@@ -1,0 +1,27 @@
+{
+  "name": "@ai-usage/identity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./better-auth": "./src/shared-authentication.ts",
+    "./device-enrollment": "./src/device-enrollment.ts",
+    "./private-device-credential": "./src/private-device-credential.ts",
+    "./session-digest-adapter": "./src/session-digest-adapter.ts",
+    "./device-tokens": "./src/device-tokens.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "dependencies": {
+    "@ai-usage/authorization": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*",
+    "better-auth": "1.7.2"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

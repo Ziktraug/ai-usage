@@ -1,0 +1,22 @@
+{
+  "name": "@ai-usage/project-registry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./mapping": "./src/mapping.ts",
+    "./resolution": "./src/resolution.ts",
+    "./review": "./src/review.ts"
+  },
+  "dependencies": {
+    "@ai-usage/platform-core": "workspace:*",
+    "@ai-usage/report-core": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

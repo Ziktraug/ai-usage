@@ -1,9 +1,7 @@
 # Identity kernel and Project resolution
 
-> **Implementation status:** Accepted target specification. The identity
-> packages, stores, service, routes, and verification evidence below are
-> pending integration and are not available on `main`; plan 102 remains
-> `IN PROGRESS` in `plans/README.md`.
+> **Implementation status:** Integrated on `main` via PR #53 (plan 102
+> `DONE`).
 
 This is the accepted reference for the identity kernel specified by plan 102. It
 defines stable identities shared by the local SQLite and connected PostgreSQL

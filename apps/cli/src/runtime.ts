@@ -1,9 +1,12 @@
+import { createMemoryServiceClient, type MemoryServiceClient } from '@ai-usage/memory-service/client';
+import { loadMemoryServiceRendezvous, memoryServiceRendezvousPath } from '@ai-usage/memory-service/node';
 import { Context, Layer } from 'effect';
 import { type CliUsageEngine, createLiveCliUsageEngine } from './usage-engine';
 import { type CliUsagePaths, resolveCliUsagePaths } from './usage-paths';
 
 export interface CliRuntime {
   readonly argv: string[];
+  readonly memory: MemoryServiceClient;
   readonly paths: CliUsagePaths;
   readonly signal: AbortSignal;
   readonly stdoutIsTTY: boolean;
@@ -20,8 +23,12 @@ export interface CreateCliRuntimeLayerOptions {
 
 export const createCliRuntimeLayer = (options: CreateCliRuntimeLayerOptions) => {
   const paths = resolveCliUsagePaths();
+  const memoryRendezvousPath = memoryServiceRendezvousPath(paths.stateDirectory);
   return Layer.succeed(CliRuntime, {
     argv: options.argv ?? process.argv.slice(2),
+    memory: createMemoryServiceClient({
+      resolveRendezvous: async () => await loadMemoryServiceRendezvous(memoryRendezvousPath),
+    }),
     paths,
     signal: options.signal,
     stdoutIsTTY: options.stdoutIsTTY ?? !!process.stdout.isTTY,

@@ -130,6 +130,7 @@ const normalTextPairs = [
     background,
     foreground: 'accent',
   })),
+  { background: 'accent', foreground: 'accentContrast' },
   ...(['ok', 'warn', 'danger'] as const).flatMap((tone) => [
     { background: 'canvas', foreground: `status.${tone}` },
     { background: 'surface', foreground: `status.${tone}` },
@@ -230,7 +231,7 @@ test('reserves a stable scrollbar gutter on the document scroll root', () => {
 
 test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
   const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
-  expect(presetHash).toBe('c57d60eaec134723c3b58832e3665e3e97119afe32ed46c1dc238c66f2ce3f6e');
+  expect(presetHash).toBe('e2daab8f3247504a5a6147e713a2b4accadf3e1dfa00d4c88255d7087c6512cb');
 });
 
 test('punchcard controls meet the minimum interactive target size', () => {

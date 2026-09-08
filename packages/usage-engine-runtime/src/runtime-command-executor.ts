@@ -11,6 +11,7 @@ import {
   type UsageEngineMachineOutput,
   type UsageEngineMergePreviewOutput,
   type UsageEnginePublicationOutput,
+  type UsageEngineReplicationStatusOutput,
   usageEngineReportSourceIdsFor,
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineRuntimeDependencies } from './runtime';
@@ -22,6 +23,7 @@ export type UsageEngineCommandOutput =
   | UsageEngineMachineOutput
   | UsageEngineMergePreviewOutput
   | UsageEnginePublicationOutput
+  | UsageEngineReplicationStatusOutput
   | undefined;
 
 interface RuntimeCommandExecutorState {
@@ -91,6 +93,17 @@ export const createRuntimeCommandExecutor = (
         }
         return { kind: 'publication', publication };
       }
+      case 'replication-status':
+        return dependencies.readReplicationStatus
+          ? await dependencies.readReplicationStatus()
+          : {
+              kind: 'replication-status',
+              lastDiagnostic: null,
+              memory: null,
+              mode: 'local-only',
+              runtimeState: 'disabled',
+              usage: null,
+            };
       case 'set-source-enabled':
         await dependencies.sourceControl.setSourceEnabled(command.sourceId, command.enabled, signal);
         return;

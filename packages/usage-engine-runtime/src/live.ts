@@ -35,6 +35,7 @@ import {
 import {
   parseUsageEnginePublicationRevision,
   type UsageEngineProjectSourceReference,
+  type UsageEngineReplicationStatusOutput,
 } from '@ai-usage/usage-engine-control';
 import { createUsageFileMergeService, type UsageFileMergeService, UsageMergeError } from '@ai-usage/usage-merge';
 import {
@@ -502,6 +503,7 @@ export interface LiveUsageEngineRuntimeOptions {
   readonly now?: () => Date;
   readonly operatorCwd: string;
   readonly readInput?: typeof readUsageEngineInput;
+  readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly reportRecovery?: (result: UsageEngineRecoveryReport) => void;
   readonly retainRevisions?: (input: { readonly dbPath: string; readonly now: number }) => Promise<void>;
   readonly storage?: LocalHistoryStorageService;
@@ -1065,6 +1067,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
         await eventRuntime.dispose();
       }
     },
+    ...(options.readReplicationStatus === undefined ? {} : { readReplicationStatus: options.readReplicationStatus }),
     recover: async () =>
       await writerGate.run(async () => {
         await observe(

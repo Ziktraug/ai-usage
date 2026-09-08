@@ -120,6 +120,7 @@ export const aiUsagePreset = definePreset({
           // Lavender is the Atelier interaction accent. Tinted surfaces stay quiet
           // enough for dense tables and long-form session and Skill detail.
           accent: dual('#735095', '#C5ADEE'),
+          accentContrast: dual('#FFFFFF', '#111116'),
           accentSoft: dual('#EDE3F7', '#332A43'),
           accentTint: dual('#F2ECF8', '#25202F'),
           focusRing: dual('rgba(115, 80, 149, 0.28)', 'rgba(197, 173, 238, 0.35)'),

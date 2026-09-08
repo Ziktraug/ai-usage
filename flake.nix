@@ -25,6 +25,7 @@
             packages = with pkgs; [
               biome
               bun
+              postgresql_17
             ];
           };
         }

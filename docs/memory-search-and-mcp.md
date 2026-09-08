@@ -1,9 +1,8 @@
 # Memory search and MCP
 
-> **Implementation status:** Accepted target specification. The search and MCP
-> packages, commands, routes, corpus measurements, and verification evidence
-> below are pending integration and are not available on `main`; plan 106
-> remains `IN PROGRESS` in `plans/README.md`.
+> **Implementation status:** Integrated on `main` via PR #53 (plan 106
+> `DONE`). Corpus measurements and verification evidence below record the
+> validation run at integration time, not a continuously refreshed benchmark.
 
 Memory retrieval is specified as one authorization-first application contract
 with two storage projections and several edge adapters. Local/offline mode uses
@@ -147,6 +146,13 @@ TanStack Query owns one key containing every result-shaping input. Search is
 disabled during SSR until an operator submits a query; proposal review remains
 separately SSR-hydrated.
 
+Proposals reach that review only through the Memory application's
+`recordObservation`, `createProposal`, `previewMemoryImport`, and
+`confirmMemoryImport` operations, which the local service, CLI, Web, and MCP
+do not expose yet; `exportMemory` is in the same state. A fresh local store
+therefore has an empty corpus until such a surface exists
+([`future-work.md`](future-work.md)).
+
 With the supervised engine running, CLI search is:
 
 ```sh
@@ -166,7 +172,7 @@ falls back to a different local corpus.
 | Tool | Input | Output |
 | --- | --- | --- |
 | `memory.search` | bounded search fields: `query`, `limit`, optional cursor/mode/Project/kind/status/trust | revision-pinned cards, total/cursor, rank, match explanation, provenance |
-| `memory.get` | `itemId` UUID | exact authorized current item/revision card |
+| `memory.get` | `itemId` UUID and optional exact `revisionId` UUID | exact authorized current or historical item/revision card |
 | `memory.project_context` | Project UUID and limit (default 16, max 32) | deterministic active constraints, decisions, pitfalls, and commands |
 
 `memory.latest_work_handoff`, `work_handoff.get`, and
@@ -175,7 +181,9 @@ Plan 108 activates them only with real Work application services. There is no
 MCP acceptance, revision, supersession, relation, or direct Item-creation tool.
 
 Every response includes `contentRole: "retrieved-data"`, a fixed notice, exact
-revision/content identity, status, trust, sensitivity, and verification.
+revision/content identity, status, trust, sensitivity, and verification. An
+exact historical `memory.get` result is labeled `accepted-historical-revision`;
+current results are labeled `accepted-current-revision`.
 Search cards additionally preserve match explanation, rank, and bounded
 provenance. Retrieved text—including prompt-injection fixtures—is serialized as
 quoted JSON data and cannot override the current user request, system
@@ -204,7 +212,10 @@ bun run mcp:register:codex
 bun apps/mcp/src/register.ts json /absolute/project/.mcp.json
 ```
 
-The JSON path must end in `.mcp.json` or `mcp.json`. Registration shares the
+The JSON path must end in `.mcp.json` or `mcp.json` and receives the
+`mcpServers` shape (the Claude Code project-scope and Cursor conventions);
+there is no OpenCode registration mode, and any other stdio MCP client is
+pointed at `bun run mcp` by hand. Registration shares the
 Skills projection lock, validates parent/target identity, refuses symlinks,
 bounds existing files to 1 MiB, uses an owner-only atomic temp write, preserves
 unrelated keys/servers, and is idempotent. A same-name registration with

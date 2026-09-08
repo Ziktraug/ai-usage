@@ -25,7 +25,10 @@ const unavailableServices = <Services>(overrides: object = {}): Services =>
   }) as Services;
 
 const dependencies = (): WebRpcRouterDependencies => ({
+  memory: unavailableServices<WebRpcRouterDependencies['memory']>(),
+  projects: unavailableServices<WebRpcRouterDependencies['projects']>(),
   report: unavailableServices<WebRpcRouterDependencies['report']>(),
+  replication: unavailableServices<WebRpcRouterDependencies['replication']>(),
   session: unavailableServices<WebRpcRouterDependencies['session']>(),
   skills: {
     preflight: () => ({ allowed: false, tag: 'ForbiddenDemo' }),
@@ -93,8 +96,8 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(31);
-    expect(dependencyAcquisitions).toBe(31);
+    expect(observed).toHaveLength(37);
+    expect(dependencyAcquisitions).toBe(37);
   });
   test('serves opaque project identity through the real Skills RPC routes only in an injected extended context', async () => {
     const capability = await createE2ESkillsCapability('extended');

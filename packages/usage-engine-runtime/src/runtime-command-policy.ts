@@ -6,7 +6,8 @@ export type UsageEngineCommandOutputKind =
   | 'machine'
   | 'merge-preview'
   | 'none'
-  | 'publication';
+  | 'publication'
+  | 'replication-status';
 
 interface UsageEngineCommandPolicy {
   readonly interruptible: boolean;
@@ -21,6 +22,7 @@ export const usageEngineCommandPolicies = {
   'import-cursor': { interruptible: false, outputKind: 'cursor-import' },
   'preview-merge': { interruptible: true, outputKind: 'merge-preview' },
   publish: { interruptible: false, outputKind: 'publication' },
+  'replication-status': { interruptible: true, outputKind: 'replication-status' },
   'replace-project-aliases': { interruptible: false, outputKind: 'none' },
   'replace-project-groups': { interruptible: false, outputKind: 'none' },
   'replace-project-groups-by-reference': { interruptible: false, outputKind: 'none' },

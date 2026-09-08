@@ -19,6 +19,7 @@ import {
   type UsageEngineEvent,
   type UsageEngineInstanceId,
   type UsageEngineMergePreviewOutput,
+  type UsageEngineReplicationStatusOutput,
   type UsageEngineStatus,
 } from '@ai-usage/usage-engine-control';
 import { createRuntimeCommandCoordinator, type RuntimeCommandCoordinator } from './runtime-command-coordinator';
@@ -118,6 +119,7 @@ export interface UsageEngineRuntimeDependencies {
   ) => Promise<Result>;
   readonly publishInitialRevision: () => Promise<NonNullable<UsageEngineStatus['currentPublication']>>;
   readonly quiesceStore: () => Promise<void>;
+  readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly recover: () => Promise<void>;
   readonly sourceControl: Omit<UsageEngineSourceControlPort, 'runSource' | 'setSourceEnabled'> & {
     readonly runSource: (sourceId: RunSourceCommand['sourceId'], signal?: AbortSignal) => Promise<SourceControlView>;

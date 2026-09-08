@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "commit": "71915d4566dd1079ec4fa8bd14666d59e4e1bbef",
+    "implementation": "modules/devtools/ai/agent-memory/scripts/agent-memory.ts",
+    "repository": "Ziktraug/nixos"
+  },
+  "mapping": {
+    "kinds": {
+      "command": "command",
+      "constraint": "constraint",
+      "decision": "decision",
+      "handoff": "handoff",
+      "lesson": "lesson",
+      "pattern": "pattern",
+      "pitfall": "pitfall",
+      "preference": "preference"
+    },
+    "scopes": {
+      "global": "space",
+      "repo": "project",
+      "session": "observation-and-pending-proposal"
+    },
+    "statuses": {
+      "active": "accepted-item-active",
+      "rejected": "rejected-proposal-no-item",
+      "superseded": "accepted-item-superseded"
+    },
+    "trust": {
+      "explicit": "explicit",
+      "harvest-accepted": "harvest-accepted"
+    }
+  },
+  "safety": {
+    "acceptance": "person-confirmed-only",
+    "authority": "database",
+    "filePathAffectsIdentity": false,
+    "importMutatesSource": false,
+    "invalidBatchBehavior": "quarantine-without-related-mutations",
+    "previewProofBinds": [
+      "content-hash",
+      "destination-space",
+      "destination-project",
+      "destination-memory-state"
+    ]
+  },
+  "portableExport": {
+    "formats": ["jsonl", "markdown"],
+    "includes": [
+      "stable-item-and-revision-ids",
+      "current-and-historical-revision-data",
+      "status",
+      "trust",
+      "sensitivity",
+      "bounded-provenance",
+      "relations"
+    ],
+    "omits": ["principal-identifiers", "raw-source-locators"],
+    "intentionalReimportLosses": [
+      "prior-revisions-collapse-to-one-current-import-revision",
+      "person-scope-collapses-to-space-scope",
+      "non-supersession-relations-are-not-reconstructed",
+      "rejected-items-reimport-as-rejected-proposals"
+    ]
+  },
+  "compatibilityExit": {
+    "nixosImplementationRemainsAvailable": true,
+    "remainingGate": "plan-106-search-and-mcp-parity"
+  }
+}

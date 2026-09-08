@@ -2,14 +2,18 @@
 
 `ai-usage` turns local AI coding-tool history (Claude Code, Codex, OpenCode,
 Cursor) into a usage report: a Bun workspace with a SvelteKit web app, a CLI,
-and a background usage engine. It is a local, single-operator product — no
-remote service, no provider credentials.
+and a background usage engine. It is local-first: the default composition is
+single-operator with no remote service and no provider credentials; the
+connected platform (`apps/server`, PostgreSQL 17, GitHub login, outbound Device
+replication) is an explicit opt-in that local mode never contacts.
 
 ## Read these before changing behavior
 
 - `CONTEXT.md` — the ubiquitous language (harness, collection source, source
   publication, …). Use these words; the "Avoid" lists are binding.
 - `docs/architecture.md` — data flow, process ownership, package ownership.
+- `docs/local-store-upgrade.md` — moving the local usage and Memory SQLite
+  stores across code versions (backup first; there is no downgrade path).
 - `docs/adr/README.md` — the decision index. Architecture and product
   invariants live here; check it before re-deciding anything.
 - `docs/README.md` — map of the remaining docs (living reference vs dated
@@ -40,6 +44,14 @@ remote service, no provider credentials.
 - `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
 - `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
 - `bun run test:e2e` — browser regressions (run the relevant E2E variant)
+- `bun run test:postgres` — PostgreSQL 17 suites; needs `nix develop` (CI runs
+  them flake-locked). Not part of `verify`.
+- `bun run test:local-platform` — proves local mode never consults the
+  PostgreSQL or authentication factories. CI-only, not part of `verify`.
+- `bun run dev:platform` — disposable PostgreSQL + connected server
+  (`docs/platform-server-operations.md`); `dev` stays PostgreSQL-free
+- `bun run mcp` / `bun run mcp:register:codex` — local stdio Memory MCP server
+  and its Codex registration
 - `bun x ultracite fix` — format and autofix before committing (Biome)
 
 ## Code standards

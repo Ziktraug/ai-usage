@@ -1,9 +1,15 @@
 # Authentication and Device enrollment
 
-> **Implementation status:** Accepted target specification. Authentication,
-> enrollment, routes, packages, and verification evidence below are pending
-> integration and are not available on `main`; plan 104 remains `IN PROGRESS`
-> in `plans/README.md`.
+> **Implementation status:** Integrated on `main` via PR #53 (plan 104
+> `DONE`). Connected V1 login is GitHub-only; non-GitHub login remains
+> explicitly blocked. The server routes exist; no CLI or engine command yet
+> performs the Device-side exchange and writes `device-credential.json`
+> (see [`future-work.md`](future-work.md)).
+
+A Person always keeps at least one active provider account: migration
+ordinal 9 installs a database guard that locks the principal and refuses the
+deletion of its last account, so two concurrent unlink requests answer 200 and
+400 (`FAILED_TO_UNLINK_LAST_ACCOUNT`) instead of removing every login.
 
 This accepted reference defines the connected authentication, Web-session, and
 Device-enrollment slice. Authentication establishes a Person principal;
@@ -63,7 +69,12 @@ domain session API.
 
 Sessions are non-sliding with a 24-hour absolute/idle limit and 15-minute fresh
 window. Each login creates a new session. Linking forces reauthentication;
-unlinking an identity invalidates a session bound to it. `POST
+unlinking an identity invalidates a session bound to it, and an unlinked
+identity cannot be linked again (`IDENTITY_REVOKED`, refused before any
+provider-account row is written and, against a relink racing the unlink, by
+the database guard of migration ordinal 10). A provider account an older race
+did orphan is ignored, reported once as
+`authentication-provider-account-orphaned`, and never authenticates. `POST
 /api/session/revoke-all` and Better Auth sign-out remove sessions. Every
 cookie-authenticated application mutation also requires the configured exact
 Origin; OAuth state, PKCE, CSRF, and origin checks remain enabled.
@@ -93,7 +104,10 @@ label. `Authorizer.manage_device` is checked before creation and again inside
 the PostgreSQL mutation. Exchange verifies/consumes the grant and creates the
 Device plus a distinct credential in one transaction; concurrent exchanges
 produce exactly one Device. Authentication updates last-seen metadata only
-after verifier and lifecycle checks. List, rename, rotate, revoke-one, and
+after verifier and lifecycle checks; those checks include the owner Person, so
+a suspended owner makes an otherwise valid credential answer `identity-revoked`
+(HTTP `revoked`) until the Person is active again, without revoking the Device
+or its credential. List, rename, rotate, revoke-one, and
 revoke-all remain authorization-scoped. Rotation revokes the old credential
 and inserts the new one atomically. Revocation happens before any future ingest
 authorization, while historical Device rows remain readable.

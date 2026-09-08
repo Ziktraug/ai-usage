@@ -6,6 +6,8 @@ import {
   parseSessionVcsContext,
   sessionVcsBranchUrl,
   sessionVcsCommitUrl,
+  sessionVcsRepositoryAliasKey,
+  sessionVcsRepositoryProvider,
 } from './session-vcs';
 
 const githubRepository = {
@@ -61,6 +63,19 @@ describe('session VCS context', () => {
       'https://gitlab.com/group/project/-/tree/topic/one',
     );
     expect(gitlab && sessionVcsCommitUrl(gitlab, 'abcdef')).toBe('https://gitlab.com/group/project/-/commit/abcdef');
+  });
+
+  test('derives provider-aware alias keys without changing display provenance', () => {
+    const githubHttps = normalizeSessionVcsRepository('https://GitHub.com/OpenAI/Codex.git///', 'harness-recorded');
+    const githubSsh = normalizeSessionVcsRepository('git@github.com:openai/codex', 'local-derived');
+    const selfHostedUpper = normalizeSessionVcsRepository('git@forge.example:Team/Repo.git', 'local-derived');
+    const selfHostedLower = normalizeSessionVcsRepository('git@forge.example:team/repo.git', 'local-derived');
+
+    expect(githubHttps && sessionVcsRepositoryAliasKey(githubHttps)).toBe('github.com/openai/codex');
+    expect(githubSsh && sessionVcsRepositoryAliasKey(githubSsh)).toBe('github.com/openai/codex');
+    expect(githubHttps && sessionVcsRepositoryProvider(githubHttps)).toBe('github');
+    expect(selfHostedUpper && sessionVcsRepositoryAliasKey(selfHostedUpper)).toBe('forge.example/Team/Repo');
+    expect(selfHostedLower && sessionVcsRepositoryAliasKey(selfHostedLower)).toBe('forge.example/team/repo');
   });
 
   test('compacts consecutive branches and deduplicates PRs chronologically', () => {

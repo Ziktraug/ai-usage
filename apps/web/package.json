@@ -7,6 +7,8 @@
     "@ai-usage/design-system": "workspace:*",
     "@ai-usage/effect-runtime": "workspace:*",
     "@ai-usage/local-machine": "workspace:*",
+    "@ai-usage/memory-service": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/report-data": "workspace:*",
     "@ai-usage/skills": "workspace:*",

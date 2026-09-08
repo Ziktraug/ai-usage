@@ -1,9 +1,8 @@
 # Authorization model and operations
 
-> **Implementation status:** Accepted target specification. The authorization
-> packages, PostgreSQL model, benchmark, and verification evidence below are
-> pending integration and are not available on `main`; plan 103 remains
-> `IN PROGRESS` in `plans/README.md`.
+> **Implementation status:** Integrated on `main` via PR #53 (plan 103
+> `DONE`). Benchmark and verification evidence below record the validation
+> run at integration time.
 
 This is the accepted reference for the local and connected authorization seam.
 It describes the application-owned `Authorizer`, the PostgreSQL V1 relation

@@ -56,6 +56,7 @@ without a numbering collision.
 | [0035](0035-opt-in-normalized-session-archives.md) | Opt-in normalized session archives with envelope encryption | 2026-08-29 | Accepted |
 | [0036](0036-github-authentication-and-hmac-device-credentials.md) | GitHub authentication and HMAC Device credentials | 2026-08-29 | Accepted |
 | [0037](0037-current-producers-and-durable-skill-invocations.md) | Absence proof requires current producers and durable skill invocations | 2026-08-31 | Accepted; amends 0012 and 0022 |
+| [0038](0038-local-memory-store-writer-lease-and-startup-coupling.md) | Local Memory store writer lease and fail-closed startup coupling | 2026-09-07 | Accepted; extends 0009 and 0024 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

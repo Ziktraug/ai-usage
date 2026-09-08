@@ -4,13 +4,14 @@ Existing workspace packages expose only their current seams below.
 Cross-package imports must use declared package exports, never private `src`
 paths or relative workspace paths.
 
-Platform entries introduced by plans 101–107 are accepted target interfaces,
-not exports currently available on `main`. They remain pending until their plan
-status reaches `DONE`: `platform-core`, `authorization-contract`,
-`authorization`, `identity`, `project-application`, `project-registry`,
-`replication-*`, `memory-*`, `mcp-adapter`, `postgres-store`, `server`, and
-`mcp`, plus the platform-specific extensions described for existing packages
-and apps. All other entries describe current interfaces.
+Platform entries introduced by plans 101–107 (`platform-core`,
+`authorization-contract`, `authorization`, `identity`, `project-application`,
+`project-registry`, `replication-*`, `memory-*`, `mcp-adapter`,
+`postgres-store`, `server`, and `mcp`, plus the platform-specific extensions
+described for existing packages and apps) are exports present on `main` since
+PR #53. Plan 107's open criteria and the application operations that still
+lack an operator surface are listed in [`future-work.md`](future-work.md).
+All entries describe current interfaces.
 
 ## `@ai-usage/effect-runtime`
 

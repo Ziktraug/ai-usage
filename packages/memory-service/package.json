@@ -1,0 +1,33 @@
+{
+  "name": "@ai-usage/memory-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/contracts.ts",
+    "./application": "./src/application.ts",
+    "./client": "./src/client.ts",
+    "./conformance": "./src/conformance.ts",
+    "./domain": "./src/domain.ts",
+    "./export": "./src/export.ts",
+    "./migration": "./src/migration.ts",
+    "./node": "./src/node.ts",
+    "./redaction": "./src/redaction.ts",
+    "./read-contract": "./src/read-contract.ts",
+    "./repository": "./src/repository.ts",
+    "./search": "./src/search.ts"
+  },
+  "dependencies": {
+    "@ai-usage/authorization-contract": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*",
+    "@ai-usage/project-registry": "workspace:*",
+    "@ai-usage/replication-protocol": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

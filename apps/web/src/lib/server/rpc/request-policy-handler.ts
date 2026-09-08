@@ -16,15 +16,21 @@ const MAX_SOURCE_CONTROL_COMMAND_BYTES = 4 * 1024;
 const textEncoder = new TextEncoder();
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
 export const rpcPathByOperation = {
+  applyMemoryProposalReviewAction: '/memory/applyProposalReviewAction',
+  applyProjectResolutionAction: '/projects/applyResolutionAction',
   createManagedSkillTargetDirectory: '/skills/createTargetDirectory',
   getCampaignLabelOverrides: '/campaign/labelOverrides',
   getFocusedReportBreakdown: '/report/focusedBreakdown',
   getFocusedReportOverview: '/report/focusedOverview',
   getFocusedReportSupport: '/report/focusedSupport',
   getKnownSkillProjectPaths: '/skills/knownProjectPaths',
+  getMemoryProposalReviews: '/memory/proposalReviews',
+  searchMemory: '/memory/search',
   getManagedSkillMarkdown: '/skills/managedMarkdown',
   getProjectSkillMarkdown: '/skills/projectMarkdown',
+  getProjectResolutionReviews: '/projects/resolutionReviews',
   getProviderQuotaHistory: '/quota/history',
+  getReplicationStatus: '/replication/status',
   getReportPerfEnabled: '/runtime/reportPerfEnabled',
   getReportRevisionBootstrap: '/report/revisionBootstrap',
   getReportRevisionManifest: '/report/revisionManifest',

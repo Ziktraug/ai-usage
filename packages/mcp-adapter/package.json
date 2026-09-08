@@ -1,0 +1,26 @@
+{
+  "name": "@ai-usage/mcp-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./registration": "./src/registration.ts",
+    "./stdio": "./src/stdio.ts"
+  },
+  "dependencies": {
+    "@ai-usage/authorization-contract": "workspace:*",
+    "@ai-usage/memory-service": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*",
+    "@ai-usage/skills": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

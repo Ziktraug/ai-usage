@@ -16,7 +16,7 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 - Improve `/sync` file import review with clearer bundle identity, generated-at, row-count, and conflict summaries before the user confirms a bounded import.
 - Consider a documented encrypted-file workflow for users whose existing file-transfer tools do not already protect merge bundles at rest.
-- Keep transfer explicit and file-based. Do not add machine discovery, a non-loopback listener, credentials, or background replication without a separate security design.
+- Keep transfer explicit and file-based. Machine discovery and non-loopback listeners stay excluded; outbound-only Device replication (ADR 0031, plan 107) is the accepted background path and must not grow an inbound, peer, or remote-command channel.
 
 ## Skill Management
 
@@ -100,3 +100,154 @@ over-emphasize it or build ROI/break-even features on top of it.
   shown in Top Sessions. Remaining gap is narrower: subagent/orchestrator
   children fall back to generic ids — children could inherit the parent's title
   once campaign grouping is surfaced in the UI.
+
+## AI Operations And Memory Platform (plans 099–110)
+
+The platform runtime for plans 101–107 is integrated via PR #53; plan 107 is
+partial and plans 108–110 are `TODO` (`plans/README.md`). Guardrails that every
+item below must keep: local mode never consults PostgreSQL or shared
+authentication (`bun run test:local-platform`), replication stays outbound-only
+(ADR 0031), Memory keeps one mutation authority per mode (ADR 0026, ADR 0038),
+and authorization stays application-owned (ADR 0029).
+
+- Memory ingress and export surfaces (plan 105 remainder).
+  Problem: `previewMemoryImport`, `confirmMemoryImport`, `exportMemory`,
+  `recordObservation`, `createProposal`, `reviseMemoryItem`,
+  `supersedeMemoryItem`, and `purgeMemoryItem` exist in
+  `packages/memory-service/src/application.ts`, but the local Memory service
+  (`apps/usage-engine/src/memory-service-server.ts`) exposes only proposal
+  list/accept/reject, search, exact get, Project context, and repository
+  resolutions; no CLI, Web, or MCP surface calls the others.
+  Impact: a fresh local store has an empty corpus, so `/memory`,
+  `memory search`, and the MCP tools return nothing, and legacy NixOS or
+  `.agent-memory/` content cannot be migrated by an operator.
+  Acceptance: a preview-then-confirm import command and an export command over
+  the Memory service (no independent SQLite writer), idempotent re-import
+  proven on a copy of a real store, and harvest that still never becomes
+  durable guidance without acceptance.
+- Device-side enrollment command (plans 104/107 remainder).
+  Problem: `storePrivateDeviceCredential`
+  (`packages/identity/src/private-device-credential.ts`) has no caller
+  outside tests; nothing on the Device exchanges a grant at
+  `POST /api/device-enrollment-exchanges`.
+  Impact: connected mode requires hand-writing `device-credential.json`.
+  Acceptance: one CLI command that reads a grant token from stdin or a
+  prompt (never argv), exchanges it, stores the credential owner-only, and
+  prints the shared Device identity; covered by a PostgreSQL test.
+- Server-side bundle bootstrap (plan 107, step 6).
+  Problem: rows imported through a manual usage merge bundle are not mapped
+  to the same replication fact keys as direct publication.
+  Impact: a Device bootstrapped from a bundle can re-publish or diverge from
+  the shared projection.
+  Acceptance: bundle-imported rows publish with the same `fact_key`/event
+  identity, duplicate-free after acknowledgement, proven in
+  `tools/replication-e2e.postgres.test.ts`.
+- Blocked-stream repair controls (plan 107, step 7).
+  Problem: a `blocked` outbox stream (authentication, revocation, Capture
+  Context, version, generation, or identity conflict) is only reported; there
+  is no preview/confirm repair.
+  Impact: the operator must stop the engine and act on SQLite by hand.
+  Acceptance: a content-free preview-then-confirm repair command on the engine
+  control plane with the same all-or-nothing identity guarantees and tests.
+- Target-Space visibility and revocation of a publishing Device (needs an
+  ADR).
+  Problem: `authorizeSpaceContext`
+  (`packages/postgres-store/src/internal/replication-adapter.ts`) lets a
+  Device owned in a personal Space publish into an organization Space when its
+  owner is an `admin`/`member`, but Device list/rename/revoke are scoped to the
+  Device's owning Space (`packages/identity/src/device-enrollment.ts`,
+  `spaceScopeSql('manage_device')` in
+  `packages/postgres-store/src/internal/authorization-query.ts`).
+  Impact: an organization admin cannot see or revoke a Device that publishes
+  facts into their Space.
+  The same gap has a client side: the default `personal-fallback` Capture
+  Context (`apps/usage-engine/src/replication-runtime.ts`) targets the
+  Device's owning Space as returned by the server, so a Device enrolled into an
+  organization Space publishes its default usage facts and normal non-Project
+  Memory there rather than into the owner's personal Space.
+  Acceptance: an ADR deciding whether publication into a Space requires a
+  Space-visible Device binding with admin revocation, or is limited to the
+  Device's own Space, and whether default publication for an
+  organization-owned Device stays in its owning Space or must be personal-only;
+  list and ingest tests on both sides of the decision.
+- `propose_memory` at Space scope includes auditor memberships.
+  Problem: `spaceScopeSql` in
+  `packages/postgres-store/src/internal/authorization-query.ts` uses an
+  unfiltered `membership()` for `propose_memory` and `create_work_handoff` on
+  resource kind `space`, so `usage-auditor` and `security-auditor` pass; the
+  replication adapter restricts the same decision to `admin`/`member` in its
+  own SQL instead of asking the Authorizer.
+  Impact: no exposed surface proposes Memory at Space scope in connected mode
+  today, so it is a rule defect rather than an exploitable path; the two
+  rules disagree.
+  Acceptance: restrict to `admin`/`member` in the SQL and in-memory adapters,
+  add conformance deny cases for both auditor roles, and make the replication
+  adapter reuse the Authorizer scope.
+- No rate limiting on the enrollment exchange.
+  Problem: `POST /api/device-enrollment-exchanges`
+  (`apps/server/src/application.ts`) accepts a one-time bearer with no attempt
+  bound; the `rate-limited` to `429` mapping has no producer.
+  Impact: online guessing of the 43-character secret is infeasible, but
+  attempts are unmetered and unaudited.
+  Acceptance: bounded attempts per source and per public token ID with `429`
+  and a content-free diagnostic, tested.
+- Migration runner runs under the pool `query_timeout`.
+  Problem: `createPlatformStore` (`packages/postgres-store/src/writer.ts`)
+  builds the pool with `query_timeout: config.queryTimeoutMs` (default
+  5 000 ms) and `runPlatformMigrations`
+  (`packages/postgres-store/src/internal/migration-runner.ts`) takes its client
+  from that pool.
+  Impact: a migration statement slower than the query timeout on a large
+  database aborts that migration's transaction (ledger unchanged, so safe) and
+  the server never becomes ready.
+  Acceptance: migrations run on a dedicated client with an explicit migration
+  timeout and `lock_timeout`, documented in `platform-server-operations.md`.
+- Publication of Memory items larger than one replication payload.
+  Problem: Memory accepts up to 64 guidance entries and 256 KiB of structured
+  content, while the replication protocol bounds one payload to 64 KiB
+  (`replicationBounds.payloadBytes`); such an item is accepted locally but not
+  published, which the Memory audit log and the configure result record.
+  Impact: a large accepted item never reaches the shared Space.
+  Acceptance: a chunked or referenced publication form under the same
+  idempotent event identity, or a documented Memory size ceiling equal to the
+  payload bound, decided with the protocol version.
+- Replication payload rules narrower than the Memory domain contract.
+  Problem: the protocol's bounded text refuses every control character (so a
+  multiline guidance entry is `invalid-value`) and its canonical JSON visitor
+  caps one value at 10 000 nodes and depth 32, while Memory accepts multiline
+  guidance and up to 256 KiB of structured content; such items are accepted
+  locally, refused for publication, and recorded in the Memory audit log and
+  in the configure result.
+  Impact: ordinary multi-line guidance never reaches the shared Space, and a
+  usage row with a refused text field is skipped with only the backfill
+  result's `unpublishable` count as a trace (no usage-side audit log or
+  Sources-panel indicator yet).
+  Acceptance: a protocol revision that admits newline and tab in guidance and
+  summary text and states the node budget per event, applied on both sides of
+  the wire with the same fixtures, or a documented Memory ceiling equal to the
+  protocol's.
+- MCP registration beyond Codex and `mcpServers` JSON files.
+  Problem: `apps/mcp/src/register.ts` supports `codex` and a `.mcp.json` /
+  `mcp.json` `mcpServers` file; OpenCode has no mode.
+  Impact: OpenCode operators edit configuration by hand.
+  Acceptance: an OpenCode mode with the same lock, identity, and
+  unmanaged-entry refusal rules, or a documented manual snippet.
+- Two small hardening leftovers from the 2026-09-08 closure review.
+  Problem: the enrollment exchange (`POST /api/device-enrollment-exchanges`)
+  relies on the authorizer's `manage_device` scope for a suspended grantee
+  rather than an explicit owner-status check like credential confirmation and
+  ingestion now perform; and the legacy front-matter parser in
+  `packages/memory-service/src/migration.ts` still rebuilds objects with
+  indexed assignment, so a `__proto__:` front-matter key alters a scratch
+  object's prototype instead of becoming data.
+  Impact: no data loss or exposure found; both are consistency gaps.
+  Acceptance: an explicit active-owner predicate on the exchange with a test,
+  and own-property construction in the front-matter parser with a test.
+  Also: when the `before` unlink hook returns `false`, Better Auth answers
+  200 without deleting; the last-account refusal now comes from the database
+  guard (ordinal 9), but that silent path deserves an explicit 4xx and a test.
+- Plans 108–110 (Work handoffs and Work threads, session-detail archives, the
+  native portability spike) stay `TODO`; the reserved MCP tool names
+  `memory.latest_work_handoff`, `work_handoff.get`, and
+  `work_thread.get_context` remain unregistered until plan 108 supplies real
+  services.

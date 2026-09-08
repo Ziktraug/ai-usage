@@ -9,6 +9,7 @@ const RPC_OPERATIONS = {
   '/rpc/campaign/setLabelOverride': 'campaign.setLabelOverride',
   '/rpc/projectGroup/save': 'projectGroup.save',
   '/rpc/quota/history': 'quota.history',
+  '/rpc/replication/status': 'replication.status',
   '/rpc/report/focusedBreakdown': 'report.focusedBreakdown',
   '/rpc/report/focusedOverview': 'report.focusedOverview',
   '/rpc/report/focusedSupport': 'report.focusedSupport',

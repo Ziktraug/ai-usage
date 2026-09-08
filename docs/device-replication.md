@@ -1,11 +1,11 @@
 # Device replication
 
-> **Implementation status:** Accepted target specification. The replication
-> runtime, protocol packages, routes, commands, and verification evidence below
-> are pending integration and are not available on `main`; plan 107 remains
-> `IN PROGRESS` with additional done criteria still open.
+> **Implementation status:** The replication runtime, protocol packages,
+> routes, and commands below are integrated on `main` via PR #53. Plan 107
+> remains `IN PROGRESS`: server-side bundle bootstrap and blocked-stream repair
+> controls are still open (see Operations and fallback).
 
-Device replication will publish selected local facts to the connected platform.
+Device replication publishes selected local facts to the connected platform.
 It is an asynchronous publication path, not a remote-control channel and not a
 replacement for either local SQLite authority.
 
@@ -28,8 +28,12 @@ contracts; replication does not use them.
 Local mode does not construct the connector. Connected publication is enabled
 only when `AI_USAGE_PLATFORM_BASE_URL` is present. The usage engine then loads
 the owner-only Device credential from `device-credential.json` below its owned
-state directory. HTTPS is mandatory except for an explicitly permitted
-loopback HTTP origin in non-production execution. A missing/unsafe credential,
+state directory. No CLI or engine command writes that file yet: the operator
+exchanges an enrollment grant over the server's HTTP routes and stores the
+credential with `@ai-usage/identity/private-device-credential`
+([`future-work.md`](future-work.md)). HTTPS is mandatory except for an
+explicitly permitted loopback HTTP origin in non-production execution. A
+missing/unsafe credential,
 invalid endpoint, revoked Device, or unavailable server produces only a bounded
 content-free replication diagnostic and a later retry; engine startup,
 collection, Memory, search, MCP, and local reads continue.
@@ -54,6 +58,16 @@ same explicit personal context. The server may create an absent Capture Context
 row only from the complete authenticated snapshot in the request, in the same
 transaction that rechecks the active credential, Device owner, Space, optional
 Project, and SCM bindings.
+
+That default context targets the Device's owning Space exactly as the server
+returns it: the personal Space for a self-enrolled Device, or the organization
+Space for a Device an organization admin enrolled there, so such a Device
+publishes its usage facts and normal non-Project Memory into that organization
+by default. Sensitive Memory and Project-scoped Memory never publish by
+default, and installing an organization-enrolled credential is the operator's
+explicit opt-in to that target. Whether an organization-owned Device should
+instead default to personal-only publication is the open Target-Space decision
+tracked in [`future-work.md`](future-work.md).
 
 ## Protocol identities and payload policy
 
@@ -100,8 +114,8 @@ Only a contiguous prefix after the last ACK can be claimed. A process restart
 deterministically returns every abandoned `in-flight` row to `pending` before
 new claims. Network errors, server unavailability, and rate limiting schedule a
 bounded retry; authentication, revocation, Capture Context, version, generation,
-and identity conflicts remain visibly blocked. Acknowledged events never return
-to pending and their payload or identity is never rewritten.
+identity, and fact-owner conflicts remain visibly blocked. Acknowledged events
+never return to pending and their payload or identity is never rewritten.
 
 The local status model contains pending/in-flight/acknowledged/blocked counts,
 oldest unacknowledged time, next retry, last bounded error code, last ACK time,
@@ -141,21 +155,38 @@ The request Device must equal the authenticated active Device.
 
 One PostgreSQL transaction:
 
-1. locks and rechecks the active Device credential and Device;
+1. locks and rechecks the active Device credential, the active Device, and
+   the active owner Person; a suspended owner is answered with `revoked`,
+   exactly like credential verification does, whatever Space the batch names;
 2. validates every explicit Capture Context and current identity/Project/SCM
-   binding;
+   binding, and requires contribution authority for its Space: the personal
+   Space owner, an active `admin`/`member` organization membership for a
+   Space context, or a `collaborator`+ Project grant (`propose_memory`) for a
+   Project context. Viewer grants and auditor memberships cannot publish
+   facts, and the request is never treated as a trusted-Device request;
 3. serializes a Device/stream with an advisory transaction lock;
 4. checks batch/event identity, previous ACK proof, overlap, and generation;
 5. inserts immutable batch and event receipts;
-6. upserts or tombstones the current projection by `fact_key`;
+6. upserts or tombstones the current projection by `fact_key`, bound to the
+   Device that first published it: a fact key another Device already owns in
+   that Space is a `fact-owner-conflict`, whatever Project the batch names;
 7. advances stream state and stores the reconstructible bounded ACK.
+
+An owner-Space event-identity registry keeps Device/stream event IDs visible to
+the ingest transaction even when event receipts are fenced into different
+Spaces. Every problem result rolls the transaction back, including any Capture
+Contexts materialized while validating the batch.
 
 The ACK is returned only after commit. An exact duplicate returns the stored
 ACK. Reusing an event or batch identity with different canonical content is a
 conflict and writes nothing. Gaps and disagreeing overlap write nothing. A
-commit followed by a lost response is safe because the client retries the same
-batch. Content-free metrics expose only outcome, stream, event count, and a
-closed problem code.
+batch that touches a fact key owned by another Device writes nothing, blocks
+the stream, and needs an operator: fact keys are client-chosen, so ownership
+rather than the fact key is the fence between Devices in one Space. The same
+Device may still correct, re-assign to another Project, or tombstone its own
+fact. A commit followed by a lost response is safe because the client retries
+the same batch. Content-free metrics expose only outcome, stream, event count,
+and a closed problem code.
 
 Generation, active credential state, Capture Context authorization, immutable
 identities, and idempotency bound replay. They do not make a copied live Device
@@ -168,11 +199,37 @@ receipts, and fact projections are protected by forced Space RLS and immutable
 receipt triggers. Back up and restore them with the complete PostgreSQL database
 and migration ledger, never as isolated tables.
 
-The existing preview/confirm manual usage merge and deterministic Memory
-export/import remain the offline and air-gapped fallback. They do not perform
-network work. A connected server-side bootstrap that maps a transferred bundle
-to the same replication fact keys, plus preview/confirm repair controls for a
-blocked stream, is not exposed yet; plan 107 therefore remains in progress.
+The existing preview/confirm manual usage merge remains the offline and
+air-gapped fallback for usage facts; it performs no network work. Memory
+export and preview/confirm import exist as Memory application operations
+(`exportMemory`, `previewMemoryImport`, `confirmMemoryImport`) that no local
+service, CLI, Web, or MCP surface exposes yet. A connected server-side
+bootstrap that maps a transferred bundle to the same replication fact keys,
+plus preview/confirm repair controls for a blocked stream, is not exposed
+either; plan 107 therefore remains in progress, and
+[`future-work.md`](future-work.md) tracks all three.
+
+Memory validation admits documents the V1 payload contract refuses: text with
+control characters (a multi-line guidance entry), payloads over 64 KiB
+(`replicationBounds.payloadBytes`; Memory allows 64 guidance entries and
+256 KiB of structured content), and JSON beyond the canonical visitor's node
+and depth caps. A Memory item whose replication payload the protocol refuses is
+accepted locally and not published: the local mutation stays authoritative, the
+live path records a `replication-skipped-oversized` or
+`replication-skipped-invalid-payload` row in the Memory audit log (subject
+`memory-item`, result `rejected`, under the acting principal), and the
+configure/backfill result reports it in its `unpublishable` count instead of
+failing, so neither stream stops. On the outbox side, a claimed batch is
+shortened from its tail until it satisfies every protocol bound, and an event
+that cannot fit a batch on its own is blocked as `event-oversized`, visible in
+the outbox status. A publication path for such documents is backlog in
+[`future-work.md`](future-work.md).
+The same rule applies to usage facts: a stored usage row whose text fields
+the payload contract refuses (a control character in a model or harness name)
+stays in the local report, is skipped by every publication cycle, and is
+counted in the backfill result's `unpublishable` field; the usage side has no
+audit log, so that count is the only trace until the Sources panel surfaces it
+([`future-work.md`](future-work.md)).
 
 Focused verification:
 
@@ -185,6 +242,6 @@ bun run test:local-platform
 ```
 
 The PostgreSQL suite covers exact and concurrent duplicates, correction,
-tombstone, gap/overlap/conflict, all-or-nothing apply, revocation, bounded HTTP,
-SQLite-to-HTTP-to-PostgreSQL ACK, and continuity while another Device is
-offline.
+tombstone, gap/overlap/conflict, fact ownership across Devices, all-or-nothing
+apply, revocation, bounded HTTP, SQLite-to-HTTP-to-PostgreSQL ACK, and
+continuity while another Device is offline.

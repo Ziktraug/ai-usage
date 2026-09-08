@@ -595,7 +595,10 @@ describe('Svelte Skills workspace SSR', () => {
       createDependencies: () => {
         calls.acquisitions += 1;
         return Promise.resolve({
+          memory: unavailableServices<WebRpcRouterDependencies['memory']>(),
+          projects: unavailableServices<WebRpcRouterDependencies['projects']>(),
           report: unavailableServices<WebRpcRouterDependencies['report']>(),
+          replication: unavailableServices<WebRpcRouterDependencies['replication']>(),
           session: unavailableServices<WebRpcRouterDependencies['session']>(),
           skills: {
             preflight: () => ({ allowed: true }),

@@ -10,7 +10,10 @@
     "./writer": "./src/writer.ts"
   },
   "dependencies": {
+    "@ai-usage/platform-core": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/replication-outbox": "workspace:*",
+    "@ai-usage/replication-protocol": "workspace:*",
     "effect": "^3.21.4"
   },
   "scripts": {

@@ -1,0 +1,26 @@
+{
+  "name": "@ai-usage/authorization",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./conformance": "./src/conformance.ts",
+    "./in-memory": "./src/in-memory.ts",
+    "./organization-model": "./src/organization-model.ts",
+    "./permission-resource": "./src/permission-resource.ts",
+    "./scope-internal": "./src/scope-internal.ts",
+    "./single-user": "./src/single-user.ts"
+  },
+  "dependencies": {
+    "@ai-usage/authorization-contract": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

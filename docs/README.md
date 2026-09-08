@@ -11,6 +11,9 @@ living reference, the living reference wins.
 
 - [`architecture.md`](architecture.md) — data flow, process/package ownership,
   the data-plane/control-plane split.
+- [`local-store-upgrade.md`](local-store-upgrade.md) — operator procedure for
+  moving the local usage and Memory SQLite stores across code versions
+  (backup, update, verify, recover) and its limits.
 - [`adr/`](adr/README.md) — the architecture decision index. Start here for
   "why is it like this".
 - [`../CONTEXT.md`](../CONTEXT.md) — the ubiquitous language of the domain.
@@ -31,11 +34,14 @@ living reference, the living reference wins.
 
 ## Accepted platform specifications
 
-The architecture in this section is accepted, but its runtime implementation
-is not yet available on `main`. Plans 101–107 remain `IN PROGRESS` until their
-implementation and verification are integrated; commands, routes, packages,
-and measurements described by these specifications are not current-runtime
-claims. See [`../plans/README.md`](../plans/README.md) for delivery status.
+The architecture in this section is accepted and its runtime for plans
+101–107 is integrated on `main` via PR #53. Plan 107 stays `IN PROGRESS`
+for its open bootstrap/repair criteria; plans 108–110 are not started; and
+each specification names the operations that are still application-only
+(no operator surface). Measurements quoted by these specifications are the
+evidence recorded at integration time, not a refreshed benchmark. See
+[`../plans/README.md`](../plans/README.md) for delivery status and
+[`future-work.md`](future-work.md) for the platform backlog.
 
 - [`platform-server-operations.md`](platform-server-operations.md) — connected
   PostgreSQL 17 lifecycle, migrations, health, configuration, and recovery.
