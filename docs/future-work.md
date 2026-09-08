@@ -229,6 +229,17 @@ and authorization stays application-owned (ADR 0029).
   Impact: OpenCode operators edit configuration by hand.
   Acceptance: an OpenCode mode with the same lock, identity, and
   unmanaged-entry refusal rules, or a documented manual snippet.
+- Two small hardening leftovers from the 2026-09-08 closure review.
+  Problem: the enrollment exchange (`POST /api/device-enrollment-exchanges`)
+  relies on the authorizer's `manage_device` scope for a suspended grantee
+  rather than an explicit owner-status check like credential confirmation and
+  ingestion now perform; and the legacy front-matter parser in
+  `packages/memory-service/src/migration.ts` still rebuilds objects with
+  indexed assignment, so a `__proto__:` front-matter key alters a scratch
+  object's prototype instead of becoming data.
+  Impact: no data loss or exposure found; both are consistency gaps.
+  Acceptance: an explicit active-owner predicate on the exchange with a test,
+  and own-property construction in the front-matter parser with a test.
 - Plans 108–110 (Work handoffs and Work threads, session-detail archives, the
   native portability spike) stay `TODO`; the reserved MCP tool names
   `memory.latest_work_handoff`, `work_handoff.get`, and
