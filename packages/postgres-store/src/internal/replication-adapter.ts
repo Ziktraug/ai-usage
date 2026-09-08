@@ -94,6 +94,25 @@ const problem = (
   },
 });
 
+// PostgreSQL cannot store U+0000 or invalid UTF-8 in a TEXT or JSONB value and
+// raises `22P05 untranslatable_character` or `22021 character_not_in_repertoire`.
+// Inside the apply transaction such content can only come from the batch, so it is
+// the client's terminal problem, never a retryable outage: answering
+// `server-unavailable` would make the outbox retry the same batch forever. The
+// protocol refuses such text first (`invalid-value`); this keeps a protocol
+// regression from turning into that retry loop. pg raises plain DatabaseError
+// instances whose SQLSTATE is `code`, so the shape, not the prototype, is matched.
+const unstorableCharacterSqlStates = new Set(['22021', '22P05']);
+
+export const replicationPersistenceProblem = (error: unknown): ReplicationProblemResult | null =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  typeof error.code === 'string' &&
+  unstorableCharacterSqlStates.has(error.code)
+    ? problem('invalid-batch')
+    : null;
+
 const integer = (value: unknown, field: string): number => {
   const parsed = typeof value === 'string' ? Number(value) : value;
   if (!Number.isSafeInteger(parsed) || (parsed as number) < 0) {
@@ -715,7 +734,15 @@ export const createPlatformReplicationStore = (pool: Pool): PlatformReplicationS
           if (!contexts) {
             throw new ReplicationProblemRollback(problem('capture-context-forbidden'));
           }
-          const result = await applyAuthorizedBatch(client, input, batch, requestHash, contexts);
+          const result = await applyAuthorizedBatch(client, input, batch, requestHash, contexts).catch(
+            (error: unknown) => {
+              const persistence = replicationPersistenceProblem(error);
+              if (persistence) {
+                throw new ReplicationProblemRollback(persistence);
+              }
+              throw error;
+            },
+          );
           if (result.kind === 'problem') {
             throw new ReplicationProblemRollback(result);
           }

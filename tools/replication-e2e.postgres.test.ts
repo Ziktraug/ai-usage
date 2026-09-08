@@ -1,6 +1,13 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createSingleUserAuthorizer } from '@ai-usage/authorization/single-user';
 import { createDeviceEnrollmentService } from '@ai-usage/identity/device-enrollment';
+import { createMemoryApplicationService } from '@ai-usage/memory-service/application';
+import { type MemoryJsonValue, memoryFingerprint } from '@ai-usage/memory-service/domain';
+import { openLocalIdentityKernel } from '@ai-usage/memory-sqlite/identity';
 import {
   createCaptureContextId,
   createPersonId,
@@ -22,6 +29,21 @@ import { startPostgresCluster } from './pg-harness';
 const runPostgresTests = process.env.AI_USAGE_RUN_POSTGRES_TESTS === '1';
 const baseUrl = 'https://platform.example.invalid';
 const observedAt = instantNow(() => new Date('2026-08-30T14:00:00.000Z'));
+// Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
+const nul = String.fromCharCode(0);
+
+const serverConfig = (databaseUrl: string) =>
+  parsePlatformServerConfig({
+    AI_USAGE_AUTH_SECRETS: `1:${Buffer.alloc(32, 101).toString('base64url')}`,
+    AI_USAGE_DEVICE_TOKEN_KEYS: `5:${Buffer.alloc(32, 102).toString('base64url')}`,
+    AI_USAGE_FIRST_OWNER_BOOTSTRAP: 'false',
+    AI_USAGE_GITHUB_CLIENT_ID: 'github-client-id',
+    AI_USAGE_GITHUB_CLIENT_SECRET: 'github-client-secret-with-enough-entropy',
+    AI_USAGE_PLATFORM_BASE_URL: baseUrl,
+    AI_USAGE_PLATFORM_DATABASE_TLS: 'disable',
+    AI_USAGE_PLATFORM_DATABASE_URL: databaseUrl,
+    NODE_ENV: 'test',
+  });
 
 const outboxPort = (outbox: ReturnType<typeof createSqliteReplicationOutbox>): ReplicationWorkerOutboxPort => ({
   acknowledge: async (batch, ack) => outbox.acknowledge(batch, ack),
@@ -45,17 +67,7 @@ if (runPostgresTests) {
       });
       const database = createPlatformTestingDatabase(cluster.url);
       const localDatabases: Database[] = [];
-      const config = parsePlatformServerConfig({
-        AI_USAGE_AUTH_SECRETS: `1:${Buffer.alloc(32, 101).toString('base64url')}`,
-        AI_USAGE_DEVICE_TOKEN_KEYS: `5:${Buffer.alloc(32, 102).toString('base64url')}`,
-        AI_USAGE_FIRST_OWNER_BOOTSTRAP: 'false',
-        AI_USAGE_GITHUB_CLIENT_ID: 'github-client-id',
-        AI_USAGE_GITHUB_CLIENT_SECRET: 'github-client-secret-with-enough-entropy',
-        AI_USAGE_PLATFORM_BASE_URL: baseUrl,
-        AI_USAGE_PLATFORM_DATABASE_TLS: 'disable',
-        AI_USAGE_PLATFORM_DATABASE_URL: cluster.url,
-        NODE_ENV: 'test',
-      });
+      const config = serverConfig(cluster.url);
       try {
         const personId = createPersonId();
         const spaceId = createSpaceId();
@@ -210,6 +222,259 @@ if (runPostgresTests) {
         for (const local of localDatabases) {
           local.close();
         }
+        await database.close().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('keeps a NUL-bearing Memory item local, publishes the next item, and refuses a crafted NUL batch', async () => {
+      const cluster = await startPostgresCluster('replication-e2e-memory-nul');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const database = createPlatformTestingDatabase(cluster.url);
+      const config = serverConfig(cluster.url);
+      const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-replication-e2e-memory-'));
+      const memoryDatabasePath = path.join(directory, 'memory.sqlite');
+      const kernel = await openLocalIdentityKernel({ databasePath: memoryDatabasePath });
+      const usageDatabase = new Database(':memory:');
+      try {
+        const personId = createPersonId();
+        const spaceId = createSpaceId();
+        await store.identity.createPersonalIdentity({
+          person: { displayName: 'Memory owner', id: personId, personalSpaceId: spaceId, status: 'active' },
+          space: { createdAt: observedAt, displayName: 'Memory', id: spaceId, kind: 'personal' },
+        });
+        const devices = createDeviceEnrollmentService({
+          authorizer: store.authorization,
+          clock: () => new Date(observedAt),
+          keyRing: config.deviceTokenKeyRing,
+          store: store.devices,
+        });
+        const grant = await devices.requestEnrollmentGrant({
+          context: { activeSpaceId: spaceId, trustedDevice: false },
+          label: 'Memory Device',
+          principal: { kind: 'person', personId },
+        });
+        if (grant.kind !== 'success') {
+          throw new Error('Expected enrollment grant.');
+        }
+        const enrollment = await devices.exchangeEnrollmentGrant(grant.value.token);
+        if (enrollment.kind !== 'success') {
+          throw new Error('Expected enrollment exchange.');
+        }
+        const application = createPlatformApplicationHandler(config, store);
+        const seenStatuses: number[] = [];
+        const transportWith = (rewriteBody?: (body: string) => string) =>
+          createHttpReplicationTransport({
+            baseUrl,
+            credentialToken: enrollment.value.token,
+            fetch: async (url, init) => {
+              if (rewriteBody !== undefined && typeof init.body !== 'string') {
+                throw new Error('Expected the replication client to send a JSON string body.');
+              }
+              const response = await application(
+                new Request(
+                  url,
+                  rewriteBody === undefined ? init : { ...init, body: rewriteBody(init.body as string) },
+                ),
+              );
+              seenStatuses.push(response.status);
+              return response;
+            },
+          });
+
+        // The local Memory kernel is configured exactly as the usage engine does it:
+        // the explicit shared Capture Context names the enrolled Device.
+        const identity = await kernel.getBootstrapIdentity();
+        let now = new Date(observedAt);
+        const authorizer = createSingleUserAuthorizer({
+          listKnownResources: async () =>
+            (await kernel.memory.listAuthorizationResourceIds(identity.space.id)).map((id) => ({
+              id,
+              kind: 'memory' as const,
+              spaceId: identity.space.id,
+            })),
+          localPersonId: identity.person.id,
+          personalSpaceId: identity.space.id,
+        });
+        const service = createMemoryApplicationService(authorizer, kernel.memory, () => now);
+        const authorization = { activeSpaceId: identity.space.id, trustedDevice: true } as const;
+        const principal = { kind: 'person' as const, personId: identity.person.id };
+        const accept = async (title: string, structuredContent: MemoryJsonValue) => {
+          now = new Date(now.getTime() + 60_000);
+          const evidence = { source: `synthetic evidence for ${title}` } as const;
+          const observation = await service.recordObservation({
+            authorization,
+            captureContextId: null,
+            content: evidence,
+            fingerprint: memoryFingerprint(evidence),
+            principal,
+            projectId: null,
+            sensitivity: 'normal',
+            sourceKind: 'user',
+            sourceLocator: `synthetic:${title}`,
+          });
+          if (observation.kind !== 'success') {
+            throw new Error(`Observation for ${title} was not recorded.`);
+          }
+          const proposal = await service.createProposal({
+            authorization,
+            guidance: ['Keep the decision.'],
+            observationIds: [observation.value.id],
+            principal,
+            projectId: null,
+            proposedKind: 'decision',
+            sensitivity: 'normal',
+            structuredContent,
+            summary: `${title} summary.`,
+            title,
+            trustCandidate: 'explicit',
+          });
+          if (proposal.kind !== 'success') {
+            throw new Error(`Proposal for ${title} was not created.`);
+          }
+          const accepted = await service.acceptProposal({
+            authorization,
+            principal,
+            proposalId: proposal.value,
+            scope: 'space',
+            spaceId: identity.space.id,
+          });
+          if (accepted.kind !== 'success') {
+            throw new Error(`Proposal for ${title} was not accepted.`);
+          }
+          return accepted.value.item.id;
+        };
+        const auditRows = (action: string) => {
+          const memoryDatabase = new Database(memoryDatabasePath, { readonly: true, strict: true });
+          try {
+            return memoryDatabase
+              .query('SELECT result, subject_id, subject_type FROM memory_audit_events WHERE action = $action')
+              .all({ action });
+          } finally {
+            memoryDatabase.close(false);
+          }
+        };
+        expect(
+          await kernel.configureReplication({
+            captureContext: {
+              deviceId: enrollment.value.device.id,
+              id: createCaptureContextId(),
+              personId,
+              projectId: null,
+              scmAccountId: null,
+              scmInstallationId: null,
+              source: 'personal-fallback',
+              spaceId,
+            },
+            configuredAt: now,
+            localProjectId: null,
+            localSpaceId: identity.space.id,
+          }),
+        ).toMatchObject({ backfilled: 0, unpublishable: 0 });
+
+        // A NUL inside structured content is valid Memory but not storable JSONB.
+        // The item is accepted locally, never enters the outbox, and is audited.
+        const nulItemId = await accept('NUL decision', { value: `a${nul}b` });
+        expect(kernel.replication.status()).toMatchObject({ pending: 0, streamId: 'memory-v1' });
+        expect(auditRows('replication-skipped-invalid-payload')).toEqual([
+          { result: 'rejected', subject_id: nulItemId, subject_type: 'memory-item' },
+        ]);
+
+        const ordinaryItemId = await accept('Ordinary decision', { value: 'ab' });
+        expect(kernel.replication.status()).toMatchObject({ pending: 1 });
+        expect(
+          await runReplicationWorkerCycle({
+            clock: () => now,
+            outbox: outboxPort(kernel.replication),
+            transport: transportWith(),
+          }),
+        ).toMatchObject({ kind: 'acknowledged', publishedEvents: 1 });
+        expect(kernel.replication.status()).toMatchObject({
+          acknowledged: 1,
+          acknowledgedThroughGeneration: 1,
+          blocked: 0,
+          inFlight: 0,
+          pending: 0,
+        });
+        expect(await database.queryRowCount('SELECT 1 FROM replicated_fact_projections')).toBe(1);
+        expect(
+          await database.queryRowCount(
+            `SELECT 1 FROM replicated_fact_projections
+             WHERE space_id = $1 AND fact_key = $2 AND device_id = $3 AND status = 'active'`,
+            [spaceId, `memory-item:${ordinaryItemId}`, enrollment.value.device.id],
+          ),
+        ).toBe(1);
+        expect(
+          await database.queryRowCount('SELECT 1 FROM replication_event_receipts WHERE fact_key = $1', [
+            `memory-item:${nulItemId}`,
+          ]),
+        ).toBe(0);
+
+        // A crafted body that bypasses the client's protocol validation: the
+        // server refuses the NUL at parse time with 400 invalid-batch, writes
+        // nothing, and the client blocks that stream instead of retrying.
+        const usageOutbox = createSqliteReplicationOutbox(usageDatabase);
+        usageOutbox.initialize({
+          createdAt: observedAt,
+          deviceId: enrollment.value.device.id,
+          streamId: USAGE_REPLICATION_STREAM_ID,
+        });
+        usageOutbox.enqueue({
+          captureContext: {
+            deviceId: enrollment.value.device.id,
+            id: createCaptureContextId(),
+            personId,
+            projectId: null,
+            scmAccountId: null,
+            scmInstallationId: null,
+            source: 'personal-fallback',
+            spaceId,
+          },
+          changeKind: 'device-fact-upsert',
+          enqueuedAt: observedAt,
+          eventId: createReplicationEventId(),
+          factKey: `device:${enrollment.value.device.id}`,
+          payload: {
+            deviceId: enrollment.value.device.id,
+            kind: 'device-fact-upsert',
+            label: 'Crafted label',
+            lastSeenAt: observedAt,
+            status: 'active',
+          },
+        });
+        expect(
+          await runReplicationWorkerCycle({
+            clock: () => now,
+            outbox: outboxPort(usageOutbox),
+            transport: transportWith((body) => {
+              if (!body.includes('"Crafted label"')) {
+                throw new Error('Expected the canonical batch body to carry the Device label.');
+              }
+              return body.replace('"Crafted label"', '"Crafted\\u0000label"');
+            }),
+          }),
+        ).toMatchObject({ kind: 'blocked', reason: 'invalid-batch' });
+        expect(usageOutbox.status()).toMatchObject({ acknowledged: 0, blocked: 1, lastErrorCode: 'invalid-batch' });
+        expect(seenStatuses).toEqual([200, 400]);
+        expect(await database.queryRowCount('SELECT 1 FROM replicated_fact_projections')).toBe(1);
+        expect(await database.queryRowCount('SELECT 1 FROM replication_event_receipts')).toBe(1);
+        expect(
+          await database.queryRowCount('SELECT 1 FROM replication_stream_states WHERE stream_id = $1', [
+            USAGE_REPLICATION_STREAM_ID,
+          ]),
+        ).toBe(0);
+      } finally {
+        usageDatabase.close();
+        await kernel.close().catch(() => undefined);
+        await rm(directory, { force: true, recursive: true });
         await database.close().catch(() => undefined);
         await store.close().catch(() => undefined);
         await cluster.stop();
