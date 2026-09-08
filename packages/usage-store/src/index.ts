@@ -2449,11 +2449,16 @@ const usageReplicationOutbox = (db: SqliteDatabase) =>
 // hashed into the fact key. It is therefore bounded by the local identity contract, not by the
 // wire fact-key bound of 512, which a 500-character session id (itself within the wire payload's
 // bound) already exceeds once composed. The store column carries no length limit, so this
-// explicit, generous bound keeps assignments and cursors well-formed; a key beyond it is refused
-// per row (counted as unpublishable) and never enters the candidate stream, so it cannot stall a
-// page or become a cursor. SQLite's length() counts characters where JavaScript counts UTF-16
-// units; the difference only moves the boundary for astral characters, never the outcome class.
-const usageRowKeyMaximumLength = 4096;
+// explicit, generous bound applies at one place only, the assignment stage, where a key beyond
+// it is refused per row (counted as unpublishable), never thrown. The candidate stream and its
+// cursors carry no length rule at all: a page admits every locally observed key and the next
+// query accepts exactly what a page can return, so a cursor is never rejected. The bound is
+// measured in UTF-8 bytes, one definition on one side; SQLite's length() counts characters and
+// stops at an embedded NUL, and JavaScript's .length counts UTF-16 units, so a shared limit
+// across the two would disagree exactly at a page boundary.
+const usageRowKeyMaximumBytes = 4096;
+
+const usageRowKeyByteLength = (rowKey: string): number => new TextEncoder().encode(rowKey).byteLength;
 
 // The fact key is derived from the row's stable local identity (`row_key`: version, origin
 // machine, harness, and source session id or stable-content id), which survives re-collection.
@@ -2542,7 +2547,7 @@ const publishUsageReplicationRows = (
     ) {
       throw new Error('Usage replication capture assignment is invalid.');
     }
-    if (assignment.rowKey.length > usageRowKeyMaximumLength) {
+    if (usageRowKeyByteLength(assignment.rowKey) > usageRowKeyMaximumBytes) {
       unpublishable += 1;
       continue;
     }
@@ -2798,9 +2803,10 @@ export const queryUsageReplicationCandidates = (
           !Number.isSafeInteger(maximumItems) ||
           maximumItems <= 0 ||
           maximumItems > 1000 ||
-          (input.afterRowKey !== undefined &&
-            input.afterRowKey !== null &&
-            (input.afterRowKey.length === 0 || input.afterRowKey.length > usageRowKeyMaximumLength))
+          // A cursor is a row key a previous page returned; it is validated with exactly the
+          // predicate that admits candidates (a non-empty key), so a page never yields a cursor
+          // the next query refuses.
+          (input.afterRowKey !== undefined && input.afterRowKey !== null && input.afterRowKey.length === 0)
         ) {
           throw new Error('Usage replication candidate query is invalid.');
         }
@@ -2808,13 +2814,11 @@ export const queryUsageReplicationCandidates = (
           .query(
             `SELECT row_key
              FROM usage_rows
-             WHERE source_authority = 'local-observed' AND row_key > ? AND length(row_key) <= ?
+             WHERE source_authority = 'local-observed' AND row_key > ?
              ORDER BY row_key ASC
              LIMIT ?`,
           )
-          .all(input.afterRowKey ?? '', usageRowKeyMaximumLength, maximumItems + 1) as {
-          readonly row_key: unknown;
-        }[];
+          .all(input.afterRowKey ?? '', maximumItems + 1) as { readonly row_key: unknown }[];
         const hasNext = rows.length > maximumItems;
         const selected = hasNext ? rows.slice(0, maximumItems) : rows;
         const rowKeys = selected.map(({ row_key }) => requiredReplicationText(row_key, 'candidate row key'));

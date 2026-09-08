@@ -285,6 +285,62 @@ describe('usage-engine Device replication runtime', () => {
     });
   }
 
+  // Keys whose length differs between SQLite (characters, stopping at an embedded NUL) and
+  // JavaScript (UTF-16 units), placed at position 500: the boundary of the runtime's 500-row page.
+  const boundarySessionIds = [
+    ['3 000 astral characters', `session-0500${'😀'.repeat(3000)}`],
+    ['a NUL followed by a long suffix', `session-0500${nul}${'x'.repeat(4200)}`],
+  ] as const;
+  for (const [subject, boundarySessionId] of boundarySessionIds) {
+    test(`publishes usage and Memory facts across a page boundary key of ${subject}`, async () => {
+      await withKernel(async ({ kernel, usageDatabasePath }) => {
+        const sessionIds = [
+          ...Array.from({ length: 499 }, (_, index) => `session-${String(index + 1).padStart(4, '0')}`),
+          boundarySessionId,
+          'session-0501',
+        ];
+        await Effect.runPromise(
+          importLocalRows({
+            dbPath: usageDatabasePath,
+            importedAt: new Date(occurredAt),
+            machine: { id: 'machine-runtime', label: 'Runtime workstation' },
+            rows: sessionIds.map((sessionId) => localUsageRow('gpt-5', sessionId)),
+          }),
+        );
+        const published: Array<{ readonly kinds: string[]; readonly streamId: string }> = [];
+        const runtime = startDeviceReplicationRuntime({
+          acquireClient: () => Promise.resolve(acknowledgingClient(published)),
+          clock: () => new Date(occurredAt),
+          kernel,
+          usageDatabasePath,
+        });
+        await runtime.runNow();
+        expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
+        expect(published[0]?.streamId).toBe('usage-v1');
+        expect(runtime.status().usage).toMatchObject({ acknowledged: 100, blocked: 0 });
+
+        kernel.replication.enqueue({
+          captureContext: defaultReplicationCaptureContext(resolvedDevice),
+          changeKind: 'memory-fact-tombstone',
+          enqueuedAt: occurredAt,
+          eventId: parseReplicationEventId('70000000-0000-4000-8000-000000000009'),
+          factKey: 'memory-item:70000000-0000-4000-8000-00000000000a',
+          payload: {
+            itemId: parseMemoryItemId('70000000-0000-4000-8000-00000000000a'),
+            kind: 'memory-fact-tombstone',
+            reasonCode: 'privacy-purged',
+            tombstonedAt: occurredAt,
+          },
+        });
+        await runtime.runNow();
+        expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
+        expect(published.map(({ streamId }) => streamId)).toContain('memory-v1');
+        expect(kernel.replication.status()).toMatchObject({ acknowledged: 1, pending: 0 });
+        await runtime.dispose();
+      });
+    });
+  }
+
   test('aborts an active outbound identity request before the local kernel closes', async () => {
     await withKernel(async ({ kernel, usageDatabasePath }) => {
       let startedResolve: (() => void) | undefined;

@@ -474,3 +474,71 @@ test('publishes a row whose long session id pushes the local row key past the wi
     expect(walked).toContain(longRowKey);
   });
 });
+
+// Keys whose length differs between SQLite (characters, stopping at an embedded NUL) and
+// JavaScript (UTF-16 units): each one sorts at position 500, the boundary of a 500-row page.
+const boundarySessionIds = [
+  ['3 000 astral characters', `session-0500${'😀'.repeat(3000)}`],
+  ['a NUL followed by a long suffix', `session-0500${nul}${'x'.repeat(4200)}`],
+] as const;
+
+for (const [subject, boundarySessionId] of boundarySessionIds) {
+  test(`walks candidate pages across a boundary key of ${subject} and counts it once per pass`, async () => {
+    await withStorePath(async (dbPath) => {
+      const sessionIds = [
+        ...Array.from({ length: 499 }, (_, index) => `session-${String(index + 1).padStart(4, '0')}`),
+        boundarySessionId,
+        'session-0501',
+      ];
+      const rows = sessionIds.map((sourceSessionId) => usageRow(20, { sourceSessionId }));
+      const boundaryRowKey = toSerializedMergeRow(usageRow(20, { sourceSessionId: boundarySessionId }), machine).rowKey;
+      await Effect.runPromise(importLocalRows({ dbPath, importedAt: capturedAt, machine, rows }));
+      expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(501);
+
+      const pages: string[][] = [];
+      let cursor: string | null = null;
+      do {
+        const page: UsageReplicationCandidatePage = await Effect.runPromise(
+          queryUsageReplicationCandidates({ afterRowKey: cursor, dbPath, maximumItems: 500 }),
+        );
+        pages.push([...page.rowKeys]);
+        cursor = page.nextCursor;
+      } while (cursor !== null);
+      expect(pages.map((page) => page.length)).toEqual([500, 1]);
+      expect(pages[0]?.at(-1)).toBe(boundaryRowKey);
+
+      const backfillPages = async (enqueuedAt: Date) => {
+        const totals = { enqueued: 0, unchanged: 0, unpublishable: 0 };
+        for (const rowKeys of pages) {
+          const result = await Effect.runPromise(
+            backfillUsageReplicationOutbox({
+              assignments: rowKeys.map((rowKey) => ({ captureContext, rowKey })),
+              dbPath,
+              deviceId,
+              enqueuedAt,
+              includeDeviceFact: false,
+            }),
+          );
+          totals.enqueued += result.enqueued;
+          totals.unchanged += result.unchanged;
+          totals.unpublishable += result.unpublishable;
+        }
+        return totals;
+      };
+      expect(await backfillPages(new Date('2026-08-30T11:04:00.000Z'))).toEqual({
+        enqueued: 500,
+        unchanged: 0,
+        unpublishable: 1,
+      });
+      expect(await backfillPages(new Date('2026-08-30T11:05:00.000Z'))).toEqual({
+        enqueued: 0,
+        unchanged: 500,
+        unpublishable: 1,
+      });
+      expect(await Effect.runPromise(queryUsageReplicationOutboxStatus({ dbPath }))).toMatchObject({
+        blocked: 0,
+        pending: 500,
+      });
+    });
+  });
+}
