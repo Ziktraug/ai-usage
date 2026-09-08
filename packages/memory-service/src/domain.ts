@@ -245,14 +245,16 @@ export const parseMemoryJsonValue = (value: unknown, field = 'memoryJson'): Memo
     if (typeof entry !== 'object' || Object.getPrototypeOf(entry) !== Object.prototype) {
       throw new MemoryDomainValidationError(field);
     }
-    const result: Record<string, MemoryJsonValue> = {};
-    for (const [key, item] of Object.entries(entry)) {
-      if (key.length === 0 || key.length > 256) {
-        throw new MemoryDomainValidationError(field);
-      }
-      result[key] = visit(item, depth + 1);
-    }
-    return result;
+    // Object.fromEntries defines every key as an own data property; indexed assignment would route
+    // a "__proto__" key through the inherited setter and silently drop an accepted field.
+    return Object.fromEntries(
+      Object.entries(entry).map(([key, item]): [string, MemoryJsonValue] => {
+        if (key.length === 0 || key.length > 256) {
+          throw new MemoryDomainValidationError(field);
+        }
+        return [key, visit(item, depth + 1)];
+      }),
+    );
   };
   return visit(value, 0);
 };

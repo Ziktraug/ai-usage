@@ -41,17 +41,19 @@ const redactValue = (value: MemoryJsonValue): { readonly changed: boolean; reado
   }
   if (value !== null && typeof value === 'object') {
     let changed = false;
-    const output: Record<string, MemoryJsonValue> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (sensitiveKeyPattern.test(key)) {
-        output[key] = redacted;
-        changed = true;
-      } else {
+    // Object.fromEntries keeps a "__proto__" key as an own data property instead of invoking the
+    // inherited setter, which would silently drop the field.
+    const output = Object.fromEntries(
+      Object.entries(value).map(([key, entry]): [string, MemoryJsonValue] => {
+        if (sensitiveKeyPattern.test(key)) {
+          changed = true;
+          return [key, redacted];
+        }
         const item = redactValue(entry);
-        output[key] = item.value;
         changed ||= item.changed;
-      }
-    }
+        return [key, item.value];
+      }),
+    );
     return { changed, value: output };
   }
   return { changed: false, value };

@@ -18,6 +18,7 @@ import {
   parseReplicationBatchId,
   parseReplicationEventId,
   parseReplicationGeneration,
+  parseReplicationJsonValue,
   ReplicationProtocolError,
   replicationHash,
 } from '.';
@@ -70,6 +71,21 @@ describe('replication protocol identities and canonical content', () => {
       canonicalReplicationJson({ alpha: { charlie: null, delta: true }, beta: 2 }),
     );
     expect(replicationHash({ beta: 2, alpha: 1 })).toBe(replicationHash({ alpha: 1, beta: 2 }));
+  });
+
+  test('keeps a "__proto__" key as content instead of dropping it from the canonical form', () => {
+    // JSON.parse creates an own "__proto__" property, as persisted JSON does; an object literal would
+    // set the prototype instead and never carry the key.
+    const withProtoKey: unknown = JSON.parse('{"__proto__":42,"kept":"ok"}');
+    const parsed = parseReplicationJsonValue(withProtoKey);
+    expect(Object.hasOwn(parsed as object, '__proto__')).toBe(true);
+    expect(JSON.stringify(parsed)).toBe('{"__proto__":42,"kept":"ok"}');
+    expect(canonicalReplicationJson(withProtoKey)).toBe('{"__proto__":42,"kept":"ok"}');
+    expect(canonicalReplicationJson(withProtoKey)).not.toBe(canonicalReplicationJson({ kept: 'ok' }));
+    expect(replicationHash(withProtoKey)).not.toBe(replicationHash({ kept: 'ok' }));
+    expect(canonicalReplicationJson(JSON.parse('{"outer":{"__proto__":{"inner":true}}}'))).toBe(
+      '{"outer":{"__proto__":{"inner":true}}}',
+    );
   });
 
   test('keeps retries stable and enrichment on the same logical fact immutable', () => {

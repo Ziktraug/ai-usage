@@ -398,14 +398,17 @@ const jsonValue = (value: unknown, field: string): ReplicationJsonValue => {
       return candidate.map((item) => visit(item, depth + 1));
     }
     const object = recordValue(candidate, field);
-    const result: Record<string, ReplicationJsonValue> = {};
-    for (const [key, item] of Object.entries(object)) {
-      if (key.length === 0 || key.length > 256) {
-        throw new ReplicationProtocolError('invalid-value', field);
-      }
-      result[key] = visit(item, depth + 1);
-    }
-    return result;
+    // Object.fromEntries defines every key as an own data property; indexed assignment would route
+    // a "__proto__" key through the inherited setter, dropping it from the canonical form and the
+    // hash while the sender's document still carried it.
+    return Object.fromEntries(
+      Object.entries(object).map(([key, item]): [string, ReplicationJsonValue] => {
+        if (key.length === 0 || key.length > 256) {
+          throw new ReplicationProtocolError('invalid-value', field);
+        }
+        return [key, visit(item, depth + 1)];
+      }),
+    );
   };
   return visit(value, 0);
 };

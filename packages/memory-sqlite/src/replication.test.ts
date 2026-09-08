@@ -423,4 +423,41 @@ describe('local Memory replication backfill', () => {
       await fixture.close();
     }
   });
+
+  test('persists and publishes a "__proto__" structured content key as ordinary data', async () => {
+    const fixture = await openServiceFixture();
+    try {
+      await fixture.configure('2026-08-30T09:00:00.000Z');
+      fixture.advance('2026-08-30T09:10:00.000Z');
+      const accepted = await fixture.accept(
+        'Proto key decision',
+        ['Keep every accepted field.'],
+        JSON.parse('{"__proto__":42,"kept":"ok"}') as MemoryJsonValue,
+      );
+      if (accepted.kind !== 'success') {
+        throw new Error('Proto key acceptance failed.');
+      }
+      const stored = await fixture.kernel.memory.getItem(accepted.value.item.owningSpaceId, accepted.value.item.id);
+      if (!stored) {
+        throw new Error('Proto key item was not stored.');
+      }
+      expect(JSON.stringify(stored.revision.structuredContent)).toBe('{"__proto__":42,"kept":"ok"}');
+      expect(Object.hasOwn(stored.revision.structuredContent as object, '__proto__')).toBe(true);
+
+      const claimed = fixture.kernel.replication.claimReady({
+        maximumEvents: 100,
+        now: parseInstant('2026-08-30T09:11:00.000Z'),
+      });
+      if (!claimed) {
+        throw new Error('Proto key publication was not claimable.');
+      }
+      const payload = claimed.batch.events[0]?.payload;
+      if (payload?.kind !== 'memory-item-revision-upsert') {
+        throw new Error('Expected a revision upsert payload.');
+      }
+      expect(JSON.stringify(payload.structuredContent)).toBe('{"__proto__":42,"kept":"ok"}');
+    } finally {
+      await fixture.close();
+    }
+  });
 });
