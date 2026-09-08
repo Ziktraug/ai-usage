@@ -337,6 +337,37 @@ interface BackfillMemoryItemRow {
   readonly status: unknown;
 }
 
+interface LatestOutboxEventRow {
+  readonly change_kind: unknown;
+  readonly payload: unknown;
+}
+
+// A supersession tombstone carries the clock it was enqueued with, so re-deriving it on every
+// backfill would mint a new event for an unchanged fact. The store persists no supersession
+// instant (memory_items has none; audit rows only exist for the live path; the revision's
+// created_at predates the supersession), so the outbox itself is the durable record: once the
+// latest event for the fact key is a supersession tombstone, the fact is already published.
+const supersessionAlreadyEnqueued = (database: Database, factKey: string): boolean => {
+  const row = database
+    .query(
+      `SELECT change_kind, payload
+       FROM replication_outbox_events
+       WHERE fact_key = $factKey
+       ORDER BY generation DESC
+       LIMIT 1`,
+    )
+    .get({ factKey }) as LatestOutboxEventRow | null;
+  if (row?.change_kind !== 'memory-fact-tombstone') {
+    return false;
+  }
+  const envelope = parseJson(row.payload, 'read-replication-outbox-payload');
+  if (typeof envelope !== 'object' || envelope === null || !('payload' in envelope)) {
+    throw new MemoryIdentityStoreError('migration-incompatible', 'read-replication-outbox-payload');
+  }
+  const payload = parseReplicationPayload(envelope.payload);
+  return payload.kind === 'memory-fact-tombstone' && payload.reasonCode === 'superseded';
+};
+
 const backfillMemoryReplicationContext = (
   database: Database,
   context: CaptureContextSnapshot,
@@ -372,6 +403,11 @@ const backfillMemoryReplicationContext = (
   for (const row of selected) {
     const itemId = parseMemoryItemId(row.id);
     const mapped = memoryRevisionPayload(database, itemId, row.current_revision_id);
+    const factKey = `memory-item:${itemId}`;
+    if (row.status === 'superseded' && supersessionAlreadyEnqueued(database, factKey)) {
+      unchanged += 1;
+      continue;
+    }
     const payload =
       row.status === 'superseded'
         ? parseReplicationPayload({
@@ -381,7 +417,6 @@ const backfillMemoryReplicationContext = (
             tombstonedAt: enqueuedAt,
           })
         : memoryReplicationPayloadForContext(mapped.payload, context);
-    const factKey = `memory-item:${itemId}`;
     const eventId = replicationEventIdForSeed({ captureContextId: context.id, factKey, payload });
     const existed = database.query('SELECT 1 FROM replication_outbox_events WHERE event_id = ?').get(eventId) !== null;
     outbox.enqueue({
