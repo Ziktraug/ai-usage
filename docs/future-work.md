@@ -202,6 +202,15 @@ and authorization stays application-owned (ADR 0029).
   the server never becomes ready.
   Acceptance: migrations run on a dedicated client with an explicit migration
   timeout and `lock_timeout`, documented in `platform-server-operations.md`.
+- Publication of Memory items larger than one replication payload.
+  Problem: Memory accepts up to 64 guidance entries and 256 KiB of structured
+  content, while the replication protocol bounds one payload to 64 KiB
+  (`replicationBounds.payloadBytes`); such an item is accepted locally but not
+  published, which the Memory audit log and the configure result record.
+  Impact: a large accepted item never reaches the shared Space.
+  Acceptance: a chunked or referenced publication form under the same
+  idempotent event identity, or a documented Memory size ceiling equal to the
+  payload bound, decided with the protocol version.
 - MCP registration beyond Codex and `mcpServers` JSON files.
   Problem: `apps/mcp/src/register.ts` supports `codex` and a `.mcp.json` /
   `mcp.json` `mcpServers` file; OpenCode has no mode.

@@ -207,6 +207,17 @@ plus preview/confirm repair controls for a blocked stream, is not exposed
 either; plan 107 therefore remains in progress, and
 [`future-work.md`](future-work.md) tracks all three.
 
+Memory validation admits larger documents (64 guidance entries, 256 KiB of
+structured content) than the V1 payload bound carries (64 KiB,
+`replicationBounds.payloadBytes`). A Memory item whose replication payload
+would exceed that bound is accepted locally and not published: the local
+mutation stays authoritative, the live path records a
+`replication-skipped-oversized` row in the Memory audit log (subject
+`memory-item`, result `rejected`, under the acting principal), and the
+configure/backfill result reports it in its `oversized` count instead of
+failing, so neither stream stops. A publication path for larger documents is
+backlog in [`future-work.md`](future-work.md).
+
 Focused verification:
 
 ```sh
