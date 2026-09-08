@@ -35,6 +35,8 @@ const eventOneId = parseReplicationEventId('10000000-0000-4000-8000-000000000009
 const eventTwoId = parseReplicationEventId('10000000-0000-4000-8000-00000000000a');
 const batchId = parseReplicationBatchId('10000000-0000-4000-8000-00000000000b');
 const instant = '2026-08-30T08:00:00.000Z' as Instant;
+// Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
+const nul = String.fromCharCode(0);
 
 const captureContext = {
   deviceId,
@@ -86,6 +88,31 @@ describe('replication protocol identities and canonical content', () => {
     expect(canonicalReplicationJson(JSON.parse('{"outer":{"__proto__":{"inner":true}}}'))).toBe(
       '{"outer":{"__proto__":{"inner":true}}}',
     );
+  });
+
+  test('refuses JSON text that PostgreSQL JSONB cannot store, and keeps every other code point', () => {
+    const rejected = (value: unknown, field = 'json') => {
+      expect(() => parseReplicationJsonValue(value, field)).toThrow(ReplicationProtocolError);
+      try {
+        parseReplicationJsonValue(value, field);
+      } catch (error) {
+        expect(error).toMatchObject({ code: 'invalid-value', field });
+      }
+      expect(() => canonicalReplicationJson(value)).toThrow(ReplicationProtocolError);
+    };
+    rejected(`a${nul}b`);
+    rejected({ value: `a${nul}b` }, 'payload.structuredContent');
+    rejected({ [`a${nul}b`]: 1 });
+    rejected(['ok', { nested: [nul] }]);
+    rejected('\ud800');
+    rejected('\udc00x');
+    rejected({ 'x\ud800': 1 });
+    rejected({ value: 'pair\udc00\ud800' });
+
+    const accepted = { control: 'line\nbreak\ttab', emoji: '😀 \u{1F600}', key: 'ok' };
+    expect(parseReplicationJsonValue(accepted)).toEqual(accepted);
+    expect(canonicalReplicationJson(accepted)).toBe(JSON.stringify(accepted));
+    expect(parseReplicationJsonValue({ '\u{1F600}': true })).toEqual({ '\u{1F600}': true });
   });
 
   test('keeps retries stable and enrichment on the same logical fact immutable', () => {

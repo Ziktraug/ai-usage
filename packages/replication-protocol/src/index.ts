@@ -378,6 +378,30 @@ const parseHash = (value: unknown, field: string): string => {
   return value;
 };
 
+// JSON text the shared contract can carry on both sides. PostgreSQL JSONB cannot store U+0000 or
+// an unpaired UTF-16 surrogate in a string value or an object key (the insert fails as
+// `22P05 cannot be converted to text`), so a batch carrying either would be accepted here and
+// refused on apply forever. Every other code point, including other control characters, remains
+// valid JSON text; the text fields keep their own `boundedText` rules.
+const jsonText = (value: string, field: string): string => {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit === 0) {
+      throw new ReplicationProtocolError('invalid-value', field);
+    }
+    if (unit >= 0xd8_00 && unit <= 0xdb_ff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc_00 && next <= 0xdf_ff)) {
+        throw new ReplicationProtocolError('invalid-value', field);
+      }
+      index += 1;
+    } else if (unit >= 0xdc_00 && unit <= 0xdf_ff) {
+      throw new ReplicationProtocolError('invalid-value', field);
+    }
+  }
+  return value;
+};
+
 const jsonValue = (value: unknown, field: string): ReplicationJsonValue => {
   let nodes = 0;
   const visit = (candidate: unknown, depth: number): ReplicationJsonValue => {
@@ -385,8 +409,11 @@ const jsonValue = (value: unknown, field: string): ReplicationJsonValue => {
     if (nodes > 10_000 || depth > 32) {
       throw new ReplicationProtocolError('bounds-exceeded', field);
     }
-    if (candidate === null || typeof candidate === 'boolean' || typeof candidate === 'string') {
+    if (candidate === null || typeof candidate === 'boolean') {
       return candidate;
+    }
+    if (typeof candidate === 'string') {
+      return jsonText(candidate, field);
     }
     if (typeof candidate === 'number') {
       if (!Number.isFinite(candidate)) {
@@ -406,7 +433,7 @@ const jsonValue = (value: unknown, field: string): ReplicationJsonValue => {
         if (key.length === 0 || key.length > 256) {
           throw new ReplicationProtocolError('invalid-value', field);
         }
-        return [key, visit(item, depth + 1)];
+        return [jsonText(key, field), visit(item, depth + 1)];
       }),
     );
   };

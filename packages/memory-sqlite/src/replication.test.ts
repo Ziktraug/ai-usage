@@ -29,6 +29,8 @@ const oversizedGuidance = Array.from({ length: 20 }, (_, index) => `guidance ${i
 const multilineGuidance = ['First line\nSecond line'];
 // Valid Memory JSON (about 20 KiB), refused once the canonical visitor counts the event envelope.
 const deepStructuredContent = { nodes: Array.from({ length: 9990 }, () => 0) };
+// Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
+const nul = String.fromCharCode(0);
 
 const openServiceFixture = async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-memory-replication-service-'));
@@ -456,6 +458,42 @@ describe('local Memory replication backfill', () => {
         throw new Error('Expected a revision upsert payload.');
       }
       expect(JSON.stringify(payload.structuredContent)).toBe('{"__proto__":42,"kept":"ok"}');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test('keeps an item whose JSON carries U+0000 local instead of stalling the stream on the server', async () => {
+    const fixture = await openServiceFixture();
+    try {
+      await fixture.configure('2026-08-30T09:00:00.000Z');
+      fixture.advance('2026-08-30T09:10:00.000Z');
+      const accepted = await fixture.accept('NUL decision', ['Keep the structure.'], { value: `a${nul}b` });
+      if (accepted.kind !== 'success') {
+        throw new Error('NUL acceptance failed.');
+      }
+      expect(fixture.kernel.replication.status()).toMatchObject({ pending: 0 });
+      expect(fixture.auditRows('replication-skipped-invalid-payload')).toEqual([
+        { actor_kind: 'person', result: 'rejected', subject_id: accepted.value.item.id, subject_type: 'memory-item' },
+      ]);
+      const stored = await fixture.kernel.memory.getItem(accepted.value.item.owningSpaceId, accepted.value.item.id);
+      expect(stored?.revision.structuredContent).toEqual({ value: `a${nul}b` });
+
+      fixture.advance('2026-08-30T09:20:00.000Z');
+      const regular = await fixture.accept('Regular decision', ['Publish normally.']);
+      if (regular.kind !== 'success') {
+        throw new Error('Regular acceptance failed.');
+      }
+      expect(fixture.kernel.replication.status()).toMatchObject({ pending: 1 });
+      expect(fixture.kernel.replication.listHistory()).toEqual([
+        expect.objectContaining({ factKey: `memory-item:${regular.value.item.id}`, state: 'pending' }),
+      ]);
+      expect(await fixture.configure('2026-08-30T10:00:00.000Z')).toEqual({
+        backfilled: 0,
+        nextCursor: null,
+        unchanged: 1,
+        unpublishable: 1,
+      });
     } finally {
       await fixture.close();
     }
