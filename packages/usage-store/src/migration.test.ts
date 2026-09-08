@@ -12,8 +12,10 @@ import {
   queryProviderQuotaObservations,
   querySkillObservations,
   queryUsageLocalMachine,
+  queryUsageStoreGeneration,
   USAGE_STORE_SCHEMA_VERSION,
 } from './reader';
+import { SERVED_REPORT_PROJECTION_SCHEMA_VERSION } from './served-revision';
 import {
   importLocalRows,
   importProviderQuotaBatch,
@@ -27,6 +29,41 @@ const temporaryRoots: string[] = [];
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
+
+interface SchemaObject {
+  readonly name: string;
+  readonly sql: string | null;
+  readonly tbl_name: string;
+  readonly type: string;
+}
+
+const durableTables = [
+  'provider_quota_observations',
+  'served_report_revisions',
+  'skill_observation_collection_state',
+  'skill_observations',
+  'usage_local_machine',
+  'usage_rows',
+] as const;
+
+const readUserVersion = (db: Database): number =>
+  (db.query('PRAGMA user_version').get() as { user_version: number }).user_version;
+
+const readSchema = (db: Database): SchemaObject[] =>
+  db
+    .query("SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
+    .all() as SchemaObject[];
+
+const readMetadata = (db: Database): Array<{ key: string; value: number }> =>
+  db.query('SELECT key, value FROM usage_store_metadata ORDER BY key').all() as Array<{ key: string; value: number }>;
+
+const readCounts = (db: Database): Record<string, number> =>
+  Object.fromEntries(
+    durableTables.map((table) => [
+      table,
+      (db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count,
+    ]),
+  );
 
 describe('usage-store forward migration', () => {
   test('preserves an incompatible served projection instead of deleting its current revision', async () => {
@@ -386,5 +423,170 @@ describe('usage-store forward migration', () => {
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
     expect(read.skipped).toBe(0);
     expect(read.observations.map(({ observation }) => observation.skillName)).toEqual(['write-a-skill']);
+  });
+
+  test('migrates a populated schema-3 store to schema 4 by adding the replication outbox and refuses a newer schema', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-schema-3-to-4-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    const machine = { id: 'schema-three-machine', label: 'Schema three machine' };
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine,
+        rows: [
+          {
+            ...normalizeUsageRow({
+              calls: 1,
+              cost: actualCost(null),
+              date: new Date('2026-08-20T08:00:00.000Z'),
+              durationMs: 1000,
+              endDate: new Date('2026-08-20T08:01:00.000Z'),
+              harness: 'Claude Code',
+              model: 'claude-sonnet-4-6',
+              name: 'Schema three session',
+              project: 'ai-usage',
+              provider: 'Claude sub',
+              tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+            }),
+            source: {
+              harnessKey: 'claude',
+              sourcePath: '/home/alex/Projects/ai-usage',
+              sourceSessionId: 'schema-three-session',
+            },
+          },
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: {
+          completeness: completeSkillObservationCollection(),
+          harnessKey: 'claude',
+        },
+        dbPath,
+        machineId: machine.id,
+        observations: [
+          {
+            argsPresent: null,
+            harnessKey: 'claude',
+            observationKey: 'call_schema_three',
+            observedAt: '2026-08-20T09:00:00.000Z',
+            projectPath: null,
+            resolvedPath: null,
+            sessionId: 'schema-three-session',
+            skillName: 'write-a-skill',
+            success: true,
+            tier: 'declared',
+          },
+        ],
+      }),
+    );
+    const observation: ProviderQuotaObservation = {
+      accountScope: null,
+      machineId: machine.id,
+      machineLabel: machine.label,
+      observedAt: '2026-08-20T09:30:00.000Z',
+      plan: 'plus',
+      providerGeneratedAt: null,
+      providerKey: 'codex',
+      providerLabel: 'Codex',
+      source: { confidence: 'authoritative', key: 'poll', mode: 'poll' },
+      state: 'ok',
+      windows: [],
+    };
+    await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [{ observation, sourceEventKey: 'event-schema-three' }],
+      }),
+    );
+
+    // Shape the store exactly as schema 3 wrote it: the same tables minus the
+    // replication outbox family, which is the only difference between the
+    // schema-3 and schema-4 `migrate()` bodies.
+    const legacy = new Database(dbPath, { create: false, readwrite: true });
+    legacy.exec(`
+      INSERT INTO served_report_revisions (
+        revision, capture_fingerprint, private_capture_fingerprint, config_fingerprint,
+        usage_store_generation, machine_fleet_generation, projection_schema_version,
+        generated_at, published_at, expires_at, complete, row_count, segment_count,
+        filter_key_count, rows_bytes, support_bytes, projection_bytes
+      ) VALUES (
+        'schema-three-revision', '${'a'.repeat(64)}', '${'b'.repeat(64)}', '${'c'.repeat(64)}',
+        1, 1, ${SERVED_REPORT_PROJECTION_SCHEMA_VERSION}, '2026-08-20T10:00:00.000Z', 1000, 2000, 1, 0, 0, 0, 0, 0, 0
+      );
+      INSERT INTO served_report_current (singleton, revision, required_complete)
+      VALUES (1, 'schema-three-revision', 1);
+      DROP TABLE replication_outbox_events;
+      DROP TABLE replication_outbox_state;
+      PRAGMA user_version = 3;
+    `);
+    const metadataBefore = readMetadata(legacy);
+    const countsBefore = readCounts(legacy);
+    expect(readUserVersion(legacy)).toBe(3);
+    expect(readSchema(legacy).some(({ name }) => name.includes('replication_outbox'))).toBe(false);
+    legacy.close(true);
+    const generationBefore = metadataBefore.find(({ key }) => key === 'generation')?.value;
+    if (generationBefore === undefined) {
+      throw new Error('The schema-3 fixture lost its generation counter.');
+    }
+    expect(generationBefore).toBeGreaterThan(0);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(
+      readSchema(migrated)
+        .filter(({ name }) => name.includes('replication_outbox'))
+        .map(({ name }) => name),
+    ).toEqual([
+      'idx_replication_outbox_fact_history',
+      'idx_replication_outbox_ready',
+      'replication_outbox_events',
+      'replication_outbox_state',
+    ]);
+    expect(readMetadata(migrated)).toEqual(metadataBefore);
+    expect(readCounts(migrated)).toEqual(countsBefore);
+    // The schema step creates the outbox tables only; binding a Device identity
+    // is a separate, explicit replication setup.
+    expect(migrated.query('SELECT COUNT(*) AS count FROM replication_outbox_state').get()).toEqual({ count: 0 });
+    expect(migrated.query('SELECT COUNT(*) AS count FROM replication_outbox_events').get()).toEqual({ count: 0 });
+    expect(migrated.query('SELECT revision FROM served_report_current WHERE singleton = 1').get()).toEqual({
+      revision: 'schema-three-revision',
+    });
+    const schemaAfterMigration = readSchema(migrated);
+    migrated.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const reopened = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(reopened)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(readSchema(reopened)).toEqual(schemaAfterMigration);
+    expect(readMetadata(reopened)).toEqual(metadataBefore);
+    reopened.close(true);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationBefore);
+
+    const newer = new Database(dbPath, { create: false, readwrite: true });
+    newer.exec(`PRAGMA user_version = ${USAGE_STORE_SCHEMA_VERSION + 1}`);
+    newer.close(true);
+    const writerRefusal = await Effect.runPromise(Effect.flip(initializeUsageStore({ dbPath })));
+    expect(writerRefusal).toMatchObject({
+      _tag: 'UsageStoreError',
+      operation: 'openUsageStoreWriter',
+      reason: 'storage-failure',
+    });
+    expect(writerRefusal.message).toContain('newer than supported');
+    const readerRefusal = await Effect.runPromise(Effect.flip(queryUsageStoreGeneration({ dbPath })));
+    expect(readerRefusal).toMatchObject({ _tag: 'UsageStoreError', reason: 'schema-too-new' });
+    const untouched = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(untouched)).toBe(USAGE_STORE_SCHEMA_VERSION + 1);
+    expect(readSchema(untouched)).toEqual(schemaAfterMigration);
+    expect(readMetadata(untouched)).toEqual(metadataBefore);
+    expect(readCounts(untouched)).toEqual(countsBefore);
+    untouched.close(true);
   });
 });
