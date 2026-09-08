@@ -218,7 +218,10 @@ and authorization stays application-owned (ADR 0029).
   guidance and up to 256 KiB of structured content; such items are accepted
   locally, refused for publication, and recorded in the Memory audit log and
   in the configure result.
-  Impact: ordinary multi-line guidance never reaches the shared Space.
+  Impact: ordinary multi-line guidance never reaches the shared Space, and a
+  usage row with a refused text field is skipped with only the backfill
+  result's `unpublishable` count as a trace (no usage-side audit log or
+  Sources-panel indicator yet).
   Acceptance: a protocol revision that admits newline and tab in guidance and
   summary text and states the node budget per event, applied on both sides of
   the wire with the same fixtures, or a documented Memory ceiling equal to the

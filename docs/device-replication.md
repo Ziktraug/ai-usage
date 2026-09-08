@@ -224,6 +224,12 @@ shortened from its tail until it satisfies every protocol bound, and an event
 that cannot fit a batch on its own is blocked as `event-oversized`, visible in
 the outbox status. A publication path for such documents is backlog in
 [`future-work.md`](future-work.md).
+The same rule applies to usage facts: a stored usage row whose text fields
+the payload contract refuses (a control character in a model or harness name)
+stays in the local report, is skipped by every publication cycle, and is
+counted in the backfill result's `unpublishable` field; the usage side has no
+audit log, so that count is the only trace until the Sources panel surfaces it
+([`future-work.md`](future-work.md)).
 
 Focused verification:
 
