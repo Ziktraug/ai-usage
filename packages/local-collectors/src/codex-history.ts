@@ -96,6 +96,7 @@ interface CodexSessionReadResult {
   files: number;
   lines: number;
   observationCompleteness: SkillObservationCollectionCompleteness;
+  oversizedLines: number;
   parsedLines: number;
   parseMs: number;
   readMs: number;
@@ -145,7 +146,12 @@ interface SqliteDatabase {
 // neither for a line admitted only for usage rows. A version 21 entry carries
 // reject counts inflated by lines that could never have held a skill signal, and
 // reusing it would keep reporting a complete read as a lower bound.
-const CODEX_SESSION_CACHE_VERSION = 22;
+// Bumped to 23 because the per-line byte bound rose to 32 MiB and an oversized
+// record is now dropped and counted instead of failing the read. A version 22
+// entry was written when a pasted-image record could still abort the file, so an
+// unchanged rollout now yields more turns, tokens, and phases — and carries an
+// `oversizedLines` count that older entries cannot report.
+const CODEX_SESSION_CACHE_VERSION = 23;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child
@@ -323,6 +329,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       value.tout,
       value.rejectedMetricRecords,
       value.rejectedSkillObservationRecords,
+      value.oversizedLines,
     ].map(parseNonNegativeSafeInteger);
     const start = reviveDate(value.start);
     const end = reviveDate(value.end);
@@ -364,11 +371,21 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     ) {
       return null;
     }
-    const [turns, tools, maxTotal, tin, tcr, tout, rejectedMetricRecords, rejectedSkillObservationRecords] = counters;
+    const [
+      turns,
+      tools,
+      maxTotal,
+      tin,
+      tcr,
+      tout,
+      rejectedMetricRecords,
+      rejectedSkillObservationRecords,
+      oversizedLines,
+    ] = counters;
     if (!(turns?.ok && tools?.ok && maxTotal?.ok && tin?.ok && tcr?.ok && tout?.ok && rejectedMetricRecords?.ok)) {
       return null;
     }
-    if (!rejectedSkillObservationRecords?.ok) {
+    if (!(rejectedSkillObservationRecords?.ok && oversizedLines?.ok)) {
       return null;
     }
     return {
@@ -398,6 +415,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       tout: tout.value,
       rejectedMetricRecords: rejectedMetricRecords.value,
       rejectedSkillObservationRecords: rejectedSkillObservationRecords.value,
+      oversizedLines: oversizedLines.value,
       hasTokenUsage: value.hasTokenUsage,
       skillObservations: skillObservations.observations,
       skillObservationCompleteness,
@@ -538,6 +556,7 @@ const readCodexSessions = (
       let rejectedMetricRecords = 0;
       let rejectedSkillObservationRecords = 0;
       let skippedLines = 0;
+      let oversizedLines = 0;
       const files = yield* listCodexSessionFilesForCollection;
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
       const mergeObservationCompleteness = (value: SkillObservationCollectionCompleteness): void => {
@@ -568,6 +587,7 @@ const readCodexSessions = (
                 cacheHits++;
                 rejectedMetricRecords += cached.session.rejectedMetricRecords;
                 rejectedSkillObservationRecords += cached.session.rejectedSkillObservationRecords;
+                oversizedLines += cached.session.oversizedLines;
                 mergeObservationCompleteness(cached.session.skillObservationCompleteness);
                 const session = cloneCodexSession(cached.session);
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
@@ -585,6 +605,10 @@ const readCodexSessions = (
               bytes += readResult.bytes;
 
               const parsed = parser.finish();
+              // The reader dropped these before the parser could see them, so
+              // the count is attached here rather than produced by `finish`.
+              parsed.session.oversizedLines = readResult.oversizedLines;
+              oversizedLines += readResult.oversizedLines;
               lines += parsed.lines;
               parseMs += parsed.parseMs;
               parsedLines += parsed.parsedLines;
@@ -630,6 +654,7 @@ const readCodexSessions = (
         files: files.length,
         lines,
         observationCompleteness,
+        oversizedLines,
         parseMs,
         parsedLines,
         readMs,
@@ -647,6 +672,7 @@ const readCodexSessions = (
       cacheWriteMs: result.cacheWriteMs,
       files: result.files,
       lines: result.lines,
+      oversizedLines: result.oversizedLines,
       parseMs: result.parseMs,
       parsedLines: result.parsedLines,
       readMs: result.readMs,
@@ -665,6 +691,8 @@ export interface CodexUsageSessionsResult {
    * are never combined into one count (ADR 0022).
    */
   observations: SkillObservation[];
+  /** Records dropped by the reader for exceeding the per-line byte bound. */
+  oversizedLines: number;
   rejectedMetricRecords: number;
   rejectedSkillObservationRecords: number;
   sessions: CodexCollectedSession[];
@@ -678,8 +706,13 @@ export const readCodexUsageSessionsResult: Effect.Effect<
   'aiUsage.collect.codex.usageSessions',
   Effect.gen(function* () {
     const metadata = yield* readCodexThreadMetadata;
-    const { observationCompleteness, rejectedMetricRecords, rejectedSkillObservationRecords, sessions } =
-      yield* readCodexSessions(metadata);
+    const {
+      observationCompleteness,
+      oversizedLines,
+      rejectedMetricRecords,
+      rejectedSkillObservationRecords,
+      sessions,
+    } = yield* readCodexSessions(metadata);
     const byId = new Map<string, CodexSession>();
     for (const session of sessions) {
       if (session.id) {
@@ -767,6 +800,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     return {
       observationCompleteness,
       observations,
+      oversizedLines,
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
       sessions: usageSessions,
@@ -774,6 +808,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
   }),
   (result) => ({
     observations: result.observations.length,
+    oversizedLines: result.oversizedLines,
     rejectedMetricRecords: result.rejectedMetricRecords,
     rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
     sessions: result.sessions.length,

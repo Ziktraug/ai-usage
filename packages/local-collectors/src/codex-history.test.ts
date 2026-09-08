@@ -75,6 +75,20 @@ class SimulatedBudgetCodexStorage extends TestMemoryStorage {
   }
 }
 
+/**
+ * Codex reads with the default per-line bound. Narrowing it here keeps the
+ * fixture readable instead of writing a 32 MiB pasted image to disk.
+ */
+class NarrowLineBudgetCodexStorage extends TestMemoryStorage {
+  override readLines(
+    filePath: string,
+    visit: (line: string) => void,
+    limits: { maxBytes?: number; maxLineBytes?: number } = {},
+  ) {
+    return super.readLines(filePath, visit, { ...limits, maxLineBytes: 512 });
+  }
+}
+
 class CountingCodexDatabaseStorage extends TestMemoryStorage {
   databaseOpens = 0;
 
@@ -2801,5 +2815,68 @@ Preserve the existing aggregation semantics.`,
     expect(result.warnings.find(({ operation }) => operation === 'skillObservationValidation')?.rejectedRecords).toBe(
       2,
     );
+  });
+
+  /**
+   * The regression this guards: a Codex rollout carrying a pasted image as one
+   * base64 record used to fail the read, and because the collector reads every
+   * rollout in one pass, that single record took the whole Codex source down —
+   * every session on the machine stopped being collected.
+   */
+  test('drops an oversized record, still collects its session, and reports the loss', () => {
+    const storage = new NarrowLineBudgetCodexStorage();
+    storage.writeText(
+      '.codex/sessions/2026/oversized.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'oversized-thread', cwd: '/work/fixture-project' },
+        },
+        {
+          timestamp: '2026-01-01T00:01:00.000Z',
+          payload: { type: 'task_started', turn_id: 'oversized-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:02:00.000Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-6-astra', turn_id: 'oversized-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:03:00.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_image', image_url: `data:image/png;base64,${'A'.repeat(2048)}` }],
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:04:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 30,
+                input_tokens: 12,
+                cached_input_tokens: 2,
+                output_tokens: 18,
+              },
+            },
+          },
+        },
+      ),
+    );
+
+    const result = runWithStorage(collectCodexResult, storage);
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.model).toBe('gpt-6-astra');
+    expect(result.rows[0]?.tokOut).toBe(18);
+    expect(result.rows[0]?.turns).toBe(1);
+    expect(result.warnings.find(({ operation }) => operation === 'oversizedHistoryLine')).toMatchObject({
+      harness: 'codex',
+      rejectedRecords: 1,
+    });
   });
 });

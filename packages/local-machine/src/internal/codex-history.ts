@@ -67,6 +67,12 @@ export interface CodexSession {
   model: string;
   models: string[];
   observedPriorTokenUsage: boolean;
+  /**
+   * Records the reader dropped for exceeding the per-line byte bound, set from
+   * the read result rather than by the parser, which never sees them. Carried
+   * on the session so a cache hit keeps reporting the read as partial.
+   */
+  oversizedLines: number;
   parent: string | null;
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
@@ -279,6 +285,7 @@ const emptySession = (): CodexSession => ({
   durationPartial: false,
   reportPartial: false,
   observedPriorTokenUsage: false,
+  oversizedLines: 0,
   rejectedMetricRecords: 0,
   rejectedSkillObservationRecords: 0,
   start: null,

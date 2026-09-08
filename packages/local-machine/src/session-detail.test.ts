@@ -86,7 +86,7 @@ describe('local session analysis', () => {
     });
     let finalized = false;
     class InterruptibleStorage extends TestMemoryStorage implements LocalHistoryStorage {
-      override readLines(): Effect.Effect<{ bytes: number; lines: number }, LocalHistoryError> {
+      override readLines(): Effect.Effect<{ bytes: number; lines: number; oversizedLines: number }, LocalHistoryError> {
         return Effect.acquireUseRelease(
           Effect.sync(() => {
             releaseRead?.();

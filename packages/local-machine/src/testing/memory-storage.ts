@@ -122,14 +122,18 @@ export class TestMemoryStorage implements LocalHistoryStorage {
           throw new Error('Fixture exceeds limit');
         }
         let lines = 0;
+        let oversizedLines = 0;
         for (const line of content.split(LINE_SEPARATOR)) {
+          // Mirrors the real reader: an oversized record is dropped and
+          // counted, never thrown.
           if (Buffer.byteLength(line, 'utf8') > (limits.maxLineBytes ?? Number.POSITIVE_INFINITY)) {
-            throw new Error('Fixture line exceeds limit');
+            oversizedLines++;
+            continue;
           }
           visit(line);
           lines++;
         }
-        return { bytes: Buffer.byteLength(content, 'utf8'), lines };
+        return { bytes: Buffer.byteLength(content, 'utf8'), lines, oversizedLines };
       },
       catch: (cause) => new LocalHistoryError({ operation: 'readLines', path: filePath, cause }),
     });

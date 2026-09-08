@@ -18,6 +18,7 @@ import { collectorCachePath, reviveCollectorRowsResult, reviveSkillObservationsR
 import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
 import {
   metricValidationWarning,
+  oversizedHistoryLineWarning,
   parseNonNegativeSafeInteger,
   skillObservationTruncationWarning,
   skillObservationValidationWarning,
@@ -42,6 +43,8 @@ interface ClaudeCache {
   fingerprintKey: string | null;
   observations: SkillObservation[];
   observationsTruncated: boolean;
+  /** Cached for the same reason as the reject counts: a warm scan must not look complete. */
+  oversizedLines: number;
   rejectedMetricRecords: number;
   /** Cached so a warm re-scan reports the same partial-data state as a cold one. */
   rejectedObservations: number;
@@ -51,7 +54,11 @@ interface ClaudeCache {
 // Bumped to 10 because version 9 silently discarded malformed JSONL records.
 // Reusing one could certify invocation absence even though an incomplete final
 // record hid a Skill call.
-const CLAUDE_CACHE_VERSION = 10;
+// Bumped to 11 because the per-line byte bound rose to 32 MiB and an oversized
+// record is now dropped and counted instead of failing the read. A version 10
+// entry was written when a pasted-image record could still abort the transcript,
+// so it under-reports both the rows and the loss.
+const CLAUDE_CACHE_VERSION = 11;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
@@ -63,6 +70,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
       fingerprintKey: null,
       observations: [],
       observationsTruncated: false,
+      oversizedLines: 0,
       rejectedMetricRecords: 0,
       rejectedObservations: 0,
       rows: [],
@@ -76,6 +84,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
       fingerprintKey?: unknown;
       observations?: unknown;
       observationsTruncated?: unknown;
+      oversizedLines?: unknown;
       rejectedMetricRecords?: unknown;
       rejectedObservations?: unknown;
       rows?: unknown;
@@ -86,10 +95,12 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     }
     const revived = reviveCollectorRowsResult(parsed.rows);
     const observations = reviveSkillObservationsResult(parsed.observations);
+    const oversizedLines = parseNonNegativeSafeInteger(parsed.oversizedLines);
     const rejectedMetricRecords = parseNonNegativeSafeInteger(parsed.rejectedMetricRecords);
     const rejectedObservations = parseNonNegativeSafeInteger(parsed.rejectedObservations);
     if (
       !(
+        oversizedLines.ok &&
         rejectedMetricRecords.ok &&
         rejectedObservations.ok &&
         revived.valid &&
@@ -104,6 +115,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
       fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
       observations: observations.observations,
       observationsTruncated: parsed.observationsTruncated,
+      oversizedLines: oversizedLines.value,
       rejectedMetricRecords: rejectedMetricRecords.value,
       rejectedObservations: rejectedObservations.value,
       rows: revived.rows,
@@ -122,6 +134,7 @@ const writeClaudeCache = (
   observations: SkillObservation[],
   rejectedObservations: number,
   observationsTruncated: boolean,
+  oversizedLines: number,
 ) => {
   if (!fingerprintKey) {
     return false;
@@ -131,6 +144,7 @@ const writeClaudeCache = (
     fingerprintKey,
     observations,
     observationsTruncated,
+    oversizedLines,
     rejectedMetricRecords,
     rejectedObservations,
     rows,
@@ -347,6 +361,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   if (cache?.fingerprintKey && cache.fingerprintKey === fingerprintKey) {
     const warning = metricValidationWarning('claude', cache.rejectedMetricRecords);
     const cachedObservationWarning = skillObservationValidationWarning('claude', cache.rejectedObservations);
+    const cachedOversizedWarning = oversizedHistoryLineWarning('claude', cache.oversizedLines);
     const cachedTruncationWarning = cache.observationsTruncated
       ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
       : null;
@@ -356,7 +371,9 @@ export const collectClaudeResult = Effect.gen(function* () {
         observationCompleteness: claudeObservationCompleteness(cache.rejectedObservations, cache.observationsTruncated),
         observations: cache.observations,
         rows: cache.rows,
-        warnings: [warning, cachedObservationWarning, cachedTruncationWarning].filter((value) => value !== null),
+        warnings: [warning, cachedObservationWarning, cachedOversizedWarning, cachedTruncationWarning].filter(
+          (value) => value !== null,
+        ),
       }),
       (result) => ({
         observations: result.observations.length,
@@ -383,6 +400,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   let rejectedMetricRecords = 0;
   let rejectedObservations = 0;
   let observationsTruncated = false;
+  let oversizedLines = 0;
 
   yield* withPerfSpan(
     'aiUsage.collect.claude.parseFiles',
@@ -393,7 +411,7 @@ export const collectClaudeResult = Effect.gen(function* () {
         const isAgentFile = path.basename(filePath).startsWith('agent-');
         const records: unknown[] = [];
 
-        yield* storage.readLines(filePath, (line) => {
+        const transcriptRead = yield* storage.readLines(filePath, (line) => {
           if (!line) {
             return;
           }
@@ -408,6 +426,9 @@ export const collectClaudeResult = Effect.gen(function* () {
             rejectedObservations++;
           }
         });
+        // Dropped by the reader before `visit` ever saw them, so they are added
+        // here rather than counted inside the callback.
+        oversizedLines += transcriptRead.oversizedLines;
 
         // Extracted before the usage-row parse and independently of it: a
         // transcript can record a skill invocation without producing a usage
@@ -499,12 +520,14 @@ export const collectClaudeResult = Effect.gen(function* () {
         observations,
         rejectedObservations,
         observationsTruncated,
+        oversizedLines,
       ),
     ),
     (wrote) => ({ wrote }),
   );
   const warning = metricValidationWarning('claude', rejectedMetricRecords);
   const observationWarning = skillObservationValidationWarning('claude', rejectedObservations);
+  const oversizedWarning = oversizedHistoryLineWarning('claude', oversizedLines);
   const truncationWarning = observationsTruncated
     ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;
@@ -512,7 +535,7 @@ export const collectClaudeResult = Effect.gen(function* () {
     observationCompleteness: claudeObservationCompleteness(rejectedObservations, observationsTruncated),
     observations,
     rows,
-    warnings: [warning, observationWarning, truncationWarning].filter((value) => value !== null),
+    warnings: [warning, observationWarning, oversizedWarning, truncationWarning].filter((value) => value !== null),
   };
 });
 

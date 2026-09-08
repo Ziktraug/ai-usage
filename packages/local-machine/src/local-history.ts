@@ -54,11 +54,16 @@ export interface LocalHistoryStorage {
   readConfigText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
   readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
   readFileMetadata?(filePath: string): Effect.Effect<LocalHistoryFileMetadata, LocalHistoryError>;
+  /**
+   * `oversizedLines` counts records dropped for exceeding `maxLineBytes`. They
+   * are reported rather than thrown so one unreadable record costs its own
+   * session detail instead of the whole collection source.
+   */
   readLines(
     filePath: string,
     visit: (line: string) => void,
     limits?: { maxBytes?: number; maxLineBytes?: number },
-  ): Effect.Effect<{ bytes: number; lines: number }, LocalHistoryError>;
+  ): Effect.Effect<{ bytes: number; lines: number; oversizedLines: number }, LocalHistoryError>;
   readText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
   readTextRange?(
     filePath: string,
@@ -256,7 +261,7 @@ export const visitRegularFileLines = (
   visit: (line: string) => void,
   maxBytes: number,
   maxLineBytes: number,
-): { bytes: number; lines: number } => {
+): { bytes: number; lines: number; oversizedLines: number } => {
   const before = fs.lstatSync(filePath);
   if (before.isSymbolicLink() || !before.isFile()) {
     throw new Error(`History input is not a regular file: ${filePath}`);
@@ -269,21 +274,43 @@ export const visitRegularFileLines = (
   const decoder = new TextDecoder('utf-8', { fatal: true });
   let bytes = 0;
   let lines = 0;
+  let oversizedLines = 0;
   let pending = '';
+  // Set once the buffered record has already passed `maxLineBytes`. Its bytes
+  // are discarded as they arrive instead of being retained until the closing
+  // newline, so peak memory stays at the bound rather than following the size
+  // of the offending record.
+  let discardingOversizedLine = false;
   const emitCompleteLines = (): void => {
-    let separatorIndex = pending.indexOf('\n');
-    while (separatorIndex >= 0) {
+    for (;;) {
+      const separatorIndex = pending.indexOf('\n');
+      if (discardingOversizedLine) {
+        if (separatorIndex < 0) {
+          pending = '';
+          return;
+        }
+        pending = pending.slice(separatorIndex + 1);
+        discardingOversizedLine = false;
+        oversizedLines++;
+        continue;
+      }
+      if (separatorIndex < 0) {
+        break;
+      }
       const line = pending.slice(0, separatorIndex).replace(TRAILING_CARRIAGE_RETURN, '');
+      pending = pending.slice(separatorIndex + 1);
       if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
-        throw new Error(`History input contains a line exceeding its ${maxLineBytes}-byte limit: ${filePath}`);
+        oversizedLines++;
+        continue;
       }
       visit(line);
       lines++;
-      pending = pending.slice(separatorIndex + 1);
-      separatorIndex = pending.indexOf('\n');
     }
+    // Nothing arriving later can shrink an unterminated record that is already
+    // over the bound, so commit to discarding it now.
     if (Buffer.byteLength(pending, 'utf8') > maxLineBytes) {
-      throw new Error(`History input contains a line exceeding its ${maxLineBytes}-byte limit: ${filePath}`);
+      discardingOversizedLine = true;
+      pending = '';
     }
   };
   try {
@@ -306,6 +333,12 @@ export const visitRegularFileLines = (
     }
     pending += decoder.decode();
     emitCompleteLines();
+    if (discardingOversizedLine) {
+      // The trailing record ran past the bound and the file ended before its
+      // newline, so it closes here.
+      oversizedLines++;
+      pending = '';
+    }
     if (pending.length > 0) {
       visit(pending.replace(TRAILING_CARRIAGE_RETURN, ''));
       lines++;
@@ -314,7 +347,7 @@ export const visitRegularFileLines = (
     if (after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino) {
       throw new Error(`History input changed while it was read: ${filePath}`);
     }
-    return { bytes, lines };
+    return { bytes, lines, oversizedLines };
   } finally {
     fs.closeSync(descriptor);
   }

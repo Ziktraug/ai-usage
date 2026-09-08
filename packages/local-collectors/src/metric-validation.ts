@@ -32,6 +32,24 @@ export const skillObservationValidationWarning = (
     : null;
 
 /**
+ * A record the reader dropped for exceeding its per-line byte bound — most
+ * often a pasted image inlined as base64. It gets its own operation because the
+ * record was never seen by the parser: nothing about it was malformed, so
+ * folding it into `metricValidation` would report a working harness as
+ * corrupted. The session around it is still collected, which is exactly why the
+ * loss has to be stated rather than inferred from a missing turn.
+ */
+export const oversizedHistoryLineWarning = (harness: string, oversizedLines: number): LocalHistoryWarning | null =>
+  oversizedLines > 0
+    ? {
+        harness,
+        operation: 'oversizedHistoryLine',
+        message: `Dropped ${oversizedLines} oversized ${harness} history record(s); the affected sessions are lower bounds.`,
+        rejectedRecords: oversizedLines,
+      }
+    : null;
+
+/**
  * A bounded read that hit its bound. The standing rule is that partial data is
  * presented faithfully, so a truncated observation set has to say so rather
  * than silently reporting a smaller count as if it were complete.

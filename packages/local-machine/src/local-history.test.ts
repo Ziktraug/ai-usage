@@ -89,7 +89,7 @@ test('readConfigText follows config symlinks while keeping the hardened target r
   }
 });
 
-test('visits UTF-8 lines incrementally and rejects oversized or invalid lines', async () => {
+test('visits UTF-8 lines incrementally and rejects invalid ones', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-lines-'));
   try {
     const filePath = path.join(root, 'history.jsonl');
@@ -100,13 +100,72 @@ test('visits UTF-8 lines incrementally and rejects oversized or invalid lines', 
       storage.readLines(filePath, (line) => visited.push(line), { maxBytes: 18, maxLineBytes: 6 }),
     );
     expect(visited).toEqual(['first', 'second', 'last']);
-    expect(result).toEqual({ bytes: 18, lines: 3 });
+    expect(result).toEqual({ bytes: 18, lines: 3, oversizedLines: 0 });
 
-    await expect(
-      Effect.runPromise(storage.readLines(filePath, () => undefined, { maxBytes: 18, maxLineBytes: 5 })),
-    ).rejects.toThrow();
     fs.writeFileSync(filePath, Uint8Array.from([0xff, 0x0a]));
     await expect(Effect.runPromise(storage.readLines(filePath, () => undefined))).rejects.toThrow();
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+/**
+ * A pasted image lands as one base64 record far larger than the read chunk, so
+ * the drop has to survive being spread across many reads. Losing that record
+ * must not cost the surrounding session, which is what previously took the
+ * whole collection source down.
+ */
+test('drops a record over the line bound and keeps reading the rest of the file', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-oversized-'));
+  try {
+    const filePath = path.join(root, 'history.jsonl');
+    const oversized = 'x'.repeat(200_000);
+    const content = `first\n${oversized}\nlast\n`;
+    fs.writeFileSync(filePath, content);
+    const storage = createLocalHistoryStorage(root);
+    const visited: string[] = [];
+    const result = await Effect.runPromise(
+      storage.readLines(filePath, (line) => visited.push(line), { maxLineBytes: 1024 }),
+    );
+    expect(visited).toEqual(['first', 'last']);
+    expect(result).toEqual({ bytes: Buffer.byteLength(content, 'utf8'), lines: 2, oversizedLines: 1 });
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('counts an oversized trailing record that the file ends without terminating', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-oversized-tail-'));
+  try {
+    const filePath = path.join(root, 'history.jsonl');
+    const content = `first\n${'x'.repeat(200_000)}`;
+    fs.writeFileSync(filePath, content);
+    const storage = createLocalHistoryStorage(root);
+    const visited: string[] = [];
+    const result = await Effect.runPromise(
+      storage.readLines(filePath, (line) => visited.push(line), { maxLineBytes: 1024 }),
+    );
+    expect(visited).toEqual(['first']);
+    expect(result).toEqual({ bytes: Buffer.byteLength(content, 'utf8'), lines: 1, oversizedLines: 1 });
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('counts each oversized record separately when they are adjacent', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-oversized-run-'));
+  try {
+    const filePath = path.join(root, 'history.jsonl');
+    const oversized = 'x'.repeat(200_000);
+    const content = `${oversized}\n${oversized}\nlast\n`;
+    fs.writeFileSync(filePath, content);
+    const storage = createLocalHistoryStorage(root);
+    const visited: string[] = [];
+    const result = await Effect.runPromise(
+      storage.readLines(filePath, (line) => visited.push(line), { maxLineBytes: 1024 }),
+    );
+    expect(visited).toEqual(['last']);
+    expect(result).toEqual({ bytes: Buffer.byteLength(content, 'utf8'), lines: 1, oversizedLines: 2 });
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }

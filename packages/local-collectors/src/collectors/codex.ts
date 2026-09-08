@@ -10,6 +10,7 @@ import { hasCodexHistory, readCodexUsageSessionsResult } from '../codex-history'
 import { sessionToUsageRow } from '../collected-session';
 import {
   metricValidationWarning,
+  oversizedHistoryLineWarning,
   skillObservationTruncationWarning,
   skillObservationValidationWarning,
 } from '../metric-validation';
@@ -39,6 +40,7 @@ export const collectCodexResult = Effect.gen(function* () {
     result.observationCompleteness.exposure.truncated || result.observationCompleteness.invocation.truncated;
   const warning = metricValidationWarning('codex', result.rejectedMetricRecords);
   const observationWarning = skillObservationValidationWarning('codex', result.rejectedSkillObservationRecords);
+  const oversizedWarning = oversizedHistoryLineWarning('codex', result.oversizedLines);
   const truncationWarning = observationsTruncated
     ? skillObservationTruncationWarning('codex', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;
@@ -46,7 +48,7 @@ export const collectCodexResult = Effect.gen(function* () {
     observationCompleteness: result.observationCompleteness,
     observations: result.observations,
     rows: result.sessions.map(sessionToUsageRow),
-    warnings: [warning, observationWarning, truncationWarning].filter((value) => value !== null),
+    warnings: [warning, observationWarning, oversizedWarning, truncationWarning].filter((value) => value !== null),
   };
 });
 
