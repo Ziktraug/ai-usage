@@ -2432,15 +2432,13 @@ const requiredReplicationText = (value: unknown, operation: string): string => {
 const usageReplicationOutbox = (db: SqliteDatabase) =>
   createSqliteReplicationOutbox(db as unknown as ReplicationSqliteDatabase);
 
-const usageSessionFactKey = (deviceId: DeviceId, row: StoredUsageReplicationRow): string =>
-  `usage-session:${replicationHash({
-    deviceId,
-    harness: requiredReplicationText(row.harness_key, 'harness'),
-    originMachineId: requiredReplicationText(row.origin_machine_id, 'origin machine'),
-    sourceFingerprint: requiredReplicationText(row.source_fingerprint, 'source fingerprint'),
-    sourceSessionId: row.source_session_id,
-    version: 1,
-  })}`;
+// The fact key is derived from the row's stable local identity (`row_key`: version, origin
+// machine, harness, and source session id or stable-content id), which survives re-collection.
+// `source_fingerprint` is content-derived and rewritten in place when a session grows, so hashing
+// it would split one local row into several server facts and orphan the earlier ones. The row key
+// never leaves the machine in clear text: it is hashed together with the Device id.
+const usageSessionFactKey = (deviceId: DeviceId, rowKey: string): string =>
+  `usage-session:${replicationHash({ deviceId, rowKey, version: 2 })}`;
 
 const publishUsageReplicationRows = (
   db: SqliteDatabase,
@@ -2548,7 +2546,7 @@ const publishUsageReplicationRows = (
     if (!captureContext) {
       throw new Error('Usage replication capture context is unavailable.');
     }
-    const factKey = usageSessionFactKey(publication.deviceId, row);
+    const factKey = usageSessionFactKey(publication.deviceId, rowKey);
     const observedAt = parseInstant(row.updated_at, 'usageSession.observedAt');
     const payload =
       row.status === 'active'

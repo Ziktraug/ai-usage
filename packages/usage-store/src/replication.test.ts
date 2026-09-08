@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -194,6 +195,68 @@ test('rolls the source mutation back when its explicit Capture Context is invali
       ),
     ).rejects.toThrow();
     expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toEqual([]);
+  });
+});
+
+test('keeps one usage fact key across re-collection and tombstones that same key', async () => {
+  await withStorePath(async (dbPath) => {
+    const initial = usageRow(20);
+    const grown = usageRow(40);
+    const rowKey = toSerializedMergeRow(initial, machine).rowKey;
+    expect(toSerializedMergeRow(grown, machine).rowKey).toBe(rowKey);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: capturedAt,
+        machine,
+        replication: publicationFor(initial),
+        rows: [initial],
+      }),
+    );
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-08-30T11:05:00.000Z'),
+        machine,
+        replication: publicationFor(grown),
+        rows: [grown],
+      }),
+    );
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
+    const upserts = (await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }))).filter(
+      ({ changeKind }) => changeKind === 'usage-session-upsert',
+    );
+    expect(upserts).toHaveLength(2);
+    expect(new Set(upserts.map(({ contentHash }) => contentHash)).size).toBe(2);
+    expect(new Set(upserts.map(({ factKey }) => factKey)).size).toBe(1);
+    const sessionFactKey = upserts[0]?.factKey;
+    if (sessionFactKey === undefined) {
+      throw new Error('Expected a usage session fact key.');
+    }
+    expect(sessionFactKey).not.toContain(rowKey);
+
+    const store = new Database(dbPath);
+    try {
+      store
+        .query("UPDATE usage_rows SET status = 'deleted', updated_at = ? WHERE row_key = ?")
+        .run('2026-08-30T11:06:00.000Z', rowKey);
+    } finally {
+      store.close();
+    }
+    expect(
+      await Effect.runPromise(
+        backfillUsageReplicationOutbox({
+          ...publicationFor(grown),
+          dbPath,
+          enqueuedAt: new Date('2026-08-30T11:07:00.000Z'),
+          includeDeviceFact: false,
+        }),
+      ),
+    ).toEqual({ enqueued: 1, unchanged: 0 });
+    expect((await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath })))[0]).toMatchObject({
+      changeKind: 'usage-session-tombstone',
+      factKey: sessionFactKey,
+    });
   });
 });
 
