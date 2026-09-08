@@ -13,8 +13,16 @@ import {
 } from '@ai-usage/replication-outbox';
 import {
   type CaptureContextSnapshot,
+  canonicalReplicationJson,
+  createReplicationBatch,
+  createReplicationEvent,
+  parseReplicationBatchId,
+  parseReplicationGeneration,
+  parseReplicationPayload,
   type ReplicationAck,
   type ReplicationBatch,
+  type ReplicationPayload,
+  ReplicationProtocolError,
   replicationEventIdForSeed,
   replicationHash,
   USAGE_REPLICATION_STREAM_ID,
@@ -117,6 +125,11 @@ export interface BackfillUsageReplicationOutboxInput extends UsageReplicationPub
 export interface BackfillUsageReplicationOutboxResult {
   readonly enqueued: number;
   readonly unchanged: number;
+  /**
+   * Rows whose replication payload the protocol refuses (for example a control character in a
+   * text field); kept locally, never enqueued, skipped again on every cycle.
+   */
+  readonly unpublishable: number;
 }
 
 export interface QueryUsageReplicationCandidatesInput {
@@ -2440,6 +2453,50 @@ const usageReplicationOutbox = (db: SqliteDatabase) =>
 const usageSessionFactKey = (deviceId: DeviceId, rowKey: string): string =>
   `usage-session:${replicationHash({ deviceId, rowKey, version: 2 })}`;
 
+const usagePlaceholderBatchId = parseReplicationBatchId('00000000-0000-4000-8000-000000000000');
+const usagePlaceholderAckProof = 'f'.repeat(64);
+
+// A locally stored row the V1 protocol refuses (a control character in a text field, most likely
+// copied from a harness log) stays local and is counted, never enqueued: the same row is skipped
+// on every cycle, and one row cannot stall either stream. The check mirrors the outbox and the
+// claim: the payload, the event (content hash, payload bound), the stored envelope, and a
+// placeholder single-event batch whose envelope is at least as wide as a real one. A protocol
+// error never escapes the publication; every other error still does.
+const usageReplicationEventIsPublishable = (
+  captureContext: CaptureContextSnapshot,
+  factKey: string,
+  candidate: ReplicationPayload,
+): boolean => {
+  try {
+    const payload = parseReplicationPayload(candidate);
+    const event = createReplicationEvent({
+      captureContextId: captureContext.id,
+      changeKind: payload.kind,
+      eventId: replicationEventIdForSeed({ captureContextId: captureContext.id, factKey, payload }),
+      factKey,
+      generation: parseReplicationGeneration(1),
+      payload,
+    });
+    canonicalReplicationJson({ captureContext, payload });
+    createReplicationBatch({
+      batchId: usagePlaceholderBatchId,
+      captureContexts: [captureContext],
+      deviceId: captureContext.deviceId,
+      events: [event],
+      fromGenerationExclusive: parseReplicationGeneration(0),
+      previousAckProof: usagePlaceholderAckProof,
+      streamId: USAGE_REPLICATION_STREAM_ID,
+      toGenerationInclusive: parseReplicationGeneration(1),
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof ReplicationProtocolError) {
+      return false;
+    }
+    throw error;
+  }
+};
+
 const publishUsageReplicationRows = (
   db: SqliteDatabase,
   publication: UsageReplicationPublication,
@@ -2463,7 +2520,7 @@ const publishUsageReplicationRows = (
     assignments.set(assignment.rowKey, assignment.captureContext);
   }
   if (assignments.size === 0) {
-    return { enqueued: 0, unchanged: 0 };
+    return { enqueued: 0, unchanged: 0, unpublishable: 0 };
   }
   const rowKeys = [...assignments.keys()];
   const placeholders = rowKeys.map(() => '?').join(', ');
@@ -2483,6 +2540,7 @@ const publishUsageReplicationRows = (
   outbox.initialize({ createdAt: enqueuedAt, deviceId: publication.deviceId, streamId: USAGE_REPLICATION_STREAM_ID });
   let enqueued = 0;
   let unchanged = 0;
+  let unpublishable = 0;
 
   const firstRow = rows[0];
   const firstContext = firstRow ? assignments.get(requiredReplicationText(firstRow.row_key, 'row key')) : undefined;
@@ -2507,24 +2565,30 @@ const publishUsageReplicationRows = (
       lastSeenAt,
       status: 'active' as const,
     };
-    const deviceEventId = replicationEventIdForSeed({
-      captureContextId: firstContext.id,
-      factKey: `device:${publication.deviceId}`,
-      payload: devicePayload,
-    });
-    const existed = db.query('SELECT 1 FROM replication_outbox_events WHERE event_id = ?').get(deviceEventId) !== null;
-    outbox.enqueue({
-      captureContext: firstContext,
-      changeKind: devicePayload.kind,
-      enqueuedAt,
-      eventId: deviceEventId,
-      factKey: `device:${publication.deviceId}`,
-      payload: devicePayload,
-    });
-    if (existed) {
-      unchanged += 1;
+    const deviceFactKey = `device:${publication.deviceId}`;
+    if (usageReplicationEventIsPublishable(firstContext, deviceFactKey, devicePayload)) {
+      const deviceEventId = replicationEventIdForSeed({
+        captureContextId: firstContext.id,
+        factKey: deviceFactKey,
+        payload: devicePayload,
+      });
+      const existed =
+        db.query('SELECT 1 FROM replication_outbox_events WHERE event_id = ?').get(deviceEventId) !== null;
+      outbox.enqueue({
+        captureContext: firstContext,
+        changeKind: devicePayload.kind,
+        enqueuedAt,
+        eventId: deviceEventId,
+        factKey: deviceFactKey,
+        payload: devicePayload,
+      });
+      if (existed) {
+        unchanged += 1;
+      } else {
+        enqueued += 1;
+      }
     } else {
-      enqueued += 1;
+      unpublishable += 1;
     }
   }
 
@@ -2569,6 +2633,10 @@ const publishUsageReplicationRows = (
             reasonCode: row.status,
             tombstonedAt: observedAt,
           };
+    if (!usageReplicationEventIsPublishable(captureContext, factKey, payload)) {
+      unpublishable += 1;
+      continue;
+    }
     const eventId = replicationEventIdForSeed({ captureContextId: captureContext.id, factKey, payload });
     const existed = db.query('SELECT 1 FROM replication_outbox_events WHERE event_id = ?').get(eventId) !== null;
     outbox.enqueue({
@@ -2585,7 +2653,7 @@ const publishUsageReplicationRows = (
       enqueued += 1;
     }
   }
-  return { enqueued, unchanged };
+  return { enqueued, unchanged, unpublishable };
 };
 
 const importMergeRows = (

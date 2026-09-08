@@ -31,6 +31,8 @@ export interface BackfillUsageReplicationPagesResult {
   readonly scanned: number;
   readonly truncated: boolean;
   readonly unchanged: number;
+  /** Rows the protocol refuses; kept locally and skipped on every page, never enqueued. */
+  readonly unpublishable: number;
 }
 
 export const backfillUsageReplicationPages = async (
@@ -53,12 +55,13 @@ export const backfillUsageReplicationPages = async (
   let pages = 0;
   let scanned = 0;
   let unchanged = 0;
+  let unpublishable = 0;
   do {
     const page: UsageReplicationCandidatePage = await Effect.runPromise(
       queryUsageReplicationCandidates({ afterRowKey: cursor, dbPath: input.dbPath, maximumItems: pageSize }),
     );
     if (page.rowKeys.length === 0) {
-      return { enqueued, nextCursor: null, pages, scanned, truncated: false, unchanged };
+      return { enqueued, nextCursor: null, pages, scanned, truncated: false, unchanged, unpublishable };
     }
     const result = await Effect.runPromise(
       backfillUsageReplicationOutbox({
@@ -72,14 +75,15 @@ export const backfillUsageReplicationPages = async (
     );
     enqueued += result.enqueued;
     unchanged += result.unchanged;
+    unpublishable += result.unpublishable;
     scanned += page.rowKeys.length;
     pages += 1;
     cursor = page.nextCursor;
     if (cursor === null) {
-      return { enqueued, nextCursor: null, pages, scanned, truncated: false, unchanged };
+      return { enqueued, nextCursor: null, pages, scanned, truncated: false, unchanged, unpublishable };
     }
   } while (pages < maximumPages);
-  return { enqueued, nextCursor: cursor, pages, scanned, truncated: true, unchanged };
+  return { enqueued, nextCursor: cursor, pages, scanned, truncated: true, unchanged, unpublishable };
 };
 
 export const createUsageReplicationOutboxPort = (dbPath: string): ReplicationWorkerOutboxPort => ({

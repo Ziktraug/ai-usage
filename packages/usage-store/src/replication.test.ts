@@ -43,7 +43,10 @@ const captureContext = {
   spaceId: '40000000-0000-4000-8000-000000000005' as SpaceId,
 };
 
-const usageRow = (outputTokens = 20): UsageRowWithOptionalSource => ({
+const usageRow = (
+  outputTokens = 20,
+  overrides: { readonly model?: string; readonly sourceSessionId?: string } = {},
+): UsageRowWithOptionalSource => ({
   ...normalizeUsageRow({
     calls: 1,
     cost: actualCost(null),
@@ -51,14 +54,17 @@ const usageRow = (outputTokens = 20): UsageRowWithOptionalSource => ({
     durationMs: 1000,
     endDate: new Date('2026-08-30T10:31:00.000Z'),
     harness: 'Codex',
-    model: 'gpt-5',
+    model: overrides.model ?? 'gpt-5',
     name: 'Replicated session',
     project: '/private/local/path/never-publish',
     provider: 'OpenAI',
     tokens: { cr: 0, cw: 0, in: 10, out: outputTokens },
   }),
-  source: { harnessKey: 'codex', sourceSessionId: 'replication-session' },
+  source: { harnessKey: 'codex', sourceSessionId: overrides.sourceSessionId ?? 'replication-session' },
 });
+
+// Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
+const nul = String.fromCharCode(0);
 
 const withStorePath = async (run: (dbPath: string) => Promise<void>): Promise<void> => {
   const directory = mkdtempSync(path.join(tmpdir(), 'ai-usage-replication-'));
@@ -252,7 +258,7 @@ test('keeps one usage fact key across re-collection and tombstones that same key
           includeDeviceFact: false,
         }),
       ),
-    ).toEqual({ enqueued: 1, unchanged: 0 });
+    ).toEqual({ enqueued: 1, unchanged: 0, unpublishable: 0 });
     expect((await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath })))[0]).toMatchObject({
       changeKind: 'usage-session-tombstone',
       factKey: sessionFactKey,
@@ -278,10 +284,85 @@ test('deterministically backfills a previously published local fact once', async
       dbPath,
       enqueuedAt: new Date('2026-08-30T11:04:00.000Z'),
     };
-    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({ enqueued: 2, unchanged: 0 });
-    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({ enqueued: 0, unchanged: 2 });
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 2,
+      unchanged: 0,
+      unpublishable: 0,
+    });
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 0,
+      unchanged: 2,
+      unpublishable: 0,
+    });
     const history = await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }));
     expect(history).toHaveLength(2);
     expect(history.map(({ factKey }) => factKey)).not.toContain('/private/local/path/never-publish');
+  });
+});
+
+test('keeps a usage row the protocol refuses local and counted, without stalling the other rows', async () => {
+  await withStorePath(async (dbPath) => {
+    const ordinary = usageRow();
+    const refused = usageRow(20, { model: `gpt-5${nul}`, sourceSessionId: 'refused-session' });
+    const rows = [ordinary, refused];
+    const assignments = rows.map((row) => ({ captureContext, rowKey: toSerializedMergeRow(row, machine).rowKey }));
+    await Effect.runPromise(importLocalRows({ dbPath, importedAt: capturedAt, machine, rows }));
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(2);
+
+    const input = {
+      assignments,
+      dbPath,
+      deviceId,
+      enqueuedAt: new Date('2026-08-30T11:04:00.000Z'),
+      includeDeviceFact: false,
+    };
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 1,
+      unchanged: 0,
+      unpublishable: 1,
+    });
+    const ordinaryFactKey = (await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }))).map(
+      ({ changeKind, factKey }) => ({ changeKind, factKey }),
+    );
+    expect(ordinaryFactKey).toEqual([{ changeKind: 'usage-session-upsert', factKey: expect.any(String) }]);
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 0,
+      unchanged: 1,
+      unpublishable: 1,
+    });
+
+    // The incremental publication (import with a replication publication) skips the same row and
+    // still commits the import of every row.
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-08-30T11:05:00.000Z'),
+        machine,
+        replication: { assignments, deviceId },
+        rows: [usageRow(40), usageRow(40, { model: `gpt-5${nul}`, sourceSessionId: 'refused-session' })],
+      }),
+    );
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(2);
+    const afterImport = await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }));
+    expect(afterImport).toHaveLength(2);
+    expect(new Set(afterImport.map(({ factKey }) => factKey)).size).toBe(1);
+
+    // A tombstone carries no free text, so the refused row's deletion still publishes.
+    const store = new Database(dbPath);
+    try {
+      store
+        .query("UPDATE usage_rows SET status = 'deleted', updated_at = ? WHERE row_key = ?")
+        .run('2026-08-30T11:06:00.000Z', toSerializedMergeRow(refused, machine).rowKey);
+    } finally {
+      store.close();
+    }
+    expect(
+      await Effect.runPromise(
+        backfillUsageReplicationOutbox({ ...input, enqueuedAt: new Date('2026-08-30T11:07:00.000Z') }),
+      ),
+    ).toEqual({ enqueued: 1, unchanged: 1, unpublishable: 0 });
+    expect((await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath })))[0]).toMatchObject({
+      changeKind: 'usage-session-tombstone',
+    });
   });
 });

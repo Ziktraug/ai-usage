@@ -62,7 +62,15 @@ test('continues bounded usage recovery scans without repeating the Device fact o
       maximumPages: 2,
       pageSize: 1,
     });
-    expect(second).toEqual({ enqueued: 1, nextCursor: null, pages: 1, scanned: 1, truncated: false, unchanged: 0 });
+    expect(second).toEqual({
+      enqueued: 1,
+      nextCursor: null,
+      pages: 1,
+      scanned: 1,
+      truncated: false,
+      unchanged: 0,
+      unpublishable: 0,
+    });
 
     const history = await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }));
     expect(history).toHaveLength(4);

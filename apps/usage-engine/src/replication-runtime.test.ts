@@ -12,7 +12,10 @@ import {
   parseSpaceId,
 } from '@ai-usage/platform-core/identity';
 import type { HttpReplicationClient } from '@ai-usage/replication-client';
-import { parseReplicationEventId } from '@ai-usage/replication-protocol';
+import { parseReplicationEventId, type ReplicationBatch } from '@ai-usage/replication-protocol';
+import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
+import { importLocalRows } from '@ai-usage/usage-store/testing';
+import { Effect } from 'effect';
 import {
   defaultReplicationCaptureContext,
   deviceReplicationStatusOutput,
@@ -47,6 +50,52 @@ const resolvedDevice = {
     },
   },
 };
+
+const acknowledgingClient = (published: Array<{ readonly kinds: string[]; readonly streamId: string }>) => {
+  const client: HttpReplicationClient = {
+    publish: (batch: ReplicationBatch) => {
+      published.push({ kinds: batch.events.map(({ changeKind }) => changeKind), streamId: batch.streamId });
+      return Promise.resolve({
+        ack: {
+          acceptedThroughGeneration: batch.toGenerationInclusive,
+          appliedAt: occurredAt,
+          appliedBatchId: batch.batchId,
+          appliedEventIds: batch.events.map(({ eventId }) => eventId),
+          counts: {
+            applied: batch.events.length,
+            duplicate: 0,
+            projected: batch.events.length,
+            tombstoned: batch.events.filter(({ changeKind }) => changeKind.endsWith('tombstone')).length,
+          },
+          deviceId: batch.deviceId,
+          protocolVersion: 1,
+          streamId: batch.streamId,
+          warnings: [],
+        },
+        kind: 'ack' as const,
+      });
+    },
+    resolveDevice: () => Promise.resolve(resolvedDevice),
+  };
+  return client;
+};
+
+const localUsageRow = (model: string, sourceSessionId: string) => ({
+  ...normalizeUsageRow({
+    calls: 1,
+    cost: actualCost(null),
+    date: new Date('2026-08-30T16:30:00.000Z'),
+    durationMs: 1000,
+    endDate: new Date('2026-08-30T16:31:00.000Z'),
+    harness: 'Codex',
+    model,
+    name: `Session ${sourceSessionId}`,
+    project: '/local/project/never-publish',
+    provider: 'OpenAI',
+    tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+  }),
+  source: { harnessKey: 'codex' as const, sourceSessionId },
+});
 
 const withKernel = async (
   run: (input: {
@@ -171,6 +220,51 @@ describe('usage-engine Device replication runtime', () => {
 
       await runtime.runNow();
       expect(publishedStreams).toEqual(['memory-v1']);
+      expect(kernel.replication.status()).toMatchObject({ acknowledged: 1, pending: 0 });
+      await runtime.dispose();
+    });
+  });
+
+  test('publishes ordinary usage and Memory facts while a usage row the protocol refuses stays local', async () => {
+    await withKernel(async ({ kernel, usageDatabasePath }) => {
+      // Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
+      const nul = String.fromCharCode(0);
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath: usageDatabasePath,
+          importedAt: new Date(occurredAt),
+          machine: { id: 'machine-runtime', label: 'Runtime workstation' },
+          rows: [localUsageRow('gpt-5', 'ordinary-session'), localUsageRow(`gpt-5${nul}`, 'refused-session')],
+        }),
+      );
+      const published: Array<{ readonly kinds: string[]; readonly streamId: string }> = [];
+      const runtime = startDeviceReplicationRuntime({
+        acquireClient: () => Promise.resolve(acknowledgingClient(published)),
+        clock: () => new Date(occurredAt),
+        kernel,
+        usageDatabasePath,
+      });
+      await runtime.runNow();
+      expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
+      expect(published).toEqual([{ kinds: ['device-fact-upsert', 'usage-session-upsert'], streamId: 'usage-v1' }]);
+      expect(runtime.status().usage).toMatchObject({ acknowledged: 2, blocked: 0, pending: 0 });
+
+      kernel.replication.enqueue({
+        captureContext: defaultReplicationCaptureContext(resolvedDevice),
+        changeKind: 'memory-fact-tombstone',
+        enqueuedAt: occurredAt,
+        eventId: parseReplicationEventId('70000000-0000-4000-8000-000000000007'),
+        factKey: 'memory-item:70000000-0000-4000-8000-000000000008',
+        payload: {
+          itemId: parseMemoryItemId('70000000-0000-4000-8000-000000000008'),
+          kind: 'memory-fact-tombstone',
+          reasonCode: 'privacy-purged',
+          tombstonedAt: occurredAt,
+        },
+      });
+      await runtime.runNow();
+      expect(published.map(({ streamId }) => streamId)).toEqual(['usage-v1', 'memory-v1']);
+      expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
       expect(kernel.replication.status()).toMatchObject({ acknowledged: 1, pending: 0 });
       await runtime.dispose();
     });
