@@ -72,7 +72,11 @@ import {
   type SpaceId,
 } from '@ai-usage/platform-core/identity';
 import { createSqliteReplicationOutbox, type ReplicationSqliteDatabase } from '@ai-usage/replication-outbox';
-import { memoryReplicationPayloadForContext, resolveLocalMemoryReplicationContext } from './replication';
+import {
+  memoryReplicationPayloadExceedsBound,
+  memoryReplicationPayloadForContext,
+  resolveLocalMemoryReplicationContext,
+} from './replication';
 
 interface ObservationRow {
   readonly capture_context_id: unknown;
@@ -358,7 +362,7 @@ const insertAudit = (database: Database, event: MemoryAuditEvent): void => {
     });
 };
 
-const insertOutbox = (database: Database, event: AcceptProposalInput['outboxEvent']): void => {
+const insertOutbox = (database: Database, event: AcceptProposalInput['outboxEvent'], audit: MemoryAuditEvent): void => {
   if (!event) {
     return;
   }
@@ -367,6 +371,18 @@ const insertOutbox = (database: Database, event: AcceptProposalInput['outboxEven
     return;
   }
   const payload = memoryReplicationPayloadForContext(event.payload, captureContext);
+  if (memoryReplicationPayloadExceedsBound(payload)) {
+    // The local mutation stays authoritative: the fact is accepted here and not published. The
+    // audit log is the durable record of the skipped publication, under the acting principal.
+    insertAudit(database, {
+      ...audit,
+      action: 'replication-skipped-oversized',
+      result: 'rejected',
+      subjectId: event.payload.itemId,
+      subjectType: 'memory-item',
+    });
+    return;
+  }
   createSqliteReplicationOutbox(database as unknown as ReplicationSqliteDatabase).enqueue({
     captureContext,
     changeKind: payload.kind,
@@ -1126,7 +1142,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
             throw new MemoryRepositoryError('conflict', 'accept-proposal');
           }
           replaceMemorySearchProjection(database, input.item, input.revision);
-          insertOutbox(database, input.outboxEvent);
+          insertOutbox(database, input.outboxEvent, input.audit);
           bumpMemoryState(database, input.item.owningSpaceId);
           insertAudit(database, input.audit);
         });
@@ -1219,7 +1235,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
               });
             if (record.item && record.revision) {
               insertImportedItem(database, record.item, record.revision);
-              insertOutbox(database, record.outboxEvent);
+              insertOutbox(database, record.outboxEvent, input.audit);
             }
             importedFingerprints.push(record.observation.fingerprint);
           }
@@ -1702,7 +1718,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
                WHERE space_id = $spaceId AND (from_memory_item_id = $itemId OR to_memory_item_id = $itemId)`,
             )
             .run({ itemId: input.itemId, spaceId: input.spaceId });
-          insertOutbox(database, input.outboxEvent);
+          insertOutbox(database, input.outboxEvent, input.audit);
           database
             .query('DELETE FROM memory_revisions WHERE space_id = $spaceId AND memory_item_id = $itemId')
             .run({ itemId: input.itemId, spaceId: input.spaceId });
@@ -1860,7 +1876,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
             throw new MemoryRepositoryError('stale', 'revise-item');
           }
           reindexMemorySearchItem(database, input.spaceId, input.revision.memoryItemId);
-          insertOutbox(database, input.outboxEvent);
+          insertOutbox(database, input.outboxEvent, input.audit);
           bumpMemoryState(database, input.spaceId);
           insertAudit(database, input.audit);
         });
@@ -2055,7 +2071,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
             throw new MemoryRepositoryError(exists ? 'conflict' : 'not-found', 'supersede-item');
           }
           reindexMemorySearchItem(database, input.spaceId, input.itemId);
-          insertOutbox(database, input.outboxEvent);
+          insertOutbox(database, input.outboxEvent, input.audit);
           bumpMemoryState(database, input.spaceId);
           insertAudit(database, input.audit);
         });

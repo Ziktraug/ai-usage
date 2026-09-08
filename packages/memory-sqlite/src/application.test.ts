@@ -152,7 +152,7 @@ describe('local Memory application service', () => {
           localProjectId: null,
           localSpaceId: identity.space.id,
         }),
-      ).toEqual({ backfilled: 1, nextCursor: null, unchanged: 0 });
+      ).toEqual({ backfilled: 1, nextCursor: null, oversized: 0, unchanged: 0 });
       const contextProjectId = createProjectId();
       expect(
         await service.getProjectContext({

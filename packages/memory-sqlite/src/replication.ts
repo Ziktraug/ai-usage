@@ -30,6 +30,8 @@ import {
   parseReplicationJsonValue,
   parseReplicationPayload,
   type ReplicationPayload,
+  replicationBounds,
+  replicationEventContentHash,
   replicationEventIdForSeed,
 } from '@ai-usage/replication-protocol';
 import { MemoryIdentityStoreError } from './errors';
@@ -97,6 +99,8 @@ export interface ConfigureLocalMemoryReplicationInput {
 export interface ConfigureLocalMemoryReplicationResult {
   readonly backfilled: number;
   readonly nextCursor: MemoryItemId | null;
+  /** Items whose replication payload exceeds the protocol bound; kept locally, never published. */
+  readonly oversized: number;
   readonly unchanged: number;
 }
 
@@ -342,12 +346,43 @@ interface LatestOutboxEventRow {
   readonly payload: unknown;
 }
 
-// A supersession tombstone carries the clock it was enqueued with, so re-deriving it on every
-// backfill would mint a new event for an unchanged fact. The store persists no supersession
-// instant (memory_items has none; audit rows only exist for the live path; the revision's
-// created_at predates the supersession), so the outbox itself is the durable record: once the
-// latest event for the fact key is a supersession tombstone, the fact is already published.
-const supersessionAlreadyEnqueued = (database: Database, factKey: string): boolean => {
+/**
+ * Whether a Memory replication payload exceeds the protocol payload bound. Memory validation
+ * admits larger documents than the V1 payload carries; such a fact stays authoritative locally and
+ * is not published. The live path records the skip in the Memory audit log, the backfill counts it
+ * as `oversized`.
+ */
+export const memoryReplicationPayloadExceedsBound = (payload: ReplicationPayload): boolean =>
+  new TextEncoder().encode(canonicalReplicationJson(parseReplicationPayload(payload))).byteLength >
+  replicationBounds.payloadBytes;
+
+// The live path mints a random event id per publication while the backfill derives a
+// deterministic one, so event identity alone cannot tell a restart from a change. The outbox is
+// the durable record of what this Device published for a fact key, and its own duplicate guard is
+// content-based: an event with the same fact key and content hash, under any event id, means the
+// fact is already published. A supersession tombstone carries the clock it was enqueued with, so
+// for a superseded item the latest event being a supersession tombstone is the equivalent signal
+// (the store persists no supersession instant: memory_items has none, audit rows only exist for
+// the live path, and the revision's created_at predates the supersession).
+const memoryFactAlreadyEnqueued = (
+  database: Database,
+  factKey: string,
+  contentHash: string,
+  superseded: boolean,
+): boolean => {
+  const sameContent = database
+    .query(
+      `SELECT 1 FROM replication_outbox_events
+       WHERE fact_key = $factKey AND content_hash = $contentHash
+       LIMIT 1`,
+    )
+    .get({ contentHash, factKey });
+  if (sameContent !== null) {
+    return true;
+  }
+  if (!superseded) {
+    return false;
+  }
   const row = database
     .query(
       `SELECT change_kind, payload
@@ -399,43 +434,44 @@ const backfillMemoryReplicationContext = (
   const hasNext = rows.length > maximumItems;
   const selected = hasNext ? rows.slice(0, maximumItems) : rows;
   let backfilled = 0;
+  let oversized = 0;
   let unchanged = 0;
   for (const row of selected) {
     const itemId = parseMemoryItemId(row.id);
     const mapped = memoryRevisionPayload(database, itemId, row.current_revision_id);
     const factKey = `memory-item:${itemId}`;
-    if (row.status === 'superseded' && supersessionAlreadyEnqueued(database, factKey)) {
+    const superseded = row.status === 'superseded';
+    const payload = superseded
+      ? parseReplicationPayload({
+          itemId,
+          kind: 'memory-fact-tombstone',
+          reasonCode: 'superseded',
+          tombstonedAt: enqueuedAt,
+        })
+      : memoryReplicationPayloadForContext(mapped.payload, context);
+    if (memoryReplicationPayloadExceedsBound(payload)) {
+      oversized += 1;
+      continue;
+    }
+    const contentHash = replicationEventContentHash(payload.kind, context.id, payload);
+    if (memoryFactAlreadyEnqueued(database, factKey, contentHash, superseded)) {
       unchanged += 1;
       continue;
     }
-    const payload =
-      row.status === 'superseded'
-        ? parseReplicationPayload({
-            itemId,
-            kind: 'memory-fact-tombstone',
-            reasonCode: 'superseded',
-            tombstonedAt: enqueuedAt,
-          })
-        : memoryReplicationPayloadForContext(mapped.payload, context);
-    const eventId = replicationEventIdForSeed({ captureContextId: context.id, factKey, payload });
-    const existed = database.query('SELECT 1 FROM replication_outbox_events WHERE event_id = ?').get(eventId) !== null;
     outbox.enqueue({
       captureContext: context,
       changeKind: payload.kind,
       enqueuedAt,
-      eventId,
+      eventId: replicationEventIdForSeed({ captureContextId: context.id, factKey, payload }),
       factKey,
       payload,
     });
-    if (existed) {
-      unchanged += 1;
-    } else {
-      backfilled += 1;
-    }
+    backfilled += 1;
   }
   return {
     backfilled,
     nextCursor: hasNext ? parseMemoryItemId(selected.at(-1)?.id) : null,
+    oversized,
     unchanged,
   };
 };
