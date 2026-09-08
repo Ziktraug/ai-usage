@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSingleUserAuthorizer } from '@ai-usage/authorization/single-user';
 import { createMemoryApplicationService } from '@ai-usage/memory-service/application';
-import { memoryFingerprint } from '@ai-usage/memory-service/domain';
+import { type MemoryJsonValue, memoryFingerprint } from '@ai-usage/memory-service/domain';
 import {
   createCaptureContextId,
   createDeviceId,
@@ -25,6 +25,10 @@ import { backfillLocalMemoryReplication, configureLocalMemoryReplication } from 
 // 20 entries x ~4 000 ASCII chars: each entry is within the 4 096-char Memory bound, while the
 // replication payload (about 80 KiB) exceeds the 64 KiB protocol payload bound.
 const oversizedGuidance = Array.from({ length: 20 }, (_, index) => `guidance ${index % 10} `.repeat(368).trim());
+// Valid Memory text, refused by the protocol's control-character rule.
+const multilineGuidance = ['First line\nSecond line'];
+// Valid Memory JSON (about 20 KiB), refused once the canonical visitor counts the event envelope.
+const deepStructuredContent = { nodes: Array.from({ length: 9990 }, () => 0) };
 
 const openServiceFixture = async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-memory-replication-service-'));
@@ -58,7 +62,11 @@ const openServiceFixture = async () => {
   const advance = (iso: string) => {
     now = new Date(iso);
   };
-  const accept = async (title: string, guidance: readonly string[]) => {
+  const accept = async (
+    title: string,
+    guidance: readonly string[],
+    structuredContent: MemoryJsonValue = { synthetic: true },
+  ) => {
     const evidence = { source: `synthetic evidence for ${title}` } as const;
     const observation = await service.recordObservation({
       authorization,
@@ -82,7 +90,7 @@ const openServiceFixture = async () => {
       projectId: null,
       proposedKind: 'decision',
       sensitivity: 'normal',
-      structuredContent: { synthetic: true },
+      structuredContent,
       summary: `${title} summary.`,
       title,
       trustCandidate: 'explicit',
@@ -196,13 +204,13 @@ describe('local Memory replication backfill', () => {
       };
       expect(
         configureLocalMemoryReplication(database, { ...input, configuredAt: new Date('2026-08-30T09:00:00.000Z') }),
-      ).toEqual({ backfilled: 1, nextCursor: null, oversized: 0, unchanged: 0 });
+      ).toEqual({ backfilled: 1, nextCursor: null, unchanged: 0, unpublishable: 0 });
       expect(
         configureLocalMemoryReplication(database, { ...input, configuredAt: new Date('2026-08-30T10:00:00.000Z') }),
-      ).toEqual({ backfilled: 0, nextCursor: null, oversized: 0, unchanged: 1 });
+      ).toEqual({ backfilled: 0, nextCursor: null, unchanged: 1, unpublishable: 0 });
       expect(
         backfillLocalMemoryReplication(database, { ...input, enqueuedAt: new Date('2026-08-30T11:00:00.000Z') }),
-      ).toEqual({ backfilled: 0, nextCursor: null, oversized: 0, unchanged: 1 });
+      ).toEqual({ backfilled: 0, nextCursor: null, unchanged: 1, unpublishable: 0 });
       expect(
         database
           .query('SELECT change_kind, fact_key, generation, state FROM replication_outbox_events ORDER BY generation')
@@ -225,8 +233,8 @@ describe('local Memory replication backfill', () => {
       expect(await fixture.configure('2026-08-30T09:00:00.000Z')).toEqual({
         backfilled: 0,
         nextCursor: null,
-        oversized: 0,
         unchanged: 0,
+        unpublishable: 0,
       });
       fixture.advance('2026-08-30T09:10:00.000Z');
       const accepted = await fixture.accept('Live accepted decision', ['Publish through the live path.']);
@@ -238,8 +246,8 @@ describe('local Memory replication backfill', () => {
       expect(await fixture.configure('2026-08-30T10:00:00.000Z')).toEqual({
         backfilled: 0,
         nextCursor: null,
-        oversized: 0,
         unchanged: 1,
+        unpublishable: 0,
       });
       expect(fixture.kernel.replication.listHistory()).toHaveLength(1);
       expect(fixture.kernel.replication.status()).toMatchObject({ acknowledged: 1, pending: 0 });
@@ -258,8 +266,8 @@ describe('local Memory replication backfill', () => {
       expect(await fixture.configure('2026-08-30T09:30:00.000Z')).toEqual({
         backfilled: 1,
         nextCursor: null,
-        oversized: 0,
         unchanged: 0,
+        unpublishable: 0,
       });
       fixture.advance('2026-08-30T09:40:00.000Z');
       const revised = await fixture.service.reviseMemoryItem({
@@ -283,8 +291,8 @@ describe('local Memory replication backfill', () => {
       expect(await fixture.configure('2026-08-30T10:00:00.000Z')).toEqual({
         backfilled: 0,
         nextCursor: null,
-        oversized: 0,
         unchanged: 1,
+        unpublishable: 0,
       });
       expect(fixture.kernel.replication.listHistory()).toHaveLength(2);
     } finally {
@@ -335,16 +343,81 @@ describe('local Memory replication backfill', () => {
       expect(await fixture.configure('2026-08-30T09:30:00.000Z')).toEqual({
         backfilled: 0,
         nextCursor: null,
-        oversized: 1,
         unchanged: 0,
+        unpublishable: 1,
       });
       expect(fixture.kernel.replication.status()).toMatchObject({ pending: 0, streamId: 'memory-v1' });
       expect(fixture.auditRows('replication-skipped-oversized')).toEqual([]);
+      expect(fixture.auditRows('replication-skipped-invalid-payload')).toEqual([]);
       expect(await fixture.configure('2026-08-30T10:00:00.000Z')).toEqual({
         backfilled: 0,
         nextCursor: null,
-        oversized: 1,
         unchanged: 0,
+        unpublishable: 1,
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test('accepts protocol-invalid Memory content locally, records each skipped publication, and keeps publishing', async () => {
+    const fixture = await openServiceFixture();
+    try {
+      await fixture.configure('2026-08-30T09:00:00.000Z');
+      fixture.advance('2026-08-30T09:10:00.000Z');
+      const multiline = await fixture.accept('Multiline decision', multilineGuidance);
+      if (multiline.kind !== 'success') {
+        throw new Error('Multiline acceptance failed.');
+      }
+      fixture.advance('2026-08-30T09:11:00.000Z');
+      const deep = await fixture.accept('Deep decision', ['Keep the structure.'], deepStructuredContent);
+      if (deep.kind !== 'success') {
+        throw new Error('Deep acceptance failed.');
+      }
+      expect(fixture.kernel.replication.status()).toMatchObject({ pending: 0 });
+      expect(fixture.auditRows('replication-skipped-invalid-payload')).toEqual([
+        { actor_kind: 'person', result: 'rejected', subject_id: multiline.value.item.id, subject_type: 'memory-item' },
+        { actor_kind: 'person', result: 'rejected', subject_id: deep.value.item.id, subject_type: 'memory-item' },
+      ]);
+      expect(fixture.auditRows('replication-skipped-oversized')).toEqual([]);
+
+      fixture.advance('2026-08-30T09:20:00.000Z');
+      const regular = await fixture.accept('Regular decision', ['Publish normally.']);
+      if (regular.kind !== 'success') {
+        throw new Error('Regular acceptance failed.');
+      }
+      expect(fixture.kernel.replication.status()).toMatchObject({ pending: 1 });
+      expect(fixture.kernel.replication.listHistory()[0]).toMatchObject({
+        factKey: `memory-item:${regular.value.item.id}`,
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test('configures replication over stored protocol-invalid items with a count instead of failing', async () => {
+    const fixture = await openServiceFixture();
+    try {
+      expect((await fixture.accept('Stored multiline decision', multilineGuidance)).kind).toBe('success');
+      fixture.advance('2026-08-30T09:01:00.000Z');
+      expect((await fixture.accept('Stored deep decision', ['Keep the structure.'], deepStructuredContent)).kind).toBe(
+        'success',
+      );
+      fixture.advance('2026-08-30T09:02:00.000Z');
+      expect((await fixture.accept('Stored regular decision', ['Publish normally.'])).kind).toBe('success');
+      expect(await fixture.configure('2026-08-30T09:30:00.000Z')).toEqual({
+        backfilled: 1,
+        nextCursor: null,
+        unchanged: 0,
+        unpublishable: 2,
+      });
+      expect(fixture.kernel.replication.status()).toMatchObject({ pending: 1, streamId: 'memory-v1' });
+      expect(fixture.auditRows('replication-skipped-invalid-payload')).toEqual([]);
+      expect(await fixture.configure('2026-08-30T10:00:00.000Z')).toEqual({
+        backfilled: 0,
+        nextCursor: null,
+        unchanged: 1,
+        unpublishable: 2,
       });
     } finally {
       await fixture.close();

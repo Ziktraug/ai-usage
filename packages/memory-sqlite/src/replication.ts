@@ -24,12 +24,15 @@ import {
 import {
   type CaptureContextSnapshot,
   canonicalReplicationJson,
+  createReplicationEvent,
   MEMORY_REPLICATION_STREAM_ID,
   parseCaptureContextSnapshot,
   parseReplicationEventId,
+  parseReplicationGeneration,
   parseReplicationJsonValue,
   parseReplicationPayload,
   type ReplicationPayload,
+  ReplicationProtocolError,
   replicationBounds,
   replicationEventContentHash,
   replicationEventIdForSeed,
@@ -99,9 +102,12 @@ export interface ConfigureLocalMemoryReplicationInput {
 export interface ConfigureLocalMemoryReplicationResult {
   readonly backfilled: number;
   readonly nextCursor: MemoryItemId | null;
-  /** Items whose replication payload exceeds the protocol bound; kept locally, never published. */
-  readonly oversized: number;
   readonly unchanged: number;
+  /**
+   * Items whose replication payload the protocol refuses (over the byte bound, or otherwise
+   * invalid for the V1 contract); kept locally, never published.
+   */
+  readonly unpublishable: number;
 }
 
 export interface BackfillLocalMemoryReplicationInput {
@@ -346,15 +352,50 @@ interface LatestOutboxEventRow {
   readonly payload: unknown;
 }
 
+export type MemoryReplicationRefusalReason = 'invalid-payload' | 'oversized';
+
+export type MemoryReplicationCandidate =
+  | { readonly kind: 'publishable'; readonly payload: ReplicationPayload }
+  | { readonly kind: 'refused'; readonly reason: MemoryReplicationRefusalReason };
+
 /**
- * Whether a Memory replication payload exceeds the protocol payload bound. Memory validation
- * admits larger documents than the V1 payload carries; such a fact stays authoritative locally and
- * is not published. The live path records the skip in the Memory audit log, the backfill counts it
- * as `oversized`.
+ * Builds and validates a Memory replication payload exactly as the outbox will, before anything
+ * is enqueued. Memory validation admits documents the V1 protocol refuses: text with control
+ * characters, payloads over `replicationBounds.payloadBytes`, and JSON beyond the canonical
+ * visitor's node and depth caps, which also count the event and stored-envelope nodes around the
+ * payload. Such a fact stays authoritative locally and is not published: the live path records the
+ * refusal in the Memory audit log and the backfill counts it as `unpublishable`. A protocol error
+ * never escapes; the byte bound reads as `oversized`, every other refusal as `invalid-payload`.
  */
-export const memoryReplicationPayloadExceedsBound = (payload: ReplicationPayload): boolean =>
-  new TextEncoder().encode(canonicalReplicationJson(parseReplicationPayload(payload))).byteLength >
-  replicationBounds.payloadBytes;
+export const prepareMemoryReplicationPayload = (
+  context: CaptureContextSnapshot,
+  factKey: string,
+  build: () => ReplicationPayload,
+): MemoryReplicationCandidate => {
+  try {
+    const payload = parseReplicationPayload(build());
+    if (new TextEncoder().encode(canonicalReplicationJson(payload)).byteLength > replicationBounds.payloadBytes) {
+      return { kind: 'refused', reason: 'oversized' };
+    }
+    // Mirror the outbox: the event (content hash, payload bound) and the stored envelope are
+    // canonicalized as whole values, so their own nodes count against the visitor's cap.
+    createReplicationEvent({
+      captureContextId: context.id,
+      changeKind: payload.kind,
+      eventId: replicationEventIdForSeed({ captureContextId: context.id, factKey, payload }),
+      factKey,
+      generation: parseReplicationGeneration(1),
+      payload,
+    });
+    canonicalReplicationJson({ captureContext: context, payload });
+    return { kind: 'publishable', payload };
+  } catch (error) {
+    if (error instanceof ReplicationProtocolError) {
+      return { kind: 'refused', reason: 'invalid-payload' };
+    }
+    throw error;
+  }
+};
 
 // The live path mints a random event id per publication while the backfill derives a
 // deterministic one, so event identity alone cannot tell a restart from a change. The outbox is
@@ -434,25 +475,32 @@ const backfillMemoryReplicationContext = (
   const hasNext = rows.length > maximumItems;
   const selected = hasNext ? rows.slice(0, maximumItems) : rows;
   let backfilled = 0;
-  let oversized = 0;
   let unchanged = 0;
+  let unpublishable = 0;
   for (const row of selected) {
     const itemId = parseMemoryItemId(row.id);
-    const mapped = memoryRevisionPayload(database, itemId, row.current_revision_id);
     const factKey = `memory-item:${itemId}`;
     const superseded = row.status === 'superseded';
-    const payload = superseded
-      ? parseReplicationPayload({
-          itemId,
-          kind: 'memory-fact-tombstone',
-          reasonCode: 'superseded',
-          tombstonedAt: enqueuedAt,
-        })
-      : memoryReplicationPayloadForContext(mapped.payload, context);
-    if (memoryReplicationPayloadExceedsBound(payload)) {
-      oversized += 1;
+    // A tombstone does not depend on the revision content, so a superseded item is tombstoned
+    // even when its current revision itself could not be published.
+    const candidate = prepareMemoryReplicationPayload(context, factKey, () =>
+      superseded
+        ? parseReplicationPayload({
+            itemId,
+            kind: 'memory-fact-tombstone',
+            reasonCode: 'superseded',
+            tombstonedAt: enqueuedAt,
+          })
+        : memoryReplicationPayloadForContext(
+            memoryRevisionPayload(database, itemId, row.current_revision_id).payload,
+            context,
+          ),
+    );
+    if (candidate.kind === 'refused') {
+      unpublishable += 1;
       continue;
     }
+    const { payload } = candidate;
     const contentHash = replicationEventContentHash(payload.kind, context.id, payload);
     if (memoryFactAlreadyEnqueued(database, factKey, contentHash, superseded)) {
       unchanged += 1;
@@ -471,8 +519,8 @@ const backfillMemoryReplicationContext = (
   return {
     backfilled,
     nextCursor: hasNext ? parseMemoryItemId(selected.at(-1)?.id) : null,
-    oversized,
     unchanged,
+    unpublishable,
   };
 };
 

@@ -73,8 +73,8 @@ import {
 } from '@ai-usage/platform-core/identity';
 import { createSqliteReplicationOutbox, type ReplicationSqliteDatabase } from '@ai-usage/replication-outbox';
 import {
-  memoryReplicationPayloadExceedsBound,
   memoryReplicationPayloadForContext,
+  prepareMemoryReplicationPayload,
   resolveLocalMemoryReplicationContext,
 } from './replication';
 
@@ -370,13 +370,15 @@ const insertOutbox = (database: Database, event: AcceptProposalInput['outboxEven
   if (!captureContext) {
     return;
   }
-  const payload = memoryReplicationPayloadForContext(event.payload, captureContext);
-  if (memoryReplicationPayloadExceedsBound(payload)) {
+  const candidate = prepareMemoryReplicationPayload(captureContext, event.factKey, () =>
+    memoryReplicationPayloadForContext(event.payload, captureContext),
+  );
+  if (candidate.kind === 'refused') {
     // The local mutation stays authoritative: the fact is accepted here and not published. The
-    // audit log is the durable record of the skipped publication, under the acting principal.
+    // audit log is the durable record of the refused publication, under the acting principal.
     insertAudit(database, {
       ...audit,
-      action: 'replication-skipped-oversized',
+      action: `replication-skipped-${candidate.reason}`,
       result: 'rejected',
       subjectId: event.payload.itemId,
       subjectType: 'memory-item',
@@ -385,11 +387,11 @@ const insertOutbox = (database: Database, event: AcceptProposalInput['outboxEven
   }
   createSqliteReplicationOutbox(database as unknown as ReplicationSqliteDatabase).enqueue({
     captureContext,
-    changeKind: payload.kind,
+    changeKind: candidate.payload.kind,
     enqueuedAt: event.enqueuedAt,
     eventId: event.eventId,
     factKey: event.factKey,
-    payload,
+    payload: candidate.payload,
   });
 };
 
