@@ -26,6 +26,7 @@ import {
   queryReportRows,
   queryUsageReplicationCandidates,
   queryUsageReplicationOutboxStatus,
+  type UsageReplicationCandidatePage,
 } from './index';
 
 const deviceId = '40000000-0000-4000-8000-000000000001' as DeviceId;
@@ -422,5 +423,54 @@ test('keeps a usage row whose session id the protocol refuses local and counted,
       ),
     ).toEqual({ enqueued: 0, unchanged: 1, unpublishable: 1 });
     expect(await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }))).toHaveLength(2);
+  });
+});
+
+test('publishes a row whose long session id pushes the local row key past the wire fact-key bound', async () => {
+  await withStorePath(async (dbPath) => {
+    // 500 ASCII characters fit the wire payload's session-id bound, while the composite local row
+    // key exceeds 512 characters; the row key never travels, it is hashed into the fact key.
+    const longSessionId = 'session-'.padEnd(500, 'x');
+    const ordinary = usageRow();
+    const long = usageRow(20, { sourceSessionId: longSessionId });
+    const rows = [ordinary, long];
+    const longRowKey = toSerializedMergeRow(long, machine).rowKey;
+    expect(longRowKey.length).toBeGreaterThan(512);
+    const assignments = rows.map((row) => ({ captureContext, rowKey: toSerializedMergeRow(row, machine).rowKey }));
+    await Effect.runPromise(importLocalRows({ dbPath, importedAt: capturedAt, machine, rows }));
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(2);
+
+    const input = {
+      assignments,
+      dbPath,
+      deviceId,
+      enqueuedAt: new Date('2026-08-30T11:04:00.000Z'),
+      includeDeviceFact: false,
+    };
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 2,
+      unchanged: 0,
+      unpublishable: 0,
+    });
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 0,
+      unchanged: 2,
+      unpublishable: 0,
+    });
+    const history = await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }));
+    expect(history.map(({ changeKind }) => changeKind)).toEqual(['usage-session-upsert', 'usage-session-upsert']);
+    expect(JSON.stringify(history)).not.toContain(longSessionId);
+
+    const walked: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: UsageReplicationCandidatePage = await Effect.runPromise(
+        queryUsageReplicationCandidates({ afterRowKey: cursor, dbPath, maximumItems: 1 }),
+      );
+      walked.push(...page.rowKeys);
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    expect(walked.toSorted()).toEqual(assignments.map(({ rowKey }) => rowKey).toSorted());
+    expect(walked).toContain(longRowKey);
   });
 });

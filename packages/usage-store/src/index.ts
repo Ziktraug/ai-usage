@@ -2445,6 +2445,16 @@ const requiredReplicationText = (value: unknown, operation: string): string => {
 const usageReplicationOutbox = (db: SqliteDatabase) =>
   createSqliteReplicationOutbox(db as unknown as ReplicationSqliteDatabase);
 
+// A local row key (`v1:<machine>:<harness>:<session id | content hash>`) never travels: it is
+// hashed into the fact key. It is therefore bounded by the local identity contract, not by the
+// wire fact-key bound of 512, which a 500-character session id (itself within the wire payload's
+// bound) already exceeds once composed. The store column carries no length limit, so this
+// explicit, generous bound keeps assignments and cursors well-formed; a key beyond it is refused
+// per row (counted as unpublishable) and never enters the candidate stream, so it cannot stall a
+// page or become a cursor. SQLite's length() counts characters where JavaScript counts UTF-16
+// units; the difference only moves the boundary for astral characters, never the outcome class.
+const usageRowKeyMaximumLength = 4096;
+
 // The fact key is derived from the row's stable local identity (`row_key`: version, origin
 // machine, harness, and source session id or stable-content id), which survives re-collection.
 // `source_fingerprint` is content-derived and rewritten in place when a session grows, so hashing
@@ -2523,19 +2533,23 @@ const publishUsageReplicationRows = (
     throw new Error('Usage replication capture assignments exceed the bounded scan size.');
   }
   const assignments = new Map<string, CaptureContextSnapshot>();
+  let unpublishable = 0;
   for (const assignment of publication.assignments) {
     if (
       assignment.rowKey.length === 0 ||
-      assignment.rowKey.length > 512 ||
       assignment.captureContext.deviceId !== publication.deviceId ||
       assignments.has(assignment.rowKey)
     ) {
       throw new Error('Usage replication capture assignment is invalid.');
     }
+    if (assignment.rowKey.length > usageRowKeyMaximumLength) {
+      unpublishable += 1;
+      continue;
+    }
     assignments.set(assignment.rowKey, assignment.captureContext);
   }
   if (assignments.size === 0) {
-    return { enqueued: 0, unchanged: 0, unpublishable: 0 };
+    return { enqueued: 0, unchanged: 0, unpublishable };
   }
   const rowKeys = [...assignments.keys()];
   const placeholders = rowKeys.map(() => '?').join(', ');
@@ -2555,7 +2569,6 @@ const publishUsageReplicationRows = (
   outbox.initialize({ createdAt: enqueuedAt, deviceId: publication.deviceId, streamId: USAGE_REPLICATION_STREAM_ID });
   let enqueued = 0;
   let unchanged = 0;
-  let unpublishable = 0;
 
   const firstRow = rows[0];
   const firstContext = firstRow ? assignments.get(requiredReplicationText(firstRow.row_key, 'row key')) : undefined;
@@ -2787,7 +2800,7 @@ export const queryUsageReplicationCandidates = (
           maximumItems > 1000 ||
           (input.afterRowKey !== undefined &&
             input.afterRowKey !== null &&
-            (input.afterRowKey.length === 0 || input.afterRowKey.length > 512))
+            (input.afterRowKey.length === 0 || input.afterRowKey.length > usageRowKeyMaximumLength))
         ) {
           throw new Error('Usage replication candidate query is invalid.');
         }
@@ -2795,11 +2808,13 @@ export const queryUsageReplicationCandidates = (
           .query(
             `SELECT row_key
              FROM usage_rows
-             WHERE source_authority = 'local-observed' AND row_key > ?
+             WHERE source_authority = 'local-observed' AND row_key > ? AND length(row_key) <= ?
              ORDER BY row_key ASC
              LIMIT ?`,
           )
-          .all(input.afterRowKey ?? '', maximumItems + 1) as { readonly row_key: unknown }[];
+          .all(input.afterRowKey ?? '', usageRowKeyMaximumLength, maximumItems + 1) as {
+          readonly row_key: unknown;
+        }[];
         const hasNext = rows.length > maximumItems;
         const selected = hasNext ? rows.slice(0, maximumItems) : rows;
         const rowKeys = selected.map(({ row_key }) => requiredReplicationText(row_key, 'candidate row key'));

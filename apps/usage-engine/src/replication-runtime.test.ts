@@ -240,7 +240,13 @@ describe('usage-engine Device replication runtime', () => {
             dbPath: usageDatabasePath,
             importedAt: new Date(occurredAt),
             machine: { id: 'machine-runtime', label: 'Runtime workstation' },
-            rows: [localUsageRow('gpt-5', 'ordinary-session'), refusedRow],
+            rows: [
+              localUsageRow('gpt-5', 'ordinary-session'),
+              refusedRow,
+              // A 500-character session id: within the wire bound, but the local row key it is
+              // embedded in exceeds 512 characters, and that key is hashed, never sent.
+              localUsageRow('gpt-5', 'long-session-'.padEnd(500, 'x')),
+            ],
           }),
         );
         const published: Array<{ readonly kinds: string[]; readonly streamId: string }> = [];
@@ -252,8 +258,10 @@ describe('usage-engine Device replication runtime', () => {
         });
         await runtime.runNow();
         expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
-        expect(published).toEqual([{ kinds: ['device-fact-upsert', 'usage-session-upsert'], streamId: 'usage-v1' }]);
-        expect(runtime.status().usage).toMatchObject({ acknowledged: 2, blocked: 0, pending: 0 });
+        expect(published).toEqual([
+          { kinds: ['device-fact-upsert', 'usage-session-upsert', 'usage-session-upsert'], streamId: 'usage-v1' },
+        ]);
+        expect(runtime.status().usage).toMatchObject({ acknowledged: 3, blocked: 0, pending: 0 });
 
         kernel.replication.enqueue({
           captureContext: defaultReplicationCaptureContext(resolvedDevice),
