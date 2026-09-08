@@ -63,6 +63,7 @@ const enrollContributor = async (
     },
     deviceId: exchanged.value.device.id,
     personId,
+    token: exchanged.value.token,
   };
 };
 
@@ -1120,6 +1121,161 @@ if (runPostgresTests) {
             [factKey],
           ),
         ).toBe(3);
+      } finally {
+        await database.close().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('rejects publication while the owner Person of an authenticated Device is suspended', async () => {
+      const cluster = await startPostgresCluster('replication-suspended-owner');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const database = createPlatformTestingDatabase(cluster.url);
+      try {
+        const key = createDeploymentTokenKey(Buffer.alloc(32, 75).toString('base64url'), 1);
+        const devices = createDeviceEnrollmentService({
+          authorizer: store.authorization,
+          clock: () => new Date(observedAt),
+          keyRing: createDeploymentTokenKeyRing([key], 1),
+          store: store.devices,
+        });
+        const owner = await enrollContributor(store, devices, 'Suspended publisher');
+        const personalSpaceId = owner.authenticated.authenticatedDevice.owningSpaceId;
+        const organizationSpaceId = createSpaceId();
+        await database.query(
+          `INSERT INTO spaces (id, kind, display_name, created_at)
+           VALUES ($1, 'organization', 'Suspended owner organization', $2)`,
+          [organizationSpaceId, observedAt],
+        );
+        await store.authorization.administration.createOrganizationWithAdmin({
+          actorPersonId: owner.personId,
+          createdAt: observedAt,
+          spaceId: organizationSpaceId,
+        });
+        const contextIn = (spaceId: typeof organizationSpaceId) => ({
+          deviceId: owner.deviceId,
+          id: createCaptureContextId(),
+          personId: owner.personId,
+          projectId: null,
+          scmAccountId: null,
+          scmInstallationId: null,
+          source: spaceId === personalSpaceId ? ('personal-fallback' as const) : ('explicit' as const),
+          spaceId,
+        });
+        const publish = (context: ReturnType<typeof contextIn>, generation: number, sessionName: string) =>
+          store.replication.applyBatch({
+            ...owner.authenticated,
+            batch: createReplicationBatch({
+              batchId: createReplicationBatchId(),
+              captureContexts: [context],
+              deviceId: owner.deviceId,
+              events: [
+                createReplicationEvent({
+                  captureContextId: context.id,
+                  changeKind: 'usage-session-upsert',
+                  eventId: createReplicationEventId(),
+                  factKey: `usage-session:${sessionName}`,
+                  generation: parseReplicationGeneration(generation),
+                  payload: {
+                    harness: 'codex',
+                    kind: 'usage-session-upsert',
+                    model: 'gpt-5',
+                    observedAt,
+                    projectId: null,
+                    sourceFingerprint: 'f'.repeat(64),
+                    sourceSessionId: sessionName,
+                    status: 'active',
+                    tokenTotal: 10,
+                  },
+                }),
+              ],
+              fromGenerationExclusive: parseReplicationGeneration(generation - 1),
+              streamId: USAGE_REPLICATION_STREAM_ID,
+              toGenerationInclusive: parseReplicationGeneration(generation),
+            }),
+          });
+        const serverState = async () => ({
+          acceptedGenerations: await database.queryRowCount(
+            'SELECT 1 FROM replication_stream_states WHERE device_id = $1 AND accepted_through_generation = 1',
+            [owner.deviceId],
+          ),
+          batchReceipts: await database.queryRowCount('SELECT 1 FROM replication_batch_receipts WHERE device_id = $1', [
+            owner.deviceId,
+          ]),
+          eventReceipts: await database.queryRowCount('SELECT 1 FROM replication_event_receipts WHERE device_id = $1', [
+            owner.deviceId,
+          ]),
+          organizationProjections: await database.queryRowCount(
+            'SELECT 1 FROM replicated_fact_projections WHERE space_id = $1',
+            [organizationSpaceId],
+          ),
+          personalProjections: await database.queryRowCount(
+            'SELECT 1 FROM replicated_fact_projections WHERE space_id = $1',
+            [personalSpaceId],
+          ),
+        });
+
+        const organizationContext = contextIn(organizationSpaceId);
+        expect(await publish(organizationContext, 1, 'before-suspension')).toMatchObject({
+          ack: { acceptedThroughGeneration: 1 },
+          kind: 'ack',
+        });
+        const publishedState = {
+          acceptedGenerations: 1,
+          batchReceipts: 1,
+          eventReceipts: 1,
+          organizationProjections: 1,
+          personalProjections: 0,
+        };
+        expect(await serverState()).toEqual(publishedState);
+
+        // The owner is suspended after the Device authenticated. Its membership,
+        // Device, and credential stay in place, yet neither the organization nor
+        // the personal Space may receive facts, and the rejected batches leave no
+        // receipt, Capture Context, projection, or generation change behind.
+        await database.query("UPDATE people SET status = 'suspended' WHERE id = $1", [owner.personId]);
+        await expect(devices.authenticateDevice(owner.token)).resolves.toMatchObject({
+          error: { code: 'identity-revoked' },
+          kind: 'error',
+        });
+        const suspendedOrganizationContext = contextIn(organizationSpaceId);
+        const suspendedPersonalContext = contextIn(personalSpaceId);
+        expect(await publish(suspendedOrganizationContext, 2, 'suspended-organization')).toEqual({
+          kind: 'problem',
+          problem: { code: 'revoked' },
+        });
+        expect(await publish(suspendedPersonalContext, 2, 'suspended-personal')).toEqual({
+          kind: 'problem',
+          problem: { code: 'revoked' },
+        });
+        expect(await serverState()).toEqual(publishedState);
+        expect(
+          await database.queryRowCount('SELECT 1 FROM capture_contexts WHERE id = ANY($1::UUID[])', [
+            [suspendedOrganizationContext.id, suspendedPersonalContext.id],
+          ]),
+        ).toBe(0);
+
+        await database.query("UPDATE people SET status = 'active' WHERE id = $1", [owner.personId]);
+        await expect(devices.authenticateDevice(owner.token)).resolves.toMatchObject({ kind: 'success' });
+        expect(await publish(suspendedOrganizationContext, 2, 'after-reactivation')).toMatchObject({
+          ack: { acceptedThroughGeneration: 2 },
+          kind: 'ack',
+        });
+        expect(await serverState()).toEqual({
+          acceptedGenerations: 0,
+          batchReceipts: 2,
+          eventReceipts: 2,
+          organizationProjections: 2,
+          personalProjections: 0,
+        });
       } finally {
         await database.close().catch(() => undefined);
         await store.close().catch(() => undefined);

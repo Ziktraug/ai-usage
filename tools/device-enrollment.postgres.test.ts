@@ -130,5 +130,69 @@ if (runPostgresTests) {
         await cluster.stop();
       }
     }, 30_000);
+
+    test('refuses a Device credential while its owner Person is suspended', async () => {
+      const cluster = await startPostgresCluster('device-enrollment-suspended-owner');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const database = createPlatformTestingDatabase(cluster.url);
+      try {
+        const personId = createPersonId();
+        const spaceId = createSpaceId();
+        const observedAt = instantNow(() => new Date('2026-08-29T12:00:00.000Z'));
+        await store.identity.createPersonalIdentity({
+          person: { displayName: 'Suspended owner', id: personId, personalSpaceId: spaceId, status: 'active' },
+          space: { createdAt: observedAt, displayName: 'Suspended personal', id: spaceId, kind: 'personal' },
+        });
+        const tokenKey = createDeploymentTokenKey(Buffer.alloc(32, 12).toString('base64url'), 7);
+        const service = createDeviceEnrollmentService({
+          authorizer: store.authorization,
+          clock: () => new Date('2026-08-29T12:00:00.000Z'),
+          keyRing: createDeploymentTokenKeyRing([tokenKey], 7),
+          store: store.devices,
+        });
+        const grant = await service.requestEnrollmentGrant({
+          context: { activeSpaceId: spaceId, trustedDevice: false },
+          label: 'Suspended owner laptop',
+          principal: { kind: 'person', personId },
+        });
+        if (grant.kind !== 'success') {
+          throw new Error('Expected enrollment grant creation to succeed.');
+        }
+        const exchanged = await service.exchangeEnrollmentGrant(grant.value.token);
+        if (exchanged.kind !== 'success') {
+          throw new Error('Expected enrollment exchange to succeed.');
+        }
+        await expect(service.authenticateDevice(exchanged.value.token)).resolves.toMatchObject({ kind: 'success' });
+
+        // Suspension keeps the Device, its credential, and any memberships in
+        // place; the credential must still stop working exactly like a revoked
+        // Device so the client ends in a blocked stream rather than a retry loop.
+        await database.query("UPDATE people SET status = 'suspended' WHERE id = $1", [personId]);
+        await expect(service.authenticateDevice(exchanged.value.token)).resolves.toMatchObject({
+          error: { code: 'identity-revoked' },
+          kind: 'error',
+        });
+        expect(
+          await database.queryRowCount(
+            "SELECT 1 FROM devices WHERE id = $1 AND status = 'active' AND last_seen_at IS NULL",
+            [exchanged.value.device.id],
+          ),
+        ).toBe(1);
+
+        await database.query("UPDATE people SET status = 'active' WHERE id = $1", [personId]);
+        await expect(service.authenticateDevice(exchanged.value.token)).resolves.toMatchObject({ kind: 'success' });
+      } finally {
+        await database.close().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
   });
 }

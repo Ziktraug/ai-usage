@@ -155,7 +155,9 @@ The request Device must equal the authenticated active Device.
 
 One PostgreSQL transaction:
 
-1. locks and rechecks the active Device credential and Device;
+1. locks and rechecks the active Device credential, the active Device, and
+   the active owner Person; a suspended owner is answered with `revoked`,
+   exactly like credential verification does, whatever Space the batch names;
 2. validates every explicit Capture Context and current identity/Project/SCM
    binding, and requires contribution authority for its Space: the personal
    Space owner, an active `admin`/`member` organization membership for a

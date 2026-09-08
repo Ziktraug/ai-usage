@@ -290,6 +290,7 @@ export const createPlatformDeviceStore = (pool: Pool): PlatformDeviceStore => ({
            UPDATE device_credentials credential
            SET last_used_at = $5
            FROM devices device
+           INNER JOIN people owner ON owner.id = device.owner_person_id
            WHERE credential.id = $1
              AND credential.public_token_id = $2
              AND credential.keyed_digest = $3
@@ -298,6 +299,7 @@ export const createPlatformDeviceStore = (pool: Pool): PlatformDeviceStore => ({
              AND device.id = credential.device_id
              AND device.space_id = credential.space_id
              AND device.status = 'active'
+             AND owner.status = 'active'
            RETURNING credential.id
          )
          ${credentialSelection}

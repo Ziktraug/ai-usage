@@ -94,7 +94,10 @@ label. `Authorizer.manage_device` is checked before creation and again inside
 the PostgreSQL mutation. Exchange verifies/consumes the grant and creates the
 Device plus a distinct credential in one transaction; concurrent exchanges
 produce exactly one Device. Authentication updates last-seen metadata only
-after verifier and lifecycle checks. List, rename, rotate, revoke-one, and
+after verifier and lifecycle checks; those checks include the owner Person, so
+a suspended owner makes an otherwise valid credential answer `identity-revoked`
+(HTTP `revoked`) until the Person is active again, without revoking the Device
+or its credential. List, rename, rotate, revoke-one, and
 revoke-all remain authorization-scoped. Rotation revokes the old credential
 and inserts the new one atomically. Revocation happens before any future ingest
 authorization, while historical Device rows remain readable.

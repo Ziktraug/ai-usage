@@ -195,12 +195,14 @@ const credentialIsCurrent = async (
      FROM device_credentials credential
      INNER JOIN devices device
        ON device.id = credential.device_id AND device.space_id = credential.space_id
+     INNER JOIN people owner ON owner.id = device.owner_person_id
      WHERE credential.id = $1
        AND credential.device_id = $2
        AND credential.space_id = $3
        AND credential.revoked_at IS NULL
        AND device.owner_person_id = $4
        AND device.status = 'active'
+       AND owner.status = 'active'
      FOR UPDATE OF credential, device`,
     [
       input.authenticatedCredentialId,
@@ -234,11 +236,13 @@ const authorizeSpaceContext = async (client: PoolClient, context: CaptureContext
            SELECT 1
            FROM organizations organization
            INNER JOIN space_memberships membership ON membership.space_id = organization.space_id
+           INNER JOIN people member ON member.id = membership.person_id
            WHERE organization.space_id = space.id
              AND organization.status = 'active'
              AND membership.person_id = $2
              AND membership.status = 'active'
              AND membership.role IN ('admin', 'member')
+             AND member.status = 'active'
          )
        )`,
     [context.spaceId, context.personId],
