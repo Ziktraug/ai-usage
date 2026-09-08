@@ -59,6 +59,16 @@ row only from the complete authenticated snapshot in the request, in the same
 transaction that rechecks the active credential, Device owner, Space, optional
 Project, and SCM bindings.
 
+That default context targets the Device's owning Space exactly as the server
+returns it: the personal Space for a self-enrolled Device, or the organization
+Space for a Device an organization admin enrolled there, so such a Device
+publishes its usage facts and normal non-Project Memory into that organization
+by default. Sensitive Memory and Project-scoped Memory never publish by
+default, and installing an organization-enrolled credential is the operator's
+explicit opt-in to that target. Whether an organization-owned Device should
+instead default to personal-only publication is the open Target-Space decision
+tracked in [`future-work.md`](future-work.md).
+
 ## Protocol identities and payload policy
 
 `@ai-usage/replication-protocol` is a strict, IO-free version-1 contract. Every
@@ -104,8 +114,8 @@ Only a contiguous prefix after the last ACK can be claimed. A process restart
 deterministically returns every abandoned `in-flight` row to `pending` before
 new claims. Network errors, server unavailability, and rate limiting schedule a
 bounded retry; authentication, revocation, Capture Context, version, generation,
-and identity conflicts remain visibly blocked. Acknowledged events never return
-to pending and their payload or identity is never rewritten.
+identity, and fact-owner conflicts remain visibly blocked. Acknowledged events
+never return to pending and their payload or identity is never rewritten.
 
 The local status model contains pending/in-flight/acknowledged/blocked counts,
 oldest unacknowledged time, next retry, last bounded error code, last ACK time,
@@ -155,7 +165,9 @@ One PostgreSQL transaction:
 3. serializes a Device/stream with an advisory transaction lock;
 4. checks batch/event identity, previous ACK proof, overlap, and generation;
 5. inserts immutable batch and event receipts;
-6. upserts or tombstones the current projection by `fact_key`;
+6. upserts or tombstones the current projection by `fact_key`, bound to the
+   Device that first published it: a fact key another Device already owns in
+   that Space is a `fact-owner-conflict`, whatever Project the batch names;
 7. advances stream state and stores the reconstructible bounded ACK.
 
 An owner-Space event-identity registry keeps Device/stream event IDs visible to
@@ -166,9 +178,13 @@ Contexts materialized while validating the batch.
 The ACK is returned only after commit. An exact duplicate returns the stored
 ACK. Reusing an event or batch identity with different canonical content is a
 conflict and writes nothing. Gaps and disagreeing overlap write nothing. A
-commit followed by a lost response is safe because the client retries the same
-batch. Content-free metrics expose only outcome, stream, event count, and a
-closed problem code.
+batch that touches a fact key owned by another Device writes nothing, blocks
+the stream, and needs an operator: fact keys are client-chosen, so ownership
+rather than the fact key is the fence between Devices in one Space. The same
+Device may still correct, re-assign to another Project, or tombstone its own
+fact. A commit followed by a lost response is safe because the client retries
+the same batch. Content-free metrics expose only outcome, stream, event count,
+and a closed problem code.
 
 Generation, active credential state, Capture Context authorization, immutable
 identities, and idempotency bound replay. They do not make a copied live Device
@@ -202,6 +218,6 @@ bun run test:local-platform
 ```
 
 The PostgreSQL suite covers exact and concurrent duplicates, correction,
-tombstone, gap/overlap/conflict, all-or-nothing apply, revocation, bounded HTTP,
-SQLite-to-HTTP-to-PostgreSQL ACK, and continuity while another Device is
-offline.
+tombstone, gap/overlap/conflict, fact ownership across Devices, all-or-nothing
+apply, revocation, bounded HTTP, SQLite-to-HTTP-to-PostgreSQL ACK, and
+continuity while another Device is offline.

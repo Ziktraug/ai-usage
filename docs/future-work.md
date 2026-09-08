@@ -160,9 +160,16 @@ and authorization stays application-owned (ADR 0029).
   `packages/postgres-store/src/internal/authorization-query.ts`).
   Impact: an organization admin cannot see or revoke a Device that publishes
   facts into their Space.
+  The same gap has a client side: the default `personal-fallback` Capture
+  Context (`apps/usage-engine/src/replication-runtime.ts`) targets the
+  Device's owning Space as returned by the server, so a Device enrolled into an
+  organization Space publishes its default usage facts and normal non-Project
+  Memory there rather than into the owner's personal Space.
   Acceptance: an ADR deciding whether publication into a Space requires a
   Space-visible Device binding with admin revocation, or is limited to the
-  Device's own Space; list and ingest tests on both sides of the decision.
+  Device's own Space, and whether default publication for an
+  organization-owned Device stays in its owning Space or must be personal-only;
+  list and ingest tests on both sides of the decision.
 - `propose_memory` at Space scope includes auditor memberships.
   Problem: `spaceScopeSql` in
   `packages/postgres-store/src/internal/authorization-query.ts` uses an
