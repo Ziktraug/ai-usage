@@ -31,6 +31,9 @@ const multilineGuidance = ['First line\nSecond line'];
 const deepStructuredContent = { nodes: Array.from({ length: 9990 }, () => 0) };
 // Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
 const nul = String.fromCharCode(0);
+// Valid Memory JSON that fits the event and its stored envelope but not the batch envelope around
+// a single event; without the batch check it would enter the outbox and block the stream.
+const batchOversizedStructuredContent = { nodes: Array.from({ length: 9960 }, () => 0) };
 
 const openServiceFixture = async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-memory-replication-service-'));
@@ -494,6 +497,65 @@ describe('local Memory replication backfill', () => {
         unchanged: 1,
         unpublishable: 1,
       });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test('keeps an item that fits an event but not a batch local, and keeps publishing behind it', async () => {
+    const fixture = await openServiceFixture();
+    try {
+      await fixture.configure('2026-08-30T09:00:00.000Z');
+      fixture.advance('2026-08-30T09:10:00.000Z');
+      const accepted = await fixture.accept(
+        'Batch-oversized decision',
+        ['Keep the structure.'],
+        batchOversizedStructuredContent,
+      );
+      if (accepted.kind !== 'success') {
+        throw new Error('Batch-oversized acceptance failed.');
+      }
+      expect(fixture.kernel.replication.status()).toMatchObject({ blocked: 0, pending: 0 });
+      expect(fixture.auditRows('replication-skipped-oversized')).toEqual([
+        { actor_kind: 'person', result: 'rejected', subject_id: accepted.value.item.id, subject_type: 'memory-item' },
+      ]);
+      expect(fixture.auditRows('replication-skipped-invalid-payload')).toEqual([]);
+
+      fixture.advance('2026-08-30T09:20:00.000Z');
+      const regular = await fixture.accept('Regular decision', ['Publish normally.']);
+      if (regular.kind !== 'success') {
+        throw new Error('Regular acceptance failed.');
+      }
+      expect(fixture.kernel.replication.status()).toMatchObject({ blocked: 0, pending: 1 });
+      const claimed = fixture.kernel.replication.claimReady({
+        maximumEvents: 100,
+        now: parseInstant('2026-08-30T09:21:00.000Z'),
+      });
+      expect(claimed?.batch.events.map(({ factKey }) => factKey)).toEqual([`memory-item:${regular.value.item.id}`]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test('configures replication over a stored item that fits an event but not a batch with a count', async () => {
+    const fixture = await openServiceFixture();
+    try {
+      const accepted = await fixture.accept(
+        'Stored batch-oversized decision',
+        ['Keep the structure.'],
+        batchOversizedStructuredContent,
+      );
+      expect(accepted.kind).toBe('success');
+      expect(await fixture.configure('2026-08-30T09:30:00.000Z')).toEqual({
+        backfilled: 0,
+        nextCursor: null,
+        unchanged: 0,
+        unpublishable: 1,
+      });
+      expect(fixture.kernel.replication.status()).toMatchObject({ blocked: 0, pending: 0, streamId: 'memory-v1' });
+      expect(
+        fixture.kernel.replication.claimReady({ maximumEvents: 100, now: parseInstant('2026-08-30T09:31:00.000Z') }),
+      ).toBeNull();
     } finally {
       await fixture.close();
     }

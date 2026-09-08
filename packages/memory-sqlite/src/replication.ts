@@ -24,13 +24,16 @@ import {
 import {
   type CaptureContextSnapshot,
   canonicalReplicationJson,
+  createReplicationBatch,
   createReplicationEvent,
   MEMORY_REPLICATION_STREAM_ID,
   parseCaptureContextSnapshot,
+  parseReplicationBatchId,
   parseReplicationEventId,
   parseReplicationGeneration,
   parseReplicationJsonValue,
   parseReplicationPayload,
+  type ReplicationEvent,
   type ReplicationPayload,
   ReplicationProtocolError,
   replicationBounds,
@@ -363,23 +366,26 @@ export type MemoryReplicationCandidate =
  * is enqueued. Memory validation admits documents the V1 protocol refuses: text with control
  * characters, payloads over `replicationBounds.payloadBytes`, and JSON beyond the canonical
  * visitor's node and depth caps, which also count the event and stored-envelope nodes around the
- * payload. Such a fact stays authoritative locally and is not published: the live path records the
- * refusal in the Memory audit log and the backfill counts it as `unpublishable`. A protocol error
- * never escapes; the byte bound reads as `oversized`, every other refusal as `invalid-payload`.
+ * payload, and the batch envelope around a single event. Such a fact stays authoritative locally
+ * and is not published: the live path records the refusal in the Memory audit log and the backfill
+ * counts it as `unpublishable`. A protocol error never escapes; the payload byte bound and a batch
+ * that cannot hold the event read as `oversized`, every other refusal as `invalid-payload`.
  */
 export const prepareMemoryReplicationPayload = (
   context: CaptureContextSnapshot,
   factKey: string,
   build: () => ReplicationPayload,
 ): MemoryReplicationCandidate => {
+  let payload: ReplicationPayload;
+  let event: ReplicationEvent;
   try {
-    const payload = parseReplicationPayload(build());
+    payload = parseReplicationPayload(build());
     if (new TextEncoder().encode(canonicalReplicationJson(payload)).byteLength > replicationBounds.payloadBytes) {
       return { kind: 'refused', reason: 'oversized' };
     }
     // Mirror the outbox: the event (content hash, payload bound) and the stored envelope are
     // canonicalized as whole values, so their own nodes count against the visitor's cap.
-    createReplicationEvent({
+    event = createReplicationEvent({
       captureContextId: context.id,
       changeKind: payload.kind,
       eventId: replicationEventIdForSeed({ captureContextId: context.id, factKey, payload }),
@@ -388,14 +394,39 @@ export const prepareMemoryReplicationPayload = (
       payload,
     });
     canonicalReplicationJson({ captureContext: context, payload });
-    return { kind: 'publishable', payload };
   } catch (error) {
     if (error instanceof ReplicationProtocolError) {
       return { kind: 'refused', reason: 'invalid-payload' };
     }
     throw error;
   }
+  // A claim wraps the event in a batch whose envelope (ids, generation range, previous ACK proof,
+  // idempotency key, protocol version) is hashed through the same node and byte caps, so an event
+  // that validates on its own can still be unclaimable and would block every later event. The
+  // placeholder envelope is at least as wide as a real one in nodes: an ACK proof is present, and
+  // wider generation numbers only add bytes, where a single event stays far below the batch cap.
+  try {
+    createReplicationBatch({
+      batchId: placeholderBatchId,
+      captureContexts: [context],
+      deviceId: context.deviceId,
+      events: [event],
+      fromGenerationExclusive: parseReplicationGeneration(0),
+      previousAckProof: placeholderAckProof,
+      streamId: MEMORY_REPLICATION_STREAM_ID,
+      toGenerationInclusive: parseReplicationGeneration(1),
+    });
+  } catch (error) {
+    if (error instanceof ReplicationProtocolError) {
+      return { kind: 'refused', reason: error.code === 'bounds-exceeded' ? 'oversized' : 'invalid-payload' };
+    }
+    throw error;
+  }
+  return { kind: 'publishable', payload };
 };
+
+const placeholderBatchId = parseReplicationBatchId('00000000-0000-4000-8000-000000000000');
+const placeholderAckProof = 'f'.repeat(64);
 
 // The live path mints a random event id per publication while the backfill derives a
 // deterministic one, so event identity alone cannot tell a restart from a change. The outbox is
