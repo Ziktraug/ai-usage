@@ -14,6 +14,7 @@ import {
   parseReplicationAck,
   parseReplicationBatchId,
   parseReplicationEvent,
+  parseReplicationEventId,
   parseReplicationGeneration,
   parseReplicationPayload,
   parseReplicationStreamId,
@@ -236,8 +237,82 @@ const batchEnvelopeReserveBytes = 1024;
 /** `last_error_code` recorded on an event that cannot fit a batch on its own. */
 export const REPLICATION_OUTBOX_OVERSIZED_EVENT_ERROR_CODE = 'event-oversized';
 
+/**
+ * `last_error_code` recorded on a stored event whose payload or capture context the current
+ * protocol refuses (written by an older writer under a looser contract).
+ */
+export const REPLICATION_OUTBOX_STORED_PAYLOAD_INVALID_ERROR_CODE = 'stored-payload-invalid';
+
 const canonicalByteLength = (value: unknown): number =>
   new TextEncoder().encode(canonicalReplicationJson(value)).byteLength;
+
+const isStoredValueError = (error: unknown): error is ReplicationOutboxError =>
+  error instanceof ReplicationOutboxError && error.code === 'stored-value-invalid';
+
+// A stored row the current protocol cannot map would make every claim and recovery throw at it
+// forever. Block it visibly instead, keeping its identities and generation; a row that is already
+// blocked is left untouched, so the outcome is idempotent.
+const blockStoredInvalidRow = (database: ReplicationSqliteDatabase, row: EventRow): void => {
+  if (row.state === 'blocked') {
+    return;
+  }
+  if (
+    changes(
+      database
+        .query(
+          `UPDATE replication_outbox_events
+           SET state = 'blocked', next_attempt_at = NULL, last_error_code = ?
+           WHERE event_id = ? AND state IN ('pending', 'in-flight')`,
+        )
+        .run(REPLICATION_OUTBOX_STORED_PAYLOAD_INVALID_ERROR_CODE, requiredString(row.event_id, 'eventId')),
+    ) !== 1
+  ) {
+    throw new ReplicationOutboxError('batch-state-conflict', 'block-stored-payload');
+  }
+};
+
+// Exhaustive over the protocol's closed union: a new payload kind fails to compile here.
+const changeKinds: Record<ReplicationChangeKind, true> = {
+  'checkout-fact-tombstone': true,
+  'checkout-fact-upsert': true,
+  'device-fact-upsert': true,
+  'memory-fact-tombstone': true,
+  'memory-item-revision-upsert': true,
+  'memory-observation-upsert': true,
+  'memory-proposal-upsert': true,
+  'memory-relation-upsert': true,
+  'usage-session-tombstone': true,
+  'usage-session-upsert': true,
+};
+
+const isChangeKind = (value: string): value is ReplicationChangeKind => Object.hasOwn(changeKinds, value);
+
+// History never needs the payload, so it is read from the indexed columns alone and stays
+// available while a stored row the protocol refuses is blocked.
+const mapHistoryRow = (row: EventRow): ReplicationOutboxHistoryItem => {
+  try {
+    const changeKind = requiredString(row.change_kind, 'changeKind');
+    const contentHash = requiredString(row.content_hash, 'contentHash');
+    if (!(isChangeKind(changeKind) && hashPattern.test(contentHash))) {
+      throw new ReplicationOutboxError('stored-value-invalid', 'read-history-row');
+    }
+    return Object.freeze({
+      acknowledgedAt: optionalInstant(row.acknowledged_at, 'acknowledgedAt'),
+      changeKind,
+      contentHash,
+      enqueuedAt: parseInstant(row.enqueued_at, 'enqueuedAt'),
+      eventId: parseReplicationEventId(row.event_id),
+      factKey: requiredString(row.fact_key, 'factKey'),
+      generation: requiredInteger(row.generation, 'generation', 1),
+      state: eventState(row.state),
+    });
+  } catch (error) {
+    if (error instanceof ReplicationOutboxError) {
+      throw error;
+    }
+    throw new ReplicationOutboxError('stored-value-invalid', 'map-history');
+  }
+};
 
 const changes = (result: unknown): number => {
   if (
@@ -557,15 +632,32 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
   const recoverInFlight = (_recoveredAt: Instant): number =>
     withImmediateTransaction(database, () => {
       ensureIdentity(database);
-      return changes(
-        database
-          .query(
-            `UPDATE replication_outbox_events
-             SET state = 'pending', next_attempt_at = NULL, last_error_code = 'lease-recovered'
-             WHERE state = 'in-flight'`,
-          )
-          .run(),
-      );
+      // At most one batch is ever in flight, so the per-row mapping stays bounded.
+      const rows = database
+        .query(`${eventSelection} WHERE state = 'in-flight' ORDER BY generation ASC`)
+        .all() as EventRow[];
+      let recovered = 0;
+      for (const row of rows) {
+        try {
+          mapEventRow(row);
+        } catch (error) {
+          if (!isStoredValueError(error)) {
+            throw error;
+          }
+          blockStoredInvalidRow(database, row);
+          continue;
+        }
+        recovered += changes(
+          database
+            .query(
+              `UPDATE replication_outbox_events
+               SET state = 'pending', next_attempt_at = NULL, last_error_code = 'lease-recovered'
+               WHERE event_id = ? AND state = 'in-flight'`,
+            )
+            .run(requiredString(row.event_id, 'eventId')),
+        );
+      }
+      return recovered;
     });
 
   const claimReady = (input: ClaimReplicationBatchInput): ClaimedReplicationBatch | null =>
@@ -620,7 +712,17 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
       let initialAttemptCount: number | undefined;
       let estimatedBytes = batchEnvelopeReserveBytes;
       for (const row of rows) {
-        const record = mapEventRow(row);
+        let record: ReplicationOutboxEventRecord;
+        try {
+          record = mapEventRow(row);
+        } catch (error) {
+          if (!isStoredValueError(error)) {
+            throw error;
+          }
+          // The valid prefix ahead of the row is still claimed; the row itself stays visible.
+          blockStoredInvalidRow(database, row);
+          break;
+        }
         if (record.event.generation !== expectedGeneration) {
           throw new ReplicationOutboxError('batch-state-conflict', 'claim-generation-gap');
         }
@@ -868,19 +970,7 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
     }
     ensureIdentity(database);
     const rows = database.query(`${eventSelection} ORDER BY generation DESC LIMIT ?`).all(limit) as EventRow[];
-    return rows.map((row) => {
-      const record = mapEventRow(row);
-      return Object.freeze({
-        acknowledgedAt: record.acknowledgedAt,
-        changeKind: record.event.changeKind,
-        contentHash: record.event.contentHash,
-        enqueuedAt: record.enqueuedAt,
-        eventId: record.event.eventId,
-        factKey: record.event.factKey,
-        generation: record.event.generation,
-        state: record.state,
-      });
-    });
+    return rows.map(mapHistoryRow);
   };
 
   return Object.freeze({

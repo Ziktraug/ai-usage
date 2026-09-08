@@ -354,6 +354,70 @@ describe('SQLite replication outbox', () => {
     database.close();
   });
 
+  test('blocks a stored event the current protocol refuses instead of failing every claim and recovery', () => {
+    const { database, outbox } = createOutbox();
+    // A row written by an older writer, before the protocol refused U+0000 in JSON text. The NUL is
+    // built at runtime so no editor or formatter can flatten it into whitespace.
+    const nul = String.fromCharCode(0);
+    const insertLegacyRow = (eventId: string, generation: number, state: 'in-flight' | 'pending') => {
+      database
+        .query(
+          `INSERT INTO replication_outbox_events
+             (event_id, generation, fact_key, content_hash, change_kind, payload, state,
+              enqueued_at, attempt_count, next_attempt_at, last_error_code, acknowledged_at)
+           VALUES (?, ?, ?, ?, 'memory-item-revision-upsert', ?, ?, ?, 0, NULL, NULL, NULL)`,
+        )
+        .run(
+          eventId,
+          generation,
+          `memory-item:${itemId}`,
+          'a'.repeat(64),
+          JSON.stringify({
+            captureContext,
+            payload: {
+              ...payload(revisionOneId, generation, `Legacy ${generation}`),
+              structuredContent: { value: `a${nul}b` },
+            },
+          }),
+          state,
+          instant,
+        );
+      database.query('UPDATE replication_outbox_state SET next_generation = ? WHERE singleton = 1').run(generation + 1);
+    };
+
+    enqueue(outbox, '20000000-0000-4000-8000-000000000009', revisionOneId, 1, 'Initial');
+    insertLegacyRow('20000000-0000-4000-8000-0000000000e1', 2, 'pending');
+    const prefix = outbox.claimReady({ maximumEvents: 100, now: instant });
+    if (!prefix) {
+      throw new Error('expected the valid prefix to be claimed');
+    }
+    expect(prefix.batch.events.map(({ generation }) => Number(generation))).toEqual([1]);
+    expect(outbox.status()).toMatchObject({
+      blocked: 1,
+      inFlight: 1,
+      lastErrorCode: 'stored-payload-invalid',
+      pending: 0,
+    });
+    outbox.acknowledge(prefix.batch, ackFor(prefix.batch));
+    expect(outbox.claimReady({ maximumEvents: 100, now: later })).toBeNull();
+    expect(outbox.claimReady({ maximumEvents: 100, now: later })).toBeNull();
+    expect(outbox.listHistory()).toEqual([
+      expect.objectContaining({ generation: 2, state: 'blocked' }),
+      expect.objectContaining({ generation: 1, state: 'acknowledged' }),
+    ]);
+
+    insertLegacyRow('20000000-0000-4000-8000-0000000000e2', 3, 'in-flight');
+    expect(outbox.recoverInFlight(later)).toBe(0);
+    expect(outbox.status()).toMatchObject({
+      blocked: 2,
+      inFlight: 0,
+      lastErrorCode: 'stored-payload-invalid',
+      pending: 0,
+    });
+    expect(outbox.listHistory()[0]).toMatchObject({ generation: 3, state: 'blocked' });
+    database.close();
+  });
+
   test('rejects a stored identity change', () => {
     const { database, outbox } = createOutbox();
     expect(() =>
