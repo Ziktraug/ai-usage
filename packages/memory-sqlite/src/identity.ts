@@ -60,6 +60,7 @@ import {
   localMemoryImportStateSchema,
   localMemoryProposalAcceptanceLinkUpgrade,
   localMemoryReplicationPublicationSchema,
+  localMemoryRepositoryProviderIdentityIndexRebuild,
   localMemorySearchSchema,
 } from './schema';
 
@@ -368,6 +369,14 @@ const bootstrapDatabase = (database: Database, options: OpenLocalIdentityKernelO
     }
     if (version < 5 && version >= 2) {
       migrateLegacyMemoryReplicationOutbox(database, createdAt);
+    }
+    if (!isNewDatabase && version < 6) {
+      // Version 5 was persisted with two definitions of this index (see
+      // schema.ts). A new database already carries the Space-scoped form;
+      // every older store is rebuilt from the same constant. Uniqueness on the
+      // wider key follows from uniqueness on the narrower one, so the rebuild
+      // cannot fail on stored rows.
+      database.exec(localMemoryRepositoryProviderIdentityIndexRebuild);
     }
     database.exec(localMemoryReplicationPublicationSchema);
     database.exec(`PRAGMA user_version = ${LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION}`);

@@ -1,6 +1,25 @@
 import { replicationOutboxSchemaSql } from '@ai-usage/replication-outbox';
 
-export const LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION = 5;
+export const LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION = 6;
+
+/**
+ * Version 5 shipped under one `user_version` with two definitions of this
+ * index: `(provider, provider_repository_id)` before commit b949af04 and the
+ * Space-scoped form below after it. `bootstrapDatabase` returns early when the
+ * stored version already matches, so a store created by the earlier form kept
+ * it. Version 6 rebuilds the index from this single definition; the identity
+ * schema and the rebuild step must keep reading the same constant.
+ */
+export const localMemoryRepositoryProviderIdentityIndexSql = `
+  CREATE UNIQUE INDEX repositories_provider_identity_unique
+    ON repositories (space_id, provider, provider_repository_id)
+    WHERE provider_repository_id IS NOT NULL;
+`;
+
+export const localMemoryRepositoryProviderIdentityIndexRebuild = `
+  DROP INDEX IF EXISTS repositories_provider_identity_unique;
+  ${localMemoryRepositoryProviderIdentityIndexSql}
+`;
 
 export const localMemoryReplicationPublicationSchema = `
   CREATE TABLE IF NOT EXISTS replication_publication_contexts (
@@ -58,9 +77,7 @@ export const localMemoryIdentitySchema = `
     UNIQUE (id, space_id)
   ) STRICT;
 
-  CREATE UNIQUE INDEX repositories_provider_identity_unique
-    ON repositories (space_id, provider, provider_repository_id)
-    WHERE provider_repository_id IS NOT NULL;
+  ${localMemoryRepositoryProviderIdentityIndexSql}
 
   CREATE TABLE repository_aliases (
     id TEXT PRIMARY KEY,
