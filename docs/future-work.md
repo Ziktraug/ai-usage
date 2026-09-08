@@ -211,6 +211,18 @@ and authorization stays application-owned (ADR 0029).
   Acceptance: a chunked or referenced publication form under the same
   idempotent event identity, or a documented Memory size ceiling equal to the
   payload bound, decided with the protocol version.
+- Replication payload rules narrower than the Memory domain contract.
+  Problem: the protocol's bounded text refuses every control character (so a
+  multiline guidance entry is `invalid-value`) and its canonical JSON visitor
+  caps one value at 10 000 nodes and depth 32, while Memory accepts multiline
+  guidance and up to 256 KiB of structured content; such items are accepted
+  locally, refused for publication, and recorded in the Memory audit log and
+  in the configure result.
+  Impact: ordinary multi-line guidance never reaches the shared Space.
+  Acceptance: a protocol revision that admits newline and tab in guidance and
+  summary text and states the node budget per event, applied on both sides of
+  the wire with the same fixtures, or a documented Memory ceiling equal to the
+  protocol's.
 - MCP registration beyond Codex and `mcpServers` JSON files.
   Problem: `apps/mcp/src/register.ts` supports `codex` and a `.mcp.json` /
   `mcp.json` `mcpServers` file; OpenCode has no mode.

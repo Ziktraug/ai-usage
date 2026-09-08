@@ -207,16 +207,21 @@ plus preview/confirm repair controls for a blocked stream, is not exposed
 either; plan 107 therefore remains in progress, and
 [`future-work.md`](future-work.md) tracks all three.
 
-Memory validation admits larger documents (64 guidance entries, 256 KiB of
-structured content) than the V1 payload bound carries (64 KiB,
-`replicationBounds.payloadBytes`). A Memory item whose replication payload
-would exceed that bound is accepted locally and not published: the local
-mutation stays authoritative, the live path records a
-`replication-skipped-oversized` row in the Memory audit log (subject
+Memory validation admits documents the V1 payload contract refuses: text with
+control characters (a multi-line guidance entry), payloads over 64 KiB
+(`replicationBounds.payloadBytes`; Memory allows 64 guidance entries and
+256 KiB of structured content), and JSON beyond the canonical visitor's node
+and depth caps. A Memory item whose replication payload the protocol refuses is
+accepted locally and not published: the local mutation stays authoritative, the
+live path records a `replication-skipped-oversized` or
+`replication-skipped-invalid-payload` row in the Memory audit log (subject
 `memory-item`, result `rejected`, under the acting principal), and the
-configure/backfill result reports it in its `oversized` count instead of
-failing, so neither stream stops. A publication path for larger documents is
-backlog in [`future-work.md`](future-work.md).
+configure/backfill result reports it in its `unpublishable` count instead of
+failing, so neither stream stops. On the outbox side, a claimed batch is
+shortened from its tail until it satisfies every protocol bound, and an event
+that cannot fit a batch on its own is blocked as `event-oversized`, visible in
+the outbox status. A publication path for such documents is backlog in
+[`future-work.md`](future-work.md).
 
 Focused verification:
 
