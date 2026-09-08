@@ -94,6 +94,8 @@ export interface SharedAuthenticationIdentityStore {
     readonly authenticationPrincipalId: string;
     readonly providerSubject: string;
   }) => Promise<boolean>;
+  /** Whether a provider subject maps to an unlinked (revoked) identity, on any principal. */
+  readonly hasRevokedAuthenticationIdentity: (providerSubject: string) => Promise<IdentityServiceResult<boolean>>;
   readonly recordAuthenticationEvent: (input: {
     readonly authenticationIdentityId: AuthenticationIdentityId;
     readonly authenticationPrincipalId: string;
@@ -173,6 +175,13 @@ const revokedSessionRefusal = (): APIError =>
   new APIError('UNAUTHORIZED', {
     code: 'SESSION_EXPIRED',
     message: 'Session expired. Re-authenticate to perform this action.',
+  });
+
+// An unlinked identity cannot be linked again; there is no relink authority yet.
+const revokedIdentityRefusal = (): APIError =>
+  new APIError('BAD_REQUEST', {
+    code: 'IDENTITY_REVOKED',
+    message: 'This identity was unlinked and cannot be linked again.',
   });
 
 interface ResolvedWebSession {
@@ -382,7 +391,7 @@ export const createSharedAuthenticationService = (
           // session check, so the session that started the link is re-validated
           // here: a session revoked in the meantime cannot add a new identity.
           before: async (
-            account: { readonly userId: string },
+            account: { readonly accountId: string; readonly userId: string },
             context?: {
               readonly context: {
                 readonly internalAdapter: {
@@ -402,6 +411,17 @@ export const createSharedAuthenticationService = (
               resolved.authenticationPrincipalId !== account.userId
             ) {
               throw revokedSessionRefusal();
+            }
+            // An unlinked identity stays as a revoked row. Synchronization refuses
+            // any principal owning a provider account that maps to one, and Better
+            // Auth cannot undo the account insertion afterwards, so the relink is
+            // refused here, before the row exists, instead of orphaning it.
+            const revoked = await config.identityStore.hasRevokedAuthenticationIdentity(account.accountId);
+            if (revoked.kind === 'error') {
+              throw new AuthenticationRejectedError();
+            }
+            if (revoked.value) {
+              throw revokedIdentityRefusal();
             }
           },
         },

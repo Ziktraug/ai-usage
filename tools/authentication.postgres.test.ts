@@ -922,5 +922,103 @@ if (runPostgresTests) {
         await cluster.stop();
       }
     }, 30_000);
+
+    test('refuses relinking an unlinked identity before any provider account is written', async () => {
+      const cluster = await startPostgresCluster('shared-authentication-relink');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const pool = new Pool({ connectionString: cluster.url, max: 2 });
+      const service = createSharedAuthenticationService({
+        baseUrl,
+        bootstrapFirstOwner: true,
+        clientId: 'github-client-id',
+        clientSecret: 'github-client-secret',
+        database: store.authentication.database,
+        identityStore: store.authentication,
+        secrets: [{ value: 'auth-secret-with-more-than-thirty-two-characters-v1', version: 1 }],
+      });
+      const subject = { current: '789012' };
+      const oauth = createOAuthFlow(service, subject);
+      const counts = async () => {
+        const result = await pool.query<{
+          readonly accounts: number;
+          readonly active_identities: number;
+          readonly revoked_identities: number;
+        }>(`SELECT
+          (SELECT count(*)::INTEGER FROM authentication_provider_accounts) AS accounts,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NULL) AS active_identities,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NOT NULL)
+            AS revoked_identities`);
+        return result.rows[0];
+      };
+      try {
+        // B is the owner; C is linked, then unlinked, so C's identity row is revoked.
+        const bootstrapSession = await oauth.complete('/api/auth/sign-in/social');
+        subject.current = '345678';
+        await oauth.complete('/api/auth/link-social', bootstrapSession);
+        const accountC = await pool.query<{ readonly id: string }>(
+          "SELECT id FROM authentication_provider_accounts WHERE account_id = '345678'",
+        );
+        const accountCId = accountC.rows[0]?.id;
+        if (!accountCId) {
+          throw new Error("Expected C's provider account.");
+        }
+        subject.current = '789012';
+        const sessionB = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB) {
+          throw new Error('Expected a Web-session cookie created through identity B.');
+        }
+        expect(
+          (await service.handle(postJson('/api/auth/unlink-account', { accountId: accountCId }, sessionB))).status,
+        ).toBe(200);
+        const unlinked = { accounts: 1, active_identities: 1, revoked_identities: 1 };
+        expect(await counts()).toEqual(unlinked);
+
+        // Relinking C with B's valid session is refused before Better Auth writes
+        // the provider-account row, so no orphan can later reject the principal.
+        subject.current = '345678';
+        const relink = await oauth.start('/api/auth/link-social', sessionB);
+        expect(relink.started.status).toBe(200);
+        if (!relink.state) {
+          throw new Error('Expected a relink state.');
+        }
+        const relinkCallback = await oauth.callback(relink.state, [
+          sessionB,
+          cookieHeader(getSetCookies(relink.started)),
+        ]);
+        expect(relinkCallback.headers.get('location')).not.toBe(`${baseUrl}/done`);
+        expect(relinkCallback.status).toBe(400);
+        expect(await relinkCallback.json()).toMatchObject({ code: 'IDENTITY_REVOKED' });
+        expect(await counts()).toEqual(unlinked);
+
+        // B keeps signing in, and unlinking the refused C is an explicit refusal:
+        // only B's account exists, so Better Auth's own last-account check answers.
+        subject.current = '789012';
+        const sessionB2 = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB2) {
+          throw new Error('Expected a second Web-session cookie created through identity B.');
+        }
+        await expect(service.resolveSession(new Headers({ cookie: sessionB2 }))).resolves.toMatchObject({
+          kind: 'authenticated',
+        });
+        const unlinkRefused = await service.handle(
+          postJson('/api/auth/unlink-account', { accountId: accountCId }, sessionB2),
+        );
+        expect(unlinkRefused.status).toBe(400);
+        expect(await unlinkRefused.json()).toMatchObject({ code: 'FAILED_TO_UNLINK_LAST_ACCOUNT' });
+        expect(await counts()).toEqual(unlinked);
+      } finally {
+        oauth.restore();
+        await pool.end().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
   });
 }

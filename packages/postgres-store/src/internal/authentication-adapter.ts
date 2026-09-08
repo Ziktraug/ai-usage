@@ -327,6 +327,19 @@ export const createPlatformAuthenticationStore = (pool: Pool): PlatformAuthentic
         return false;
       }
     },
+    hasRevokedAuthenticationIdentity: async (providerSubject) => {
+      try {
+        const result = await pool.query(
+          `SELECT 1
+           FROM authentication_identities
+           WHERE provider = 'github' AND provider_subject = $1 AND revoked_at IS NOT NULL`,
+          [providerSubject],
+        );
+        return { kind: 'success', value: result.rows.length > 0 };
+      } catch {
+        return identityFailure('link-authentication-identity', 'identity-unavailable');
+      }
+    },
     resolveAuthenticationIdentity: async (authenticationIdentityId) => {
       const result = await pool.query<ResolvedIdentityRow>(
         `SELECT identity.id, identity.person_id, identity.provider
