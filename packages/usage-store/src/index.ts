@@ -2453,6 +2453,21 @@ const usageReplicationOutbox = (db: SqliteDatabase) =>
 const usageSessionFactKey = (deviceId: DeviceId, rowKey: string): string =>
   `usage-session:${replicationHash({ deviceId, rowKey, version: 2 })}`;
 
+// The row key embeds the harness session id verbatim, so a session id the protocol refuses (a
+// control character) leaves the row with no fact key at all: it was never published under any
+// identity, and inventing one would create a fact the server could never reconcile. Such a row is
+// skipped and counted on every cycle, including once deleted. Valid keys hash exactly as before.
+const usageSessionFactKeyIfPublishable = (deviceId: DeviceId, rowKey: string): string | null => {
+  try {
+    return usageSessionFactKey(deviceId, rowKey);
+  } catch (error) {
+    if (error instanceof ReplicationProtocolError) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 const usagePlaceholderBatchId = parseReplicationBatchId('00000000-0000-4000-8000-000000000000');
 const usagePlaceholderAckProof = 'f'.repeat(64);
 
@@ -2610,7 +2625,11 @@ const publishUsageReplicationRows = (
     if (!captureContext) {
       throw new Error('Usage replication capture context is unavailable.');
     }
-    const factKey = usageSessionFactKey(publication.deviceId, rowKey);
+    const factKey = usageSessionFactKeyIfPublishable(publication.deviceId, rowKey);
+    if (factKey === null) {
+      unpublishable += 1;
+      continue;
+    }
     const observedAt = parseInstant(row.updated_at, 'usageSession.observedAt');
     const payload =
       row.status === 'active'

@@ -366,3 +366,61 @@ test('keeps a usage row the protocol refuses local and counted, without stalling
     });
   });
 });
+
+test('keeps a usage row whose session id the protocol refuses local and counted, even once deleted', async () => {
+  await withStorePath(async (dbPath) => {
+    const ordinary = usageRow();
+    // The session id is embedded verbatim in the row key, so even the fact key cannot be hashed.
+    const refused = usageRow(20, { sourceSessionId: `refused${nul}session` });
+    const rows = [ordinary, refused];
+    const assignments = rows.map((row) => ({ captureContext, rowKey: toSerializedMergeRow(row, machine).rowKey }));
+    await Effect.runPromise(importLocalRows({ dbPath, importedAt: capturedAt, machine, rows }));
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(2);
+
+    const input = {
+      assignments,
+      dbPath,
+      deviceId,
+      enqueuedAt: new Date('2026-08-30T11:04:00.000Z'),
+      includeDeviceFact: false,
+    };
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 1,
+      unchanged: 0,
+      unpublishable: 1,
+    });
+    expect(await Effect.runPromise(backfillUsageReplicationOutbox(input))).toEqual({
+      enqueued: 0,
+      unchanged: 1,
+      unpublishable: 1,
+    });
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-08-30T11:05:00.000Z'),
+        machine,
+        replication: { assignments, deviceId },
+        rows: [usageRow(40), usageRow(40, { sourceSessionId: `refused${nul}session` })],
+      }),
+    );
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(2);
+    expect(await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }))).toHaveLength(2);
+
+    // A fact whose key never hashed was never published, so its deletion has nothing to tombstone:
+    // the row stays counted rather than invented under another identity.
+    const store = new Database(dbPath);
+    try {
+      store
+        .query("UPDATE usage_rows SET status = 'deleted', updated_at = ? WHERE row_key = ?")
+        .run('2026-08-30T11:06:00.000Z', toSerializedMergeRow(refused, machine).rowKey);
+    } finally {
+      store.close();
+    }
+    expect(
+      await Effect.runPromise(
+        backfillUsageReplicationOutbox({ ...input, enqueuedAt: new Date('2026-08-30T11:07:00.000Z') }),
+      ),
+    ).toEqual({ enqueued: 0, unchanged: 1, unpublishable: 1 });
+    expect(await Effect.runPromise(listUsageReplicationOutboxHistory({ dbPath }))).toHaveLength(2);
+  });
+});

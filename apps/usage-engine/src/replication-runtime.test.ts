@@ -225,50 +225,57 @@ describe('usage-engine Device replication runtime', () => {
     });
   });
 
-  test('publishes ordinary usage and Memory facts while a usage row the protocol refuses stays local', async () => {
-    await withKernel(async ({ kernel, usageDatabasePath }) => {
-      // Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
-      const nul = String.fromCharCode(0);
-      await Effect.runPromise(
-        importLocalRows({
-          dbPath: usageDatabasePath,
-          importedAt: new Date(occurredAt),
-          machine: { id: 'machine-runtime', label: 'Runtime workstation' },
-          rows: [localUsageRow('gpt-5', 'ordinary-session'), localUsageRow(`gpt-5${nul}`, 'refused-session')],
-        }),
-      );
-      const published: Array<{ readonly kinds: string[]; readonly streamId: string }> = [];
-      const runtime = startDeviceReplicationRuntime({
-        acquireClient: () => Promise.resolve(acknowledgingClient(published)),
-        clock: () => new Date(occurredAt),
-        kernel,
-        usageDatabasePath,
-      });
-      await runtime.runNow();
-      expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
-      expect(published).toEqual([{ kinds: ['device-fact-upsert', 'usage-session-upsert'], streamId: 'usage-v1' }]);
-      expect(runtime.status().usage).toMatchObject({ acknowledged: 2, blocked: 0, pending: 0 });
+  // Built at runtime so no editor or formatter can flatten the NUL byte into whitespace.
+  const nul = String.fromCharCode(0);
 
-      kernel.replication.enqueue({
-        captureContext: defaultReplicationCaptureContext(resolvedDevice),
-        changeKind: 'memory-fact-tombstone',
-        enqueuedAt: occurredAt,
-        eventId: parseReplicationEventId('70000000-0000-4000-8000-000000000007'),
-        factKey: 'memory-item:70000000-0000-4000-8000-000000000008',
-        payload: {
-          itemId: parseMemoryItemId('70000000-0000-4000-8000-000000000008'),
-          kind: 'memory-fact-tombstone',
-          reasonCode: 'privacy-purged',
-          tombstonedAt: occurredAt,
-        },
+  const refusedRows = [
+    ['a usage row the protocol refuses', localUsageRow(`gpt-5${nul}`, 'refused-session')],
+    ['a usage row with a refused session id', localUsageRow('gpt-5', `refused${nul}session`)],
+  ] as const;
+  for (const [subject, refusedRow] of refusedRows) {
+    test(`publishes ordinary usage and Memory facts while ${subject} stays local`, async () => {
+      await withKernel(async ({ kernel, usageDatabasePath }) => {
+        await Effect.runPromise(
+          importLocalRows({
+            dbPath: usageDatabasePath,
+            importedAt: new Date(occurredAt),
+            machine: { id: 'machine-runtime', label: 'Runtime workstation' },
+            rows: [localUsageRow('gpt-5', 'ordinary-session'), refusedRow],
+          }),
+        );
+        const published: Array<{ readonly kinds: string[]; readonly streamId: string }> = [];
+        const runtime = startDeviceReplicationRuntime({
+          acquireClient: () => Promise.resolve(acknowledgingClient(published)),
+          clock: () => new Date(occurredAt),
+          kernel,
+          usageDatabasePath,
+        });
+        await runtime.runNow();
+        expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
+        expect(published).toEqual([{ kinds: ['device-fact-upsert', 'usage-session-upsert'], streamId: 'usage-v1' }]);
+        expect(runtime.status().usage).toMatchObject({ acknowledged: 2, blocked: 0, pending: 0 });
+
+        kernel.replication.enqueue({
+          captureContext: defaultReplicationCaptureContext(resolvedDevice),
+          changeKind: 'memory-fact-tombstone',
+          enqueuedAt: occurredAt,
+          eventId: parseReplicationEventId('70000000-0000-4000-8000-000000000007'),
+          factKey: 'memory-item:70000000-0000-4000-8000-000000000008',
+          payload: {
+            itemId: parseMemoryItemId('70000000-0000-4000-8000-000000000008'),
+            kind: 'memory-fact-tombstone',
+            reasonCode: 'privacy-purged',
+            tombstonedAt: occurredAt,
+          },
+        });
+        await runtime.runNow();
+        expect(published.map(({ streamId }) => streamId)).toEqual(['usage-v1', 'memory-v1']);
+        expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
+        expect(kernel.replication.status()).toMatchObject({ acknowledged: 1, pending: 0 });
+        await runtime.dispose();
       });
-      await runtime.runNow();
-      expect(published.map(({ streamId }) => streamId)).toEqual(['usage-v1', 'memory-v1']);
-      expect(runtime.status().lastDiagnostic?.code).not.toBe('setup-failed');
-      expect(kernel.replication.status()).toMatchObject({ acknowledged: 1, pending: 0 });
-      await runtime.dispose();
     });
-  });
+  }
 
   test('aborts an active outbound identity request before the local kernel closes', async () => {
     await withKernel(async ({ kernel, usageDatabasePath }) => {
