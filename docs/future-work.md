@@ -240,6 +240,9 @@ and authorization stays application-owned (ADR 0029).
   Impact: no data loss or exposure found; both are consistency gaps.
   Acceptance: an explicit active-owner predicate on the exchange with a test,
   and own-property construction in the front-matter parser with a test.
+  Also: when the `before` unlink hook returns `false`, Better Auth answers
+  200 without deleting; the last-account refusal now comes from the database
+  guard (ordinal 9), but that silent path deserves an explicit 4xx and a test.
 - Plans 108–110 (Work handoffs and Work threads, session-detail archives, the
   native portability spike) stay `TODO`; the reserved MCP tool names
   `memory.latest_work_handoff`, `work_handoff.get`, and

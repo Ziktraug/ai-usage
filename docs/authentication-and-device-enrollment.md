@@ -6,6 +6,11 @@
 > performs the Device-side exchange and writes `device-credential.json`
 > (see [`future-work.md`](future-work.md)).
 
+A Person always keeps at least one active provider account: migration
+ordinal 9 installs a database guard that locks the principal and refuses the
+deletion of its last account, so two concurrent unlink requests answer 200 and
+400 (`FAILED_TO_UNLINK_LAST_ACCOUNT`) instead of removing every login.
+
 This accepted reference defines the connected authentication, Web-session, and
 Device-enrollment slice. Authentication establishes a Person principal;
 `Authorizer` still decides every resource operation. The target must preserve
