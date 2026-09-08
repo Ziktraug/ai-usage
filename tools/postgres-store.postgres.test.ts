@@ -150,6 +150,31 @@ if (runPostgresTests) {
       }
     }, 30_000);
 
+    test('applies the compiled ledger to ordinal 9 and verifies it cleanly', async () => {
+      const { database, stop } = await startDatabase('migrations-compiled-verify');
+      try {
+        expect(await database.runMigrations({ mode: 'apply' })).toEqual({
+          appliedIds: PLATFORM_MIGRATIONS.map(({ id }) => id),
+          currentOrdinal: 9,
+        });
+        expect(await database.runMigrations({ mode: 'verify' })).toEqual({ appliedIds: [], currentOrdinal: 9 });
+        expect(
+          await database.queryRowCount(
+            "SELECT 1 FROM platform_schema_metadata WHERE key = 'foundation_schema_version' AND value = '9'",
+          ),
+        ).toBe(1);
+        expect(
+          await database.queryRowCount(
+            `SELECT 1 FROM pg_trigger
+             WHERE tgname = 'authentication_provider_accounts_keep_last'
+               AND tgrelid = 'authentication_provider_accounts'::regclass`,
+          ),
+        ).toBe(1);
+      } finally {
+        await stop();
+      }
+    }, 30_000);
+
     test('verify mode refuses a pending migration without applying it', async () => {
       const { database, stop } = await startDatabase('migrations-verify');
       try {

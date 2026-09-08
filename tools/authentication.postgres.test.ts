@@ -524,5 +524,176 @@ if (runPostgresTests) {
         await cluster.stop();
       }
     }, 30_000);
+
+    test('serializes concurrent unlink requests so one active provider account always remains', async () => {
+      const cluster = await startPostgresCluster('shared-authentication-concurrent-unlink');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const pool = new Pool({ connectionString: cluster.url, max: 2 });
+      // Both requests must pass every pre-check before either deletes: the gate
+      // opens only once both unlink before-hooks have run their own check.
+      let unlinkGate: (() => Promise<void>) | null = null;
+      const service = createSharedAuthenticationService({
+        baseUrl,
+        bootstrapFirstOwner: true,
+        clientId: 'github-client-id',
+        clientSecret: 'github-client-secret',
+        database: store.authentication.database,
+        identityStore: {
+          ...store.authentication,
+          canUnlinkAuthenticationIdentity: async (input) => {
+            const allowed = await store.authentication.canUnlinkAuthenticationIdentity(input);
+            await unlinkGate?.();
+            return allowed;
+          },
+        },
+        secrets: [{ value: 'auth-secret-with-more-than-thirty-two-characters-v1', version: 1 }],
+      });
+      let providerSubject = '123456';
+      const originalFetch = globalThis.fetch;
+      try {
+        const mockedFetch = (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+        ): Promise<Response> => {
+          const url = fetchInputUrl(input);
+          if (url === 'https://github.com/login/oauth/access_token') {
+            return Promise.resolve(
+              Response.json({ access_token: 'provider-token', scope: 'read:user,user:email', token_type: 'bearer' }),
+            );
+          }
+          if (url === 'https://api.github.com/user') {
+            return Promise.resolve(
+              Response.json({
+                avatar_url: 'https://avatars.example.invalid/1',
+                email: null,
+                id: providerSubject,
+                login: 'stable-login',
+                name: 'Stable Person',
+              }),
+            );
+          }
+          if (url === 'https://api.github.com/user/emails') {
+            return Promise.resolve(
+              Response.json([{ email: 'same-email@example.invalid', primary: true, verified: true, visibility: null }]),
+            );
+          }
+          return originalFetch(input, init);
+        };
+        globalThis.fetch = Object.assign(mockedFetch, { preconnect: originalFetch.preconnect });
+        const completeOAuth = async (path: '/api/auth/link-social' | '/api/auth/sign-in/social', cookie?: string) => {
+          const started = await service.handle(
+            postJson(path, { callbackURL: `${baseUrl}/done`, disableRedirect: true, provider: 'github' }, cookie),
+          );
+          expect(started.status).toBe(200);
+          const state = new URL(((await started.json()) as { readonly url: string }).url).searchParams.get('state');
+          if (!state) {
+            throw new Error(`Expected an OAuth state for ${path}.`);
+          }
+          const callback = await service.handle(
+            new Request(`${baseUrl}/api/auth/callback/github?code=code&state=${encodeURIComponent(state)}`, {
+              headers: { cookie: [cookie, cookieHeader(getSetCookies(started))].filter(Boolean).join('; ') },
+            }),
+          );
+          expect(callback.status).toBe(302);
+          expect(callback.headers.get('location')).toBe(`${baseUrl}/done`);
+          const sessionCookie = getSetCookies(callback).find((value) => value.startsWith('__Host-ai-usage-session='));
+          return sessionCookie ? cookieHeader([sessionCookie]) : cookie;
+        };
+
+        const sessionCookieHeader = await completeOAuth('/api/auth/sign-in/social');
+        if (!sessionCookieHeader) {
+          throw new Error('Expected the first Web-session cookie.');
+        }
+        providerSubject = '789012';
+        await completeOAuth('/api/auth/link-social', sessionCookieHeader);
+        const accounts = await pool.query<{ readonly id: string }>(
+          'SELECT id FROM authentication_provider_accounts ORDER BY created_at, id',
+        );
+        expect(accounts.rows).toHaveLength(2);
+        // Linking ends the session that started it; unlink needs a fresh one.
+        const unlinkSessionCookieHeader = await completeOAuth('/api/auth/sign-in/social');
+        if (!unlinkSessionCookieHeader) {
+          throw new Error('Expected a Web-session cookie for the two-account Person.');
+        }
+
+        let arrivals = 0;
+        let openGate = (): void => undefined;
+        const gateOpened = new Promise<void>((resolve) => {
+          openGate = resolve;
+        });
+        unlinkGate = async () => {
+          arrivals += 1;
+          if (arrivals === 2) {
+            openGate();
+          }
+          await gateOpened;
+        };
+        const responses = await Promise.all(
+          accounts.rows.map(({ id }) =>
+            service.handle(postJson('/api/auth/unlink-account', { accountId: id }, unlinkSessionCookieHeader)),
+          ),
+        );
+        unlinkGate = null;
+        expect(responses.map(({ status }) => status).sort()).toEqual([200, 400]);
+        const refused = responses.find(({ status }) => status === 400);
+        expect(await refused?.json()).toMatchObject({ code: 'FAILED_TO_UNLINK_LAST_ACCOUNT' });
+
+        const state = await pool.query<{
+          readonly accounts: number;
+          readonly active_bound: number;
+          readonly active_identities: number;
+          readonly revoked_identities: number;
+          readonly revoked_unbound: number;
+          readonly unlink_events: number;
+        }>(`SELECT
+          (SELECT count(*)::INTEGER FROM authentication_provider_accounts) AS accounts,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NULL) AS active_identities,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NOT NULL) AS revoked_identities,
+          (SELECT count(*)::INTEGER FROM authentication_identities identity
+             INNER JOIN authentication_provider_accounts account
+               ON account.id = identity.authentication_provider_account_id
+             WHERE identity.revoked_at IS NULL) AS active_bound,
+          (SELECT count(*)::INTEGER FROM authentication_identities
+             WHERE revoked_at IS NOT NULL AND authentication_provider_account_id IS NULL) AS revoked_unbound,
+          (SELECT count(*)::INTEGER FROM identity_events
+             WHERE event_type = 'authentication-identity-unlinked') AS unlink_events`);
+        expect(state.rows[0]).toEqual({
+          accounts: 1,
+          active_bound: 1,
+          active_identities: 1,
+          revoked_identities: 1,
+          revoked_unbound: 1,
+          unlink_events: 1,
+        });
+
+        const remaining = await pool.query<{ readonly account_id: string }>(
+          'SELECT account_id FROM authentication_provider_accounts',
+        );
+        const remainingSubject = remaining.rows[0]?.account_id;
+        if (!remainingSubject) {
+          throw new Error('Expected the remaining provider account.');
+        }
+        providerSubject = remainingSubject;
+        const remainingSessionCookieHeader = await completeOAuth('/api/auth/sign-in/social');
+        if (!remainingSessionCookieHeader) {
+          throw new Error('Expected a Web-session cookie for the remaining account.');
+        }
+        await expect(
+          service.resolveSession(new Headers({ cookie: remainingSessionCookieHeader })),
+        ).resolves.toMatchObject({ kind: 'authenticated', session: { principal: { provider: 'github' } } });
+      } finally {
+        globalThis.fetch = originalFetch;
+        await pool.end().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
   });
 }

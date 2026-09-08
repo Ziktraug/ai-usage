@@ -6,11 +6,74 @@ import {
   parsePersonId,
   parseWebSessionId,
 } from '@ai-usage/platform-core/identity';
-import { betterAuth, type DBAdapterInstance } from 'better-auth';
+import { APIError, betterAuth, type DBAdapter, type DBAdapterInstance, type DBTransactionAdapter } from 'better-auth';
 import type { IdentityServiceResult, SharedAuthenticationPrincipal, SharedSessionResolution } from './index';
 import { SHARED_AUTHENTICATION_PROVIDER } from './index';
 import { getInjectedSharedAuthenticationServiceFactory } from './internal/shared-authentication-factory';
 import { withWebSessionTokenDigests } from './session-digest-adapter';
+
+/**
+ * SQLSTATE raised by the PostgreSQL `authentication_provider_accounts_keep_last`
+ * trigger (migration ordinal 9) when a delete would remove a principal's last
+ * provider account. The trigger is what makes the invariant hold under
+ * concurrent unlink requests; the application-level checks around it are only
+ * fast paths, so its refusal has to surface as the same last-account response.
+ */
+const LAST_PROVIDER_ACCOUNT_SQLSTATE = 'IA001';
+const MAXIMUM_ERROR_CAUSE_DEPTH = 4;
+
+const refusesLastProviderAccount = (error: unknown): boolean => {
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    depth < MAXIMUM_ERROR_CAUSE_DEPTH && typeof current === 'object' && current !== null;
+    depth += 1
+  ) {
+    if ('code' in current && current.code === LAST_PROVIDER_ACCOUNT_SQLSTATE) {
+      return true;
+    }
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+};
+
+// Identical to Better Auth's own `FAILED_TO_UNLINK_LAST_ACCOUNT` refusal, which
+// its unlink endpoint raises when the pre-check already sees a single account.
+const lastProviderAccountRefusal = (): APIError =>
+  new APIError('BAD_REQUEST', {
+    code: 'FAILED_TO_UNLINK_LAST_ACCOUNT',
+    message: "You can't unlink your last account",
+  });
+
+const guardAccountDeletes = <Adapter extends DBTransactionAdapter>(adapter: Adapter): Adapter => ({
+  ...adapter,
+  delete: async (input: Parameters<DBTransactionAdapter['delete']>[0]): Promise<void> => {
+    try {
+      await adapter.delete(input);
+    } catch (error) {
+      throw input.model === 'account' && refusesLastProviderAccount(error) ? lastProviderAccountRefusal() : error;
+    }
+  },
+  deleteMany: async (input: Parameters<DBTransactionAdapter['deleteMany']>[0]): Promise<number> => {
+    try {
+      return await adapter.deleteMany(input);
+    } catch (error) {
+      throw input.model === 'account' && refusesLastProviderAccount(error) ? lastProviderAccountRefusal() : error;
+    }
+  },
+});
+
+const withLastProviderAccountRefusal =
+  (database: DBAdapterInstance): DBAdapterInstance =>
+  (options) => {
+    const adapter = database(options);
+    const result: DBAdapter = {
+      ...guardAccountDeletes(adapter),
+      id: `${adapter.id}-last-account-guard`,
+      transaction: (run) => adapter.transaction((transaction) => run(guardAccountDeletes(transaction))),
+    };
+    return result;
+  };
 
 export const BETTER_AUTH_VERSION = '1.7.2' as const;
 export const SHARED_SESSION_ABSOLUTE_LIFETIME_SECONDS = 24 * 60 * 60;
@@ -231,7 +294,7 @@ export const createSharedAuthenticationService = (
     appName: 'ai-usage',
     basePath: '/api/auth',
     baseURL: baseUrl.origin,
-    database: withWebSessionTokenDigests(config.database),
+    database: withLastProviderAccountRefusal(withWebSessionTokenDigests(config.database)),
     databaseHooks: {
       account: {
         create: {

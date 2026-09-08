@@ -1357,6 +1357,46 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
       WHERE key = '${PLATFORM_SCHEMA_METADATA_KEY}';
     `,
   }),
+  Object.freeze({
+    id: '0009_last_authentication_provider_account_guard',
+    ordinal: 9,
+    up: `
+      -- A principal keeps at least one provider account. The application checks
+      -- this before and after Better Auth deletes the row, but only the database
+      -- can make it atomic: every unlink of one principal first queues on the
+      -- principal row lock, so a concurrent unlink counts the winner's deletion
+      -- and is refused with the dedicated SQLSTATE below instead of removing the
+      -- last login. When the principal itself is being removed (ON DELETE
+      -- CASCADE) the lock finds no row and the cascade proceeds.
+      CREATE OR REPLACE FUNCTION refuse_last_authentication_provider_account_delete() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        remaining INTEGER;
+      BEGIN
+        PERFORM 1 FROM authentication_principals WHERE id = OLD.user_id FOR UPDATE;
+        IF NOT FOUND THEN
+          RETURN OLD;
+        END IF;
+        SELECT count(*) INTO remaining
+        FROM authentication_provider_accounts
+        WHERE user_id = OLD.user_id AND id <> OLD.id;
+        IF remaining = 0 THEN
+          RAISE EXCEPTION 'the last authentication provider account of a principal cannot be removed'
+            USING ERRCODE = 'IA001';
+        END IF;
+        RETURN OLD;
+      END;
+      $$;
+
+      CREATE TRIGGER authentication_provider_accounts_keep_last
+        BEFORE DELETE ON authentication_provider_accounts
+        FOR EACH ROW EXECUTE FUNCTION refuse_last_authentication_provider_account_delete();
+
+      UPDATE platform_schema_metadata
+      SET value = '${PLATFORM_SCHEMA_VERSION}', updated_at = now()
+      WHERE key = '${PLATFORM_SCHEMA_METADATA_KEY}';
+    `,
+  }),
 ]);
 
 const migrationIdPattern = /^[a-z0-9][a-z0-9_]{2,127}$/u;
