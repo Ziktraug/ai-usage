@@ -388,12 +388,28 @@ export const createPlatformAuthenticationStore = (pool: Pool): PlatformAuthentic
             return identityFailure<undefined>('unlink-authentication-identity', 'identity-conflict');
           }
           const personId = parsePersonId(target.person_id);
+          const identityId = parseAuthenticationIdentityId(target.id);
           await recordIdentityEvent(client, {
             eventType: 'authentication-identity-unlinked',
-            identityId: parseAuthenticationIdentityId(target.id),
+            identityId,
             personId,
             recordedAt: input.revokedAt,
           });
+          // A revoked identity must not keep authenticating: every Web session
+          // created through it ends in the same transaction, so Better Auth's own
+          // routes stop accepting it at once, not only the application resolver.
+          const endedSessions = await client.query<{ readonly id: unknown }>(
+            'DELETE FROM web_sessions WHERE authentication_identity_id = $1 RETURNING id',
+            [target.id],
+          );
+          for (const _session of endedSessions.rows) {
+            await recordIdentityEvent(client, {
+              eventType: 'web-session-revoked',
+              identityId,
+              personId,
+              recordedAt: input.revokedAt,
+            });
+          }
           return { kind: 'success', value: undefined };
         });
       } catch {

@@ -40,6 +40,81 @@ const postJson = (path: string, body: unknown, cookie?: string): Request =>
     method: 'POST',
   });
 
+/**
+ * Drives a complete GitHub OAuth round trip (sign-in or link) against a
+ * controlled provider whose subject is `subject.current`, and returns the
+ * Web-session cookie header the callback set (or the cookie that was passed in).
+ */
+const createOAuthFlow = (
+  service: ReturnType<typeof createSharedAuthenticationService>,
+  subject: { current: string },
+) => {
+  const originalFetch = globalThis.fetch;
+  const mockedFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
+    const url = fetchInputUrl(input);
+    if (url === 'https://github.com/login/oauth/access_token') {
+      return Promise.resolve(
+        Response.json({ access_token: 'provider-token', scope: 'read:user,user:email', token_type: 'bearer' }),
+      );
+    }
+    if (url === 'https://api.github.com/user') {
+      return Promise.resolve(
+        Response.json({
+          avatar_url: 'https://avatars.example.invalid/1',
+          email: null,
+          id: subject.current,
+          login: 'stable-login',
+          name: 'Stable Person',
+        }),
+      );
+    }
+    if (url === 'https://api.github.com/user/emails') {
+      return Promise.resolve(
+        Response.json([{ email: 'same-email@example.invalid', primary: true, verified: true, visibility: null }]),
+      );
+    }
+    return originalFetch(input, init);
+  };
+  globalThis.fetch = Object.assign(mockedFetch, { preconnect: originalFetch.preconnect });
+  const start = async (path: '/api/auth/link-social' | '/api/auth/sign-in/social', cookie?: string) => {
+    const started = await service.handle(
+      postJson(path, { callbackURL: `${baseUrl}/done`, disableRedirect: true, provider: 'github' }, cookie),
+    );
+    if (started.status !== 200) {
+      return { started, state: null };
+    }
+    const state = new URL(((await started.json()) as { readonly url: string }).url).searchParams.get('state');
+    return { started, state };
+  };
+  const callback = (state: string, cookies: readonly (string | undefined)[]) =>
+    service.handle(
+      new Request(`${baseUrl}/api/auth/callback/github?code=code&state=${encodeURIComponent(state)}`, {
+        headers: { cookie: cookies.filter((value): value is string => !!value).join('; ') },
+      }),
+    );
+  const complete = async (path: '/api/auth/link-social' | '/api/auth/sign-in/social', cookie?: string) => {
+    const { started, state } = await start(path, cookie);
+    if (!state) {
+      throw new Error(`Expected ${path} to answer 200 with an OAuth state, received ${started.status}.`);
+    }
+    const completed = await callback(state, [cookie, cookieHeader(getSetCookies(started))]);
+    const location = completed.headers.get('location');
+    if (completed.status !== 302 || location !== `${baseUrl}/done`) {
+      throw new Error(`Expected the ${path} callback to redirect to /done, received ${completed.status} ${location}.`);
+    }
+    const sessionCookie = getSetCookies(completed).find((value) => value.startsWith('__Host-ai-usage-session='));
+    return sessionCookie ? cookieHeader([sessionCookie]) : cookie;
+  };
+  return {
+    callback,
+    complete,
+    restore: (): void => {
+      globalThis.fetch = originalFetch;
+    },
+    start,
+  };
+};
+
 if (runPostgresTests) {
   describe('PostgreSQL shared authentication', () => {
     test('boots the first GitHub owner through secure OAuth and stores only a Web-session digest', async () => {
@@ -690,6 +765,158 @@ if (runPostgresTests) {
         ).resolves.toMatchObject({ kind: 'authenticated', session: { principal: { provider: 'github' } } });
       } finally {
         globalThis.fetch = originalFetch;
+        await pool.end().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('invalidates the sessions of an unlinked identity and refuses account management with a revoked session', async () => {
+      const cluster = await startPostgresCluster('shared-authentication-revoked-session');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const pool = new Pool({ connectionString: cluster.url, max: 2 });
+      const service = createSharedAuthenticationService({
+        baseUrl,
+        bootstrapFirstOwner: true,
+        clientId: 'github-client-id',
+        clientSecret: 'github-client-secret',
+        database: store.authentication.database,
+        identityStore: store.authentication,
+        secrets: [{ value: 'auth-secret-with-more-than-thirty-two-characters-v1', version: 1 }],
+      });
+      const subject = { current: '123456' };
+      const oauth = createOAuthFlow(service, subject);
+      const accountIdOf = async (providerSubject: string): Promise<string> => {
+        const result = await pool.query<{ readonly id: string }>(
+          'SELECT id FROM authentication_provider_accounts WHERE account_id = $1',
+          [providerSubject],
+        );
+        const id = result.rows[0]?.id;
+        if (!id) {
+          throw new Error(`Expected a provider account for subject ${providerSubject}.`);
+        }
+        return id;
+      };
+      const counts = async () => {
+        const result = await pool.query<{
+          readonly accounts: number;
+          readonly active_identities: number;
+          readonly sessions: number;
+          readonly session_revocations: number;
+          readonly unlinks: number;
+        }>(`SELECT
+          (SELECT count(*)::INTEGER FROM authentication_provider_accounts) AS accounts,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NULL) AS active_identities,
+          (SELECT count(*)::INTEGER FROM web_sessions) AS sessions,
+          (SELECT count(*)::INTEGER FROM identity_events WHERE event_type = 'web-session-revoked')
+            AS session_revocations,
+          (SELECT count(*)::INTEGER FROM identity_events WHERE event_type = 'authentication-identity-unlinked')
+            AS unlinks`);
+        return result.rows[0];
+      };
+      const linkSocial = (cookie: string) =>
+        service.handle(
+          postJson(
+            '/api/auth/link-social',
+            { callbackURL: `${baseUrl}/done`, disableRedirect: true, provider: 'github' },
+            cookie,
+          ),
+        );
+      try {
+        // Sign in through A, link B, then hold a fresh session created through A.
+        const bootstrapSession = await oauth.complete('/api/auth/sign-in/social');
+        subject.current = '789012';
+        await oauth.complete('/api/auth/link-social', bootstrapSession);
+        subject.current = '123456';
+        const sessionA = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionA) {
+          throw new Error('Expected a Web-session cookie created through identity A.');
+        }
+        expect(await counts()).toMatchObject({ accounts: 2, active_identities: 2, sessions: 1 });
+
+        // Unlinking A while holding A's session ends that session server-side:
+        // Better Auth no longer accepts it and the resolver no longer finds it.
+        const unlinkA = await service.handle(
+          postJson('/api/auth/unlink-account', { accountId: await accountIdOf('123456') }, sessionA),
+        );
+        expect(unlinkA.status).toBe(200);
+        expect(await counts()).toEqual({
+          accounts: 1,
+          active_identities: 1,
+          session_revocations: 1,
+          sessions: 0,
+          unlinks: 1,
+        });
+        await expect(service.resolveSession(new Headers({ cookie: sessionA }))).resolves.toEqual({
+          kind: 'anonymous',
+        });
+        expect((await linkSocial(sessionA)).status).toBe(401);
+        expect(await counts()).toMatchObject({ accounts: 1, active_identities: 1 });
+
+        // B still signs in, and a valid session can still link and unlink.
+        subject.current = '789012';
+        const sessionB = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB) {
+          throw new Error('Expected a Web-session cookie created through identity B.');
+        }
+        await expect(service.resolveSession(new Headers({ cookie: sessionB }))).resolves.toMatchObject({
+          kind: 'authenticated',
+        });
+        subject.current = '345678';
+        await oauth.complete('/api/auth/link-social', sessionB);
+        expect(await counts()).toMatchObject({ accounts: 2, active_identities: 2 });
+        subject.current = '789012';
+        const sessionB2 = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB2) {
+          throw new Error('Expected a second Web-session cookie created through identity B.');
+        }
+        expect(
+          (
+            await service.handle(
+              postJson('/api/auth/unlink-account', { accountId: await accountIdOf('345678') }, sessionB2),
+            )
+          ).status,
+        ).toBe(200);
+        expect(await counts()).toMatchObject({ accounts: 1, active_identities: 1, sessions: 1 });
+
+        // Defense in depth: the identity behind a live session is revoked out of
+        // band (its session row stays). A link that session had already started
+        // must not complete, and every account-management route refuses the
+        // session with 401 while sign-out still ends it.
+        subject.current = '345678';
+        const pendingLink = await oauth.start('/api/auth/link-social', sessionB2);
+        expect(pendingLink.started.status).toBe(200);
+        if (!pendingLink.state) {
+          throw new Error('Expected a pending link state.');
+        }
+        await pool.query("UPDATE authentication_identities SET revoked_at = now() WHERE provider_subject = '789012'");
+        const completedLink = await oauth.callback(pendingLink.state, [
+          sessionB2,
+          cookieHeader(getSetCookies(pendingLink.started)),
+        ]);
+        expect(completedLink.headers.get('location')).not.toBe(`${baseUrl}/done`);
+        expect(await counts()).toMatchObject({ accounts: 1, active_identities: 0, sessions: 1 });
+        await expect(service.resolveSession(new Headers({ cookie: sessionB2 }))).resolves.toEqual({ kind: 'revoked' });
+        expect((await linkSocial(sessionB2)).status).toBe(401);
+        expect(
+          (
+            await service.handle(
+              postJson('/api/auth/unlink-account', { accountId: await accountIdOf('789012') }, sessionB2),
+            )
+          ).status,
+        ).toBe(401);
+        expect((await service.handle(postJson('/api/auth/revoke-sessions', {}, sessionB2))).status).toBe(401);
+        expect((await service.handle(postJson('/api/auth/sign-out', {}, sessionB2))).status).toBe(200);
+        expect(await counts()).toMatchObject({ accounts: 1, sessions: 0 });
+      } finally {
+        oauth.restore();
         await pool.end().catch(() => undefined);
         await store.close().catch(() => undefined);
         await cluster.stop();

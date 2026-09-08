@@ -7,6 +7,7 @@ import {
   parseWebSessionId,
 } from '@ai-usage/platform-core/identity';
 import { APIError, betterAuth, type DBAdapter, type DBAdapterInstance, type DBTransactionAdapter } from 'better-auth';
+import { createAuthMiddleware } from 'better-auth/api';
 import type { IdentityServiceResult, SharedAuthenticationPrincipal, SharedSessionResolution } from './index';
 import { SHARED_AUTHENTICATION_PROVIDER } from './index';
 import { getInjectedSharedAuthenticationServiceFactory } from './internal/shared-authentication-factory';
@@ -160,6 +161,25 @@ const allowedAuthenticationPaths = new Set([
   '/api/auth/unlink-account',
 ]);
 
+// Every allowed route that mutates the account on behalf of a Web session. The
+// application resolver, not only Better Auth's session lookup, must accept the
+// session first: a session whose identity was revoked, or whose Person is no
+// longer active, still exists as a Better Auth session row. Sign-out is left
+// out on purpose so a refused session can still be ended by its holder.
+const sessionAuthenticatedPaths = new Set(['/link-social', '/revoke-sessions', '/unlink-account']);
+
+// Better Auth's own vocabulary for a session that must re-authenticate.
+const revokedSessionRefusal = (): APIError =>
+  new APIError('UNAUTHORIZED', {
+    code: 'SESSION_EXPIRED',
+    message: 'Session expired. Re-authenticate to perform this action.',
+  });
+
+interface ResolvedWebSession {
+  readonly authenticationPrincipalId: string | null;
+  readonly resolution: SharedSessionResolution;
+}
+
 const parseAuthenticationBaseUrl = (value: string): URL => {
   try {
     const url = new URL(value);
@@ -209,7 +229,7 @@ export const createSharedAuthenticationService = (
   }
   const clock = config.clock ?? (() => new Date());
   const secureCookies = baseUrl.protocol === 'https:';
-  const requestAuthentication = new AsyncLocalStorage<{ providerSubject?: string }>();
+  const requestAuthentication = new AsyncLocalStorage<{ readonly headers: Headers; providerSubject?: string }>();
   const synchronize = async (authenticationPrincipalId: string, preferredProviderSubject?: string) => {
     const result = await config.identityStore.synchronizeAuthenticationPrincipal({
       authenticationPrincipalId,
@@ -235,6 +255,50 @@ export const createSharedAuthenticationService = (
     });
     if (recorded.kind === 'error') {
       throw new AuthenticationRejectedError();
+    }
+  };
+  const resolveWebSession = async (headers: Headers): Promise<ResolvedWebSession> => {
+    try {
+      const resolved = await auth.api.getSession({ headers });
+      if (!resolved) {
+        return { authenticationPrincipalId: null, resolution: { kind: 'anonymous' } };
+      }
+      const authenticationPrincipalId = resolved.user.id;
+      const session = resolved.session as typeof resolved.session & Record<string, unknown>;
+      if (session.revokedAt !== null && session.revokedAt !== undefined) {
+        return { authenticationPrincipalId, resolution: { kind: 'revoked' } };
+      }
+      const absoluteExpiresAt = instantFromDateValue(session.absoluteExpiresAt, 'webSession.absoluteExpiresAt');
+      const idleExpiresAt = instantFromDateValue(session.expiresAt, 'webSession.idleExpiresAt');
+      const currentTime = clock().getTime();
+      if (Date.parse(absoluteExpiresAt) <= currentTime || Date.parse(idleExpiresAt) <= currentTime) {
+        return { authenticationPrincipalId, resolution: { kind: 'expired' } };
+      }
+      const authenticationIdentityId = parseAuthenticationIdentityId(session.authenticationIdentityId);
+      const principal = await config.identityStore.resolveAuthenticationIdentity(authenticationIdentityId);
+      if (!principal) {
+        return { authenticationPrincipalId, resolution: { kind: 'revoked' } };
+      }
+      return {
+        authenticationPrincipalId,
+        resolution: {
+          kind: 'authenticated',
+          session: {
+            absoluteExpiresAt,
+            createdAt: instantFromDateValue(session.createdAt, 'webSession.createdAt'),
+            freshUntil: instantFromDateValue(session.freshUntil, 'webSession.freshUntil'),
+            id: parseWebSessionId(session.id),
+            idleExpiresAt,
+            principal: {
+              ...principal,
+              personId: asPersonId(principal.personId),
+              provider: SHARED_AUTHENTICATION_PROVIDER,
+            },
+          },
+        },
+      };
+    } catch {
+      return { authenticationPrincipalId: null, resolution: { kind: 'unavailable' } };
     }
   };
 
@@ -311,6 +375,34 @@ export const createSharedAuthenticationService = (
               authentication.providerSubject = account.accountId;
             }
             await synchronize(account.userId, account.accountId);
+          },
+          // Implicit linking is disabled, so an account created for a principal
+          // that already has one is an explicit link completing at the OAuth
+          // callback. The callback carries the link in its state, not in a
+          // session check, so the session that started the link is re-validated
+          // here: a session revoked in the meantime cannot add a new identity.
+          before: async (
+            account: { readonly userId: string },
+            context?: {
+              readonly context: {
+                readonly internalAdapter: {
+                  readonly findAccounts: (userId: string) => Promise<readonly unknown[]>;
+                };
+              };
+            } | null,
+          ): Promise<void> => {
+            const existing = (await context?.context.internalAdapter.findAccounts(account.userId)) ?? [];
+            if (existing.length === 0) {
+              return;
+            }
+            const headers = requestAuthentication.getStore()?.headers;
+            const resolved = headers ? await resolveWebSession(headers) : null;
+            if (
+              resolved?.resolution.kind !== 'authenticated' ||
+              resolved.authenticationPrincipalId !== account.userId
+            ) {
+              throw revokedSessionRefusal();
+            }
           },
         },
         delete: {
@@ -399,6 +491,17 @@ export const createSharedAuthenticationService = (
       '/update-user',
     ],
     emailAndPassword: { enabled: false },
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (!sessionAuthenticatedPaths.has(ctx.path)) {
+          return;
+        }
+        const { resolution } = await resolveWebSession(ctx.headers ?? new Headers());
+        if (resolution.kind === 'revoked' || resolution.kind === 'expired') {
+          throw revokedSessionRefusal();
+        }
+      }),
+    },
     logger: { disabled: true },
     onAPIError: { throw: false },
     secrets: config.secrets.map((secret) => ({ value: secret.value, version: secret.version })),
@@ -466,49 +569,10 @@ export const createSharedAuthenticationService = (
     handle: (request) => {
       const path = new URL(request.url).pathname;
       return allowedAuthenticationPaths.has(path)
-        ? requestAuthentication.run({}, () => auth.handler(request))
+        ? requestAuthentication.run({ headers: request.headers }, () => auth.handler(request))
         : Promise.resolve(new Response('Not Found', { status: 404 }));
     },
-    resolveSession: async (headers) => {
-      try {
-        const resolved = await auth.api.getSession({ headers });
-        if (!resolved) {
-          return { kind: 'anonymous' };
-        }
-        const session = resolved.session as typeof resolved.session & Record<string, unknown>;
-        if (session.revokedAt !== null && session.revokedAt !== undefined) {
-          return { kind: 'revoked' };
-        }
-        const absoluteExpiresAt = instantFromDateValue(session.absoluteExpiresAt, 'webSession.absoluteExpiresAt');
-        const idleExpiresAt = instantFromDateValue(session.expiresAt, 'webSession.idleExpiresAt');
-        const currentTime = clock().getTime();
-        if (Date.parse(absoluteExpiresAt) <= currentTime || Date.parse(idleExpiresAt) <= currentTime) {
-          return { kind: 'expired' };
-        }
-        const authenticationIdentityId = parseAuthenticationIdentityId(session.authenticationIdentityId);
-        const principal = await config.identityStore.resolveAuthenticationIdentity(authenticationIdentityId);
-        if (!principal) {
-          return { kind: 'revoked' };
-        }
-        return {
-          kind: 'authenticated',
-          session: {
-            absoluteExpiresAt,
-            createdAt: instantFromDateValue(session.createdAt, 'webSession.createdAt'),
-            freshUntil: instantFromDateValue(session.freshUntil, 'webSession.freshUntil'),
-            id: parseWebSessionId(session.id),
-            idleExpiresAt,
-            principal: {
-              ...principal,
-              personId: asPersonId(principal.personId),
-              provider: SHARED_AUTHENTICATION_PROVIDER,
-            },
-          },
-        };
-      } catch {
-        return { kind: 'unavailable' };
-      }
-    },
+    resolveSession: async (headers) => (await resolveWebSession(headers)).resolution,
     revokeAllSessions: async (headers) => {
       try {
         await auth.api.revokeSessions({ headers });
