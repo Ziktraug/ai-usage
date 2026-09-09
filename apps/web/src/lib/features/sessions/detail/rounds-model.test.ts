@@ -122,6 +122,25 @@ describe('rounds view', () => {
       ['thread-b', null, true],
     ]);
     expect(view.unattributedInteractions.map((interaction) => interaction.label)).toEqual(['Lost launch']);
+    expect(view.unroundedChildren.map((child) => child.sourceSessionId)).toEqual(['thread-b']);
+    expect(view.interactionEvidence).toBe('recorded');
+    expect(
+      buildRoundsView(
+        {
+          ...detail,
+          coverage: {
+            ...detail.coverage,
+            interactionAttribution: {
+              omittedCount: null,
+              reasons: ['harness-no-spawn-evidence'],
+              status: 'unavailable',
+            },
+          },
+          interactions: [],
+        },
+        [],
+      ).interactionEvidence,
+    ).toBe('unavailable');
     expect(view.coverageNotes).toEqual([
       {
         key: 'grouping',

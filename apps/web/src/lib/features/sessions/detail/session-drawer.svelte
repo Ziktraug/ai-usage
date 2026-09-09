@@ -196,6 +196,13 @@
   const roundsView = $derived(availableDetail ? buildRoundsView(availableDetail, memberRows) : null);
   const membersAvailable = $derived(campaignScope !== null && campaignSlot !== undefined);
   let activeTab = $state<DetailTab>('rounds');
+  // The reader's place survives a tab switch; a new row starts at its first round.
+  let readerRoundId = $state<string | null>(null);
+  const roundsScopeNote = $derived(
+    campaignScope
+      ? "Rounds and Timeline read the root session's own history. The campaign's other members are listed under Members."
+      : null,
+  );
   // A tab the current target cannot show falls back to the reading view.
   const selectedTab = $derived<DetailTab>(activeTab === 'members' && !membersAvailable ? 'rounds' : activeTab);
   const roundsLabel = $derived(roundsView ? `Rounds · ${fmtNum(roundsView.rounds.length)}` : 'Rounds');
@@ -224,6 +231,7 @@
     if (snapshot.row && snapshot.target) {
       if (presentedRow?.rowId !== snapshot.row.rowId) {
         openHint = null;
+        readerRoundId = null;
       }
       presentedRow = snapshot.row;
       presentedTarget = snapshot.target;
@@ -346,13 +354,21 @@
     loading={snapshot.analysisLoading}
     onOpenChild={onSelectMember}
     onRetry={() => controller.retryAnalysis()}
+    scopeNote={roundsScopeNote}
     unavailable={unavailableDetail}
     view={roundsView}
+    bind:selectedRoundId={readerRoundId}
   />
 {/snippet}
 
 {#snippet membersPane()}
   <div class={pane} data-session-drawer-members>
+    {#if memberRows.length === 0}
+      <p class={muted} data-session-drawer-members-empty>
+        No member list is loaded for this campaign yet. Members load with the Sessions view; open the campaign there to
+        browse them.
+      </p>
+    {/if}
     {#if campaignSlot}
       {@render campaignSlot()}
     {/if}

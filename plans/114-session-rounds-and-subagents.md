@@ -103,7 +103,19 @@ restoration, 390 px). Real-history smoke: the 26-session Claude campaign shows
   local detail loads on selection instead of behind an Analyze button. Opening
   a campaign preloads both its member page and its filtered children page, so
   the Members tab lists every member instead of only the root.
-- Follow-ups for phase 4: classify prompt origin (Claude task notifications
+- 2026-09-09 — Review follow-ups: the reader states when a harness records no
+  launch attribution instead of asserting no launches; children without a
+  known round and unattributed launches are listed above the rail; coverage
+  notes render even when no round exists; a visible scope line says that
+  Rounds and Timeline read the root session; the reader's place survives a
+  tab switch; interaction cards stack below `md`; the Members tab says when
+  no member list is loaded (member pages are still owned by the Sessions
+  destination, so a campaign opened from Overview has none — moving that
+  query to the detail-route boundary is a phase 4 item); the production
+  protocol spec now checks every Session page response against the
+  fingerprint its own request implies.
+- Follow-ups for phase 4: own campaign member queries at the detail-route
+  boundary (Overview and out-of-window campaigns); classify prompt origin (Claude task notifications
   arrive as user records whose body starts with `<task-notification>` and are
   rounds of their own today); the rail is not yet windowed (38 rounds render
   fine, thousands would need ADR 0004 treatment); observed-span lanes; the

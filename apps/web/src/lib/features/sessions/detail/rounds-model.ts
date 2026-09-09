@@ -61,9 +61,17 @@ export interface CoverageNote {
 export interface RoundsView {
   readonly children: readonly ChildView[];
   readonly coverageNotes: readonly CoverageNote[];
+  /**
+   * Whether the harness records which round launched or messaged a child.
+   * When it does not, an empty interaction list is a gap, not evidence of no
+   * launches (ADR 0017), and the reader must say so.
+   */
+  readonly interactionEvidence: 'recorded' | 'unavailable';
   readonly rounds: readonly RoundView[];
   /** Interactions the reader could not attach to a round; they stay listed (ADR 0017). */
   readonly unattributedInteractions: readonly InteractionView[];
+  /** Children whose launching round is unknown; they stay listed beside the rounds. */
+  readonly unroundedChildren: readonly ChildView[];
 }
 
 const EXCERPT_LIMIT = 160;
@@ -208,8 +216,10 @@ export const buildRoundsView = (detail: SessionDetail, memberRows: readonly Sess
   return {
     children,
     coverageNotes: coverageNotesFor(detail),
+    interactionEvidence: detail.coverage.interactionAttribution.status === 'unavailable' ? 'unavailable' : 'recorded',
     rounds: roundViews,
     unattributedInteractions: interactionViews.filter((_, index) => !attached.has(index)),
+    unroundedChildren: children.filter((child) => child.spawnRoundIndex === null),
   };
 };
 

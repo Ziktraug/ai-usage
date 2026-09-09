@@ -5,6 +5,7 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
 import { collectionSourceDefinitions } from '@ai-usage/report-core';
+import { parseSessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
@@ -41,8 +42,19 @@ const INITIAL_HTML_SECRET_SENTINELS = [
 
 interface CapturedRpcResponse {
   body: Promise<string>;
+  /** For a Session page request: the fingerprint its own request body implies; null otherwise. */
+  expectedPageFingerprint: string | null;
   status: number;
 }
+
+const SESSION_PAGE_RPC_SUFFIX = '/session/page';
+
+const expectedPageFingerprintFor = (pathname: string, postData: string | null): string | null => {
+  if (!pathname.endsWith(SESSION_PAGE_RPC_SUFFIX) || postData === null) {
+    return null;
+  }
+  return sessionQueryFingerprint(parseSessionQueryRequest(decodeRpcResponseBody(postData)));
+};
 
 interface ProtocolIdentity {
   fingerprints: string[];
@@ -716,9 +728,11 @@ test('keeps the last complete report visible while the report range changes', as
 test('hydrates and automatically pages Sessions through the production revision protocol', async ({ page }) => {
   const rpcResponses: CapturedRpcResponse[] = [];
   page.on('response', (response) => {
-    if (isRpcPathname(new URL(response.url()).pathname)) {
+    const pathname = new URL(response.url()).pathname;
+    if (isRpcPathname(pathname)) {
       rpcResponses.push({
         body: response.text().catch(() => ''),
+        expectedPageFingerprint: expectedPageFingerprintFor(pathname, response.request().postData()),
         status: response.status(),
       });
     }
@@ -864,17 +878,20 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect.poll(overviewResponseCount).toBe(1);
 
   const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));
-  const sessionResponseBodies = responseBodies.filter((body) => body.includes('session-query-v1:'));
-  // First page is SSR-hydrated; with 200-row pages only one follow-up RPC is required to reach index 204.
-  const topLevelSessionResponseBodies = sessionResponseBodies.filter((body) => body.includes(requestFingerprint));
-  expect(topLevelSessionResponseBodies.length).toBeGreaterThanOrEqual(1);
-  for (const responseBody of topLevelSessionResponseBodies) {
-    expectExactProtocolIdentity(responseBody, revision, SESSION_QUERY_FINGERPRINT_PATTERN, requestFingerprint);
+  // Every Session page response must carry exactly the fingerprint its own request implies:
+  // the top-level pages the report hydrated (first page is SSR-hydrated; with 200-row pages one
+  // follow-up RPC reaches index 204) and the member pages an open campaign panel loads.
+  const sessionPageResponses = rpcResponses
+    .map((captured, index) => ({ body: responseBodies[index] ?? '', expected: captured.expectedPageFingerprint }))
+    .filter((entry): entry is { body: string; expected: string } => entry.expected !== null);
+  expect(sessionPageResponses.some(({ expected }) => expected === requestFingerprint)).toBe(true);
+  for (const { body, expected } of sessionPageResponses) {
+    expectExactProtocolIdentity(body, revision, SESSION_QUERY_FINGERPRINT_PATTERN, expected);
   }
-  // Opening a campaign panel loads its member pages under their own query identity, at the same revision.
-  for (const responseBody of sessionResponseBodies.filter((body) => !body.includes(requestFingerprint))) {
-    expectExactProtocolIdentity(responseBody, revision, SESSION_QUERY_FINGERPRINT_PATTERN);
-  }
+  const unclassifiedSessionBodies = responseBodies.filter(
+    (body, index) => body.includes('session-query-v1:') && rpcResponses[index]?.expectedPageFingerprint === null,
+  );
+  expect(unclassifiedSessionBodies).toEqual([]);
   const neighborResponseBodies = responseBodies.filter((body) => body.includes('session-neighbor-v1:'));
   expect(neighborResponseBodies.length).toBeGreaterThanOrEqual(2);
   for (const responseBody of neighborResponseBodies) {

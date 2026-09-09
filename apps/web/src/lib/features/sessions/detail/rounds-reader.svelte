@@ -149,8 +149,8 @@
   const interactionList = css({ display: 'grid', gap: '6px', m: 0, p: 0, listStyle: 'none' });
   const interactionRow = css({
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto',
-    gap: '10px',
+    gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) auto' },
+    gap: { base: '6px', md: '10px' },
     alignItems: 'start',
     p: '8px 10px',
     border: '1px solid token(colors.line)',
@@ -163,8 +163,26 @@
     textStyle: 'numeric',
     color: 'ink',
     fontSize: '12px',
-    textAlign: 'right',
-    whiteSpace: 'nowrap',
+    textAlign: { base: 'left', md: 'right' },
+    whiteSpace: { base: 'normal', md: 'nowrap' },
+  });
+  const idChip = css({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
+  const scopeNote = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
+  const preamble = css({ display: 'grid', gap: '10px', mb: '14px' });
+  const unroundedBlock = css({
+    p: '6px 12px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'sm',
+    bg: 'surface',
+    '& > summary': {
+      display: 'flex',
+      alignItems: 'center',
+      minH: { base: '44px', md: '32px' },
+      color: 'ink',
+      fontSize: '12.5px',
+      fontWeight: 600,
+      cursor: 'pointer',
+    },
   });
   const interactionValueSub = css({ display: 'block', color: 'muted', fontSize: '10px' });
   const noteList = css({ display: 'grid', gap: '4px', m: 0, p: 0, listStyle: 'none' });
@@ -218,6 +236,7 @@
   import { fmtCompact, fmtDate, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import {
+    type ChildView,
     type InteractionView,
     interactionTitle,
     promptOpening,
@@ -231,6 +250,8 @@
     loading,
     onOpenChild,
     onRetry,
+    scopeNote: scopeNoteText = null,
+    selectedRoundId = $bindable(null),
     unavailable = null,
     view,
   }: {
@@ -238,6 +259,10 @@
     loading: boolean;
     onOpenChild?: ((row: SessionPresentationRow) => void) | undefined;
     onRetry?: (() => void) | undefined;
+    /** Names what the rounds read when the panel's numbers cover more than one session. */
+    scopeNote?: string | null;
+    /** Owned by the drawer so switching tabs and back keeps the reader's place. */
+    selectedRoundId?: string | null;
     unavailable?: { message: string; reason: SessionDetailUnavailableReason } | null;
     view: RoundsView | null;
   } = $props();
@@ -252,7 +277,6 @@
     unsupported: 'Rounds not supported',
   };
 
-  let selectedRoundId = $state<string | null>(null);
   let expandedPrompts = $state<ReadonlySet<string>>(new Set());
   let railButtons: HTMLButtonElement[] = [];
   const selectedRound = $derived.by((): RoundView | null => {
@@ -320,8 +344,7 @@
       : `${formatSessionDuration(round.recordedActiveMs)} recorded`;
   const roundAccessibleLabel = (round: RoundView): string =>
     `Round ${round.index + 1} of ${view?.rounds.length ?? 0}: ${roundTitle(round)}. ${costLabel(round)}, ${spanLabel(round)}, ${fmtNum(round.tools)} tools, ${round.interactions.length} agent interactions.`;
-  const childValue = (interaction: InteractionView): { primary: string; secondary: string } | null => {
-    const row = interaction.child?.row;
+  const rowValue = (row: SessionPresentationRow | null): { primary: string; secondary: string } | null => {
     if (!row) {
       return null;
     }
@@ -330,6 +353,14 @@
       secondary: `${fmtCompact(row.freshTokens)} fresh · ${fmtNum(row.turns)} turns · ${fmtNum(row.tools)} tools`,
     };
   };
+  const childValue = (interaction: InteractionView): { primary: string; secondary: string } | null =>
+    rowValue(interaction.child?.row ?? null);
+  const childTitle = (child: ChildView): string => child.label ?? child.agentType ?? child.sourceSessionId;
+  const noInteractionText = $derived(
+    view?.interactionEvidence === 'unavailable'
+      ? 'This harness does not record which round launched or messaged a child, so an empty list here is not evidence of none. Its child sessions are listed above the rounds.'
+      : 'No sub-agent was launched or messaged in this round.',
+  );
   const stateTitleFor = (): string => {
     if (analysisError) {
       return analysisError.kind === 'transient' ? 'Rounds failed to load' : 'Rounds unavailable';
@@ -374,175 +405,217 @@
         <button class={retryButton} onclick={() => onRetry?.()} type="button">Retry</button>
       {/if}
     </div>
-  {:else if view && selectedRound}
-    {#if view.coverageNotes.length > 0}
-      <ul class={noteList} data-session-rounds-coverage>
-        {#each view.coverageNotes as coverageNote (coverageNote.key)}
-          <li class={cx(note, coverageNote.tone === 'warning' && noteWarning)}>{coverageNote.text}</li>
-        {/each}
-      </ul>
-    {/if}
-    <div class={reader}>
-      <ol aria-label="Rounds" class={rail} data-session-rounds-rail>
-        {#each view.rounds as round (round.id)}
-          <li class={railItem}>
-            <button
-              aria-current={round.id === selectedRound.id ? 'true' : 'false'}
-              aria-label={roundAccessibleLabel(round)}
-              class={railButton}
-              data-session-round={round.index}
-              onclick={() => selectRound(round)}
-              onkeydown={handleRailKey}
-              tabindex={round.id === selectedRound.id ? 0 : -1}
-              type="button"
-              bind:this={railButtons[round.index]}
-            >
-              <span aria-hidden="true" class={railIndex}>{String(round.index + 1).padStart(2, '0')}</span>
-              <span>
-                <span class={cx(railExcerpt, !round.excerpt && railExcerptMuted)}>{roundTitle(round)}</span>
-                <span class={railMeta}>
-                  {#each round.interactions as interaction (interaction.toolUseId)}
-                    <span class={cx(chip, chipAgent)}
-                      >{interaction.child?.agentType ?? (interaction.kind === 'spawn' ? 'agent' : 'message')}</span
-                    >
-                  {/each}
-                  <span>{fmtNum(round.tools)} tools</span>
-                  <span>{spanLabel(round)}</span>
-                </span>
-              </span>
-              <span class={railCost}>{costLabel(round)}</span>
-            </button>
-          </li>
-        {/each}
-      </ol>
-      <article aria-label={`Round ${selectedRound.index + 1}`} class={pane} data-session-round-pane>
-        <header class={paneHeader}>
-          <h3 class={paneTitle}>
-            Round {selectedRound.index + 1} <span class={paneMeta}>of {fmtNum(view.rounds.length)}</span>
-          </h3>
-          <div class={paneMeta}>
-            <time datetime={selectedRound.startAt}>{fmtDate(selectedRound.startAt)}</time>
-            →
-            <time datetime={selectedRound.endAt}>{fmtDate(selectedRound.endAt)}</time>
-            · {spanLabel(selectedRound)}
-          </div>
-          <div class={statsRow}>
-            <span>{costLabel(selectedRound)}</span>
-            <span>{fmtCompact(selectedRound.tokens.total)} tokens</span>
-            <span>{selectedRound.calls === null ? 'calls not recorded' : `${fmtNum(selectedRound.calls)} calls`}</span>
-            <span>{fmtNum(selectedRound.tools)} tools</span>
-            <span>{selectedRound.model}</span>
-          </div>
-        </header>
-        <div>
-          <div class={sectionLabel}>
-            {selectedRound.prompts.length === 1 ? 'Prompt' : `Prompts · ${selectedRound.prompts.length}`}
-          </div>
-          {#if selectedRound.prompts.length === 0}
-            <div class={empty}>
-              {selectedRound.kind === 'unattributed'
-                ? 'Recorded activity that no prompt owns. It stays visible instead of being folded into a neighbour.'
-                : 'No prompt text was available in local history.'}
-            </div>
-          {/if}
-          {#each selectedRound.prompts as prompt (prompt.id)}
-            {@const opening = promptOpening(prompt.text)}
-            {@const expanded = expandedPrompts.has(prompt.id)}
-            <div class={promptEntry}>
-              <div class={promptEntryMeta}>
-                <time datetime={prompt.timestamp}>{fmtDate(prompt.timestamp)}</time>
-                {#if prompt.truncated}
-                  <span class={pill}>{prompt.text.length === 0 ? 'Body not retained' : 'Truncated'}</span>
-                {/if}
-              </div>
-              {#if prompt.text.length > 0}
-                <div class={promptBlock} data-session-round-prompt>
-                  {expanded ? prompt.text : opening.text}
-                  {#if opening.truncated && !expanded}
-                    <span aria-hidden="true" class={promptFade}></span>
-                  {/if}
-                </div>
-                {#if opening.truncated}
-                  <button
-                    aria-expanded={expanded ? 'true' : 'false'}
-                    class={linkButton}
-                    onclick={() => togglePrompt(prompt.id)}
-                    type="button"
-                  >
-                    {expanded ? 'Show the opening only' : `Continue reading (${fmtCompact(prompt.text.length)} characters)`}
-                  </button>
-                {/if}
-              {/if}
-            </div>
+  {:else if view}
+    {@const unrounded = view.unroundedChildren.length + view.unattributedInteractions.length}
+    <div class={preamble}>
+      {#if scopeNoteText}
+        <p class={scopeNote} data-session-rounds-scope>{scopeNoteText}</p>
+      {/if}
+      {#if view.coverageNotes.length > 0}
+        <ul class={noteList} data-session-rounds-coverage>
+          {#each view.coverageNotes as coverageNote (coverageNote.key)}
+            <li class={cx(note, coverageNote.tone === 'warning' && noteWarning)}>{coverageNote.text}</li>
           {/each}
-        </div>
-        <div>
-          <div class={sectionLabel}>Sub-agents in this round</div>
-          {#if selectedRound.interactions.length === 0}
-            <div class={empty}>No sub-agent was launched or messaged in this round.</div>
-          {:else}
-            <ul class={interactionList} data-session-round-interactions>
-              {#each selectedRound.interactions as interaction (interaction.toolUseId)}
-                {@const value = childValue(interaction)}
-                <li class={interactionRow}>
-                  <div>
-                    <div class={interactionTitleClass}>{interactionTitle(interaction)}</div>
-                    <div class={interactionMeta}>
-                      {#if interaction.child}
-                        {interaction.child.agentType ?? 'agent'}
-                        · <span class={chip}>{interaction.child.sourceSessionId}</span>
-                        {#if interaction.child.row && onOpenChild}
-                          ·
-                          <button
-                            class={linkButton}
-                            onclick={() => onOpenChild?.(interaction.child!.row!)}
-                            type="button"
-                          >
-                            Open session
-                          </button>
-                        {:else if !interaction.child.row}
-                          · usage not loaded for this member yet
-                        {/if}
-                      {:else}
-                        The launch never recorded which agent it started.
-                      {/if}
-                    </div>
-                  </div>
-                  <div class={interactionValue}>
-                    {#if value}
-                      {value.primary}
-                      <span class={interactionValueSub}>{value.secondary}</span>
-                    {:else}
-                      —
+        </ul>
+      {/if}
+      {#if unrounded > 0}
+        <details class={unroundedBlock} data-session-rounds-unrounded>
+          <summary>
+            {fmtNum(unrounded)}
+            {unrounded === 1 ? 'child session or launch' : 'child sessions and launches'}
+            without a known round
+          </summary>
+          <ul class={interactionList} style="margin: 6px 0 8px">
+            {#each view.unroundedChildren as child (child.sourceSessionId)}
+              {@const value = rowValue(child.row)}
+              <li class={interactionRow}>
+                <div>
+                  <div class={interactionTitleClass}>{childTitle(child)}</div>
+                  <div class={interactionMeta}>
+                    {child.agentType ?? 'child session'}
+                    · <span class={cx(chip, idChip)}>{child.sourceSessionId}</span>
+                    {#if child.row && onOpenChild}
+                      ·
+                      <button class={linkButton} onclick={() => onOpenChild?.(child.row!)} type="button">
+                        Open session
+                      </button>
+                    {:else if !child.row}
+                      · usage not loaded for this member yet
                     {/if}
                   </div>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-        {#if view.unattributedInteractions.length > 0 && selectedRound.index === 0}
-          <div>
-            <div class={sectionLabel}>Launches without a round</div>
-            <ul class={interactionList}>
-              {#each view.unattributedInteractions as interaction (interaction.toolUseId)}
-                <li class={interactionRow}>
-                  <div>
-                    <div class={interactionTitleClass}>{interactionTitle(interaction)}</div>
-                    <div class={interactionMeta}>
-                      <time datetime={interaction.at}>{fmtDate(interaction.at)}</time>
-                      · not attributable to a prompt
-                    </div>
+                </div>
+                <div class={interactionValue}>
+                  {#if value}
+                    {value.primary}
+                    <span class={interactionValueSub}>{value.secondary}</span>
+                  {:else}
+                    —
+                  {/if}
+                </div>
+              </li>
+            {/each}
+            {#each view.unattributedInteractions as interaction (interaction.toolUseId)}
+              <li class={interactionRow}>
+                <div>
+                  <div class={interactionTitleClass}>{interactionTitle(interaction)}</div>
+                  <div class={interactionMeta}>
+                    <time datetime={interaction.at}>{fmtDate(interaction.at)}</time>
+                    · not attributable to a prompt
                   </div>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
-      </article>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
     </div>
-  {:else if view}
-    <div class={empty}>No rounds were recorded in local history for this session.</div>
+    {#if !selectedRound}
+      <div class={empty}>No rounds were recorded in local history for this session.</div>
+    {:else}
+      <div class={reader}>
+        <ol aria-label="Rounds" class={rail} data-session-rounds-rail>
+          {#each view.rounds as round (round.id)}
+            <li class={railItem}>
+              <button
+                aria-current={round.id === selectedRound.id ? 'true' : 'false'}
+                aria-label={roundAccessibleLabel(round)}
+                class={railButton}
+                data-session-round={round.index}
+                onclick={() => selectRound(round)}
+                onkeydown={handleRailKey}
+                tabindex={round.id === selectedRound.id ? 0 : -1}
+                type="button"
+                bind:this={railButtons[round.index]}
+              >
+                <span aria-hidden="true" class={railIndex}>{String(round.index + 1).padStart(2, '0')}</span>
+                <span>
+                  <span class={cx(railExcerpt, !round.excerpt && railExcerptMuted)}>{roundTitle(round)}</span>
+                  <span class={railMeta}>
+                    {#each round.interactions as interaction (interaction.toolUseId)}
+                      <span class={cx(chip, chipAgent)}
+                        >{interaction.child?.agentType ?? (interaction.kind === 'spawn' ? 'agent' : 'message')}</span
+                      >
+                    {/each}
+                    <span>{fmtNum(round.tools)} tools</span>
+                    <span>{spanLabel(round)}</span>
+                  </span>
+                </span>
+                <span class={railCost}>{costLabel(round)}</span>
+              </button>
+            </li>
+          {/each}
+        </ol>
+        <article aria-label={`Round ${selectedRound.index + 1}`} class={pane} data-session-round-pane>
+          <header class={paneHeader}>
+            <h3 class={paneTitle}>
+              Round {selectedRound.index + 1} <span class={paneMeta}>of {fmtNum(view.rounds.length)}</span>
+            </h3>
+            <div class={paneMeta}>
+              <time datetime={selectedRound.startAt}>{fmtDate(selectedRound.startAt)}</time>
+              →
+              <time datetime={selectedRound.endAt}>{fmtDate(selectedRound.endAt)}</time>
+              · {spanLabel(selectedRound)}
+            </div>
+            <div class={statsRow}>
+              <span>{costLabel(selectedRound)}</span>
+              <span>{fmtCompact(selectedRound.tokens.total)} tokens</span>
+              <span
+                >{selectedRound.calls === null ? 'calls not recorded' : `${fmtNum(selectedRound.calls)} calls`}</span
+              >
+              <span>{fmtNum(selectedRound.tools)} tools</span>
+              <span>{selectedRound.model}</span>
+            </div>
+          </header>
+          <div>
+            <div class={sectionLabel}>
+              {selectedRound.prompts.length === 1 ? 'Prompt' : `Prompts · ${selectedRound.prompts.length}`}
+            </div>
+            {#if selectedRound.prompts.length === 0}
+              <div class={empty}>
+                {selectedRound.kind === 'unattributed'
+                ? 'Recorded activity that no prompt owns. It stays visible instead of being folded into a neighbour.'
+                : 'No prompt text was available in local history.'}
+              </div>
+            {/if}
+            {#each selectedRound.prompts as prompt (prompt.id)}
+              {@const opening = promptOpening(prompt.text)}
+              {@const expanded = expandedPrompts.has(prompt.id)}
+              <div class={promptEntry}>
+                <div class={promptEntryMeta}>
+                  <time datetime={prompt.timestamp}>{fmtDate(prompt.timestamp)}</time>
+                  {#if prompt.truncated}
+                    <span class={pill}>{prompt.text.length === 0 ? 'Body not retained' : 'Truncated'}</span>
+                  {/if}
+                </div>
+                {#if prompt.text.length > 0}
+                  <div class={promptBlock} data-session-round-prompt>
+                    {expanded ? prompt.text : opening.text}
+                    {#if opening.truncated && !expanded}
+                      <span aria-hidden="true" class={promptFade}></span>
+                    {/if}
+                  </div>
+                  {#if opening.truncated}
+                    <button
+                      aria-expanded={expanded ? 'true' : 'false'}
+                      class={linkButton}
+                      onclick={() => togglePrompt(prompt.id)}
+                      type="button"
+                    >
+                      {expanded ? 'Show the opening only' : `Continue reading (${fmtCompact(prompt.text.length)} characters)`}
+                    </button>
+                  {/if}
+                {/if}
+              </div>
+            {/each}
+          </div>
+          <div>
+            <div class={sectionLabel}>Sub-agents in this round</div>
+            {#if selectedRound.interactions.length === 0}
+              <div class={empty} data-session-round-no-interactions={view.interactionEvidence}>{noInteractionText}</div>
+            {:else}
+              <ul class={interactionList} data-session-round-interactions>
+                {#each selectedRound.interactions as interaction (interaction.toolUseId)}
+                  {@const value = childValue(interaction)}
+                  <li class={interactionRow}>
+                    <div>
+                      <div class={interactionTitleClass}>{interactionTitle(interaction)}</div>
+                      <div class={interactionMeta}>
+                        {#if interaction.child}
+                          {interaction.child.agentType ?? 'agent'}
+                          · <span class={cx(chip, idChip)}>{interaction.child.sourceSessionId}</span>
+                          {#if interaction.child.row && onOpenChild}
+                            ·
+                            <button
+                              class={linkButton}
+                              onclick={() => onOpenChild?.(interaction.child!.row!)}
+                              type="button"
+                            >
+                              Open session
+                            </button>
+                          {:else if !interaction.child.row}
+                            · usage not loaded for this member yet
+                          {/if}
+                        {:else}
+                          The launch never recorded which agent it started.
+                        {/if}
+                      </div>
+                    </div>
+                    <div class={interactionValue}>
+                      {#if value}
+                        {value.primary}
+                        <span class={interactionValueSub}>{value.secondary}</span>
+                      {:else}
+                        —
+                      {/if}
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        </article>
+      </div>
+    {/if}
   {:else}
     <div class={statePanel}>
       <div class={stateTitleClass}>No rounds loaded</div>
