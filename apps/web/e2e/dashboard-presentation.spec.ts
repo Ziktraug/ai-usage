@@ -543,6 +543,38 @@ test('scales Punchcard size and brightness inside fixed accessible targets with 
   expect(punchcardBox?.width ?? 0).toBeGreaterThanOrEqual((advancedBox?.width ?? 0) - 32);
 });
 
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`shows a themed Punchcard tooltip on hover and keyboard focus in ${colorScheme} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    await openHydratedReport(page);
+    await waitForFocusedReportSettled(page);
+    const visual = page.locator('[data-punchcard-visual]');
+    const target = visual.locator('button[data-weekday="6"][data-hour="14"]');
+    const tooltip = page.getByRole('tooltip');
+
+    await expect(visual.locator('[title]')).toHaveCount(0);
+    await expect(tooltip).toHaveCount(0);
+    await target.scrollIntoViewIfNeeded();
+    await target.hover();
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('Sunday 14:00–14:59');
+    await expect(tooltip).toContainText('1 session');
+    await expect(tooltip).toContainText('$0.00 est. API value');
+    await expect(target).toHaveAttribute('aria-describedby', (await tooltip.getAttribute('id')) ?? '');
+    expect(await tooltip.evaluate((element) => element.closest('[data-punchcard-visual]'))).toBeNull();
+
+    await page.keyboard.press('Escape');
+    await expect(tooltip).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await page.keyboard.press('Tab');
+    await target.focus();
+    await expect(tooltip).toBeVisible();
+    await target.press('Enter');
+    await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe('SUN-14');
+    await expect(tooltip).toHaveCount(0);
+  });
+}
+
 test('keeps every Punchcard hour visible beside Session shape across the desktop band', async ({ page }) => {
   await page.addInitScript(
     ({ enabledKey, shapeKey }) => {
