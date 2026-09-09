@@ -1,9 +1,11 @@
 import { parseSessionDetailRequest, sessionDetailRequestFingerprint } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenRequest,
+  parseSessionLookupRequest,
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
@@ -11,6 +13,7 @@ import { parseSessionVcsResolveRequest } from '@ai-usage/report-core/session-vcs
 import type {
   SessionCampaignChildrenRequest,
   SessionDetailRequest,
+  SessionLookupRequest,
   SessionNeighborRequest,
   SessionQueryRequest,
   SessionVcsResolveRequest,
@@ -74,6 +77,11 @@ export const sessionNeighborsKey = (request: SessionNeighborRequest) => {
   return immutableRevisionKey(sessionFamily, parsed.query.revision, sessionNeighborFingerprint(parsed), 'neighbors');
 };
 
+export const sessionLookupKey = (request: SessionLookupRequest) => {
+  const parsed = parseSessionLookupRequest(request);
+  return immutableRevisionKey(sessionFamily, parsed.revision, sessionLookupFingerprint(parsed), 'lookup');
+};
+
 export const sessionDetailKey = (request: SessionDetailRequest) => {
   const parsed = parseSessionDetailRequest(request);
   return immutableRevisionKey(sessionFamily, parsed.revision, sessionDetailRequestFingerprint(parsed), 'detail');
@@ -129,6 +137,20 @@ export const sessionNeighborsQueryOptions = (
   });
 };
 
+export const sessionLookupQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionLookupRequest,
+  execution: SessionQueryExecution,
+) => {
+  const parsed = parseSessionLookupRequest(request);
+  return queryOptions({
+    ...webQueryPolicies.immutableRevision,
+    enabled: execution.browser,
+    queryFn: async ({ signal }) => await client.lookup(parsed, signal),
+    queryKey: sessionLookupKey(parsed),
+  });
+};
+
 export const sessionDetailQueryOptions = (
   client: SessionClientAdapter,
   request: SessionDetailRequest,
@@ -172,6 +194,15 @@ export const optionalSessionNeighborsQueryOptions = (
   execution: SessionQueryExecution,
 ) =>
   sessionNeighborsQueryOptions(client, request ?? { query: disabledSessionRequest, rowId: 'disabled-session-row' }, {
+    browser: execution.browser && request !== undefined,
+  });
+
+export const optionalSessionLookupQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionLookupRequest | undefined,
+  execution: SessionQueryExecution,
+) =>
+  sessionLookupQueryOptions(client, request ?? { revision: 'disabled-session-query', rowId: 'disabled-session-row' }, {
     browser: execution.browser && request !== undefined,
   });
 

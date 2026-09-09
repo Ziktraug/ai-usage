@@ -54,6 +54,7 @@ const unusedRpc = (): Promise<never> => Promise.reject(new Error('Unexpected Ses
 const createSessionClientStub = (overrides: Partial<SessionClientAdapter> = {}): SessionClientAdapter => ({
   campaignChildren: unusedRpc,
   detail: unusedRpc,
+  lookup: unusedRpc,
   neighbors: unusedRpc,
   page: unusedRpc,
   vcs: unusedRpc,

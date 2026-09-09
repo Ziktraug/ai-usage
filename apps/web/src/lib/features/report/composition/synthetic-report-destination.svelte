@@ -358,6 +358,7 @@
   const syntheticClient: SessionClientAdapter = {
     campaignChildren: unavailable,
     detail: unavailable,
+    lookup: unavailable,
     neighbors: unavailable,
     page: unavailable,
     vcs: unavailable,

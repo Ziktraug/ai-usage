@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   parseSessionQueryRequest,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
@@ -283,5 +284,31 @@ describe('Session RPC server adapter', () => {
 
     expect(await call(router.detail, { revision: query.revision, rowId: 'row-1' })).toEqual(detailUnavailable);
     expect(await call(router.vcs, { revision: query.revision, rowId: 'row-1' })).toEqual(vcsUnavailable);
+  });
+
+  test('routes the lookup procedure through the revision query port', async () => {
+    const lookupRequest = { revision: query.revision, rowId: 'row-1' };
+    const envelope = {
+      data: {
+        found: false,
+        requestFingerprint: sessionLookupFingerprint(lookupRequest),
+        revision: query.revision,
+        row: null,
+      },
+      ok: true as const,
+      requestFingerprint: sessionLookupFingerprint(lookupRequest),
+      revision: query.revision,
+    };
+    const kinds: string[] = [];
+    const router = createSessionRpcRouter({
+      getDetail: async () => detailUnavailable,
+      resolveVcs: async () => vcsUnavailable,
+      runRevisionQuery: (kind) => {
+        kinds.push(kind);
+        return Promise.resolve(envelope);
+      },
+    });
+    expect(await call(router.lookup, lookupRequest)).toEqual(envelope);
+    expect(kinds).toEqual(['session-lookup']);
   });
 });

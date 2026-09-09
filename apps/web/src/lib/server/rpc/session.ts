@@ -1,6 +1,7 @@
 import { parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenServerResult,
+  parseSessionLookupServerResult,
   parseSessionNeighborServerResult,
   parseSessionPageServerResult,
 } from '@ai-usage/report-core/session-query';
@@ -8,6 +9,7 @@ import { parseSessionVcsResolveResponse } from '@ai-usage/report-core/session-vc
 import {
   type SessionCampaignChildrenRequest,
   type SessionDetailRequest,
+  type SessionLookupRequest,
   type SessionNeighborRequest,
   type SessionQueryRequest,
   type SessionQueryServerResult,
@@ -16,11 +18,12 @@ import {
 } from '@ai-usage/web-contract/session';
 import { implement } from '@orpc/server';
 
-export type SessionRevisionQueryKind = 'campaign-children' | 'neighbors' | 'sessions';
+export type SessionRevisionQueryKind = 'campaign-children' | 'neighbors' | 'session-lookup' | 'sessions';
 
 interface SessionRevisionQueryInputByKind {
   'campaign-children': SessionCampaignChildrenRequest;
   neighbors: SessionNeighborRequest;
+  'session-lookup': SessionLookupRequest;
   sessions: SessionQueryRequest;
 }
 
@@ -112,6 +115,22 @@ export const createSessionRpcRouter = (dependencies: SessionRpcDependencies) => 
             data: { reason: 'session-detail-unavailable' },
             message: 'Session detail could not be read safely.',
           }),
+        ),
+    ),
+    lookup: session.lookup.handler(
+      async ({ errors, input, signal }) =>
+        await runExactQuery(
+          input,
+          signal,
+          (request, requestSignal) => dependencies.runRevisionQuery('session-lookup', request, requestSignal),
+          parseSessionLookupServerResult,
+          {
+            incompatibleStore: () =>
+              errors.IncompatibleStore({
+                data: { reason: 'incompatible-store' },
+                message: 'The exact Session lookup is unavailable for this report store.',
+              }),
+          },
         ),
     ),
     neighbors: session.neighbors.handler(
