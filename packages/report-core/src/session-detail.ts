@@ -184,6 +184,7 @@ export interface SessionDetailInteraction {
 }
 
 export const sessionDetailCoverageReasons = [
+  'ancestry-budget',
   'ancestry-conflict',
   'ancestry-cycle',
   'child-budget',

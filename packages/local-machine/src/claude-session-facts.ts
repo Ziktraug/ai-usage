@@ -168,6 +168,7 @@ interface ClaudeAssistantFacts {
   assistantEvents: ReadonlyMap<string, ClaudeEvent>;
   assistants: ClaudeAssistant[];
   assistantTurnKey: ReadonlyMap<string, string>;
+  budgetExhaustions: number;
   cycles: number;
   partial: boolean;
   rejectedMetricRecords: number;
@@ -336,9 +337,10 @@ const intervalUnionMs = (intervals: readonly SessionDetailInterval[]): number =>
 const createPromptResolver = (
   graph: ClaudeGraphIndex,
   promptIds: ReadonlySet<string>,
-): { cycles: () => number; resolve: (startUuid: string | null) => string | null } => {
+): { budgetExhaustions: () => number; cycles: () => number; resolve: (startUuid: string | null) => string | null } => {
   const memo = new Map<string, string | null>();
   let cycles = 0;
+  let budgetExhaustions = 0;
   const resolve = (startUuid: string | null, visiting = new Set<string>(), depth = 0): string | null => {
     const path: string[] = [];
     let current = startUuid;
@@ -364,7 +366,7 @@ const createPromptResolver = (
         // Each recorded parent must lead to the same prompt; otherwise the
         // activity below stays unattributed rather than guessing a duplicate.
         if (depth >= MAX_CLAUDE_CONFLICT_DEPTH) {
-          cycles += 1;
+          budgetExhaustions += 1;
           break;
         }
         const resolved = new Set(conflicting.map((parent) => resolve(parent, visiting, depth + 1)));
@@ -381,7 +383,11 @@ const createPromptResolver = (
     }
     return result;
   };
-  return { cycles: () => cycles, resolve: (startUuid) => resolve(startUuid) };
+  return {
+    budgetExhaustions: () => budgetExhaustions,
+    cycles: () => cycles,
+    resolve: (startUuid) => resolve(startUuid),
+  };
 };
 
 /**
@@ -586,6 +592,7 @@ const collectClaudeAssistants = (
   const assistantEvents = new Map<string, ClaudeEvent>();
   const assistantTurnKey = new Map<string, string>();
   const seenUsage = new Set<string>();
+  const seenToolUses = new Set<string>();
   let partial = false;
   let rejectedMetricRecords = 0;
   let unattributed = 0;
@@ -613,9 +620,22 @@ const collectClaudeAssistants = (
       seenUsage.add(deduplicationKey);
     }
     const model = typeof message.model === 'string' && message.model.length > 0 ? message.model : 'unknown';
-    const tools = Array.isArray(message.content)
-      ? message.content.filter((block) => blockType(block) === 'tool_use').length
-      : 0;
+    // A tool use carries an id; a record that repeats one already counted
+    // (a streamed duplicate the usage key did not catch) must not count twice.
+    let tools = 0;
+    for (const block of Array.isArray(message.content) ? message.content : []) {
+      if (blockType(block) !== 'tool_use') {
+        continue;
+      }
+      const toolUseId = isRecord(block) && typeof block.id === 'string' && block.id.length > 0 ? block.id : null;
+      if (toolUseId !== null) {
+        if (seenToolUses.has(toolUseId)) {
+          continue;
+        }
+        seenToolUses.add(toolUseId);
+      }
+      tools += 1;
+    }
     assistants.push({ at: current.at, model, tokens, tools, uuid: current.uuid });
     if (current.uuid && !graph.conflictingUuids.has(current.uuid)) {
       assistantEvents.set(current.uuid, current);
@@ -633,8 +653,9 @@ const collectClaudeAssistants = (
     assistantEvents,
     assistants,
     assistantTurnKey,
+    budgetExhaustions: resolver.budgetExhaustions(),
     cycles: resolver.cycles(),
-    partial: partial || resolver.cycles() > 0,
+    partial: partial || resolver.cycles() > 0 || resolver.budgetExhaustions() > 0,
     rejectedMetricRecords,
     resolveTurnKey: (event) => promptKeyFor(event, graph, resolver.resolve, promptFacts.promptIdsByRecordedId),
     unattributed,
@@ -967,19 +988,21 @@ const collectClaudeLinks = (
   ): void => {
     const meta = metasByAgent.get(agentId);
     const sourceSessionId = claudeChildSessionId(agentId);
+    const boundedLabelValue = boundedLabel(label ?? meta?.description ?? null);
+    const boundedAgentType = boundedLabel(agentType ?? meta?.agentType ?? null);
     const existing = children.get(sourceSessionId);
     if (existing) {
       if (existing.spawnTurnIndex === null && turnIndex !== null) {
         existing.spawnTurnIndex = turnIndex;
       }
-      existing.label ??= label ?? boundedLabel(meta?.description ?? null);
-      existing.agentType ??= agentType ?? boundedLabel(meta?.agentType ?? null);
+      existing.label ??= boundedLabelValue;
+      existing.agentType ??= boundedAgentType;
       return;
     }
     children.set(sourceSessionId, {
-      agentType: agentType ?? boundedLabel(meta?.agentType ?? null),
+      agentType: boundedAgentType,
       evidence,
-      label: label ?? boundedLabel(meta?.description ?? null),
+      label: boundedLabelValue,
       sourceSessionId,
       spawnTurnIndex: turnIndex,
     });
@@ -1439,6 +1462,9 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
   }
   if (assistantFacts.cycles > 0) {
     groupingReasons.push('ancestry-cycle');
+  }
+  if (assistantFacts.budgetExhaustions > 0) {
+    groupingReasons.push('ancestry-budget');
   }
   if (graph.conflictingUuids.size > 0) {
     groupingReasons.push('ancestry-conflict');

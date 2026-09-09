@@ -132,8 +132,14 @@ const CLAUDE_AGENT_FILE_PREFIX = 'agent-';
 const CLAUDE_WORKFLOWS_DIRECTORY = 'workflows';
 const SAFE_CLAUDE_WORKFLOW_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-const optionalString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+const MAX_CLAUDE_AGENT_META_STRING_LENGTH = 256;
+
+const optionalString = (value: unknown): string | null => {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return null;
+  }
+  return value.trim().slice(0, MAX_CLAUDE_AGENT_META_STRING_LENGTH);
+};
 
 /**
  * Read the `agent-<id>.meta.json` sidecars of one session's sub-agents. A

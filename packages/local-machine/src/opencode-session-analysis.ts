@@ -256,17 +256,25 @@ const boundedPromptText = (value: string, maximumBytes: number): BoundedPromptTe
   return { text: characters.join(''), truncated };
 };
 
-const promptsFromRows = (
-  rows: readonly OpenCodeDetailPromptRow[],
-): { prompts: SessionDetailPrompt[]; promptsTruncated: boolean } => {
+interface OpenCodePromptFacts {
+  bodiesOmitted: number;
+  identitiesOmitted: number;
+  prompts: SessionDetailPrompt[];
+  promptsTruncated: boolean;
+}
+
+const promptsFromRows = (rows: readonly OpenCodeDetailPromptRow[]): OpenCodePromptFacts => {
   const prompts: SessionDetailPrompt[] = [];
   let remainingBytes = MAX_PROMPT_TOTAL_BYTES;
-  let promptsTruncated = rows.length > MAX_PROMPT_ROWS;
+  let identitiesOmitted = Math.max(0, rows.length - MAX_PROMPT_ROWS);
+  let bodiesOmitted = 0;
+  let promptsTruncated = identitiesOmitted > 0;
   for (const row of rows.slice(0, MAX_PROMPT_ROWS)) {
     const id = boundedString(row.id, MAX_ID_LENGTH);
     const created = timestampMs(row.created);
     if (!(id && created !== null && typeof row.text === 'string' && row.text.length > 0)) {
       promptsTruncated = true;
+      identitiesOmitted += 1;
       continue;
     }
     // Past the body budget the identity is still kept, with an empty body, so
@@ -283,11 +291,14 @@ const promptsFromRows = (
       timestamp: timestamp(created),
       truncated: bounded.text ? bounded.truncated || sqlTruncated : true,
     };
+    if (!bounded.text) {
+      bodiesOmitted += 1;
+    }
     prompts.push(prompt);
     remainingBytes -= TEXT_ENCODER.encode(prompt.text).byteLength;
     promptsTruncated = promptsTruncated || prompt.truncated;
   }
-  return { prompts, promptsTruncated };
+  return { bodiesOmitted, identitiesOmitted, prompts, promptsTruncated };
 };
 
 const turnsFromRows = (
@@ -586,7 +597,7 @@ const detailFromDatabase = (
             projectionTools = nextTools.value;
           }
         }
-        const { prompts, promptsTruncated } = promptsFromRows(promptRows);
+        const { bodiesOmitted, identitiesOmitted, prompts, promptsTruncated } = promptsFromRows(promptRows);
         const directUserMessageIds = new Set(
           parentRows.flatMap((row) => {
             const messageId = boundedString(row.message_id, MAX_ID_LENGTH);
@@ -663,7 +674,11 @@ const detailFromDatabase = (
               status: 'unavailable',
             },
             promptBodies: promptsTruncated
-              ? { omittedCount: null, reasons: ['prompt-body-budget'], status: 'partial' }
+              ? {
+                  omittedCount: bodiesOmitted + identitiesOmitted,
+                  reasons: identitiesOmitted > 0 ? ['prompt-body-budget', 'prompt-budget'] : ['prompt-body-budget'],
+                  status: 'partial',
+                }
               : completeCoverage(),
             recordedTiming: missingCompletion
               ? { omittedCount: null, reasons: ['timing-not-recorded'], status: 'partial' }
