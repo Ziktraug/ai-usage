@@ -134,6 +134,15 @@ describe('detail selection from the route', () => {
       }),
     });
     expect(single).toMatchObject({ kind: 'open', selection: { row: { rowId: 'solo' }, total: 42 } });
+    const aggregateInContext = resolveDetailSelection({
+      campaignLookup: undefined,
+      contextRows: [campaignItem('campaign-a', 'root-a').row],
+      lookupRow: undefined,
+      revision: 'revision-a',
+      route: { kind: 'session', rowId: 'root-a' },
+      window: undefined,
+    });
+    expect(aggregateInContext).toEqual({ kind: 'loading', lookup: 'session' });
   });
 
   test('falls back to context rows, then asks for a lookup, then reports a missing row', () => {

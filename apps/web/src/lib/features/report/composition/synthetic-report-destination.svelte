@@ -321,7 +321,7 @@
         ? candidates.find(
             (candidate) => candidate.campaignKey === route.campaignKey && candidate.campaignTotalCount !== undefined,
           )
-        : candidates.find((candidate) => candidate.rowId === route.rowId);
+        : candidates.find((candidate) => candidate.rowId === route.rowId && (candidate.campaignTotalCount ?? 1) <= 1);
     return row === undefined ? null : { row, target: sessionAnalysisTargetForOverviewRow(row) };
   });
   const selectedRowId = $derived(selection?.row.rowId ?? null);

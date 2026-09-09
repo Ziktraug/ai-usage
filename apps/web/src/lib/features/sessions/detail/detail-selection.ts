@@ -130,7 +130,8 @@ export const resolveDetailSelection = (input: DetailSelectionInput): DetailSelec
   if (inWindow) {
     return { kind: 'open', selection: inWindow };
   }
-  const contextRow = input.contextRows.find((row) => row.rowId === route.rowId);
+  // Context rows may be table rows, which aggregate campaigns; a session URL takes only plain rows.
+  const contextRow = input.contextRows.find((row) => row.rowId === route.rowId && (row.campaignTotalCount ?? 1) <= 1);
   if (contextRow) {
     return {
       kind: 'open',

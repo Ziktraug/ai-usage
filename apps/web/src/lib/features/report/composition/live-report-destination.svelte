@@ -304,6 +304,18 @@
       window: sessionWindow,
     }),
   );
+  // A lookup that failed or reported an expired revision must not read as loading forever.
+  const detailLookupFailed = $derived(
+    detailSelectionState.kind === 'loading' &&
+      (detailSelectionState.lookup === 'session'
+        ? lookupQuery.isError || lookupQuery.data?.ok === false
+        : campaignLookupQuery.isError || campaignLookupQuery.data?.ok === false),
+  );
+  const retryDetailLookup = async (): Promise<void> => {
+    await (detailSelectionState.kind === 'loading' && detailSelectionState.lookup === 'campaign'
+      ? campaignLookupQuery.refetch()
+      : lookupQuery.refetch());
+  };
   const selection = $derived(detailSelectionState.kind === 'open' ? detailSelectionState.selection : null);
   const selectedRowId = $derived(selection?.row.rowId ?? null);
   $effect(() => {
@@ -843,6 +855,12 @@
     {detailSelectionState.route.kind === 'campaign'
       ? 'This campaign is not part of the current report revision.'
       : 'This session is not part of the current report revision.'}
+    <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close</button>
+  </p>
+{:else if detailSelectionState.kind === 'loading' && detailLookupFailed}
+  <p class={detailRouteStatus} data-session-route-status="failed" role="status">
+    The selected row could not be looked up in the current report revision.
+    <button class={ghostButton} onclick={() => retryDetailLookup()} type="button">Retry</button>
     <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close</button>
   </p>
 {:else if detailSelectionState.kind === 'loading'}
