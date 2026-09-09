@@ -1,6 +1,7 @@
 # 114 — Session rounds and sub-agents: reading panel with a URL
 
-Status: IN PROGRESS on `feat/session-rounds-panel`. Depends on nothing merged
+Status: IN PROGRESS on `feat/session-rounds-panel` (phase 1 committed; phase 2
+route, panel and focus policy implemented, e2e in verification). Depends on nothing merged
 after `6fb1d660`. Product decisions taken by the operator on 2026-09-09 from the
 "Rounds & Sous-agents" proposal (audit of real local history, three directions,
 peer review with Codex).
@@ -58,9 +59,15 @@ assistant records, 13 sub-agent launches):
    on native task boundaries with `thread_spawn_edges` children; OpenCode rounds
    on message parentage with `session.parent_id` children. Rounds are derived
    once, in `report-core`, from validated turns.
-2. **Route and panel**: `/sessions/[id]` and campaign URL, shallow navigation in
-   `NavigationPort`, history and focus policy, current drawer replaced by the
-   panel.
+2. **Route and panel**: `/sessions/[rowId]` and `/campaigns/[campaignKey]` as
+   child routes of a `(report)` layout that keeps the table mounted (the
+   repository's skills-drawer precedent, chosen over shallow routing because
+   the layout already exists and a direct load must render the same table);
+   the owner pushes one history entry marked as opened from the report,
+   replaces it while j/k browses, travels back on close, and restores focus
+   after the navigation. Selection is derived from the URL through the loaded
+   window, the rows the reader was looking at, an exact `session.lookup`, or a
+   one-item campaign page. The drawer keeps its current content until phase 3.
 3. **Reading by rounds**: windowed round rail (j/k, filter, jump), reading
    column at prose width, sub-agent interactions under each round, Members view
    for campaigns, first-class unavailable states.

@@ -72,8 +72,11 @@
   const desktopViewport = new MediaQuery('(min-width: 48rem)', false);
   const mobileDrawer = $derived(!desktopViewport.current);
   let previousFocus = $state<Element | null>(typeof document === 'undefined' ? null : document.activeElement);
-  let presentedRow = $state<SessionPresentationRow | null>(null);
-  let presentedTarget = $state<SessionDetailControllerSnapshot['target']>(null);
+  // Raw: these hold references handed down from a derived selection. A proxied
+  // copy would differ from the next snapshot by identity alone and re-run the
+  // presenting effect forever.
+  let presentedRow = $state.raw<SessionPresentationRow | null>(null);
+  let presentedTarget = $state.raw<SessionDetailControllerSnapshot['target']>(null);
   let drawerWasOpen = false;
   let destroyed = false;
   let openHint = $state<symbol | null>(null);

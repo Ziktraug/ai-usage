@@ -1,3 +1,23 @@
+<script lang="ts" module>
+  import { css } from '@ai-usage/design-system/css';
+  import { ghostButton } from '@ai-usage/design-system/svelte';
+
+  const detailRouteStatus = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '10px',
+    alignItems: 'center',
+    m: '12px 0',
+    p: '10px 12px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'sm',
+    bg: 'surfaceMuted',
+    color: 'ink',
+    fontSize: '13px',
+  });
+  const visuallyHidden = css({ srOnly: true });
+</script>
+
 <script lang="ts">
   import type {
     FocusedDateDomain,
@@ -6,7 +26,12 @@
   } from '@ai-usage/report-core/focused-report-query';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
   import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
-  import type { LocalTimeCell, SessionPresentationRow } from '@ai-usage/report-core/session-query';
+  import {
+    type LocalTimeCell,
+    parseSessionQueryRequest,
+    type SessionPresentationRow,
+    type SessionQueryRequest,
+  } from '@ai-usage/report-core/session-query';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { createMutation, createQuery, type QueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
@@ -44,16 +69,20 @@
     setCampaignLabelOverrideMutationOptions,
   } from '../../../query/options/report';
   import { refreshReportDestination, reportDestinationQueryOptions } from '../../../query/options/report-destination';
+  import { optionalSessionLookupQueryOptions, optionalSessionPageQueryOptions } from '../../../query/options/session';
   import {
     increaseSessionWindowDepth,
     initialSessionWindowIntent,
     type SessionWindowIntent,
     sessionWindowIntentFingerprint,
     sessionWindowSatisfiesIntent,
+    sessionWindowView,
   } from '../../../query/options/session-window';
   import type { ReportClient } from '../../../rpc/report-client';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
+  import { resolveDetailSelection, routeForSelection } from '../../sessions/detail/detail-selection';
   import SessionDetailQuerySlot from '../../sessions/detail/session-detail-query-slot.svelte';
+  import type { SessionRoute } from '../../sessions/detail/session-route';
   import type { SessionSelectionInput } from '../../sessions/detail/types';
   import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import { useSourceControl } from '../../sources/context.svelte';
@@ -65,6 +94,8 @@
     type CampaignSessionControlsBinding,
     campaignFilterMatchesBinding,
     campaignSessionSelectionFor,
+    campaignSessionSelectionQuery,
+    campaignSessionsNeedInitialLoad,
   } from '../actions/campaign-session-controls-binding';
   import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from '../actions/project';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
@@ -95,8 +126,11 @@
 
   let {
     bootstrapResult,
+    detailRoute,
     modelsHref,
     navigate,
+    onDetailRouteChange,
+    onOpenRowChange = () => undefined,
     queryClient,
     reportClient,
     runtimeMode,
@@ -115,6 +149,9 @@
     sessionClient: SessionClientAdapter;
     omittedSupportItemCount: number;
     warnings: readonly UsageReportWarning[];
+    detailRoute: SessionRoute | null;
+    onDetailRouteChange: (route: SessionRoute | null, closingRowId: string | null) => void;
+    onOpenRowChange?: (rowId: string | null) => void;
   } = $props();
 
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
@@ -134,8 +171,6 @@
     ),
   );
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
-  let selectedRowId = $state<string | null>(null);
-  let selection = $state<SessionSelectionInput | null>(null);
   let sessionDrawerClosing = false;
   let quotaHistoryOpen = $state(false);
   let servedSessionCount = $state<number>();
@@ -216,6 +251,86 @@
     ),
   );
   const commit = $derived(destinationQuery.data);
+  const sessionWindow = $derived(
+    commit?.sessions === undefined ? undefined : sessionWindowView(commit.sessions, activeSessionWindowIntent, false),
+  );
+  const servedRevision = $derived(commit?.descriptor.revision);
+  // A route the loaded window and context rows cannot answer resolves through one exact lookup.
+  const lookupRoute = $derived(detailRoute?.kind === 'session' && servedRevision !== undefined ? detailRoute : null);
+  const lookupQuery = createQuery(() =>
+    optionalSessionLookupQueryOptions(
+      sessionClient,
+      lookupRoute && servedRevision !== undefined ? { revision: servedRevision, rowId: lookupRoute.rowId } : undefined,
+      { browser: typeof globalThis.location !== 'undefined' },
+    ),
+  );
+  // A campaign route resolves from the served revision even when the Overview
+  // is the background: the lookup uses the destination's session scope, not a
+  // mounted Sessions window.
+  const campaignLookupBase = $derived.by((): SessionQueryRequest | undefined => {
+    if (sessionWindow) {
+      return sessionWindow.query;
+    }
+    return servedRevision === undefined
+      ? undefined
+      : parseSessionQueryRequest({ ...destination.sessions, cursor: null, revision: servedRevision });
+  });
+  const campaignLookupRoute = $derived(detailRoute?.kind === 'campaign' ? detailRoute : null);
+  const campaignLookupQuery = createQuery(() =>
+    optionalSessionPageQueryOptions(
+      sessionClient,
+      campaignLookupRoute && campaignLookupBase
+        ? { ...campaignSessionSelectionQuery(campaignLookupBase, campaignLookupRoute.campaignKey), pageSize: 1 }
+        : undefined,
+      { browser: typeof globalThis.location !== 'undefined' },
+    ),
+  );
+  // Rows retained from an earlier look belong to their revision; a new
+  // publication must not stamp them with a revision they were never part of.
+  let contextRevision = untrack(() => servedRevision);
+  $effect(() => {
+    if (servedRevision !== contextRevision) {
+      contextRevision = servedRevision;
+      detailRows = [];
+    }
+  });
+  const detailSelectionState = $derived(
+    resolveDetailSelection({
+      campaignLookup: campaignLookupQuery.data?.ok ? (campaignLookupQuery.data.data.items[0] ?? null) : undefined,
+      contextRows: detailRows,
+      lookupRow: lookupQuery.data?.ok ? lookupQuery.data.data.row : undefined,
+      revision: servedRevision,
+      route: detailRoute,
+      window: sessionWindow,
+    }),
+  );
+  const selection = $derived(detailSelectionState.kind === 'open' ? detailSelectionState.selection : null);
+  const selectedRowId = $derived(selection?.row.rowId ?? null);
+  $effect(() => {
+    onOpenRowChange(selectedRowId);
+  });
+  const changeSelection = (next: SessionSelectionInput | null): void => {
+    if (next === null) {
+      onDetailRouteChange(null, selection?.row.rowId ?? null);
+      return;
+    }
+    onDetailRouteChange(routeForSelection(next, sessionWindow), null);
+  };
+  // A deep-linked campaign needs its member page before the panel can list it.
+  // The guard reads the requested intent, not the loaded data: the page arrives
+  // asynchronously, and asking again while it loads would loop the effect.
+  $effect(() => {
+    if (detailRoute?.kind !== 'campaign' || focusedDestination.kind !== 'sessions') {
+      return;
+    }
+    const { campaignKey } = detailRoute;
+    if ((activeSessionWindowIntent.campaignSessionsDepth[campaignKey] ?? 0) > 0) {
+      return;
+    }
+    if (campaignSessionsNeedInitialLoad(sessionWindow?.campaignSessions, campaignKey)) {
+      increaseSessionDepth('campaign-sessions', campaignKey);
+    }
+  });
   $effect(() => {
     const domain = commit?.overview.dateDomain;
     if (domain) {
@@ -442,12 +557,11 @@
     detailRows = commit?.overview.view.topSessions.map((candidate) => presentSessionItem(candidate).row) ?? [
       presented.row,
     ];
-    selection = {
+    changeSelection({
       ...(commit?.overview.revision === undefined ? {} : { revision: commit.overview.revision }),
       row: presented.row,
       target: sessionAnalysisTargetForOverviewRow(presented.row),
-    };
-    selectedRowId = presented.row.rowId;
+    });
   };
   const selectCampaignSession = (row: SessionPresentationRow): void => {
     if (sessionDrawerClosing) {
@@ -459,11 +573,10 @@
     }
     const selected = campaignSessionSelectionFor(controls, row);
     detailRows = controls.collection.items;
-    selection = {
+    changeSelection({
       ...selected,
       target: sessionAnalysisTargetForSession(row),
-    };
-    selectedRowId = row.rowId;
+    });
   };
   const selectDay = (date: string): void =>
     navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }));
@@ -601,8 +714,7 @@
         if (sessionDrawerClosing) {
           return;
         }
-        selection = nextSelection;
-        selectedRowId = nextSelection?.row.rowId ?? null;
+        changeSelection(nextSelection);
       }}
       onSessionCountChange={(sessionCount) => (servedSessionCount = sessionCount)}
       pending={destinationQuery.isFetching}
@@ -726,6 +838,16 @@
   sessionsReady={sessionsDestinationModule !== undefined}
   {summary}
 />
+{#if detailSelectionState.kind === 'missing'}
+  <p class={detailRouteStatus} data-session-route-status="missing" role="status">
+    {detailSelectionState.route.kind === 'campaign'
+      ? 'This campaign is not part of the current report revision.'
+      : 'This session is not part of the current report revision.'}
+    <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close</button>
+  </p>
+{:else if detailSelectionState.kind === 'loading'}
+  <p class={visuallyHidden} data-session-route-status="loading" role="status">Loading session details</p>
+{/if}
 <SessionDetailQuerySlot
   {campaignSlot}
   client={sessionClient}
@@ -735,8 +857,7 @@
     if (sessionDrawerClosing && nextSelection !== null) {
       return;
     }
-    selection = nextSelection;
-    selectedRowId = nextSelection?.row.rowId ?? null;
+    changeSelection(nextSelection);
   }}
   {queryClient}
   rows={detailRows}

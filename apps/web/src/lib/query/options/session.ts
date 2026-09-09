@@ -188,6 +188,25 @@ const disabledSessionRequest = parseSessionQueryRequest({
   sort: [{ desc: true, id: 'date' }],
 });
 
+/**
+ * One exact page for a detail route the window does not hold (a campaign
+ * aggregate by key). No placeholder: the panel must not show another
+ * campaign's row while this one resolves.
+ */
+export const optionalSessionPageQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionQueryRequest | undefined,
+  execution: SessionQueryExecution,
+) => {
+  const parsed = parseSessionQueryRequest(request ?? disabledSessionRequest);
+  return queryOptions({
+    ...webQueryPolicies.immutableRevision,
+    enabled: execution.browser && request !== undefined,
+    queryFn: async ({ signal }) => await client.page(parsed, signal),
+    queryKey: sessionPageKey(parsed),
+  });
+};
+
 export const optionalSessionNeighborsQueryOptions = (
   client: SessionClientAdapter,
   request: SessionNeighborRequest | undefined,

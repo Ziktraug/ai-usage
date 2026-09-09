@@ -36,6 +36,7 @@ export const rpcPathByOperation = {
   getReportRevisionManifest: '/report/revisionManifest',
   getReportSessionCampaignChildren: '/session/campaignChildren',
   getReportSessionDetail: '/session/detail',
+  getReportSessionLookup: '/session/lookup',
   getReportSessionNeighbors: '/session/neighbors',
   getReportSessionPage: '/session/page',
   getSkillManagementSnapshot: '/skills/snapshot',

@@ -51,7 +51,9 @@
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
+  import { routeForRow } from '../../sessions/detail/detail-selection';
   import SessionDetailQuerySlot from '../../sessions/detail/session-detail-query-slot.svelte';
+  import type { SessionRoute } from '../../sessions/detail/session-route';
   import type { SessionSelectionInput } from '../../sessions/detail/types';
   import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
@@ -77,15 +79,21 @@
   type SessionTableModule = typeof import('../../sessions/table/session-table.svelte');
 
   let {
+    detailRoute,
     mode,
     modelsHref,
     navigate,
+    onDetailRouteChange,
+    onOpenRowChange = () => undefined,
     queryClient,
     search,
   }: {
+    detailRoute: SessionRoute | null;
     mode: Extract<RuntimeMode, 'demo' | 'e2e'>;
     modelsHref: string;
     navigate: SearchNavigationIntent<DashboardSearch>;
+    onDetailRouteChange: (route: SessionRoute | null, closingRowId: string | null) => void;
+    onOpenRowChange?: (rowId: string | null) => void;
     queryClient: QueryClient;
     search: DashboardSearch;
   } = $props();
@@ -235,8 +243,6 @@
   // itself is the signal to retire the preview.
   let draggedWindowApiValue = $state<number | null>(null);
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
-  let selectedRowId = $state<string | null>(null);
-  let selection = $state<SessionSelectionInput | null>(null);
   let sessionDrawerClosing = false;
   let quotaHistoryOpen = $state(false);
   let campaignLabelOverrides = $state<readonly CampaignLabelOverride[]>([]);
@@ -298,6 +304,37 @@
   const tableRows = $derived(
     buildCampaignTableRows(allRows, visibleRows, sorting).map((row) => presentCampaignRow(row, campaignIndex)),
   );
+  // The panel follows the URL here too: every row is local, so a route resolves
+  // against the table's campaign aggregates, the rows the reader was looking at,
+  // and finally every row of the payload.
+  const selection = $derived.by((): SessionSelectionInput | null => {
+    const route = detailRoute;
+    if (route === null) {
+      return null;
+    }
+    const candidates: readonly SessionPresentationRow[] =
+      route.kind === 'campaign'
+        ? [...tableRows, ...detailRows]
+        : [...detailRows, ...tableRows, ...visibleRows, ...allRows];
+    const row =
+      route.kind === 'campaign'
+        ? candidates.find(
+            (candidate) => candidate.campaignKey === route.campaignKey && candidate.campaignTotalCount !== undefined,
+          )
+        : candidates.find((candidate) => candidate.rowId === route.rowId);
+    return row === undefined ? null : { row, target: sessionAnalysisTargetForOverviewRow(row) };
+  });
+  const selectedRowId = $derived(selection?.row.rowId ?? null);
+  $effect(() => {
+    onOpenRowChange(selectedRowId);
+  });
+  const changeSelection = (next: SessionSelectionInput | null): void => {
+    if (next === null) {
+      onDetailRouteChange(null, selection?.row.rowId ?? null);
+      return;
+    }
+    onDetailRouteChange(routeForRow(next.row), null);
+  };
   const selectedCampaignView = $derived.by(() => {
     const campaignKey = selection?.row.campaignKey;
     if (!campaignKey) {
@@ -372,11 +409,9 @@
       return;
     }
     const row = presentCampaignRow(activeSelection.row, index);
-    const nextSelection = { ...activeSelection, row };
     detailRows = detailRows.map((candidate) =>
       candidate.rowId === row.rowId ? row : presentCampaignRow(candidate, index),
     );
-    selection = nextSelection;
   };
 
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
@@ -389,8 +424,7 @@
       ? { ...presented.row, campaignKey: campaignContext.campaignKey, sessionLabel: presented.label }
       : presented.row;
     detailRows = visibleRows;
-    selection = { row: presentedRow, target: sessionAnalysisTargetForOverviewRow(presentedRow) };
-    selectedRowId = presentedRow.rowId;
+    changeSelection({ row: presentedRow, target: sessionAnalysisTargetForOverviewRow(presentedRow) });
   };
   const selectSessionRow = (row: SessionPresentationRow): void => {
     if (sessionDrawerClosing) {
@@ -398,9 +432,8 @@
     }
     detailRows = tableRows;
     // Top-level table rows are campaign aggregates; loaded campaign members are plain
-    // sessions. The same helper the live destination uses tells them apart.
-    selection = selectedRowId === row.rowId ? null : { row, target: sessionAnalysisTargetForOverviewRow(row) };
-    selectedRowId = selection?.row.rowId ?? null;
+    // sessions. The route helper tells them apart; clicking the open row closes it.
+    changeSelection(selectedRowId === row.rowId ? null : { row, target: sessionAnalysisTargetForOverviewRow(row) });
   };
 </script>
 {#snippet campaignSlot()}
@@ -610,8 +643,7 @@
     if (sessionDrawerClosing && nextSelection !== null) {
       return;
     }
-    selection = nextSelection;
-    selectedRowId = nextSelection?.row.rowId ?? null;
+    changeSelection(nextSelection);
   }}
   {queryClient}
   rows={detailRows}
