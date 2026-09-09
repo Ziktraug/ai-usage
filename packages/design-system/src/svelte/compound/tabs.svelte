@@ -56,7 +56,7 @@
   import TabPanel from './tab-panel.svelte';
   import type { TabsProps } from './tabs';
 
-  let { ariaLabel, items, onValueChange, value }: TabsProps = $props();
+  let { ariaLabel, items, onValueChange, unmountOnExit = true, value }: TabsProps = $props();
 </script>
 
 <Tabs.Root
@@ -64,7 +64,7 @@
   composite
   lazyMount
   onValueChange={(details) => onValueChange(details.value)}
-  unmountOnExit
+  {unmountOnExit}
   {value}
 >
   <Tabs.List aria-label={ariaLabel} class={tabsList}>

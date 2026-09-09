@@ -30,6 +30,30 @@ const window = (overrides: Partial<DetailSelectionWindow> = {}): DetailSelection
 });
 
 describe('detail selection from the route', () => {
+  test('never relabels retained lookup rows with the new report revision', () => {
+    const input = {
+      campaignLookup: campaignItem('outside-window', 'old-root'),
+      campaignLookupRevision: 'revision-old',
+      contextRows: [],
+      lookupRow: row('old-member'),
+      lookupRevision: 'revision-old',
+      revision: query.revision,
+      window: window(),
+    };
+    for (const route of [
+      { kind: 'session' as const, rowId: 'old-member' },
+      { campaignKey: 'outside-window', kind: 'campaign' as const },
+    ]) {
+      const state = resolveDetailSelection({ ...input, route });
+      expect(state.kind).toBe('open');
+      if (state.kind !== 'open') {
+        throw new Error('Expected the retained selection');
+      }
+      expect(state.selection.revision).toBe('revision-old');
+      expect(state.selection.query).toBeUndefined();
+    }
+  });
+
   test('closes without a route and opens a campaign from the loaded window', () => {
     expect(
       resolveDetailSelection({

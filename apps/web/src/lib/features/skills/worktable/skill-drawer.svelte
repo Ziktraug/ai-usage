@@ -532,10 +532,10 @@
 
 <style>
   /*
-                                           * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
-                                           * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
-                                           * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
-                                           */
+                                                         * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
+                                                         * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
+                                                         * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
+                                                         */
   :global([data-scope="drawer"][data-part="positioner"]:has(.skills-drawer-panel)) {
     pointer-events: none;
   }

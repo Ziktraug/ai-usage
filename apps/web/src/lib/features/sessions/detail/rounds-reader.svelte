@@ -278,7 +278,7 @@
   };
 
   let expandedPrompts = $state<ReadonlySet<string>>(new Set());
-  let railButtons: HTMLButtonElement[] = [];
+  let railButtons = $state<HTMLButtonElement[]>([]);
   const selectedRound = $derived.by((): RoundView | null => {
     if (!view || view.rounds.length === 0) {
       return null;
@@ -286,6 +286,10 @@
     return view.rounds.find((round) => round.id === selectedRoundId) ?? view.rounds[0] ?? null;
   });
   $effect(() => {
+    // A pending read or a visible error does not mean the selected round was removed.
+    if (!view) {
+      return;
+    }
     const first = view?.rounds[0]?.id ?? null;
     if (selectedRoundId === null || !view?.rounds.some((round) => round.id === selectedRoundId)) {
       selectedRoundId = first;
@@ -376,7 +380,7 @@
 <section aria-label="Session rounds" data-session-rounds>
   <div aria-atomic="true" aria-live="polite" class={visuallyHidden} role="status">
     {#if loading}
-      Loading rounds
+      {view ? 'Updating rounds' : 'Loading rounds'}
     {:else if view}
       {fmtNum(view.rounds.length)}
       rounds loaded

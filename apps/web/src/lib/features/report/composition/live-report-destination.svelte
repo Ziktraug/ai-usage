@@ -297,8 +297,10 @@
   const detailSelectionState = $derived(
     resolveDetailSelection({
       campaignLookup: campaignLookupQuery.data?.ok ? (campaignLookupQuery.data.data.items[0] ?? null) : undefined,
+      ...(campaignLookupQuery.data?.ok ? { campaignLookupRevision: campaignLookupQuery.data.revision } : {}),
       contextRows: detailRows,
       lookupRow: lookupQuery.data?.ok ? lookupQuery.data.data.row : undefined,
+      ...(lookupQuery.data?.ok ? { lookupRevision: lookupQuery.data.revision } : {}),
       revision: servedRevision,
       route: detailRoute,
       window: sessionWindow,

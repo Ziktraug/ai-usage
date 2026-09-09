@@ -146,6 +146,13 @@ export const sessionLookupQueryOptions = (
   return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
+    placeholderData: (previousData: Awaited<ReturnType<SessionClientAdapter['lookup']>> | undefined, previousQuery) => {
+      const previousRevision = previousQuery?.queryKey[3];
+      return typeof previousRevision === 'string' &&
+        previousQuery?.queryKey[4] === sessionLookupFingerprint({ ...parsed, revision: previousRevision })
+        ? previousData
+        : undefined;
+    },
     queryFn: async ({ signal }) => await client.lookup(parsed, signal),
     queryKey: sessionLookupKey(parsed),
   });
@@ -160,6 +167,17 @@ export const sessionDetailQueryOptions = (
   return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
+    // A publication changes the revision even when this session has not changed.
+    // Keep its last available detail, with its original revision, while reading
+    // the new one. Never carry history into a different row or a disabled query.
+    placeholderData: (previousData: Awaited<ReturnType<SessionClientAdapter['detail']>> | undefined, previousQuery) => {
+      const previousRevision = previousQuery?.queryKey[3];
+      return previousData?.status === 'available' &&
+        typeof previousRevision === 'string' &&
+        previousQuery?.queryKey[4] === sessionDetailRequestFingerprint({ ...parsed, revision: previousRevision })
+        ? previousData
+        : undefined;
+    },
     queryFn: async ({ signal }) => await client.detail(parsed, signal),
     queryKey: sessionDetailKey(parsed),
   });
@@ -190,8 +208,8 @@ const disabledSessionRequest = parseSessionQueryRequest({
 
 /**
  * One exact page for a detail route the window does not hold (a campaign
- * aggregate by key). No placeholder: the panel must not show another
- * campaign's row while this one resolves.
+ * aggregate by key). Retain only the same campaign and scope across a
+ * publication, never another campaign while its route resolves.
  */
 export const optionalSessionPageQueryOptions = (
   client: SessionClientAdapter,
@@ -202,6 +220,14 @@ export const optionalSessionPageQueryOptions = (
   return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser && request !== undefined,
+    placeholderData: (previousData: Awaited<ReturnType<SessionClientAdapter['page']>> | undefined, previousQuery) => {
+      const previousRevision = previousQuery?.queryKey[3];
+      return request !== undefined &&
+        typeof previousRevision === 'string' &&
+        previousQuery?.queryKey[4] === sessionQueryFingerprint({ ...parsed, revision: previousRevision })
+        ? previousData
+        : undefined;
+    },
     queryFn: async ({ signal }) => await client.page(parsed, signal),
     queryKey: sessionPageKey(parsed),
   });

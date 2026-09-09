@@ -4,7 +4,7 @@
 
   // Wide enough for the rounds rail beside its reading column; the table stays
   // visible on the left so j/k browsing keeps its context.
-  const readingDrawer = css({ w: { base: '100vw', md: 'min(960px, max(480px, calc(100vw - 360px)))' } });
+  const readingDrawer = css({ w: { base: 'full', md: 'min(960px, max(480px, calc(100vw - 360px)))' } });
   const sessionIdentity = css({ display: 'grid', gap: '6px', minW: 0 });
   const sessionProject = css({ color: 'accent', fontSize: '11px', letterSpacing: '0.02em', overflowWrap: 'anywhere' });
   // Four tiles when the panel is wide, two when it is not: labels never wrap.
@@ -53,7 +53,7 @@
   } from '@ai-usage/design-system/svelte';
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
   import { campaignBadgeLabelForSessionRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
-  import { onDestroy, type Snippet } from 'svelte';
+  import { onDestroy, type Snippet, tick } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
@@ -198,6 +198,8 @@
   let activeTab = $state<DetailTab>('rounds');
   // The reader's place survives a tab switch; a new row starts at its first round.
   let readerRoundId = $state<string | null>(null);
+  let bodyElement = $state<HTMLDivElement>();
+  const tabScrollPositions = new Map<DetailTab, number>();
   const roundsScopeNote = $derived(
     campaignScope
       ? "Rounds and Timeline read the root session's own history. The campaign's other members are listed under Members."
@@ -216,6 +218,19 @@
   const isDetailTab = (value: string): value is DetailTab =>
     value === 'members' || value === 'rounds' || value === 'summary' || value === 'timeline';
 
+  const changeTab = async (value: string): Promise<void> => {
+    if (!isDetailTab(value) || value === selectedTab) {
+      return;
+    }
+    const rowId = row?.rowId;
+    tabScrollPositions.set(selectedTab, bodyElement?.scrollTop ?? 0);
+    activeTab = value;
+    await tick();
+    if (bodyElement && row?.rowId === rowId && selectedTab === value) {
+      bodyElement.scrollTop = tabScrollPositions.get(value) ?? 0;
+    }
+  };
+
   $effect.pre(() => {
     const currentOpen = drawerOpen;
     if (currentOpen && !drawerWasOpen) {
@@ -232,6 +247,7 @@
       if (presentedRow?.rowId !== snapshot.row.rowId) {
         openHint = null;
         readerRoundId = null;
+        tabScrollPositions.clear();
       }
       presentedRow = snapshot.row;
       presentedTarget = snapshot.target;
@@ -382,6 +398,7 @@
       harnessKey={row.source?.harnessKey ?? ''}
       loading={snapshot.analysisLoading}
       onRetry={() => controller.retryAnalysis()}
+      refreshing={snapshot.analysisResponse?.status === 'available' && snapshot.analysisResponse.revision !== snapshot.revision}
       response={snapshot.analysisResponse}
       {target}
     />
@@ -543,7 +560,7 @@
         </button>
       </nav>
     </div>
-    <div class={drawerBody} data-session-drawer-body>
+    <div class={drawerBody} data-session-drawer-body bind:this={bodyElement}>
       <div class={sessionIdentity} data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
         <div class={sessionProject}>{row.projectLabel}</div>
         <div class={drawerTitle}>{row.sessionLabel}</div>
@@ -587,16 +604,15 @@
         />
       </div>
       <div class={tabsShell} data-session-drawer-tabs>
-        <Tabs
-          ariaLabel="Session detail views"
-          items={tabItems({ members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
-          onValueChange={(value) => {
-            if (isDetailTab(value)) {
-              activeTab = value;
-            }
-          }}
-          value={selectedTab}
-        />
+        {#key `${row.rowId}:${target?.kind}`}
+          <Tabs
+            ariaLabel="Session detail views"
+            items={tabItems({ members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
+            onValueChange={changeTab}
+            unmountOnExit={false}
+            value={selectedTab}
+          />
+        {/key}
       </div>
     </div>
   {/if}

@@ -25,8 +25,10 @@ export interface DetailSelectionWindow {
 export interface DetailSelectionInput {
   /** Aggregate campaign item fetched for a campaign route the window did not hold. */
   readonly campaignLookup: SessionPageItem | null | undefined;
+  readonly campaignLookupRevision?: string;
   /** Rows the reader was looking at when the panel opened (Overview top sessions, campaign members). */
   readonly contextRows: readonly SessionPresentationRow[];
+  readonly lookupRevision?: string;
   /** Presentation row fetched for a session route the window did not hold. */
   readonly lookupRow: SessionPresentationRow | null | undefined;
   readonly revision: string | undefined;
@@ -124,7 +126,15 @@ export const resolveDetailSelection = (input: DetailSelectionInput): DetailSelec
     if (input.campaignLookup === null) {
       return { kind: 'missing', route };
     }
-    return { kind: 'open', selection: campaignSelectionFor(input.campaignLookup, input.window, input.revision) };
+    const lookupRevision = input.campaignLookupRevision ?? input.revision;
+    return {
+      kind: 'open',
+      selection: campaignSelectionFor(
+        input.campaignLookup,
+        input.window?.query.revision === lookupRevision ? input.window : undefined,
+        lookupRevision,
+      ),
+    };
   }
   const inWindow = input.window ? sessionSelectionInWindow(input.window, route.rowId) : undefined;
   if (inWindow) {
@@ -148,7 +158,8 @@ export const resolveDetailSelection = (input: DetailSelectionInput): DetailSelec
   if (input.lookupRow === null) {
     return { kind: 'missing', route };
   }
-  const window = input.window;
+  const lookupRevision = input.lookupRevision ?? input.revision;
+  const window = input.window?.query.revision === lookupRevision ? input.window : undefined;
   const campaignKey = input.lookupRow.campaignKey;
   if (window && campaignKey !== undefined && campaignKey !== route.rowId) {
     const page = window.campaignSessions.get(campaignKey) ?? window.campaignChildren.get(campaignKey);
@@ -159,7 +170,7 @@ export const resolveDetailSelection = (input: DetailSelectionInput): DetailSelec
   return {
     kind: 'open',
     selection: {
-      ...withRevision(input.revision),
+      ...withRevision(lookupRevision),
       row: input.lookupRow,
       target: sessionAnalysisTargetForSession(input.lookupRow),
     },
