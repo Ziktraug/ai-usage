@@ -1,5 +1,6 @@
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_MODEL_TAIL_KEY,
   FOCUSED_REPORT_E2E_NO_LOCAL_DATA_KEY,
   FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY,
 } from '../src/focused-report-e2e-fixture';
@@ -445,10 +446,18 @@ test('keeps the tablet Projects table inside its horizontal scroll surface', asy
     });
 });
 
-test('uses compact circular Punchcard marks inside accessible targets with a low/high key', async ({ page }) => {
+test('scales Punchcard size and brightness inside fixed accessible targets with a four-dot key', async ({ page }) => {
+  await page.addInitScript(
+    ({ enabledKey, tailKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, tailKey, true);
+    },
+    { enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY, tailKey: FOCUSED_REPORT_E2E_MODEL_TAIL_KEY },
+  );
   await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await waitForFocusedReportSettled(page);
 
   const advancedAnalysis = page.locator('[data-overview-advanced-analysis]');
   const punchcardPanel = page
@@ -462,7 +471,11 @@ test('uses compact circular Punchcard marks inside accessible targets with a low
   await expect(punchcardKey).toContainText('Low');
   await expect(punchcardKey).toContainText('High');
   await expect(punchcardKey).toContainText('session count');
-  await expect(punchcardKey).toHaveAttribute('aria-label', 'Punchcard session-count intensity');
+  await expect(punchcardKey).toHaveAttribute(
+    'aria-label',
+    'Punchcard session count: larger, brighter dots mean more sessions',
+  );
+  await expect(punchcardKey.locator('span[style]')).toHaveCount(4);
   await expect(punchcardKey).toHaveAttribute('role', 'img');
   await expect(punchcardKey).toHaveCSS('justify-content', 'flex-end');
   await expect(punchcardVisual).toHaveCSS('column-gap', '2px');
@@ -482,7 +495,9 @@ test('uses compact circular Punchcard marks inside accessible targets with a low
   }));
   await hoveredTarget.hover();
   await expect(hoveredTarget).toHaveCSS('outline-style', 'none');
-  await expect.poll(async () => Math.round((await hoveredDot.boundingBox())?.width ?? 0)).toBe(16);
+  await expect
+    .poll(async () => (await hoveredDot.boundingBox())?.width ?? 0)
+    .toBeCloseTo((dotBeforeHover?.width ?? 0) * 1.2, 1);
   expect(await punchcardVisual.evaluate((element) => element.scrollHeight)).toBe(scrollBeforeHover.scrollHeight);
   expect(scrollBeforeHover.scrollHeight).toBe(scrollBeforeHover.clientHeight);
   await page.mouse.move(0, 0);
@@ -510,12 +525,18 @@ test('uses compact circular Punchcard marks inside accessible targets with a low
       return {
         borderRadius: getComputedStyle(element).borderRadius,
         height: Math.round(box.height),
+        opacity: Number(getComputedStyle(element).opacity),
         width: Math.round(box.width),
       };
     }),
   );
-  expect(new Set(presentation.map((cell) => cell.width))).toEqual(new Set([10]));
-  expect(new Set(presentation.map((cell) => cell.height))).toEqual(new Set([10]));
+  const bySize = presentation.toSorted((left, right) => left.width - right.width);
+  expect(new Set(presentation.map((cell) => cell.width)).size).toBeGreaterThan(1);
+  expect(bySize[0]?.width).toBeGreaterThanOrEqual(4);
+  expect(bySize.at(-1)?.width).toBe(14);
+  expect(bySize[0]?.opacity ?? 1).toBeLessThan(bySize.at(-1)?.opacity ?? 0);
+  expect(bySize.at(-1)?.opacity).toBe(1);
+  expect(presentation.every((cell) => cell.height === cell.width)).toBe(true);
   expect(new Set(presentation.map((cell) => cell.borderRadius))).toEqual(new Set(['999px']));
 
   const [advancedBox, punchcardBox] = await Promise.all([advancedAnalysis.boundingBox(), punchcardPanel.boundingBox()]);

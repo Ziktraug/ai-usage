@@ -18,6 +18,7 @@
   } from '@ai-usage/design-system/report';
 
   const srOnly = css({ srOnly: true });
+  const legendLevels = [0.05, 0.3, 0.6, 1];
 </script>
 
 <script lang="ts">
@@ -29,7 +30,7 @@
     localTimeCellLabel,
     localTimeWeekdayNames,
   } from '@ai-usage/report-core/session-query';
-  import { PUNCH_DAYS, PUNCHCARD_MIN_SESSION_OPACITY, punchcardSessionOpacity } from '../../../../overview-model';
+  import { PUNCH_DAYS, punchcardSessionMark } from '../../../../overview-model';
   import { fmtMoney, fmtNum } from '../../../foundation/presentation/format';
 
   let {
@@ -69,6 +70,7 @@
             title={`${PUNCH_DAYS[weekday]} ${String(hour).padStart(2, '0')}:00 — ${fmtNum(item.sessions)} sessions · ${fmtMoney(item.cost)}`}
           >
             {#if timeCell}
+              {@const mark = punchcardSessionMark(item.sessions, punchcard.maxSessions)}
               <button
                 aria-label={ariaLabel(timeCell, item.sessions)}
                 class={punchCellButton}
@@ -81,7 +83,8 @@
                 <span
                   class={cx(punchDot, accentFill)}
                   data-punchcard-cell-fill
-                  style:opacity={punchcardSessionOpacity(item.sessions, punchcard.maxSessions)}
+                  style:--punch-size={`${mark.sizePx}px`}
+                  style:opacity={mark.opacity}
                 ></span>
               </button>
             {/if}
@@ -94,14 +97,20 @@
       {/each}
     </div>
     <div
-      aria-label="Punchcard session-count intensity"
+      aria-label="Punchcard session count: larger, brighter dots mean more sessions"
       class={punchIntensityKey}
       data-punchcard-intensity-key
       role="img"
     >
       <span>Low</span>
-      <span class={cx(punchIntensityKeyCell, accentFill)} style:opacity={PUNCHCARD_MIN_SESSION_OPACITY}></span>
-      <span class={cx(punchIntensityKeyCell, accentFill)}></span>
+      {#each legendLevels as level (level)}
+        {@const mark = punchcardSessionMark(level, 1)}
+        <span
+          class={cx(punchIntensityKeyCell, accentFill)}
+          style:--punch-size={`${mark.sizePx}px`}
+          style:opacity={mark.opacity}
+        ></span>
+      {/each}
       <span>High</span>
       <span>session count</span>
     </div>
