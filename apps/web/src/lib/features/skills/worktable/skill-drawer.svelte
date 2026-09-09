@@ -1,6 +1,6 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits closed boolean ARIA values for the controlled Drawer -->
 <script lang="ts">
-  import { css, cx } from "@ai-usage/design-system/css";
+  import { css, cx } from '@ai-usage/design-system/css';
   import {
     meta,
     muted,
@@ -12,36 +12,21 @@
     statusPillOk,
     statusPillWarn,
     strongCell,
-  } from "@ai-usage/design-system/report";
-  import { Drawer } from "@ai-usage/design-system/svelte";
-  import type {
-    ProjectSkillMarkdownDocument,
-    SkillMarkdownDocument,
-  } from "@ai-usage/web-contract/skills";
-  import { type Snippet, tick } from "svelte";
-  import {
-    count,
-    skillDiagnosticLabel,
-    skillInvocation,
-  } from "../../../../skills-page-model";
-  import { fmtNum } from "../../../foundation/presentation/format";
-  import {
-    MATRIX_DOT_GLYPHS,
-    matrixDotTone,
-    reconcileSkillOperation,
-    toggleOperation,
-  } from "../management/model";
-  import type { SkillsManagementOperationEpisodePort } from "../management/operation-episode.svelte";
-  import SkillSwitch from "../management/skill-switch.svelte";
-  import {
-    NAME_SCOPED_COUNTS_TEXT,
-    NOT_OBSERVABLE_TEXT,
-  } from "../observations/model";
-  import SkillObservationsPanel from "../observations/skill-observations.svelte";
-  import type { SkillsPresentationProjection } from "../presentation";
-  import type { SkillsShellViewModel } from "../shell/model";
-  import type { SkillsShellSlotContext } from "../shell/slot-context";
-  import { worktableHistorySentence } from "./model";
+  } from '@ai-usage/design-system/report';
+  import { Drawer } from '@ai-usage/design-system/svelte';
+  import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
+  import { type Snippet, tick } from 'svelte';
+  import { count, skillDiagnosticLabel, skillInvocation } from '../../../../skills-page-model';
+  import { fmtNum } from '../../../foundation/presentation/format';
+  import { MATRIX_DOT_GLYPHS, matrixDotTone, reconcileSkillOperation, toggleOperation } from '../management/model';
+  import type { SkillsManagementOperationEpisodePort } from '../management/operation-episode.svelte';
+  import SkillSwitch from '../management/skill-switch.svelte';
+  import { NAME_SCOPED_COUNTS_TEXT, NOT_OBSERVABLE_TEXT } from '../observations/model';
+  import SkillObservationsPanel from '../observations/skill-observations.svelte';
+  import type { SkillsPresentationProjection } from '../presentation';
+  import type { SkillsShellViewModel } from '../shell/model';
+  import type { SkillsShellSlotContext } from '../shell/slot-context';
+  import { worktableHistorySentence } from './model';
 
   let {
     editorSlot,
@@ -56,10 +41,7 @@
     management: SkillsManagementOperationEpisodePort;
     onClose: () => void;
     presentation: SkillsPresentationProjection;
-    selectedDocument:
-      | ProjectSkillMarkdownDocument
-      | SkillMarkdownDocument
-      | undefined;
+    selectedDocument: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
     slotContext: SkillsShellSlotContext;
     view: SkillsShellViewModel;
   } = $props();
@@ -75,21 +57,16 @@
    */
   $effect(() => {
     const projectDocumentContent =
-      selectedDocument && "truncated" in selectedDocument
-        ? selectedDocument.content
-        : undefined;
+      selectedDocument && 'truncated' in selectedDocument ? selectedDocument.content : undefined;
     const element = projectPreviewElement;
     if (!(element && projectDocumentContent !== undefined)) {
       return;
     }
     const synchronize = (): void => {
-      if (
-        element.scrollHeight > element.clientHeight ||
-        element.scrollWidth > element.clientWidth
-      ) {
-        element.setAttribute("tabindex", "0");
+      if (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth) {
+        element.setAttribute('tabindex', '0');
       } else {
-        element.removeAttribute("tabindex");
+        element.removeAttribute('tabindex');
       }
     };
     synchronize();
@@ -97,7 +74,7 @@
     observer.observe(element);
     return () => observer.disconnect();
   });
-  const selectionOpen = $derived(view.selectionDetail.kind !== "none");
+  const selectionOpen = $derived(view.selectionDetail.kind !== 'none');
   /**
    * Closing is a navigation, and a navigation can be refused — the unsaved-draft guard cancels it
    * and raises its confirmation. That confirmation is rendered inside this drawer, so a drawer that
@@ -114,10 +91,7 @@
   const open = $derived(selectionOpen && !closing);
   $effect.pre(() => {
     if (open && !wasOpen) {
-      previousFocus =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null;
+      previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }
     wasOpen = open;
   });
@@ -127,32 +101,23 @@
   const projectSkill = $derived(selected.projectSkill);
   const observationsView = $derived(presentation.observations.view);
   const pendingOperation = $derived(management.pendingOperation);
-  const historySentence = $derived(
-    worktableHistorySentence(selected.observationRow, observationsView),
-  );
+  const historySentence = $derived(worktableHistorySentence(selected.observationRow, observationsView));
   const notObservableHarnesses = $derived(
-    (observationsView?.harnesses ?? []).filter(
-      (harness) => harness.observability === "not-observable",
-    ),
+    (observationsView?.harnesses ?? []).filter((harness) => harness.observability === 'not-observable'),
   );
   const residenceLine = $derived(
     globalSkill
       ? `${globalSkill.path} · Managed — source of truth in the skills repository`
-      : `${projectSkill?.observations.at(0)?.path ?? ""} · Owned by its project repository — read-only here`,
+      : `${projectSkill?.observations.at(0)?.path ?? ''} · Owned by its project repository — read-only here`,
   );
   const issueCount = $derived(
-    presentation.attention.entries.find(
-      (entry) => entry.skill.name === selected.name,
-    )?.attention.issueCount ?? 0,
+    presentation.attention.entries.find((entry) => entry.skill.name === selected.name)?.attention.issueCount ?? 0,
   );
-  const placementActionLabel = (
-    state: string,
-    canReconcile: boolean,
-  ): string | undefined => {
+  const placementActionLabel = (state: string, canReconcile: boolean): string | undefined => {
     if (!canReconcile) {
       return;
     }
-    return state === "missing" ? "Link" : "Repair link";
+    return state === 'missing' ? 'Link' : 'Repair link';
   };
   const execute = async (
     pendingLabel: string,
@@ -162,9 +127,9 @@
       return;
     }
     await management.execute({
-      kind: "management",
+      kind: 'management',
       operation,
-      owner: "skill-drawer",
+      owner: 'skill-drawer',
       pendingLabel,
     });
   };
@@ -193,13 +158,10 @@
       // where the confirmation put it.
       reopening = true;
       closing = false;
-      if (typeof window !== "undefined") {
+      if (typeof window !== 'undefined') {
         // Whatever the guard put focus on — its own confirmation, or the editor it just kept — is
         // where focus belongs. The reopening drawer must hand it back rather than claim it.
-        const guarded =
-          document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null;
+        const guarded = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         window.requestAnimationFrame(() =>
           window.requestAnimationFrame(() => {
             reopening = false;
@@ -207,14 +169,8 @@
             // focus goes back to whatever the guard chose — the drawer's own re-entry must not
             // outrank it.
             const active = document.activeElement;
-            const insideConfirmation =
-              active instanceof Element &&
-              active.closest('[role="alertdialog"]') !== null;
-            if (
-              guarded?.isConnected &&
-              !insideConfirmation &&
-              active !== guarded
-            ) {
+            const insideConfirmation = active instanceof Element && active.closest('[role="alertdialog"]') !== null;
+            if (guarded?.isConnected && !insideConfirmation && active !== guarded) {
               guarded.focus({ preventScroll: true });
             }
           }),
@@ -223,7 +179,7 @@
       return;
     }
     closing = false;
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return;
     }
     // The router moves focus to the document after a navigation, so the restore waits for the paint
@@ -233,9 +189,7 @@
       const rowLink =
         closedName === undefined
           ? null
-          : document.querySelector<HTMLElement>(
-              `[data-worktable-row="${CSS.escape(closedName)}"] a`,
-            );
+          : document.querySelector<HTMLElement>(`[data-worktable-row="${CSS.escape(closedName)}"] a`);
       const target = rowLink ?? (fallback?.isConnected ? fallback : null);
       target?.focus({ preventScroll: true });
     });
@@ -245,9 +199,9 @@
       return;
     }
     await management.execute({
-      kind: "management",
+      kind: 'management',
       operation: toggleOperation(globalSkill.name, !globalSkill.enabled),
-      owner: "skill-drawer",
+      owner: 'skill-drawer',
       pendingLabel: `toggle:${globalSkill.name}`,
     });
   };
@@ -255,154 +209,152 @@
     if (!reopening) {
       return closeButton ?? null;
     }
-    return document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    return document.activeElement instanceof HTMLElement ? document.activeElement : null;
   };
 
-  const drawerContent = css({ w: { base: "100%", md: "min(680px, 94vw)" } });
-  const stack = css({ display: "grid", gap: "28px", minW: 0 });
+  const drawerContent = css({ w: { base: '100%', md: 'min(680px, 94vw)' } });
+  const stack = css({ display: 'grid', gap: '28px', minW: 0 });
   const header = css({
-    display: "grid",
-    gap: "12px",
-    pb: "20px",
-    borderBottom: "1px solid token(colors.line)",
+    display: 'grid',
+    gap: '12px',
+    pb: '20px',
+    borderBottom: '1px solid token(colors.line)',
   });
   const titleRow = css({
-    position: "relative",
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px 10px",
-    alignItems: "center",
-    pr: "48px",
-    "& > h2": { w: "full" },
+    position: 'relative',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px 10px',
+    alignItems: 'center',
+    pr: '48px',
+    '& > h2': { w: 'full' },
   });
   const drawerTitleText = css({
-    fontSize: "28px",
+    fontSize: '28px',
     fontWeight: 500,
-    letterSpacing: "-0.04em",
-    overflowWrap: "anywhere",
+    letterSpacing: '-0.04em',
+    overflowWrap: 'anywhere',
   });
   const closeButtonClass = css({
-    appearance: "none",
-    position: "absolute",
+    appearance: 'none',
+    position: 'absolute',
     top: 0,
     right: 0,
-    w: "44px",
-    h: "44px",
-    border: "1px solid transparent",
-    borderRadius: "sm",
-    bg: "surfaceMuted",
-    color: "muted",
-    cursor: "pointer",
-    _hover: { borderColor: "accent", color: "accent" },
+    w: '44px',
+    h: '44px',
+    border: '1px solid transparent',
+    borderRadius: 'sm',
+    bg: 'surfaceMuted',
+    color: 'muted',
+    cursor: 'pointer',
+    _hover: { borderColor: 'accent', color: 'accent' },
     _focusVisible: {
-      outline: "2px solid token(colors.accent)",
-      outlineOffset: "2px",
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
     },
   });
   const pathLine = css({
-    color: "muted",
-    fontFamily: "mono",
-    fontSize: "11px",
-    overflowWrap: "anywhere",
+    color: 'muted',
+    fontFamily: 'mono',
+    fontSize: '11px',
+    overflowWrap: 'anywhere',
   });
-  const section = css({ display: "grid", gap: "10px", minW: 0 });
+  const section = css({ display: 'grid', gap: '10px', minW: 0 });
   const placementList = css({
-    display: "grid",
-    borderTop: "1px solid token(colors.line)",
-    borderBottom: "1px solid token(colors.line)",
-    overflow: "hidden",
+    display: 'grid',
+    borderTop: '1px solid token(colors.line)',
+    borderBottom: '1px solid token(colors.line)',
+    overflow: 'hidden',
   });
   const placementRow = css({
-    display: "grid",
+    display: 'grid',
     gridTemplateColumns: {
-      base: "minmax(0, 1fr) auto",
-      md: "120px minmax(0, 1fr) auto",
+      base: 'minmax(0, 1fr) auto',
+      md: '120px minmax(0, 1fr) auto',
     },
-    "& > :nth-child(2)": {
-      gridColumn: { base: "1 / -1", md: "auto" },
-      gridRow: { base: "2", md: "auto" },
-      overflowWrap: "anywhere",
+    '& > :nth-child(2)': {
+      gridColumn: { base: '1 / -1', md: 'auto' },
+      gridRow: { base: '2', md: 'auto' },
+      overflowWrap: 'anywhere',
       minW: 0,
     },
-    "& > :nth-child(3)": {
-      gridColumn: { base: "2", md: "auto" },
-      gridRow: { base: "1", md: "auto" },
+    '& > :nth-child(3)': {
+      gridColumn: { base: '2', md: 'auto' },
+      gridRow: { base: '1', md: 'auto' },
     },
-    gap: "12px",
-    alignItems: "center",
-    p: "12px 0",
-    borderTop: "1px solid token(colors.line)",
+    gap: '12px',
+    alignItems: 'center',
+    p: '12px 0',
+    borderTop: '1px solid token(colors.line)',
     _first: { borderTop: 0 },
-    fontSize: "12.5px",
+    fontSize: '12.5px',
   });
   const glyphMark = css({
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    w: "18px",
-    h: "18px",
-    borderRadius: "xs",
-    fontFamily: "mono",
-    fontSize: "11px",
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    w: '18px',
+    h: '18px',
+    borderRadius: 'xs',
+    fontFamily: 'mono',
+    fontSize: '11px',
     fontWeight: 700,
-    '&[data-tone="linked"]': { bg: "status.okSoft", color: "status.ok" },
-    '&[data-tone="missing"]': { bg: "surfaceMuted", color: "ink" },
+    '&[data-tone="linked"]': { bg: 'status.okSoft', color: 'status.ok' },
+    '&[data-tone="missing"]': { bg: 'surfaceMuted', color: 'ink' },
     '&[data-tone="broken"]': {
-      bg: "status.dangerSoft",
-      color: "status.danger",
+      bg: 'status.dangerSoft',
+      color: 'status.danger',
     },
-    '&[data-tone="copy"]': { bg: "status.warnSoft", color: "status.warn" },
-    '&[data-tone="none"]': { color: "muted" },
+    '&[data-tone="copy"]': { bg: 'status.warnSoft', color: 'status.warn' },
+    '&[data-tone="none"]': { color: 'muted' },
   });
   const actionButton = css({
-    appearance: "none",
-    p: "3px 10px",
-    border: "1px solid token(colors.lineStrong)",
-    borderRadius: "sm",
-    bg: "surface",
-    color: "ink",
-    fontSize: "12px",
+    appearance: 'none',
+    p: '3px 10px',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: 'sm',
+    bg: 'surface',
+    color: 'ink',
+    fontSize: '12px',
     fontWeight: 650,
-    minH: { base: "44px", md: "32px" },
-    cursor: "pointer",
-    _hover: { borderColor: "accent" },
+    minH: { base: '44px', md: '32px' },
+    cursor: 'pointer',
+    _hover: { borderColor: 'accent' },
     _focusVisible: {
-      outline: "2px solid token(colors.accent)",
-      outlineOffset: "2px",
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
     },
-    _disabled: { cursor: "default", opacity: 0.5 },
+    _disabled: { cursor: 'default', opacity: 0.5 },
   });
   const preview = css({
-    maxH: "360px",
-    overflow: "auto",
-    p: "12px",
-    border: "1px solid token(colors.line)",
-    borderRadius: "sm",
-    bg: "surfaceMuted",
-    fontFamily: "mono",
-    fontSize: "12px",
-    whiteSpace: "pre-wrap",
+    maxH: '360px',
+    overflow: 'auto',
+    p: '12px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'sm',
+    bg: 'surfaceMuted',
+    fontFamily: 'mono',
+    fontSize: '12px',
+    whiteSpace: 'pre-wrap',
     _focusVisible: {
-      outline: "2px solid token(colors.accent)",
-      outlineOffset: "2px",
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
     },
   });
-  const previewDocument = css({ m: 0, font: "inherit", whiteSpace: "inherit" });
+  const previewDocument = css({ m: 0, font: 'inherit', whiteSpace: 'inherit' });
   const findingRow = css({
-    display: "grid",
-    gap: "4px",
+    display: 'grid',
+    gap: '4px',
     minW: 0,
-    p: "8px 0",
+    p: '8px 0',
     border: 0,
-    borderTop: "1px solid token(colors.line)",
+    borderTop: '1px solid token(colors.line)',
   });
   const pathText = css({
-    color: "muted",
-    fontFamily: "mono",
-    fontSize: "11px",
-    overflowWrap: "anywhere",
+    color: 'muted',
+    fontFamily: 'mono',
+    fontSize: '11px',
+    overflowWrap: 'anywhere',
   });
 </script>
 
@@ -504,14 +456,10 @@
             {skillInvocation(globalSkill) === "auto" ? "Auto" : "Manual"}
           </span>
           {#if issueCount > 0}
-            <span class={cx(statusPill, statusPillWarn)}
-              >{count(issueCount, "issue")}</span
-            >
+            <span class={cx(statusPill, statusPillWarn)}>{count(issueCount, "issue")}</span>
           {/if}
         {:else}
-          <span class={cx(statusPill, statusPillInfo)}
-            >Project-owned · read-only</span
-          >
+          <span class={cx(statusPill, statusPillInfo)}>Project-owned · read-only</span>
         {/if}
         <button
           aria-label="Close skill detail"
@@ -534,13 +482,9 @@
     <section aria-label="What the history says" class={section}>
       <h3 class={panelTitle}>What the history says</h3>
       {#if observationsView === undefined}
-        <p data-skill-drawer-history="unavailable" role="status">
-          Skill observations are unavailable.
-        </p>
+        <p data-skill-drawer-history="unavailable" role="status">Skill observations are unavailable.</p>
       {:else if selected.observationRowOmitted}
-        <p data-skill-drawer-history="omitted" role="status">
-          Omitted from this observation response.
-        </p>
+        <p data-skill-drawer-history="omitted" role="status">Omitted from this observation response.</p>
       {:else}
         <p data-skill-drawer-history>{historySentence}</p>
       {/if}
@@ -555,14 +499,9 @@
               item.state,
               item.canReconcile,
             )}
-            <div
-              class={placementRow}
-              data-skill-drawer-placement={item.targetId}
-            >
+            <div class={placementRow} data-skill-drawer-placement={item.targetId}>
               <span class={strongCell}>
-                <span aria-hidden="true" class={glyphMark} data-tone={tone}
-                  >{MATRIX_DOT_GLYPHS[tone]}</span
-                >
+                <span aria-hidden="true" class={glyphMark} data-tone={tone}>{MATRIX_DOT_GLYPHS[tone]}</span>
                 {presentation.targetLabelById.get(item.targetId) ??
                   item.targetId}
               </span>
@@ -673,15 +612,13 @@
   </div>
 </Drawer>
 
+<!--
+  The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
+  whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
+  drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
+-->
 <style>
-  /*
-                                                               * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
-                                                               * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
-                                                               * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
-                                                               */
-  :global(
-      [data-scope="drawer"][data-part="positioner"]:has(.skills-drawer-panel)
-    ) {
+  :global([data-scope="drawer"][data-part="positioner"]:has(.skills-drawer-panel)) {
     pointer-events: none;
   }
 
