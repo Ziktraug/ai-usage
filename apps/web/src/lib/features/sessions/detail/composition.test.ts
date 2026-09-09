@@ -58,15 +58,21 @@ describe('P4 stable Drawer composition', () => {
     expect(slot).toContain("command === 'previous'");
   });
 
-  test('keeps the P8 campaign slot between the comparison summary and the detail grid', () => {
+  test('keeps the campaign label with the identity and the member list in its own tab', () => {
     const drawer = source('./session-drawer.svelte');
-    const comparison = drawer.indexOf('title="Compared with the median session in the current view"');
-    const campaign = drawer.indexOf('{@render campaignSlot()}');
-    const detailGrid = drawer.indexOf('<div class={drawerGrid}>');
+    const scope = drawer.indexOf('data-session-drawer-campaign-scope');
+    const label = drawer.indexOf('{@render campaignLabelSlot()}');
+    const stats = drawer.indexOf('data-session-drawer-stats');
+    const membersPane = drawer.indexOf('{#snippet membersPane()}');
+    const members = drawer.indexOf('{@render campaignSlot()}');
+    const membersEnd = drawer.indexOf('{/snippet}', membersPane);
 
-    expect(comparison).toBeGreaterThan(-1);
-    expect(campaign).toBeGreaterThan(comparison);
-    expect(detailGrid).toBeGreaterThan(campaign);
+    expect(scope).toBeGreaterThan(-1);
+    expect(label).toBeGreaterThan(scope);
+    expect(stats).toBeGreaterThan(label);
+    expect(members).toBeGreaterThan(membersPane);
+    expect(membersEnd).toBeGreaterThan(members);
+    expect(drawer).not.toContain('toggleAnalysis');
   });
 
   test('keeps phase keys collision-safe and phase bands on the selected timeline scale', () => {

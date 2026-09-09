@@ -88,3 +88,24 @@ assistant records, 13 sub-agent launches):
 Playwright e2e for the panel (navigation, Back/Forward, Escape, focus
 restoration, 390 px). Real-history smoke: the 26-session Claude campaign shows
 34 rounds, not 1,024 turns, and lists its 25 child sessions.
+
+## Execution log
+
+- 2026-09-09 — Phase 1 (contract and derivation) and phase 2 (URL-addressed
+  panel, `session.lookup`) landed on `feat/session-rounds-panel`.
+- 2026-09-09 — Phase 3 landed: the drawer is an identity block, a four-item
+  stat strip, and tabs (Rounds by default, Members for campaigns, Timeline for
+  the existing chronology, Summary for token anatomy, details, source control,
+  and filters). The rounds reader shows a rail of rounds beside a reading
+  column; long prompts open on their first lines and expand on request;
+  sub-agent interactions list the member's own row numbers. The panel widens
+  to `min(960px, 100vw - 360px)` so the table stays clickable beside it. The
+  local detail loads on selection instead of behind an Analyze button. Opening
+  a campaign preloads both its member page and its filtered children page, so
+  the Members tab lists every member instead of only the root.
+- Follow-ups for phase 4: classify prompt origin (Claude task notifications
+  arrive as user records whose body starts with `<task-notification>` and are
+  rounds of their own today); the rail is not yet windowed (38 rounds render
+  fine, thousands would need ADR 0004 treatment); observed-span lanes; the
+  agent view; the Linux visual-regression snapshot of the drawer must be
+  regenerated in CI.

@@ -436,10 +436,12 @@
     changeSelection(selectedRowId === row.rowId ? null : { row, target: sessionAnalysisTargetForOverviewRow(row) });
   };
 </script>
-{#snippet campaignSlot()}
+{#snippet campaignLabelSlot()}
   {#if selectedCampaignEditor}
     <CampaignLabelEditor editor={selectedCampaignEditor} />
   {/if}
+{/snippet}
+{#snippet campaignSlot()}
   {#if selectedCampaignView && selection?.row}
     <CampaignSessionControls
       campaign={selection.row}
@@ -635,8 +637,10 @@
   {summary}
 />
 <SessionDetailQuerySlot
+  {campaignLabelSlot}
   {campaignSlot}
   client={syntheticClient}
+  memberRows={selectedCampaignView?.allRows ?? []}
   onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={navigation.setFieldFilter}
   onSelectionChange={(nextSelection) => {
@@ -645,6 +649,7 @@
     }
     changeSelection(nextSelection);
   }}
+  onSelectMember={selectSessionRow}
   {queryClient}
   rows={detailRows}
   {selection}

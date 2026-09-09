@@ -1,6 +1,5 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
-  import type { Snippet } from 'svelte';
 
   const tabsRoot = css({
     display: 'grid',
@@ -49,24 +48,13 @@
     },
   });
 
-  export interface TabItem {
-    content: Snippet;
-    disabled?: boolean;
-    label: string;
-    value: string;
-  }
-
-  export interface TabsProps {
-    ariaLabel: string;
-    items: readonly TabItem[];
-    onValueChange: (value: string) => void;
-    value: string;
-  }
+  export type { TabItem, TabsProps } from './tabs';
 </script>
 
 <script lang="ts">
   import { Tabs } from '@ark-ui/svelte/tabs';
   import TabPanel from './tab-panel.svelte';
+  import type { TabsProps } from './tabs';
 
   let { ariaLabel, items, onValueChange, value }: TabsProps = $props();
 </script>

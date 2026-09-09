@@ -29,26 +29,36 @@
   };
 
   let {
+    campaignLabelSlot,
     campaignSlot,
     client,
+    memberRows = [],
     onClosingChange,
     onFieldFilter,
     onSelectionChange,
+    onSelectMember,
     queryClient,
     rows,
     selection,
   }: {
+    campaignLabelSlot?: Snippet;
     campaignSlot?: Snippet;
     client: SessionClientAdapter;
+    /** Campaign member rows the panel joins child sessions to; usage stays on those rows. */
+    memberRows?: readonly SessionPresentationRow[];
     onClosingChange?: (closing: boolean) => void;
     onFieldFilter?: (key: 'model' | 'project', value: string) => void;
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
+    /** Opens a campaign member from the rounds reader; the destination owns the route change. */
+    onSelectMember?: (row: SessionPresentationRow) => void;
     queryClient: QueryClient;
     rows: readonly SessionPresentationRow[];
     selection: SessionSelectionInput | null;
   } = $props();
 
-  let analysisOpen = $state(false);
+  // Rounds are the panel's first view, so the local detail loads as soon as a
+  // row is selected; the toggle only lets the reader release it.
+  let analysisOpen = $state(true);
   let vcsRequested = $state(false);
   let selectedIdentity = $state('');
   let drawerModule = $state<SessionDrawerModule>();
@@ -158,7 +168,8 @@
     current: () => snapshot,
     dispose: () => undefined,
     handleKeyDown: (event) => {
-      if (drawerClosing || !snapshot.row) {
+      // A component that already answered the key (the rounds rail's arrows) opts out.
+      if (drawerClosing || !snapshot.row || event.defaultPrevented) {
         return;
       }
       if (escapeBelongsToActiveOverlay(event)) {
@@ -210,7 +221,7 @@
       return;
     }
     selectedIdentity = identity;
-    analysisOpen = false;
+    analysisOpen = true;
     vcsRequested = false;
     if (selection) {
       ensureDrawer();
@@ -228,10 +239,13 @@
   {#if drawerModule}
     {@const SessionDrawer = drawerModule.default}
     <SessionDrawer
+      {...(campaignLabelSlot === undefined ? {} : { campaignLabelSlot })}
       {...(campaignSlot === undefined ? {} : { campaignSlot })}
       {controller}
+      {memberRows}
       onClosingChange={handleClosingChange}
       {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
+      {...(onSelectMember === undefined ? {} : { onSelectMember })}
       {rows}
       {snapshot}
     />

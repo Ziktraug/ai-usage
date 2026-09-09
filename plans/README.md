@@ -188,7 +188,7 @@ dependency.
 | 111 | Skill Invocation Observability — Declared, Inferred, and Exposed Signals Across Claude Code, OpenCode, and Codex | P2 | L | - | IN PROGRESS (implementation verified on PR #51; pending integration on `main`; ADR 0022 accepted) |
 | 112 | Skills Decision-First Surface — Verdicts on the Landing Page, Ranked Observations, Joined Axes | P1 | L | 111 | IN PROGRESS (implementation verified on PR #51; pending integration on `main`; adopt action remains plan 083) |
 | 113 | Skills Worktable — One Surface Joining Placement and Evidence, Detail as a Drawer | P1 | L | 111, 112 | DONE (implementation verified on `agent/099-skill-invocation-observability`; pending integration on `main`; adopt action remains plan 083; Activity sparkline recorded as a contract gap) |
-| 114 | Session Rounds and Sub-agents — Reading Panel With a URL Across Claude, Codex, and OpenCode | P1 | L | - | IN PROGRESS (branch `feat/session-rounds-panel`; phase 1 contract and derivation done, phase 2 route and panel in verification) |
+| 114 | Session Rounds and Sub-agents — Reading Panel With a URL Across Claude, Codex, and OpenCode | P1 | L | - | IN PROGRESS (branch `feat/session-rounds-panel`; phases 1–3 done: contract, URL panel, rounds reader; phase 4 lanes and agent view pending) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:

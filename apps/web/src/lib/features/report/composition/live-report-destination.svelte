@@ -328,19 +328,27 @@
     }
     onDetailRouteChange(routeForSelection(next, sessionWindow), null);
   };
-  // A deep-linked campaign needs its member page before the panel can list it.
-  // The guard reads the requested intent, not the loaded data: the page arrives
-  // asynchronously, and asking again while it loads would loop the effect.
+  // An open campaign needs both member pages before the panel can list them: every
+  // member (the Members tab and the rounds' child joins) and the filtered children
+  // page that says which members the current filters hide. The guards read the
+  // requested intent, not the loaded data: a page arrives asynchronously, and
+  // asking again while it loads would loop the effect.
   $effect(() => {
     if (detailRoute?.kind !== 'campaign' || focusedDestination.kind !== 'sessions') {
       return;
     }
     const { campaignKey } = detailRoute;
-    if ((activeSessionWindowIntent.campaignSessionsDepth[campaignKey] ?? 0) > 0) {
-      return;
-    }
-    if (campaignSessionsNeedInitialLoad(sessionWindow?.campaignSessions, campaignKey)) {
+    if (
+      (activeSessionWindowIntent.campaignSessionsDepth[campaignKey] ?? 0) === 0 &&
+      campaignSessionsNeedInitialLoad(sessionWindow?.campaignSessions, campaignKey)
+    ) {
       increaseSessionDepth('campaign-sessions', campaignKey);
+    }
+    if (
+      (activeSessionWindowIntent.campaignChildrenDepth[campaignKey] ?? 0) === 0 &&
+      campaignSessionsNeedInitialLoad(sessionWindow?.campaignChildren, campaignKey)
+    ) {
+      increaseSessionDepth('campaign-children', campaignKey);
     }
   });
   $effect(() => {
@@ -661,10 +669,12 @@
   };
 </script>
 
-{#snippet campaignSlot()}
+{#snippet campaignLabelSlot()}
   {#if selectedCampaignEditor}
     <CampaignLabelEditor editor={selectedCampaignEditor} />
   {/if}
+{/snippet}
+{#snippet campaignSlot()}
   {#if campaignSessionControls}
     <CampaignSessionControls
       campaign={campaignSessionControls.campaign}
@@ -867,8 +877,10 @@
   <p class={visuallyHidden} data-session-route-status="loading" role="status">Loading session details</p>
 {/if}
 <SessionDetailQuerySlot
+  {campaignLabelSlot}
   {campaignSlot}
   client={sessionClient}
+  memberRows={campaignSessionControls?.collection.items ?? []}
   onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={(key, value) => navigation.setFieldFilter(key, value)}
   onSelectionChange={(nextSelection) => {
@@ -877,6 +889,7 @@
     }
     changeSelection(nextSelection);
   }}
+  onSelectMember={selectCampaignSession}
   {queryClient}
   rows={detailRows}
   {selection}

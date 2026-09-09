@@ -1,6 +1,7 @@
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const OPEN_BUILD_REPORT_UI_PATTERN = /^Open details for Build report UI\./;
+const COMPETING_MEMBER_PATTERN = /Review analytics model/;
 
 test('uses one token magnitude and accessible drawer explanations', async ({ page }) => {
   await openHydratedReport(page, '/?origin=%5B%5D');
@@ -59,6 +60,9 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   );
   await expect(taskOpenExplanation).toBeVisible();
 
+  // The competing action is a campaign member button, which the Members tab renders.
+  await drawer.getByRole('tab', { name: 'Members · 3' }).click();
+  await expect(drawer.getByRole('button', { name: COMPETING_MEMBER_PATTERN })).toBeVisible();
   await drawer.getByRole('button', { name: 'Close session details' }).evaluate(async (button) => {
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error('Expected the Drawer close control to be a button');
@@ -93,6 +97,8 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await waitForFocusedReportSettled(page);
   const partialSessionRow = page.locator('tbody tr').filter({ hasText: 'Explore report sketch' });
   await partialSessionRow.locator('td').first().click();
+  // Partial coverage is a Summary detail; the tab choice survives moving to the neighbour row.
+  await drawer.getByRole('tab', { name: 'Summary' }).click();
 
   const partialHelp = drawer.getByRole('button', { name: 'About Partial' });
   await expect(partialHelp).toHaveAttribute('aria-haspopup', 'dialog');
