@@ -1,10 +1,12 @@
-import type {
-  LocalSessionAnalysis,
-  SessionDetail,
-  SessionDetailPhase,
-  SessionDetailPrompt,
-  SessionDetailTokenCounts,
-  SessionDetailTurn,
+import {
+  completeCoverage,
+  type LocalSessionAnalysis,
+  type SessionDetail,
+  type SessionDetailChildLink,
+  type SessionDetailPhase,
+  type SessionDetailPrompt,
+  type SessionDetailTokenCounts,
+  type SessionDetailTurn,
 } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -32,7 +34,8 @@ const MAX_LABEL_LENGTH = 256;
 const MAX_MESSAGE_ROWS = 2048;
 const MAX_PHASES = 256;
 const MAX_PROMPT_BYTES = 32 * 1024;
-const MAX_PROMPT_ROWS = 256;
+// Prompt identities share the turn budget; bodies stay bounded by bytes.
+const MAX_PROMPT_ROWS = 1024;
 const MAX_PROMPT_TOTAL_BYTES = 512 * 1024;
 const MAX_TOOL_GROUPS = 1024;
 const MAX_TURNS = 1024;
@@ -90,6 +93,12 @@ WHERE p.session_id = ?
   AND ${OPENCODE_DIRECT_USER_PART_PREDICATE}
 ORDER BY p.message_id
 LIMIT ?`;
+export const OPENCODE_DETAIL_CHILDREN_SQL = `
+SELECT id, title
+FROM session
+WHERE parent_id = ?
+ORDER BY time_created, id
+LIMIT ?`;
 export const OPENCODE_DETAIL_TOOL_SQL = `
 SELECT message_id, count(*) AS tool_count
 FROM part
@@ -138,6 +147,13 @@ interface OpenCodeDetailToolRow {
   message_id: unknown;
   tool_count: unknown;
 }
+
+interface OpenCodeDetailChildRow {
+  id: unknown;
+  title: unknown;
+}
+
+const MAX_CHILD_ROWS = 512;
 
 interface ParsedOpenCodeTurn {
   cost: number | null;
@@ -253,22 +269,19 @@ const promptsFromRows = (
       promptsTruncated = true;
       continue;
     }
-    if (remainingBytes <= 0) {
-      promptsTruncated = true;
-      break;
-    }
-    const bounded = boundedPromptText(row.text, Math.min(MAX_PROMPT_BYTES, remainingBytes));
-    if (!bounded.text) {
-      promptsTruncated = true;
-      continue;
-    }
+    // Past the body budget the identity is still kept, with an empty body, so
+    // the assistant messages under it keep grouping as a prompt-led round.
+    const bounded =
+      remainingBytes > 0
+        ? boundedPromptText(row.text, Math.min(MAX_PROMPT_BYTES, remainingBytes))
+        : { text: '', truncated: true };
     const sourceLength = parseOptionalNonNegativeSafeInteger(row.text_length);
     const sqlTruncated = sourceLength.ok && sourceLength.value > row.text.length;
     const prompt: SessionDetailPrompt = {
       id,
       text: bounded.text,
       timestamp: timestamp(created),
-      truncated: bounded.truncated || sqlTruncated,
+      truncated: bounded.text ? bounded.truncated || sqlTruncated : true,
     };
     prompts.push(prompt);
     remainingBytes -= TEXT_ENCODER.encode(prompt.text).byteLength;
@@ -334,6 +347,9 @@ const turnsFromRows = (
       parentKind,
       startMs,
       turn: {
+        calls: 1,
+        cost: fact.reportedCostKnown ? fact.cost : null,
+        costKind: fact.reportedCostKnown ? 'reported' : 'unknown',
         durationMs: hasRecordedTiming ? endMs - startMs : null,
         effort: fact.effort,
         effortKind: fact.effort ? 'recorded' : 'unavailable',
@@ -405,12 +421,24 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
       }
     }
     const effort = dominantTurnValue(group, (turn) => turn.effort);
+    let cost: number | null = 0;
+    for (const message of group) {
+      if (cost === null || message.cost === null) {
+        cost = null;
+        break;
+      }
+      const next = addNonNegativeFiniteNumbers(cost, message.cost);
+      cost = next.ok ? next.value : null;
+    }
     const startMs = Math.min(...group.map(({ startMs: value }) => value));
     const endMs = Math.max(...group.map(({ endMs: value }) => value));
     const timedGroup = group.filter(({ turn }) => turn.timingStatus === 'recorded');
     const intervals = mergeOpenCodeActivityIntervals(timedGroup);
     const timingStatus = intervals.length > 0 ? 'recorded' : 'unavailable';
     return {
+      calls: group.length,
+      cost,
+      costKind: cost === null ? 'unknown' : 'reported',
       durationMs: timingStatus === 'recorded' ? openCodeActivityDuration(timedGroup) : null,
       effort,
       effortKind: effort ? 'recorded' : 'unavailable',
@@ -523,6 +551,25 @@ const detailFromDatabase = (
           );
         }
 
+        const childRows = yield* db.all<OpenCodeDetailChildRow>(OPENCODE_DETAIL_CHILDREN_SQL, [
+          sourceSessionId,
+          MAX_CHILD_ROWS + 1,
+        ]);
+        const children: SessionDetailChildLink[] = [];
+        for (const row of childRows.slice(0, MAX_CHILD_ROWS)) {
+          const id = boundedString(row.id, MAX_ID_LENGTH);
+          if (id && id !== sourceSessionId && !children.some((child) => child.sourceSessionId === id)) {
+            children.push({
+              agentType: null,
+              evidence: 'opencode-session-parent',
+              label: boundedString(row.title),
+              sourceSessionId: id,
+              spawnTurnIndex: null,
+            });
+          }
+        }
+        const childrenOmitted = childRows.length > MAX_CHILD_ROWS;
+
         const toolsByMessageId = new Map<string, number>();
         let projectionTools = 0;
         for (const row of toolRows) {
@@ -590,13 +637,44 @@ const detailFromDatabase = (
           return created === null || completed === null || completed < created;
         });
         const turns = groupedTurnsFromMessages(parsedTurns, dbPath);
+        const unresolvedTurns = parsedTurns.filter(({ parentKind }) => parentKind === 'unresolved').length;
         const detail = {
           activeDurationMs,
+          children,
+          coverage: {
+            childDiscovery:
+              children.length === 0 && !childrenOmitted
+                ? completeCoverage()
+                : {
+                    omittedCount: childrenOmitted ? null : 0,
+                    reasons: childrenOmitted
+                      ? ['harness-no-spawn-evidence', 'child-budget']
+                      : ['harness-no-spawn-evidence'],
+                    status: 'partial',
+                  },
+            grouping:
+              unresolvedTurns > 0
+                ? { omittedCount: unresolvedTurns, reasons: ['unattributed-activity'], status: 'partial' }
+                : completeCoverage(),
+            // OpenCode links a child session to its parent session, never to the message that opened it.
+            interactionAttribution: {
+              omittedCount: null,
+              reasons: ['harness-no-spawn-evidence'],
+              status: 'unavailable',
+            },
+            promptBodies: promptsTruncated
+              ? { omittedCount: null, reasons: ['prompt-body-budget'], status: 'partial' }
+              : completeCoverage(),
+            recordedTiming: missingCompletion
+              ? { omittedCount: null, reasons: ['timing-not-recorded'], status: 'partial' }
+              : completeCoverage(),
+          },
           durationStatus: missingCompletion ? 'partial' : 'recorded',
           efforts: [...new Set(parsedTurns.flatMap(({ turn }) => (turn.effort ? [turn.effort] : [])))],
           elapsedDurationMs,
           endedAt: timestamp(boundedEndMs),
           idleDurationMs: elapsedDurationMs - activeDurationMs,
+          interactions: [],
           models: [...new Set(parsedTurns.map(({ turn }) => turn.model))],
           observedAt: new Date().toISOString(),
           phases,

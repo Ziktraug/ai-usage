@@ -1,12 +1,18 @@
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
-import type {
-  SessionDetail,
-  SessionDetailInterval,
-  SessionDetailPhase,
-  SessionDetailPrompt,
-  SessionDetailTokenCounts,
-  SessionDetailTurn,
-  SessionProjectionFacts,
+import {
+  completeCoverage,
+  type SessionDetail,
+  type SessionDetailChildLink,
+  type SessionDetailCoverage,
+  type SessionDetailCoverageFact,
+  type SessionDetailCoverageReason,
+  type SessionDetailInteraction,
+  type SessionDetailInterval,
+  type SessionDetailPhase,
+  type SessionDetailPrompt,
+  type SessionDetailTokenCounts,
+  type SessionDetailTurn,
+  type SessionProjectionFacts,
 } from '@ai-usage/report-core/session-detail';
 import {
   compactSessionVcsBranchObservations,
@@ -27,14 +33,57 @@ import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from 
 import { dominant, usablePrompt } from './text';
 
 const MAX_CLAUDE_RECORDS = 100_000;
-const MAX_CLAUDE_GRAPH_DEPTH = 64;
-const MAX_CLAUDE_PROMPTS = 256;
+// Prompt identities group activity into rounds, so they share the turn budget.
+// Bodies are bounded separately: past the total byte budget an identity is
+// kept with an empty body and the omission is reported through coverage.
+const MAX_CLAUDE_PROMPTS = 1024;
 const MAX_CLAUDE_PROMPT_BYTES = 32 * 1024;
 const MAX_CLAUDE_PROMPT_TOTAL_BYTES = 1024 * 1024;
 const MAX_CLAUDE_TURNS = 1024;
+const MAX_CLAUDE_CHILDREN = 512;
+const MAX_CLAUDE_INTERACTIONS = 2048;
+const CLAUDE_SPAWN_TOOL_NAMES = new Set(['Agent', 'Task', 'Workflow']);
+const CLAUDE_MESSAGE_TOOL_NAME = 'SendMessage';
+const CLAUDE_AGENT_SESSION_PREFIX = 'agent-';
+const MAX_CLAUDE_LINK_LABEL_LENGTH = 256;
+// Nested conflicting records are resolved recursively; past this depth the
+// activity stays unattributed rather than risking the call stack.
+const MAX_CLAUDE_CONFLICT_DEPTH = 64;
+
+/**
+ * The collector names an agent transcript by its file stem, `agent-<id>`, so
+ * that is the child session identity a link must carry to join the report row.
+ * Tool results and sidecar file names carry the bare id.
+ */
+export const claudeChildSessionId = (agentId: string): string =>
+  agentId.startsWith(CLAUDE_AGENT_SESSION_PREFIX) ? agentId : `${CLAUDE_AGENT_SESSION_PREFIX}${agentId}`;
+
+const boundedLabel = (value: string | null): string | null => {
+  if (value === null) {
+    return null;
+  }
+  return value.length > MAX_CLAUDE_LINK_LABEL_LENGTH ? value.slice(0, MAX_CLAUDE_LINK_LABEL_LENGTH) : value;
+};
 const TRAILING_REPLACEMENT_CHARACTER = /\uFFFD$/u;
 
+/**
+ * One `<session>/subagents/agent-<id>.meta.json` sidecar. It names the agent's
+ * type, its task description and the `tool_use` that launched it, so a child
+ * stays linked even when the launching tool result was dropped as oversized.
+ */
+export interface ClaudeAgentMeta {
+  agentId: string;
+  agentType: string | null;
+  description: string | null;
+  toolUseId: string | null;
+  /** Run id of the Workflow that spawned the agent, when the sidecar lives under `subagents/workflows/<run>/`. */
+  workflowRunId: string | null;
+}
+
 export interface ClaudeSessionInput {
+  agentMetas?: readonly ClaudeAgentMeta[];
+  /** Sidecars that existed but could not be read within budget. */
+  agentMetasUnreadable?: number;
   isAgentFile?: boolean;
   records: readonly unknown[];
   repository: SessionVcsRepository | null;
@@ -82,6 +131,7 @@ interface MutableTurn {
   assistants: ClaudeAssistant[];
   durationIntervals: SessionDetailInterval[];
   end: Date;
+  key: string;
   prompt: SessionDetailPrompt | null;
   start: Date;
   timingRejected: boolean;
@@ -96,13 +146,20 @@ interface ClaudeAssistant {
 }
 
 interface ClaudeGraphIndex {
+  /** Every parent a conflicting uuid was recorded with, in file order. */
+  conflictingParents: ReadonlyMap<string, readonly (string | null)[]>;
   conflictingUuids: ReadonlySet<string>;
+  events: ReadonlyMap<string, ClaudeEvent>;
   parents: ReadonlyMap<string, string | null>;
 }
 
 interface ClaudePromptFacts {
+  bodiesOmitted: number;
+  identitiesOmitted: number;
   partial: boolean;
   promptEvents: ReadonlyMap<string, ClaudeEvent>;
+  /** Claude's own `promptId` on a prompt record → that prompt's identity here. */
+  promptIdsByRecordedId: ReadonlyMap<string, string>;
   prompts: SessionDetailPrompt[];
   promptsTruncated: boolean;
 }
@@ -111,13 +168,32 @@ interface ClaudeAssistantFacts {
   assistantEvents: ReadonlyMap<string, ClaudeEvent>;
   assistants: ClaudeAssistant[];
   assistantTurnKey: ReadonlyMap<string, string>;
+  cycles: number;
   partial: boolean;
   rejectedMetricRecords: number;
+  /** Prompt key of any attributable event, for records the usage pass skipped (streamed duplicates). */
+  resolveTurnKey: (event: ClaudeEvent) => string | null;
+  unattributed: number;
 }
 
 interface ClaudeTurnFacts {
   detailTurns: SessionDetailTurn[];
   partial: boolean;
+  turnIndexByKey: ReadonlyMap<string, number>;
+}
+
+interface ClaudeToolCall {
+  at: Date;
+  input: Record<string, unknown>;
+  name: string;
+  toolUseId: string;
+  turnKey: string | null;
+}
+
+interface ClaudeLinkFacts {
+  children: SessionDetailChildLink[];
+  coverage: Pick<SessionDetailCoverage, 'childDiscovery' | 'interactionAttribution'>;
+  interactions: SessionDetailInteraction[];
 }
 
 interface ClaudeMetadataFacts extends ClaudeSourceFacts {
@@ -250,24 +326,78 @@ const intervalUnionMs = (intervals: readonly SessionDetailInterval[]): number =>
   return start === null || end === null ? total : total + end - start;
 };
 
-const findAncestor = (
-  startUuid: string | null,
-  parents: ReadonlyMap<string, string | null>,
-  candidates: ReadonlySet<string>,
-): { cycleOrDepth: boolean; uuid: string | null } => {
-  let current = startUuid;
-  const seen = new Set<string>();
-  for (let depth = 0; current && depth < MAX_CLAUDE_GRAPH_DEPTH; depth += 1) {
-    if (candidates.has(current)) {
-      return { cycleOrDepth: false, uuid: current };
+/**
+ * Nearest prompt above an event, resolved with memoisation instead of a depth
+ * cap. A round in a long agentic session routinely reaches 150 hops of
+ * parentUuid, and the old 64-hop ceiling turned every assistant record past it
+ * into its own "turn". Every visited uuid is memoised, so the walk stays linear
+ * over the transcript; a cycle or a missing parent resolves to no prompt.
+ */
+const createPromptResolver = (
+  graph: ClaudeGraphIndex,
+  promptIds: ReadonlySet<string>,
+): { cycles: () => number; resolve: (startUuid: string | null) => string | null } => {
+  const memo = new Map<string, string | null>();
+  let cycles = 0;
+  const resolve = (startUuid: string | null, visiting = new Set<string>(), depth = 0): string | null => {
+    const path: string[] = [];
+    let current = startUuid;
+    let result: string | null = null;
+    while (current) {
+      if (promptIds.has(current)) {
+        result = current;
+        break;
+      }
+      const memoised = memo.get(current);
+      if (memoised !== undefined) {
+        result = memoised;
+        break;
+      }
+      if (visiting.has(current)) {
+        cycles += 1;
+        break;
+      }
+      visiting.add(current);
+      path.push(current);
+      const conflicting = graph.conflictingParents.get(current);
+      if (conflicting) {
+        // Each recorded parent must lead to the same prompt; otherwise the
+        // activity below stays unattributed rather than guessing a duplicate.
+        if (depth >= MAX_CLAUDE_CONFLICT_DEPTH) {
+          cycles += 1;
+          break;
+        }
+        const resolved = new Set(conflicting.map((parent) => resolve(parent, visiting, depth + 1)));
+        result = resolved.size === 1 ? ([...resolved][0] ?? null) : null;
+        break;
+      }
+      if (!graph.parents.has(current)) {
+        break;
+      }
+      current = graph.parents.get(current) ?? null;
     }
-    if (seen.has(current)) {
-      return { cycleOrDepth: true, uuid: null };
+    for (const uuid of path) {
+      memo.set(uuid, result);
     }
-    seen.add(current);
-    current = parents.get(current) ?? null;
+    return result;
+  };
+  return { cycles: () => cycles, resolve: (startUuid) => resolve(startUuid) };
+};
+
+/**
+ * Claude Code stamps every user record with the `promptId` of the human prompt
+ * it belongs to. An assistant record carries none, but its parent (a tool
+ * result) does, which recovers the round when an oversized dropped record broke
+ * the parentUuid chain.
+ */
+const recordedPromptIdFor = (event: ClaudeEvent, graph: ClaudeGraphIndex): string | null => {
+  const own = event.record.promptId;
+  if (typeof own === 'string' && own.length > 0) {
+    return own;
   }
-  return { cycleOrDepth: current !== null, uuid: null };
+  const parent = event.parentUuid ? graph.events.get(event.parentUuid) : undefined;
+  const inherited = parent?.record.promptId;
+  return typeof inherited === 'string' && inherited.length > 0 ? inherited : null;
 };
 
 const modelSegments = (assistants: readonly ClaudeAssistant[]): UsageModelSegment[] => {
@@ -355,8 +485,10 @@ const parseClaudeEvents = (records: readonly unknown[]): ClaudeEvent[] => {
 
 const createClaudeGraphIndex = (events: readonly ClaudeEvent[]): ClaudeGraphIndex => {
   const parents = new Map<string, string | null>();
+  const eventsByUuid = new Map<string, ClaudeEvent>();
   const graphSignatures = new Map<string, string>();
   const conflictingUuids = new Set<string>();
+  const conflictingParents = new Map<string, (string | null)[]>();
   for (const event of events) {
     if (!event.uuid) {
       continue;
@@ -365,22 +497,36 @@ const createClaudeGraphIndex = (events: readonly ClaudeEvent[]): ClaudeGraphInde
     const existingSignature = graphSignatures.get(event.uuid);
     if (existingSignature !== undefined && existingSignature !== signature) {
       conflictingUuids.add(event.uuid);
+      const recorded = conflictingParents.get(event.uuid) ?? [parents.get(event.uuid) ?? null];
+      recorded.push(event.parentUuid);
+      conflictingParents.set(event.uuid, recorded);
     } else if (existingSignature === undefined) {
       graphSignatures.set(event.uuid, signature);
       parents.set(event.uuid, event.parentUuid);
+      eventsByUuid.set(event.uuid, event);
     }
   }
+  // A conflicting uuid (Claude Code re-writes attachment records with a second
+  // parent) is not cut out of the graph: that would sever every chain below it
+  // and turn the whole round into unattributed activity. The resolver walks
+  // each recorded parent and only accepts them when they agree on one prompt;
+  // the conflict itself stays visible and keeps such records from owning
+  // prompts or usage.
   for (const uuid of conflictingUuids) {
     parents.delete(uuid);
+    eventsByUuid.delete(uuid);
   }
-  return { conflictingUuids, parents };
+  return { conflictingParents, conflictingUuids, events: eventsByUuid, parents };
 };
 
 const collectClaudePrompts = (events: readonly ClaudeEvent[], graph: ClaudeGraphIndex): ClaudePromptFacts => {
   const prompts: SessionDetailPrompt[] = [];
   const promptEvents = new Map<string, ClaudeEvent>();
+  const promptIdsByRecordedId = new Map<string, string>();
   let promptBytes = 0;
   let promptsTruncated = false;
+  let bodiesOmitted = 0;
+  let identitiesOmitted = 0;
   let partial = graph.conflictingUuids.size > 0;
   for (const current of events) {
     const { record } = current;
@@ -392,12 +538,7 @@ const collectClaudePrompts = (events: readonly ClaudeEvent[], graph: ClaudeGraph
       continue;
     }
     if (prompts.length >= MAX_CLAUDE_PROMPTS) {
-      promptsTruncated = true;
-      partial = true;
-      continue;
-    }
-    const bounded = boundedPrompt(text, MAX_CLAUDE_PROMPT_TOTAL_BYTES - promptBytes);
-    if (!bounded) {
+      identitiesOmitted += 1;
       promptsTruncated = true;
       partial = true;
       continue;
@@ -408,28 +549,46 @@ const collectClaudePrompts = (events: readonly ClaudeEvent[], graph: ClaudeGraph
       continue;
     }
     const id = usableUuid ?? `prompt-${current.index + 1}`;
-    prompts.push({ id, text: bounded.text, timestamp: iso(current.at), truncated: bounded.truncated });
-    promptBytes += bounded.usedBytes;
-    promptsTruncated ||= bounded.truncated;
+    // The identity is kept whatever the body budget says: it is what groups
+    // the activity below it into a round. Only the body is subject to bytes.
+    const bounded = boundedPrompt(text, MAX_CLAUDE_PROMPT_TOTAL_BYTES - promptBytes);
+    if (bounded) {
+      prompts.push({ id, text: bounded.text, timestamp: iso(current.at), truncated: bounded.truncated });
+      promptBytes += bounded.usedBytes;
+      promptsTruncated ||= bounded.truncated;
+    } else {
+      prompts.push({ id, text: '', timestamp: iso(current.at), truncated: true });
+      bodiesOmitted += 1;
+      promptsTruncated = true;
+    }
     if (usableUuid) {
       promptEvents.set(usableUuid, current);
     }
+    if (
+      typeof record.promptId === 'string' &&
+      record.promptId.length > 0 &&
+      !promptIdsByRecordedId.has(record.promptId)
+    ) {
+      promptIdsByRecordedId.set(record.promptId, id);
+    }
   }
-  return { partial, promptEvents, prompts, promptsTruncated };
+  return { bodiesOmitted, identitiesOmitted, partial, promptEvents, promptIdsByRecordedId, prompts, promptsTruncated };
 };
 
 const collectClaudeAssistants = (
   events: readonly ClaudeEvent[],
   graph: ClaudeGraphIndex,
-  promptEvents: ReadonlyMap<string, ClaudeEvent>,
+  promptFacts: ClaudePromptFacts,
 ): ClaudeAssistantFacts => {
-  const promptIds = new Set(promptEvents.keys());
+  const promptIds = new Set(promptFacts.promptEvents.keys());
+  const resolver = createPromptResolver(graph, promptIds);
   const assistants: ClaudeAssistant[] = [];
   const assistantEvents = new Map<string, ClaudeEvent>();
   const assistantTurnKey = new Map<string, string>();
   const seenUsage = new Set<string>();
   let partial = false;
   let rejectedMetricRecords = 0;
+  let unattributed = 0;
   for (const current of events) {
     const { record } = current;
     if (record.type !== 'assistant') {
@@ -460,14 +619,41 @@ const collectClaudeAssistants = (
     assistants.push({ at: current.at, model, tokens, tools, uuid: current.uuid });
     if (current.uuid && !graph.conflictingUuids.has(current.uuid)) {
       assistantEvents.set(current.uuid, current);
-      const ancestor = findAncestor(current.parentUuid, graph.parents, promptIds);
-      partial ||= ancestor.cycleOrDepth;
-      assistantTurnKey.set(current.uuid, ancestor.uuid ?? `assistant:${current.uuid}`);
+      const key = promptKeyFor(current, graph, resolver.resolve, promptFacts.promptIdsByRecordedId);
+      if (key === null) {
+        unattributed += 1;
+        partial = true;
+      }
+      assistantTurnKey.set(current.uuid, key ?? `assistant:${current.uuid}`);
     } else {
       partial = true;
     }
   }
-  return { assistantEvents, assistants, assistantTurnKey, partial, rejectedMetricRecords };
+  return {
+    assistantEvents,
+    assistants,
+    assistantTurnKey,
+    cycles: resolver.cycles(),
+    partial: partial || resolver.cycles() > 0,
+    rejectedMetricRecords,
+    resolveTurnKey: (event) => promptKeyFor(event, graph, resolver.resolve, promptFacts.promptIdsByRecordedId),
+    unattributed,
+  };
+};
+
+/** Ancestry first; Claude's own `promptId` stamp second, for records whose chain was broken. */
+const promptKeyFor = (
+  event: ClaudeEvent,
+  graph: ClaudeGraphIndex,
+  resolve: (startUuid: string | null) => string | null,
+  promptIdsByRecordedId: ReadonlyMap<string, string>,
+): string | null => {
+  const ancestor = resolve(event.parentUuid);
+  if (ancestor) {
+    return ancestor;
+  }
+  const recorded = recordedPromptIdFor(event, graph);
+  return recorded ? (promptIdsByRecordedId.get(recorded) ?? null) : null;
 };
 
 const createClaudeTurns = (
@@ -485,6 +671,7 @@ const createClaudeTurns = (
       assistants: [],
       durationIntervals: [],
       end: at,
+      key: prompt.id,
       prompt,
       start: at,
       timingRejected: false,
@@ -504,6 +691,7 @@ const createClaudeTurns = (
         assistants: [],
         durationIntervals: [],
         end: assistant.at,
+        key,
         prompt: null,
         start: assistant.at,
         timingRejected: false,
@@ -518,6 +706,33 @@ const createClaudeTurns = (
   return { partial, turnsByKey };
 };
 
+/**
+ * A round's observed span ends with the last record attributable to it, tool
+ * results included: an assistant call that ran a long tool ends when the
+ * result came back, not when the request went out.
+ */
+const extendClaudeTurnBounds = (
+  events: readonly ClaudeEvent[],
+  assistantTurnKey: ReadonlyMap<string, string>,
+  turnsByKey: ReadonlyMap<string, MutableTurn>,
+): void => {
+  for (const current of events) {
+    if (current.record.type !== 'user' || !current.parentUuid) {
+      continue;
+    }
+    const message = isRecord(current.record.message) ? current.record.message : null;
+    const content = message?.content;
+    if (!(Array.isArray(content) && content.some((block) => blockType(block) === 'tool_result'))) {
+      continue;
+    }
+    const key = assistantTurnKey.get(current.parentUuid);
+    const turn = key ? turnsByKey.get(key) : undefined;
+    if (turn && current.at > turn.end) {
+      turn.end = current.at;
+    }
+  }
+};
+
 const applyClaudeTurnDurations = (
   events: readonly ClaudeEvent[],
   graph: ClaudeGraphIndex,
@@ -528,13 +743,14 @@ const applyClaudeTurnDurations = (
   sessionEnd: Date,
 ): boolean => {
   const assistantIds = new Set(assistantEvents.keys());
+  const resolver = createPromptResolver(graph, assistantIds);
   let partial = false;
   for (const current of events) {
     if (!(current.record.type === 'system' && current.record.subtype === 'turn_duration')) {
       continue;
     }
-    const ancestor = findAncestor(current.parentUuid, graph.parents, assistantIds);
-    const key = ancestor.uuid ? assistantTurnKey.get(ancestor.uuid) : null;
+    const ancestor = resolver.resolve(current.parentUuid);
+    const key = ancestor ? assistantTurnKey.get(ancestor) : null;
     const turn = key ? turnsByKey.get(key) : null;
     const durationMs = current.record.durationMs;
     const hasLaterAssistant = turn?.assistants.some((assistant) => assistant.at > current.at) ?? false;
@@ -558,8 +774,25 @@ const applyClaudeTurnDurations = (
   return partial;
 };
 
+const turnCost = (assistants: readonly ClaudeAssistant[]): { cost: number | null; known: boolean } => {
+  let cost = 0;
+  let known = true;
+  for (const assistant of assistants) {
+    const pricing = priceFor(assistant.model, { at: assistant.at });
+    known &&= pricing.known || assistant.tokens.total === 0;
+    cost += approxCost(pricing.rates, {
+      cr: assistant.tokens.cacheRead,
+      cw: assistant.tokens.cacheWrite,
+      in: assistant.tokens.input,
+      out: assistant.tokens.output,
+    });
+  }
+  return known ? { cost, known } : { cost: null, known };
+};
+
 const serializeClaudeTurns = (turnsByKey: ReadonlyMap<string, MutableTurn>): ClaudeTurnFacts => {
   const detailTurns: SessionDetailTurn[] = [];
+  const turnIndexByKey = new Map<string, number>();
   let partial = false;
   const orderedTurns = [...turnsByKey.values()].sort((left, right) => left.start.getTime() - right.start.getTime());
   for (const [index, turn] of orderedTurns.entries()) {
@@ -571,7 +804,12 @@ const serializeClaudeTurns = (turnsByKey: ReadonlyMap<string, MutableTurn>): Cla
     }
     const intervals = turn.timingRejected ? [] : turn.durationIntervals;
     const durationMs = intervals.length > 0 ? intervalUnionMs(intervals) : null;
+    const pricing = turnCost(turn.assistants);
+    turnIndexByKey.set(turn.key, index);
     detailTurns.push({
+      calls: turn.assistants.length,
+      cost: pricing.cost,
+      costKind: pricing.cost === null ? 'unknown' : 'approximate',
       durationMs,
       effort: null,
       effortKind: 'unavailable',
@@ -586,7 +824,267 @@ const serializeClaudeTurns = (turnsByKey: ReadonlyMap<string, MutableTurn>): Cla
       tools,
     });
   }
-  return { detailTurns, partial };
+  return { detailTurns, partial, turnIndexByKey };
+};
+
+const stringInput = (input: Record<string, unknown>, key: string): string | null => {
+  const value = input[key];
+  return boundedLabel(typeof value === 'string' && value.trim().length > 0 ? value.trim() : null);
+};
+
+/**
+ * Sub-agent launches (`Task`/`Agent`) and follow-up messages (`SendMessage`)
+ * as the assistant issued them, each keyed to the turn of the assistant record
+ * that carried the call.
+ */
+const collectClaudeToolCalls = (
+  events: readonly ClaudeEvent[],
+  graph: ClaudeGraphIndex,
+  assistantTurnKey: ReadonlyMap<string, string>,
+  resolveTurnKey: (event: ClaudeEvent) => string | null,
+): ClaudeToolCall[] => {
+  const calls: ClaudeToolCall[] = [];
+  const seenToolUses = new Set<string>();
+  for (const current of events) {
+    if (current.record.type !== 'assistant') {
+      continue;
+    }
+    const message = isRecord(current.record.message) ? current.record.message : null;
+    const content = message?.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    // A streamed message is written as several records sharing one message id;
+    // the usage pass keeps the first, so a later record carrying the tool_use
+    // block resolves its round through ancestry instead.
+    const attributable = current.uuid && !graph.conflictingUuids.has(current.uuid);
+    const turnKey =
+      attributable && current.uuid ? (assistantTurnKey.get(current.uuid) ?? resolveTurnKey(current)) : null;
+    for (const block of content) {
+      if (!(isRecord(block) && block.type === 'tool_use' && typeof block.name === 'string')) {
+        continue;
+      }
+      if (!(CLAUDE_SPAWN_TOOL_NAMES.has(block.name) || block.name === CLAUDE_MESSAGE_TOOL_NAME)) {
+        continue;
+      }
+      const toolUseId = typeof block.id === 'string' && block.id.length > 0 ? block.id : null;
+      // A streamed message repeats its blocks across records; one tool use is one call.
+      if (!toolUseId || seenToolUses.has(toolUseId)) {
+        continue;
+      }
+      seenToolUses.add(toolUseId);
+      calls.push({
+        at: current.at,
+        input: isRecord(block.input) ? block.input : {},
+        name: block.name,
+        toolUseId,
+        turnKey,
+      });
+    }
+  }
+  return calls;
+};
+
+interface ClaudeSpawnResults {
+  /** `toolUseResult.agentId` of the tool result that answered a Task/Agent launch. */
+  agentIdsByToolUse: ReadonlyMap<string, string>;
+  /** `toolUseResult.runId` of the tool result that answered a Workflow launch. */
+  workflowRunsByToolUse: ReadonlyMap<string, string>;
+}
+
+const collectClaudeSpawnResults = (events: readonly ClaudeEvent[]): ClaudeSpawnResults => {
+  const agentIdsByToolUse = new Map<string, string>();
+  const workflowRunsByToolUse = new Map<string, string>();
+  for (const current of events) {
+    if (current.record.type !== 'user') {
+      continue;
+    }
+    const toolUseResult = isRecord(current.record.toolUseResult) ? current.record.toolUseResult : null;
+    const agentId = optionalRecordString(toolUseResult, 'agentId');
+    const runId = optionalRecordString(toolUseResult, 'runId');
+    if (!(agentId || runId)) {
+      continue;
+    }
+    const message = isRecord(current.record.message) ? current.record.message : null;
+    const content = message?.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const block of content) {
+      if (!(isRecord(block) && block.type === 'tool_result' && typeof block.tool_use_id === 'string')) {
+        continue;
+      }
+      if (agentId) {
+        agentIdsByToolUse.set(block.tool_use_id, agentId);
+      }
+      if (runId) {
+        workflowRunsByToolUse.set(block.tool_use_id, runId);
+      }
+    }
+  }
+  return { agentIdsByToolUse, workflowRunsByToolUse };
+};
+
+const optionalRecordString = (record: Record<string, unknown> | null, key: string): string | null => {
+  const value = record?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+};
+
+const collectClaudeLinks = (
+  events: readonly ClaudeEvent[],
+  graph: ClaudeGraphIndex,
+  assistantFacts: ClaudeAssistantFacts,
+  turnIndexByKey: ReadonlyMap<string, number>,
+  input: ClaudeSessionInput,
+): ClaudeLinkFacts => {
+  const calls = collectClaudeToolCalls(events, graph, assistantFacts.assistantTurnKey, assistantFacts.resolveTurnKey);
+  const spawnResults = collectClaudeSpawnResults(events);
+  const metasByToolUse = new Map<string, ClaudeAgentMeta>();
+  const metasByAgent = new Map<string, ClaudeAgentMeta>();
+  const metasByWorkflowRun = new Map<string, ClaudeAgentMeta[]>();
+  for (const meta of input.agentMetas ?? []) {
+    metasByAgent.set(meta.agentId, meta);
+    if (meta.toolUseId) {
+      metasByToolUse.set(meta.toolUseId, meta);
+    }
+    if (meta.workflowRunId) {
+      const run = metasByWorkflowRun.get(meta.workflowRunId) ?? [];
+      run.push(meta);
+      metasByWorkflowRun.set(meta.workflowRunId, run);
+    }
+  }
+  const children = new Map<string, SessionDetailChildLink>();
+  const interactions: SessionDetailInteraction[] = [];
+  let resultsMissing = 0;
+  let unattributedInteractions = 0;
+  let interactionsOmitted = 0;
+  const childFor = (
+    agentId: string,
+    evidence: SessionDetailChildLink['evidence'],
+    label: string | null,
+    agentType: string | null,
+    turnIndex: number | null,
+  ): void => {
+    const meta = metasByAgent.get(agentId);
+    const sourceSessionId = claudeChildSessionId(agentId);
+    const existing = children.get(sourceSessionId);
+    if (existing) {
+      if (existing.spawnTurnIndex === null && turnIndex !== null) {
+        existing.spawnTurnIndex = turnIndex;
+      }
+      existing.label ??= label ?? boundedLabel(meta?.description ?? null);
+      existing.agentType ??= agentType ?? boundedLabel(meta?.agentType ?? null);
+      return;
+    }
+    children.set(sourceSessionId, {
+      agentType: agentType ?? boundedLabel(meta?.agentType ?? null),
+      evidence,
+      label: label ?? boundedLabel(meta?.description ?? null),
+      sourceSessionId,
+      spawnTurnIndex: turnIndex,
+    });
+  };
+  for (const call of calls) {
+    const turnIndex = call.turnKey === null ? null : (turnIndexByKey.get(call.turnKey) ?? null);
+    const isSpawn = CLAUDE_SPAWN_TOOL_NAMES.has(call.name);
+    const label = isSpawn ? stringInput(call.input, 'description') : stringInput(call.input, 'summary');
+    let agentId: string | null;
+    if (call.name === 'Workflow') {
+      // One Workflow call fans out to many agents; the run id in its result
+      // names the sidecar directory that lists them, so each child links to
+      // this round while the interaction itself names no single child.
+      agentId = null;
+      const runId = spawnResults.workflowRunsByToolUse.get(call.toolUseId) ?? null;
+      const runMetas = runId ? (metasByWorkflowRun.get(runId) ?? []) : [];
+      if (runMetas.length === 0) {
+        resultsMissing += 1;
+      }
+      for (const meta of runMetas) {
+        childFor(meta.agentId, 'claude-agent-meta', meta.description, meta.agentType, turnIndex);
+      }
+    } else if (isSpawn) {
+      agentId =
+        spawnResults.agentIdsByToolUse.get(call.toolUseId) ?? metasByToolUse.get(call.toolUseId)?.agentId ?? null;
+      if (agentId === null) {
+        resultsMissing += 1;
+      } else {
+        childFor(
+          agentId,
+          spawnResults.agentIdsByToolUse.has(call.toolUseId) ? 'claude-agent-link' : 'claude-agent-meta',
+          label,
+          stringInput(call.input, 'subagent_type'),
+          turnIndex,
+        );
+      }
+    } else {
+      agentId = stringInput(call.input, 'to');
+      if (agentId !== null) {
+        // A message names the agent it reaches; the launch that created it may
+        // sit in an earlier, possibly dropped, record. The child exists either way.
+        childFor(agentId, 'claude-agent-link', null, null, null);
+      }
+    }
+    if (turnIndex === null) {
+      unattributedInteractions += 1;
+    }
+    if (interactions.length >= MAX_CLAUDE_INTERACTIONS) {
+      interactionsOmitted += 1;
+      continue;
+    }
+    interactions.push({
+      at: iso(call.at),
+      childSourceSessionId: agentId === null ? null : claudeChildSessionId(agentId),
+      kind: isSpawn ? 'spawn' : 'message',
+      label,
+      toolUseId: call.toolUseId,
+      turnIndex,
+    });
+  }
+  // Sidecars name children whose launch record never survived at all.
+  for (const meta of metasByAgent.values()) {
+    if (!children.has(claudeChildSessionId(meta.agentId))) {
+      childFor(meta.agentId, 'claude-agent-meta', meta.description, meta.agentType, null);
+    }
+  }
+  const orderedChildren = [...children.values()];
+  const retainedChildren = orderedChildren.slice(0, MAX_CLAUDE_CHILDREN);
+  const retainedIds = new Set(retainedChildren.map(({ sourceSessionId }) => sourceSessionId));
+  for (const interaction of interactions) {
+    if (interaction.childSourceSessionId !== null && !retainedIds.has(interaction.childSourceSessionId)) {
+      interaction.childSourceSessionId = null;
+    }
+  }
+  const childReasons: SessionDetailCoverageReason[] = [];
+  const metasUnreadable = input.agentMetasUnreadable ?? 0;
+  if (resultsMissing > 0) {
+    childReasons.push('child-result-missing');
+  }
+  if (metasUnreadable > 0) {
+    childReasons.push('child-metadata-unreadable');
+  }
+  if (orderedChildren.length > retainedChildren.length) {
+    childReasons.push('child-budget');
+  }
+  const childDiscovery: SessionDetailCoverageFact =
+    childReasons.length === 0
+      ? completeCoverage()
+      : {
+          omittedCount: resultsMissing + metasUnreadable + (orderedChildren.length - retainedChildren.length),
+          reasons: childReasons,
+          status: 'partial',
+        };
+  const interactionReasons: SessionDetailCoverageReason[] = [];
+  if (unattributedInteractions > 0) {
+    interactionReasons.push('unattributed-activity');
+  }
+  if (interactionsOmitted > 0) {
+    interactionReasons.push('interaction-budget');
+  }
+  const interactionAttribution: SessionDetailCoverageFact =
+    interactionReasons.length === 0
+      ? completeCoverage()
+      : { omittedCount: interactionsOmitted, reasons: interactionReasons, status: 'partial' };
+  return { children: retainedChildren, coverage: { childDiscovery, interactionAttribution }, interactions };
 };
 
 const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSessionInput): ClaudeMetadataFacts => {
@@ -853,7 +1351,7 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
 
   const graph = createClaudeGraphIndex(events);
   const promptFacts = collectClaudePrompts(events, graph);
-  const assistantFacts = collectClaudeAssistants(events, graph, promptFacts.promptEvents);
+  const assistantFacts = collectClaudeAssistants(events, graph, promptFacts);
   const { assistants } = assistantFacts;
   const { prompts, promptsTruncated } = promptFacts;
   if (assistants.length === 0 && prompts.length === 0) {
@@ -866,6 +1364,7 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     assistants,
     assistantFacts.assistantTurnKey,
   );
+  extendClaudeTurnBounds(events, assistantFacts.assistantTurnKey, mutableTurns.turnsByKey);
   const timingPartial = applyClaudeTurnDurations(
     events,
     graph,
@@ -880,6 +1379,7 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
   const turnsPartial =
     promptFacts.partial || assistantFacts.partial || mutableTurns.partial || timingPartial || turnFacts.partial;
   let { rejectedMetricRecords } = assistantFacts;
+  const links = collectClaudeLinks(events, graph, assistantFacts, turnFacts.turnIndexByKey, input);
 
   const recordedTurns = detailTurns.filter((turn) => turn.timingStatus === 'recorded').length;
   const activeDurationMs = recordedTurns > 0 ? intervalUnionMs(detailTurns.flatMap((turn) => turn.intervals)) : null;
@@ -933,13 +1433,70 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     tools,
     turns: prompts.length,
   };
+  const groupingReasons: SessionDetailCoverageReason[] = [];
+  if (assistantFacts.unattributed > 0) {
+    groupingReasons.push('unattributed-activity');
+  }
+  if (assistantFacts.cycles > 0) {
+    groupingReasons.push('ancestry-cycle');
+  }
+  if (graph.conflictingUuids.size > 0) {
+    groupingReasons.push('ancestry-conflict');
+  }
+  if (mutableTurns.partial && detailTurns.length >= MAX_CLAUDE_TURNS) {
+    groupingReasons.push('turn-budget');
+  }
+  if (promptFacts.identitiesOmitted > 0) {
+    groupingReasons.push('prompt-budget');
+  }
+  const promptBodyReasons: SessionDetailCoverageReason[] = [];
+  if (promptFacts.bodiesOmitted > 0 || prompts.some(({ truncated }) => truncated)) {
+    promptBodyReasons.push('prompt-body-budget');
+  }
+  if (promptFacts.identitiesOmitted > 0) {
+    promptBodyReasons.push('prompt-budget');
+  }
+  const timingReasons: SessionDetailCoverageReason[] = [];
+  if (recordedTurns < detailTurns.length) {
+    timingReasons.push('timing-not-recorded');
+  }
+  if (timingPartial) {
+    timingReasons.push('timing-rejected');
+  }
+  const coverage: SessionDetailCoverage = {
+    childDiscovery: links.coverage.childDiscovery,
+    grouping:
+      groupingReasons.length === 0
+        ? completeCoverage()
+        : { omittedCount: assistantFacts.unattributed, reasons: groupingReasons, status: 'partial' },
+    interactionAttribution: links.coverage.interactionAttribution,
+    promptBodies:
+      promptBodyReasons.length === 0
+        ? completeCoverage()
+        : {
+            omittedCount: promptFacts.bodiesOmitted + promptFacts.identitiesOmitted,
+            reasons: promptBodyReasons,
+            status: 'partial',
+          },
+    recordedTiming:
+      timingReasons.length === 0
+        ? completeCoverage()
+        : {
+            omittedCount: detailTurns.length - recordedTurns,
+            reasons: timingReasons,
+            status: recordedTurns === 0 ? 'unavailable' : 'partial',
+          },
+  };
   const detailFacts: SessionDetail = {
     activeDurationMs,
+    children: links.children,
+    coverage,
     durationStatus,
     efforts: [],
     elapsedDurationMs,
     endedAt: iso(end),
     idleDurationMs,
+    interactions: links.interactions,
     models,
     observedAt: new Date().toISOString(),
     phases: detailPhases(assistants),

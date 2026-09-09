@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { LocalSessionAnalysis } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
-import { parseClaudeSessionFacts } from './claude-session-facts';
+import { type ClaudeAgentMeta, parseClaudeSessionFacts } from './claude-session-facts';
 import { LocalHistoryError } from './errors';
 import {
   HISTORY_JSONL_MAX_BYTES,
@@ -111,11 +111,100 @@ export const readClaudeSessionAnalysis = (
       { maxBytes: HISTORY_JSONL_MAX_BYTES, maxLineBytes: HISTORY_LINE_MAX_BYTES },
     );
     const isAgentFile = path.basename(transcript).startsWith('agent-');
-    const initial = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
+    const metas = isAgentFile
+      ? { agentMetas: [], agentMetasUnreadable: 0 }
+      : yield* readClaudeAgentMetas(storage, path.join(path.dirname(transcript), sourceSessionId, 'subagents'));
+    const input = { ...metas, isAgentFile, records, sourceSessionId };
+    const initial = parseClaudeSessionFacts({ ...input, repository: null });
     if (!initial) {
       return null;
     }
     const repository = readLocalGitRepository(initial.source.sourcePath);
-    const facts = repository ? parseClaudeSessionFacts({ isAgentFile, records, repository, sourceSessionId }) : initial;
+    const facts = repository ? parseClaudeSessionFacts({ ...input, repository }) : initial;
     return facts ? { detail: facts.detailFacts, projection: facts.projection } : null;
+  });
+
+const MAX_CLAUDE_AGENT_META_FILES = 512;
+const MAX_CLAUDE_WORKFLOW_RUN_DIRECTORIES = 64;
+const MAX_CLAUDE_AGENT_META_BYTES = 64 * 1024;
+const CLAUDE_AGENT_META_SUFFIX = '.meta.json';
+const CLAUDE_AGENT_FILE_PREFIX = 'agent-';
+const CLAUDE_WORKFLOWS_DIRECTORY = 'workflows';
+const SAFE_CLAUDE_WORKFLOW_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+const optionalString = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+
+/**
+ * Read the `agent-<id>.meta.json` sidecars of one session's sub-agents. A
+ * missing directory is an ordinary session without sub-agents; a sidecar that
+ * cannot be read within budget is counted, never fatal, so the session keeps
+ * its rounds and reports the gap through coverage.
+ */
+const readClaudeAgentMetas = (
+  storage: LocalHistoryStorageService,
+  directory: string,
+): Effect.Effect<{ agentMetas: ClaudeAgentMeta[]; agentMetasUnreadable: number }, LocalHistoryError> =>
+  Effect.gen(function* () {
+    const agentMetas: ClaudeAgentMeta[] = [];
+    let agentMetasUnreadable = 0;
+    let attemptedReads = 0;
+    if (!(yield* storage.exists(directory))) {
+      return { agentMetas, agentMetasUnreadable };
+    }
+    const collect = function* (target: string, workflowRunId: string | null) {
+      const entries = yield* storage.readDir(target);
+      const sidecars = entries
+        .filter(
+          (entry) =>
+            entry.isRegularFile &&
+            entry.name.startsWith(CLAUDE_AGENT_FILE_PREFIX) &&
+            entry.name.endsWith(CLAUDE_AGENT_META_SUFFIX),
+        )
+        .sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of sidecars) {
+        // Every sidecar, readable or not, is charged against one budget.
+        attemptedReads += 1;
+        if (attemptedReads > MAX_CLAUDE_AGENT_META_FILES) {
+          agentMetasUnreadable += 1;
+          continue;
+        }
+        const agentId = entry.name.slice(CLAUDE_AGENT_FILE_PREFIX.length, -CLAUDE_AGENT_META_SUFFIX.length);
+        if (!SAFE_CLAUDE_SESSION_ID.test(agentId)) {
+          agentMetasUnreadable += 1;
+          continue;
+        }
+        const text = yield* storage
+          .readText(path.join(target, entry.name), MAX_CLAUDE_AGENT_META_BYTES)
+          .pipe(Effect.catchAll(() => Effect.succeed(null)));
+        const parsed = text === null ? null : safeJSON(text);
+        if (!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))) {
+          agentMetasUnreadable += 1;
+          continue;
+        }
+        const meta = parsed as Record<string, unknown>;
+        agentMetas.push({
+          agentId,
+          agentType: optionalString(meta.agentType),
+          description: optionalString(meta.description),
+          toolUseId: optionalString(meta.toolUseId),
+          workflowRunId,
+        });
+      }
+      return entries;
+    };
+    const entries = yield* Effect.gen(() => collect(directory, null));
+    // Workflow fan-outs keep their agents one level down, under the run id the
+    // Workflow tool result named.
+    const workflowsDirectory = path.join(directory, CLAUDE_WORKFLOWS_DIRECTORY);
+    if (entries.some((entry) => entry.isDirectory && entry.name === CLAUDE_WORKFLOWS_DIRECTORY)) {
+      const runs = (yield* storage.readDir(workflowsDirectory))
+        .filter((entry) => entry.isDirectory && SAFE_CLAUDE_WORKFLOW_RUN_ID.test(entry.name))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      agentMetasUnreadable += Math.max(0, runs.length - MAX_CLAUDE_WORKFLOW_RUN_DIRECTORIES);
+      for (const run of runs.slice(0, MAX_CLAUDE_WORKFLOW_RUN_DIRECTORIES)) {
+        yield* Effect.gen(() => collect(path.join(workflowsDirectory, run.name), run.name));
+      }
+    }
+    return { agentMetas, agentMetasUnreadable };
   });

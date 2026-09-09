@@ -6,11 +6,18 @@ import { parseSessionVcsContext, type SessionVcsContext } from './session-vcs';
 const MAX_ID_LENGTH = 512;
 const MAX_LABEL_LENGTH = 256;
 const MAX_PHASES = 256;
-const MAX_PROMPTS = 256;
+// Prompt identities are what group activity into rounds, so their budget matches
+// the turn budget. Prompt bodies stay bounded separately by the byte budgets
+// below and by the reader's total-body budget; an identity whose body was not
+// retained keeps an empty text and reports it through coverage.
+const MAX_PROMPTS = 1024;
 const MAX_PROMPT_TEXT_LENGTH = 32 * 1024;
 const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const MAX_TURNS = 1024;
 const MAX_TURN_INTERVALS = 2048;
+const MAX_CHILDREN = 512;
+const MAX_INTERACTIONS = 2048;
+const MAX_COVERAGE_REASONS = 16;
 
 export const sessionDetailHarnessKeys = ['claude', 'codex', 'opencode'] as const;
 export type SessionDetailHarnessKey = (typeof sessionDetailHarnessKeys)[number];
@@ -121,6 +128,11 @@ export interface SessionDetailInterval {
 }
 
 export interface SessionDetailTurn {
+  /** API calls attributed to this turn; null when the harness does not record them. */
+  calls: number | null;
+  /** Canonical API-equivalent value of the turn's own usage; null exactly when unknown. */
+  cost: number | null;
+  costKind: SessionDetailCostKind;
   durationMs: number | null;
   effort: string | null;
   effortKind: SessionDetailEffortKind;
@@ -135,13 +147,98 @@ export interface SessionDetailTurn {
   tools: number;
 }
 
+/**
+ * How a child session was linked to this session. The evidence kind is part of
+ * the fact: a Codex thread edge proves parentage but not the spawning turn,
+ * while a Claude tool link names both.
+ */
+export const sessionDetailChildEvidences = [
+  'claude-agent-link',
+  'claude-agent-meta',
+  'codex-thread-edge',
+  'opencode-session-parent',
+] as const;
+export type SessionDetailChildEvidence = (typeof sessionDetailChildEvidences)[number];
+
+export interface SessionDetailChildLink {
+  agentType: string | null;
+  evidence: SessionDetailChildEvidence;
+  label: string | null;
+  /** The child's own source session identity, joinable to its report row. */
+  sourceSessionId: string;
+  /** Turn that launched the child; null means the spawning turn is not recorded. */
+  spawnTurnIndex: number | null;
+}
+
+export type SessionDetailInteractionKind = 'message' | 'spawn';
+
+export interface SessionDetailInteraction {
+  at: string;
+  /** Null when the tool result never named the child, so the launch is known but not its identity. */
+  childSourceSessionId: string | null;
+  kind: SessionDetailInteractionKind;
+  label: string | null;
+  toolUseId: string;
+  /** Turn the interaction belongs to; null keeps an unattributed interaction visible. */
+  turnIndex: number | null;
+}
+
+export const sessionDetailCoverageReasons = [
+  'ancestry-conflict',
+  'ancestry-cycle',
+  'child-budget',
+  'child-metadata-unreadable',
+  'child-result-missing',
+  'harness-no-child-evidence',
+  'harness-no-spawn-evidence',
+  'interaction-budget',
+  'prompt-body-budget',
+  'prompt-budget',
+  'record-budget',
+  'timing-not-recorded',
+  'timing-rejected',
+  'turn-budget',
+  'unattributed-activity',
+] as const;
+export type SessionDetailCoverageReason = (typeof sessionDetailCoverageReasons)[number];
+
+export type SessionDetailCoverageState = 'complete' | 'partial' | 'unavailable';
+
+export interface SessionDetailCoverageFact {
+  /** Items known to be missing; null when the count itself is unknowable. */
+  omittedCount: number | null;
+  reasons: SessionDetailCoverageReason[];
+  status: SessionDetailCoverageState;
+}
+
+export interface SessionDetailCoverage {
+  childDiscovery: SessionDetailCoverageFact;
+  grouping: SessionDetailCoverageFact;
+  interactionAttribution: SessionDetailCoverageFact;
+  promptBodies: SessionDetailCoverageFact;
+  recordedTiming: SessionDetailCoverageFact;
+}
+
+export const sessionDetailCoverageKeys = [
+  'childDiscovery',
+  'grouping',
+  'interactionAttribution',
+  'promptBodies',
+  'recordedTiming',
+] as const satisfies readonly (keyof SessionDetailCoverage)[];
+
+export const completeCoverage = (): SessionDetailCoverageFact => ({ omittedCount: 0, reasons: [], status: 'complete' });
+
 export interface SessionDetail {
   activeDurationMs: number | null;
+  children: SessionDetailChildLink[];
+  coverage: SessionDetailCoverage;
   durationStatus: SessionDetailTimingStatus;
   efforts: string[];
   elapsedDurationMs: number;
   endedAt: string;
   idleDurationMs: number | null;
+  interactions: SessionDetailInteraction[];
   models: string[];
   observedAt: string;
   phases: SessionDetailPhase[];
@@ -152,6 +249,72 @@ export interface SessionDetail {
   turns: SessionDetailTurn[];
   turnsStatus: SessionDetailCoverageStatus;
 }
+
+export type SessionDetailRoundKind = 'prompt' | 'unattributed';
+
+/**
+ * A round is one prompt-led unit of activity: the prompt(s) that opened it,
+ * the activity attributable to them until the next prompt, and the sub-agent
+ * interactions launched or messaged in between. Activity without a prompt
+ * stays a round of its own (ADR 0017: absence is shown, never folded away).
+ */
+export interface SessionDetailRound {
+  calls: number | null;
+  cost: number | null;
+  costKind: SessionDetailCostKind;
+  endAt: string;
+  id: string;
+  index: number;
+  interactionIndexes: number[];
+  kind: SessionDetailRoundKind;
+  model: string;
+  /** Wall-clock distance between the first and last attributable record; not active time. */
+  observedSpanMs: number;
+  promptIds: string[];
+  /** Union of recorded harness intervals; null when the harness recorded none. */
+  recordedActiveMs: number | null;
+  startAt: string;
+  tokens: SessionDetailTokenCounts;
+  tools: number;
+  turnIndex: number;
+}
+
+/**
+ * The one canonical derivation of rounds from validated turns (ADR 0018).
+ * Readers already group each harness's activity per prompt into a turn, so a
+ * round is the turn plus its interactions; nothing is re-priced or re-summed.
+ */
+export const deriveSessionRounds = (detail: Pick<SessionDetail, 'interactions' | 'turns'>): SessionDetailRound[] => {
+  const interactionsByTurn = new Map<number, number[]>();
+  for (const [index, interaction] of detail.interactions.entries()) {
+    if (interaction.turnIndex === null) {
+      continue;
+    }
+    const current = interactionsByTurn.get(interaction.turnIndex) ?? [];
+    current.push(index);
+    interactionsByTurn.set(interaction.turnIndex, current);
+  }
+  return [...detail.turns]
+    .sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt) || left.index - right.index)
+    .map((turn, index) => ({
+      calls: turn.calls,
+      cost: turn.cost,
+      costKind: turn.costKind,
+      endAt: turn.endAt,
+      id: turn.promptIds[0] === undefined ? `activity:${turn.index}` : `prompt:${turn.promptIds[0]}`,
+      index,
+      interactionIndexes: interactionsByTurn.get(turn.index) ?? [],
+      kind: turn.promptIds.length > 0 ? 'prompt' : 'unattributed',
+      model: turn.model,
+      observedSpanMs: Math.max(0, Date.parse(turn.endAt) - Date.parse(turn.startAt)),
+      promptIds: turn.promptIds,
+      recordedActiveMs: turn.durationMs,
+      startAt: turn.startAt,
+      tokens: turn.tokens,
+      tools: turn.tools,
+      turnIndex: turn.index,
+    }));
+};
 
 export type SessionDetailUnavailableReason =
   | 'history-unavailable'
@@ -395,9 +558,17 @@ const parsePrompt = (value: unknown, index: number): SessionDetailPrompt => {
   if (typeof value.truncated !== 'boolean') {
     throw new SessionDetailValidationError(`${label}.truncated must be a boolean`);
   }
+  // An empty body is a prompt whose identity was kept for grouping while its
+  // text fell outside the body budget; it must say so through `truncated`.
+  if (typeof value.text !== 'string' || value.text.length > MAX_PROMPT_TEXT_LENGTH) {
+    throw new SessionDetailValidationError(`${label}.text must be a bounded string`);
+  }
+  if (value.text.length === 0 && !value.truncated) {
+    throw new SessionDetailValidationError(`${label}.text may be empty only when its body was not retained`);
+  }
   return {
     id: requireString(value.id, `${label}.id`, MAX_ID_LENGTH),
-    text: requireString(value.text, `${label}.text`, MAX_PROMPT_TEXT_LENGTH),
+    text: value.text,
     timestamp: requireTimestamp(value.timestamp, `${label}.timestamp`),
     truncated: value.truncated,
   };
@@ -423,6 +594,9 @@ const parseTurn = (value: unknown, index: number): SessionDetailTurn => {
   assertExactKeys(
     value,
     [
+      'calls',
+      'cost',
+      'costKind',
       'durationMs',
       'effort',
       'effortKind',
@@ -441,6 +615,11 @@ const parseTurn = (value: unknown, index: number): SessionDetailTurn => {
   if (!(Array.isArray(value.intervals) && value.intervals.length <= MAX_TURN_INTERVALS)) {
     throw new SessionDetailValidationError(`${label}.intervals must be a bounded array`);
   }
+  const cost = requireNullableNonNegativeNumber(value.cost, `${label}.cost`);
+  const costKind = parseCostKind(value.costKind, `${label}.costKind`);
+  if ((costKind === 'unknown') !== (cost === null)) {
+    throw new SessionDetailValidationError(`${label}.cost must be null exactly when its kind is unknown`);
+  }
   const effort = requireNullableString(value.effort, `${label}.effort`);
   const effortKind = parseEffortKind(value.effortKind, `${label}.effortKind`);
   if ((effortKind === 'recorded') !== (effort !== null)) {
@@ -458,6 +637,9 @@ const parseTurn = (value: unknown, index: number): SessionDetailTurn => {
     throw new SessionDetailValidationError(`${label} unavailable timing cannot contain a duration or interval`);
   }
   return {
+    calls: value.calls === null ? null : requireNonNegativeInteger(value.calls, `${label}.calls`),
+    cost,
+    costKind,
     durationMs,
     effort,
     effortKind,
@@ -645,6 +827,96 @@ export const compareSessionProjectionFacts = (
   return { checkedFields, reason: 'insufficient-comparable-facts', status: 'cannot-compare' };
 };
 
+const parseChildLink = (value: unknown, index: number): SessionDetailChildLink => {
+  const label = `session detail.children[${index}]`;
+  if (!isRecord(value)) {
+    throw new SessionDetailValidationError(`${label} must be an object`);
+  }
+  assertExactKeys(value, ['agentType', 'evidence', 'label', 'sourceSessionId', 'spawnTurnIndex'], label);
+  const evidence = sessionDetailChildEvidences.find((candidate) => candidate === value.evidence);
+  if (!evidence) {
+    throw new SessionDetailValidationError(`${label}.evidence is invalid`);
+  }
+  return {
+    agentType: requireNullableString(value.agentType, `${label}.agentType`),
+    evidence,
+    label: requireNullableString(value.label, `${label}.label`),
+    sourceSessionId: requireString(value.sourceSessionId, `${label}.sourceSessionId`, MAX_ID_LENGTH),
+    spawnTurnIndex:
+      value.spawnTurnIndex === null ? null : requireNonNegativeInteger(value.spawnTurnIndex, `${label}.spawnTurnIndex`),
+  };
+};
+
+const parseInteraction = (value: unknown, index: number): SessionDetailInteraction => {
+  const label = `session detail.interactions[${index}]`;
+  if (!isRecord(value)) {
+    throw new SessionDetailValidationError(`${label} must be an object`);
+  }
+  assertExactKeys(value, ['at', 'childSourceSessionId', 'kind', 'label', 'toolUseId', 'turnIndex'], label);
+  if (value.kind !== 'message' && value.kind !== 'spawn') {
+    throw new SessionDetailValidationError(`${label}.kind is invalid`);
+  }
+  return {
+    at: requireTimestamp(value.at, `${label}.at`),
+    childSourceSessionId: requireNullableString(
+      value.childSourceSessionId,
+      `${label}.childSourceSessionId`,
+      MAX_ID_LENGTH,
+    ),
+    kind: value.kind,
+    label: requireNullableString(value.label, `${label}.label`),
+    toolUseId: requireString(value.toolUseId, `${label}.toolUseId`, MAX_ID_LENGTH),
+    turnIndex: value.turnIndex === null ? null : requireNonNegativeInteger(value.turnIndex, `${label}.turnIndex`),
+  };
+};
+
+const parseCoverageFact = (value: unknown, label: string): SessionDetailCoverageFact => {
+  if (!isRecord(value)) {
+    throw new SessionDetailValidationError(`${label} must be an object`);
+  }
+  assertExactKeys(value, ['omittedCount', 'reasons', 'status'], label);
+  if (value.status !== 'complete' && value.status !== 'partial' && value.status !== 'unavailable') {
+    throw new SessionDetailValidationError(`${label}.status is invalid`);
+  }
+  if (!(Array.isArray(value.reasons) && value.reasons.length <= MAX_COVERAGE_REASONS)) {
+    throw new SessionDetailValidationError(`${label}.reasons must be a bounded array`);
+  }
+  const reasons = value.reasons.map((reason, reasonIndex) => {
+    const known = sessionDetailCoverageReasons.find((candidate) => candidate === reason);
+    if (!known) {
+      throw new SessionDetailValidationError(`${label}.reasons[${reasonIndex}] is invalid`);
+    }
+    return known;
+  });
+  if (new Set(reasons).size !== reasons.length) {
+    throw new SessionDetailValidationError(`${label}.reasons must be unique`);
+  }
+  const omittedCount =
+    value.omittedCount === null ? null : requireNonNegativeInteger(value.omittedCount, `${label}.omittedCount`);
+  if (value.status === 'complete' && (reasons.length > 0 || omittedCount !== 0)) {
+    throw new SessionDetailValidationError(`${label} complete coverage cannot carry reasons or omissions`);
+  }
+  if (value.status !== 'complete' && reasons.length === 0) {
+    throw new SessionDetailValidationError(`${label} incomplete coverage must name a reason`);
+  }
+  return { omittedCount, reasons, status: value.status };
+};
+
+const parseCoverage = (value: unknown): SessionDetailCoverage => {
+  const label = 'session detail.coverage';
+  if (!isRecord(value)) {
+    throw new SessionDetailValidationError(`${label} must be an object`);
+  }
+  assertExactKeys(value, sessionDetailCoverageKeys, label);
+  return {
+    childDiscovery: parseCoverageFact(value.childDiscovery, `${label}.childDiscovery`),
+    grouping: parseCoverageFact(value.grouping, `${label}.grouping`),
+    interactionAttribution: parseCoverageFact(value.interactionAttribution, `${label}.interactionAttribution`),
+    promptBodies: parseCoverageFact(value.promptBodies, `${label}.promptBodies`),
+    recordedTiming: parseCoverageFact(value.recordedTiming, `${label}.recordedTiming`),
+  };
+};
+
 export const parseSessionDetail = (value: unknown): SessionDetail => {
   if (!isRecord(value)) {
     throw new SessionDetailValidationError('Session detail must be an object');
@@ -656,11 +928,14 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
     value,
     [
       'activeDurationMs',
+      'children',
+      'coverage',
       'durationStatus',
       'efforts',
       'elapsedDurationMs',
       'endedAt',
       'idleDurationMs',
+      'interactions',
       'models',
       'observedAt',
       'phases',
@@ -673,6 +948,12 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
     ],
     'Session detail',
   );
+  if (!(Array.isArray(value.children) && value.children.length <= MAX_CHILDREN)) {
+    throw new SessionDetailValidationError('Session detail.children exceeds its item budget');
+  }
+  if (!(Array.isArray(value.interactions) && value.interactions.length <= MAX_INTERACTIONS)) {
+    throw new SessionDetailValidationError('Session detail.interactions exceeds its item budget');
+  }
   if (!(Array.isArray(value.phases) && value.phases.length <= MAX_PHASES)) {
     throw new SessionDetailValidationError('Session detail.phases exceeds its item budget');
   }
@@ -687,11 +968,14 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
   }
   const detail: SessionDetail = {
     activeDurationMs: requireNullableNonNegativeNumber(value.activeDurationMs, 'Session detail.activeDurationMs'),
+    children: value.children.map(parseChildLink),
+    coverage: parseCoverage(value.coverage),
     durationStatus: parseTimingStatus(value.durationStatus, 'Session detail.durationStatus'),
     efforts: parseStringArray(value.efforts, 'Session detail.efforts', MAX_PHASES),
     elapsedDurationMs: requireNonNegativeNumber(value.elapsedDurationMs, 'Session detail.elapsedDurationMs'),
     endedAt: requireTimestamp(value.endedAt, 'Session detail.endedAt'),
     idleDurationMs: requireNullableNonNegativeNumber(value.idleDurationMs, 'Session detail.idleDurationMs'),
+    interactions: value.interactions.map(parseInteraction),
     models: parseStringArray(value.models, 'Session detail.models', MAX_PHASES),
     observedAt: requireTimestamp(value.observedAt, 'Session detail.observedAt'),
     phases: value.phases.map(parsePhase),
@@ -709,6 +993,50 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
   }
   if (detail.elapsedDurationMs !== sessionEndMs - sessionStartMs) {
     throw new SessionDetailValidationError('Session detail elapsed duration does not match its timestamps');
+  }
+  const promptIds = new Set(detail.prompts.map(({ id }) => id));
+  if (promptIds.size !== detail.prompts.length) {
+    throw new SessionDetailValidationError('Session detail.prompts must have unique identities');
+  }
+  const turnIndexes = new Set<number>();
+  const ownedPrompts = new Set<string>();
+  for (const [index, turn] of detail.turns.entries()) {
+    if (turnIndexes.has(turn.index)) {
+      throw new SessionDetailValidationError(`Session detail.turns[${index}] repeats a turn index`);
+    }
+    turnIndexes.add(turn.index);
+    for (const promptId of turn.promptIds) {
+      if (!promptIds.has(promptId)) {
+        throw new SessionDetailValidationError(`Session detail.turns[${index}] references an unknown prompt`);
+      }
+      // A prompt opens exactly one round; a second owner would derive two rounds with one identity.
+      if (ownedPrompts.has(promptId)) {
+        throw new SessionDetailValidationError(`Session detail.turns[${index}] re-owns prompt ${promptId}`);
+      }
+      ownedPrompts.add(promptId);
+    }
+  }
+  const childIds = new Set<string>();
+  for (const [index, child] of detail.children.entries()) {
+    if (childIds.has(child.sourceSessionId)) {
+      throw new SessionDetailValidationError(`Session detail.children[${index}] repeats a child session`);
+    }
+    childIds.add(child.sourceSessionId);
+    if (child.spawnTurnIndex !== null && !turnIndexes.has(child.spawnTurnIndex)) {
+      throw new SessionDetailValidationError(`Session detail.children[${index}] names an unknown spawning turn`);
+    }
+  }
+  for (const [index, interaction] of detail.interactions.entries()) {
+    const atMs = Date.parse(interaction.at);
+    if (atMs < sessionStartMs || atMs > sessionEndMs) {
+      throw new SessionDetailValidationError(`Session detail.interactions[${index}] falls outside the session`);
+    }
+    if (interaction.turnIndex !== null && !turnIndexes.has(interaction.turnIndex)) {
+      throw new SessionDetailValidationError(`Session detail.interactions[${index}] names an unknown turn`);
+    }
+    if (interaction.childSourceSessionId !== null && !childIds.has(interaction.childSourceSessionId)) {
+      throw new SessionDetailValidationError(`Session detail.interactions[${index}] names an unlisted child`);
+    }
   }
   for (const [index, phase] of detail.phases.entries()) {
     assertContainedInterval(
