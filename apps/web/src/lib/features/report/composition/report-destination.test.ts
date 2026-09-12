@@ -109,7 +109,14 @@ const successfulSessionPage = (request: SessionQueryRequest, nextCursor: string 
 
 const sessionClientWithPage = (page: SessionClientAdapter['page']): SessionClientAdapter => {
   const unexpected = () => Promise.reject(new Error('Unexpected Session operation'));
-  return { campaignChildren: unexpected, detail: unexpected, neighbors: unexpected, page, vcs: unexpected };
+  return {
+    campaignChildren: unexpected,
+    detail: unexpected,
+    lookup: unexpected,
+    neighbors: unexpected,
+    page,
+    vcs: unexpected,
+  };
 };
 
 describe('report destination Query', () => {

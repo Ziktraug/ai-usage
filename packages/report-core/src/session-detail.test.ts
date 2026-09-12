@@ -2,12 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { serializeUsageRow } from './report-data';
 import {
   compareSessionProjectionFacts,
+  deriveSessionRounds,
   parseSessionDetailAnchorResult,
   parseSessionDetailRequest,
   parseSessionDetailResponse,
   type SessionDetail,
   type SessionDetailComparableField,
   type SessionDetailConsistency,
+  type SessionDetailCoverageFact,
   SessionDetailValidationError,
   sessionDetailRequestFingerprint,
   sessionProjectionFactsForSerializedRow,
@@ -16,13 +18,24 @@ import type { UsageRow } from './types';
 
 const tokens = { cacheRead: 60, cacheWrite: 0, input: 30, output: 10, total: 100 };
 
+const completeCoverage = (): SessionDetailCoverageFact => ({ omittedCount: 0, reasons: [], status: 'complete' });
+
 const detail: SessionDetail = {
   activeDurationMs: 60_000,
+  children: [],
+  coverage: {
+    childDiscovery: completeCoverage(),
+    grouping: completeCoverage(),
+    interactionAttribution: completeCoverage(),
+    promptBodies: completeCoverage(),
+    recordedTiming: completeCoverage(),
+  },
   durationStatus: 'recorded',
   efforts: ['ultra', 'high'],
   elapsedDurationMs: 3_720_000,
   endedAt: '2026-07-18T11:02:00.000Z',
   idleDurationMs: 3_660_000,
+  interactions: [],
   models: ['gpt-5.6-sol', 'gpt-5.6-terra'],
   observedAt: '2026-07-18T11:02:01.000Z',
   phases: [
@@ -60,6 +73,9 @@ const detail: SessionDetail = {
   startedAt: '2026-07-18T10:00:00.000Z',
   turns: [
     {
+      calls: 2,
+      cost: 1.2,
+      costKind: 'approximate',
       durationMs: 60_000,
       effort: 'ultra',
       effortKind: 'recorded',
@@ -305,7 +321,9 @@ describe('session detail contract', () => {
     const untimedTurn = {
       ...detail.turns[0]!,
       durationMs: null,
+      index: 1,
       intervals: [],
+      promptIds: [],
       timingStatus: 'unavailable',
     } as const;
     const unavailable = {
@@ -491,5 +509,128 @@ describe('session detail contract', () => {
         rawPromptPath: '/private',
       }),
     ).toThrow(SessionDetailValidationError);
+  });
+
+  test('accepts child links, interactions, and coverage, and rejects dangling references', () => {
+    const linked: SessionDetail = {
+      ...detail,
+      children: [
+        {
+          agentType: 'codex:codex-rescue',
+          evidence: 'claude-agent-link',
+          label: 'Independent UI critique',
+          sourceSessionId: 'agent-ae',
+          spawnTurnIndex: 0,
+        },
+        {
+          agentType: null,
+          evidence: 'codex-thread-edge',
+          label: null,
+          sourceSessionId: 'thread-child',
+          spawnTurnIndex: null,
+        },
+      ],
+      coverage: {
+        ...detail.coverage,
+        childDiscovery: { omittedCount: null, reasons: ['harness-no-spawn-evidence'], status: 'partial' },
+        promptBodies: { omittedCount: 3, reasons: ['prompt-body-budget'], status: 'partial' },
+      },
+      interactions: [
+        {
+          at: '2026-07-18T10:00:30.000Z',
+          childSourceSessionId: 'agent-ae',
+          kind: 'spawn',
+          label: 'Independent UI critique',
+          toolUseId: 'toolu-1',
+          turnIndex: 0,
+        },
+        {
+          at: '2026-07-18T11:01:30.000Z',
+          childSourceSessionId: 'agent-ae',
+          kind: 'message',
+          label: 'Follow up on the critique',
+          toolUseId: 'toolu-2',
+          turnIndex: null,
+        },
+      ],
+      prompts: [
+        ...detail.prompts,
+        { id: 'prompt-2', text: '', timestamp: '2026-07-18T11:01:00.000Z', truncated: true },
+      ],
+    };
+    const parsed = parseSessionDetailResponse({
+      consistency: fullConsistency,
+      detail: linked,
+      revision: 'revision-1',
+      status: 'available',
+    });
+    expect(parsed.status === 'available' && parsed.detail.children).toHaveLength(2);
+    expect(parsed.status === 'available' && parsed.detail.interactions[1]?.turnIndex).toBeNull();
+
+    const rejects = (mutate: (value: SessionDetail) => SessionDetail): void => {
+      expect(() =>
+        parseSessionDetailResponse({
+          consistency: fullConsistency,
+          detail: mutate(structuredClone(linked)),
+          revision: 'revision-1',
+          status: 'available',
+        }),
+      ).toThrow(SessionDetailValidationError);
+    };
+    rejects((value) => ({ ...value, interactions: [{ ...value.interactions[0]!, childSourceSessionId: 'unknown' }] }));
+    rejects((value) => ({ ...value, interactions: [{ ...value.interactions[0]!, turnIndex: 7 }] }));
+    rejects((value) => ({ ...value, children: [{ ...value.children[0]!, spawnTurnIndex: 4 }] }));
+    rejects((value) => ({ ...value, children: [value.children[0]!, value.children[0]!] }));
+    rejects((value) => ({ ...value, prompts: [{ ...value.prompts[0]!, text: '' }] }));
+    rejects((value) => ({ ...value, turns: [{ ...value.turns[0]!, promptIds: ['missing'] }] }));
+    rejects((value) => ({ ...value, turns: [value.turns[0]!, { ...value.turns[0]!, index: 1 }] }));
+    rejects((value) => ({ ...value, turns: [{ ...value.turns[0]!, cost: null }] }));
+    rejects((value) => ({
+      ...value,
+      coverage: { ...value.coverage, grouping: { omittedCount: 1, reasons: [], status: 'complete' } },
+    }));
+    rejects((value) => ({
+      ...value,
+      coverage: { ...value.coverage, grouping: { omittedCount: null, reasons: [], status: 'partial' } },
+    }));
+  });
+
+  test('derives one round per turn and keeps unattributed activity and interactions attached', () => {
+    const rounds = deriveSessionRounds({
+      interactions: [
+        {
+          at: '2026-07-18T10:00:30.000Z',
+          childSourceSessionId: null,
+          kind: 'spawn',
+          label: null,
+          toolUseId: 'toolu-1',
+          turnIndex: 1,
+        },
+        {
+          at: '2026-07-18T10:00:40.000Z',
+          childSourceSessionId: null,
+          kind: 'message',
+          label: null,
+          toolUseId: 'toolu-2',
+          turnIndex: null,
+        },
+      ],
+      turns: [
+        {
+          ...detail.turns[0]!,
+          endAt: '2026-07-18T10:03:00.000Z',
+          index: 0,
+          promptIds: [],
+          startAt: '2026-07-18T10:02:00.000Z',
+        },
+        { ...detail.turns[0]!, index: 1 },
+      ],
+    });
+    expect(rounds.map(({ id, index, kind, turnIndex }) => ({ id, index, kind, turnIndex }))).toEqual([
+      { id: 'prompt:prompt-1', index: 0, kind: 'prompt', turnIndex: 1 },
+      { id: 'activity:0', index: 1, kind: 'unattributed', turnIndex: 0 },
+    ]);
+    expect(rounds[0]).toMatchObject({ interactionIndexes: [0], observedSpanMs: 60_000, recordedActiveMs: 60_000 });
+    expect(rounds[1]?.interactionIndexes).toEqual([]);
   });
 });

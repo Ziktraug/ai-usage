@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type {
   SessionDetail,
+  SessionDetailCoverageFact,
   SessionDetailPhase,
   SessionDetailPrompt,
   SessionDetailTurn,
@@ -45,6 +46,9 @@ const turn = (
   endAt: string,
   overrides: Partial<SessionDetailTurn> = {},
 ): SessionDetailTurn => ({
+  calls: 1,
+  cost: 0.01,
+  costKind: 'approximate',
   durationMs: Date.parse(endAt) - Date.parse(startAt),
   effort: 'high',
   effortKind: 'recorded',
@@ -67,13 +71,24 @@ const prompt = (id: string, timestamp: string): SessionDetailPrompt => ({
   truncated: false,
 });
 
+const coverage = (): SessionDetailCoverageFact => ({ omittedCount: 0, reasons: [], status: 'complete' });
+
 const detail = (overrides: Partial<SessionDetail> = {}): SessionDetail => ({
   activeDurationMs: 30 * 60_000,
+  children: [],
+  coverage: {
+    childDiscovery: coverage(),
+    grouping: coverage(),
+    interactionAttribution: coverage(),
+    promptBodies: coverage(),
+    recordedTiming: coverage(),
+  },
   durationStatus: 'recorded',
   efforts: ['high'],
   elapsedDurationMs: 60 * 60_000,
   endedAt: '2026-07-18T11:00:00.000Z',
   idleDurationMs: 30 * 60_000,
+  interactions: [],
   models: ['gpt-5.6-sol'],
   observedAt: '2026-07-18T11:00:00.000Z',
   phases: [],

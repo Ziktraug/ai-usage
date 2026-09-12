@@ -13,6 +13,7 @@ import {
   compareSessionIdentityValues,
   enrichSessionPresentationRow,
   projectSessionCampaignChildren,
+  projectSessionLookup,
   projectSessionNeighbors,
   projectSessionPage,
   type SessionQueryRequest,
@@ -613,6 +614,28 @@ describe('durable session query SQLite projections', () => {
       expect(traces[0]?.sql).toContain('LEAD(ordinal)');
       expect(traces[0]?.sql).not.toContain('LAG(row_json)');
       expect(traces[0]?.sql).not.toContain('LEAD(row_json)');
+    } finally {
+      database.close();
+    }
+  });
+
+  test('looks up one row by identity with a single indexed read', async () => {
+    const { database } = await openFixtureDatabase();
+    const target = rows.find((candidate) => candidate.source?.sourceSessionId === 'campaign-root');
+    if (!target) {
+      throw new Error('Expected a lookup target');
+    }
+    const lookupRequest = { revision: 'revision-a', rowId: sessionRowIdentity(target) };
+    const traces: { params: readonly unknown[]; sql: string }[] = [];
+    try {
+      expect(
+        executeMaterializedSessionQuery(database, 'session-lookup', lookupRequest, (query) => traces.push(query)),
+      ).toEqual(projectSessionLookup(rows, lookupRequest));
+      expect(traces).toHaveLength(1);
+      expect(traces[0]?.sql).toContain('WHERE row_id = ?');
+      expect(
+        executeMaterializedSessionQuery(database, 'session-lookup', { ...lookupRequest, rowId: 'absent' }),
+      ).toEqual(projectSessionLookup(rows, { ...lookupRequest, rowId: 'absent' }));
     } finally {
       database.close();
     }

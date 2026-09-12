@@ -255,6 +255,7 @@
     loading,
     onRetry,
     response,
+    refreshing = false,
     target,
   }: {
     error?: SessionAnalysisError | null;
@@ -262,6 +263,7 @@
     loading: boolean;
     onRetry?: () => void;
     response: SessionDetailResponse | null;
+    refreshing?: boolean;
     target: SessionAnalysisTarget;
   } = $props();
 
@@ -487,7 +489,7 @@
         {/if}
       </div>
     </div>
-  {:else if loading}
+  {:else if loading && !available}
     <div aria-busy="true" class={statePanel}>
       <div class={stateTitle}>Loading session analysis</div>
       <div>Reading the bounded local session trace…</div>
@@ -511,13 +513,16 @@
           · session
           <span class={numeric}>{detail.sourceSessionId}</span>
         </div>
-        {#each items('consistency-meta') as item (item.text)}
+        {#if refreshing}
+          <div class={muted} role="status">Updating local history. Showing the previous report revision.</div>
+        {/if}
+        {#each refreshing ? [] : items('consistency-meta') as item (item.text)}
           <div class={muted} data-session-analysis-item={item.kind} data-tone={item.tone}>{item.text}</div>
         {/each}
         {#each items('scope') as item (item.text)}
           <div class={muted} data-session-analysis-item={item.kind} data-tone={item.tone}>{item.text}</div>
         {/each}
-        {#each items('consistency-warning') as item (item.text)}
+        {#each refreshing ? [] : items('consistency-warning') as item (item.text)}
           <div
             class={cx(notice, warningNotice)}
             data-session-analysis-item={item.kind}

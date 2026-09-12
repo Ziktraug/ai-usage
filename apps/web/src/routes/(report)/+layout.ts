@@ -1,8 +1,8 @@
 import { error } from '@sveltejs/kit';
 import { ReportBootstrapUnavailableError, reportPageDataFor } from '$lib/features/report/core/report-bootstrap';
-import type { PageLoad } from './$types';
+import type { LayoutLoad } from './$types';
 
-export const load: PageLoad = async ({ data, fetch, parent, untrack, url }) => {
+export const load: LayoutLoad = async ({ data, fetch, parent, untrack, url }) => {
   const rpcBaseUrl = untrack(() => new URL(url.origin));
   // Runtime mode is document-scoped; search navigation must not reacquire the report bootstrap.
   const parentData = await untrack(() => parent());

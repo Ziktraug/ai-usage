@@ -82,6 +82,14 @@ _Avoid_: remote usage, cloud billing data
 A single conversation or agent run found in local history. A session can include child sessions, such as Codex subagent threads.
 _Avoid_: chat, transcript, thread
 
+**Round**:
+One prompt-led unit of activity inside a session: the user prompt that opened it, the calls and tool activity attributable to it until the next prompt, and the child sessions it launched or messaged. A round is derived once from the harness's native units (Claude turns, Codex tasks, OpenCode message groups), which stay in the evidence. Activity that no prompt owns remains a round of its own rather than disappearing.
+_Avoid_: turn (as the reading unit), task, exchange, step
+
+**Child session**:
+A session launched from another session, such as a Claude sub-agent, a Codex spawned thread, or an OpenCode child session. The link carries its evidence kind; a message sent to an existing child continues that same child session instead of creating a new one.
+_Avoid_: subagent run, agent instance, worker
+
 **Session origin**:
 The declared way a session was started, with three values: human, delegated, or automated review. It is absent when the harness did not declare one. An absent attribute is expressed by provenance, never by a sentinel value in its own domain.
 An automated review with a declared parent contributes to that parent's campaign. A review shape that declares no parent remains a standalone one-session review campaign; a declared but unresolved parent remains an integrity error.

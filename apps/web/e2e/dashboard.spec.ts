@@ -24,6 +24,8 @@ const PROVIDER_LINE_PATTERN = / — (?:partial|unsupported|ok|stale|auth require
 const SEPARATOR_SPACING_PATTERN = /\S·|·\S/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
+const DETAIL_URL_PATTERN = /\/(sessions|campaigns)\/[^/?]+\?.*tab=sessions/;
+const LIST_URL_PATTERN = /^[^?]*\/\?.*tab=sessions/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
 const CLAUDE_SERIES_PATTERN = /^Claude · /;
@@ -742,6 +744,39 @@ test('navigates and closes the selected session with drawer keyboard commands', 
   await page.keyboard.press('Escape');
   await expect(drawer).not.toBeVisible();
   await expect(sessionTrigger).toBeFocused();
+});
+
+test('keeps the selected session in the URL, closes with Back, and reopens from a deep link', async ({ page }) => {
+  await openHydratedReport(page, '/?tab=sessions');
+  const firstRow = page.locator('tbody tr').first();
+  await firstRow.locator('td').first().click();
+  const dialog = page.getByRole('dialog', { name: 'Session details' });
+  await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(DETAIL_URL_PATTERN);
+  const detailUrl = page.url();
+
+  // Escape travels back to the list entry the panel was opened from; the search survives.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(LIST_URL_PATTERN);
+  await expect(firstRow).toBeFocused();
+
+  // Forward reopens the same detail without touching the table.
+  await page.goForward();
+  await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(detailUrl);
+
+  // A direct load renders the table with the panel open; closing then navigates to the list.
+  await page.goto(detailUrl);
+  await expect(page.getByRole('dialog', { name: 'Session details' })).toBeVisible();
+  await expect(page.locator('tbody tr').first()).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Session details' })).toHaveCount(0);
+  await expect(page).toHaveURL(LIST_URL_PATTERN);
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 });
 
 test('starts sessions with focused work columns and switches metric presets', async ({ page }) => {

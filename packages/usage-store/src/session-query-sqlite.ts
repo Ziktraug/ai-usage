@@ -21,9 +21,13 @@ import type {
 } from '@ai-usage/report-core/session-query';
 import {
   parseSessionCampaignChildrenRequest,
+  parseSessionLookupRequest,
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
+  type SessionLookupRequest,
+  type SessionLookupResult,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
@@ -32,7 +36,12 @@ import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import { createSessionQueryExactRevisionCache } from './session-query-exact-revision-cache';
 import { measureSessionQueryPerfPhase, recordSessionQueryPerfCounter } from './session-query-perf';
 
-export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
+export type SessionQueryKind =
+  | 'campaign-children'
+  | 'neighbors'
+  | 'session-detail-anchor'
+  | 'session-lookup'
+  | 'sessions';
 
 export interface SessionQuerySqliteStatement {
   all(...params: unknown[]): unknown[];
@@ -1020,16 +1029,32 @@ export function executeMaterializedSessionQuery(
 ): SessionDetailAnchorResult;
 export function executeMaterializedSessionQuery(
   database: SessionQuerySqliteDatabase,
-  kind: SessionQueryKind,
+  kind: 'session-lookup',
   request: unknown,
   trace?: SessionQuerySqliteTrace,
-): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult | SessionDetailAnchorResult;
+): SessionLookupResult;
 export function executeMaterializedSessionQuery(
   database: SessionQuerySqliteDatabase,
   kind: SessionQueryKind,
   request: unknown,
   trace?: SessionQuerySqliteTrace,
-): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult | SessionDetailAnchorResult {
+):
+  | SessionPageResult
+  | SessionCampaignChildrenResult
+  | SessionNeighborResult
+  | SessionDetailAnchorResult
+  | SessionLookupResult;
+export function executeMaterializedSessionQuery(
+  database: SessionQuerySqliteDatabase,
+  kind: SessionQueryKind,
+  request: unknown,
+  trace?: SessionQuerySqliteTrace,
+):
+  | SessionPageResult
+  | SessionCampaignChildrenResult
+  | SessionNeighborResult
+  | SessionDetailAnchorResult
+  | SessionLookupResult {
   if (kind === 'sessions') {
     return runSessionPage(database, parseSessionQueryRequest(request), trace);
   }
@@ -1039,5 +1064,46 @@ export function executeMaterializedSessionQuery(
   if (kind === 'session-detail-anchor') {
     return runSessionDetailAnchor(database, parseSessionDetailRequest(request), trace);
   }
+  if (kind === 'session-lookup') {
+    return runSessionLookup(database, parseSessionLookupRequest(request), trace);
+  }
   return runNeighbors(database, parseSessionNeighborRequest(request), trace);
 }
+
+interface LookupRecord {
+  row_json: string;
+}
+
+/**
+ * One row by its stable identity. A deep link names a row the current window
+ * may not have loaded; the served projection already stores the presentation
+ * row, so this is a single indexed read, never a re-aggregation.
+ */
+const runSessionLookup = (
+  database: SessionQuerySqliteDatabase,
+  input: SessionLookupRequest,
+  trace?: SessionQuerySqliteTrace,
+): SessionLookupResult => {
+  const request = parseSessionLookupRequest(input);
+  const records = executeAll<LookupRecord>(
+    database,
+    `SELECT row_json
+    FROM session_rows
+    WHERE row_id = ?
+    ORDER BY ordinal
+    LIMIT 2`,
+    [request.rowId],
+    trace,
+  );
+  if (records.length > 1) {
+    throw new Error('Report revision session row identity is not unique');
+  }
+  const record = records[0];
+  const row = record ? parsePresentationRow(record.row_json) : null;
+  return {
+    found: row !== null,
+    requestFingerprint: sessionLookupFingerprint(request),
+    revision: request.revision,
+    row,
+  };
+};

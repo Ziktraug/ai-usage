@@ -219,6 +219,7 @@ describe('report bootstrap', () => {
           return {
             campaignChildren: unavailable,
             detail: unavailable,
+            lookup: unavailable,
             neighbors: unavailable,
             page: (request) => {
               sessionPageCount += 1;

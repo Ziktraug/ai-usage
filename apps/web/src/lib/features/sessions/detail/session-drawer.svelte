@@ -2,9 +2,21 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
-  const analysisDrawer = css({ w: { base: '100vw', md: 'min(960px, 94vw)' } });
-  const sessionIdentity = css({ display: 'grid', gap: '8px', minW: 0 });
+  // Wide enough for the rounds rail beside its reading column; the table stays
+  // visible on the left so j/k browsing keeps its context.
+  const readingDrawer = css({ w: { base: 'full', md: 'min(960px, max(480px, calc(100vw - 360px)))' } });
+  const sessionIdentity = css({ display: 'grid', gap: '6px', minW: 0 });
   const sessionProject = css({ color: 'accent', fontSize: '11px', letterSpacing: '0.02em', overflowWrap: 'anywhere' });
+  // Four tiles when the panel is wide, two when it is not: labels never wrap.
+  const statStrip = css({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+    gap: '0 16px',
+  });
+  // Tab triggers live inside the scrolling body, where every control keeps a
+  // 44px touch target below `md` (ADR 0005).
+  const tabsShell = css({ minW: 0, '& [data-part="trigger"]': { minH: { base: '44px', md: 'auto' } } });
+  const pane = css({ display: 'grid', gap: '20px', minW: 0 });
   const tokenSegmentClasses = {
     cacheRead: css({ bg: 'accent', opacity: 0.22 }),
     cacheWrite: css({ bg: 'accent', opacity: 0.42 }),
@@ -36,44 +48,57 @@
     HarnessBadge,
     muted,
     SegmentBar,
+    type TabItem,
+    Tabs,
   } from '@ai-usage/design-system/svelte';
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
-
   import { campaignBadgeLabelForSessionRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
-  import { onDestroy, type Snippet } from 'svelte';
+  import { onDestroy, type Snippet, tick } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import DrawerDetailItem from './drawer-detail-item.svelte';
+  import { buildRoundsView } from './rounds-model';
+  import RoundsReader from './rounds-reader.svelte';
   import SessionAnalysis from './session-analysis.svelte';
   import SessionVcsSummary from './session-vcs-summary.svelte';
   import type { SessionDetailController, SessionDetailControllerSnapshot } from './types';
 
+  type DetailTab = 'members' | 'rounds' | 'summary' | 'timeline';
+
   let {
+    campaignLabelSlot,
     campaignSlot,
     controller,
+    memberRows = [],
     onClosingChange = () => undefined,
     onFieldFilter = () => undefined,
+    onSelectMember,
     rows,
     snapshot,
   }: {
+    campaignLabelSlot?: Snippet;
     campaignSlot?: Snippet;
     controller: SessionDetailController;
+    memberRows?: readonly SessionPresentationRow[];
     onClosingChange?: (closing: boolean) => void;
     onFieldFilter?: (key: 'model' | 'project', value: string) => void;
+    onSelectMember?: (row: SessionPresentationRow) => void;
     rows: readonly SessionPresentationRow[];
     snapshot: SessionDetailControllerSnapshot;
   } = $props();
 
   let closeButton = $state<HTMLButtonElement>();
-  let analysisPanel = $state<HTMLDivElement>();
   const desktopViewport = new MediaQuery('(min-width: 48rem)', false);
   const mobileDrawer = $derived(!desktopViewport.current);
   let previousFocus = $state<Element | null>(typeof document === 'undefined' ? null : document.activeElement);
-  let presentedRow = $state<SessionPresentationRow | null>(null);
-  let presentedTarget = $state<SessionDetailControllerSnapshot['target']>(null);
+  // Raw: these hold references handed down from a derived selection. A proxied
+  // copy would differ from the next snapshot by identity alone and re-run the
+  // presenting effect forever.
+  let presentedRow = $state.raw<SessionPresentationRow | null>(null);
+  let presentedTarget = $state.raw<SessionDetailControllerSnapshot['target']>(null);
   let drawerWasOpen = false;
   let destroyed = false;
   let openHint = $state<symbol | null>(null);
@@ -84,10 +109,10 @@
   const row = $derived(snapshot.row ?? presentedRow);
   const target = $derived(snapshot.target ?? presentedTarget);
   const position = $derived(row ? rows.findIndex((candidate) => candidate.rowId === row.rowId) : -1);
-  // Names what the values below aggregate, using the same count the row that opened this
+  // Names what the values aggregate, using the same count the row that opened this
   // drawer shows. No automated-review suffix here: the display row cannot tell how many of
-  // its rolled-up reviews are already inside `campaignVisibleCount`, and the campaign
-  // controls panel below states that exactly, from the member list it actually has.
+  // its rolled-up reviews are already inside `campaignVisibleCount`, and the Members tab
+  // states that exactly, from the member list it actually has.
   // A campaign of one (every top-level row is a campaign) gets no extra line.
   const campaignScope = $derived(
     target?.kind === 'campaign-root' && (row?.campaignTotalCount ?? 1) > 1 && row
@@ -119,18 +144,6 @@
     row && row.costActual !== null && row.costActual !== row.costApprox ? row.costActual : null,
   );
   const fmtRatio = (ratio: number): string => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
-  const analysisButtonLabel = (): string => {
-    if (snapshot.analysisOpen) {
-      return 'Hide analysis';
-    }
-    return target?.kind === 'session' ? 'Analyze' : 'Analyze root';
-  };
-  const analysisButtonAriaLabel = (): string => {
-    if (snapshot.analysisOpen) {
-      return 'Hide session chronology';
-    }
-    return target?.kind === 'session' ? 'Analyze session chronology' : 'Analyze root session chronology';
-  };
   const positionLabel = (): string => {
     if (snapshot.navigation) {
       return `${fmtNum(snapshot.navigation.total)} matching sessions`;
@@ -157,6 +170,66 @@
           'Local history did not cover the whole session.')
       : '',
   );
+  const durationSemantics = $derived(
+    sessionDurationSemantics(row?.source?.harnessKey, target?.kind === 'campaign-root'),
+  );
+
+  // The rounds view is derived once per detail response and shared by the tab
+  // label and the reader; the reader never re-derives it.
+  const availableDetail = $derived(
+    snapshot.analysisResponse?.status === 'available' ? snapshot.analysisResponse.detail : null,
+  );
+  // Without a served revision there is no local history to read, and the reader
+  // says so instead of waiting for a load that will never start.
+  const unavailableDetail = $derived.by(() => {
+    if (snapshot.analysisResponse?.status === 'unavailable') {
+      return snapshot.analysisResponse;
+    }
+    if (snapshot.analysisResponse === null && snapshot.revision === null && !snapshot.analysisLoading) {
+      return {
+        message: 'This report is not served from a local revision, so its session history cannot be read.',
+        reason: 'not-local' as const,
+      };
+    }
+    return null;
+  });
+  const roundsView = $derived(availableDetail ? buildRoundsView(availableDetail, memberRows) : null);
+  const membersAvailable = $derived(campaignScope !== null && campaignSlot !== undefined);
+  let activeTab = $state<DetailTab>('rounds');
+  // The reader's place survives a tab switch; a new row starts at its first round.
+  let readerRoundId = $state<string | null>(null);
+  let bodyElement = $state<HTMLDivElement>();
+  const tabScrollPositions = new Map<DetailTab, number>();
+  const roundsScopeNote = $derived(
+    campaignScope
+      ? "Rounds and Timeline read the root session's own history. The campaign's other members are listed under Members."
+      : null,
+  );
+  // A tab the current target cannot show falls back to the reading view.
+  const selectedTab = $derived<DetailTab>(activeTab === 'members' && !membersAvailable ? 'rounds' : activeTab);
+  const roundsLabel = $derived(roundsView ? `Rounds · ${fmtNum(roundsView.rounds.length)}` : 'Rounds');
+  const membersLabel = $derived(row?.campaignTotalCount ? `Members · ${fmtNum(row.campaignTotalCount)}` : 'Members');
+  const tabItems = (panes: Record<DetailTab, Snippet>): TabItem[] => [
+    { content: panes.rounds, label: roundsLabel, value: 'rounds' },
+    ...(membersAvailable ? [{ content: panes.members, label: membersLabel, value: 'members' }] : []),
+    { content: panes.timeline, label: 'Timeline', value: 'timeline' },
+    { content: panes.summary, label: 'Summary', value: 'summary' },
+  ];
+  const isDetailTab = (value: string): value is DetailTab =>
+    value === 'members' || value === 'rounds' || value === 'summary' || value === 'timeline';
+
+  const changeTab = async (value: string): Promise<void> => {
+    if (!isDetailTab(value) || value === selectedTab) {
+      return;
+    }
+    const rowId = row?.rowId;
+    tabScrollPositions.set(selectedTab, bodyElement?.scrollTop ?? 0);
+    activeTab = value;
+    await tick();
+    if (bodyElement && row?.rowId === rowId && selectedTab === value) {
+      bodyElement.scrollTop = tabScrollPositions.get(value) ?? 0;
+    }
+  };
 
   $effect.pre(() => {
     const currentOpen = drawerOpen;
@@ -173,6 +246,8 @@
     if (snapshot.row && snapshot.target) {
       if (presentedRow?.rowId !== snapshot.row.rowId) {
         openHint = null;
+        readerRoundId = null;
+        tabScrollPositions.clear();
       }
       presentedRow = snapshot.row;
       presentedTarget = snapshot.target;
@@ -287,19 +362,153 @@
     onHintOpenChange: handleHintOpenChange,
     openHint,
   });
-
-  const toggleAnalysis = async (): Promise<void> => {
-    await controller.toggleAnalysis();
-    if (controller.current().analysisOpen) {
-      analysisPanel?.scrollIntoView({ block: 'nearest' });
-    }
-  };
 </script>
+
+{#snippet roundsPane()}
+  <RoundsReader
+    error={snapshot.analysisError}
+    loading={snapshot.analysisLoading}
+    onOpenChild={onSelectMember}
+    onRetry={() => controller.retryAnalysis()}
+    scopeNote={roundsScopeNote}
+    unavailable={unavailableDetail}
+    view={roundsView}
+    bind:selectedRoundId={readerRoundId}
+  />
+{/snippet}
+
+{#snippet membersPane()}
+  <div class={pane} data-session-drawer-members>
+    {#if memberRows.length === 0}
+      <p class={muted} data-session-drawer-members-empty>
+        No member list is loaded for this campaign yet. Members load with the Sessions view; open the campaign there to
+        browse them.
+      </p>
+    {/if}
+    {#if campaignSlot}
+      {@render campaignSlot()}
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet timelinePane()}
+  {#if row && target}
+    <SessionAnalysis
+      error={snapshot.analysisError}
+      harnessKey={row.source?.harnessKey ?? ''}
+      loading={snapshot.analysisLoading}
+      onRetry={() => controller.retryAnalysis()}
+      refreshing={snapshot.analysisResponse?.status === 'available' && snapshot.analysisResponse.revision !== snapshot.revision}
+      response={snapshot.analysisResponse}
+      {target}
+    />
+  {/if}
+{/snippet}
+
+{#snippet summaryPane()}
+  {#if row && target}
+    <div class={pane} data-session-drawer-summary>
+      <div>
+        <SegmentBar ariaLabel="Token anatomy" {segments} />
+        <div class={drawerLegend} style="margin-top: 8px">
+          {#each segments as segment (segment.label)}
+            <div class={drawerLegendItem} title={`${segment.label}: ${fmtNum(segment.value)} tokens`}>
+              <span class={cx(drawerLegendSwatch, segment.class)}></span>
+              <span>{segment.label}</span><span class={drawerLegendValue}>{fmtCompact(segment.value)}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+      {#if costRatio !== null || durationRatio !== null}
+        <div class={drawerCompare} title="Compared with the median session in the current view">
+          {#if costRatio !== null}
+            ≈ {fmtRatio(costRatio)} median API value
+          {/if}
+          {#if costRatio !== null && durationRatio !== null}
+            ·
+          {/if}
+          {#if durationRatio !== null}
+            {fmtRatio(durationRatio)}
+            median duration
+          {/if}
+        </div>
+      {/if}
+      <div class={drawerGrid}>
+        <DrawerDetailItem {...detailHintControl} label="Started" value={fmtDate(row.date)} />
+        <DrawerDetailItem {...detailHintControl} label="Ended" value={fmtDate(row.endDate)} />
+        <DrawerDetailItem
+          {...detailHintControl}
+          hint={rtkSavedTitle(row)}
+          label="RTK token savings"
+          value={rtkSavedLabel(row)}
+        />
+        {#if chargedAmount !== null}
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Amount this session's source reported as charged. Shown only when it differs from the API-equivalent estimate."
+            label="Charged amount"
+            value={fmtMoney(chargedAmount)}
+          />
+        {/if}
+        {#if row.harness === 'Cursor' && row.costQuota !== null && row.costQuota !== undefined}
+          <!-- Only the Cursor export reports a quota-covered value. Applicability is the source, not
+               the number: campaign totals reduce an absent quota to 0, so a non-null value alone
+               would still print $0.00 under a Codex campaign. A Cursor zero stays visible. -->
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Cursor export value covered by the subscription quota"
+            label="Subscription value"
+            value={fmtMoney(row.costQuota)}
+          />
+        {/if}
+        <DrawerDetailItem {...detailHintControl} label="Calls" value={fmtNum(row.calls)} />
+        <DrawerDetailItem {...detailHintControl} label="Tools" value={fmtNum(row.tools)} />
+        <DrawerDetailItem {...detailHintControl} label="Lines" value={lineDeltaLabel(row)} />
+        <DrawerDetailItem {...detailHintControl} label="Subagent" value={row.subagent ? 'Yes' : 'No'} />
+        {#if row.partial}
+          <DrawerDetailItem {...detailHintControl} hint={partialHint} label="Partial" value="Yes" />
+        {/if}
+        {#if row.usageUnavailable}
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Session came from prompt history, but detailed local token counters are missing"
+            label="Usage data"
+            value="Unavailable"
+          />
+        {/if}
+        {#if row.ambiguous}
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Multiple local Cursor sessions matched the same export cluster; totals are best-effort"
+            label="Reconciliation"
+            value="Ambiguous"
+          />
+        {/if}
+      </div>
+      {#if row.source?.vcs}
+        <SessionVcsSummary
+          context={row.source.vcs}
+          onResolve={() => controller.resolveVcs()}
+          resolution={snapshot.vcsResolution}
+          resolving={snapshot.vcsResolving}
+        />
+      {/if}
+      <div class={drawerActions}>
+        <button class={ghostButton} onclick={() => onFieldFilter('project', row.projectKey)} type="button">
+          Filter project: {row.projectLabel}
+        </button>
+        <button class={ghostButton} onclick={() => onFieldFilter('model', row.modelKey)} type="button">
+          Filter model: {row.modelKey}
+        </button>
+      </div>
+    </div>
+  {/if}
+{/snippet}
 
 <Drawer
   closeOnInteractOutside={mobileDrawer}
   contentAriaLabel="Session details"
-  contentClass={snapshot.analysisOpen ? cx(drawer, analysisDrawer) : drawer}
+  contentClass={cx(drawer, readingDrawer)}
   finalFocusEl={previousFocusElement}
   initialFocusEl={() => (mobileDrawer ? (closeButton ?? null) : previousFocusElement())}
   modal={mobileDrawer}
@@ -351,7 +560,7 @@
         </button>
       </nav>
     </div>
-    <div class={drawerBody} data-session-drawer-body>
+    <div class={drawerBody} data-session-drawer-body bind:this={bodyElement}>
       <div class={sessionIdentity} data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
         <div class={sessionProject}>{row.projectLabel}</div>
         <div class={drawerTitle}>{row.sessionLabel}</div>
@@ -360,43 +569,22 @@
           <div
             class={muted}
             data-session-drawer-campaign-scope
-            title="Values below cover the whole campaign: every session matching the current filters plus its rolled-up automated reviews, including any not listed below. Analyze root opens the root session's chronology."
+            title="Values here cover the whole campaign: every session matching the current filters plus its rolled-up automated reviews, including any not listed under Members. Rounds and Timeline read the root session's local history."
           >
             {campaignScope}
           </div>
         {/if}
+        {#if campaignLabelSlot}
+          {@render campaignLabelSlot()}
+        {/if}
       </div>
-      <div>
-        <SegmentBar ariaLabel="Token anatomy" {segments} />
-        <div class={drawerLegend} style="margin-top: 8px">
-          {#each segments as segment (segment.label)}
-            <div class={drawerLegendItem} title={`${segment.label}: ${fmtNum(segment.value)} tokens`}>
-              <span class={cx(drawerLegendSwatch, segment.class)}></span>
-              <span>{segment.label}</span><span class={drawerLegendValue}>{fmtCompact(segment.value)}</span>
-            </div>
-          {/each}
-        </div>
-      </div>
-      {#if costRatio !== null || durationRatio !== null}
-        <div class={drawerCompare} title="Compared with the median session in the current view">
-          {#if costRatio !== null}
-            ≈ {fmtRatio(costRatio)} median API value
-          {/if}
-          {#if costRatio !== null && durationRatio !== null}
-            ·
-          {/if}
-          {#if durationRatio !== null}
-            {fmtRatio(durationRatio)}
-            median duration
-          {/if}
-        </div>
-      {/if}
-      {#if campaignSlot}
-        {@render campaignSlot()}
-      {/if}
-      <div class={drawerGrid}>
-        <DrawerDetailItem {...detailHintControl} label="Started" value={fmtDate(row.date)} />
-        <DrawerDetailItem {...detailHintControl} label="Ended" value={fmtDate(row.endDate)} />
+      <div class={statStrip} data-session-drawer-stats>
+        <DrawerDetailItem
+          {...detailHintControl}
+          hint={apiValuePresentation(row).title}
+          label="API value"
+          value={apiValuePresentation(row).label}
+        />
         <DrawerDetailItem
           {...detailHintControl}
           hint={`Exact token count: ${fmtNum(row.tokenTotal)}`}
@@ -405,111 +593,27 @@
         />
         <DrawerDetailItem
           {...detailHintControl}
-          hint={rtkSavedTitle(row)}
-          label="RTK token savings"
-          value={rtkSavedLabel(row)}
-        />
-        <DrawerDetailItem
-          {...detailHintControl}
-          hint={apiValuePresentation(row).title}
-          label="API value"
-          value={apiValuePresentation(row).label}
-        />
-        {#if chargedAmount !== null}
-          <DrawerDetailItem
-            {...detailHintControl}
-            hint="Amount this session's source reported as charged. Shown only when it differs from the API-equivalent estimate."
-            label="Charged amount"
-            value={fmtMoney(chargedAmount)}
-          />
-        {/if}
-        {#if row.harness === 'Cursor' && row.costQuota !== null && row.costQuota !== undefined}
-          <!-- Only the Cursor export reports a quota-covered value. Applicability is the source, not
-               the number: campaign totals reduce an absent quota to 0, so a non-null value alone
-               would still print $0.00 under a Codex campaign. A Cursor zero stays visible. -->
-          <DrawerDetailItem
-            {...detailHintControl}
-            hint="Cursor export value covered by the subscription quota"
-            label="Subscription value"
-            value={fmtMoney(row.costQuota)}
-          />
-        {/if}
-        <DrawerDetailItem {...detailHintControl} label="Calls" value={fmtNum(row.calls)} />
-        <DrawerDetailItem
-          {...detailHintControl}
           label="Turns"
           value={row.usageUnavailable ? 'Unavailable' : fmtNum(row.turns)}
         />
-        <DrawerDetailItem {...detailHintControl} label="Tools" value={fmtNum(row.tools)} />
         <DrawerDetailItem
           {...detailHintControl}
-          hint={sessionDurationSemantics(row.source?.harnessKey, target.kind === 'campaign-root').metricHint}
-          label={sessionDurationSemantics(row.source?.harnessKey, target.kind === 'campaign-root').metricLabel}
+          hint={durationSemantics.metricHint}
+          label={durationSemantics.metricLabel}
           value={fmtDuration(row.durationMs)}
         />
-        <DrawerDetailItem {...detailHintControl} label="Lines" value={lineDeltaLabel(row)} />
-        <DrawerDetailItem {...detailHintControl} label="Subagent" value={row.subagent ? 'Yes' : 'No'} />
-        {#if row.partial}
-          <DrawerDetailItem {...detailHintControl} hint={partialHint} label="Partial" value="Yes" />
-        {/if}
-        {#if row.usageUnavailable}
-          <DrawerDetailItem
-            {...detailHintControl}
-            hint="Session came from prompt history, but detailed local token counters are missing"
-            label="Usage data"
-            value="Unavailable"
-          />
-        {/if}
-        {#if row.ambiguous}
-          <DrawerDetailItem
-            {...detailHintControl}
-            hint="Multiple local Cursor sessions matched the same export cluster; totals are best-effort"
-            label="Reconciliation"
-            value="Ambiguous"
-          />
-        {/if}
       </div>
-      {#if row.source?.vcs}
-        <SessionVcsSummary
-          context={row.source.vcs}
-          onResolve={() => controller.resolveVcs()}
-          resolution={snapshot.vcsResolution}
-          resolving={snapshot.vcsResolving}
-        />
-      {/if}
-      <div class={drawerActions}>
-        {#if snapshot.revision}
-          <button
-            aria-controls="session-analysis-panel"
-            aria-expanded={snapshot.analysisOpen ? 'true' : 'false'}
-            aria-label={analysisButtonAriaLabel()}
-            class={ghostButton}
-            disabled={closing}
-            onclick={toggleAnalysis}
-            type="button"
-          >
-            {analysisButtonLabel()}
-          </button>
-        {/if}
-        <button class={ghostButton} onclick={() => onFieldFilter('project', row.projectKey)} type="button">
-          Filter project: {row.projectLabel}
-        </button>
-        <button class={ghostButton} onclick={() => onFieldFilter('model', row.modelKey)} type="button">
-          Filter model: {row.modelKey}
-        </button>
-      </div>
-      {#if snapshot.analysisOpen}
-        <div id="session-analysis-panel" bind:this={analysisPanel}>
-          <SessionAnalysis
-            error={snapshot.analysisError}
-            harnessKey={row.source?.harnessKey ?? ''}
-            loading={snapshot.analysisLoading}
-            onRetry={() => controller.retryAnalysis()}
-            response={snapshot.analysisResponse}
-            {target}
+      <div class={tabsShell} data-session-drawer-tabs>
+        {#key `${row.rowId}:${target?.kind}`}
+          <Tabs
+            ariaLabel="Session detail views"
+            items={tabItems({ members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
+            onValueChange={changeTab}
+            unmountOnExit={false}
+            value={selectedTab}
           />
-        </div>
-      {/if}
+        {/key}
+      </div>
     </div>
   {/if}
 </Drawer>

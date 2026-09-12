@@ -71,11 +71,20 @@ const availableResponse: SessionDetailResponse = {
   consistency: { checkedFields: ['tokens'], status: 'matches-report' },
   detail: {
     activeDurationMs: 120_000,
+    children: [],
+    coverage: {
+      childDiscovery: { omittedCount: 0, reasons: [], status: 'complete' },
+      grouping: { omittedCount: 1, reasons: ['unattributed-activity'], status: 'partial' },
+      interactionAttribution: { omittedCount: 0, reasons: [], status: 'complete' },
+      promptBodies: { omittedCount: 0, reasons: [], status: 'complete' },
+      recordedTiming: { omittedCount: 0, reasons: [], status: 'complete' },
+    },
     durationStatus: 'partial',
     efforts: ['high', 'default'],
     elapsedDurationMs: 18_120_000,
     endedAt: '2026-08-01T15:02:00.000Z',
     idleDurationMs: 18_000_000,
+    interactions: [],
     models: ['gpt-5.6-sol', 'claude-opus'],
     observedAt: '2026-08-01T15:02:01.000Z',
     phases: [
@@ -119,6 +128,9 @@ const availableResponse: SessionDetailResponse = {
     startedAt: '2026-08-01T10:00:00.000Z',
     turns: [
       {
+        calls: 3,
+        cost: 0.5,
+        costKind: 'approximate',
         durationMs: 60_000,
         effort: 'high',
         effortKind: 'recorded',
@@ -138,6 +150,9 @@ const availableResponse: SessionDetailResponse = {
         tools: 1,
       },
       {
+        calls: 1,
+        cost: null,
+        costKind: 'unknown',
         durationMs: 60_000,
         effort: null,
         effortKind: 'default',

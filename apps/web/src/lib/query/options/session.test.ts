@@ -8,13 +8,17 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { isCancelledError, QueryObserver } from '@tanstack/svelte-query';
+import { sessionDetailFixtureResponse } from '../../features/sessions/detail/session-detail.fixtures';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { createWebQueryClient } from '../client';
 import { DEFAULT_BOUNDED_GC_TIME_MS } from '../policies';
 import {
+  optionalSessionDetailQueryOptions,
+  optionalSessionPageQueryOptions,
   sessionCampaignChildrenKey,
   sessionCampaignChildrenQueryOptions,
   sessionDetailKey,
+  sessionDetailQueryOptions,
   sessionNeighborsKey,
   sessionPageKey,
   sessionPageQueryOptions,
@@ -54,6 +58,7 @@ const unusedRpc = (): Promise<never> => Promise.reject(new Error('Unexpected Ses
 const createSessionClientStub = (overrides: Partial<SessionClientAdapter> = {}): SessionClientAdapter => ({
   campaignChildren: unusedRpc,
   detail: unusedRpc,
+  lookup: unusedRpc,
   neighbors: unusedRpc,
   page: unusedRpc,
   vcs: unusedRpc,
@@ -61,6 +66,64 @@ const createSessionClientStub = (overrides: Partial<SessionClientAdapter> = {}):
 });
 
 describe('Session Query options', () => {
+  test('retains only the same session history through superseding revision reads', () => {
+    const queryClient = createWebQueryClient();
+    const client = createSessionClientStub({ detail: () => new Promise(() => undefined) });
+    const first = { revision: 'revision-1', rowId: 'row-1' };
+    const initial = sessionDetailQueryOptions(client, first, { browser: true });
+    const response = sessionDetailFixtureResponse(first.revision, first.rowId);
+    queryClient.setQueryData(initial.queryKey, response);
+    const observer = new QueryObserver(queryClient, initial);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      for (const revision of ['revision-2', 'revision-3']) {
+        observer.setOptions(sessionDetailQueryOptions(client, { ...first, revision }, { browser: true }));
+        expect(observer.getCurrentResult()).toMatchObject({
+          data: response,
+          isFetching: true,
+          isPlaceholderData: true,
+        });
+      }
+      observer.setOptions(
+        sessionDetailQueryOptions(client, { ...first, revision: 'revision-3', rowId: 'row-2' }, { browser: true }),
+      );
+      expect(observer.getCurrentResult().data).toBeUndefined();
+      observer.setOptions(initial);
+      observer.setOptions(optionalSessionDetailQueryOptions(client, undefined, { browser: true }));
+      expect(observer.getCurrentResult().data).toBeUndefined();
+    } finally {
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  test('keeps route lookup results at their original revision only for the same campaign scope', () => {
+    const queryClient = createWebQueryClient();
+    const client = createSessionClientStub({ page: () => new Promise(() => undefined) });
+    const initial = optionalSessionPageQueryOptions(client, query, { browser: true });
+    const response = pageResult(query);
+    queryClient.setQueryData(initial.queryKey, response);
+    const observer = new QueryObserver(queryClient, initial);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      observer.setOptions(
+        optionalSessionPageQueryOptions(client, { ...query, revision: 'revision-2' }, { browser: true }),
+      );
+      expect(observer.getCurrentResult()).toMatchObject({ data: response, isPlaceholderData: true });
+      observer.setOptions(
+        optionalSessionPageQueryOptions(
+          client,
+          { ...query, filters: { ...query.filters, query: 'another campaign' }, revision: 'revision-2' },
+          { browser: true },
+        ),
+      );
+      expect(observer.getCurrentResult().data).toBeUndefined();
+    } finally {
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
   test('QUERY-SESSION-EXACT-IMMUTABLE: separates revision, fingerprint, destination, cursor, and row identity', () => {
     const pageMutations: SessionQueryRequest[] = [
       { ...query, cursor: 'cursor-1' },

@@ -117,6 +117,7 @@ export {
   timeSliderThumb,
 } from './components/time-slider';
 export { default as SegmentedControl } from './svelte/compound/segmented-control.svelte';
+export type { TabItem, TabsProps } from './svelte/compound/tabs';
 export { default as Tabs } from './svelte/compound/tabs.svelte';
 export { default as Checkbox } from './svelte/controls/checkbox.svelte';
 export { default as HarnessBadge } from './svelte/controls/harness-badge.svelte';

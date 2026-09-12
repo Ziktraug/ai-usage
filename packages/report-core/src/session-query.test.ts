@@ -14,6 +14,9 @@ import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenResult,
   parseSessionCampaignChildrenServerResult,
+  parseSessionLookupRequest,
+  parseSessionLookupResult,
+  parseSessionLookupServerResult,
   parseSessionNeighborRequest,
   parseSessionNeighborResult,
   parseSessionNeighborServerResult,
@@ -21,6 +24,7 @@ import {
   parseSessionPageServerResult,
   parseSessionQueryRequest,
   projectSessionCampaignChildren,
+  projectSessionLookup,
   projectSessionNeighbors,
   projectSessionPage,
   SessionQueryCursorError,
@@ -1079,6 +1083,34 @@ describe('session query contracts', () => {
       requestFingerprint: neighbors.requestFingerprint,
       revision: neighbors.revision,
     });
+
+    const lookupRequest = parseSessionLookupRequest({ revision: pageRequest.revision, rowId: neighborRequest.rowId });
+    const lookup = projectSessionLookup(rows, lookupRequest);
+    expect(lookup.found).toBe(true);
+    expect(lookup.row?.rowId).toBe(neighborRequest.rowId);
+    expect(parseSessionLookupResult(lookup, lookupRequest)).toEqual(lookup);
+    expect(
+      parseSessionLookupServerResult(
+        { data: lookup, ok: true, requestFingerprint: lookup.requestFingerprint, revision: lookup.revision },
+        lookupRequest,
+      ),
+    ).toEqual({
+      data: lookup,
+      ok: true,
+      requestFingerprint: lookup.requestFingerprint,
+      revision: lookup.revision,
+    });
+    const missing = projectSessionLookup(rows, { ...lookupRequest, rowId: 'absent-row' });
+    expect(missing).toMatchObject({ found: false, row: null });
+    expect(() => parseSessionLookupResult({ ...lookup, found: false }, lookupRequest)).toThrow(
+      SessionQueryValidationError,
+    );
+    expect(() => parseSessionLookupResult({ ...lookup, row: null }, lookupRequest)).toThrow(
+      SessionQueryValidationError,
+    );
+    expect(() =>
+      parseSessionLookupResult({ ...lookup, row: { ...lookup.row, rowId: 'other-row' } }, lookupRequest),
+    ).toThrow(SessionQueryValidationError);
   });
 
   test('rejects malformed Session rows, counts, cursors, identities, and error envelopes', () => {

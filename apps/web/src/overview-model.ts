@@ -779,14 +779,12 @@ export const buildSessionShapeData = (
   };
 };
 
-export const PUNCHCARD_MIN_SESSION_OPACITY = 0.3;
-
-export const punchcardSessionOpacity = (sessions: number, maxSessions: number): number => {
+export const punchcardSessionMark = (sessions: number, maxSessions: number): { sizePx: number; opacity: number } => {
   if (sessions <= 0 || maxSessions <= 0) {
-    return 0;
+    return { sizePx: 0, opacity: 0 };
   }
   const normalizedSessions = Math.min(1, sessions / maxSessions);
-  return PUNCHCARD_MIN_SESSION_OPACITY + (1 - PUNCHCARD_MIN_SESSION_OPACITY) * normalizedSessions;
+  return { sizePx: 4 + 10 * normalizedSessions, opacity: 0.22 + 0.78 * normalizedSessions };
 };
 
 export const PUNCH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
