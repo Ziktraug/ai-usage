@@ -1,10 +1,11 @@
 <script lang="ts">
   import { page, shell } from '@ai-usage/design-system/svelte';
   import { onMount } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser, dev } from '$app/environment';
   import { page as pageState } from '$app/state';
   import { activeReportTab, reportDestinationHeading } from '../../shell/navigation';
   import ReportDestinationOwner from '../composition/report-destination-owner.svelte';
+  import DatavizPrototype from '../prototype/dataviz-prototype.svelte';
   import type { ReportPageData } from './report-bootstrap';
   import ReportHeader from './report-header.svelte';
   import { provideReportIdentityChannel } from './report-identity-context.svelte';
@@ -38,12 +39,18 @@
 
 <main class={page} data-hydrated={hydrated ? 'true' : 'false'} data-route-shell="report" bind:this={reportElement}>
   <div class={shell}>
-    <ReportHeader
-      generatedAt={model.generatedAt}
-      hasReportData={model.hasReportData}
-      heading={reportDestinationHeading(activeReportTab(pageState.url))}
-      isDemo={model.isDemo}
-    />
-    <ReportDestinationOwner {liveResult} mode={data.mode} {model} />
+    {#if !(dev && pageState.url.searchParams.has('variant'))}
+      <ReportHeader
+        generatedAt={model.generatedAt}
+        hasReportData={model.hasReportData}
+        heading={reportDestinationHeading(activeReportTab(pageState.url))}
+        isDemo={model.isDemo}
+      />
+    {/if}
+    {#if dev && pageState.url.searchParams.has('variant')}
+      <DatavizPrototype />
+    {:else}
+      <ReportDestinationOwner {liveResult} mode={data.mode} {model} />
+    {/if}
   </div>
 </main>

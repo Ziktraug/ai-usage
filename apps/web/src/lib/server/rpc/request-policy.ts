@@ -81,6 +81,15 @@ const skillsErrors = ['ForbiddenDemo', 'InvalidInput', 'SkillsConflict', 'Unavai
 
 export const operationRequestPolicies = [
   defineOperationPolicy({
+    applicationErrorFamilies: ['Unavailable'],
+    method: 'GET',
+    operation: 'getDatavizPrototypeSnapshot',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    target: 'datavizPrototype.snapshot',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
     applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable'],
     method: 'GET',
     operation: 'getMemoryProposalReviews',

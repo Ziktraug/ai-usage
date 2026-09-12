@@ -16,7 +16,8 @@ export interface WebRpcHttpHandlerOptions {
 
 const defaultDependenciesFactory: WebRpcDependenciesFactory = async (request) => {
   const { createWebRpcRouterDependencies } = await import('./context.server');
-  return await createWebRpcRouterDependencies(request);
+  const { dev } = await import('$app/environment');
+  return { ...(await createWebRpcRouterDependencies(request)), datavizPrototypeEnabled: dev };
 };
 
 const failureResponse = (status: number, tag: string, message: string): Response =>

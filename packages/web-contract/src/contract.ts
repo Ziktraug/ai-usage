@@ -1,4 +1,5 @@
 import type { ContractRouterClient } from '@orpc/contract';
+import { datavizPrototypeContract } from './dataviz-prototype';
 import { memoryContract } from './memory';
 import { projectsContract } from './projects';
 import { replicationContract } from './replication';
@@ -8,6 +9,7 @@ import { skillsContract } from './skills';
 import { syncContract } from './sync';
 
 export const webContract = {
+  datavizPrototype: datavizPrototypeContract,
   ...reportContract,
   memory: memoryContract,
   projects: projectsContract,

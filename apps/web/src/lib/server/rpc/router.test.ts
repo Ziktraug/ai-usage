@@ -15,6 +15,7 @@ test('composes every router leaf under one root router', () => {
 
   expect(Object.keys(router).sort()).toEqual([
     'campaign',
+    'datavizPrototype',
     'memory',
     'projectGroup',
     'projects',

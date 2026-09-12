@@ -1,3 +1,4 @@
+import { createDatavizPrototypeRouter } from './dataviz-prototype.server';
 import type { MemoryRpcDependencies } from './memory';
 import { createMemoryRpcRouter } from './memory';
 import type { ProjectsRpcDependencies } from './projects';
@@ -14,6 +15,7 @@ import type { SyncRpcDependencies } from './sync';
 import { createSyncRpcRouter } from './sync';
 
 export interface WebRpcRouterDependencies {
+  readonly datavizPrototypeEnabled?: boolean;
   readonly memory: MemoryRpcDependencies;
   readonly projects: ProjectsRpcDependencies;
   readonly replication: ReplicationRpcDependencies;
@@ -28,6 +30,7 @@ export interface WebRpcRouterDependencies {
 
 export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
   ...createReportRpcRouter(dependencies.report),
+  datavizPrototype: createDatavizPrototypeRouter(dependencies.datavizPrototypeEnabled),
   memory: createMemoryRpcRouter(dependencies.memory),
   projects: createProjectsRpcRouter(dependencies.projects),
   replication: createReplicationRpcRouter(dependencies.replication),

@@ -4,6 +4,7 @@ import { RPCLink } from '@orpc/client/fetch';
 import { createORPCSvelteQueryUtils, type RouterUtils } from '@orpc/svelte-query';
 
 const GET_RPC_PATHS = new Set([
+  'datavizPrototype/snapshot',
   'campaign/labelOverrides',
   'memory/proposalReviews',
   'projects/resolutionReviews',
