@@ -16,6 +16,8 @@ describe('model pricing', () => {
       ['gpt-5.6-terra', { in: 2.5, out: 15, cr: 0.25, cw: 3.125 }],
       ['gpt-5.6-luna', { in: 1, out: 6, cr: 0.1, cw: 1.25 }],
       ['gpt-6-astra', { in: 10, out: 50, cr: 1, cw: 12.5 }],
+      ['gpt-6-sol', { in: 2, out: 10, cr: 0.2, cw: 2.5 }],
+      ['gpt-6-luna', { in: 0.1, out: 0.5, cr: 0.01, cw: 0.125 }],
       ['gpt-5.5-pro', { in: 30, out: 180, cr: 30, cw: 30 }],
       ['gpt-5.5', { in: 5, out: 30, cr: 0.5, cw: 5 }],
       ['gpt-5.4-pro', { in: 30, out: 180, cr: 30, cw: 30 }],
@@ -44,6 +46,7 @@ describe('model pricing', () => {
       ['claude-mythos-5-1', { in: 10, out: 50, cr: 0.25, cw: 12.5 }],
       ['claude-fable-5', { in: 10, out: 50, cr: 1, cw: 12.5 }],
       ['claude-mythos-5', { in: 10, out: 50, cr: 1, cw: 12.5 }],
+      ['claude-opus-5-5', { in: 4, out: 20, cr: 0.2, cw: 5 }],
       ['claude-opus-5', { in: 5, out: 25, cr: 0.5, cw: 6.25 }],
       ['claude-opus-4-8', { in: 5, out: 25, cr: 0.5, cw: 6.25 }],
       ['claude-opus-4-1', { in: 15, out: 75, cr: 1.5, cw: 18.75 }],
@@ -109,6 +112,9 @@ describe('model pricing', () => {
 
   test('prices GLM text and vision models independently', () => {
     const cases: [model: string, rates: Rates][] = [
+      ['glm-5.3', { in: 1.4, out: 4.4, cr: 0.26, cw: 0 }],
+      ['glm-5.3-flash', { in: 0.15, out: 0.5, cr: 0.03, cw: 0 }],
+      ['glm-5.3-flashx', { in: 0.37, out: 1.25, cr: 0.075, cw: 0 }],
       ['glm-5.2', { in: 1.4, out: 4.4, cr: 0.26, cw: 0 }],
       ['glm-5v-turbo', { in: 1.2, out: 4, cr: 0.24, cw: 0 }],
       ['glm-4.6v', { in: 0.3, out: 0.9, cr: 0.05, cw: 0 }],
@@ -127,7 +133,11 @@ describe('model pricing', () => {
 
   test('prices supported paid-tier Gemini text models', () => {
     const cases: [model: string, rates: Rates][] = [
+      ['gemini-3.8-flash', { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 }],
+      ['gemini-3.7-flash', { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 }],
+      ['gemini-3.6-flash', { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 }],
       ['gemini-3.5-flash', { in: 1.5, out: 9, cr: 0.15, cw: 1.5 }],
+      ['gemini-3.5-flash-lite', { in: 0.3, out: 2.5, cr: 0.03, cw: 0.3 }],
       ['gemini-3.1-flash-lite', { in: 0.25, out: 1.5, cr: 0.025, cw: 0.25 }],
       ['gemini-3.1-pro', { in: 2, out: 12, cr: 0.2, cw: 2 }],
       ['gemini-3.1-pro-preview', { in: 2, out: 12, cr: 0.2, cw: 2 }],
@@ -144,8 +154,74 @@ describe('model pricing', () => {
     }
   });
 
+  test('moves the Gemini 3.6+ Flash models off their launch price in 2027', () => {
+    const launch = { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 };
+    const standard = { in: 1.5, out: 7.5, cr: 0.15, cw: 1.5 };
+    for (const model of ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash']) {
+      expect(priceAt(model, new Date('2026-12-31T23:59:59.999Z'))).toEqual({ rates: launch, known: true });
+      expect(priceAt(model, new Date('2027-01-01T00:00:00.000Z'))).toEqual({ rates: standard, known: true });
+    }
+  });
+
+  test('prices current xAI models', () => {
+    const cases: [model: string, rates: Rates][] = [
+      ['grok-4.7', { in: 2, out: 6, cr: 0.5, cw: 2 }],
+      ['grok-4.6', { in: 2, out: 6, cr: 0.5, cw: 2 }],
+      ['grok-4.5', { in: 2, out: 6, cr: 0.3, cw: 2 }],
+      ['grok-4.3', { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 }],
+      ['grok-build-0.1', { in: 1, out: 2, cr: 0.2, cw: 1 }],
+    ];
+
+    for (const [model, rates] of cases) {
+      expect(priceAt(model)).toEqual({ rates, known: true });
+    }
+  });
+
+  test('prices DeepSeek by the peak or off-peak leg in effect', () => {
+    const v41FlashOffPeak = { in: 0.15, out: 0.6, cr: 0.003, cw: 0.15 };
+    const v41FlashPeak = { in: 0.3, out: 1.2, cr: 0.006, cw: 0.3 };
+    const cases: [model: string, at: string, rates: Rates][] = [
+      ['deepseek-v4-flash', '2026-08-16T15:59:59.999Z', { in: 0.14, out: 0.28, cr: 0.0028, cw: 0.14 }],
+      // Sunday: off-peak all day.
+      ['deepseek-v4-flash', '2026-08-16T16:00:00.000Z', { in: 0.22, out: 0.66, cr: 0.007, cw: 0.22 }],
+      // Monday 02:00 UTC: peak.
+      ['deepseek-v4-flash', '2026-08-17T02:00:00.000Z', { in: 0.44, out: 1.32, cr: 0.014, cw: 0.44 }],
+      // Monday 04:00 UTC: the gap between the two peak windows.
+      ['deepseek-v4-flash', '2026-08-17T04:00:00.000Z', { in: 0.22, out: 0.66, cr: 0.007, cw: 0.22 }],
+      // The retired name now routes to V4.1 Flash.
+      ['deepseek-v4-flash', '2026-09-21T09:59:59.999Z', v41FlashPeak],
+      ['deepseek-flash', '2026-09-21T10:00:00.000Z', v41FlashOffPeak],
+      ['deepseek-flash', '2026-09-22T06:00:00.000Z', v41FlashPeak],
+      ['deepseek-v4-pro', '2026-08-14T02:00:00.000Z', { in: 0.435, out: 0.87, cr: 0.003_625, cw: 0.435 }],
+      ['deepseek-v4-pro', '2026-09-19T02:00:00.000Z', { in: 0.66, out: 1.98, cr: 0.022, cw: 0.66 }],
+      ['deepseek-v4-pro', '2026-09-18T02:00:00.000Z', { in: 1.32, out: 3.96, cr: 0.044, cw: 1.32 }],
+    ];
+
+    for (const [model, at, rates] of cases) {
+      expect(priceAt(model, new Date(at))).toEqual({ rates, known: true });
+    }
+
+    // Released with V4.1 Flash, so it has no earlier price.
+    expect(priceAt('deepseek-flash', new Date('2026-09-10T03:59:59.999Z')).known).toBe(false);
+  });
+
+  test('prices Qwen models at list price with explicit-cache rates', () => {
+    const cases: [model: string, rates: Rates][] = [
+      ['opencode-go/qwen3.7-plus', { in: 0.4, out: 1.6, cr: 0.04, cw: 0.5 }],
+      ['qwen3.7-plus-2026-05-26', { in: 0.4, out: 1.6, cr: 0.04, cw: 0.5 }],
+      ['qwen3.8-max', { in: 2, out: 6, cr: 0.2, cw: 2.5 }],
+      ['qwen3.8-max-0902', { in: 2, out: 6, cr: 0.2, cw: 2.5 }],
+      ['qwen3.8-flash', { in: 0.15, out: 0.47, cr: 0.015, cw: 0.1875 }],
+    ];
+
+    for (const [model, rates] of cases) {
+      expect(priceAt(model)).toEqual({ rates, known: true });
+    }
+  });
+
   test('prices current Kimi, Moonshot, and MiniMax models', () => {
     const cases: [model: string, rates: Rates][] = [
+      ['kimi-k3', { in: 3, out: 15, cr: 0.3, cw: 3 }],
       ['kimi-k2.7-code', { in: 0.95, out: 4, cr: 0.19, cw: 0.95 }],
       ['kimi-k2.7-code-highspeed', { in: 1.9, out: 8, cr: 0.38, cw: 1.9 }],
       ['kimi-k2.6', { in: 0.95, out: 4, cr: 0.16, cw: 0.95 }],
@@ -171,6 +247,7 @@ describe('model pricing', () => {
       ['openai/gpt-5.6-luna-2026-07-09', { in: 1, out: 6, cr: 0.1, cw: 1.25 }],
       ['cursor/claude-opus-4-8-thinking-high', { in: 5, out: 25, cr: 0.5, cw: 6.25 }],
       ['claude-haiku-4-5-20251001', { in: 1, out: 5, cr: 0.1, cw: 1.25 }],
+      ['cursor/claude-5.5-opus-high', { in: 4, out: 20, cr: 0.2, cw: 5 }],
       ['claude-4.5-sonnet', { in: 3, out: 15, cr: 0.3, cw: 3.75 }],
       ['cursor/claude-4-sonnet-thinking', { in: 3, out: 15, cr: 0.3, cw: 3.75 }],
       ['claude-4-opus-thinking', { in: 15, out: 75, cr: 1.5, cw: 18.75 }],
@@ -203,7 +280,6 @@ describe('model pricing', () => {
       'claude-mythos-preview',
       'gemini-3.1-flash-live-preview',
       'kimi-k2-thinking',
-      'kimi-k3',
       'glm',
     ];
 
