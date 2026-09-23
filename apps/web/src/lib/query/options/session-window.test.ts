@@ -80,6 +80,7 @@ const clientWith = (overrides: Partial<SessionClientAdapter>): SessionClientAdap
   return {
     campaignChildren: unexpected,
     detail: unexpected,
+    lookup: unexpected,
     neighbors: unexpected,
     page: unexpected,
     vcs: unexpected,

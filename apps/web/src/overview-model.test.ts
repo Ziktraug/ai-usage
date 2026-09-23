@@ -14,7 +14,7 @@ import {
   buildTimelineData,
   buildTopSessions,
   nextHeatmapFocusIndex,
-  punchcardSessionOpacity,
+  punchcardSessionMark,
   SESSION_SHAPE_POINT_RADIUS,
   type TimelineDimension,
 } from './overview-model';
@@ -636,11 +636,25 @@ describe('overview model', () => {
     expect(data?.cells[6]?.[14]?.sessions).toBe(1);
   });
 
-  test('uses one intensity channel for Punchcard sessions and a fixed Session Shape point size', () => {
-    expect(punchcardSessionOpacity(0, 4)).toBe(0);
-    expect(punchcardSessionOpacity(1, 4)).toBeGreaterThan(0);
-    expect(punchcardSessionOpacity(1, 4)).toBeLessThan(punchcardSessionOpacity(4, 4));
-    expect(punchcardSessionOpacity(4, 4)).toBe(1);
+  test('makes busier Punchcard cells larger and brighter on the same relative scale', () => {
+    expect(punchcardSessionMark(0, 4)).toEqual({ sizePx: 0, opacity: 0 });
+    expect(punchcardSessionMark(1, 0)).toEqual({ sizePx: 0, opacity: 0 });
+    const low = punchcardSessionMark(1, 100);
+    const medium = punchcardSessionMark(50, 100);
+    const high = punchcardSessionMark(100, 100);
+    expect(low.sizePx).toBeGreaterThanOrEqual(4);
+    expect(low.sizePx).toBeLessThan(5);
+    expect(low.opacity).toBeGreaterThan(0);
+    expect(low.opacity).toBeLessThan(medium.opacity);
+    expect(medium.sizePx).toBe(9);
+    expect(medium.sizePx).toBeLessThan(high.sizePx);
+    expect(medium.opacity).toBeLessThan(high.opacity);
+    expect(high).toEqual({ sizePx: 14, opacity: 1 });
+    expect(punchcardSessionMark(1, 2)).toEqual(medium);
+    expect(punchcardSessionMark(150, 100)).toEqual(high);
+  });
+
+  test('keeps Session Shape points at a fixed size', () => {
     expect(SESSION_SHAPE_POINT_RADIUS).toBe(4);
   });
 

@@ -21,10 +21,13 @@ import {
 } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenRequest,
+  parseSessionLookupRequest,
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
   type SessionCampaignChildrenRequest,
   type SessionCampaignChildrenResult,
+  type SessionLookupRequest,
+  type SessionLookupResult,
   type SessionNeighborRequest,
   type SessionNeighborResult,
   type SessionPageResult,
@@ -46,6 +49,7 @@ export type ServedRevisionQueryResult =
   | FocusedReportQueryResult
   | SessionCampaignChildrenResult
   | SessionDetailAnchorResult
+  | SessionLookupResult
   | SessionNeighborResult
   | SessionPageResult;
 
@@ -72,10 +76,15 @@ type ParsedRequest =
   | { readonly kind: 'neighbors'; readonly request: SessionNeighborRequest; readonly revision: string }
   | { readonly kind: 'overview'; readonly request: FocusedOverviewRequest; readonly revision: string }
   | { readonly kind: 'session-detail-anchor'; readonly request: SessionDetailRequest; readonly revision: string }
+  | { readonly kind: 'session-lookup'; readonly request: SessionLookupRequest; readonly revision: string }
   | { readonly kind: 'sessions'; readonly request: SessionQueryRequest; readonly revision: string }
   | { readonly kind: 'support'; readonly request: FocusedRevisionRequest; readonly revision: string };
 
 const parseRequest = (kind: ServedRevisionQueryKind, value: unknown): ParsedRequest => {
+  if (kind === 'session-lookup') {
+    const request = parseSessionLookupRequest(value);
+    return { kind, request, revision: request.revision };
+  }
   if (kind === 'sessions') {
     const request = parseSessionQueryRequest(value);
     assertSessionQueryCursorScope(request.cursor, request.revision, sessionQueryFingerprint(request));

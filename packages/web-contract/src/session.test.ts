@@ -5,6 +5,7 @@ import {
   sessionContract,
   sessionDetailRequestSchema,
   sessionDetailResponseSchema,
+  sessionLookupRequestSchema,
   sessionNeighborRequestSchema,
   sessionPageOutputSchema,
   sessionQueryRequestSchema,
@@ -28,7 +29,14 @@ const queryRequest = {
 
 describe('Session contract', () => {
   test('defines five POST query procedures with their exact closed public error families', () => {
-    expect(Object.keys(sessionContract).sort()).toEqual(['campaignChildren', 'detail', 'neighbors', 'page', 'vcs']);
+    expect(Object.keys(sessionContract).sort()).toEqual([
+      'campaignChildren',
+      'detail',
+      'lookup',
+      'neighbors',
+      'page',
+      'vcs',
+    ]);
     expect(sessionContract.page['~orpc'].route).toEqual({ method: 'POST', path: '/session/page' });
     expect(sessionContract.campaignChildren['~orpc'].route).toEqual({
       method: 'POST',
@@ -83,6 +91,10 @@ describe('Session contract', () => {
       }).success,
     ).toBe(false);
     expect(safeParse(sessionNeighborRequestSchema, { query: queryRequest, rowId: 'row-1' }).success).toBe(true);
+    expect(safeParse(sessionLookupRequestSchema, { revision: 'revision-1', rowId: 'row-1' }).success).toBe(true);
+    expect(safeParse(sessionLookupRequestSchema, { revision: 'revision-1', rowId: 'row-1', extra: 1 }).success).toBe(
+      false,
+    );
     expect(
       safeParse(sessionNeighborRequestSchema, {
         query: queryRequest,

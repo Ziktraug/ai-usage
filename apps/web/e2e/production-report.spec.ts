@@ -5,6 +5,7 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
 import { collectionSourceDefinitions } from '@ai-usage/report-core';
+import { parseSessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
@@ -26,6 +27,7 @@ const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const FOCUSED_OVERVIEW_FINGERPRINT_PATTERN = /^focused-overview-v1:[0-9a-f]{16}$/;
 const PROJECT_COLUMN_PATTERN = /Project/;
 const MATCHING_SESSIONS_PATTERN = /matching sessions$/;
+const ROUNDS_TAB_PATTERN = /^Rounds · \d+$/;
 const SOURCES_URL_PATTERN = /\/sources$/;
 const SESSION_PAGE_PATH = '/rpc/session/page';
 const EXPECTED_ENABLED_SOURCE_COUNT = collectionSourceDefinitions.filter(
@@ -40,8 +42,19 @@ const INITIAL_HTML_SECRET_SENTINELS = [
 
 interface CapturedRpcResponse {
   body: Promise<string>;
+  /** For a Session page request: the fingerprint its own request body implies; null otherwise. */
+  expectedPageFingerprint: string | null;
   status: number;
 }
+
+const SESSION_PAGE_RPC_SUFFIX = '/session/page';
+
+const expectedPageFingerprintFor = (pathname: string, postData: string | null): string | null => {
+  if (!pathname.endsWith(SESSION_PAGE_RPC_SUFFIX) || postData === null) {
+    return null;
+  }
+  return sessionQueryFingerprint(parseSessionQueryRequest(decodeRpcResponseBody(postData)));
+};
 
 interface ProtocolIdentity {
   fingerprints: string[];
@@ -715,9 +728,11 @@ test('keeps the last complete report visible while the report range changes', as
 test('hydrates and automatically pages Sessions through the production revision protocol', async ({ page }) => {
   const rpcResponses: CapturedRpcResponse[] = [];
   page.on('response', (response) => {
-    if (isRpcPathname(new URL(response.url()).pathname)) {
+    const pathname = new URL(response.url()).pathname;
+    if (isRpcPathname(pathname)) {
       rpcResponses.push({
         body: response.text().catch(() => ''),
+        expectedPageFingerprint: expectedPageFingerprintFor(pathname, response.request().postData()),
         status: response.status(),
       });
     }
@@ -793,6 +808,12 @@ test('hydrates and automatically pages Sessions through the production revision 
   expect(headerGeometry.badgeRight).toBeLessThanOrEqual(headerGeometry.positionLeft);
   expect(headerGeometry.navigationOverflows).toBe(false);
   expect(headerGeometry.headerOverflows).toBe(false);
+  const roundsTab = rootDrawer.getByRole('tab', { name: ROUNDS_TAB_PATTERN });
+  await expect(roundsTab).toHaveAttribute('aria-selected', 'true');
+  const rounds = rootDrawer.getByRole('region', { name: 'Session rounds' });
+  await expect(rounds.getByRole('list', { name: 'Rounds' })).toBeVisible();
+  await expect(rounds.getByText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, { exact: true })).toHaveCount(1);
+  await rootDrawer.getByRole('tab', { name: 'Summary' }).click();
   const codexSourceControl = rootDrawer.getByRole('region', { name: 'Session source control' });
   await expect(
     codexSourceControl.getByRole('link', { name: 'Open repository fixture/ai-usage in a new tab' }),
@@ -803,10 +824,10 @@ test('hydrates and automatically pages Sessions through the production revision 
     .getByRole('button', { name: 'Find pull requests for the recorded branch on GitHub' })
     .click();
   await expect(codexSourceControl.getByRole('link', { name: 'Open #42 in a new tab' })).toBeVisible();
-  await rootDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
+  await expect(rootDrawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  await rootDrawer.getByRole('tab', { name: 'Timeline' }).click();
   const sessionAnalysis = rootDrawer.getByRole('region', { name: 'Session analysis' });
   await expect(sessionAnalysis.getByRole('heading', { level: 2, name: 'Session analysis' })).toBeVisible();
-  await expect(rootDrawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
   const timelineSection = sessionAnalysis.locator('section[aria-labelledby="session-timeline"]');
   await expect(timelineSection).toContainText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
   await expect(sessionAnalysis.getByText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, { exact: true })).toHaveCount(1);
@@ -829,13 +850,10 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(privacyMetadata).toBeVisible();
   await expect(privacyMetadata).toHaveAttribute('data-tone', 'neutral');
   await expect(privacyMetadata).not.toHaveAttribute('role', 'status');
-  const hideAnalysisButton = rootDrawer.getByRole('button', { name: 'Hide session chronology' });
-  await expect(hideAnalysisButton).toBeVisible();
-  await expect(hideAnalysisButton).toHaveText('Hide analysis');
-  await hideAnalysisButton.click();
+  await roundsTab.click();
   await expect(sessionAnalysis).toHaveCount(0);
   await expect(rootDrawer).toBeVisible();
-  await expect(rootDrawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  await expect(rounds.getByRole('list', { name: 'Rounds' })).toBeVisible();
   await rootDrawer.getByRole('button', { name: 'Close session details' }).click();
   await expect(rootDrawer).toHaveCount(0);
 
@@ -860,19 +878,28 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect.poll(overviewResponseCount).toBe(1);
 
   const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));
-  const sessionResponseBodies = responseBodies.filter((body) => body.includes('session-query-v1:'));
-  // First page is SSR-hydrated; with 200-row pages only one follow-up RPC is required to reach index 204.
-  expect(sessionResponseBodies.length).toBeGreaterThanOrEqual(1);
-  for (const responseBody of sessionResponseBodies) {
-    expectExactProtocolIdentity(responseBody, revision, SESSION_QUERY_FINGERPRINT_PATTERN, requestFingerprint);
+  // Every Session page response must carry exactly the fingerprint its own request implies:
+  // the top-level pages the report hydrated (first page is SSR-hydrated; with 200-row pages one
+  // follow-up RPC reaches index 204) and the member pages an open campaign panel loads.
+  const sessionPageResponses = rpcResponses
+    .map((captured, index) => ({ body: responseBodies[index] ?? '', expected: captured.expectedPageFingerprint }))
+    .filter((entry): entry is { body: string; expected: string } => entry.expected !== null);
+  expect(sessionPageResponses.some(({ expected }) => expected === requestFingerprint)).toBe(true);
+  for (const { body, expected } of sessionPageResponses) {
+    expectExactProtocolIdentity(body, revision, SESSION_QUERY_FINGERPRINT_PATTERN, expected);
   }
+  const unclassifiedSessionBodies = responseBodies.filter(
+    (body, index) => body.includes('session-query-v1:') && rpcResponses[index]?.expectedPageFingerprint === null,
+  );
+  expect(unclassifiedSessionBodies).toEqual([]);
   const neighborResponseBodies = responseBodies.filter((body) => body.includes('session-neighbor-v1:'));
   expect(neighborResponseBodies.length).toBeGreaterThanOrEqual(2);
   for (const responseBody of neighborResponseBodies) {
     expectExactProtocolIdentity(responseBody, revision, SESSION_NEIGHBOR_FINGERPRINT_PATTERN);
   }
+  // Rounds is the panel's first view, so each selected session loads its local detail once.
   const detailResponseBodies = responseBodies.filter((body) => body.includes('matches-report'));
-  expect(detailResponseBodies).toHaveLength(1);
+  expect(detailResponseBodies.length).toBeGreaterThanOrEqual(1);
   for (const responseBody of detailResponseBodies) {
     expect(new Set(protocolIdentityFrom(responseBody).revisions)).toEqual(new Set([revision]));
   }
@@ -908,10 +935,11 @@ test('opens Claude chronology and recorded source control from the production re
     .toBe(true);
 
   const claudeDrawer = page.getByRole('dialog');
+  await claudeDrawer.getByRole('tab', { name: 'Summary' }).click();
   const claudeSourceControl = claudeDrawer.getByRole('region', { name: 'Session source control' });
   await expect(claudeSourceControl).toContainText('fixture/main → fixture/topic');
   await expect(claudeSourceControl.getByRole('link', { name: 'Open #27 in a new tab' })).toBeVisible();
-  await claudeDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
+  await claudeDrawer.getByRole('tab', { name: 'Timeline' }).click();
   const claudeAnalysis = claudeDrawer.getByRole('region', { name: 'Session analysis' });
   await expect(claudeAnalysis.getByText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, { exact: true })).toHaveCount(1);
   await expect(claudeAnalysis).toContainText('Root interval time');
@@ -955,8 +983,8 @@ test('automatically pages mobile Sessions and keeps modal analysis usable', asyn
   const drawerHeader = drawer.locator('[data-session-drawer-header]');
   await expect(drawer).toBeVisible();
   await expect(drawer).toHaveAttribute('aria-modal', 'true');
-  const analyzeButton = drawer.getByRole('button', { name: 'Analyze root session chronology' });
-  await expect(analyzeButton).toBeVisible();
+  const timelineTab = drawer.getByRole('tab', { name: 'Timeline' });
+  await expect(timelineTab).toBeVisible();
   const headerActionGeometry = await drawerHeader.locator('button:visible').evaluateAll((elements) =>
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
@@ -965,13 +993,12 @@ test('automatically pages mobile Sessions and keeps modal analysis usable', asyn
   );
   expect(headerActionGeometry).toHaveLength(3);
   expect(headerActionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
-  await expect(drawerBody.getByRole('button', { name: 'Analyze root session chronology' })).toBeVisible();
+  await expect(drawerBody.getByRole('region', { name: 'Session rounds' })).toBeVisible();
 
-  await analyzeButton.click();
+  await timelineTab.click();
   const analysis = drawer.getByRole('region', { name: 'Session analysis' });
   await expect(analysis).toBeVisible();
-  await expect(drawer.getByRole('button', { name: 'Hide session chronology' })).toBeVisible();
-  await expect(drawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  await expect(timelineTab).toHaveAttribute('aria-selected', 'true');
   const bodyControlGeometry = await drawerBody
     .locator('button:visible, a[href]:visible, summary:visible, input:visible, select:visible, textarea:visible')
     .evaluateAll((elements) =>

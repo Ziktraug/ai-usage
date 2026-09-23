@@ -7,22 +7,36 @@ single-operator with no remote service and no provider credentials; the
 connected platform (`apps/server`, PostgreSQL 17, GitHub login, outbound Device
 replication) is an explicit opt-in that local mode never contacts.
 
-## Read these before changing behavior
+## Read the references relevant to the change
 
-- `CONTEXT.md` — the ubiquitous language (harness, collection source, source
-  publication, …). Use these words; the "Avoid" lists are binding.
-- `docs/architecture.md` — data flow, process ownership, package ownership.
-- `docs/local-store-upgrade.md` — moving the local usage and Memory SQLite
-  stores across code versions (backup first; there is no downgrade path).
-- `docs/adr/README.md` — the decision index. Architecture and product
-  invariants live here; check it before re-deciding anything.
-- `docs/README.md` — map of the remaining docs (living reference vs dated
-  research snapshots).
-- `plans/README.md` — the execution backlog and its status table. Plans are
-  historical execution records, not current documentation.
-- `plans/099-ai-operations-memory-platform-program.md` — the dependency order,
-  offline guarantees, and STOP conditions for platform plans 100–110. Read the
-  specific child plan in full before executing it.
+Use the nearest instructions and relevant source files. Do not read the entire
+project documentation for a small edit or repeat context already available.
+
+- Domain terms and product behavior: use `CONTEXT.md`; its vocabulary and
+  "Avoid" lists remain binding.
+- Data flow, package boundaries, or process ownership: use
+  `docs/architecture.md` and relevant accepted decisions in `docs/adr/README.md`.
+- Opening real local stores from another code version, schema changes, or store
+  upgrades: read `docs/local-store-upgrade.md` before touching those stores.
+  Backup and compatibility requirements still apply; there is no downgrade path.
+- Finding other documentation: consult `docs/README.md` as needed.
+- Executing or resuming a plan: consult `plans/README.md`, the target plan,
+  and its handoff. Plans are historical execution records, not current docs.
+- Executing platform plans 100–110: first read
+  `plans/099-ai-operations-memory-platform-program.md` and the specific child
+  plan for dependencies, offline guarantees, and STOP conditions.
+
+## Completion and verification
+
+Complete the requested behavior and affected verification before handing back.
+Run the checks that cover the change; rerun them after relevant corrections.
+Use the broader `verify` gate when the scope or acceptance criteria requires it,
+not after every intermediate file edit. Documentation-only changes need reference
+and diff checks. Do not claim live-store safety from disposable-fixture tests.
+
+Routine local edits and isolated tests within the authorized task do not need
+repeated permission. Preserve explicit boundaries for real stores, publications,
+and external systems; reuse authorization already granted for the current scope.
 
 ## The two rules that shape everything
 

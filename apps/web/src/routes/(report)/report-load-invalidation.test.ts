@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 
 describe('report route load invalidation', () => {
   test('keeps layout navigation reactive while report acquisition ignores search changes', async () => {
-    const layoutSource = await readFile(new URL('+layout.ts', import.meta.url), 'utf8');
-    const pageSource = await readFile(new URL('+page.ts', import.meta.url), 'utf8');
+    const layoutSource = await readFile(new URL('../+layout.ts', import.meta.url), 'utf8');
+    const pageSource = await readFile(new URL('+layout.ts', import.meta.url), 'utf8');
 
     expect(layoutSource).toContain('({ data }) => data');
     expect(layoutSource).not.toContain('createWebQuery');
@@ -17,8 +17,8 @@ describe('report route load invalidation', () => {
   });
 
   test('acquires the report on the server so hydration never repeats the request', async () => {
-    const pageSource = await readFile(new URL('+page.ts', import.meta.url), 'utf8');
-    const serverSource = await readFile(new URL('+page.server.ts', import.meta.url), 'utf8');
+    const pageSource = await readFile(new URL('+layout.ts', import.meta.url), 'utf8');
+    const serverSource = await readFile(new URL('+layout.server.ts', import.meta.url), 'utf8');
 
     // The universal load must stay free of report acquisition: it runs again in the browser.
     expect(pageSource).not.toContain('acquireLiveReportQueryState');
@@ -31,7 +31,7 @@ describe('report route load invalidation', () => {
   });
 
   test('keeps the server load document-scoped so filters and ranges stay client-side', async () => {
-    const serverSource = await readFile(new URL('+page.server.ts', import.meta.url), 'utf8');
+    const serverSource = await readFile(new URL('+layout.server.ts', import.meta.url), 'utf8');
 
     // A tracked url read makes the load search-scoped: every filter or range change would refetch
     // __data.json and re-acquire the report the mounted component already owns.
@@ -42,7 +42,7 @@ describe('report route load invalidation', () => {
   });
 
   test('keeps root quota prefetch document-scoped so report search stays local', async () => {
-    const layoutServerSource = await readFile(new URL('+layout.server.ts', import.meta.url), 'utf8');
+    const layoutServerSource = await readFile(new URL('../+layout.server.ts', import.meta.url), 'utf8');
 
     expect(layoutServerSource).toContain('if (isDataRequest');
     expect(layoutServerSource).toContain('quotaQueryState: emptyQueryState');

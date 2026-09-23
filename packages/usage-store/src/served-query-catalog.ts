@@ -18,12 +18,16 @@ import {
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenResult,
+  parseSessionLookupRequest,
+  parseSessionLookupResult,
   parseSessionNeighborRequest,
   parseSessionNeighborResult,
   parseSessionPageResult,
   parseSessionQueryRequest,
   type SessionCampaignChildrenRequest,
   type SessionCampaignChildrenResult,
+  type SessionLookupRequest,
+  type SessionLookupResult,
   type SessionNeighborRequest,
   type SessionNeighborResult,
   type SessionPageResult,
@@ -45,6 +49,7 @@ export type ServedRevisionQueryResult =
   | FocusedReportQueryResult
   | SessionCampaignChildrenResult
   | SessionDetailAnchorResult
+  | SessionLookupResult
   | SessionNeighborResult
   | SessionPageResult;
 
@@ -54,6 +59,7 @@ export type ParsedServedRevisionQuery =
   | { readonly kind: 'neighbors'; readonly request: SessionNeighborRequest; readonly revision: string }
   | { readonly kind: 'overview'; readonly request: FocusedOverviewRequest; readonly revision: string }
   | { readonly kind: 'session-detail-anchor'; readonly request: SessionDetailRequest; readonly revision: string }
+  | { readonly kind: 'session-lookup'; readonly request: SessionLookupRequest; readonly revision: string }
   | { readonly kind: 'sessions'; readonly request: SessionQueryRequest; readonly revision: string }
   | { readonly kind: 'support'; readonly request: FocusedRevisionRequest; readonly revision: string };
 
@@ -78,6 +84,10 @@ export const parseServedRevisionQuery = (kind: ServedRevisionQueryKind, value: u
   }
   if (kind === 'session-detail-anchor') {
     const request = parseSessionDetailRequest(value);
+    return { kind, request, revision: request.revision };
+  }
+  if (kind === 'session-lookup') {
+    const request = parseSessionLookupRequest(value);
     return { kind, request, revision: request.revision };
   }
   if (kind === 'overview') {
@@ -124,6 +134,12 @@ export const executeServedRevisionQuery = (
       parsed.request,
     );
   }
+  if (parsed.kind === 'session-lookup') {
+    return parseSessionLookupResult(
+      executeMaterializedSessionQuery(database, parsed.kind, parsed.request),
+      parsed.request,
+    );
+  }
   if (parsed.kind === 'overview') {
     return parseFocusedReportQueryResult(
       parsed.kind,
@@ -164,6 +180,7 @@ export const validateServedRevisionQueryCatalog = (
     { kind: 'campaign-children', request: { campaignKey: 'catalog-missing', query }, revision },
     { kind: 'neighbors', request: { query, rowId: 'catalog-missing' }, revision },
     { kind: 'session-detail-anchor', request: { revision, rowId: 'catalog-missing' }, revision },
+    { kind: 'session-lookup', request: { revision, rowId: 'catalog-missing' }, revision },
     {
       kind: 'overview',
       request: {

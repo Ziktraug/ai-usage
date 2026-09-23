@@ -34,18 +34,23 @@ import {
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenResult,
+  parseSessionLookupRequest,
+  parseSessionLookupResult,
   parseSessionNeighborRequest,
   parseSessionNeighborResult,
   parseSessionPageResult,
   parseSessionQueryRequest,
   type SessionCampaignChildrenRequest,
   type SessionCampaignChildrenResult,
+  type SessionLookupRequest,
+  type SessionLookupResult,
   type SessionNeighborRequest,
   type SessionNeighborResult,
   type SessionPageResult,
   type SessionQueryRequest,
   type SessionQueryServerResult,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
@@ -61,6 +66,7 @@ export type RevisionQueryKind =
   | 'campaign-children'
   | 'neighbors'
   | 'session-detail-anchor'
+  | 'session-lookup'
   | 'sessions';
 
 interface RevisionQueryResultByKind {
@@ -69,6 +75,7 @@ interface RevisionQueryResultByKind {
   neighbors: SessionNeighborResult;
   overview: FocusedOverviewResult;
   'session-detail-anchor': SessionDetailAnchorResult;
+  'session-lookup': SessionLookupResult;
   sessions: SessionPageResult;
   support: FocusedSupportResult;
 }
@@ -332,6 +339,17 @@ const revisionQuerySpecs: {
       };
     },
   },
+  'session-lookup': {
+    parse: (input) => {
+      const request = parseSessionLookupRequest(input);
+      return {
+        fingerprint: sessionLookupFingerprint(request),
+        request,
+        revision: parseReportRevision(request.revision),
+        validateResult: (value) => parseSessionLookupResult(value, request),
+      };
+    },
+  },
   overview: {
     parse: (input) => {
       const request = parseFocusedOverviewRequest(input);
@@ -397,6 +415,12 @@ export function runRevisionQueryForServer(
   dependencies?: RevisionQueryRunnerDependencies,
   options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
+export function runRevisionQueryForServer(
+  kind: 'session-lookup',
+  input: SessionLookupRequest,
+  dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
+): Promise<SessionQueryServerResult<SessionLookupResult>>;
 export function runRevisionQueryForServer(
   kind: 'overview',
   input: FocusedOverviewRequest,

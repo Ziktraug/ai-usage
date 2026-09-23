@@ -16,11 +16,13 @@
     type ScrollLifecycle,
     type ScrollLifecycleEvent,
   } from '../../foundation/navigation/svelte/navigation';
+  import { isReportPathname } from '../sessions/detail/session-route';
   import { useDirtyGuardRegistry } from './dirty-navigation-context';
   import DiscardNavigationDialog from './discard-navigation-dialog.svelte';
   import ManageButton from './manage-button.svelte';
   import {
     activeReportTab,
+    consumeReplaceNavigation,
     ensureHistoryEntryKey,
     isActiveManagementDestination,
     navigationTypeForScroll,
@@ -227,12 +229,18 @@
   beforeNavigate((navigation) => {
     const fromKey = currentEntryKey || seedCurrentEntry();
     const isHistoryTraversal = navigation.type === 'popstate' && navigation.delta !== undefined;
+    const isReplacement = !isHistoryTraversal && consumeReplaceNavigation();
     const preserveReportScroll = shouldPreserveReportScroll(navigation.from?.url ?? null, navigation.to?.url ?? null);
     sessionWindowAnchorOwner.beginNavigation(preserveReportScroll);
-    pendingHistoryCursor = isHistoryTraversal ? historyCursor + navigation.delta : historyCursor + 1;
-    pendingEntryKey = isHistoryTraversal
-      ? (keysByHistoryCursor.get(pendingHistoryCursor) ?? createEntryKey())
-      : createEntryKey();
+    if (isReplacement) {
+      pendingHistoryCursor = historyCursor;
+      pendingEntryKey = fromKey;
+    } else {
+      pendingHistoryCursor = isHistoryTraversal ? historyCursor + navigation.delta : historyCursor + 1;
+      pendingEntryKey = isHistoryTraversal
+        ? (keysByHistoryCursor.get(pendingHistoryCursor) ?? createEntryKey())
+        : createEntryKey();
+    }
     const scrollEvent: ScrollLifecycleEvent = {
       fromKey,
       ...(preserveReportScroll ? { requestedReset: false } : {}),
@@ -432,8 +440,8 @@
     <div class={navigationGroupLabel}>Report</div>
     {#each reportTabs as destination (destination.tab)}
       <NavigationLink
-        active={page.url.pathname === '/' && activeReportTab(page.url) === destination.tab}
-        class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab)}
+        active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}
+        class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab)}
         href={reportDestinationUrl(page.url, destination.tab).href}
         icon={destination.icon}
         label={destination.label}
@@ -469,8 +477,8 @@
 >
   {#each reportTabs as destination (destination.tab)}
     <NavigationLink
-      active={page.url.pathname === '/' && activeReportTab(page.url) === destination.tab}
-      class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab, true)}
+      active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}
+      class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab, true)}
       href={reportDestinationUrl(page.url, destination.tab).href}
       label={destination.label}
       preserveScroll

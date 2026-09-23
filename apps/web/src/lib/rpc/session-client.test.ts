@@ -4,6 +4,7 @@ import {
   parseSessionQueryRequest,
   SessionQueryValidationError,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
@@ -25,6 +26,18 @@ const rawQuery = {
 const query = parseSessionQueryRequest(rawQuery);
 const campaignRequest = { campaignKey: 'campaign-1', query };
 const neighborRequest = { query, rowId: 'row-1' };
+const lookupRequest = { revision: query.revision, rowId: 'row-1' };
+const lookupEnvelope = () => ({
+  data: {
+    found: false,
+    requestFingerprint: sessionLookupFingerprint(lookupRequest),
+    revision: query.revision,
+    row: null,
+  },
+  ok: true as const,
+  requestFingerprint: sessionLookupFingerprint(lookupRequest),
+  revision: query.revision,
+});
 const detailUnavailable = {
   message: 'Local history is unavailable.',
   reason: 'history-unavailable' as const,
@@ -88,11 +101,20 @@ const availableDetail = {
   consistency: { checkedFields: ['tokens'], status: 'matches-report' },
   detail: {
     activeDurationMs: null,
+    children: [],
+    coverage: {
+      childDiscovery: { omittedCount: 0, reasons: [], status: 'complete' },
+      grouping: { omittedCount: 0, reasons: [], status: 'complete' },
+      interactionAttribution: { omittedCount: 0, reasons: [], status: 'complete' },
+      promptBodies: { omittedCount: 0, reasons: [], status: 'complete' },
+      recordedTiming: { omittedCount: 0, reasons: [], status: 'complete' },
+    },
     durationStatus: 'unavailable',
     efforts: [],
     elapsedDurationMs: 60_000,
     endedAt: '2026-07-18T10:01:00.000Z',
     idleDurationMs: null,
+    interactions: [],
     models: [],
     observedAt: '2026-07-18T10:01:01.000Z',
     phases: [],
@@ -110,6 +132,7 @@ const availableDetail = {
 const defaultTransport = (): SessionRpcTransport => ({
   campaignChildren: () => Promise.resolve(campaignEnvelope()),
   detail: () => Promise.resolve(detailUnavailable),
+  lookup: () => Promise.resolve(lookupEnvelope()),
   neighbors: () => Promise.resolve(neighborEnvelope()),
   page: () => Promise.resolve(pageEnvelope()),
   vcs: () => Promise.resolve(vcsUnavailable),
@@ -126,6 +149,10 @@ describe('Session RPC browser adapter', () => {
       detail: (input, options) => {
         calls.push({ input, name: 'detail', signal: options?.signal });
         return Promise.resolve(detailUnavailable);
+      },
+      lookup: (input, options) => {
+        calls.push({ input, name: 'lookup', signal: options?.signal });
+        return Promise.resolve(lookupEnvelope());
       },
       neighbors: (input, options) => {
         calls.push({ input, name: 'neighbors', signal: options?.signal });
@@ -235,5 +262,27 @@ describe('Session RPC browser adapter', () => {
       page: () => Promise.resolve({ ...pageEnvelope(), privatePath: '/private/store.sqlite' }),
     });
     await expect(adapter.page(query)).rejects.toThrow(SessionQueryValidationError);
+  });
+
+  test('canonicalizes lookup requests and rejects stale lookup envelopes', async () => {
+    const seen: unknown[] = [];
+    const adapter = createSessionClientAdapter({
+      ...defaultTransport(),
+      lookup: (input) => {
+        seen.push(input);
+        return Promise.resolve(lookupEnvelope());
+      },
+    });
+    expect(await adapter.lookup({ revision: query.revision, rowId: 'row-1' })).toEqual(lookupEnvelope());
+    await expect(adapter.lookup({ revision: query.revision, rowId: ' row-1 ' })).rejects.toThrow(
+      SessionQueryValidationError,
+    );
+    expect(seen).toEqual([lookupRequest]);
+
+    const stale = createSessionClientAdapter({
+      ...defaultTransport(),
+      lookup: () => Promise.resolve({ ...lookupEnvelope(), revision: 'stale-revision' }),
+    });
+    await expect(stale.lookup(lookupRequest)).rejects.toThrow(SessionQueryValidationError);
   });
 });

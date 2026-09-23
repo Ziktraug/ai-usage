@@ -4,11 +4,14 @@ import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
 import {
   CODEX_LINEAGE_MAX_DEPTH,
+  type CodexChildLinks,
   type CodexSession,
   type CodexThreadMetadata,
   type CodexThreadMetadataRow,
   type CodexThreadSpawnEdgeRow,
   type CodexUsageOwnership,
+  codexChildLinksFromEdges,
+  codexChildLinksWithoutDatabase,
   codexParentsFromEdges,
   codexStateDbCandidates,
   codexThreadMetadataFromRow,
@@ -57,6 +60,35 @@ const THREAD_PARENT_FOR_CHILD_SQL = `select distinct
 from thread_spawn_edges
 where child_thread_id = ?
 limit 2`;
+
+const CODEX_DETAIL_MAX_CHILDREN = 512;
+
+const THREAD_CHILDREN_FOR_PARENT_SQL = `select distinct
+  parent_thread_id as parent,
+  child_thread_id as child
+from thread_spawn_edges
+where parent_thread_id = ?
+limit ${CODEX_DETAIL_MAX_CHILDREN + 1}`;
+
+const readCodexChildLinksForSession = (
+  database: LocalHistoryDatabase,
+  sourceSessionId: string,
+): Effect.Effect<CodexChildLinks> =>
+  Effect.gen(function* () {
+    const edges = yield* database.all<CodexThreadSpawnEdgeRow>(THREAD_CHILDREN_FOR_PARENT_SQL, [sourceSessionId]);
+    const nicknames = new Map<string, string | null>();
+    for (const edge of edges) {
+      const child = edge.child;
+      if (!child || nicknames.has(child) || nicknames.size >= CODEX_DETAIL_MAX_CHILDREN) {
+        continue;
+      }
+      const rows = yield* database.all<CodexThreadMetadataRow>(THREAD_METADATA_FOR_ID_SQL, [child]);
+      const row = rows[0];
+      const metadata = rows.length === 1 && row ? codexThreadMetadataFromRow(row, sourceSessionId) : null;
+      nicknames.set(child, metadata?.agentNickname ?? null);
+    }
+    return codexChildLinksFromEdges(sourceSessionId, edges, nicknames, CODEX_DETAIL_MAX_CHILDREN);
+  }).pipe(Effect.catchAll(() => Effect.succeed(codexChildLinksWithoutDatabase())));
 
 const readCodexThreadMetadataForSession = (
   database: LocalHistoryDatabase,
@@ -184,7 +216,8 @@ export const readCodexSessionAnalysis = (
         } else if (isCodexUsageOwnedByRoot(parsedSession, sessionsById)) {
           usageOwnership = 'root';
         }
-        return parser.analysis(usageOwnership);
+        const links = database ? yield* readCodexChildLinksForSession(database, sourceSessionId) : undefined;
+        return parser.analysis(usageOwnership, links);
       });
 
     const dbPath = yield* firstExisting(storage, ...codexStateDbCandidates(storage));

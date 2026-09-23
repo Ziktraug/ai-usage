@@ -620,7 +620,8 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
   expect(desktopGeometry).toMatchObject({
     bottom: DESKTOP_DRAWER_VIEWPORT.height,
     top: 0,
-    width: 480,
+    // The reading panel keeps 360px of the report visible so rows stay clickable beside it.
+    width: DESKTOP_DRAWER_VIEWPORT.width - 360,
   });
   expect(desktopGeometry.right).toBe(desktopGeometry.layoutRight);
   const actionGeometry = await drawer.locator('[data-session-drawer-header] button:visible').evaluateAll((elements) =>

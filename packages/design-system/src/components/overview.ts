@@ -275,7 +275,7 @@ export const punchCellButton = css({
   w: 'full',
   _hover: {
     '& [data-punchcard-cell-fill]': {
-      transform: 'scale(1.6)',
+      transform: 'scale(1.2)',
     },
   },
   _focusVisible: {
@@ -285,8 +285,8 @@ export const punchCellButton = css({
 });
 
 export const punchDot = css({
-  w: '10px',
-  h: '10px',
+  w: 'var(--punch-size)',
+  h: 'var(--punch-size)',
   borderRadius: 'full',
   transition: 'transform 0.16s ease-out',
 });
@@ -302,8 +302,8 @@ export const punchIntensityKey = css({
 });
 
 export const punchIntensityKeyCell = css({
-  w: '10px',
-  h: '10px',
+  w: 'var(--punch-size)',
+  h: 'var(--punch-size)',
   borderRadius: 'full',
 });
 

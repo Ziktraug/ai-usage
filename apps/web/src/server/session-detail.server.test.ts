@@ -22,11 +22,20 @@ const projection: SessionProjectionFacts = {
 };
 const detail: SessionDetail = {
   activeDurationMs: null,
+  children: [],
+  coverage: {
+    childDiscovery: { omittedCount: 0, reasons: [], status: 'complete' },
+    grouping: { omittedCount: 0, reasons: [], status: 'complete' },
+    interactionAttribution: { omittedCount: 0, reasons: [], status: 'complete' },
+    promptBodies: { omittedCount: 0, reasons: [], status: 'complete' },
+    recordedTiming: { omittedCount: 0, reasons: [], status: 'complete' },
+  },
   durationStatus: 'unavailable',
   efforts: ['high'],
   elapsedDurationMs: 60_000,
   endedAt: '2026-07-18T10:01:00.000Z',
   idleDurationMs: null,
+  interactions: [],
   models: ['gpt-5.6-sol'],
   observedAt: '2026-07-18T10:01:01.000Z',
   phases: [],

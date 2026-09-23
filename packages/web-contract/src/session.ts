@@ -1,9 +1,11 @@
 import { parseSessionDetailRequest, parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenRequest,
+  parseSessionLookupRequest,
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
   type SessionCampaignChildrenResult,
+  type SessionLookupResult,
   type SessionNeighborResult,
   type SessionPageResult,
 } from '@ai-usage/report-core/session-query';
@@ -54,6 +56,10 @@ export const sessionNeighborRequestSchema = parserSchema(
   parseSessionNeighborRequest,
   'Expected an exact bounded Session neighbor request.',
 );
+export const sessionLookupRequestSchema = parserSchema(
+  parseSessionLookupRequest,
+  'Expected an exact bounded Session lookup request.',
+);
 export const sessionDetailRequestSchema = parserSchema(
   parseSessionDetailRequest,
   'Expected an exact bounded Session detail request.',
@@ -98,6 +104,7 @@ const sessionQueryOutputSchema = <Output>() =>
 export const sessionPageOutputSchema = sessionQueryOutputSchema<SessionPageResult>();
 export const sessionCampaignChildrenOutputSchema = sessionQueryOutputSchema<SessionCampaignChildrenResult>();
 export const sessionNeighborOutputSchema = sessionQueryOutputSchema<SessionNeighborResult>();
+export const sessionLookupOutputSchema = sessionQueryOutputSchema<SessionLookupResult>();
 export const sessionDetailResponseSchema = parserSchema(
   parseSessionDetailResponse,
   'Expected an exact bounded Session detail response.',
@@ -118,6 +125,11 @@ export const sessionContract = {
     .input(sessionDetailRequestSchema)
     .output(sessionDetailResponseSchema)
     .errors(localSessionErrors),
+  lookup: oc
+    .route({ method: 'POST', path: '/session/lookup' })
+    .input(sessionLookupRequestSchema)
+    .output(sessionLookupOutputSchema)
+    .errors(exactSessionErrors),
   neighbors: oc
     .route({ method: 'POST', path: '/session/neighbors' })
     .input(sessionNeighborRequestSchema)
@@ -140,6 +152,8 @@ export type { SessionDetailRequest, SessionDetailResponse } from '@ai-usage/repo
 export type {
   SessionCampaignChildrenRequest,
   SessionCampaignChildrenResult,
+  SessionLookupRequest,
+  SessionLookupResult,
   SessionNeighborRequest,
   SessionNeighborResult,
   SessionPageResult,

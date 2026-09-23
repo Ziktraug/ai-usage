@@ -6,6 +6,8 @@ import {
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenServerResult,
+  parseSessionLookupRequest,
+  parseSessionLookupServerResult,
   parseSessionNeighborRequest,
   parseSessionNeighborServerResult,
   parseSessionPageServerResult,
@@ -18,6 +20,8 @@ import type {
   SessionContractClient,
   SessionDetailRequest,
   SessionDetailResponse,
+  SessionLookupRequest,
+  SessionLookupResult,
   SessionNeighborRequest,
   SessionNeighborResult,
   SessionPageResult,
@@ -29,7 +33,7 @@ import type {
 
 export type SessionRpcTransport = Pick<
   SessionContractClient,
-  'campaignChildren' | 'detail' | 'neighbors' | 'page' | 'vcs'
+  'campaignChildren' | 'detail' | 'lookup' | 'neighbors' | 'page' | 'vcs'
 >;
 
 interface SessionCallOptions {
@@ -44,6 +48,7 @@ export interface SessionClientAdapter {
     signal?: AbortSignal,
   ) => Promise<SessionQueryServerResult<SessionCampaignChildrenResult>>;
   detail: (input: SessionDetailRequest, signal?: AbortSignal) => Promise<SessionDetailResponse>;
+  lookup: (input: SessionLookupRequest, signal?: AbortSignal) => Promise<SessionQueryServerResult<SessionLookupResult>>;
   neighbors: (
     input: SessionNeighborRequest,
     signal?: AbortSignal,
@@ -65,6 +70,11 @@ export const createSessionClientAdapter = (transport: SessionRpcTransport): Sess
       throw new SessionDetailValidationError('Session detail response does not match its requested revision');
     }
     return response;
+  },
+  lookup: async (input, signal) => {
+    const request = parseSessionLookupRequest(input);
+    const response = await transport.lookup(request, signalOptions(signal));
+    return parseSessionLookupServerResult(response, request);
   },
   neighbors: async (input, signal) => {
     const request = parseSessionNeighborRequest(input);
