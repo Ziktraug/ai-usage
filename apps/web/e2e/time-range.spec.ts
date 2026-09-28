@@ -393,8 +393,8 @@ test('filters the report from non-empty Punchcard cells with click and keyboard'
   const timeCellButtons = punchcard.getByRole('button', { name: PUNCHCARD_CELL_BUTTON_PATTERN });
   await expect(heading).toBeVisible();
   expect(await timeCellButtons.count()).toBeGreaterThan(0);
-  expect(await punchcard.locator('[title*="0 sessions"]').count()).toBeGreaterThan(0);
-  await expect(punchcard.locator('button[title*="0 sessions"]')).toHaveCount(0);
+  await expect(punchcard.locator('[data-punchcard-visual] [title]')).toHaveCount(0);
+  await expect(punchcard.locator('button[aria-label$=", 0 sessions"]')).toHaveCount(0);
 
   const ariaLabel = await timeCellButtons.first().getAttribute('aria-label');
   if (ariaLabel === null) {

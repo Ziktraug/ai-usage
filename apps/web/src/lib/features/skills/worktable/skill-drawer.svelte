@@ -126,7 +126,12 @@
     if (pendingOperation !== null) {
       return;
     }
-    await management.execute({ kind: 'management', operation, owner: 'skill-drawer', pendingLabel });
+    await management.execute({
+      kind: 'management',
+      operation,
+      owner: 'skill-drawer',
+      pendingLabel,
+    });
   };
   /**
    * Closing the drawer also navigates back to the worktable, and the router moves focus to the
@@ -209,7 +214,12 @@
 
   const drawerContent = css({ w: { base: '100%', md: 'min(680px, 94vw)' } });
   const stack = css({ display: 'grid', gap: '28px', minW: 0 });
-  const header = css({ display: 'grid', gap: '12px', pb: '20px', borderBottom: '1px solid token(colors.line)' });
+  const header = css({
+    display: 'grid',
+    gap: '12px',
+    pb: '20px',
+    borderBottom: '1px solid token(colors.line)',
+  });
   const titleRow = css({
     position: 'relative',
     display: 'flex',
@@ -238,9 +248,17 @@
     color: 'muted',
     cursor: 'pointer',
     _hover: { borderColor: 'accent', color: 'accent' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+    _focusVisible: {
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
+    },
   });
-  const pathLine = css({ color: 'muted', fontFamily: 'mono', fontSize: '11px', overflowWrap: 'anywhere' });
+  const pathLine = css({
+    color: 'muted',
+    fontFamily: 'mono',
+    fontSize: '11px',
+    overflowWrap: 'anywhere',
+  });
   const section = css({ display: 'grid', gap: '10px', minW: 0 });
   const placementList = css({
     display: 'grid',
@@ -250,14 +268,20 @@
   });
   const placementRow = css({
     display: 'grid',
-    gridTemplateColumns: { base: 'minmax(0, 1fr) auto', md: '120px minmax(0, 1fr) auto' },
+    gridTemplateColumns: {
+      base: 'minmax(0, 1fr) auto',
+      md: '120px minmax(0, 1fr) auto',
+    },
     '& > :nth-child(2)': {
       gridColumn: { base: '1 / -1', md: 'auto' },
       gridRow: { base: '2', md: 'auto' },
       overflowWrap: 'anywhere',
       minW: 0,
     },
-    '& > :nth-child(3)': { gridColumn: { base: '2', md: 'auto' }, gridRow: { base: '1', md: 'auto' } },
+    '& > :nth-child(3)': {
+      gridColumn: { base: '2', md: 'auto' },
+      gridRow: { base: '1', md: 'auto' },
+    },
     gap: '12px',
     alignItems: 'center',
     p: '12px 0',
@@ -277,7 +301,10 @@
     fontWeight: 700,
     '&[data-tone="linked"]': { bg: 'status.okSoft', color: 'status.ok' },
     '&[data-tone="missing"]': { bg: 'surfaceMuted', color: 'ink' },
-    '&[data-tone="broken"]': { bg: 'status.dangerSoft', color: 'status.danger' },
+    '&[data-tone="broken"]': {
+      bg: 'status.dangerSoft',
+      color: 'status.danger',
+    },
     '&[data-tone="copy"]': { bg: 'status.warnSoft', color: 'status.warn' },
     '&[data-tone="none"]': { color: 'muted' },
   });
@@ -293,7 +320,10 @@
     minH: { base: '44px', md: '32px' },
     cursor: 'pointer',
     _hover: { borderColor: 'accent' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+    _focusVisible: {
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
+    },
     _disabled: { cursor: 'default', opacity: 0.5 },
   });
   const preview = css({
@@ -306,7 +336,10 @@
     fontFamily: 'mono',
     fontSize: '12px',
     whiteSpace: 'pre-wrap',
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+    _focusVisible: {
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
+    },
   });
   const previewDocument = css({ m: 0, font: 'inherit', whiteSpace: 'inherit' });
   const findingRow = css({
@@ -317,33 +350,41 @@
     border: 0,
     borderTop: '1px solid token(colors.line)',
   });
-  const pathText = css({ color: 'muted', fontFamily: 'mono', fontSize: '11px', overflowWrap: 'anywhere' });
+  const pathText = css({
+    color: 'muted',
+    fontFamily: 'mono',
+    fontSize: '11px',
+    overflowWrap: 'anywhere',
+  });
 </script>
 
 <Drawer
   closeOnInteractOutside
-  contentAriaLabel={`${selected.name ?? 'Skill'} detail`}
+  contentAriaLabel={`${selected.name ?? "Skill"} detail`}
   contentClass={cx(
     css({
-      position: 'fixed',
+      position: "fixed",
       top: 0,
       right: 0,
       zIndex: 60,
-      display: 'flex',
-      flexDirection: 'column',
+      display: "flex",
+      flexDirection: "column",
       // Below the labelled breakpoint the application navigation is a fixed bar at the bottom of
       // the viewport. The drawer stops short of it so the rest of the app stays one tap away.
-      h: { base: 'calc(100dvh - 64px)', md: '100dvh' },
-      overflow: 'auto',
-      p: { base: '20px', md: '28px 32px' },
-      bg: 'surface',
-      borderLeft: '1px solid token(colors.line)',
-      boxShadow: 'overlay',
+      h: { base: "calc(100dvh - 64px)", md: "100dvh" },
+      overflow: "auto",
+      p: { base: "20px", md: "28px 32px" },
+      bg: "surface",
+      borderLeft: "1px solid token(colors.line)",
+      boxShadow: "overlay",
     }),
     drawerContent,
-    'skills-drawer-panel',
+    "skills-drawer-panel",
   )}
-  finalFocusEl={() => (previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null)}
+  finalFocusEl={() =>
+    previousFocus instanceof HTMLElement && previousFocus.isConnected
+      ? previousFocus
+      : null}
   initialFocusEl={initialDrawerFocus}
   modal={false}
   onFocusOutside={(event) => {
@@ -351,7 +392,10 @@
     // interaction and dismisses this drawer — re-attempting the navigation it just refused. The
     // question is about this drawer, so it counts as part of it.
     const target = event.detail.originalEvent.target;
-    if (target instanceof Element && target.closest('[role="alertdialog"]') !== null) {
+    if (
+      target instanceof Element &&
+      target.closest('[role="alertdialog"]') !== null
+    ) {
       event.preventDefault();
     }
   }}
@@ -361,7 +405,11 @@
     // front of the unsaved-draft guard at once, and the one it keeps is decided by which arrives
     // first — so discarding could replay the worktable rather than the link that was clicked.
     const target = event.detail.originalEvent.target;
-    if (target instanceof Element && target.closest('[data-app-navigation], [data-discard-confirmation]') !== null) {
+    if (
+      target instanceof Element &&
+      target.closest("[data-app-navigation], [data-discard-confirmation]") !==
+        null
+    ) {
       event.preventDefault();
     }
   }}
@@ -375,8 +423,15 @@
 >
   <div class={stack} data-skill-drawer={selected.name}>
     <div class={header}>
-      <p class={css({ color: 'accent', fontSize: '10px', letterSpacing: '0.14em', textTransform: 'uppercase' })}>
-        {globalSkill ? 'Managed skill' : 'Project skill'}
+      <p
+        class={css({
+          color: "accent",
+          fontSize: "10px",
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
+        })}
+      >
+        {globalSkill ? "Managed skill" : "Project skill"}
       </p>
       <div class={titleRow}>
         <h2 class={drawerTitleText}>{selected.name}</h2>
@@ -389,14 +444,19 @@
             pending={pendingOperation === `toggle:${globalSkill.name}`}
             showTitle
           />
-          <span class={cx(statusPill, globalSkill.enabled ? statusPillOk : statusPillInfo)}>
-            {globalSkill.enabled ? 'Enabled' : 'Kept in source'}
+          <span
+            class={cx(
+              statusPill,
+              globalSkill.enabled ? statusPillOk : statusPillInfo,
+            )}
+          >
+            {globalSkill.enabled ? "Enabled" : "Kept in source"}
           </span>
           <span class={cx(statusPill, statusPillInfo)}>
-            {skillInvocation(globalSkill) === 'auto' ? 'Auto' : 'Manual'}
+            {skillInvocation(globalSkill) === "auto" ? "Auto" : "Manual"}
           </span>
           {#if issueCount > 0}
-            <span class={cx(statusPill, statusPillWarn)}>{count(issueCount, 'issue')}</span>
+            <span class={cx(statusPill, statusPillWarn)}>{count(issueCount, "issue")}</span>
           {/if}
         {:else}
           <span class={cx(statusPill, statusPillInfo)}>Project-owned · read-only</span>
@@ -411,7 +471,11 @@
           ✕
         </button>
       </div>
-      <p class={muted}>{globalSkill?.description || projectSkill?.description || 'No description provided.'}</p>
+      <p class={muted}>
+        {globalSkill?.description ||
+          projectSkill?.description ||
+          "No description provided."}
+      </p>
       <p class={pathLine} data-skill-drawer-residence>{residenceLine}</p>
     </div>
 
@@ -431,11 +495,15 @@
         <div class={placementList}>
           {#each selected.exposure as item (item.targetId)}
             {@const tone = matrixDotTone(item.state)}
-            {@const action = placementActionLabel(item.state, item.canReconcile)}
+            {@const action = placementActionLabel(
+              item.state,
+              item.canReconcile,
+            )}
             <div class={placementRow} data-skill-drawer-placement={item.targetId}>
               <span class={strongCell}>
                 <span aria-hidden="true" class={glyphMark} data-tone={tone}>{MATRIX_DOT_GLYPHS[tone]}</span>
-                {presentation.targetLabelById.get(item.targetId) ?? item.targetId}
+                {presentation.targetLabelById.get(item.targetId) ??
+                  item.targetId}
               </span>
               <span class={muted}>{item.label} — {item.expectedPath}</span>
               {#if action}
@@ -443,13 +511,20 @@
                   class={actionButton}
                   disabled={pendingOperation !== null}
                   onclick={() =>
-                    execute(`reconcile:${globalSkill.name}`, reconcileSkillOperation(globalSkill.name))}
+                    execute(
+                      `reconcile:${globalSkill.name}`,
+                      reconcileSkillOperation(globalSkill.name),
+                    )}
                   type="button"
                 >
                   {action}
                 </button>
               {:else}
-                <span class={meta}>{tone === 'copy' ? 'Unmanaged content is never overwritten' : 'No action'}</span>
+                <span class={meta}
+                  >{tone === "copy"
+                    ? "Unmanaged content is never overwritten"
+                    : "No action"}</span
+                >
               {/if}
             </div>
           {/each}
@@ -486,7 +561,7 @@
           <p class={panelSub}>SKILL.md editor integration slot</p>
         {/if}
       </section>
-    {:else if selectedDocument && 'truncated' in selectedDocument}
+    {:else if selectedDocument && "truncated" in selectedDocument}
       <section
         aria-label={`${selectedDocument.skillName} SKILL.md preview`}
         class={preview}
@@ -510,7 +585,14 @@
           data-severity={diagnostic.severity}
           data-validation-finding={index + 1}
         >
-          <span class={cx(statusPill, diagnostic.severity === 'error' ? statusPillDanger : statusPillWarn)}>
+          <span
+            class={cx(
+              statusPill,
+              diagnostic.severity === "error"
+                ? statusPillDanger
+                : statusPillWarn,
+            )}
+          >
             {diagnostic.severity}
           </span>
           <code>{skillDiagnosticLabel(diagnostic.code)}</code>
@@ -530,12 +612,12 @@
   </div>
 </Drawer>
 
+<!--
+  The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
+  whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
+  drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
+-->
 <style>
-  /*
-                                           * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
-                                           * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
-                                           * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
-                                           */
   :global([data-scope="drawer"][data-part="positioner"]:has(.skills-drawer-panel)) {
     pointer-events: none;
   }

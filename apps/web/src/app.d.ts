@@ -9,6 +9,8 @@ declare global {
 
     interface PageState {
       readonly aiUsageNavigationKey?: string;
+      /** Set when the session panel opened from the report, so closing travels back to the list entry. */
+      readonly aiUsageSessionPanel?: { readonly openedFromReport: true };
       readonly aiUsageSessionWindowAnchorConsumed?: true;
     }
   }

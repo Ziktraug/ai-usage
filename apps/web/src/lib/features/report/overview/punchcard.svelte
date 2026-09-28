@@ -18,9 +18,28 @@
   } from '@ai-usage/design-system/report';
 
   const srOnly = css({ srOnly: true });
+  const legendLevels = [0.05, 0.3, 0.6, 1];
+  const tooltip = css({
+    display: 'grid',
+    gap: '4px',
+    p: '10px 12px',
+    maxW: 'calc(100vw - 24px)',
+    bg: 'surface',
+    color: 'ink',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: 'md',
+    boxShadow: 'overlay',
+    fontSize: '12px',
+    lineHeight: 1.5,
+    zIndex: 70,
+    _open: { animation: 'fadeIn 0.12s ease-out' },
+  });
+  const tooltipDetail = css({ color: 'muted', fontSize: '11px' });
+  const tooltipCount = css({ fontSize: '14px', fontWeight: 650, fontVariantNumeric: 'tabular-nums' });
 </script>
 
 <script lang="ts">
+  import { Tooltip } from '@ai-usage/design-system/svelte';
   import type { FocusedPunchcard } from '@ai-usage/report-core/focused-report-query';
   import {
     isLocalTimeHour,
@@ -29,7 +48,7 @@
     localTimeCellLabel,
     localTimeWeekdayNames,
   } from '@ai-usage/report-core/session-query';
-  import { PUNCH_DAYS, PUNCHCARD_MIN_SESSION_OPACITY, punchcardSessionOpacity } from '../../../../overview-model';
+  import { PUNCH_DAYS, punchcardSessionMark } from '../../../../overview-model';
   import { fmtMoney, fmtNum } from '../../../foundation/presentation/format';
 
   let {
@@ -64,26 +83,40 @@
         <span aria-hidden="true" class={punchDayLabel}>{PUNCH_DAYS[weekday]}</span>
         {#each dayCells as item, hour (`${weekday}:${hour}`)}
           {@const timeCell = item.sessions > 0 ? localTimeCell(weekday, hour) : null}
-          <span
-            class={punchCell}
-            title={`${PUNCH_DAYS[weekday]} ${String(hour).padStart(2, '0')}:00 — ${fmtNum(item.sessions)} sessions · ${fmtMoney(item.cost)}`}
-          >
+          <span class={punchCell}>
             {#if timeCell}
-              <button
-                aria-label={ariaLabel(timeCell, item.sessions)}
-                class={punchCellButton}
-                data-hour={hour}
-                data-punchcard-cell
-                data-weekday={weekday}
-                onclick={() => onSelectTimeCell(timeCell)}
-                type="button"
-              >
-                <span
-                  class={cx(punchDot, accentFill)}
-                  data-punchcard-cell-fill
-                  style:opacity={punchcardSessionOpacity(item.sessions, punchcard.maxSessions)}
-                ></span>
-              </button>
+              {@const mark = punchcardSessionMark(item.sessions, punchcard.maxSessions)}
+              <Tooltip contentClass={tooltip}>
+                {#snippet trigger(_triggerProps)}
+                  <button
+                    {..._triggerProps}
+                    aria-label={ariaLabel(timeCell, item.sessions)}
+                    class={punchCellButton}
+                    data-hour={hour}
+                    data-punchcard-cell
+                    data-weekday={weekday}
+                    onclick={(event) => {
+                      _triggerProps.onclick?.(event);
+                      onSelectTimeCell(timeCell);
+                    }}
+                    type="button"
+                  >
+                    <span
+                      class={cx(punchDot, accentFill)}
+                      data-punchcard-cell-fill
+                      style:--punch-size={`${mark.sizePx}px`}
+                      style:opacity={mark.opacity}
+                    ></span>
+                  </button>
+                {/snippet}
+                {#snippet content()}
+                  <span class={tooltipDetail}>{localTimeCellLabel(timeCell)}</span>
+                  <strong class={tooltipCount}>
+                    {fmtNum(item.sessions)} {item.sessions === 1 ? 'session' : 'sessions'}
+                  </strong>
+                  <span class={tooltipDetail}>{fmtMoney(item.cost)} est. API value</span>
+                {/snippet}
+              </Tooltip>
             {/if}
           </span>
         {/each}
@@ -94,14 +127,20 @@
       {/each}
     </div>
     <div
-      aria-label="Punchcard session-count intensity"
+      aria-label="Punchcard session count: larger, brighter dots mean more sessions"
       class={punchIntensityKey}
       data-punchcard-intensity-key
       role="img"
     >
       <span>Low</span>
-      <span class={cx(punchIntensityKeyCell, accentFill)} style:opacity={PUNCHCARD_MIN_SESSION_OPACITY}></span>
-      <span class={cx(punchIntensityKeyCell, accentFill)}></span>
+      {#each legendLevels as level (level)}
+        {@const mark = punchcardSessionMark(level, 1)}
+        <span
+          class={cx(punchIntensityKeyCell, accentFill)}
+          style:--punch-size={`${mark.sizePx}px`}
+          style:opacity={mark.opacity}
+        ></span>
+      {/each}
       <span>High</span>
       <span>session count</span>
     </div>

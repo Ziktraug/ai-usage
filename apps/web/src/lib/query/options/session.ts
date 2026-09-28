@@ -1,9 +1,11 @@
 import { parseSessionDetailRequest, sessionDetailRequestFingerprint } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenRequest,
+  parseSessionLookupRequest,
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
@@ -11,6 +13,7 @@ import { parseSessionVcsResolveRequest } from '@ai-usage/report-core/session-vcs
 import type {
   SessionCampaignChildrenRequest,
   SessionDetailRequest,
+  SessionLookupRequest,
   SessionNeighborRequest,
   SessionQueryRequest,
   SessionVcsResolveRequest,
@@ -74,6 +77,11 @@ export const sessionNeighborsKey = (request: SessionNeighborRequest) => {
   return immutableRevisionKey(sessionFamily, parsed.query.revision, sessionNeighborFingerprint(parsed), 'neighbors');
 };
 
+export const sessionLookupKey = (request: SessionLookupRequest) => {
+  const parsed = parseSessionLookupRequest(request);
+  return immutableRevisionKey(sessionFamily, parsed.revision, sessionLookupFingerprint(parsed), 'lookup');
+};
+
 export const sessionDetailKey = (request: SessionDetailRequest) => {
   const parsed = parseSessionDetailRequest(request);
   return immutableRevisionKey(sessionFamily, parsed.revision, sessionDetailRequestFingerprint(parsed), 'detail');
@@ -129,6 +137,27 @@ export const sessionNeighborsQueryOptions = (
   });
 };
 
+export const sessionLookupQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionLookupRequest,
+  execution: SessionQueryExecution,
+) => {
+  const parsed = parseSessionLookupRequest(request);
+  return queryOptions({
+    ...webQueryPolicies.immutableRevision,
+    enabled: execution.browser,
+    placeholderData: (previousData: Awaited<ReturnType<SessionClientAdapter['lookup']>> | undefined, previousQuery) => {
+      const previousRevision = previousQuery?.queryKey[3];
+      return typeof previousRevision === 'string' &&
+        previousQuery?.queryKey[4] === sessionLookupFingerprint({ ...parsed, revision: previousRevision })
+        ? previousData
+        : undefined;
+    },
+    queryFn: async ({ signal }) => await client.lookup(parsed, signal),
+    queryKey: sessionLookupKey(parsed),
+  });
+};
+
 export const sessionDetailQueryOptions = (
   client: SessionClientAdapter,
   request: SessionDetailRequest,
@@ -138,6 +167,17 @@ export const sessionDetailQueryOptions = (
   return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
+    // A publication changes the revision even when this session has not changed.
+    // Keep its last available detail, with its original revision, while reading
+    // the new one. Never carry history into a different row or a disabled query.
+    placeholderData: (previousData: Awaited<ReturnType<SessionClientAdapter['detail']>> | undefined, previousQuery) => {
+      const previousRevision = previousQuery?.queryKey[3];
+      return previousData?.status === 'available' &&
+        typeof previousRevision === 'string' &&
+        previousQuery?.queryKey[4] === sessionDetailRequestFingerprint({ ...parsed, revision: previousRevision })
+        ? previousData
+        : undefined;
+    },
     queryFn: async ({ signal }) => await client.detail(parsed, signal),
     queryKey: sessionDetailKey(parsed),
   });
@@ -166,12 +206,48 @@ const disabledSessionRequest = parseSessionQueryRequest({
   sort: [{ desc: true, id: 'date' }],
 });
 
+/**
+ * One exact page for a detail route the window does not hold (a campaign
+ * aggregate by key). Retain only the same campaign and scope across a
+ * publication, never another campaign while its route resolves.
+ */
+export const optionalSessionPageQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionQueryRequest | undefined,
+  execution: SessionQueryExecution,
+) => {
+  const parsed = parseSessionQueryRequest(request ?? disabledSessionRequest);
+  return queryOptions({
+    ...webQueryPolicies.immutableRevision,
+    enabled: execution.browser && request !== undefined,
+    placeholderData: (previousData: Awaited<ReturnType<SessionClientAdapter['page']>> | undefined, previousQuery) => {
+      const previousRevision = previousQuery?.queryKey[3];
+      return request !== undefined &&
+        typeof previousRevision === 'string' &&
+        previousQuery?.queryKey[4] === sessionQueryFingerprint({ ...parsed, revision: previousRevision })
+        ? previousData
+        : undefined;
+    },
+    queryFn: async ({ signal }) => await client.page(parsed, signal),
+    queryKey: sessionPageKey(parsed),
+  });
+};
+
 export const optionalSessionNeighborsQueryOptions = (
   client: SessionClientAdapter,
   request: SessionNeighborRequest | undefined,
   execution: SessionQueryExecution,
 ) =>
   sessionNeighborsQueryOptions(client, request ?? { query: disabledSessionRequest, rowId: 'disabled-session-row' }, {
+    browser: execution.browser && request !== undefined,
+  });
+
+export const optionalSessionLookupQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionLookupRequest | undefined,
+  execution: SessionQueryExecution,
+) =>
+  sessionLookupQueryOptions(client, request ?? { revision: 'disabled-session-query', rowId: 'disabled-session-row' }, {
     browser: execution.browser && request !== undefined,
   });
 

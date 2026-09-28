@@ -252,6 +252,15 @@ export const operationRequestPolicies = [
     transport: 'query',
   }),
   defineOperationPolicy({
+    applicationErrorFamilies: exactReportErrors,
+    method: 'POST',
+    operation: 'getReportSessionLookup',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'session.lookup',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
     applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
     method: 'POST',
     operation: 'getReportSessionDetail',

@@ -154,6 +154,12 @@ export interface SessionNeighborRequest {
   rowId: string;
 }
 
+/** One presentation row by its stable identity at an exact revision, for a deep-linked detail. */
+export interface SessionLookupRequest {
+  revision: string;
+  rowId: string;
+}
+
 export class SessionQueryValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -297,6 +303,13 @@ export interface SessionNeighborResult {
   previous: SessionPresentationRow | null;
   requestFingerprint: string;
   revision: string;
+}
+
+export interface SessionLookupResult {
+  found: boolean;
+  requestFingerprint: string;
+  revision: string;
+  row: SessionPresentationRow | null;
 }
 
 export type SessionQueryProtocolErrorTag = 'QueryFailed' | 'RevisionExpired';
@@ -561,6 +574,15 @@ export const parseSessionNeighborRequest = (value: unknown): SessionNeighborRequ
   };
 };
 
+export const parseSessionLookupRequest = (value: unknown): SessionLookupRequest => {
+  const record = requireRecord(value, 'session lookup request');
+  assertExactKeys(record, ['revision', 'rowId'], 'session lookup request');
+  return {
+    revision: requireTrimmedString(record.revision, 'revision', MAX_CURSOR_LENGTH),
+    rowId: requireTrimmedString(record.rowId, 'rowId', MAX_CURSOR_LENGTH),
+  };
+};
+
 const fnv1a64 = (value: string): string => {
   let hash = 0xcbf29ce484222325n;
   for (const character of value) {
@@ -604,6 +626,11 @@ export const sessionCampaignChildrenFingerprint = (request: SessionCampaignChild
 export const sessionNeighborFingerprint = (request: SessionNeighborRequest): string => {
   const validated = parseSessionNeighborRequest(request);
   return `session-neighbor-v1:${fnv1a64(`${validated.rowId}\n${canonicalQueryScope(validated.query)}`)}`;
+};
+
+export const sessionLookupFingerprint = (request: SessionLookupRequest): string => {
+  const validated = parseSessionLookupRequest(request);
+  return `session-lookup-v1:${fnv1a64(validated.rowId)}`;
 };
 
 const requireNonNegativeSafeInteger = (value: unknown, label: string): number => {
@@ -880,6 +907,36 @@ export const parseSessionCampaignChildrenServerResult = (
     request.query.revision,
     sessionCampaignChildrenFingerprint(request),
     (data) => parseSessionCampaignChildrenResult(data, request),
+  );
+};
+
+export const parseSessionLookupResult = (value: unknown, input: SessionLookupRequest): SessionLookupResult => {
+  const request = parseSessionLookupRequest(input);
+  const requestFingerprint = sessionLookupFingerprint(request);
+  assertSessionQueryResultSize(value, 'session lookup result');
+  const record = requireRecord(value, 'session lookup result');
+  assertExactKeys(record, ['found', 'requestFingerprint', 'revision', 'row'], 'session lookup result');
+  assertResultIdentity(record, request.revision, requestFingerprint, 'session lookup result');
+  if (typeof record.found !== 'boolean') {
+    throw new SessionQueryValidationError('session lookup result.found must be a boolean');
+  }
+  const row = record.row === null ? null : parseSessionPresentationRow(record.row, 'session lookup result.row');
+  if (record.found !== (row !== null)) {
+    throw new SessionQueryValidationError('session lookup result.found must match the presence of its row');
+  }
+  if (row !== null && row.rowId !== request.rowId) {
+    throw new SessionQueryValidationError('session lookup result.row does not match the requested identity');
+  }
+  return { found: record.found, requestFingerprint, revision: request.revision, row };
+};
+
+export const parseSessionLookupServerResult = (
+  value: unknown,
+  input: SessionLookupRequest,
+): SessionQueryServerResult<SessionLookupResult> => {
+  const request = parseSessionLookupRequest(input);
+  return parseSessionQueryServerResult(value, request.revision, sessionLookupFingerprint(request), (data) =>
+    parseSessionLookupResult(data, request),
   );
 };
 
@@ -1575,6 +1632,17 @@ export const projectSessionCampaignChildren = (
     revision: request.query.revision,
     root: root ?? null,
     sessionCount: visibleSessionCount,
+  };
+};
+
+export const projectSessionLookup = (rows: SerializedRow[], input: SessionLookupRequest): SessionLookupResult => {
+  const request = parseSessionLookupRequest(input);
+  const row = rows.map(enrichSessionPresentationRow).find((candidate) => candidate.rowId === request.rowId) ?? null;
+  return {
+    found: row !== null,
+    requestFingerprint: sessionLookupFingerprint(request),
+    revision: request.revision,
+    row,
   };
 };
 

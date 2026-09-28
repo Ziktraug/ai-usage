@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import {
+  OPENCODE_DETAIL_CHILDREN_SQL,
   OPENCODE_DETAIL_MESSAGE_SQL,
   OPENCODE_DETAIL_PARENT_SQL,
   OPENCODE_DETAIL_PROMPT_SQL,
@@ -16,9 +17,10 @@ import { Effect } from 'effect';
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const SESSION_ID = 'session-detail';
 const SESSION_PARAMETERS = [SESSION_ID, 2] as const;
+const CHILDREN_PARAMETERS = [SESSION_ID, 513] as const;
 const MESSAGE_PARAMETERS = [SESSION_ID, 2049] as const;
 const PARENT_PARAMETERS = [SESSION_ID, SESSION_ID, 1025] as const;
-const PROMPT_PARAMETERS = [SESSION_ID, SESSION_ID, 257] as const;
+const PROMPT_PARAMETERS = [SESSION_ID, SESSION_ID, 1025] as const;
 const TOOL_PARAMETERS = [SESSION_ID, 1025] as const;
 
 const readOpenCodeDetailForTest = (sourceSessionId: string) =>
@@ -34,6 +36,7 @@ const writeDetailFixture = (storage: TestMemoryStorage): void => {
     [{ id: SESSION_ID, time_created: Date.parse('2026-07-19T10:00:00.000Z'), time_updated: null }],
     SESSION_PARAMETERS,
   );
+  storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_CHILDREN_SQL, [], CHILDREN_PARAMETERS);
   storage.writeDatabaseRows(
     OPENCODE_DB,
     OPENCODE_DETAIL_MESSAGE_SQL,
@@ -129,6 +132,7 @@ const writeGroupedTurnFixture = (storage: TestMemoryStorage): void => {
     [{ id: SESSION_ID, time_created: Date.parse('2026-07-19T10:00:00.000Z'), time_updated: null }],
     SESSION_PARAMETERS,
   );
+  storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_CHILDREN_SQL, [], CHILDREN_PARAMETERS);
   storage.writeDatabaseRows(
     OPENCODE_DB,
     OPENCODE_DETAIL_MESSAGE_SQL,
@@ -322,6 +326,9 @@ describe('OpenCode session detail', () => {
     expect(detail.turnsStatus).toBe('partial');
     expect(detail.turns).toHaveLength(3);
     expect(detail.turns[0]).toEqual({
+      calls: 2,
+      cost: 0.1 + 0.2,
+      costKind: 'reported',
       durationMs: 15_000,
       effort: 'high',
       effortKind: 'recorded',
@@ -452,5 +459,50 @@ describe('OpenCode session detail', () => {
     expect(detail.turns.reduce((total, turn) => total + turn.tokens.total, 0)).toBe(24);
     expect(detail.phases.reduce((total, phase) => total + phase.tokens.total, 0)).toBe(24);
     expect(detail.turns.reduce((total, turn) => total + (turn.durationMs ?? 0), 0)).toBe(detail.activeDurationMs ?? -1);
+  });
+
+  test('lists child sessions by parent id without inventing a spawning turn', () => {
+    const storage = new TestMemoryStorage();
+    writeDetailFixture(storage);
+    storage.writeDatabaseRows(
+      OPENCODE_DB,
+      OPENCODE_DETAIL_CHILDREN_SQL,
+      [
+        { id: 'child-a', title: 'Explore the schema' },
+        { id: 'child-b', title: null },
+        { id: SESSION_ID, title: 'self-reference is ignored' },
+      ],
+      CHILDREN_PARAMETERS,
+    );
+
+    const detail = runWithStorage(readOpenCodeDetailForTest(SESSION_ID), storage);
+
+    if (!detail) {
+      throw new Error('Expected OpenCode session detail with children');
+    }
+    expect(parseSessionDetail(detail)).toEqual(detail);
+    expect(detail.children).toEqual([
+      {
+        agentType: null,
+        evidence: 'opencode-session-parent',
+        label: 'Explore the schema',
+        sourceSessionId: 'child-a',
+        spawnTurnIndex: null,
+      },
+      {
+        agentType: null,
+        evidence: 'opencode-session-parent',
+        label: null,
+        sourceSessionId: 'child-b',
+        spawnTurnIndex: null,
+      },
+    ]);
+    expect(detail.coverage.childDiscovery).toEqual({
+      omittedCount: 0,
+      reasons: ['harness-no-spawn-evidence'],
+      status: 'partial',
+    });
+    expect(detail.coverage.interactionAttribution.status).toBe('unavailable');
+    expect(detail.interactions).toEqual([]);
   });
 });

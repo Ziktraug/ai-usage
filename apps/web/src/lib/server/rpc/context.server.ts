@@ -1,5 +1,6 @@
 import {
   parseSessionCampaignChildrenRequest,
+  parseSessionLookupRequest,
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
 } from '@ai-usage/report-core/session-query';
@@ -281,6 +282,14 @@ const createSessionDependencies = (): WebRpcRouterDependencies['session'] => ({
         return await server.runRevisionQueryForServer(
           kind,
           parseSessionNeighborRequest(input),
+          undefined,
+          abortOptions(signal),
+        );
+      }
+      if (kind === 'session-lookup') {
+        return await server.runRevisionQueryForServer(
+          kind,
+          parseSessionLookupRequest(input),
           undefined,
           abortOptions(signal),
         );
