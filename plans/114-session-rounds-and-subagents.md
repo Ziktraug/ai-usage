@@ -1,7 +1,8 @@
 # 114 — Session rounds and sub-agents: reading panel with a URL
 
-Status: IN PROGRESS on `feat/session-rounds-panel` (phase 1 committed; phase 2
-route, panel and focus policy implemented, e2e in verification). Depends on nothing merged
+Status: IN PROGRESS on `feat/session-rounds-panel` (phases 1–3 committed:
+contract and derivation, URL panel, rounds reader; phase 4 lanes and agent view
+pending). Depends on nothing merged
 after `6fb1d660`. Product decisions taken by the operator on 2026-09-09 from the
 "Rounds & Sous-agents" proposal (audit of real local history, three directions,
 peer review with Codex).
