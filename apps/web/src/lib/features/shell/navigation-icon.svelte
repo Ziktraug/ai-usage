@@ -22,6 +22,8 @@
     <rect height="5" rx="1" width="7" x="14" y="3"></rect>
     <rect height="9" rx="1" width="7" x="14" y="12"></rect>
     <rect height="5" rx="1" width="7" x="3" y="16"></rect>
+  {:else if name === 'campaigns'}
+    <path d="M4 4v16M4 7h15M8 12h9M12 17h9M8 7v5M12 12v5"></path>
   {:else if name === 'sessions'}
     <path d="M8 6h13M8 12h13M8 18h13"></path>
     <path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"></path>

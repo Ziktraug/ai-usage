@@ -143,7 +143,7 @@
     bottom: 0,
     zIndex: 50,
     display: { base: 'grid', md: 'none' },
-    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
     minH: '64px',
     px: '8px',
     pb: 'max(6px, env(safe-area-inset-bottom))',
@@ -151,7 +151,7 @@
     bg: 'surface',
     _print: { display: 'none' },
   });
-  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' });
+  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
   const mobileLink = css({
     display: 'grid',
     placeItems: 'center',
@@ -440,6 +440,13 @@
         preserveScroll
       />
     {/each}
+    <NavigationLink
+      active={page.url.pathname === '/campaigns'}
+      class={linkClass(page.url.pathname === '/campaigns')}
+      href={`/campaigns${page.url.search}`}
+      icon="campaigns"
+      label="Campaigns"
+    />
   </nav>
   {#if showManage}
     <nav aria-label="Manage destinations" class={cx(navigationGroup, navigationGroupDivider)}>
@@ -476,6 +483,12 @@
       preserveScroll
     />
   {/each}
+  <NavigationLink
+    active={page.url.pathname === '/campaigns'}
+    class={linkClass(page.url.pathname === '/campaigns', true)}
+    href={`/campaigns${page.url.search}`}
+    label="Campaigns"
+  />
   {#if showManage}
     <ManageButton
       class={cx(

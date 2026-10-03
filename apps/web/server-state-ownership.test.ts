@@ -10,6 +10,7 @@ const IMPERATIVE_QUERY_PATTERN =
   /\.(fetchInfiniteQuery|fetchNextPage|fetchQuery|ensureQueryData|getQueryData|getQueryState)\(/g;
 
 const SERVER_PREFETCH_HELPERS = new Set([
+  'lib/features/campaigns/campaigns-load.ts',
   'lib/features/memory/memory-load.ts',
   'lib/features/projects/projects-load.ts',
   'lib/features/report/core/report-bootstrap.ts',
