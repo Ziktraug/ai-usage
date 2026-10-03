@@ -139,6 +139,32 @@ test('filters through the URL, shows an empty result, and restores the prior cam
   await expect(search).toHaveValue('');
 });
 
+test('preserves multiple inherited harnesses when changing search and allows choosing one harness', async ({
+  page,
+}) => {
+  const search = new URLSearchParams({ harness: JSON.stringify(['Codex', 'Claude']) });
+  await page.goto(`/campaigns?${search.toString()}`);
+  await waitForHydratedNavigation(page);
+  const harness = page.getByRole('combobox', { name: 'Harness', exact: true });
+  await expect(harness.locator('option:checked')).toHaveText('Multiple harnesses (Codex, Claude)');
+  await expect(page.locator('[data-campaign-card]')).toHaveCount(3);
+
+  await page.getByRole('searchbox', { name: 'Find a campaign', exact: true }).fill('release');
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('release');
+  await expect
+    .poll(() => JSON.parse(new URL(page.url()).searchParams.get('harness') ?? '[]'))
+    .toEqual(['Codex', 'Claude']);
+  await expect(page.locator('[data-campaign-card]')).toHaveCount(1);
+  await expect(agentMap(page)).toContainText(STANDALONE_TITLE);
+
+  await harness.selectOption('Claude');
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('harness') ?? '[]')).toEqual(['Claude']);
+  await expect(harness).toHaveValue('Claude');
+  await expect(page.locator('[data-campaign-card]')).toHaveCount(1);
+});
+
 test('keeps the hierarchy accessible and within the viewport on desktop and narrow screens', async ({
   page,
 }, testInfo) => {

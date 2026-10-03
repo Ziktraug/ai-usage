@@ -39,6 +39,8 @@
   import { readCampaignSelection } from './campaigns-selection';
   import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
+  const MULTIPLE_HARNESSES = 'inherited-harnesses';
+
   let { data }: { data: CampaignsPageData } = $props();
   const queryClient = useQueryClient();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
@@ -75,6 +77,7 @@
   const revision = $derived(data.mode === 'live' ? bootstrap?.manifest.revision : 'synthetic-campaign-map-v1');
   const generatedAt = $derived(bootstrap?.bootstrap.support.generatedAt ?? campaignMapFixtureGeneratedAt);
   const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  const harnessSelection = $derived(search.harness.length > 1 ? MULTIPLE_HARNESSES : (search.harness[0] ?? ''));
   const inheritedFilters = $derived([
     ...Object.entries(search.filters).map(([name, value]) => `${name}: ${value}`),
     ...search.machine.map((value) => `machine: ${value}`),
@@ -204,10 +207,14 @@
     const form = new FormData(event.currentTarget);
     const range = form.get('range');
     const harness = String(form.get('harness') ?? '');
+    let nextHarness = harness ? [harness] : [];
+    if (harness === MULTIPLE_HARNESSES) {
+      nextHarness = search.harness;
+    }
     const next: DashboardSearch = {
       ...search,
       q: String(form.get('q') ?? ''),
-      harness: harness ? [harness] : [],
+      harness: nextHarness,
       range:
         range === 'custom'
           ? search.range
@@ -360,7 +367,10 @@
         </select></label
       >
       <label class={field}
-        >Harness<select class={input} name="harness" value={search.harness[0] ?? ''}>
+        >Harness<select class={input} name="harness" value={harnessSelection}>
+          {#if search.harness.length > 1}
+            <option value={MULTIPLE_HARNESSES}>Multiple harnesses ({search.harness.join(', ')})</option>
+          {/if}
           <option value="">All harnesses</option>
           <option>Codex</option>
           <option>Claude</option>
