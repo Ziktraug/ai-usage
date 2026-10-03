@@ -176,7 +176,9 @@
     </div>
     <div class={metric}>
       <span class={label}>Peak overlap</span>
-      {map.maxConcurrency === null ? 'Incomplete timing' : `${map.maxConcurrency} sessions`}
+      {map.maxConcurrency === null
+        ? 'Incomplete timing'
+        : `${map.maxConcurrency} ${map.maxConcurrency === 1 ? 'session' : 'sessions'}`}
     </div>
     <div class={metric}>
       <span class={label}>Tokens in loaded sessions</span>{map.usageComplete ? '' : '≥ '}{fmtCompact(map.tokenTotal)}

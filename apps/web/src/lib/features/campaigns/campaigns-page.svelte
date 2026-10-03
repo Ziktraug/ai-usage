@@ -284,9 +284,9 @@
     display: 'grid',
     gap: '6px',
     minW: 0,
-    maxH: { lg: 'calc(100vh - 260px)' },
-    overflowY: { lg: 'auto' },
-    pr: { lg: '4px' },
+    maxH: { base: '360px', lg: 'calc(100vh - 260px)' },
+    overflowY: 'auto',
+    pr: '4px',
   });
   const card = css({
     display: 'grid',
