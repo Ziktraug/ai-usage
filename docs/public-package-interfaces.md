@@ -50,6 +50,7 @@ This package imports no other `@ai-usage/*` package.
   projection contracts.
 - `./session-lineage`: parent/root session normalization.
 - `./session-query`: strict Session paging/campaign/neighbor/cursor contracts.
+- `./campaign-map`: pure temporal hierarchy and bounded-member metrics for a canonical served campaign.
 - `./session-vcs`: bounded credential-free repository/branch/commit/PR facts.
 - `./skill-observation`: the persisted skill-observation fact, parser, producer
   completeness, and storage bounds.

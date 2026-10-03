@@ -9,6 +9,7 @@
     "./auth": "./src/auth.ts",
     "./canonical-instant": "./src/canonical-instant.ts",
     "./campaign-label": "./src/campaign-label.ts",
+    "./campaign-map": "./src/campaign-map.ts",
     "./csv": "./src/csv.ts",
     "./datasets": "./src/datasets.ts",
     "./focused-report-query": "./src/focused-report-query.ts",
