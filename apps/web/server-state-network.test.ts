@@ -9,6 +9,7 @@ describe('browser server-state network characterization', () => {
   test('maps physical oRPC paths to stable contract operations and rejects drift', () => {
     expect(rpcOperationForPathname('/rpc/report/focusedOverview')).toBe('report.focusedOverview');
     expect(rpcOperationForPathname('/rpc/session/campaign-children')).toBe('session.campaignChildren');
+    expect(rpcOperationForPathname('/rpc/session/campaignChildren')).toBe('session.campaignChildren');
     expect(rpcOperationForPathname('/rpc/skills/reconcile/example')).toBe('skills.reconcileOne');
     expect(rpcOperationForPathname('/rpc/skills/snapshot')).toBe('skills.snapshot');
     expect(rpcOperationForPathname('/rpc/skills/projectInventories')).toBe('skills.projectInventories');

@@ -69,10 +69,11 @@ over-emphasize it or build ROI/break-even features on top of it.
 - Per-metric provenance/limitations: instead of a global completeness badge, let
   individual columns/cards carry their own caveats (partial Cursor counters,
   ambiguous reconciliation, usage-unavailable sessions) where they apply.
-- Project → Campaign → Session timeline: extend the Campaigns Agent Map with a
-  shared time scale across projects using a bounded exact-revision summary query.
-  Derive campaign-wide bounds from all members rather than reusing the root's
-  active duration or issuing a member query for every list item.
+- The Project → Campaign → Session timeline uses bounded full-campaign chronology
+  summaries on existing Session pages and loads the selected hierarchy on demand.
+  If historical interval-overlap discovery becomes necessary, add an explicit
+  query contract rather than changing the report's shared recorded-activity
+  period semantics implicitly.
 - Campaign outcomes: surface recorded repository/branch/commit/PR facts without
   interpreting a mentioned commit as produced work or a recorded PR as merged.
 - Timeline charts now collapse additive tails beyond 12 categories into a

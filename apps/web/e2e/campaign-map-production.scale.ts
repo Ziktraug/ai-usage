@@ -11,6 +11,7 @@ import { freezeSessionScrollCollectionSources } from './session-scroll-source-co
 
 const OPEN_SESSION_PATTERN = /^Open session/;
 const ANALYSE_SESSION_PATTERN = /Analyze session chronology/;
+const EXPAND_CAMPAIGN_PATTERN = /^Expand sessions for/;
 
 const SECRET_SENTINELS = [
   HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
@@ -146,4 +147,80 @@ test('retains the visible campaign on a mismatched response and recovers through
   await expect(page.locator('[data-campaign-node]')).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
   await expect(page.locator('[data-map-revision]')).toHaveAttribute('data-map-revision', revision!);
+});
+
+test('serves bounded project chronology without fetching every campaign hierarchy', async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  await freezeSessionScrollCollectionSources(request, baseURL!);
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/campaigns?range=all&campaignView=timeline');
+  await waitForHydratedNavigation(page);
+  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(40);
+  await expect(page.locator('[data-timeline-session]')).toHaveCount(1);
+  expect(trace.counts().operations['session.campaignChildren'] ?? 0).toBe(0);
+  const nextCampaign = page.locator('[data-timeline-campaign]').nth(1);
+  const key = await nextCampaign.getAttribute('data-campaign-key');
+  const response = page.waitForResponse(
+    (candidate) => new URL(candidate.url()).pathname === '/rpc/session/campaignChildren',
+  );
+  await nextCampaign.getByRole('button', { name: EXPAND_CAMPAIGN_PATTERN }).click();
+  const body = await (await response).text();
+  const revision = await page.locator('main[data-route-shell="campaigns"]').getAttribute('data-report-revision');
+  expect(new Set(rpcStringFieldValues(body, 'revision'))).toEqual(new Set([revision]));
+  await expect.poll(() => new URL(page.url()).searchParams.get('selectedCampaign')).toBe(key);
+  await expect(page.locator('[data-timeline-session]')).toHaveCount(1);
+  expect(trace.counts().operations['session.campaignChildren']).toBe(1);
+  expect(trace.counts().operations['session.page'] ?? 0).toBe(0);
+
+  const session = page.locator('[data-timeline-session]').getByRole('button', { name: OPEN_SESSION_PATTERN });
+  await session.click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toBeVisible();
+  const detailResponse = page.waitForResponse(
+    (candidate) => new URL(candidate.url()).pathname === '/rpc/session/detail',
+  );
+  await drawer.getByRole('button', { name: ANALYSE_SESSION_PATTERN }).click();
+  const detail = await (await detailResponse).text();
+  expect(new Set(rpcStringFieldValues(detail, 'revision'))).toEqual(new Set([revision]));
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect(session).toBeFocused();
+  trace.dispose();
+});
+
+test('keeps the retained timeline on its original period until a failed filter can be retried', async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  await freezeSessionScrollCollectionSources(request, baseURL!);
+  await page.goto('/campaigns?range=all&q=Implement%20fixture%20root&campaignView=timeline');
+  await waitForHydratedNavigation(page);
+  await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
+  const timeline = page.locator('[data-project-timeline]');
+  const start = await timeline.getAttribute('data-axis-start');
+  const end = await timeline.getAttribute('data-axis-end');
+  expect(start).toBeTruthy();
+  await page.route('**/rpc/session/page**', async (route) => {
+    const response = await route.fetch();
+    const decoded = decodeRpcResponseBody(await response.text());
+    if (!(typeof decoded === 'object' && decoded !== null && 'revision' in decoded)) {
+      throw new Error('The real Session response must expose its exact revision');
+    }
+    await route.fulfill({ response, body: encodeRpcResponseBody({ ...decoded, revision: 'mismatched-revision' }) });
+  });
+  await page.getByRole('combobox', { name: 'Period', exact: true }).selectOption('today');
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  await expect(page.getByText('Showing last loaded campaigns.', { exact: false })).toBeVisible();
+  await expect(timeline).toHaveAttribute('data-axis-start', start!);
+  await expect(timeline).toHaveAttribute('data-axis-end', end!);
+  await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
+  await page.unroute('**/rpc/session/page**');
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(0);
+  await expect(page.getByText('No campaigns match this period and search.', { exact: false })).toBeVisible();
 });

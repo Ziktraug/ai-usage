@@ -228,6 +228,7 @@ The web report opens on Overview and lets you:
 
 - switch between **Overview, Sessions, and Analysis**; Analysis keeps the existing breakdown dimensions for Models, Providers, Harnesses, Projects, and Cursor AI;
 - open **Campaigns** to explore related agent sessions as a temporal hierarchy, collapse descendants, compare recorded overlap, and open any node in the existing session drawer;
+- switch Campaigns to **Project timeline** to compare projects and campaigns on one UTC scale, expand one campaign's sessions, or collapse a project;
 - filter by date range with presets or a custom range, and read the activity timeline;
 - analyze local Claude, Codex, and OpenCode chronology from the unified session drawer, using each harness's recorded, partial, or unavailable timing semantics;
 - inspect source-dependent repository, branch-span, commit, and recorded pull-request facts when the harness owns them;
@@ -245,6 +246,15 @@ token counters are disclosed beside the affected information. Titles reuse
 published session labels and existing local campaign names; generic children
 inherit parent context without fetching prompts or calling a model. `bun run
 demo` includes an isolated example with nested and parallel agents.
+
+The Project timeline reuses the same paged discovery filters. Campaign bounds
+cover all recorded members; only the expanded campaign loads individual session
+rows. The shared scale fits the loaded campaigns within the selected period, and
+clipped intervals are marked. Period filters retain the report's recorded-activity
+semantics: they do not search for every session whose lifetime overlaps an
+arbitrary historical period. Project bands preserve gaps between campaigns and
+do not claim continuous work. `campaignView=timeline` preserves this view in the
+URL; a selected campaign outside the loaded page can still open in the Agent Map.
 
 ## Useful options
 

@@ -37,6 +37,19 @@ test('explores Campaigns and individual session details without local data or bu
   await campaigns.getByRole('button', { name: INCOMPLETE_CAMPAIGN_PATTERN }).click();
   await expect(map.getByRole('heading', { name: 'Explore dashboard layout', exact: true })).toBeVisible();
   await expect(map).toContainText('Timing is incomplete.');
+
+  await page.getByRole('button', { name: 'Project timeline', exact: true }).click();
+  await expect(page.locator('[data-project-timeline]')).toBeVisible();
+  await expect(page.locator('[data-timeline-project]')).toHaveCount(3);
+  await expect(page.locator('[data-timeline-session]')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Expand sessions for Build forecast model', exact: true }).click();
+  await expect(page.locator('[data-timeline-session]')).toHaveCount(5);
+  await expect(page.locator('[data-timeline-session][data-depth="2"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Open session Verify ingestion edge cases', exact: true }).click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer.locator('[data-detail-item="Total tokens"]')).toContainText('160k');
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
   expect(businessRequests).toEqual([]);
 });
 
