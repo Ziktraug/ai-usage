@@ -301,12 +301,15 @@ const verifyEveryVirtualizedCampaign = async (
         rowId: item.dataset.sessionRowId ?? '',
       })),
     );
+    // Keep every check without recording thousands of repeated assertion steps in the trace.
     for (const { index, rowId } of rendered) {
       maximumValidCampaignIndex([index]);
-      expect(rowId).not.toBe('');
+      if (rowId.length === 0) {
+        throw new Error(`Campaign index ${index} has no session identity`);
+      }
       const previous = identitiesByIndex.get(index);
-      if (previous !== undefined) {
-        expect(rowId).toBe(previous);
+      if (previous !== undefined && rowId !== previous) {
+        throw new Error(`Campaign index ${index} changed identity from ${previous} to ${rowId}`);
       }
       identitiesByIndex.set(index, rowId);
     }
@@ -322,10 +325,12 @@ const verifyEveryVirtualizedCampaign = async (
   );
   for (const { index, rowId } of finalRendered) {
     maximumValidCampaignIndex([index]);
-    expect(rowId).not.toBe('');
+    if (rowId.length === 0) {
+      throw new Error(`Campaign index ${index} has no session identity`);
+    }
     const previous = identitiesByIndex.get(index);
-    if (previous !== undefined) {
-      expect(rowId).toBe(previous);
+    if (previous !== undefined && rowId !== previous) {
+      throw new Error(`Campaign index ${index} changed identity from ${previous} to ${rowId}`);
     }
     identitiesByIndex.set(index, rowId);
   }
