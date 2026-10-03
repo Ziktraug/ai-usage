@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import {
+  buildCampaignChronology,
   parseSessionQueryRequest,
   type SessionPresentationRow,
   sessionQueryFingerprint,
@@ -86,6 +87,7 @@ const queryData = (): SessionWindowQueryData => ({
         itemCount: FILTERED_CAMPAIGN_ROWS,
         items: loadedCampaignRows().map((row, index) => ({
           campaignKey: row.campaignKey ?? `campaign-${index}`,
+          chronology: buildCampaignChronology([row]),
           kind: 'campaign' as const,
           row,
         })),

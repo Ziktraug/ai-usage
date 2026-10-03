@@ -219,6 +219,102 @@ const openFixtureDatabase = async (): Promise<{ database: TestQueryDatabase; dbP
   openRowsDatabase(rows);
 
 describe('durable session query SQLite projections', () => {
+  test('hydrates full chronology in the existing batch while preserving filtered costs and classifier rollups', async () => {
+    const instant = (minute: number) => new Date(Date.UTC(2026, 6, 1, 10, minute)).toISOString();
+    const timedRow = (
+      id: string,
+      units: number,
+      start: number | null,
+      end: number | null,
+      parent = 'timeline-root',
+    ): SerializedRow => {
+      const date = start === null ? null : instant(start);
+      const endDate = end === null ? null : instant(end);
+      return {
+        ...row(id, units, { ...(id === 'timeline-root' ? {} : { parent }), root: 'timeline-root' }),
+        activeDate: endDate ?? date,
+        date,
+        endDate,
+      };
+    };
+    const fixtureRows = [
+      timedRow('timeline-root', 10, 10, 20),
+      timedRow('earlier-child', 20, 0, 5),
+      timedRow('nested-child', 30, 25, 40, 'earlier-child'),
+      { ...timedRow('review', 7, 1, 2), origin: 'classifier' as const },
+      timedRow('end-only', 1, null, -20),
+      timedRow('start-only', 1, 100, null),
+      timedRow('missing', 1, null, null),
+      timedRow('reversed', 1, 1000, -1000),
+    ];
+    const { database, dbPath } = await openRowsDatabase(fixtureRows);
+    try {
+      const request = queryRequest({ range: { from: instant(19), to: instant(21) } });
+      const traces: { params: readonly unknown[]; sql: string }[] = [];
+      const actual = executeMaterializedSessionQuery(database, 'sessions', request, (entry) => traces.push(entry));
+      expect(actual).toEqual(projectSessionPage(fixtureRows, request));
+      if (!('items' in actual && 'chronology' in actual.items[0]!)) {
+        throw new Error('Expected a campaign chronology result');
+      }
+      expect(actual.items).toHaveLength(1);
+      expect(actual.items[0]?.chronology).toEqual({
+        endedAt: instant(40),
+        observedFrom: instant(-20),
+        observedTo: instant(100),
+        sessionCount: 8,
+        startedAt: instant(0),
+        timedSessionCount: 4,
+      });
+      expect(actual.items[0]?.row).toMatchObject({
+        campaignTotalCount: 8,
+        campaignVisibleCount: 1,
+        costActual: 0.17,
+        costApprox: 1.7,
+        costQuota: 0.17,
+      });
+      const batches = traces.filter(({ sql }) => sql.includes('AS contributes_to_totals'));
+      expect(batches).toHaveLength(1);
+      expect(batches[0]?.params).toEqual([
+        Date.parse(instant(19)),
+        Date.parse(instant(21)),
+        'machine-a:codex:timeline-root',
+      ]);
+      expect(traces).toHaveLength(5);
+    } finally {
+      database.close();
+    }
+    const exactRequest = queryRequest({ revision: 'revision-a' });
+    const exact = await Effect.runPromise(
+      queryServedRevisionData({
+        dbPath,
+        kind: 'sessions',
+        now: 1001,
+        request: exactRequest,
+        revision: exactRequest.revision,
+      }),
+    );
+    expect(exact).toEqual(projectSessionPage(fixtureRows, exactRequest));
+  });
+
+  test('keeps missing and zero-length chronology in parity without a report schema change', async () => {
+    const instant = '1970-01-01T00:00:00.000Z';
+    const expanded = '+010000-01-01T00:00:00.000Z';
+    const fixtureRows = [
+      { ...row('missing', 1), date: null, endDate: null, activeDate: null },
+      { ...row('zero', 1), date: instant, endDate: instant, activeDate: instant, durationMs: 0 },
+      { ...row('expanded', 1), date: expanded, endDate: expanded, activeDate: expanded, durationMs: 0 },
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    try {
+      const request = queryRequest({ pageSize: 3 });
+      expect(executeMaterializedSessionQuery(database, 'sessions', request)).toEqual(
+        projectSessionPage(fixtureRows, request),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   test('rejects duplicate report row identities during publication', async () => {
     const duplicate = row('duplicate-source', 10);
 

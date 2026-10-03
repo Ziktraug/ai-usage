@@ -6,7 +6,11 @@ import {
   projectFocusedOverview,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
-import { enrichSessionPresentationRow, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import {
+  buildCampaignChronology,
+  enrichSessionPresentationRow,
+  sessionQueryFingerprint,
+} from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { demoReportPayload } from '../../../../report-data';
 import { countDehydratedSessionPagePayloads, createHydratedWebQueryClient } from '../../../query/client';
@@ -234,6 +238,7 @@ describe('report bootstrap', () => {
                   items: [
                     {
                       campaignKey: row.campaignKey ?? `campaign:${row.rowId}`,
+                      chronology: buildCampaignChronology([row]),
                       kind: 'campaign' as const,
                       row,
                     },

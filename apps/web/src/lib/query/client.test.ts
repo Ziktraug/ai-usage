@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { parseSessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import {
+  buildCampaignChronology,
+  parseSessionQueryRequest,
+  sessionQueryFingerprint,
+} from '@ai-usage/report-core/session-query';
 import { QueryObserver } from '@tanstack/svelte-query';
 import {
   countDehydratedSessionPagePayloads,
@@ -159,6 +163,7 @@ describe('request-scoped Web QueryClient', () => {
     const fingerprint = sessionQueryFingerprint(query);
     const sessionItem = {
       campaignKey: 'campaign:hydrate',
+      chronology: buildCampaignChronology([{ date: null, endDate: null }]),
       kind: 'campaign' as const,
       row: {
         calls: 1,
