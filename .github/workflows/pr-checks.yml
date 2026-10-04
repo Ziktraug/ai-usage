@@ -174,3 +174,10 @@ jobs:
       - run: bun tools/retry-on-dev-server-hang.ts bun run test:e2e-demo
       - run: bun run test:e2e-production
       - run: bun run --cwd apps/web benchmark:session-scroll
+      - name: Upload production browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-browser-failures
+          path: apps/web/test-results
+          retention-days: 7
