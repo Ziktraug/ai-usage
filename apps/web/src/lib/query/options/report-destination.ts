@@ -43,6 +43,7 @@ export interface ReportDestinationQueryData extends FocusedReportCommit {
 
 export interface ReportDestinationQueryExecution {
   readonly browser: boolean;
+  readonly preserveSessionRevision?: boolean;
 }
 
 export interface ReportDestinationQueryDependencies {
@@ -185,9 +186,17 @@ export const reportDestinationQueryOptions = (
     ...queryPolicy('current-alias-swr'),
     enabled: execution.browser,
     queryFn: async ({ signal }) => {
+      const visible = dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey());
+      const preservedDescriptor =
+        execution.preserveSessionRevision &&
+        destination.kind === 'sessions' &&
+        visible?.destination.kind === 'sessions' &&
+        destinationFingerprint(visible.destination) === destinationFingerprint(destination)
+          ? visible.descriptor
+          : undefined;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          const descriptor = await descriptorFor(dependencies, attempt > 0);
+          const descriptor = preservedDescriptor ?? (await descriptorFor(dependencies, attempt > 0));
           signal.throwIfAborted();
           const result = await dependencies.queryClient.fetchQuery(
             exactDestinationQueryOptions(dependencies, destination, descriptor, sessionWindowIntent),
@@ -197,7 +206,7 @@ export const reportDestinationQueryOptions = (
         } catch (error) {
           const expired =
             error instanceof FocusedReportRevisionExpiredError || error instanceof SessionRevisionExpiredError;
-          if (!(expired && attempt === 0)) {
+          if (!(expired && attempt === 0) || preservedDescriptor !== undefined) {
             throw error;
           }
         }
@@ -211,8 +220,14 @@ export const refreshReportDestination = async (
   dependencies: ReportDestinationQueryDependencies,
   destination: FocusedReportDestination,
   sessionWindowIntent: SessionWindowIntent = initialSessionWindowIntent(),
+  preserveSessionRevision = false,
 ): Promise<ReportDestinationQueryData> => {
-  const options = reportDestinationQueryOptions(dependencies, destination, { browser: true }, sessionWindowIntent);
+  const options = reportDestinationQueryOptions(
+    dependencies,
+    destination,
+    { browser: true, preserveSessionRevision },
+    sessionWindowIntent,
+  );
   await dependencies.queryClient.invalidateQueries({
     exact: true,
     queryKey: options.queryKey,

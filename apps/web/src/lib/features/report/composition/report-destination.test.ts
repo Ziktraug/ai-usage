@@ -19,7 +19,9 @@ import { QueryObserver } from '@tanstack/svelte-query';
 import { demoReportPayload } from '../../../../report-data';
 import { createWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
+import { reportBootstrapQueryOptions } from '../../../query/options/report';
 import { reportDestinationExactKey, reportDestinationQueryOptions } from '../../../query/options/report-destination';
+import { initialSessionWindowIntent } from '../../../query/options/session-window';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { syntheticCampaignRow } from '../../sessions/table/session-table.fixtures';
 
@@ -116,6 +118,110 @@ const sessionClientWithPage = (page: SessionClientAdapter['page']): SessionClien
 };
 
 describe('report destination Query', () => {
+  test('does not replace an inspected expired revision while acquiring the next Session page', async () => {
+    const queryClient = createWebQueryClient();
+    let bootstrapCalls = 0;
+    const calls: string[] = [];
+    const client: ReportQueryClient = {
+      getFocusedReportBreakdown: () => Promise.reject(new Error('Unexpected Breakdown query')),
+      getFocusedReportOverview: (request) => Promise.resolve(successfulOverview(request)),
+      getFocusedReportSupport: () => Promise.reject(new Error('Unexpected support query')),
+      getReportRevisionBootstrap: () => {
+        bootstrapCalls += 1;
+        return Promise.resolve(bootstrap(bootstrapCalls === 1 ? 'revision-one' : 'revision-two'));
+      },
+      getReportRevisionManifest: () => Promise.reject(new Error('Unexpected manifest query')),
+    };
+    const dependencies = {
+      queryClient,
+      reportClient: client,
+      sessionClient: sessionClientWithPage((request) => {
+        calls.push(request.revision);
+        return Promise.resolve(
+          request.cursor === null
+            ? successfulSessionPage(request, 'sq1.0000000000000000.1')
+            : {
+                error: { message: 'expired', revision: request.revision, tag: 'RevisionExpired' as const },
+                ok: false as const,
+                requestFingerprint: sessionQueryFingerprint(request),
+                revision: request.revision,
+              },
+        );
+      }),
+    };
+    const destination = sessionsDestination();
+    const initial = reportDestinationQueryOptions(dependencies, destination, { browser: true });
+    try {
+      const old = await queryClient.fetchQuery(initial);
+      await queryClient.invalidateQueries({ exact: true, queryKey: initial.queryKey, refetchType: 'none' });
+      await expect(
+        queryClient.fetchQuery(
+          reportDestinationQueryOptions(
+            dependencies,
+            destination,
+            { browser: true, preserveSessionRevision: true },
+            { ...initialSessionWindowIntent(), topLevelDepth: 2 },
+          ),
+        ),
+      ).rejects.toThrow('expired');
+      expect(bootstrapCalls).toBe(1);
+      expect(calls).toEqual(['revision-one', 'revision-one']);
+      expect(queryClient.getQueryData<typeof old>(initial.queryKey)).toBe(old);
+    } finally {
+      queryClient.clear();
+    }
+  });
+  test('keeps an inspected Session revision for depth growth until explicit refresh', async () => {
+    const queryClient = createWebQueryClient();
+    const calls: string[] = [];
+    const client: ReportQueryClient = {
+      getFocusedReportBreakdown: () => Promise.reject(new Error('Unexpected Breakdown query')),
+      getFocusedReportOverview: (request) => Promise.resolve(successfulOverview(request)),
+      getFocusedReportSupport: () => Promise.reject(new Error('Unexpected support query')),
+      getReportRevisionBootstrap: () => Promise.resolve(bootstrap('revision-one')),
+      getReportRevisionManifest: () => Promise.reject(new Error('Unexpected manifest query')),
+    };
+    const dependencies = {
+      queryClient,
+      reportClient: client,
+      sessionClient: sessionClientWithPage((request) => {
+        calls.push(`${request.revision}:${request.cursor ?? 'first'}`);
+        return Promise.resolve(
+          successfulSessionPage(request, request.cursor === null ? 'sq1.0000000000000000.1' : null),
+        );
+      }),
+    };
+    const destination = sessionsDestination();
+    const initial = reportDestinationQueryOptions(dependencies, destination, { browser: true });
+    try {
+      await queryClient.fetchQuery(initial);
+      queryClient.setQueryData(
+        reportBootstrapQueryOptions(client, { browser: true }).queryKey,
+        bootstrap('revision-two'),
+      );
+      await queryClient.invalidateQueries({ exact: true, queryKey: initial.queryKey, refetchType: 'none' });
+      const depth = { ...initialSessionWindowIntent(), topLevelDepth: 2 };
+      const preserved = await queryClient.fetchQuery(
+        reportDestinationQueryOptions(
+          dependencies,
+          destination,
+          { browser: true, preserveSessionRevision: true },
+          depth,
+        ),
+      );
+      expect(preserved.descriptor.revision).toBe('revision-one');
+      expect(preserved.sessions?.topLevel.pages).toHaveLength(2);
+      expect(calls).toEqual(['revision-one:first', 'revision-one:sq1.0000000000000000.1']);
+      await queryClient.invalidateQueries({ exact: true, queryKey: initial.queryKey, refetchType: 'none' });
+      const refreshed = await queryClient.fetchQuery(
+        reportDestinationQueryOptions(dependencies, destination, { browser: true }, depth),
+      );
+      expect(refreshed.descriptor.revision).toBe('revision-two');
+      expect(refreshed.sessions?.topLevel.pages).toHaveLength(2);
+    } finally {
+      queryClient.clear();
+    }
+  });
   test('QUERY-REPORT-DESTINATION: caches one complete Breakdown value and reuses it while fresh', async () => {
     const queryClient = createWebQueryClient();
     const calls = { bootstrap: 0, breakdown: 0, overview: 0 };

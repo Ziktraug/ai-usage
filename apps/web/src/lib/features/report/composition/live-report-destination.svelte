@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ghostButton } from '@ai-usage/design-system/report';
   import type {
     FocusedDateDomain,
     FocusedOverviewSessionItem,
@@ -207,15 +208,27 @@
       : defaultSessionWindowIntent;
   });
   const destinationDependencies = untrack(() => ({ queryClient, reportClient, sessionClient }));
+  const preserveSessionRevision = $derived(
+    focusedDestination.kind === 'sessions' &&
+      (activeSessionWindowIntent.topLevelDepth > 1 ||
+        Object.keys(activeSessionWindowIntent.campaignChildrenDepth).length > 0 ||
+        selection !== null),
+  );
   const destinationQuery = createQuery(() =>
     reportDestinationQueryOptions(
       destinationDependencies,
       focusedDestination,
-      { browser: typeof globalThis.location !== 'undefined' },
+      { browser: typeof globalThis.location !== 'undefined', preserveSessionRevision },
       activeSessionWindowIntent,
     ),
   );
   const commit = $derived(destinationQuery.data);
+  const newerSessionRevision = $derived(
+    preserveSessionRevision &&
+      commit?.destination.kind === 'sessions' &&
+      sourceControl.state().publication?.revision !== undefined &&
+      sourceControl.state().publication?.revision !== commit.descriptor.revision,
+  );
   $effect(() => {
     const domain = commit?.overview.dateDomain;
     if (domain) {
@@ -238,10 +251,12 @@
     focused: FocusedReportDestination,
     publicationRevision: string | undefined,
     sessionIntent: SessionWindowIntent,
+    preserveRevision = false,
   ): string =>
     JSON.stringify({
       destination: destinationFingerprint(focused),
       publicationRevision,
+      preserveRevision,
       sessionWindow: focused.kind === 'sessions' ? sessionWindowIntentFingerprint(sessionIntent) : undefined,
     });
   let requestedRefreshIdentity = untrack(() => {
@@ -252,12 +267,18 @@
       initialDestination.focused,
       sourceControl.state().publication?.revision,
       activeSessionWindowIntent,
+      preserveSessionRevision,
     );
   });
   let visibleCommitIdentity = '';
   $effect(() => {
     const publicationRevision = sourceControl.state().publication?.revision;
-    const refreshIdentity = refreshIdentityFor(focusedDestination, publicationRevision, activeSessionWindowIntent);
+    const refreshIdentity = refreshIdentityFor(
+      focusedDestination,
+      publicationRevision,
+      activeSessionWindowIntent,
+      preserveSessionRevision,
+    );
     if (refreshIdentity === requestedRefreshIdentity) {
       return;
     }
@@ -267,6 +288,14 @@
       focusedDestination.kind !== 'sessions' ||
       (visible?.sessions !== undefined && sessionWindowSatisfiesIntent(visible.sessions, activeSessionWindowIntent));
     if (
+      preserveSessionRevision &&
+      visible !== undefined &&
+      destinationFingerprint(focusedDestination) === destinationFingerprint(visible.destination) &&
+      sessionWindowIsCurrent
+    ) {
+      return;
+    }
+    if (
       visible !== undefined &&
       publicationRevision === visible.descriptor.revision &&
       destinationFingerprint(focusedDestination) === destinationFingerprint(visible.destination) &&
@@ -274,9 +303,12 @@
     ) {
       return;
     }
-    refreshReportDestination(destinationDependencies, focusedDestination, activeSessionWindowIntent).catch(
-      () => undefined,
-    );
+    refreshReportDestination(
+      destinationDependencies,
+      focusedDestination,
+      activeSessionWindowIntent,
+      preserveSessionRevision,
+    ).catch(() => undefined);
   });
   $effect(() => {
     const nextCommit = commit;
@@ -587,6 +619,22 @@
   {@render activeFilterSummary(staleForRequest)}
 {/snippet}
 {#snippet sessions()}
+  {#if newerSessionRevision}
+    <div aria-live="polite" data-session-revision-update role="status">
+      <span>New session data is available. Your current exploration is preserved.</span>
+      {#if selection}
+        <span>Close the session detail to apply it.</span>
+      {/if}
+      <button
+        class={ghostButton}
+        disabled={selection !== null || destinationQuery.isFetching}
+        onclick={() => refreshReportDestination(destinationDependencies, focusedDestination, activeSessionWindowIntent).catch(() => undefined)}
+        type="button"
+      >
+        Apply new session data
+      </button>
+    </div>
+  {/if}
   {#if sessionsDestinationModule}
     {@const SessionsDestination = sessionsDestinationModule.default}
     <SessionsDestination
