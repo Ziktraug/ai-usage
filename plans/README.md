@@ -189,6 +189,7 @@ dependency.
 | 112 | Skills Decision-First Surface — Verdicts on the Landing Page, Ranked Observations, Joined Axes | P1 | L | 111 | IN PROGRESS (implementation verified on PR #51; pending integration on `main`; adopt action remains plan 083) |
 | 113 | Skills Worktable — One Surface Joining Placement and Evidence, Detail as a Drawer | P1 | L | 111, 112 | DONE (implementation verified on `agent/099-skill-invocation-observability`; pending integration on `main`; adopt action remains plan 083; Activity sparkline recorded as a contract gap) |
 | 114 | Session Rounds and Sub-agents — Reading Panel With a URL Across Claude, Codex, and OpenCode | P1 | L | - | IN PROGRESS (phases 1–3 reconciled with continuous exploration; bounded Members from every detail entry point; acceptance tracked in PR #55; phase 4 lanes and agent view pending) |
+| 115 | [Local session distillation](115-local-session-distillation.md) | P1 | L | - | DONE (synthetic active-harness workflow, durable local corpus, CLI and Session integration verified; real-history evaluation and real-store upgrade unperformed) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:

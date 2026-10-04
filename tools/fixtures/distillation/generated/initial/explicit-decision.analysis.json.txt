@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "summary": {
+    "text": "The user chose local-only evidence packets bounded at 64 KiB with omitted byte counts, and deferred runtime enforcement. The assistant reported recording the decision.",
+    "basis": "reported",
+    "evidence": [
+      { "eventId": "event:6:7dc5bec0b54c85ee", "quote": "Decision: use 64 KiB per packet, local-only, with omitted byte counts." },
+      { "eventId": "event:9:3092074b16e389a7", "quote": "The decision is recorded. Runtime enforcement remains to be implemented." }
+    ]
+  },
+  "episodes": [
+    {
+      "id": "choose-and-record-packet-bound",
+      "objective": {
+        "text": "Compare 64 KiB and 1 MiB local evidence packet bounds, then record the selected bound without implementing runtime enforcement.",
+        "basis": "reported",
+        "evidence": [
+          { "eventId": "event:4:0575b3f15ea665c2", "quote": "The options are 64 KiB or 1 MiB; first explain the tradeoff." },
+          { "eventId": "event:6:7dc5bec0b54c85ee", "quote": "Record this decision in docs/adr/0042-evidence-packet-bound.md. Do not implement runtime enforcement yet." }
+        ]
+      },
+      "attempts": [
+        {
+          "text": "The assistant recommended 64 KiB to limit disclosure and processing time, while acknowledging that useful tail events might be omitted; 1 MiB was presented as preserving more detail at higher processing cost.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:5:50df93536bd2ab95", "quote": "64 KiB limits disclosure and processing time but may omit useful tail events. 1 MiB preserves more detail at higher processing cost." }]
+        },
+        {
+          "text": "The patch tool reported adding docs/adr/0042-evidence-packet-bound.md.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:8:53033a4e0d571c05", "quote": "Success. Updated the following files:\nA docs/adr/0042-evidence-packet-bound.md" }]
+        }
+      ],
+      "result": {
+        "status": "observed-success",
+        "assertion": {
+          "text": "Creation of the requested ADR file succeeded.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:8:53033a4e0d571c05", "quote": "Success. Updated the following files:\nA docs/adr/0042-evidence-packet-bound.md" }]
+        }
+      },
+      "difficulties": [],
+      "decisions": [
+        {
+          "text": "The user explicitly selected 64 KiB per packet, local-only handling, and visible omitted byte counts, with runtime enforcement deferred.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:6:7dc5bec0b54c85ee", "quote": "Decision: use 64 KiB per packet, local-only, with omitted byte counts. Record this decision in docs/adr/0042-evidence-packet-bound.md. Do not implement runtime enforcement yet." }]
+        }
+      ],
+      "entryPoints": [
+        {
+          "text": "The recorded decision's historical entry point is docs/adr/0042-evidence-packet-bound.md.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:8:53033a4e0d571c05", "quote": "A docs/adr/0042-evidence-packet-bound.md" }]
+        }
+      ],
+      "openQuestions": []
+    }
+  ],
+  "abstention": null
+}

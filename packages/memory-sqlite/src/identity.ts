@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { chmod, link, mkdir, open as openFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import type { DistillationRepository } from '@ai-usage/memory-service/distillation-repository';
 import type { MemoryRepository } from '@ai-usage/memory-service/repository';
 import {
   type Checkout,
@@ -42,6 +43,7 @@ import type {
   CheckoutResolutionReview,
 } from '@ai-usage/project-registry/review';
 import type { SqliteReplicationOutbox } from '@ai-usage/replication-outbox';
+import { createSqliteDistillationRepository } from './distillation';
 import { asMemoryIdentityStoreError, MemoryIdentityStoreError } from './errors';
 import { createSqliteMemoryRepository } from './memory';
 import {
@@ -55,6 +57,7 @@ import {
 } from './replication';
 import {
   LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION,
+  localDistillationSchema,
   localMemoryDomainSchema,
   localMemoryIdentitySchema,
   localMemoryImportStateSchema,
@@ -107,6 +110,7 @@ export interface LocalIdentityKernel {
   ) => Promise<ConfigureLocalMemoryReplicationResult>;
   readonly createProject: (project: Project) => Promise<void>;
   readonly createRepositoryWithAlias: (repository: Repository, alias: RepositoryAlias) => Promise<void>;
+  readonly distillation: DistillationRepository;
   readonly findProjectSourceMapping: (
     spaceId: SpaceId,
     projectSourceId: string,
@@ -379,6 +383,9 @@ const bootstrapDatabase = (database: Database, options: OpenLocalIdentityKernelO
       database.exec(localMemoryRepositoryProviderIdentityIndexRebuild);
     }
     database.exec(localMemoryReplicationPublicationSchema);
+    if (version < 7) {
+      database.exec(localDistillationSchema);
+    }
     database.exec(`PRAGMA user_version = ${LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION}`);
   });
   migrate.immediate();
@@ -422,11 +429,13 @@ export const openLocalIdentityKernel = async (
 ): Promise<LocalIdentityKernel> => {
   let database: Database | undefined;
   let replication: SqliteReplicationOutbox | undefined;
+  let distillation: DistillationRepository;
   try {
     database = await openDatabase(options.databasePath);
     bootstrapDatabase(database, options);
     readBootstrap(database);
     replication = initializeLocalMemoryReplication(database, instantNow(options.clock));
+    distillation = createSqliteDistillationRepository(database, options.clock);
   } catch (error) {
     try {
       database?.close(false);
@@ -455,6 +464,7 @@ export const openLocalIdentityKernel = async (
   };
 
   const kernel: LocalIdentityKernel = {
+    distillation,
     acknowledgeProjectSourceMapping: (mapping, spaceId) =>
       storageOperation('acknowledge-project-source-mapping', (open) => {
         open

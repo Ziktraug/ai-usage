@@ -81,6 +81,33 @@ const skillsErrors = ['ForbiddenDemo', 'InvalidInput', 'SkillsConflict', 'Unavai
 
 export const operationRequestPolicies = [
   defineOperationPolicy({
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
+    method: 'POST',
+    operation: 'getSessionDistillationStatus',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'sessionDistillation.status',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
+    method: 'POST',
+    operation: 'getSessionDistillationAnalysis',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'sessionDistillation.get',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
+    method: 'POST',
+    operation: 'getSessionDistillationEvidence',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'sessionDistillation.evidence',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
     applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable'],
     method: 'GET',
     operation: 'getMemoryProposalReviews',

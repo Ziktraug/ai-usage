@@ -1,3 +1,8 @@
+import {
+  type DistillationRequest,
+  distillationBounds,
+  parseDistillationRequest,
+} from '@ai-usage/platform-core/session-distillation';
 import type { CheckoutResolutionAction, CheckoutResolutionActionResult } from '@ai-usage/project-registry/review';
 import type { MemoryProjectContext } from './application';
 import {
@@ -35,6 +40,7 @@ export interface MemoryServiceClient {
     action: CheckoutResolutionAction,
     options?: MemoryServiceRequestOptions,
   ) => Promise<CheckoutResolutionActionResult>;
+  readonly distillation: (input: DistillationRequest, options?: MemoryServiceRequestOptions) => Promise<unknown>;
   readonly getMemoryItem: (
     input: MemoryItemReadRequest,
     options?: MemoryServiceRequestOptions,
@@ -148,8 +154,9 @@ export const createMemoryServiceClient = ({
     body: unknown,
     parseData: (value: unknown) => Value,
     options?: MemoryServiceRequestOptions,
+    timeoutMs = requestTimeoutMs,
   ): Promise<Value> => {
-    const linked = linkedSignal(options?.signal, requestTimeoutMs);
+    const linked = linkedSignal(options?.signal, timeoutMs);
     try {
       const rendezvous = await resolveRendezvous(linked.signal);
       const response = await fetchTransport(`http://127.0.0.1:${rendezvous.port}${pathname}`, {
@@ -182,6 +189,15 @@ export const createMemoryServiceClient = ({
     }
   };
   const client: MemoryServiceClient = {
+    distillation: async (input, options) =>
+      await request(
+        '/v1/session-distillation',
+        'POST',
+        parseDistillationRequest(input),
+        (value) => value,
+        options,
+        distillationBounds.operationMs,
+      ),
     applyResolutionAction: async (action, options) =>
       await request('/v1/repository-resolutions/actions', 'POST', action, parseCheckoutResolutionActionResult, options),
     listResolutionReviews: async (options) =>

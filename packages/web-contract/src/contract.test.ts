@@ -5,6 +5,7 @@ import { projectsContract } from './projects';
 import { replicationContract } from './replication';
 import { reportContract } from './report';
 import { sessionContract } from './session';
+import { sessionDistillationContract } from './session-distillation';
 import { skillsContract } from './skills';
 import { syncContract } from './sync';
 
@@ -15,6 +16,7 @@ test('composes every RPC leaf under one root contract', () => {
     projects: projectsContract,
     replication: replicationContract,
     session: sessionContract,
+    sessionDistillation: sessionDistillationContract,
     skills: skillsContract,
     sync: syncContract,
   });

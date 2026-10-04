@@ -42,6 +42,9 @@ export interface WebQueryOwnership {
     | 'report-current'
     | 'report-exact'
     | 'session'
+    | 'session-analysis'
+    | 'session-analysis-evidence'
+    | 'session-analysis-status'
     | 'skill-observations'
     | 'skills'
     | 'sources'
@@ -52,6 +55,24 @@ export interface WebQueryOwnership {
 }
 
 export const webQueryOwnership = [
+  {
+    family: 'session-analysis',
+    policy: 'immutable-revision',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
+  {
+    family: 'session-analysis-evidence',
+    policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
+  {
+    family: 'session-analysis-status',
+    policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
   {
     family: 'report-current',
     policy: 'current-alias-swr',

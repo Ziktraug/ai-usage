@@ -1,0 +1,104 @@
+{
+  "format": "ai-usage-distillation-generated-examples",
+  "version": 1,
+  "provenance": {
+    "producer": "Real structured generation by the active Codex harness, reported by the coordinating agent; outputs copied byte-for-byte from its generation artifacts.",
+    "producerModelId": null,
+    "reviewer": "The agent that authored the independent synthetic corpus before generation; review uses those frozen checkpoints.",
+    "generatedAnswersHandwrittenByReviewer": false,
+    "generationPacketDigestAvailable": false,
+    "reviewPacketNote": "Production packets were refreshed in place after initial generation, adding lifecycle completion and recorded truncation detection. Source digests and cited event IDs remain checkable. Archived packets are the review-time packets, not proven byte-identical generation inputs."
+  },
+  "files": [
+    {
+      "caseId": "multi-attempt",
+      "analysisFile": "generated/initial/multi-attempt.analysis.json.txt",
+      "analysisSha256": "b7ff19a8fa76f8b72e7f13feee4c2d8f20dd505a46a40143bcff82b731c5fe63",
+      "reviewPacketFile": "generated/initial/multi-attempt.review-packet.json.txt",
+      "reviewPacketSha256": "a842bf877c736da60bd6d3e75c3e664273863dc102ca653567d4d8bdf8d57d0c",
+      "reviewPacketDigest": "b60dcabcfb9f3998b9610a4edd0e90fde931410ef4f43760a568b8f53f8492ef",
+      "generationPacketDigest": null,
+      "sourceDigest": "c003d03499330f258e345ecf021f913291d71f05476694f409a738396db7c8bc"
+    },
+    {
+      "caseId": "unresolved-failure",
+      "analysisFile": "generated/initial/unresolved-failure.analysis.json.txt",
+      "analysisSha256": "94dbde5fee66a56b4828bba366bec65d9a7a6b3d1adcd9b506a188f8a3ced447",
+      "reviewPacketFile": "generated/initial/unresolved-failure.review-packet.json.txt",
+      "reviewPacketSha256": "ac7df8e187fee2a8fe8df0696697a7a4039ee65908dab37e84118a47be8bd363",
+      "reviewPacketDigest": "76cfdeaad52213f92a481c31ea761dfed4f27ff8723037876dbfd12bba783ca7",
+      "generationPacketDigest": null,
+      "sourceDigest": "210e451c306f0c771b44ac6e1fd0d6f861cd7e88d1776bb38daa1d8b03fce594"
+    },
+    {
+      "caseId": "explicit-decision",
+      "analysisFile": "generated/initial/explicit-decision.analysis.json.txt",
+      "analysisSha256": "0e768b1727747e71135038456e2186cb19b895408270b0cfe0dd1e23961a23e9",
+      "reviewPacketFile": "generated/initial/explicit-decision.review-packet.json.txt",
+      "reviewPacketSha256": "9774de5e3bb4154b1e3ec7a939719e56af1d985cb962b11e97cc38234a558168",
+      "reviewPacketDigest": "27704cbd7113913fcb884a94df838f85b683347ab4cc2f5f85e7e52f3a8946c6",
+      "generationPacketDigest": null,
+      "sourceDigest": "998644e022f520e54502c4c65394c35b19fbbd577d4638d33625f0d0ed931447"
+    },
+    {
+      "caseId": "abandoned-proposal",
+      "analysisFile": "generated/initial/abandoned-proposal.analysis.json.txt",
+      "analysisSha256": "839a87c1262ae2a71bdde6a8d1b55f189600ee3a0ca70e34e8d3eb8699de999e",
+      "reviewPacketFile": "generated/initial/abandoned-proposal.review-packet.json.txt",
+      "reviewPacketSha256": "5832aa23d9066ee34047888509dfef30d1457f9b4573a0c57c56768175f9987d",
+      "reviewPacketDigest": "8c1c5857c46b25d651dfecd4bdeab0977adc807b1e941b5de8fcf9e4906f0f3d",
+      "generationPacketDigest": null,
+      "sourceDigest": "2da7eee8427e1b4a947fd7c67bbb853af3e77c6e24e4e8972d06ea99cf58d4d4"
+    },
+    {
+      "caseId": "claimed-success",
+      "analysisFile": "generated/initial/claimed-success.analysis.json.txt",
+      "analysisSha256": "7693ce3748cfc1d42d3f4e84ea3ad6a1dac9b2ec899d652d1ca41c345626f0a1",
+      "reviewPacketFile": "generated/initial/claimed-success.review-packet.json.txt",
+      "reviewPacketSha256": "d3af931770c01bca6daf28fbb98a8a395cd3907657b5e2d57292fcce5669389f",
+      "reviewPacketDigest": "0ed37c4b5dc817032a1b0eb834f7dd6071e32dbb65ee004bae8616750c0bab42",
+      "generationPacketDigest": null,
+      "sourceDigest": "7af405f2e3b8904a758bf5979ea79dda88796fe4b81553a31db00768ce27243a"
+    },
+    {
+      "caseId": "trivial-no-lessons",
+      "analysisFile": "generated/initial/trivial-no-lessons.analysis.json.txt",
+      "analysisSha256": "007ca2986bbfe7d0dfde5082c36080a8a766aab9efde942e05629221419aa7db",
+      "reviewPacketFile": "generated/initial/trivial-no-lessons.review-packet.json.txt",
+      "reviewPacketSha256": "7ec95c62bdde7c77a69706e18967432749cad32d3c5652f0c039146d91b7ce88",
+      "reviewPacketDigest": "7263f36b7bce0ff041225bc48c1f0f2dbacff42874a0129a218065bb9a530765",
+      "generationPacketDigest": null,
+      "sourceDigest": "973228254f6b03c68211c2bea9c9b34762c37447908dd7eac90e34545cfece67"
+    },
+    {
+      "caseId": "interrupted",
+      "analysisFile": "generated/initial/interrupted.analysis.json.txt",
+      "analysisSha256": "3e69a8bbb4b6658dbb343c2517278adeefce8e69bfa9645f944037b6e549bc19",
+      "reviewPacketFile": "generated/initial/interrupted.review-packet.json.txt",
+      "reviewPacketSha256": "0b52ffd89453902506a08e0e4e9e00bc40b367720c3de34bc475df9a99073ccd",
+      "reviewPacketDigest": "f144fa299f99c69e8046d93b68290430e054f0f5428683b6f6460152ec863ef6",
+      "generationPacketDigest": null,
+      "sourceDigest": "32093d1578b9b4bbac66105c8321e96c22afc100e0eb7d583c579b1c79017250"
+    },
+    {
+      "caseId": "truncated-output",
+      "analysisFile": "generated/initial/truncated-output.analysis.json.txt",
+      "analysisSha256": "e419c6c477a99af8b73099590761c61a796cf0ef7726fc6f77cce364b4658cb5",
+      "reviewPacketFile": "generated/initial/truncated-output.review-packet.json.txt",
+      "reviewPacketSha256": "7b7fbc8b7b2458c339131659c6bd053913bfd317ca85061ad0ca8c7fded41154",
+      "reviewPacketDigest": "fe1836d9f9a5962a280eb1505b94816d997f9f9f7ad568b904ccdf57f08a04a0",
+      "generationPacketDigest": null,
+      "sourceDigest": "dfef0ef1fb2a741699ca05e21a672adce5cfe3c691d0bee6096523b0fa5e0722"
+    },
+    {
+      "caseId": "malicious-data",
+      "analysisFile": "generated/initial/malicious-data.analysis.json.txt",
+      "analysisSha256": "2b44969bb1a6112a876fb549893078045d655d60f7c24e5350c257cd1776f385",
+      "reviewPacketFile": "generated/initial/malicious-data.review-packet.json.txt",
+      "reviewPacketSha256": "2245f89d62a7af21744d132b1adeb36c3c1e12a057ba0b068f65b82261163495",
+      "reviewPacketDigest": "fafade33e3262213269bd19c6e5122133ab4c3f3e2411decd0cdc2469f54fbc1",
+      "generationPacketDigest": null,
+      "sourceDigest": "57fa8e65485a230870885b1d1c1f3836f29398bde34214c72fc0bf22569b9cae"
+    }
+  ]
+}

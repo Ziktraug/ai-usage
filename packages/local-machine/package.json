@@ -9,6 +9,7 @@
     "./claude-session-facts": "./src/claude-session-facts.ts",
     "./codex-session-analysis": "./src/codex-session-analysis.ts",
     "./codex-skill-observation": "./src/codex-skill-observation.ts",
+    "./distillation-evidence": "./src/distillation-evidence.ts",
     "./errors": "./src/errors.ts",
     "./history-budgets": "./src/history-budgets.ts",
     "./internal/codex-history": "./src/internal/codex-history.ts",
@@ -33,7 +34,8 @@
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/skills": "workspace:*",
-    "effect": "^3.21.4"
+    "effect": "^3.21.4",
+    "@ai-usage/platform-core": "workspace:*"
   },
   "scripts": {
     "build": "tsc --noEmit",

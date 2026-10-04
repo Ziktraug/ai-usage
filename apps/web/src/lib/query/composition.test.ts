@@ -160,6 +160,9 @@ describe('Web Query composition', () => {
 
   test('QUERY-CONVERGENCE-OWNERSHIP: assigns every family a named finite-GC policy', async () => {
     expect(webQueryOwnership.map(({ family }) => family)).toEqual([
+      'session-analysis',
+      'session-analysis-evidence',
+      'session-analysis-status',
       'report-current',
       'report-exact',
       'session',

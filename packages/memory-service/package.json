@@ -15,7 +15,9 @@
     "./redaction": "./src/redaction.ts",
     "./read-contract": "./src/read-contract.ts",
     "./repository": "./src/repository.ts",
-    "./search": "./src/search.ts"
+    "./search": "./src/search.ts",
+    "./distillation-redaction": "./src/distillation-redaction.ts",
+    "./distillation-repository": "./src/distillation-repository.ts"
   },
   "dependencies": {
     "@ai-usage/authorization-contract": "workspace:*",

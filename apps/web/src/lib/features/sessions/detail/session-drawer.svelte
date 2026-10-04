@@ -59,6 +59,7 @@
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+  import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
   import DrawerDetailItem from './drawer-detail-item.svelte';
   import { buildRoundsViewForRevision } from './rounds-model';
   import RoundsReader from './rounds-reader.svelte';
@@ -66,7 +67,8 @@
   import SessionVcsSummary from './session-vcs-summary.svelte';
   import type { SessionDetailController, SessionDetailControllerSnapshot } from './types';
 
-  type DetailTab = 'members' | 'rounds' | 'summary' | 'timeline';
+  type DetailTab = 'analysis' | 'members' | 'rounds' | 'summary' | 'timeline';
+  type DistillationModule = typeof import('./session-distillation.svelte');
 
   let {
     campaignLabelSlot,
@@ -196,6 +198,17 @@
   const roundsView = $derived(buildRoundsViewForRevision(snapshot.analysisResponse, snapshot.revision, memberRows));
   const membersAvailable = $derived(campaignScope !== null && campaignSlot !== undefined);
   let activeTab = $state<DetailTab>('rounds');
+  let distillationModule = $state<DistillationModule>();
+  let distillationLoadFailed = $state(false);
+  const distillationLoader = createLazyModuleLoader({
+    importModule: () => import('./session-distillation.svelte'),
+    onFailureChange: (failed) => {
+      distillationLoadFailed = failed;
+    },
+    onLoaded: (module) => {
+      distillationModule = module;
+    },
+  });
   // The reader's place survives a tab switch; a new row starts at its first round.
   let readerRoundId = $state<string | null>(null);
   let bodyElement = $state<HTMLDivElement>();
@@ -213,10 +226,17 @@
     { content: panes.rounds, label: roundsLabel, value: 'rounds' },
     ...(membersAvailable ? [{ content: panes.members, label: membersLabel, value: 'members' }] : []),
     { content: panes.timeline, label: 'Timeline', value: 'timeline' },
+    { content: panes.analysis, label: 'Analysis', value: 'analysis' },
     { content: panes.summary, label: 'Summary', value: 'summary' },
   ];
   const isDetailTab = (value: string): value is DetailTab =>
-    value === 'members' || value === 'rounds' || value === 'summary' || value === 'timeline';
+    value === 'analysis' || value === 'members' || value === 'rounds' || value === 'summary' || value === 'timeline';
+
+  $effect(() => {
+    if (drawerOpen && selectedTab === 'analysis' && !distillationModule) {
+      distillationLoader.start();
+    }
+  });
 
   const changeTab = async (value: string): Promise<void> => {
     if (!isDetailTab(value) || value === selectedTab) {
@@ -390,6 +410,23 @@
       {@render campaignSlot()}
     {/if}
   </div>
+{/snippet}
+
+{#snippet analysisPane()}
+  {#if distillationModule && target && snapshot.revision}
+    {@const Distillation = distillationModule.default}
+    <Distillation
+      active={drawerOpen && selectedTab === 'analysis' && !closing}
+      selection={{ revision: snapshot.revision, rowId: target.reportRowId }}
+    />
+  {:else if distillationLoadFailed}
+    <p role="status">The Analysis view could not be loaded.</p>
+    <button class={ghostButton} onclick={() => distillationLoader.retry()} type="button">Retry Analysis view</button>
+  {:else if !snapshot.revision}
+    <p class={muted}>Session analysis requires a local served report revision.</p>
+  {:else}
+    <p class={muted} role="status">Loading Analysis view…</p>
+  {/if}
 {/snippet}
 
 {#snippet timelinePane()}
@@ -608,7 +645,7 @@
         {#key `${row.rowId}:${target?.kind}`}
           <Tabs
             ariaLabel="Session detail views"
-            items={tabItems({ members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
+            items={tabItems({ analysis: analysisPane, members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
             onValueChange={changeTab}
             unmountOnExit={false}
             value={selectedTab}

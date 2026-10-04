@@ -3,6 +3,8 @@
   import { QueryClientProvider } from '@tanstack/svelte-query';
   import { onDestroy } from 'svelte';
   import { createWebQueryClient } from '../../../query/client';
+  import { installWebQueryRpcContext } from '../../../query/rpc-context.svelte';
+  import { createBrowserWebRpcClient, createWebRpcQueryUtils } from '../../../rpc/client';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { syntheticSessionRow } from '../table/session-table.fixtures';
   import { sessionDetailFixtureResponse } from './session-detail.fixtures';
@@ -10,6 +12,8 @@
   import type { SessionSelectionInput } from './types';
 
   const queryClient = createWebQueryClient();
+  const rpc = createBrowserWebRpcClient();
+  installWebQueryRpcContext({ rpc, orpc: createWebRpcQueryUtils(rpc) });
   const rows = [syntheticSessionRow(0), syntheticSessionRow(1)];
   let revision = $state(1);
   let selection = $state<SessionSelectionInput | null>({ revision: 'revision-1', row: rows[0]! });

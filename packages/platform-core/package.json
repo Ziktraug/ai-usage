@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./identity": "./src/identity.ts"
+    "./identity": "./src/identity.ts",
+    "./session-distillation": "./src/session-distillation.ts",
+    "./distillation-evidence": "./src/distillation-evidence.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

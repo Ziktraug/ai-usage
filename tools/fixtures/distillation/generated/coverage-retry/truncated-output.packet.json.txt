@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "normalizationVersion": 1,
+  "redactionVersion": 1,
+  "source": {
+    "harnessKey": "codex",
+    "machineId": "synthetic-machine",
+    "projectId": "synthetic-ai-usage",
+    "nativeSessionId": "00000000-0000-4000-8000-000000000008",
+    "reportAnchor": null,
+    "version": {
+      "digest": "dfef0ef1fb2a741699ca05e21a672adce5cfe3c691d0bee6096523b0fa5e0722",
+      "bytes": 1605,
+      "totalBytes": 1605,
+      "modifiedAtMs": 1791150960508.6484
+    }
+  },
+  "packetDigest": "fe1836d9f9a5962a280eb1505b94816d997f9f9f7ad568b904ccdf57f08a04a0",
+  "events": [
+    {
+      "id": "event:4:f6d055f4783e9db5",
+      "line": 4,
+      "kind": "user",
+      "text": "Run the focused report test and identify the failing assertion.",
+      "timestamp": "2026-01-08T09:00:03.000Z",
+      "nativeTurnId": "truncated-output-turn",
+      "roundId": "activity:0",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:5:fd0efa90a0bf057a",
+      "line": 5,
+      "kind": "tool-call",
+      "text": "{\"cmd\":\"bun test src/report.test.ts\",\"max_output_tokens\":20}",
+      "timestamp": "2026-01-08T09:00:04.000Z",
+      "nativeTurnId": "truncated-output-turn",
+      "roundId": "activity:0",
+      "toolName": "exec_command",
+      "callId": "truncated-test-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:6:8d387007d09cdb47",
+      "line": 6,
+      "kind": "tool-result",
+      "text": "Process exited with code 1\nWarning: truncated output (original character count: 4812)\nOutput:\nPASS report title\nFAIL report rendering\n[... output truncated ...]",
+      "timestamp": "2026-01-08T09:00:05.000Z",
+      "nativeTurnId": "truncated-output-turn",
+      "roundId": "activity:0",
+      "toolName": null,
+      "callId": "truncated-test-call",
+      "truncated": true,
+      "redacted": false
+    }
+  ],
+  "coverage": {
+    "scope": "session-only",
+    "status": "partial",
+    "lines": 6,
+    "includedEvents": 3,
+    "exclusions": [
+      {
+        "reason": "recorded-truncation",
+        "count": 1
+      }
+    ],
+    "childrenNotAnalyzed": null,
+    "childDiscovery": "not-performed",
+    "completion": "in-progress"
+  }
+}

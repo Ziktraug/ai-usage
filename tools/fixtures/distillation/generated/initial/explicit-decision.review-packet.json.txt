@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "normalizationVersion": 1,
+  "redactionVersion": 1,
+  "source": {
+    "harnessKey": "codex",
+    "machineId": "synthetic-machine",
+    "projectId": "synthetic-ai-usage",
+    "nativeSessionId": "00000000-0000-4000-8000-000000000003",
+    "reportAnchor": null,
+    "version": {
+      "digest": "998644e022f520e54502c4c65394c35b19fbbd577d4638d33625f0d0ed931447",
+      "bytes": 3055,
+      "totalBytes": 3055,
+      "modifiedAtMs": 1791150960504.6482
+    }
+  },
+  "packetDigest": "27704cbd7113913fcb884a94df838f85b683347ab4cc2f5f85e7e52f3a8946c6",
+  "events": [
+    {
+      "id": "event:4:0575b3f15ea665c2",
+      "line": 4,
+      "kind": "user",
+      "text": "Choose a bound for a local evidence packet. The options are 64 KiB or 1 MiB; first explain the tradeoff.",
+      "timestamp": "2026-01-03T09:00:03.000Z",
+      "nativeTurnId": "explicit-decision-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:5:50df93536bd2ab95",
+      "line": 5,
+      "kind": "assistant",
+      "text": "64 KiB limits disclosure and processing time but may omit useful tail events. 1 MiB preserves more detail at higher processing cost. I recommend starting with 64 KiB and making omitted bytes visible.",
+      "timestamp": "2026-01-03T09:00:04.000Z",
+      "nativeTurnId": "explicit-decision-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:6:7dc5bec0b54c85ee",
+      "line": 6,
+      "kind": "user",
+      "text": "Decision: use 64 KiB per packet, local-only, with omitted byte counts. Record this decision in docs/adr/0042-evidence-packet-bound.md. Do not implement runtime enforcement yet.",
+      "timestamp": "2026-01-03T09:00:05.000Z",
+      "nativeTurnId": "explicit-decision-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:7:d8b6722f377e6d8f",
+      "line": 7,
+      "kind": "tool-call",
+      "text": "{\"patch\":\"*** Begin Patch\\n*** Add File: docs/adr/0042-evidence-packet-bound.md\\n+# Evidence packet bound\\n+Status: Accepted for this synthetic project\\n+Packets have a 64 KiB bound, stay local-only, and expose omitted byte counts.\\n+Runtime enforcement is a separate task.\\n*** End Patch\"}",
+      "timestamp": "2026-01-03T09:00:06.000Z",
+      "nativeTurnId": "explicit-decision-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": "apply_patch",
+      "callId": "decision-write-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:8:53033a4e0d571c05",
+      "line": 8,
+      "kind": "tool-result",
+      "text": "Success. Updated the following files:\nA docs/adr/0042-evidence-packet-bound.md",
+      "timestamp": "2026-01-03T09:00:07.000Z",
+      "nativeTurnId": "explicit-decision-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": "decision-write-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:9:3092074b16e389a7",
+      "line": 9,
+      "kind": "assistant",
+      "text": "The decision is recorded. Runtime enforcement remains to be implemented.",
+      "timestamp": "2026-01-03T09:00:08.000Z",
+      "nativeTurnId": "explicit-decision-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    }
+  ],
+  "coverage": {
+    "scope": "session-only",
+    "status": "complete",
+    "lines": 10,
+    "includedEvents": 6,
+    "exclusions": [],
+    "childrenNotAnalyzed": null,
+    "childDiscovery": "not-performed",
+    "completion": "completed"
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "normalizationVersion": 1,
+  "redactionVersion": 1,
+  "source": {
+    "harnessKey": "codex",
+    "machineId": "synthetic-machine",
+    "projectId": "synthetic-ai-usage",
+    "nativeSessionId": "00000000-0000-4000-8000-000000000007",
+    "reportAnchor": null,
+    "version": {
+      "digest": "32093d1578b9b4bbac66105c8321e96c22afc100e0eb7d583c579b1c79017250",
+      "bytes": 1703,
+      "totalBytes": 1703,
+      "modifiedAtMs": 1791150960508.4878
+    }
+  },
+  "packetDigest": "f144fa299f99c69e8046d93b68290430e054f0f5428683b6f6460152ec863ef6",
+  "events": [
+    {
+      "id": "event:4:202cf73a079b89df",
+      "line": 4,
+      "kind": "user",
+      "text": "Run bun test src/importer.test.ts and investigate if it fails.",
+      "timestamp": "2026-01-07T09:00:03.000Z",
+      "nativeTurnId": "interrupted-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:5:6f50580ec5186b13",
+      "line": 5,
+      "kind": "tool-call",
+      "text": "{\"cmd\":\"bun test src/importer.test.ts\",\"yield_time_ms\":1000}",
+      "timestamp": "2026-01-07T09:00:04.000Z",
+      "nativeTurnId": "interrupted-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": "exec_command",
+      "callId": "interrupted-test-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:6:255975e972a9b56f",
+      "line": 6,
+      "kind": "tool-result",
+      "text": "Process running with session ID 7007\nOutput:\nstarted importer.test.ts\nconnecting to disposable fixture",
+      "timestamp": "2026-01-07T09:00:05.000Z",
+      "nativeTurnId": "interrupted-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": "interrupted-test-call",
+      "truncated": false,
+      "redacted": false
+    }
+  ],
+  "coverage": {
+    "scope": "session-only",
+    "status": "partial",
+    "lines": 7,
+    "includedEvents": 3,
+    "exclusions": [],
+    "childrenNotAnalyzed": null,
+    "childDiscovery": "not-performed",
+    "completion": "interrupted"
+  }
+}

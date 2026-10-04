@@ -6,7 +6,12 @@ const moduleSpecifierPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu;
 const sourceExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] as const;
 const allowedExternalPackages = ['@ai-usage/report-core', '@orpc/contract', 'valibot'] as const;
-const allowedExactExternalSpecifiers = new Set(['@ai-usage/skills/config', '@ai-usage/skills/shared']);
+const allowedExactExternalSpecifiers = new Set([
+  '@ai-usage/skills/config',
+  '@ai-usage/skills/shared',
+  '@ai-usage/platform-core/session-distillation',
+  '@ai-usage/platform-core/distillation-evidence',
+]);
 const forbiddenWebRouter = ['@ai-usage', 'web', 'server', 'router'].join('/');
 
 interface ContractClosureViolation {
@@ -185,6 +190,27 @@ describe('web contract production closure', () => {
       { importer: 'application.ts', path: ['application.ts'], specifier: '@ai-usage/skills/application' },
       { importer: 'root.ts', path: ['root.ts'], specifier: '@ai-usage/skills' },
       { importer: 'unknown.ts', path: ['unknown.ts'], specifier: unreviewedSkillsSpecifier },
+    ]);
+  });
+  test('permits only exact reviewed portable distillation contract entrypoints', () => {
+    const allowedSources = new Map([
+      ['analysis.ts', "import '@ai-usage/platform-core/session-distillation';\n"],
+      ['evidence.ts', "import '@ai-usage/platform-core/distillation-evidence';\n"],
+    ]);
+    expect(collectContractClosureViolations(allowedSources, [...allowedSources.keys()])).toEqual([]);
+
+    const unreviewedSpecifier = ['@ai-usage/platform-core', 'not-reviewed'].join('/');
+    const rootSpecifier = '@ai-usage/platform-core';
+    const nestedSpecifier = ['@ai-usage/platform-core/session-distillation', 'internal'].join('/');
+    const rejectedSources = new Map([
+      ['unknown.ts', `import '${unreviewedSpecifier}';\n`],
+      ['root.ts', `import '${rootSpecifier}';\n`],
+      ['nested.ts', `import '${nestedSpecifier}';\n`],
+    ]);
+    expect(collectContractClosureViolations(rejectedSources, [...rejectedSources.keys()])).toEqual([
+      { importer: 'unknown.ts', path: ['unknown.ts'], specifier: unreviewedSpecifier },
+      { importer: 'root.ts', path: ['root.ts'], specifier: rootSpecifier },
+      { importer: 'nested.ts', path: ['nested.ts'], specifier: nestedSpecifier },
     ]);
   });
 });

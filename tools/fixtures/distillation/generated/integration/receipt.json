@@ -1,0 +1,31 @@
+{
+  "kind": "synthetic-local-integration-smoke",
+  "verifiedAt": "2026-10-04T22:23:19.055Z",
+  "sourceCase": "multi-attempt",
+  "producer": "Active harness root agent generated content from the claimed packet; not a controlled software-test producer.",
+  "analysisId": "9d07733d-75a7-437b-8621-9a76b32620d3",
+  "analysisSha256": "6a86c1c3c3e57b39a166b901f86d199e85fb8d4f7674b7223cf19cf88ce8eddb",
+  "sameSubmissionReplayed": true,
+  "afterRestart": "Memory HTTP service stopped, SQLite kernel closed and reopened, service restarted; exact CLI get and identical replay preserved the saved ID.",
+  "searchHits": 1,
+  "contextBytes": 6106,
+  "contextLimit": 8192,
+  "browser": {
+    "synthetic": true,
+    "realPersistedBackend": true,
+    "selectionUrl": "http://127.0.0.1:4186/campaigns/synthetic-machine%3Acodex%3A00000000-0000-4000-8000-000000000001?tab=sessions",
+    "reads": [
+      "/rpc/sessionDistillation/status",
+      "/rpc/sessionDistillation/get",
+      "/rpc/sessionDistillation/evidence"
+    ],
+    "errors": [],
+    "axeViolations": 0,
+    "mobile": "Resized to 390x844, scrolled the actual drawer by a wheel gesture, summary asserted in viewport."
+  },
+  "limits": [
+    "Synthetic source only; no real-history quality or migration claim.",
+    "Software and browser correctness do not prove semantic truth.",
+    "Native producer session identity was not supplied and remains unknown."
+  ]
+}

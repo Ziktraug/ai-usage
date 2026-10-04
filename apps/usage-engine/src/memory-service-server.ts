@@ -20,6 +20,8 @@ import {
   parseMemorySearchReadRequest,
 } from '@ai-usage/memory-service/read-contract';
 import { type LocalIdentityKernel, MemoryIdentityStoreError } from '@ai-usage/memory-sqlite/identity';
+import { DistillationError, distillationBounds } from '@ai-usage/platform-core/session-distillation';
+import type { DistillationRuntime } from './distillation-runtime';
 
 const jsonMediaType = 'application/json';
 const protocolHeader = 'x-ai-usage-memory-protocol-version';
@@ -30,6 +32,7 @@ export interface LocalMemoryServiceHandler {
 }
 
 export interface CreateLocalMemoryServiceHandlerOptions {
+  readonly distillation?: DistillationRuntime;
   readonly kernel: LocalIdentityKernel;
   readonly token: MemoryServiceToken;
 }
@@ -120,7 +123,7 @@ const tokenMatches = (request: Request, token: MemoryServiceToken): boolean => {
   return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
 };
 
-const readBoundedJson = async (request: Request): Promise<unknown> => {
+const readBoundedJson = async (request: Request, signal: AbortSignal = request.signal): Promise<unknown> => {
   const contentLengthValue = request.headers.get('content-length');
   if (contentLengthValue !== null) {
     const contentLength = Number(contentLengthValue);
@@ -135,12 +138,17 @@ const readBoundedJson = async (request: Request): Promise<unknown> => {
     throw new Error('missing-body');
   }
   const reader = request.body.getReader();
+  const abortRead = (): void => {
+    reader.cancel(signal.reason).catch(() => undefined);
+  };
+  signal.addEventListener('abort', abortRead, { once: true });
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     while (true) {
-      request.signal.throwIfAborted();
+      signal.throwIfAborted();
       const { done, value } = await reader.read();
+      signal.throwIfAborted();
       if (done) {
         break;
       }
@@ -151,6 +159,7 @@ const readBoundedJson = async (request: Request): Promise<unknown> => {
       chunks.push(value);
     }
   } finally {
+    signal.removeEventListener('abort', abortRead);
     reader.releaseLock();
   }
   const bytes = new Uint8Array(total);
@@ -163,6 +172,7 @@ const readBoundedJson = async (request: Request): Promise<unknown> => {
 };
 
 export const createLocalMemoryServiceHandler = async ({
+  distillation,
   kernel,
   token,
 }: CreateLocalMemoryServiceHandlerOptions): Promise<LocalMemoryServiceHandler> => {
@@ -204,6 +214,30 @@ export const createLocalMemoryServiceHandler = async ({
       }
       if (!tokenMatches(request, token)) {
         return errorResponse('authentication-failed', 'Memory service authentication failed.', 401);
+      }
+      if (url.pathname === '/v1/session-distillation') {
+        if (request.method !== 'POST') {
+          return new Response(null, { status: 405 });
+        }
+        if ((request.headers.get('content-type') ?? '').split(';', 1)[0]?.trim() !== jsonMediaType) {
+          return errorResponse('invalid-request', 'Session distillation requires JSON.', 415);
+        }
+        if (!distillation) {
+          return errorResponse('service-unavailable', 'Session distillation is unavailable in this runtime.', 503);
+        }
+        try {
+          const signal = AbortSignal.any([request.signal, AbortSignal.timeout(distillationBounds.operationMs)]);
+          const result = await distillation.execute(await readBoundedJson(request, signal), signal);
+          if (encoder.encode(JSON.stringify(result)).byteLength > memoryServiceBounds.maxResponseBytes - 256) {
+            return errorResponse('service-unavailable', 'Session distillation response exceeds its byte limit.', 503);
+          }
+          return successResponse(result);
+        } catch (error) {
+          if (error instanceof DistillationError) {
+            return errorResponse('invalid-request', error.message, 400);
+          }
+          return errorResponse('service-unavailable', 'Session distillation operation failed.', 503);
+        }
       }
       if (
         url.pathname === '/v1/memory-search' ||
@@ -427,6 +461,7 @@ export const createLocalMemoryServiceHandler = async ({
 };
 
 export const startLocalMemoryService = async ({
+  distillation,
   hostname = '127.0.0.1',
   kernel,
   port = 0,
@@ -440,7 +475,7 @@ export const startLocalMemoryService = async ({
   if (!(Number.isSafeInteger(port) && port >= 0 && port <= 65_535)) {
     throw new Error('Memory service port is invalid.');
   }
-  const handler = await createLocalMemoryServiceHandler({ kernel, token });
+  const handler = await createLocalMemoryServiceHandler({ ...(distillation ? { distillation } : {}), kernel, token });
   const server = Bun.serve({
     fetch: async (request, bunServer) => await handler.handle(request, bunServer.requestIP(request)?.address ?? null),
     hostname,

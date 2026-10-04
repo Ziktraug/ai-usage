@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "summary": {
+    "text": "A README.md patch corrected recieve to receive, and the patch tool reported success.",
+    "basis": "observed",
+    "evidence": [
+      { "eventId": "event:5:d94af807e917d275", "quote": "-You will recieve a report.\\n+You will receive a report." },
+      { "eventId": "event:6:79e901c9554def5f", "quote": "Success. Updated the following files:\nM README.md" }
+    ]
+  },
+  "episodes": [],
+  "abstention": "The packet records only a straightforward spelling correction. It supports no durable lesson, significant investigation, or meaningful unresolved question."
+}

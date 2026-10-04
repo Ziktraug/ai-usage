@@ -1,0 +1,224 @@
+{
+  "id": "9d07733d-75a7-437b-8621-9a76b32620d3",
+  "revision": 1,
+  "createdAt": "2026-10-04T22:11:03.414Z",
+  "projectId": "11b68ce6-fc04-4dcb-b7e7-980da1855a0f",
+  "nativeSessionId": "00000000-0000-4000-8000-000000000001",
+  "machineId": "synthetic-machine",
+  "packetDigest": "f22874c0a1078c1c84aed9b6591747fea4a28f4ecdcaaef6a2b4b33c975a6cb2",
+  "schemaVersion": 1,
+  "normalizationVersion": 1,
+  "extractorVersion": "session-distillation-v1",
+  "source": {
+    "harnessKey": "codex",
+    "machineId": "synthetic-machine",
+    "projectId": "11b68ce6-fc04-4dcb-b7e7-980da1855a0f",
+    "nativeSessionId": "00000000-0000-4000-8000-000000000001",
+    "reportAnchor": {
+      "revision": "distillation-fixture-1791151624417",
+      "rowId": "session-row-v1:7b1fe144fcf81379"
+    },
+    "version": {
+      "digest": "c003d03499330f258e345ecf021f913291d71f05476694f409a738396db7c8bc",
+      "bytes": 5085,
+      "totalBytes": 5085,
+      "modifiedAtMs": 1791151624318.1785
+    }
+  },
+  "coverage": {
+    "scope": "session-only",
+    "status": "complete",
+    "lines": 18,
+    "includedEvents": 14,
+    "exclusions": [],
+    "childrenNotAnalyzed": null,
+    "childDiscovery": "not-performed",
+    "completion": "completed"
+  },
+  "content": {
+    "schemaVersion": 1,
+    "summary": {
+      "basis": "inferred",
+      "evidence": [
+        {
+          "eventId": "event:6:89b542f44baf0aec",
+          "quote": "FAIL isolates revisions: expected revision r2, received r1"
+        },
+        {
+          "eventId": "event:11:3096b3eb8cbc9954",
+          "quote": "FAIL clears all project revisions: expected cache size 0, received 2"
+        },
+        {
+          "eventId": "event:16:8f4693cd14812369",
+          "quote": "5 pass\n0 fail"
+        },
+        {
+          "eventId": "event:17:7e7c9ac94f5d797e",
+          "quote": "I did not run the full suite or reproduce the production incident."
+        }
+      ],
+      "text": "The revision-cache investigation recorded two failing focused test runs, two applied changes, and a final focused run with 5 passes. The full suite and the production incident remain unverified in this session."
+    },
+    "episodes": [
+      {
+        "id": "revision-cache-isolation",
+        "objective": {
+          "basis": "reported",
+          "evidence": [
+            {
+              "eventId": "event:4:85e47f87fb73d0fa",
+              "quote": "Preserve separate results for different revisions and show the regression test."
+            }
+          ],
+          "text": "Preserve distinct cached results for distinct revisions in src/revision-cache.ts and show the regression test."
+        },
+        "attempts": [
+          {
+            "basis": "observed",
+            "evidence": [
+              {
+                "eventId": "event:6:89b542f44baf0aec",
+                "quote": "FAIL isolates revisions: expected revision r2, received r1\n4 pass\n1 fail"
+              }
+            ],
+            "text": "The initial focused test returned r1 where r2 was expected: 4 passes and 1 failure."
+          },
+          {
+            "basis": "inferred",
+            "evidence": [
+              {
+                "eventId": "event:7:412a64ff936285c3",
+                "quote": "The cache key may omit the revision. I will add it to the key."
+              },
+              {
+                "eventId": "event:9:c17969df744790d5",
+                "quote": "Success. Updated the following files:\nM src/revision-cache.ts"
+              }
+            ],
+            "text": "The assistant hypothesized that the cache key omitted the revision and chose to add it. A patch application to src/revision-cache.ts was recorded; this alone does not establish the production cause."
+          },
+          {
+            "basis": "observed",
+            "evidence": [
+              {
+                "eventId": "event:11:3096b3eb8cbc9954",
+                "quote": "PASS isolates revisions\nFAIL clears all project revisions: expected cache size 0, received 2"
+              }
+            ],
+            "text": "The next focused run passed revision isolation but failed project invalidation: cache size was 2 instead of 0."
+          },
+          {
+            "basis": "inferred",
+            "evidence": [
+              {
+                "eventId": "event:12:0475dcbba9307735",
+                "quote": "I will change invalidation to delete every key with this project prefix."
+              },
+              {
+                "eventId": "event:14:5219d7a292ff31a8",
+                "quote": "Success. Updated the following files:\nM src/revision-cache.ts"
+              },
+              {
+                "eventId": "event:16:8f4693cd14812369",
+                "quote": "PASS isolates revisions\nPASS clears all project revisions\n5 pass\n0 fail"
+              }
+            ],
+            "text": "The assistant chose deletion by project prefix. A second patch application was recorded, followed by a focused run passing both named cases and all five tests."
+          }
+        ],
+        "result": {
+          "status": "observed-success",
+          "assertion": {
+            "basis": "observed",
+            "evidence": [
+              {
+                "eventId": "event:16:8f4693cd14812369",
+                "quote": "Process exited with code 0\nPASS isolates revisions\nPASS clears all project revisions\n5 pass\n0 fail"
+              }
+            ],
+            "text": "The final focused regression run exited successfully with 5 passes and 0 failures. This result applies only to the recorded focused run."
+          }
+        },
+        "difficulties": [
+          {
+            "basis": "inferred",
+            "evidence": [
+              {
+                "eventId": "event:11:3096b3eb8cbc9954",
+                "quote": "PASS isolates revisions\nFAIL clears all project revisions: expected cache size 0, received 2"
+              }
+            ],
+            "text": "Fixing isolation was followed by a failing project-invalidation check, so the first applied change was insufficient for the focused suite."
+          }
+        ],
+        "decisions": [
+          {
+            "basis": "reported",
+            "evidence": [
+              {
+                "eventId": "event:7:412a64ff936285c3",
+                "quote": "I will add it to the key."
+              }
+            ],
+            "text": "Add the revision to the cache key."
+          },
+          {
+            "basis": "reported",
+            "evidence": [
+              {
+                "eventId": "event:12:0475dcbba9307735",
+                "quote": "I will change invalidation to delete every key with this project prefix."
+              }
+            ],
+            "text": "Invalidate every cache key with the project's prefix."
+          }
+        ],
+        "entryPoints": [
+          {
+            "basis": "observed",
+            "evidence": [
+              {
+                "eventId": "event:14:5219d7a292ff31a8",
+                "quote": "M src/revision-cache.ts"
+              }
+            ],
+            "text": "Historical implementation entry point: src/revision-cache.ts. Recheck its current contents before resuming."
+          },
+          {
+            "basis": "inferred",
+            "evidence": [
+              {
+                "eventId": "event:15:71f9c7558231b954",
+                "quote": "bun test src/revision-cache.test.ts"
+              },
+              {
+                "eventId": "event:16:8f4693cd14812369",
+                "quote": "PASS isolates revisions\nPASS clears all project revisions"
+              }
+            ],
+            "text": "Historical focused command: bun test src/revision-cache.test.ts. Its recorded outcomes concern revision isolation and project invalidation."
+          }
+        ],
+        "openQuestions": [
+          {
+            "basis": "unknown",
+            "evidence": [
+              {
+                "eventId": "event:17:7e7c9ac94f5d797e",
+                "quote": "I did not run the full suite or reproduce the production incident."
+              }
+            ],
+            "text": "Does the correction resolve the production incident and pass the full suite? The assistant explicitly reports that neither was checked here; no later result is established."
+          }
+        ]
+      }
+    ],
+    "abstention": null
+  },
+  "producer": {
+    "kind": "active-harness",
+    "sessionId": null,
+    "attribution": "unknown"
+  },
+  "validation": "schema-and-references"
+}

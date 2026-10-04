@@ -1309,7 +1309,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
     });
   };
 
-  const detailTurns = (): SessionDetailTurn[] => {
+  const detailTasks = () => {
     const tasks = [...completedTasks];
     for (const task of openTasks.values()) {
       if (task.hasContext && !task.replayed) {
@@ -1321,7 +1321,11 @@ export const createCodexSessionParser = (captureDetail = false) => {
       }
     }
     tasks.sort((left, right) => left.start.getTime() - right.start.getTime());
-    return tasks.slice(0, CODEX_DETAIL_MAX_TURNS).map((task, index) => {
+    return tasks.slice(0, CODEX_DETAIL_MAX_TURNS);
+  };
+
+  const detailTurns = (): SessionDetailTurn[] => {
+    return detailTasks().map((task, index) => {
       const model = task.model === 'codex' ? session.model : task.model;
       // Same pricing convention as the phases above: each model in effect
       // prices its own tokens, Codex reports cache reads but no billable cache
@@ -1443,6 +1447,13 @@ export const createCodexSessionParser = (captureDetail = false) => {
   return {
     analysis,
     detail,
+    /** Native ownership for evidence readers; shares replay classification with usage. */
+    evidenceContext: (turnId: string | null) => {
+      const task = turnId ? openTasks.get(turnId) : [...openTasks.values()].at(-1);
+      return task ? { hasContext: task.hasContext, replayed: task.replayed, turnId: task.turnId } : null;
+    },
+    /** Same ordered native tasks used by detailTurns, never a second round derivation. */
+    evidenceTurnIndexes: () => new Map(detailTasks().map((task, index) => [task.turnId, index])),
     finish: (): CodexSessionParseResult => {
       finalize();
       return {

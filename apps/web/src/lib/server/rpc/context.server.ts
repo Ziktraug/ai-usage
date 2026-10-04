@@ -327,6 +327,15 @@ const createProjectsDependencies = (): WebRpcRouterDependencies['projects'] => (
     }),
 });
 
+const createSessionDistillationDependencies = (): WebRpcRouterDependencies['sessionDistillation'] => ({
+  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
+  read: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/session-distillation.server');
+      return await server.readSessionDistillationForServer(input, signal);
+    }),
+});
+
 const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
   applyProposalReviewAction: async (input, signal) =>
     await phaseBound(signal, async () => {
@@ -397,6 +406,7 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
     report: createReportDependencies(request),
     replication: createReplicationDependencies(),
     session: createSessionDependencies(),
+    sessionDistillation: createSessionDistillationDependencies(),
     skills: {
       preflight: preflightSkills,
       selectCapability: async (options) => await selectSkillsCapability(options, fixtureVariant),

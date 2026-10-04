@@ -7,6 +7,7 @@ import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usag
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
 import { startUsageEngineControlServer, type UsageEngineInternalFailureBoundary } from './control-server';
+import { createDistillationRuntime } from './distillation-runtime';
 import { acquireUsageEngineLock, UsageEngineWriterLockContendedError } from './engine-lock';
 import { localMemoryIdentityDatabasePath, withLocalMemoryIdentityKernel } from './memory-identity-runtime';
 import { createRandomMemoryServiceToken, startLocalMemoryService } from './memory-service-server';
@@ -137,6 +138,12 @@ const createProductionDependencies = (
           }),
       startService: async (kernel) =>
         await startLocalMemoryService({
+          distillation: createDistillationRuntime({
+            kernel,
+            databasePath: paths.databasePath,
+            homeDirectory: paths.homeDirectory,
+            connected: env.AI_USAGE_PLATFORM_BASE_URL !== undefined,
+          }),
           kernel,
           stateDirectory: paths.stateDirectory,
           token: createRandomMemoryServiceToken(),

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "normalizationVersion": 1,
+  "redactionVersion": 1,
+  "source": {
+    "harnessKey": "codex",
+    "machineId": "synthetic-machine",
+    "projectId": "synthetic-ai-usage",
+    "nativeSessionId": "00000000-0000-4000-8000-000000000006",
+    "reportAnchor": null,
+    "version": {
+      "digest": "973228254f6b03c68211c2bea9c9b34762c37447908dd7eac90e34545cfece67",
+      "bytes": 1969,
+      "totalBytes": 1969,
+      "modifiedAtMs": 1791150960507.6526
+    }
+  },
+  "packetDigest": "7263f36b7bce0ff041225bc48c1f0f2dbacff42874a0129a218065bb9a530765",
+  "events": [
+    {
+      "id": "event:4:5d3d8c148fbb6b41",
+      "line": 4,
+      "kind": "user",
+      "text": "Change \"recieve\" to \"receive\" in README.md.",
+      "timestamp": "2026-01-06T09:00:03.000Z",
+      "nativeTurnId": "trivial-no-lessons-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:5:d94af807e917d275",
+      "line": 5,
+      "kind": "tool-call",
+      "text": "{\"patch\":\"*** Begin Patch\\n*** Update File: README.md\\n@@\\n-You will recieve a report.\\n+You will receive a report.\\n*** End Patch\"}",
+      "timestamp": "2026-01-06T09:00:04.000Z",
+      "nativeTurnId": "trivial-no-lessons-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": "apply_patch",
+      "callId": "trivial-patch-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:6:79e901c9554def5f",
+      "line": 6,
+      "kind": "tool-result",
+      "text": "Success. Updated the following files:\nM README.md",
+      "timestamp": "2026-01-06T09:00:05.000Z",
+      "nativeTurnId": "trivial-no-lessons-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": "trivial-patch-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:7:ef6b5991654484a8",
+      "line": 7,
+      "kind": "assistant",
+      "text": "Corrected the spelling in README.md.",
+      "timestamp": "2026-01-06T09:00:06.000Z",
+      "nativeTurnId": "trivial-no-lessons-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    }
+  ],
+  "coverage": {
+    "scope": "session-only",
+    "status": "complete",
+    "lines": 8,
+    "includedEvents": 4,
+    "exclusions": [],
+    "childrenNotAnalyzed": null,
+    "childDiscovery": "not-performed",
+    "completion": "completed"
+  }
+}

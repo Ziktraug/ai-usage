@@ -1,6 +1,54 @@
 import { replicationOutboxSchemaSql } from '@ai-usage/replication-outbox';
 
-export const LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION = 6;
+export const LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION = 7;
+
+/** Local generated corpus. Deliberately absent from Memory export/search/replication projections. */
+export const localDistillationSchema = `
+  CREATE TABLE distillation_jobs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    machine_id TEXT NOT NULL,
+    native_session_id TEXT NOT NULL,
+    packet_digest TEXT NOT NULL CHECK(length(packet_digest) = 64),
+    dedupe_key TEXT NOT NULL UNIQUE CHECK(length(dedupe_key) = 64),
+    extractor_version TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('queued','running','failed','cancelled','published')),
+    attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3),
+    error_code TEXT,
+    lease_id TEXT,
+    lease_expires_at TEXT,
+    packet_json TEXT CHECK(packet_json IS NULL OR json_valid(packet_json)),
+    grant_json TEXT NOT NULL CHECK(json_valid(grant_json)),
+    producer_session_id TEXT,
+    analysis_id TEXT,
+    content_digest TEXT CHECK(content_digest IS NULL OR length(content_digest) = 64),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK((state = 'running') = (lease_expires_at IS NOT NULL)),
+    CHECK(state != 'published' OR (analysis_id IS NOT NULL AND content_digest IS NOT NULL))
+  ) STRICT;
+  CREATE INDEX distillation_jobs_session ON distillation_jobs(project_id, machine_id, native_session_id, created_at DESC);
+  CREATE INDEX distillation_jobs_producer ON distillation_jobs(machine_id, producer_session_id);
+  CREATE UNIQUE INDEX distillation_one_running_job ON distillation_jobs((1)) WHERE state = 'running';
+
+  CREATE TABLE session_analyses (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    machine_id TEXT NOT NULL,
+    native_session_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    job_id TEXT NOT NULL UNIQUE REFERENCES distillation_jobs(id) ON DELETE RESTRICT,
+    packet_digest TEXT NOT NULL CHECK(length(packet_digest) = 64),
+    created_at TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    coverage_status TEXT NOT NULL CHECK(coverage_status IN ('complete','partial')),
+    episode_ids_json TEXT NOT NULL CHECK(json_valid(episode_ids_json)),
+    analysis_json TEXT NOT NULL CHECK(json_valid(analysis_json)),
+    UNIQUE(project_id, machine_id, native_session_id, revision)
+  ) STRICT;
+  CREATE INDEX session_analyses_project ON session_analyses(project_id, created_at DESC);
+  CREATE VIRTUAL TABLE session_analyses_fts USING fts5(analysis_id UNINDEXED, project_id UNINDEXED, content, tokenize='unicode61');
+`;
 
 /**
  * Version 5 shipped under one `user_version` with two definitions of this

@@ -22,6 +22,7 @@ import type {
 } from '@ai-usage/usage-engine-control';
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
 import { Console, Effect, Exit } from 'effect';
+import { executeAnalysesCommand } from './analyses';
 import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
 import { renderMemorySearch } from './memory';
@@ -225,6 +226,11 @@ const renderReport = (args: Args, report: Awaited<ReturnType<typeof readServedUs
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
   const command = yield* parseCommand(runtime.argv);
+  if (command._tag === 'Analyses') {
+    const output = yield* fromPromise(() => executeAnalysesCommand(command.args, runtime.memory, runtime.signal));
+    yield* writeStdout(output);
+    return;
+  }
 
   if (command._tag === 'Help') {
     yield* Console.log(helpText);
