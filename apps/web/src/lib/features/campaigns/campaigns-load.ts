@@ -4,12 +4,13 @@ import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dash
 import type { WebQueryHydrationState } from '../../query/client';
 import type { WebQueryRuntimeOptions } from '../../query/composition';
 import { campaignLabelOverridesQueryOptions, reportBootstrapQueryOptions } from '../../query/options/report';
+import { initialSessionWindowIntent } from '../../query/options/session-window';
 import { createReportClient } from '../../rpc/report-client';
 import { createSessionClientAdapter } from '../../rpc/session-client';
 import { requireAvailableReportBootstrap } from '../report/core/report-bootstrap';
 import { dashboardSearchCodec } from '../shell/navigation';
 import { createAwaitedRouteQueryState } from '../shell/query-load';
-import { campaignMembersOptions, campaignsListOptions, campaignsRequest } from './campaigns-query';
+import { campaignsExplorationOptions, campaignsListOptions, campaignsRequest } from './campaigns-query';
 import { readCampaignSelection } from './campaigns-selection';
 import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
@@ -53,7 +54,14 @@ export const loadCampaignsPageData = async (
     const selection = readCampaignSelection(options.url, request);
     const selectedKey = selection.status === 'selected' ? selection.campaignKey : list.pages[0]?.items[0]?.campaignKey;
     if (selectedKey) {
-      await runtime.queryClient.fetchInfiniteQuery(campaignMembersOptions(sessionClient, revision, selectedKey));
+      await runtime.queryClient.fetchQuery(
+        campaignsExplorationOptions({
+          client: sessionClient,
+          intent: { ...initialSessionWindowIntent(), campaignSessionsDepth: { [selectedKey]: 1 } },
+          queryClient: runtime.queryClient,
+          request,
+        }),
+      );
     }
   }),
 });
