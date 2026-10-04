@@ -204,6 +204,7 @@ export const reportDestinationQueryOptions = (
           signal.throwIfAborted();
           return result;
         } catch (error) {
+          signal.throwIfAborted();
           const expired =
             error instanceof FocusedReportRevisionExpiredError || error instanceof SessionRevisionExpiredError;
           if (!(expired && attempt === 0) || preservedDescriptor !== undefined) {
@@ -228,10 +229,18 @@ export const refreshReportDestination = async (
     { browser: true, preserveSessionRevision },
     sessionWindowIntent,
   );
-  await dependencies.queryClient.invalidateQueries({
+  // The shared alias can still be acquiring another destination. Supersede it
+  // synchronously so a new intent cannot join the obsolete acquisition.
+  const cancellation = dependencies.queryClient.cancelQueries(
+    { exact: true, queryKey: options.queryKey },
+    { silent: true },
+  );
+  const invalidation = dependencies.queryClient.invalidateQueries({
     exact: true,
     queryKey: options.queryKey,
     refetchType: 'none',
   });
-  return await dependencies.queryClient.fetchQuery(options);
+  const acquisition = dependencies.queryClient.fetchQuery(options);
+  const [, , result] = await Promise.all([cancellation, invalidation, acquisition]);
+  return result;
 };

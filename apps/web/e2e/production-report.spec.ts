@@ -5,6 +5,7 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
 import { collectionSourceDefinitions } from '@ai-usage/report-core';
+import { parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
@@ -16,8 +17,10 @@ import {
   rpcStringFieldValues,
 } from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
+import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
+const SERIALIZED_GENERATED_AT_PATTERN = /generatedAt:"([^"]+)"/;
 const API_VALUE_BUCKET_PATTERN = /API value: (?:≥ )?\$/;
 const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
@@ -278,20 +281,27 @@ test('renders the report timeline on the initial production Overview', async ({ 
   serverStateTrace.dispose();
 });
 
-test('upgrades a live all-time Day cache exactly once after the date domain resolves to Week', async ({ page }) => {
+test('upgrades a live all-time Day cache exactly once after the date domain resolves to Week', async ({
+  page,
+  request,
+  baseURL,
+}) => {
   const trace = createServerStateNetworkTrace(page);
-  const upgradeStarted = Promise.withResolvers<void>();
   const releaseUpgrade = Promise.withResolvers<void>();
   const upgradeResponseBodies: string[] = [];
   let initialDocumentHtml = '';
   let initialDomainRewriteCount = 0;
+  let fixtureGeneratedAt = '';
+  let settledRevision = '';
 
   await expect
     .poll(async () => {
       const response = await page.request.get('/?range=all');
       const body = await response.text();
+      fixtureGeneratedAt = body.match(SERIALIZED_GENERATED_AT_PATTERN)?.[1] ?? '';
       return (
         response.ok() &&
+        fixtureGeneratedAt.length > 0 &&
         body.includes('Harness · Day · Estimated API-equivalent value') &&
         body.includes(LIVE_ALL_TIME_CURRENT_FIRST_DAY)
       );
@@ -310,20 +320,33 @@ test('upgrades a live all-time Day cache exactly once after the date domain reso
       });
     },
   );
+  await page.route(
+    (url) => url.pathname === REPORT_BOOTSTRAP_PATH,
+    async (route) => {
+      const response = await route.fetch();
+      const decoded = decodeRpcResponseBody(await response.text());
+      expect(rewriteDateDomainFirst(decoded, LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT)).toBeGreaterThan(0);
+      await route.fulfill({ body: encodeRpcResponseBody(decoded), response });
+    },
+  );
   await page.route('**/rpc/report/focusedOverview', async (route) => {
+    expect(rpcStringFieldValues(route.request().postData() ?? '', 'revision')).toEqual([settledRevision]);
     const response = await route.fetch();
     const decoded = decodeRpcResponseBody(await response.text());
     expect(rewriteDateDomainFirst(decoded, LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT)).toBeGreaterThan(0);
     const body = encodeRpcResponseBody(decoded);
     upgradeResponseBodies.push(body);
-    upgradeStarted.resolve();
     await releaseUpgrade.promise;
     await route.fulfill({ body, response });
   });
 
   try {
+    // This asserts one acquisition for one revision; a cadence publication is a different query.
+    settledRevision = await freezeSessionScrollCollectionSources(request, baseURL!);
+    // The production fixture owns server time; hydration must use that clock too.
+    await page.clock.setFixedTime(new Date(fixtureGeneratedAt));
     await page.goto('/?range=all');
-    await upgradeStarted.promise;
+    await expect.poll(() => upgradeResponseBodies.length, { message: 'The Week upgrade must begin' }).toBe(1);
 
     expect(initialDomainRewriteCount).toBeGreaterThan(0);
     expect(initialDocumentHtml).toContain('Harness · Day · Estimated API-equivalent value');
@@ -369,6 +392,44 @@ test('upgrades a live all-time Day cache exactly once after the date domain reso
   } finally {
     releaseUpgrade.resolve();
     trace.dispose();
+    await page.close();
+    // Other production tests exercise the fixture's normal enabled collection sources.
+    const restoreSource = async ({ defaultEnabled, id }: (typeof collectionSourceDefinitions)[number]) => {
+      const response = await request.post('/api/source-control/command', {
+        data: { command: 'set-enabled', enabled: defaultEnabled, sourceId: id },
+        headers: { origin: baseURL! },
+      });
+      const restored = parseSourceControlCommandResponse(await response.json());
+      if (!(response.ok() && restored.ok)) {
+        throw new Error('Could not restore the synthetic collection source');
+      }
+      return restored.snapshot;
+    };
+    for (const definition of collectionSourceDefinitions) {
+      await restoreSource(definition);
+    }
+    await expect
+      .poll(
+        async () => {
+          const snapshot = await restoreSource(collectionSourceDefinitions[0]!);
+          const { publication } = snapshot;
+          return {
+            policiesRestored: collectionSourceDefinitions.every(
+              ({ defaultEnabled, id }) =>
+                snapshot.sources.find((source) => source.id === id)?.policy ===
+                (defaultEnabled ? 'enabled' : 'disabled'),
+            ),
+            publicationSettled:
+              !(publication.dirty || publication.pendingDemand || publication.queued || publication.running) &&
+              publication.publishedGeneration >= publication.dirtyGeneration &&
+              publication.acknowledgedRequestGeneration >= publication.requestedGeneration,
+            queueDepth: snapshot.queueDepth,
+            runningCount: snapshot.runningCount,
+          };
+        },
+        { message: 'Restored fixture sources and their publication must settle before the next test', timeout: 60_000 },
+      )
+      .toEqual({ policiesRestored: true, publicationSettled: true, queueDepth: 0, runningCount: 0 });
   }
 });
 
