@@ -4,7 +4,11 @@
   import { ghostButton } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
   import { buildCampaignMap, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
-  import { type SessionPresentationRow, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+  import {
+    type SessionPresentationRow,
+    type SessionQueryRequest,
+    sessionQueryFingerprint,
+  } from '@ai-usage/report-core/session-query';
   import {
     createInfiniteQuery,
     createQuery,
@@ -34,6 +38,8 @@
   import { dashboardSearchCodec } from '../shell/navigation';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import CampaignAgentMap from './campaign-agent-map.svelte';
+  import CampaignProjectTimeline from './campaign-project-timeline.svelte';
+  import { buildCampaignTimeline } from './campaign-timeline-model';
   import type { CampaignsPageData } from './campaigns-load';
   import { campaignMembersOptions, campaignsListOptions, campaignsRequest } from './campaigns-query';
   import { readCampaignSelection } from './campaigns-selection';
@@ -61,6 +67,7 @@
   let selection = $state<SessionSelectionInput | null>(null);
   let navigationError = $state<string | null>(null);
   let previousListKey = $state<QueryKey>();
+  let previousListRequest = $state<SessionQueryRequest>();
   let previousMembersKey = $state<{ campaignKey: string; queryKey: QueryKey }>();
   let recoveredExpiredRevision = $state<string>();
   const bootstrapQuery = createQuery(() =>
@@ -78,6 +85,7 @@
   const generatedAt = $derived(bootstrap?.bootstrap.support.generatedAt ?? campaignMapFixtureGeneratedAt);
   const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
   const harnessSelection = $derived(search.harness.length > 1 ? MULTIPLE_HARNESSES : (search.harness[0] ?? ''));
+  const campaignView = $derived(page.url.searchParams.get('campaignView') === 'timeline' ? 'timeline' : 'list');
   const inheritedFilters = $derived([
     ...Object.entries(search.filters).map(([name, value]) => `${name}: ${value}`),
     ...search.machine.map((value) => `machine: ${value}`),
@@ -99,6 +107,20 @@
   const listAnswersRequest = $derived(
     visibleRevision === request.revision && listPages[0]?.requestFingerprint === sessionQueryFingerprint(request),
   );
+  const visibleListRequest = $derived.by(() => {
+    if (listAnswersRequest) {
+      return request;
+    }
+    if (
+      previousListRequest &&
+      previousListRequest.revision === visibleRevision &&
+      listPages[0]?.requestFingerprint === sessionQueryFingerprint(previousListRequest)
+    ) {
+      return previousListRequest;
+    }
+    return null;
+  });
+  const timeline = $derived(buildCampaignTimeline(items, visibleListRequest?.range ?? { from: null, to: null }));
   const urlSelection = $derived(readCampaignSelection(page.url, request));
   const selectedKey = $derived(
     urlSelection.status === 'selected' ? urlSelection.campaignKey : (items[0]?.campaignKey ?? ''),
@@ -134,6 +156,7 @@
   );
   const rows = $derived(map?.nodes.map((node) => node.row) ?? []);
   const presentedMap = $derived(map ? { ...map, title: campaignLabelFor(labels, selectedKey, map.title) } : null);
+  const timelineMap = $derived(mapRevision === visibleRevision ? presentedMap : null);
   const isRefreshing = $derived(listQuery.isFetching || membersQuery.isFetching);
   const recoverExpiredRevision = async (expiredRevision: string): Promise<void> => {
     const refreshed = await bootstrapQuery.refetch();
@@ -147,8 +170,9 @@
     }
   };
   $effect(() => {
-    if (listQuery.data && !listQuery.isPlaceholderData) {
+    if (listQuery.data && !listQuery.isPlaceholderData && listAnswersRequest) {
       previousListKey = campaignsListOptions(clients.session, request).queryKey;
+      previousListRequest = request;
     }
   });
   $effect(() => {
@@ -187,6 +211,15 @@
   const selectCampaign = (campaignKey: string): void => {
     const url = new URL(page.url);
     url.searchParams.set('selectedCampaign', campaignKey);
+    navigate(url);
+  };
+  const selectView = (view: 'list' | 'timeline'): void => {
+    const url = new URL(page.url);
+    if (view === 'timeline') {
+      url.searchParams.set('campaignView', 'timeline');
+    } else {
+      url.searchParams.delete('campaignView');
+    }
     navigate(url);
   };
   const clearSelection = (): void => {
@@ -267,6 +300,8 @@
   };
 
   const toolbar = css({ display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: '12px', mb: '24px' });
+  const viewControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', mb: '20px' });
+  const activeViewButton = css({ bg: 'accentTint', borderColor: 'accent', color: 'ink' });
   const field = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '11px' });
   const input = css({
     minH: '40px',
@@ -344,6 +379,24 @@
       eyebrow="Agent work"
       heading="Campaigns"
     />
+    <nav aria-label="Campaign view" class={viewControls}>
+      <button
+        aria-pressed={campaignView === 'list' ? 'true' : 'false'}
+        class={cx(ghostButton, campaignView === 'list' && activeViewButton)}
+        onclick={() => selectView('list')}
+        type="button"
+      >
+        Agent Map
+      </button>
+      <button
+        aria-pressed={campaignView === 'timeline' ? 'true' : 'false'}
+        class={cx(ghostButton, campaignView === 'timeline' && activeViewButton)}
+        onclick={() => selectView('timeline')}
+        type="button"
+      >
+        Project timeline
+      </button>
+    </nav>
     <form class={toolbar} onsubmit={applyFilters}>
       <label class={field}
         >Find a campaign<input
@@ -418,83 +471,127 @@
         {listQuery.isFetching ? 'loading' : 'unavailable'}.
       </p>
     {/if}
-    <div class={layout}>
-      <section aria-label="Recent campaigns" class={campaignList} data-campaign-list>
-        <p class={muted}>{items.length} of {listPages[0]?.itemCount ?? 0} campaigns · most recent first</p>
-        {#each items as item (item.campaignKey)}
-          <button
-            aria-pressed={item.campaignKey === selectedKey ? 'true' : 'false'}
-            class={cx(card, item.campaignKey === selectedKey && activeCard)}
-            data-campaign-card
-            onclick={() => selectCampaign(item.campaignKey)}
-            type="button"
-          >
-            <span class={title}>{campaignLabelFor(labels, item.campaignKey, campaignMapTitle(item.row))}</span>
-            <span class={muted}>{item.row.projectLabel} · {item.row.harness}</span>
-            <span class={muted} title="Last recorded activity">{recordedAt(item.row)}</span>
-            <span class={muted}
-              >{sessionCount(item.row)}
-              ·
-              {item.row.partial || item.row.usageUnavailable ? '≥ ' : ''}
-              {fmtCompact(item.row.tokenTotal)}
-              recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount ? '' : ' in filter'}</span
-            >
-          </button>
-        {/each}
-        {#if listQuery.hasNextPage}
-          <button
-            class={ghostButton}
-            disabled={listQuery.isFetching}
-            onclick={() => loadNextCampaignPage(listQuery)}
-            type="button"
-          >
-            Load more campaigns
-          </button>
-        {/if}
-        {#if items.length === 0 && !listQuery.isPending}
-          <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
-        {/if}
-      </section>
-      {#if map}
-        <div class={detail} data-map-revision={mapRevision}>
-          <p class={muted}>{root?.projectLabel}· {map.harnesses.join(' · ')}</p>
-          {#if selectedItem && listAnswersRequest && mapRevision === visibleRevision && (selectedItem.row.campaignVisibleCount ?? map.totalCount) < map.totalCount}
-            <p class={muted}>{sessionCount(selectedItem.row)} match the list filters. Map scope: full campaign.</p>
-          {/if}
-          {#if mapRevision !== visibleRevision}
-            <p class={notice} role="status">Showing the last complete Agent Map while the newer revision loads.</p>
-          {/if}
-          {#if presentedMap}
-            <CampaignAgentMap map={presentedMap} onOpen={openSession} />
-          {/if}
-          {#if map.omittedCount > 0}
-            <p class={notice}>
-              {map.omittedCount}
-              sessions are not loaded yet. Counts and timing describe the loaded portion.
-            </p>
-          {/if}
-          {#if membersQuery.hasNextPage}
+    {#if campaignView === 'timeline'}
+      <CampaignProjectTimeline
+        hasMoreSessions={membersQuery.hasNextPage}
+        labelFor={(key, label) => campaignLabelFor(labels, key, label)}
+        map={timelineMap}
+        mapError={membersQuery.error?.message ?? null}
+        mapLoading={membersQuery.isFetching || (mapRevision !== visibleRevision && !membersQuery.error)}
+        onLoadMoreSessions={() => loadNextCampaignPage(membersQuery)}
+        onOpenSession={openSession}
+        onSelectCampaign={selectCampaign}
+        selectedCampaignKey={selectedKey}
+        {timeline}
+      />
+      <p class={notice}>
+        {items.length}
+        of {listPages[0]?.itemCount ?? 0} campaigns loaded. Campaigns are discovered by recorded activity in the
+        selected period; their bars show the recorded campaign chronology.
+      </p>
+      {#if selectedKey && membersQuery.isSuccess && !membersQuery.isPlaceholderData && !root}
+        <p class={notice} role="status">
+          This campaign is unavailable in the current served revision.
+          <button class={ghostButton} onclick={clearSelection} type="button">Clear selection</button>
+        </p>
+      {:else if selectedKey && !selectedItem && (map || items.length > 0)}
+        <p class={notice}>
+          The selected campaign is outside the loaded results.
+          <button class={ghostButton} onclick={() => selectView('list')} type="button">Open Agent Map</button>
+        </p>
+      {/if}
+      {#if listQuery.hasNextPage}
+        <button
+          class={ghostButton}
+          disabled={listQuery.isFetching}
+          onclick={() => loadNextCampaignPage(listQuery)}
+          type="button"
+        >
+          Load more campaigns
+        </button>
+      {/if}
+      {#if items.length === 0 && !listQuery.isPending}
+        <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
+      {/if}
+    {:else}
+      <div class={layout}>
+        <section aria-label="Recent campaigns" class={campaignList} data-campaign-list>
+          <p class={muted}>{items.length} of {listPages[0]?.itemCount ?? 0} campaigns · most recent first</p>
+          {#each items as item (item.campaignKey)}
             <button
-              class={ghostButton}
-              disabled={membersQuery.isFetching}
-              onclick={() => loadNextCampaignPage(membersQuery)}
+              aria-pressed={item.campaignKey === selectedKey ? 'true' : 'false'}
+              class={cx(card, item.campaignKey === selectedKey && activeCard)}
+              data-campaign-card
+              onclick={() => selectCampaign(item.campaignKey)}
               type="button"
             >
-              Load more sessions
+              <span class={title}>{campaignLabelFor(labels, item.campaignKey, campaignMapTitle(item.row))}</span>
+              <span class={muted}>{item.row.projectLabel} · {item.row.harness}</span>
+              <span class={muted} title="Last recorded activity">{recordedAt(item.row)}</span>
+              <span class={muted}
+                >{sessionCount(item.row)}
+                ·
+                {item.row.partial || item.row.usageUnavailable ? '≥ ' : ''}
+                {fmtCompact(item.row.tokenTotal)}
+                recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount ? '' : ' in filter'}</span
+              >
+            </button>
+          {/each}
+          {#if listQuery.hasNextPage}
+            <button
+              class={ghostButton}
+              disabled={listQuery.isFetching}
+              onclick={() => loadNextCampaignPage(listQuery)}
+              type="button"
+            >
+              Load more campaigns
             </button>
           {/if}
-        </div>
-      {:else if membersQuery.isPending && selectedKey}
-        <div class={empty} role="status">Loading campaign hierarchy…</div>
-      {:else if selectedKey && membersQuery.isSuccess}
-        <div class={empty} role="status">
-          This campaign is unavailable in the current served revision.
-          <button class={ghostButton} onclick={clearSelection} type="button">Show recent campaigns</button>
-        </div>
-      {:else}
-        <div class={empty}>Select a campaign to inspect its Agent Map.</div>
-      {/if}
-    </div>
+          {#if items.length === 0 && !listQuery.isPending}
+            <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
+          {/if}
+        </section>
+        {#if map}
+          <div class={detail} data-map-revision={mapRevision}>
+            <p class={muted}>{root?.projectLabel}· {map.harnesses.join(' · ')}</p>
+            {#if selectedItem && listAnswersRequest && mapRevision === visibleRevision && (selectedItem.row.campaignVisibleCount ?? map.totalCount) < map.totalCount}
+              <p class={muted}>{sessionCount(selectedItem.row)} match the list filters. Map scope: full campaign.</p>
+            {/if}
+            {#if mapRevision !== visibleRevision}
+              <p class={notice} role="status">Showing the last complete Agent Map while the newer revision loads.</p>
+            {/if}
+            {#if presentedMap}
+              <CampaignAgentMap map={presentedMap} onOpen={openSession} />
+            {/if}
+            {#if map.omittedCount > 0}
+              <p class={notice}>
+                {map.omittedCount}
+                sessions are not loaded yet. Counts and timing describe the loaded portion.
+              </p>
+            {/if}
+            {#if membersQuery.hasNextPage}
+              <button
+                class={ghostButton}
+                disabled={membersQuery.isFetching}
+                onclick={() => loadNextCampaignPage(membersQuery)}
+                type="button"
+              >
+                Load more sessions
+              </button>
+            {/if}
+          </div>
+        {:else if membersQuery.isPending && selectedKey}
+          <div class={empty} role="status">Loading campaign hierarchy…</div>
+        {:else if selectedKey && membersQuery.isSuccess}
+          <div class={empty} role="status">
+            This campaign is unavailable in the current served revision.
+            <button class={ghostButton} onclick={clearSelection} type="button">Show recent campaigns</button>
+          </div>
+        {:else}
+          <div class={empty}>Select a campaign to inspect its Agent Map.</div>
+        {/if}
+      </div>
+    {/if}
     <SessionDetailQuerySlot
       client={clients.session}
       onSelectionChange={changeSelection}

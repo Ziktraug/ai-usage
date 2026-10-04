@@ -8,6 +8,7 @@ import {
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
 import {
+  buildCampaignChronology,
   parseSessionQueryRequest,
   type SessionPageItem,
   type SessionQueryRequest,
@@ -38,10 +39,12 @@ const bootstrap = (revision: string): Extract<ReportRevisionBootstrapResult, { r
   ok: true,
   requestFingerprint: 'report-manifest:v1:{}',
 });
+const sessionRow = syntheticCampaignRow(1);
 const sessionItem: SessionPageItem = {
   campaignKey: 'campaign-1',
+  chronology: buildCampaignChronology([sessionRow]),
   kind: 'campaign',
-  row: syntheticCampaignRow(1),
+  row: sessionRow,
 };
 const sessionScope = (query = '') => {
   const request = parseSessionQueryRequest({

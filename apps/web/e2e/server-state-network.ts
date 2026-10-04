@@ -17,6 +17,7 @@ const RPC_OPERATIONS = {
   '/rpc/report/revisionManifest': 'report.revisionManifest',
   '/rpc/runtime/reportPerfEnabled': 'runtime.reportPerfEnabled',
   '/rpc/session/campaign-children': 'session.campaignChildren',
+  '/rpc/session/campaignChildren': 'session.campaignChildren',
   '/rpc/session/detail': 'session.detail',
   '/rpc/session/neighbors': 'session.neighbors',
   '/rpc/session/page': 'session.page',

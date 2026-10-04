@@ -35,7 +35,9 @@ export const sessionAnalysisTargetForCampaign = (
   visibleCount: campaign.visibleCount,
 });
 
-export const sessionAnalysisTargetForPageItem = (item: SessionPageItem): SessionAnalysisTarget => {
+export const sessionAnalysisTargetForPageItem = (
+  item: Pick<SessionPageItem, 'campaignKey' | 'kind' | 'row'>,
+): SessionAnalysisTarget => {
   const { campaignTotalCount, campaignVisibleCount } = item.row;
   if (campaignTotalCount === undefined || campaignVisibleCount === undefined) {
     throw new Error('Served campaign rows must include visible and total counts');

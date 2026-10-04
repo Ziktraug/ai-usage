@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import { buildCampaignChronology, type SessionQueryRequest } from '@ai-usage/report-core/session-query';
 import type { SessionWindowView } from '../../../query/options/session-window';
 import { syntheticCampaignRow, syntheticSessionRow } from '../../sessions/table/session-table.fixtures';
 import { campaignSessionControlsModel, campaignSessionControlsState } from './campaign-session-controls-model';
@@ -64,7 +64,14 @@ describe('campaign session controls model', () => {
         ],
       ]),
       itemCount: 1,
-      items: [{ campaignKey, kind: 'campaign' as const, row: campaign }],
+      items: [
+        {
+          campaignKey,
+          chronology: buildCampaignChronology([root, visibleChild, hiddenChild, syntheticSessionRow(4)]),
+          kind: 'campaign' as const,
+          row: campaign,
+        },
+      ],
       loadingMore: false,
       nextCursor: null,
       query: query(),

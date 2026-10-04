@@ -1168,6 +1168,74 @@ describe('session query contracts', () => {
     ).toThrow(SessionQueryValidationError);
   });
 
+  test('requires complete chronology contracts on campaign summaries and rejects inconsistent bounds', () => {
+    const request = defaultRequest();
+    const page = projectSessionPage([sourcedRow('root')], request);
+    const item = page.items[0]!;
+    const valid = item.chronology;
+    expect(parseSessionPageResult(page, request)).toEqual(page);
+    const invalidChronologies = [
+      undefined,
+      { ...valid, extra: true },
+      { ...valid, sessionCount: 0 },
+      { ...valid, sessionCount: 2 },
+      { ...valid, timedSessionCount: 2 },
+      { ...valid, observedFrom: null },
+      { ...valid, observedFrom: 'invalid' },
+      { ...valid, startedAt: '2026-06-10T10:00:00.000Z' },
+      { ...valid, observedFrom: valid.observedTo, observedTo: valid.observedFrom },
+      { ...valid, endedAt: null },
+      { ...valid, observedFrom: '2026-06-10T10:00:00.000Z' },
+      { ...valid, startedAt: null, endedAt: null, timedSessionCount: 0 },
+      { ...valid, startedAt: null, observedTo: '2026-06-10T13:00:00.000Z', timedSessionCount: 0 },
+      { ...valid, endedAt: null, observedFrom: '2026-06-10T10:00:00.000Z', timedSessionCount: 0 },
+    ];
+    for (const chronology of invalidChronologies) {
+      expect(() => parseSessionPageResult({ ...page, items: [{ ...item, chronology }] }, request)).toThrow(
+        SessionQueryValidationError,
+      );
+    }
+  });
+
+  test('accepts partial chronology whose one-sided anchors extend beyond valid paired intervals', () => {
+    const request = defaultRequest();
+    const instant = (hour: number): string => new Date(Date.UTC(2026, 5, 10, hour)).toISOString();
+    const timingCases = [
+      [
+        { date: instant(11), endDate: instant(12) },
+        { date: null, endDate: instant(10) },
+        { date: instant(13), endDate: null },
+      ],
+      [
+        { date: instant(10), endDate: null },
+        { date: instant(13), endDate: null },
+      ],
+      [
+        { date: null, endDate: instant(10) },
+        { date: null, endDate: instant(13) },
+      ],
+      [{ date: null, endDate: null }],
+    ];
+    for (const timings of timingCases) {
+      const members = timings.map((timing, index) =>
+        sourcedRow(`timing-${index}`, {
+          ...timing,
+          source: {
+            harnessKey: 'codex',
+            machineId: 'machine-a',
+            machineLabel: 'Machine A',
+            rootSourceSessionId: 'timing-0',
+            sourceSessionId: `timing-${index}`,
+          },
+        }),
+      );
+      const page = projectSessionPage(members, request);
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.chronology.sessionCount).toBe(timings.length);
+      expect(parseSessionPageResult(page, request)).toEqual(page);
+    }
+  });
+
   test('keeps a maximum Session page within frozen row and byte budgets', () => {
     const request = defaultRequest({ pageSize: MAX_SESSION_QUERY_PAGE_SIZE });
     const result = projectSessionPage(
