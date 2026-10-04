@@ -6,7 +6,7 @@ import {
 } from '@ai-usage/local-machine/testing/harness-home';
 import { collectionSourceDefinitions } from '@ai-usage/report-core';
 import { parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
-import type { Request } from '@playwright/test';
+import type { Page, Request } from '@playwright/test';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
 import {
@@ -63,6 +63,34 @@ const LIVE_ALL_TIME_CURRENT_FIRST_DAY = '2026-07-01T';
 const LIVE_ALL_TIME_HISTORICAL_FIRST_DAY = '2025-01-01T';
 const LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT = '2025-01-01T08:00:00.000Z';
 const LIVE_ALL_TIME_QUIESCENCE_MS = 250;
+
+/** Start action counts after the first source publication and its alias revalidation have completed. */
+const openSettledProductionReport = async (page: Page, url = '/'): Promise<void> => {
+  const pending = new Set<Request>();
+  const observe = (request: Request): void => {
+    if (isRpcPathname(new URL(request.url()).pathname)) {
+      pending.add(request);
+    }
+  };
+  const settle = (request: Request): void => {
+    pending.delete(request);
+  };
+  page.on('request', observe);
+  page.on('requestfinished', settle);
+  page.on('requestfailed', settle);
+  try {
+    await page.goto(url);
+    await expect(page.getByRole('button', { exact: true, name: 'Collect now' })).toBeEnabled();
+    await expect
+      .poll(() => pending.size, { message: 'The initial source publication RPCs must settle before action counts' })
+      .toBe(0);
+    await waitForFocusedReportSettled(page);
+  } finally {
+    page.off('request', observe);
+    page.off('requestfinished', settle);
+    page.off('requestfailed', settle);
+  }
+};
 
 const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -435,8 +463,7 @@ test('upgrades a live all-time Day cache exactly once after the date domain reso
 
 test('switches production Activity metrics without a business request', async ({ page }) => {
   const serverStateTrace = createServerStateNetworkTrace(page);
-  await page.goto('/');
-  await waitForFocusedReportSettled(page);
+  await openSettledProductionReport(page);
 
   const activity = page.getByRole('region', { name: 'Activity' });
   const metricControl = activity.getByRole('group', { name: 'Activity metric' });
@@ -487,10 +514,8 @@ test('reuses the current revision bootstrap across Sessions filter and sort with
     }
   });
 
-  await page.goto('/?tab=sessions');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openSettledProductionReport(page, '/?tab=sessions');
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
-  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
   trace.checkpoint('session-actions');
   browserBootstrapRequests.length = 0;
   routeDataRequests.length = 0;
@@ -529,7 +554,7 @@ test('reuses the current revision bootstrap across Sessions filter and sort with
 
 test('records destination request counts and report DOM identity', async ({ page }) => {
   const trace = createServerStateNetworkTrace(page);
-  await page.goto('/');
+  await openSettledProductionReport(page);
   const workspace = page.locator('[data-report-workspace]');
   const graph = page.locator('[data-report-range-part="chart"]');
   await expect(workspace).toBeVisible();
@@ -565,7 +590,7 @@ test('records destination request counts and report DOM identity', async ({ page
 
 test('records filter range sort and history request counts without route data', async ({ page }) => {
   const trace = createServerStateNetworkTrace(page);
-  await page.goto('/?tab=sessions');
+  await openSettledProductionReport(page, '/?tab=sessions');
   const workspace = page.locator('[data-report-workspace]');
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
   await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'history'));
@@ -621,7 +646,7 @@ test('records one exact expiry and one failed background refresh while retaining
   page,
 }) => {
   const trace = createServerStateNetworkTrace(page);
-  await page.goto('/');
+  await openSettledProductionReport(page);
   const workspace = page.locator('[data-report-workspace]');
   const completeOutput = page.locator('[data-report-complete-output]');
   await expect(completeOutput).toBeVisible();
