@@ -337,7 +337,8 @@ test('scrolls every campaign once with bounded DOM and acquisition, then finds a
   await page.getByRole('button', { name: 'Open matching session Continuity child 0359', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details', exact: true });
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByText('Continuity child 0359', { exact: true })).toBeVisible();
+  await expect(drawer.locator('[data-session-round-prompt]')).toBeVisible();
+  await expect(drawer.locator('[data-session-round-prompt]')).toHaveText('Continuity child 0359');
 });
 
 test('scrolls a large hierarchy and restores the same session anchor and keyboard focus after details', async ({
@@ -729,13 +730,16 @@ test('restores a far matching session through publication without replaying the 
   request,
   baseURL,
 }, testInfo) => {
+  // This non-modal desktop path keeps the publication action beside the wide reader.
+  await page.setViewportSize({ width: 1920, height: 1080 });
   const traffic = await captureAcquisition(page);
   await openCampaigns(page, `${LIST_ROUTE}%20child%200359`);
   const map = page.locator('[data-campaign-scroll="map"]');
   await expect(map).toHaveAttribute('data-loaded-rows', '101');
   await page.getByRole('button', { name: 'Open matching session Continuity child 0359', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details', exact: true });
-  await expect(drawer.getByText('Continuity child 0359', { exact: true })).toBeVisible();
+  await expect(drawer.locator('[data-session-round-prompt]')).toBeVisible();
+  await expect(drawer.locator('[data-session-round-prompt]')).toHaveText('Continuity child 0359');
   const selectedSession = new URL(page.url()).searchParams.get('selectedSession');
   expect(selectedSession).toBeTruthy();
   const report = page.locator('main[data-route-shell="campaigns"]');
@@ -744,10 +748,22 @@ test('restores a far matching session through publication without replaying the 
   const refresh = page.getByRole('button', { name: REFRESH_PATTERN });
   await expect(refresh).toBeVisible();
   await expect(report).toHaveAttribute('data-report-revision', originalRevision!);
+  await expect(refresh).toBeInViewport();
+  const refreshHitTarget = await refresh.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const target = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+    return { bounds: bounds.toJSON(), hitsButton: target?.closest('button') === element, target: target?.outerHTML };
+  });
+  await testInfo.attach('publication-action-hit-target', {
+    body: JSON.stringify(refreshHitTarget),
+    contentType: 'application/json',
+  });
+  expect(refreshHitTarget.hitsButton).toBe(true);
   await refresh.click();
   await expect(report).not.toHaveAttribute('data-report-revision', originalRevision!);
   const revision = await report.getAttribute('data-report-revision');
-  await expect(drawer.getByText('Continuity child 0359', { exact: true })).toBeVisible();
+  await expect(drawer.locator('[data-session-round-prompt]')).toBeVisible();
+  await expect(drawer.locator('[data-session-round-prompt]')).toHaveText('Continuity child 0359');
   expect(new URL(page.url()).searchParams.get('selectedSession')).toBe(selectedSession);
   const observations = await traffic.finish();
   await saveMeasurements(testInfo, 'campaign-search-revision-continuity.json', {
