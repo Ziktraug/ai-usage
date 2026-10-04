@@ -2,9 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import { campaignMapFixtureGeneratedAt, campaignMapFixtureRootKey } from '../../../campaign-map-fixture';
 import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
 import { createHydratedWebQueryClient, createWebQueryClient } from '../../query/client';
+import { initialSessionWindowIntent } from '../../query/options/session-window';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { loadCampaignsPageData } from './campaigns-load';
-import { campaignMembersOptions, campaignsListOptions, campaignsRequest } from './campaigns-query';
+import {
+  campaignMatchingMembersOptions,
+  campaignMembersOptions,
+  campaignsExplorationOptions,
+  campaignsListOptions,
+  campaignsRequest,
+} from './campaigns-query';
 import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
 describe('Campaign focused query integration', () => {
@@ -30,6 +37,11 @@ describe('Campaign focused query integration', () => {
       expect(members.pages[0]?.revision).toBe(request.revision);
       expect(members.pages[0]?.root?.tokenTotal).toBe(400_000);
       expect(members.pages[0]?.items.some((row) => row.name === 'Implement market ingestion')).toBe(true);
+      const matches = await queryClient.fetchInfiniteQuery(
+        campaignMatchingMembersOptions(client, request, campaignMapFixtureRootKey),
+      );
+      expect(matches.pages[0]?.items).toHaveLength(1);
+      expect(matches.pages[0]?.items[0]?.name).toBe('Verify ingestion edge cases');
     } finally {
       queryClient.clear();
     }
@@ -69,7 +81,7 @@ describe('Campaign focused query integration', () => {
       'demo',
     );
     expect(networkCalls).toBe(0);
-    expect(data.queryState.dehydratedState.queries).toHaveLength(2);
+    expect(data.queryState.dehydratedState.queries).toHaveLength(3);
     const client = createSyntheticCampaignClient();
     const forbidRefetch = (): Promise<never> => Promise.reject(new Error('Hydrated exact data was refetched'));
     const hydratedClient: SessionClientAdapter = { ...client, campaignChildren: forbidRefetch, page: forbidRefetch };
@@ -86,6 +98,16 @@ describe('Campaign focused query integration', () => {
       );
       expect(list.pages[0]?.items).toHaveLength(4);
       expect(map.pages[0]?.items).toHaveLength(4);
+      const exploration = await queryClient.fetchQuery(
+        campaignsExplorationOptions({
+          client: hydratedClient,
+          queryClient,
+          request,
+          intent: { ...initialSessionWindowIntent(), campaignSessionsDepth: { [campaignMapFixtureRootKey]: 1 } },
+        }),
+      );
+      expect(exploration.list.pages[0]?.items).toHaveLength(4);
+      expect(exploration.members[0]?.data.pages[0]?.items).toHaveLength(4);
       expect(queryClient.isFetching()).toBe(0);
     } finally {
       queryClient.clear();

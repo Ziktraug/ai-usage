@@ -19,8 +19,53 @@ const session = (page: Page, title: string): Locator =>
     has: page.getByRole('button', { exact: true, name: `Open session ${title}` }),
   });
 
-const openTimeline = async (page: Page): Promise<void> => {
-  await page.goto('/campaigns?campaignView=timeline');
+const revealTimelineRow = async (page: Page, target: Locator): Promise<void> => {
+  const viewport = page.locator('[data-campaign-scroll="timeline"]');
+  await viewport.scrollIntoViewIfNeeded();
+  await viewport.focus();
+  await page.keyboard.press('Home');
+  // Chromium animates native Home scrolling; wait until it finishes before sending wheel input.
+  await expect.poll(() => viewport.evaluate((element) => Math.abs(element.scrollTop))).toBeLessThan(1);
+  for (let index = 0; index < 60; index++) {
+    const box = await viewport.boundingBox();
+    if (!box) {
+      throw new Error('Timeline viewport is unavailable');
+    }
+    const top = Math.max(box.y, 0);
+    const bottom = Math.min(box.y + box.height, page.viewportSize()?.height ?? 720);
+    const targetBox = await target.boundingBox({ timeout: 50 }).catch(() => null);
+    if (targetBox && targetBox.y >= top && targetBox.y + targetBox.height <= bottom) {
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      const nextBox = await target.boundingBox({ timeout: 50 }).catch(() => null);
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      const settledBox = await target.boundingBox({ timeout: 50 }).catch(() => null);
+      if (
+        nextBox &&
+        settledBox &&
+        Math.abs(nextBox.y - targetBox.y) < 1 &&
+        Math.abs(settledBox.y - targetBox.y) < 1 &&
+        settledBox.y >= top &&
+        settledBox.y + settledBox.height <= bottom
+      ) {
+        await expect(target).toBeVisible();
+        return;
+      }
+      continue;
+    }
+    await page.mouse.move(box.x + box.width / 2, (top + bottom) / 2);
+    await page.mouse.wheel(0, box.height * 0.4 * (targetBox && targetBox.y < box.y ? -1 : 1));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  }
+  throw new Error(`Timeline target was not reached by scrolling: ${target}`);
+};
+
+const projectHeader = (page: Page, label: string): Locator =>
+  page
+    .locator('[data-timeline-project]')
+    .filter({ has: page.getByRole('button', { name: `Collapse project ${label}`, exact: true }) });
+
+const openTimeline = async (page: Page, url = '/campaigns?campaignView=timeline'): Promise<void> => {
+  await page.goto(url);
   await waitForHydratedNavigation(page);
   await expect(timeline(page)).toBeVisible();
   await expect(page.locator('[data-timeline-session]')).toHaveCount(5);
@@ -28,6 +73,7 @@ const openTimeline = async (page: Page): Promise<void> => {
 
 const selectCampaign = async (page: Page, title: string, sessionCount: number): Promise<void> => {
   const trigger = page.getByRole('button', { exact: true, name: `Select campaign ${title}` });
+  await revealTimelineRow(page, trigger);
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[data-timeline-session]')).toHaveCount(sessionCount);
@@ -41,8 +87,12 @@ test('preserves the project timeline mode and selected campaign through reload a
   await page.getByRole('button', { exact: true, name: 'Project timeline' }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get('campaignView')).toBe('timeline');
   await expect(timeline(page)).toBeVisible();
-  await expect(page.locator('[data-timeline-project]')).toHaveCount(3);
-  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(4);
+  for (const project of ['world-state', 'ai-usage', 'aroven']) {
+    await revealTimelineRow(page, projectHeader(page, project));
+  }
+  for (const title of [ROOT_TITLE, STANDALONE_TITLE, CURSOR_TITLE, ORPHAN_TITLE]) {
+    await revealTimelineRow(page, campaign(page, title));
+  }
   await selectCampaign(page, STANDALONE_TITLE, 1);
   await expect.poll(() => new URL(page.url()).searchParams.get('selectedCampaign')).toBe(STANDALONE_KEY);
 
@@ -64,22 +114,29 @@ test('preserves the project timeline mode and selected campaign through reload a
 
 test('collapses projects independently and expands only the selected campaign', async ({ page }) => {
   await openTimeline(page);
-  const aiUsage = timeline(page).getByRole('region', { exact: true, name: 'ai-usage' });
-  await expect(aiUsage.locator('[data-timeline-campaign]')).toHaveCount(2);
+  await revealTimelineRow(page, campaign(page, STANDALONE_TITLE));
+  await revealTimelineRow(page, campaign(page, ORPHAN_TITLE));
   await selectCampaign(page, STANDALONE_TITLE, 1);
   await page.getByRole('button', { exact: true, name: 'Collapse project ai-usage' }).click();
-  await expect(aiUsage.locator('[data-timeline-campaign]')).toHaveCount(0);
+  await expect(campaign(page, STANDALONE_TITLE)).toHaveCount(0);
+  await expect(campaign(page, ORPHAN_TITLE)).toHaveCount(0);
+  await revealTimelineRow(page, campaign(page, ROOT_TITLE));
   await expect(campaign(page, ROOT_TITLE)).toBeVisible();
   await expect(page.locator('[data-timeline-session]')).toHaveCount(0);
   await expect.poll(() => new URL(page.url()).searchParams.get('selectedCampaign')).toBe(STANDALONE_KEY);
-  await page.getByRole('button', { exact: true, name: 'Expand project ai-usage' }).click();
-  await expect(aiUsage.locator('[data-timeline-campaign]')).toHaveCount(2);
+  const expandProject = page.getByRole('button', { exact: true, name: 'Expand project ai-usage' });
+  await revealTimelineRow(page, expandProject);
+  await expandProject.click();
+  await revealTimelineRow(page, campaign(page, STANDALONE_TITLE));
+  await revealTimelineRow(page, campaign(page, ORPHAN_TITLE));
   await expect(session(page, STANDALONE_TITLE)).toBeVisible();
 
   await page.getByRole('button', { exact: true, name: `Collapse sessions for ${STANDALONE_TITLE}` }).click();
   await expect(page.locator('[data-timeline-session]')).toHaveCount(0);
   await expect.poll(() => new URL(page.url()).searchParams.get('selectedCampaign')).toBe(STANDALONE_KEY);
-  await page.getByRole('button', { exact: true, name: `Expand sessions for ${ROOT_TITLE}` }).click();
+  const expandRoot = page.getByRole('button', { exact: true, name: `Expand sessions for ${ROOT_TITLE}` });
+  await revealTimelineRow(page, expandRoot);
+  await expandRoot.click();
   await expect(page.locator('[data-timeline-session]')).toHaveCount(5);
   await expect(session(page, STANDALONE_TITLE)).toHaveCount(0);
   await expect(session(page, NESTED_TITLE)).toHaveAttribute('data-depth', '2');
@@ -107,19 +164,18 @@ test('opens standalone and nested sessions with the keyboard and restores detail
 });
 
 test('aligns campaigns and parallel sessions on the shared observed time axis', async ({ page }) => {
-  await openTimeline(page);
+  await openTimeline(page, '/campaigns?campaignView=timeline&range=all');
   await expect(timeline(page)).toHaveAttribute('data-axis-start', '2026-06-11T06:45:00.000Z');
   await expect(timeline(page)).toHaveAttribute('data-axis-end', '2026-06-11T09:20:00.000Z');
   await page.evaluate(async () => await document.fonts.ready);
   const rootCampaignBar = await campaign(page, ROOT_TITLE).locator('[data-timeline-campaign-bar]').boundingBox();
   const rootSessionBar = await session(page, ROOT_TITLE).locator('[data-timeline-session-bar]').boundingBox();
-  const projectBar = await timeline(page)
-    .getByRole('region', { exact: true, name: 'world-state' })
-    .locator('[data-timeline-project-bar]')
-    .boundingBox();
+  const projectBar = await projectHeader(page, 'world-state').locator('[data-timeline-project-bar]').boundingBox();
+  await revealTimelineRow(page, campaign(page, STANDALONE_TITLE));
   const earlierCampaignBar = await campaign(page, STANDALONE_TITLE)
     .locator('[data-timeline-campaign-bar]')
     .boundingBox();
+  await revealTimelineRow(page, session(page, 'Define the data model'));
   const modelBar = await session(page, 'Define the data model').locator('[data-timeline-session-bar]').boundingBox();
   const ingestionBar = await session(page, 'Implement market ingestion')
     .locator('[data-timeline-session-bar]')
@@ -154,9 +210,25 @@ test('keeps full campaign chronology when a child matches search and preserves t
     await page.getByRole('combobox', { exact: true, name: 'Period' }).selectOption(range);
     await page.getByRole('button', { exact: true, name: 'Apply filters' }).click();
     await expect.poll(() => new URL(page.url()).searchParams.get('range')).toBe(range);
-    await expect(page.locator('[data-timeline-campaign]')).toHaveCount(4);
+    await expect(page.getByText('4 of 4 campaigns loaded.', { exact: false })).toBeVisible();
+    for (const title of [ROOT_TITLE, STANDALONE_TITLE, CURSOR_TITLE, ORPHAN_TITLE]) {
+      await revealTimelineRow(page, campaign(page, title));
+    }
     await expect(timeline(page)).toBeVisible();
   }
+  const readAnchor = () =>
+    page.locator('[data-campaign-scroll="timeline"]').evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      const row = [...element.querySelectorAll<HTMLElement>('[data-virtual-key]')].find(
+        (candidate) => candidate.getBoundingClientRect().bottom > top + 1,
+      );
+      return { key: row?.dataset.virtualKey, offset: row ? row.getBoundingClientRect().top - top : 0 };
+    });
+  const savedAnchor = await readAnchor();
+  expect(savedAnchor.key).toBeDefined();
+  expect(
+    await page.locator('[data-campaign-scroll="timeline"]').evaluate((element) => element.scrollTop),
+  ).toBeGreaterThan(100);
   await search.fill('no-campaign-matches-this-query');
   await page.getByRole('button', { exact: true, name: 'Apply filters' }).click();
   await expect(
@@ -164,7 +236,23 @@ test('keeps full campaign chronology when a child matches search and preserves t
   ).toBeVisible();
   await expect(page.locator('[data-timeline-campaign]')).toHaveCount(0);
   await page.goBack();
-  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(4);
+  await expect(page.getByText('4 of 4 campaigns loaded.', { exact: false })).toBeVisible();
+  const expectRestoredAnchor = () =>
+    expect
+      .poll(async () => {
+        const restored = await readAnchor();
+        return restored.key === savedAnchor.key && Math.abs(restored.offset - savedAnchor.offset) < 2;
+      })
+      .toBe(true);
+  await expectRestoredAnchor();
+  await page.goForward();
+  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(0);
+  await page.goBack();
+  await expect(page.getByText('4 of 4 campaigns loaded.', { exact: false })).toBeVisible();
+  await expectRestoredAnchor();
+  for (const title of [ROOT_TITLE, STANDALONE_TITLE, CURSOR_TITLE, ORPHAN_TITLE]) {
+    await revealTimelineRow(page, campaign(page, title));
+  }
   await expect(search).toHaveValue('');
   await expect.poll(() => new URL(page.url()).searchParams.get('campaignView')).toBe('timeline');
 });

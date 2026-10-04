@@ -9,7 +9,7 @@ import {
 } from '@ai-usage/report-core/session-detail';
 import type {
   CampaignChronology,
-  CampaignTimingRow,
+  CampaignChronologyAccumulator,
   SessionCampaignChildrenRequest,
   SessionCampaignChildrenResult,
   SessionNeighborRequest,
@@ -22,7 +22,7 @@ import type {
   SessionSortField,
 } from '@ai-usage/report-core/session-query';
 import {
-  buildCampaignChronology,
+  createCampaignChronologyAccumulator,
   parseSessionCampaignChildrenRequest,
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
@@ -160,7 +160,7 @@ interface CampaignSummaryTotals {
   actual: number;
   priceMeasurement: ApiPriceMeasurement;
   quota: number;
-  timing: CampaignTimingRow[];
+  timing: CampaignChronologyAccumulator;
 }
 
 interface CampaignRootRecord {
@@ -658,10 +658,10 @@ const hydrateCampaignSummaries = (
       actual: 0,
       priceMeasurement: EMPTY_API_PRICE_MEASUREMENT,
       quota: 0,
-      timing: [],
+      timing: createCampaignChronologyAccumulator(),
     };
     const member = parsePresentationRow(row.row_json);
-    total.timing.push({ date: member.date, endDate: member.endDate });
+    total.timing.add(member);
     if (row.contributes_to_totals === 1) {
       total.actual += row.cost_actual ?? 0;
       total.priceMeasurement = combineApiPriceMeasurements([
@@ -682,7 +682,7 @@ const hydrateCampaignSummaries = (
     record.cost_known = total.priceMeasurement.state === 'partially measured' ? 0 : 1;
     record.cost_quota = total.quota;
     record.price_measurement = total.priceMeasurement;
-    record.chronology = buildCampaignChronology(total.timing);
+    record.chronology = total.timing.finish();
   }
 };
 

@@ -240,12 +240,13 @@ const linkAbort = (signal: AbortSignal, queryClient: QueryClient, queryKey: Quer
   return () => signal.removeEventListener('abort', cancel);
 };
 
-const ensureInfiniteDepth = async <Page extends { readonly nextCursor: SessionCursor }>(
+export const ensureInfiniteDepth = async <Page extends { readonly nextCursor: SessionCursor }>(
   queryClient: QueryClient,
   options: CreateInfiniteQueryOptions<Page, Error, InfiniteData<Page, SessionCursor>, QueryKey, SessionCursor>,
   requestedDepth: number,
   signal: AbortSignal,
 ): Promise<InfiniteData<Page, SessionCursor>> => {
+  signal.throwIfAborted();
   const depth = Math.max(1, requestedDepth);
   const unlink = linkAbort(signal, queryClient, options.queryKey);
   const observer = new InfiniteQueryObserver(queryClient, options);

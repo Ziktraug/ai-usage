@@ -4,6 +4,8 @@ import {
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
+import { parseSessionQueryRequest, type SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import type { Locator, Page, Request } from '@playwright/test';
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 import { decodeRpcResponseBody, encodeRpcResponseBody, rpcStringFieldValues } from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
@@ -12,6 +14,15 @@ import { freezeSessionScrollCollectionSources } from './session-scroll-source-co
 const OPEN_SESSION_PATTERN = /^Open session/;
 const ANALYSE_SESSION_PATTERN = /Analyze session chronology/;
 const EXPAND_CAMPAIGN_PATTERN = /^Expand sessions for/;
+
+const scrollThroughBoundary = async (page: Page, surface: Locator): Promise<void> => {
+  const box = await surface.boundingBox();
+  if (!box) {
+    throw new Error('The campaign viewport must be visible');
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + Math.min(150, box.height / 2));
+  await page.mouse.wheel(0, 10_000);
+};
 
 const SECRET_SENTINELS = [
   HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
@@ -39,7 +50,8 @@ test('serves and pages bounded campaigns from the production SQLite revision', a
   expect(html).not.toContain('Synthetic demonstration');
   await waitForHydratedNavigation(page);
   await expect(page.getByRole('heading', { name: 'Campaigns', exact: true })).toBeVisible();
-  await expect(page.locator('[data-campaign-card]')).toHaveCount(40);
+  await expect(page.locator('[data-campaign-list]')).toContainText('40 of');
+  expect(await page.locator('[data-campaign-card]').count()).toBeLessThan(40);
   await expect(page.locator('[data-campaign-node]')).toHaveCount(1);
   const initialMs = performance.now() - startedAt;
   const main = page.locator('main[data-route-shell="campaigns"]');
@@ -50,20 +62,22 @@ test('serves and pages bounded campaigns from the production SQLite revision', a
   const nextPageResponse = page.waitForResponse(
     (candidate) => new URL(candidate.url()).pathname === '/rpc/session/page',
   );
-  await page.getByRole('button', { name: 'Load more campaigns', exact: true }).click();
+  await scrollThroughBoundary(page, page.locator('[data-campaign-list]'));
   const body = await (await nextPageResponse).text();
   for (const secret of SECRET_SENTINELS) {
     expect(body).not.toContain(secret);
   }
   expect(new Set(rpcStringFieldValues(body, 'revision'))).toEqual(new Set([revision]));
   expect(new TextEncoder().encode(body).byteLength).toBeLessThan(2 * 1024 * 1024);
-  await expect(page.locator('[data-campaign-card]')).toHaveCount(80);
+  await expect(page.locator('[data-campaign-list]')).toContainText('80 of');
+  expect(await page.locator('[data-campaign-card]').count()).toBeLessThan(40);
   await expect(page.locator('[data-campaign-node]')).toHaveCount(1);
 
   const reportCalls = trace.records().filter(({ operation }) => operation?.startsWith('report.'));
   expect(reportCalls.every(({ operation }) => operation === 'report.revisionBootstrap')).toBe(true);
   const observation = {
-    initialCampaignCards: 40,
+    acquiredCampaigns: 80,
+    mountedCampaignCards: await page.locator('[data-campaign-card]').count(),
     initialDocumentBytes: new TextEncoder().encode(html).byteLength,
     initialMapNodes: 1,
     initialMs: Math.round(initialMs),
@@ -76,10 +90,8 @@ test('serves and pages bounded campaigns from the production SQLite revision', a
   });
   process.stdout.write(`${JSON.stringify({ type: 'campaign-query-measurements', ...observation })}\n`);
   await page.setViewportSize({ width: 390, height: 900 });
-  const campaignList = await page.locator('[data-campaign-list]').boundingBox();
-  expect(campaignList?.height).toBeLessThanOrEqual(360);
-  await page.locator('[data-campaign-map]').scrollIntoViewIfNeeded();
-  await expect(page.locator('[data-campaign-map]')).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
   trace.dispose();
 });
 
@@ -139,7 +151,7 @@ test('retains the visible campaign on a mismatched response and recovers through
     page.getByText('session query server result has a mismatched revision or request fingerprint', { exact: false }),
   ).toBeVisible();
   await expect(page.getByText('Showing last loaded campaigns.', { exact: false })).toBeVisible();
-  await expect(page.locator('[data-campaign-card]')).toHaveCount(40);
+  await expect(page.locator('[data-campaign-list]')).toContainText('40 of');
   await expect(page.locator('[data-map-revision]')).toHaveAttribute('data-map-revision', revision!);
   await page.unroute('**/rpc/session/page**');
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
@@ -158,7 +170,8 @@ test('serves bounded project chronology without fetching every campaign hierarch
   const trace = createServerStateNetworkTrace(page);
   await page.goto('/campaigns?range=all&campaignView=timeline');
   await waitForHydratedNavigation(page);
-  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(40);
+  await expect(page.getByText('40 of', { exact: false })).toBeVisible();
+  expect(await page.locator('[data-timeline-campaign]').count()).toBeLessThan(40);
   await expect(page.locator('[data-timeline-session]')).toHaveCount(1);
   expect(trace.counts().operations['session.campaignChildren'] ?? 0).toBe(0);
   const nextCampaign = page.locator('[data-timeline-campaign]').nth(1);
@@ -195,32 +208,125 @@ test('keeps the retained timeline on its original period until a failed filter c
   page,
   request,
   baseURL,
-}) => {
+}, testInfo) => {
   await freezeSessionScrollCollectionSources(request, baseURL!);
-  await page.goto('/campaigns?range=all&q=Implement%20fixture%20root&campaignView=timeline');
-  await waitForHydratedNavigation(page);
-  await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
-  const timeline = page.locator('[data-project-timeline]');
-  const start = await timeline.getAttribute('data-axis-start');
-  const end = await timeline.getAttribute('data-axis-end');
-  expect(start).toBeTruthy();
-  await page.route('**/rpc/session/page**', async (route) => {
-    const response = await route.fetch();
-    const decoded = decodeRpcResponseBody(await response.text());
-    if (!(typeof decoded === 'object' && decoded !== null && 'revision' in decoded)) {
-      throw new Error('The real Session response must expose its exact revision');
+  const trace = createServerStateNetworkTrace(page);
+  let phase = 'initial';
+  const sourceReleased = Promise.withResolvers<void>();
+  const bootstrapReleased = Promise.withResolvers<void>();
+  let holdBootstrap = false;
+  let bootstrapHeld = false;
+  let pointerHeld = false;
+  const acquisitions: Array<{ at: number; phase: string; query: SessionQueryRequest }> = [];
+  const observePage = (candidate: Request): void => {
+    if (new URL(candidate.url()).pathname !== '/rpc/session/page') {
+      return;
     }
-    await route.fulfill({ response, body: encodeRpcResponseBody({ ...decoded, revision: 'mismatched-revision' }) });
+    const input = candidate.postData() ?? new URL(candidate.url()).searchParams.get('data');
+    if (input === null) {
+      throw new Error('A Campaign page request must carry its exact query');
+    }
+    acquisitions.push({ at: Date.now(), phase, query: parseSessionQueryRequest(decodeRpcResponseBody(input)) });
+  };
+  page.on('request', observePage);
+  await page.route('**/api/source-control', async (route) => {
+    await sourceReleased.promise;
+    await route.continue();
   });
-  await page.getByRole('combobox', { name: 'Period', exact: true }).selectOption('today');
-  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
-  await expect(page.getByText('Showing last loaded campaigns.', { exact: false })).toBeVisible();
-  await expect(timeline).toHaveAttribute('data-axis-start', start!);
-  await expect(timeline).toHaveAttribute('data-axis-end', end!);
-  await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
-  await page.unroute('**/rpc/session/page**');
-  await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(0);
-  await expect(page.getByText('No campaigns match this period and search.', { exact: false })).toBeVisible();
+  await page.route('**/rpc/report/revisionBootstrap**', async (route) => {
+    const response = await route.fetch();
+    if (holdBootstrap) {
+      bootstrapHeld = true;
+      await bootstrapReleased.promise;
+    }
+    await route.fulfill({ response });
+  });
+  try {
+    await page.goto('/campaigns?range=all&q=Implement%20fixture%20root&campaignView=timeline');
+    await waitForHydratedNavigation(page);
+    await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
+    const main = page.locator('main[data-route-shell="campaigns"]');
+    await expect(main).toHaveAttribute('aria-busy', 'false');
+    const revision = await main.getAttribute('data-report-revision');
+    const timeline = page.locator('[data-project-timeline]');
+    const start = await timeline.getAttribute('data-axis-start');
+    const end = await timeline.getAttribute('data-axis-end');
+    expect(start).toBeTruthy();
+    await page.route('**/rpc/session/page**', async (route) => {
+      const response = await route.fetch();
+      const decoded = decodeRpcResponseBody(await response.text());
+      if (!(typeof decoded === 'object' && decoded !== null && 'revision' in decoded)) {
+        throw new Error('The real Session response must expose its exact revision');
+      }
+      await route.fulfill({ response, body: encodeRpcResponseBody({ ...decoded, revision: 'mismatched-revision' }) });
+    });
+    const period = page.getByRole('combobox', { name: 'Period', exact: true });
+    await period.selectOption('today');
+    await expect(period).toHaveValue('today');
+    phase = 'filter';
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get('range')).toBe('today');
+    // The production fixture is July 3; this browser's calendar is Europe/Paris.
+    const expectedQuery = {
+      range: { from: '2026-07-02T22:00:00.000Z', to: '2026-07-03T21:59:59.999Z' },
+      revision,
+    };
+    expect(acquisitions.at(-1)?.query).toMatchObject(expectedQuery);
+    await expect(page.getByText('Showing last loaded campaigns.', { exact: false })).toBeVisible();
+    await expect(timeline).toHaveAttribute('data-axis-start', start!);
+    await expect(timeline).toHaveAttribute('data-axis-end', end!);
+    await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
+    await page.unroute('**/rpc/session/page**');
+    phase = 'retry';
+    const retry = page.getByRole('button', { name: 'Retry', exact: true });
+    await expect(retry).toBeEnabled();
+    const retryBox = await retry.boundingBox();
+    if (!retryBox) {
+      throw new Error('The retained timeline must expose its Retry control');
+    }
+    holdBootstrap = true;
+    await page.mouse.move(retryBox.x + retryBox.width / 2, retryBox.y + retryBox.height / 2);
+    await page.mouse.down();
+    pointerHeld = true;
+    // A healthy alias revalidation between press and release must not discard this pinned Retry.
+    sourceReleased.resolve();
+    await expect.poll(() => bootstrapHeld).toBe(true);
+    await expect(main).toHaveAttribute('aria-busy', 'true');
+    await expect(retry).toBeEnabled();
+    await page.mouse.up();
+    pointerHeld = false;
+    await expect(page.locator('[data-timeline-campaign]')).toHaveCount(0);
+    await expect(page.getByText('No campaigns match this period and search.', { exact: false })).toBeVisible();
+    expect(acquisitions).toHaveLength(2);
+    expect(acquisitions.at(-1)?.query).toMatchObject(expectedQuery);
+    bootstrapReleased.resolve();
+    await expect(main).toHaveAttribute('aria-busy', 'false');
+  } finally {
+    sourceReleased.resolve();
+    bootstrapReleased.resolve();
+    if (pointerHeld) {
+      await page.mouse.up();
+    }
+    const finalState = await page.evaluate(() => {
+      const main = document.querySelector('main[data-route-shell="campaigns"]');
+      const timeline = document.querySelector('[data-project-timeline]');
+      return {
+        axisEnd: timeline?.getAttribute('data-axis-end'),
+        axisStart: timeline?.getAttribute('data-axis-start'),
+        busy: main?.getAttribute('aria-busy'),
+        campaigns: document.querySelectorAll('[data-timeline-campaign]').length,
+        notices: [...document.querySelectorAll('[role="status"]')].map((node) => node.textContent?.trim()),
+        period: document.querySelector<HTMLSelectElement>('select[name="range"]')?.value,
+        revision: main?.getAttribute('data-report-revision'),
+        url: window.location.href,
+      };
+    });
+    await testInfo.attach('campaign-filter-retry-context.json', {
+      body: JSON.stringify({ acquisitions, finalState, phase, requests: trace.records() }, null, 2),
+      contentType: 'application/json',
+    });
+    page.off('request', observePage);
+    trace.dispose();
+  }
 });

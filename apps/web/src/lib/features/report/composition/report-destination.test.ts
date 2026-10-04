@@ -19,7 +19,15 @@ import { QueryObserver } from '@tanstack/svelte-query';
 import { demoReportPayload } from '../../../../report-data';
 import { createWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
-import { reportDestinationExactKey, reportDestinationQueryOptions } from '../../../query/options/report-destination';
+import { reportBootstrapQueryOptions } from '../../../query/options/report';
+import {
+  type ReportDestinationQueryData,
+  refreshReportDestination,
+  reportDestinationExactKey,
+  reportDestinationKey,
+  reportDestinationQueryOptions,
+} from '../../../query/options/report-destination';
+import { initialSessionWindowIntent } from '../../../query/options/session-window';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { syntheticCampaignRow } from '../../sessions/table/session-table.fixtures';
 
@@ -115,7 +123,278 @@ const sessionClientWithPage = (page: SessionClientAdapter['page']): SessionClien
   return { campaignChildren: unexpected, detail: unexpected, neighbors: unexpected, page, vcs: unexpected };
 };
 
+const overviewDependencies = (getFocusedReportOverview: ReportQueryClient['getFocusedReportOverview']) => ({
+  queryClient: createWebQueryClient(),
+  reportClient: {
+    getFocusedReportOverview,
+    getFocusedReportBreakdown: () => Promise.reject(new Error('Unexpected Breakdown query')),
+    getFocusedReportSupport: () => Promise.reject(new Error('Unexpected support query')),
+    getReportRevisionBootstrap: () => Promise.resolve(bootstrap('revision-refresh')),
+    getReportRevisionManifest: () => Promise.reject(new Error('Unexpected manifest query')),
+  },
+  sessionClient: sessionClientWithPage(() => Promise.reject(new Error('Unexpected Session query'))),
+});
+
 describe('report destination Query', () => {
+  test('supersedes a retained Day refresh when its date domain requests Week', async () => {
+    const calls: string[] = [];
+    const dependencies = overviewDependencies((request) => {
+      calls.push(request.timeline.granularity);
+      return Promise.resolve(successfulOverview(request));
+    });
+    const day = overviewDestination();
+    const week = { ...day, timeline: { ...day.timeline, granularity: 'week' as const } };
+    try {
+      await dependencies.queryClient.fetchQuery(reportDestinationQueryOptions(dependencies, day, { browser: true }));
+      const pendingDay = refreshReportDestination(dependencies, day);
+      await Promise.resolve();
+      const pendingWeek = refreshReportDestination(dependencies, week);
+      const [, result] = await Promise.all([pendingDay, pendingWeek]);
+      expect(result.destination.timeline.granularity).toBe('week');
+      expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toEqual(result);
+      expect(calls).toEqual(['day', 'week']);
+    } finally {
+      dependencies.queryClient.clear();
+    }
+  });
+
+  test('supersedes an unseeded pending Day and never publishes its late result over Week', async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    const dependencies = overviewDependencies(async (request) => {
+      calls.push(request.timeline.granularity);
+      if (request.timeline.granularity === 'day') {
+        started.resolve();
+        await release.promise;
+      }
+      return successfulOverview(request);
+    });
+    const day = overviewDestination();
+    const week = { ...day, timeline: { ...day.timeline, granularity: 'week' as const } };
+    try {
+      const pendingDay = refreshReportDestination(dependencies, day);
+      await started.promise;
+      const pendingWeek = refreshReportDestination(dependencies, week);
+      // Week must acquire without waiting for the obsolete transport to finish.
+      const result = await pendingWeek;
+      expect(result.destination.timeline.granularity).toBe('week');
+      const accepted = dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey());
+      const obsolete = dependencies.queryClient.getQueryCache().find({
+        exact: true,
+        queryKey: reportDestinationExactKey(day, result.descriptor),
+      })?.promise;
+      expect(obsolete).toBeDefined();
+      release.resolve();
+      await Promise.all([pendingDay, obsolete]);
+      expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toBe(accepted);
+      expect(calls).toEqual(['day', 'week']);
+    } finally {
+      release.resolve();
+      dependencies.queryClient.clear();
+    }
+  });
+
+  test('deduplicates concurrent refreshes for the same exact Week request', async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let calls = 0;
+    const dependencies = overviewDependencies(async (request) => {
+      calls += 1;
+      started.resolve();
+      await release.promise;
+      return successfulOverview(request);
+    });
+    const day = overviewDestination();
+    const week = { ...day, timeline: { ...day.timeline, granularity: 'week' as const } };
+    try {
+      const first = refreshReportDestination(dependencies, week);
+      await started.promise;
+      const second = refreshReportDestination(dependencies, week);
+      const third = refreshReportDestination(dependencies, week);
+      release.resolve();
+      const results = await Promise.all([first, second, third]);
+      expect(calls).toBe(1);
+      expect(results.every((result) => result.destination.timeline.granularity === 'week')).toBe(true);
+      expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toBe(
+        results[2],
+      );
+    } finally {
+      release.resolve();
+      dependencies.queryClient.clear();
+    }
+  });
+
+  test('does not reacquire bootstrap when an obsolete destination expires after cancellation', async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let bootstrapCalls = 0;
+    const dependencies = overviewDependencies(async (request) => {
+      if (request.timeline.granularity === 'day') {
+        started.resolve();
+        await release.promise;
+        return {
+          error: { message: 'expired', revision: request.query.revision, tag: 'RevisionExpired' as const },
+          ok: false as const,
+          requestFingerprint: focusedOverviewFingerprint(request),
+          revision: request.query.revision,
+        };
+      }
+      return successfulOverview(request);
+    });
+    dependencies.reportClient.getReportRevisionBootstrap = () => {
+      bootstrapCalls += 1;
+      return Promise.resolve(bootstrap('revision-refresh'));
+    };
+    const day = overviewDestination();
+    const week = { ...day, timeline: { ...day.timeline, granularity: 'week' as const } };
+    try {
+      const pendingDay = refreshReportDestination(dependencies, day);
+      await started.promise;
+      const accepted = await refreshReportDestination(dependencies, week);
+      const obsolete = dependencies.queryClient.getQueryCache().find({
+        exact: true,
+        queryKey: reportDestinationExactKey(day, accepted.descriptor),
+      })?.promise;
+      expect(obsolete).toBeDefined();
+      release.resolve();
+      await expect(obsolete).rejects.toThrow('expired');
+      await pendingDay;
+      await Bun.sleep(0);
+      expect(bootstrapCalls).toBe(1);
+      expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toBe(accepted);
+    } finally {
+      release.resolve();
+      dependencies.queryClient.clear();
+    }
+  });
+
+  test('acquires the latest destination when two cold intents arrive in the same turn', async () => {
+    const calls: string[] = [];
+    const dependencies = overviewDependencies((request) => {
+      calls.push(request.timeline.granularity);
+      return Promise.resolve(successfulOverview(request));
+    });
+    const day = overviewDestination();
+    const week = { ...day, timeline: { ...day.timeline, granularity: 'week' as const } };
+    try {
+      const pendingDay = refreshReportDestination(dependencies, day);
+      const pendingWeek = refreshReportDestination(dependencies, week);
+      const results = await Promise.all([pendingDay, pendingWeek]);
+      expect(calls).toEqual(['week']);
+      expect(results.every((result) => result.destination.timeline.granularity === 'week')).toBe(true);
+      expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toEqual(
+        results[1],
+      );
+    } finally {
+      dependencies.queryClient.clear();
+    }
+  });
+
+  test('does not replace an inspected expired revision while acquiring the next Session page', async () => {
+    const queryClient = createWebQueryClient();
+    let bootstrapCalls = 0;
+    const calls: string[] = [];
+    const client: ReportQueryClient = {
+      getFocusedReportBreakdown: () => Promise.reject(new Error('Unexpected Breakdown query')),
+      getFocusedReportOverview: (request) => Promise.resolve(successfulOverview(request)),
+      getFocusedReportSupport: () => Promise.reject(new Error('Unexpected support query')),
+      getReportRevisionBootstrap: () => {
+        bootstrapCalls += 1;
+        return Promise.resolve(bootstrap(bootstrapCalls === 1 ? 'revision-one' : 'revision-two'));
+      },
+      getReportRevisionManifest: () => Promise.reject(new Error('Unexpected manifest query')),
+    };
+    const dependencies = {
+      queryClient,
+      reportClient: client,
+      sessionClient: sessionClientWithPage((request) => {
+        calls.push(request.revision);
+        return Promise.resolve(
+          request.cursor === null
+            ? successfulSessionPage(request, 'sq1.0000000000000000.1')
+            : {
+                error: { message: 'expired', revision: request.revision, tag: 'RevisionExpired' as const },
+                ok: false as const,
+                requestFingerprint: sessionQueryFingerprint(request),
+                revision: request.revision,
+              },
+        );
+      }),
+    };
+    const destination = sessionsDestination();
+    const initial = reportDestinationQueryOptions(dependencies, destination, { browser: true });
+    try {
+      const old = await queryClient.fetchQuery(initial);
+      await queryClient.invalidateQueries({ exact: true, queryKey: initial.queryKey, refetchType: 'none' });
+      await expect(
+        queryClient.fetchQuery(
+          reportDestinationQueryOptions(
+            dependencies,
+            destination,
+            { browser: true, preserveSessionRevision: true },
+            { ...initialSessionWindowIntent(), topLevelDepth: 2 },
+          ),
+        ),
+      ).rejects.toThrow('expired');
+      expect(bootstrapCalls).toBe(1);
+      expect(calls).toEqual(['revision-one', 'revision-one']);
+      expect(queryClient.getQueryData<typeof old>(initial.queryKey)).toBe(old);
+    } finally {
+      queryClient.clear();
+    }
+  });
+  test('keeps an inspected Session revision for depth growth until explicit refresh', async () => {
+    const queryClient = createWebQueryClient();
+    const calls: string[] = [];
+    const client: ReportQueryClient = {
+      getFocusedReportBreakdown: () => Promise.reject(new Error('Unexpected Breakdown query')),
+      getFocusedReportOverview: (request) => Promise.resolve(successfulOverview(request)),
+      getFocusedReportSupport: () => Promise.reject(new Error('Unexpected support query')),
+      getReportRevisionBootstrap: () => Promise.resolve(bootstrap('revision-one')),
+      getReportRevisionManifest: () => Promise.reject(new Error('Unexpected manifest query')),
+    };
+    const dependencies = {
+      queryClient,
+      reportClient: client,
+      sessionClient: sessionClientWithPage((request) => {
+        calls.push(`${request.revision}:${request.cursor ?? 'first'}`);
+        return Promise.resolve(
+          successfulSessionPage(request, request.cursor === null ? 'sq1.0000000000000000.1' : null),
+        );
+      }),
+    };
+    const destination = sessionsDestination();
+    const initial = reportDestinationQueryOptions(dependencies, destination, { browser: true });
+    try {
+      await queryClient.fetchQuery(initial);
+      queryClient.setQueryData(
+        reportBootstrapQueryOptions(client, { browser: true }).queryKey,
+        bootstrap('revision-two'),
+      );
+      await queryClient.invalidateQueries({ exact: true, queryKey: initial.queryKey, refetchType: 'none' });
+      const depth = { ...initialSessionWindowIntent(), topLevelDepth: 2 };
+      const preserved = await queryClient.fetchQuery(
+        reportDestinationQueryOptions(
+          dependencies,
+          destination,
+          { browser: true, preserveSessionRevision: true },
+          depth,
+        ),
+      );
+      expect(preserved.descriptor.revision).toBe('revision-one');
+      expect(preserved.sessions?.topLevel.pages).toHaveLength(2);
+      expect(calls).toEqual(['revision-one:first', 'revision-one:sq1.0000000000000000.1']);
+      await queryClient.invalidateQueries({ exact: true, queryKey: initial.queryKey, refetchType: 'none' });
+      const refreshed = await queryClient.fetchQuery(
+        reportDestinationQueryOptions(dependencies, destination, { browser: true }, depth),
+      );
+      expect(refreshed.descriptor.revision).toBe('revision-two');
+      expect(refreshed.sessions?.topLevel.pages).toHaveLength(2);
+    } finally {
+      queryClient.clear();
+    }
+  });
   test('QUERY-REPORT-DESTINATION: caches one complete Breakdown value and reuses it while fresh', async () => {
     const queryClient = createWebQueryClient();
     const calls = { bootstrap: 0, breakdown: 0, overview: 0 };

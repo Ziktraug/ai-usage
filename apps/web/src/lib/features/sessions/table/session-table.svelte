@@ -45,7 +45,7 @@
   } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { calculateSessionViewportHeight } from '../../../../session-row-window';
   import {
     browserSessionSurfaceModeEnvironment,
@@ -74,6 +74,7 @@
     summarizeSessionRowProvenance,
   } from './session-cell-projection';
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
+  import { captureSessionTableAnchor, restoreSessionTableAnchor } from './session-table-anchor';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
   import { mobileSessionSummaryHeader, popoverGrid, popoverHeader } from './session-table-styles';
   import {
@@ -158,6 +159,9 @@
   let previousResetKey = $state('');
   let pagingSignature = $state('');
   let pendingFocusIndex = $state<number>();
+  let anchorResetKey = '';
+  let anchorGeneration = 0;
+  let anchorNotice = $state('');
 
   const hasRtkData = $derived(rows.some((row) => Boolean(row.rtkSavedTokens)));
   const effectiveVisibility = $derived(hasRtkData ? columnVisibility : { ...columnVisibility, rtkSaved: false });
@@ -180,6 +184,46 @@
     projectSessionVirtualRows({ mode: activeMode, rows: model.rows, scrollTop, viewportHeight }),
   );
   const activeSort = $derived(sorting[0] ?? { desc: true, id: 'date' });
+  $effect.pre(() => {
+    const nextRows = model.rows;
+    const resetKey = queryResetKey;
+    const rowHeight = sessionVirtualBudgets[activeMode].rowHeight;
+    const generation = ++anchorGeneration;
+    const sameScope = anchorResetKey === resetKey;
+    anchorResetKey = resetKey;
+    untrack(() => {
+      if (!(sameScope && surfaceElement)) {
+        anchorNotice = '';
+        return;
+      }
+      const surface = surfaceElement;
+      const anchor = captureSessionTableAnchor(surface);
+      if (!anchor || nextRows.length === 0) {
+        return;
+      }
+      const foundIndex = nextRows.findIndex((row) => row.id === anchor.rowId);
+      const nextIndex = foundIndex < 0 ? Math.min(anchor.index, nextRows.length - 1) : foundIndex;
+      const rowId = nextRows[nextIndex]?.id;
+      if (!rowId) {
+        return;
+      }
+      anchorNotice =
+        foundIndex < 0
+          ? 'The previously visible session is no longer in this result. Showing the nearest session.'
+          : '';
+      const targetTop = Math.max(0, surface.scrollTop + (nextIndex - anchor.index) * rowHeight);
+      // Move the virtual window before restoring measured geometry and keyboard focus.
+      scrollTop = targetTop;
+      tick().then(() => {
+        if (generation !== anchorGeneration || surface !== surfaceElement) {
+          return;
+        }
+        surface.scrollTop = targetTop;
+        restoreSessionTableAnchor(surface, anchor, rowId);
+        scrollTop = surface.scrollTop;
+      });
+    });
+  });
   const activePreset = $derived(sessionColumnPresetForVisibility(columnVisibility));
   const visibleColumnWidthTotal = $derived(visibleColumns.reduce((total, entry) => total + entry.meta.widthPx, 0));
   const tableMinWidth = $derived(
@@ -452,6 +496,9 @@
   </div>
 {:else}
   <section aria-label="Sessions" class={sessionTableOwner} data-session-mode={activeMode} data-session-table-owner>
+    {#if anchorNotice}
+      <p aria-live="polite" role="status">{anchorNotice}</p>
+    {/if}
     <div class={tableControls} data-session-region-start bind:this={sessionRegionStartElement}>
       {#if activeMode === 'desktop'}
         <fieldset aria-label="Session column presets" class={cx(presetGroup, columnPresetGroup)}>

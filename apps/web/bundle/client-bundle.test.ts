@@ -31,14 +31,15 @@ const INITIAL_CLOSURE_ENTRY_KEYS = [
 const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 300_000;
 
 /**
- * The last measurement taken on main, and the tolerance around it. The ceiling alone cannot catch
+ * The last reviewed production measurement, and the tolerance around it. The ceiling alone cannot catch
  * the regression that actually matters — a dynamic import going eager, which lands in kilobytes —
  * because it can happen with headroom to spare. Two percent sits well above the few bytes that
  * differ between two builds of the same tree, and well below any real change of shape.
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-const RECORDED_GZIP_CLOSURE_BYTES = 290_372;
+// PR #58: campaign chronology and shared route chunks; CI run 37205221981.
+const RECORDED_GZIP_CLOSURE_BYTES = 296_243;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */

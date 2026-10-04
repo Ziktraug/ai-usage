@@ -3,6 +3,15 @@
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
+  let campaigns = $state<CampaignsPage>();
+  export const snapshot = {
+    capture: () => campaigns?.capture(),
+    restore: (saved: ReturnType<CampaignsPage['capture']> | undefined) => {
+      if (saved) {
+        campaigns?.restore(saved);
+      }
+    },
+  };
 </script>
 
-<CampaignsPage {data} />
+<CampaignsPage {data} bind:this={campaigns} />

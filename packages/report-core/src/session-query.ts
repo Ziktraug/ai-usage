@@ -17,7 +17,13 @@ import { zonedWeekdayHourForTimestamp } from './time-zone';
 import { isSessionOrigin, type SessionOrigin } from './types';
 import { usageRowApiPriceMeasurement, usageRowModelContributions } from './usage-row';
 
-export { buildCampaignChronology, type CampaignChronology, type CampaignTimingRow } from './campaign-chronology';
+export {
+  buildCampaignChronology,
+  type CampaignChronology,
+  type CampaignChronologyAccumulator,
+  type CampaignTimingRow,
+  createCampaignChronologyAccumulator,
+} from './campaign-chronology';
 export { MAX_SESSION_QUERY_PAGE_SIZE } from './report-budgets';
 export type { SessionOrigin } from './types';
 export { isSessionOrigin, sessionOrigins } from './types';

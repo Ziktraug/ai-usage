@@ -27,9 +27,17 @@ const openCampaigns = async (page: Page): Promise<void> => {
 };
 
 const selectCampaign = async (page: Page, name: RegExp, title: string): Promise<void> => {
+  const back = page.getByRole('button', { name: 'Back to campaigns', exact: true });
+  if (await back.isVisible()) {
+    await back.click();
+  }
   const card = page.getByRole('region', { name: 'Recent campaigns', exact: true }).getByRole('button', { name });
+  const key = await card.getAttribute('data-campaign-key');
   await card.click();
-  await expect(card).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`[data-campaign-card][data-campaign-key="${key}"]`)).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   await expect(agentMap(page).getByRole('heading', { name: title, exact: true })).toBeVisible();
 };
 
@@ -81,7 +89,63 @@ test('opens an individual nested session with the keyboard and restores focus af
   await expect(trigger).toBeFocused();
 });
 
-test('closes session details when Back restores another cached campaign in the same revision', async ({ page }) => {
+test('restores a partially visible clicked session without moving the map and still reveals keyboard targets', async ({
+  page,
+}) => {
+  await openCampaigns(page);
+  const viewport = page.locator('[data-campaign-scroll="map"]');
+  const trigger = page.getByRole('button', { name: 'Open session Define the data model', exact: true });
+  await viewport.scrollIntoViewIfNeeded();
+  const viewportBox = await viewport.boundingBox();
+  const triggerBox = await trigger.boundingBox();
+  if (!(viewportBox && triggerBox)) {
+    throw new Error('The map viewport and session must be available');
+  }
+  await page.mouse.move(viewportBox.x + viewportBox.width / 2, Math.min(viewportBox.y + 60, 680));
+  await page.mouse.wheel(0, triggerBox.y - viewportBox.y + 30);
+  const readPosition = () =>
+    trigger.evaluate((element) => {
+      const host = element.closest<HTMLElement>('[data-campaign-scroll="map"]');
+      if (!host) {
+        throw new Error('The session must belong to the map viewport');
+      }
+      return { offset: element.getBoundingClientRect().top - host.getBoundingClientRect().top, top: host.scrollTop };
+    });
+  await expect.poll(async () => (await readPosition()).offset).toBeLessThan(-20);
+  const before = await readPosition();
+  const click = await trigger.evaluate((element) => {
+    const host = element.closest<HTMLElement>('[data-campaign-scroll="map"]');
+    if (!host) {
+      throw new Error('The session must belong to the map viewport');
+    }
+    const box = element.getBoundingClientRect();
+    const bounds = host.getBoundingClientRect();
+    return {
+      x: box.x + box.width / 2,
+      y: (Math.max(box.top, bounds.top, 0) + Math.min(box.bottom, bounds.bottom, innerHeight)) / 2,
+    };
+  });
+  await page.mouse.click(click.x, click.y);
+  const drawer = page.getByRole('dialog', { name: 'Session details', exact: true });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText('Define the data model', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect(trigger).toBeFocused();
+  const after = await readPosition();
+  await test.info().attach('partial-session-focus', {
+    body: JSON.stringify({ before, after }),
+    contentType: 'application/json',
+  });
+  expect(Math.abs(after.offset - before.offset)).toBeLessThan(2);
+  expect(Math.abs(after.top - before.top)).toBeLessThan(2);
+
+  await page.keyboard.press('ArrowUp');
+  await expect(page.getByRole('button', { name: `Collapse descendants of ${ROOT_TITLE}`, exact: true })).toBeFocused();
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(1);
+});
+
+test('restores session inspection and its campaign through Back and Forward in the same revision', async ({ page }) => {
   await openCampaigns(page);
   const revision = await page.locator('[data-map-revision]').getAttribute('data-map-revision');
   expect(revision).toBeTruthy();
@@ -92,10 +156,19 @@ test('closes session details when Back restores another cached campaign in the s
   await expect(drawer.getByText(STANDALONE_TITLE, { exact: true })).toBeVisible();
 
   await page.goBack();
+  await expect(drawer).toBeHidden();
+  await expect(agentMap(page).getByRole('heading', { name: STANDALONE_TITLE, exact: true })).toBeVisible();
+  await page.goBack();
   await expect.poll(() => new URL(page.url()).searchParams.get('selectedCampaign')).toBeNull();
   await expect(agentMap(page).getByRole('heading', { name: ROOT_TITLE, exact: true })).toBeVisible();
   await expect(page.locator('[data-map-revision]')).toHaveAttribute('data-map-revision', revision!);
   await expect(drawer).toBeHidden();
+  await page.goForward();
+  await expect(agentMap(page).getByRole('heading', { name: STANDALONE_TITLE, exact: true })).toBeVisible();
+  await expect(drawer).toBeHidden();
+  await page.goForward();
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText(STANDALONE_TITLE, { exact: true })).toBeVisible();
 });
 
 test('keeps standalone, missing timing, and unavailable parents distinct and preserves selection on reload', async ({
@@ -117,7 +190,10 @@ test('keeps standalone, missing timing, and unavailable parents distinct and pre
   await selectCampaign(page, CURSOR_CARD_NAME, CURSOR_TITLE);
   await expect(agentMap(page)).toContainText('Timing is incomplete.');
   await expect(agentMap(page)).toContainText('End not recorded');
-  await expect(agentMap(page).locator('[data-campaign-bar]')).toHaveCount(0);
+  const timingPoint = agentMap(page).locator('[data-campaign-bar][data-timing="missing-end"]');
+  await expect(timingPoint).toHaveCount(1);
+  await expect(timingPoint).toHaveCSS('width', '3px');
+  await expect(agentMap(page).locator('[data-campaign-bar][data-timing="recorded"]')).toHaveCount(0);
   await selectCampaign(page, ORPHAN_CARD_NAME, ORPHAN_TITLE);
   await expect(agentMap(page).getByText('Lineage: parent unavailable', { exact: true })).toBeVisible();
   await expect(page.locator('[data-campaign-node]')).toHaveCount(1);
@@ -171,6 +247,10 @@ test('keeps the hierarchy accessible and within the viewport on desktop and narr
   await openCampaigns(page);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ height: 900, width });
+    const showMap = page.getByRole('button', { name: 'View selected campaign', exact: true });
+    if (width === 390 && (await showMap.isVisible())) {
+      await showMap.click();
+    }
     await expect(node(page, NESTED_TITLE)).toBeVisible();
     await page.evaluate(async () => await document.fonts.ready);
     const overflow = await page.evaluate(

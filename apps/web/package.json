@@ -46,7 +46,7 @@
     "test:bundle": "bun test bundle",
     "test:e2e": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun --bun playwright test",
     "test:e2e-demo": "bun --no-env-file ../../tools/run-web-demo.ts --prepare-only && bun --bun playwright test --config playwright.demo.config.ts",
-    "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts e2e/campaign-map-production.scale.ts",
+    "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts e2e/campaign-map-production.scale.ts && bun --bun playwright test --config playwright.campaign-continuity.config.ts",
     "benchmark:session-scroll": "bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll-benchmark.scale.ts",
     "benchmark:plan072-destination-render": "bun run build && bun ../../tools/plan072-bundle-map.ts && AI_USAGE_PLAN072_OUTPUT=../../docs/performance/artifacts/plan072-destination-render.json bun --bun playwright test --config playwright.plan072.config.ts --reporter=null e2e/plan072-destination-render.benchmark.ts",
     "preview": "AI_USAGE_SVELTEKIT_PHASE=build bun --no-env-file --bun vite preview --host 127.0.0.1",

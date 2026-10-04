@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { buildCampaignChronology, type SessionPageItem } from '@ai-usage/report-core/session-query';
 import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
 import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
-import { barForInterval, buildCampaignTimeline } from './campaign-timeline-model';
+import { endOfDay, startOfDay } from '../../../date-range';
+import { barForInterval, buildCampaignTimeline, campaignTimelineRange } from './campaign-timeline-model';
+import { campaignProjectSegments } from './campaign-timeline-projection';
 import { campaignsRequest } from './campaigns-query';
 import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
@@ -25,6 +27,91 @@ const fixtureItems = async (): Promise<SessionPageItem[]> => {
 };
 
 describe('project campaign timeline', () => {
+  test.each(['7d', '30d', '90d'] as const)('%s covers its calendar period before older pages arrive', async (mode) => {
+    const search = validateDashboardSearch({ range: mode }, dashboardSearchDefaultsFor('date'));
+    const request = campaignsRequest(search, campaignMapFixtureGeneratedAt, 'timeline-revision');
+    const template = (await fixtureItems())[0]!;
+    const recent = {
+      ...template,
+      chronology: buildCampaignChronology([{ date: instant('08:00'), endDate: instant('09:00') }]),
+    };
+    const older = {
+      ...template,
+      campaignKey: 'older',
+      chronology: buildCampaignChronology([{ date: '2026-06-06T08:00:00.000Z', endDate: '2026-06-06T09:00:00.000Z' }]),
+    };
+    const domain = campaignTimelineRange(search.range, campaignMapFixtureGeneratedAt);
+    const first = buildCampaignTimeline([recent], domain);
+    expect(request.range.to).toBeNull();
+    expect(first.axis).toMatchObject({
+      startMs: Date.parse(request.range.from!),
+      endMs: endOfDay(new Date(campaignMapFixtureGeneratedAt)).getTime(),
+    });
+    const appended = buildCampaignTimeline([recent, older], domain, first.axis);
+    expect(appended.axis).toBe(first.axis);
+    expect(
+      appended.groups.flatMap((group) => group.campaigns).find(({ item }) => item.campaignKey === 'older')?.bar,
+    ).toMatchObject({ point: false });
+    expect(buildCampaignTimeline([], domain).axis).toEqual(first.axis);
+  });
+  test('anchors Today to the displayed revision, including an initially empty day', async () => {
+    const current = '2026-06-11T12:00:00.000Z';
+    const next = '2026-06-12T12:00:00.000Z';
+    const today = campaignTimelineRange({ mode: 'today' }, current);
+    const tomorrow = campaignTimelineRange({ mode: 'today' }, next);
+    expect(buildCampaignTimeline([], today).axis).toMatchObject({
+      startMs: startOfDay(new Date(current)).getTime(),
+      endMs: endOfDay(new Date(current)).getTime(),
+    });
+    const template = (await fixtureItems())[0]!;
+    const items = [{ ...template, chronology: buildCampaignChronology([{ date: next, endDate: next }]) }];
+    const result = buildCampaignTimeline(items, tomorrow);
+    expect(result.axis).toMatchObject({
+      startMs: startOfDay(new Date(next)).getTime(),
+      endMs: endOfDay(new Date(next)).getTime(),
+    });
+    expect(result.groups[0]?.campaigns[0]?.bar).toMatchObject({ point: true });
+  });
+
+  test.each([
+    { mode: 'all' },
+    { mode: 'custom', from: '2026-06-01' },
+    { mode: 'custom', to: '2026-06-30' },
+  ] as const)('keeps open presentation bounds for explicit fitting: %j', (range) => {
+    const search = { ...dashboardSearchDefaultsFor('date'), range };
+    expect(campaignTimelineRange(range, campaignMapFixtureGeneratedAt)).toEqual(
+      campaignsRequest(search, campaignMapFixtureGeneratedAt, 'revision').range,
+    );
+  });
+  test('appends continuations without inserting campaigns into previously traversed project segments', async () => {
+    const template = (await fixtureItems())[0]!;
+    const items = Array.from(
+      { length: 120 },
+      (_, index): SessionPageItem => ({
+        ...template,
+        campaignKey: `campaign-${index}`,
+        row: { ...template.row, projectKey: `project-${index % 12}` },
+      }),
+    );
+    const pages = [items.slice(0, 40), items.slice(40, 80), items.slice(80)];
+    const project = (count: number) =>
+      campaignProjectSegments(
+        buildCampaignTimeline(pages.slice(0, count).flat(), allHistory),
+        pages.slice(0, count).map((entries) => entries.map((item) => item.campaignKey)),
+      );
+    const keys = (count: number) =>
+      project(count).flatMap((segment) => [
+        segment.key,
+        ...segment.project.campaigns.map((campaign) => campaign.item.campaignKey),
+      ]);
+    const first = keys(1);
+    const second = keys(2);
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(keys(3).slice(0, second.length)).toEqual(second);
+    expect(project(3).flatMap((segment) => segment.project.campaigns)).toHaveLength(120);
+    expect(new Set(keys(3)).size).toBe(keys(3).length);
+    expect(project(3).filter((segment) => segment.continuation)).toHaveLength(24);
+  });
   test('places projects and complete campaign spans on one scale and retains one-sided timing as a point', async () => {
     const items = await fixtureItems();
     const result = buildCampaignTimeline(items, allHistory);
@@ -81,6 +168,57 @@ describe('project campaign timeline', () => {
     expect(barForInterval(epoch('08:30'), epoch('09:00'), result.axis)).toMatchObject({
       leftPercent: 25,
       widthPercent: 25,
+    });
+  });
+
+  test('keeps timing quality through project unions and leaves complete bands across real gaps', async () => {
+    const template = (await fixtureItems())[0]!;
+    const item = (key: string, start: string, end: string, partial: boolean): SessionPageItem => ({
+      ...template,
+      campaignKey: key,
+      chronology: buildCampaignChronology([
+        { date: instant(start), endDate: instant(end) },
+        ...(partial ? [{ date: null, endDate: null }] : []),
+      ]),
+    });
+    const complete = item('complete', '08:00', '08:20', false);
+    const partial = item('partial', '08:10', '08:40', true);
+    expect(buildCampaignTimeline([complete], allHistory).groups[0]?.bars[0]).toMatchObject({ timing: 'complete' });
+    expect(buildCampaignTimeline([partial], allHistory).groups[0]?.bars[0]).toMatchObject({ timing: 'partial' });
+    const mixed = buildCampaignTimeline([complete, partial, item('after-gap', '09:00', '09:20', false)], allHistory);
+    expect(mixed.groups[0]?.bars).toHaveLength(2);
+    expect(mixed.groups[0]?.bars.map(({ timing }) => timing)).toEqual(['partial', 'complete']);
+  });
+
+  test('fixes finite periods and retains a fitted all-history axis while older pages append', async () => {
+    const template = (await fixtureItems())[0]!;
+    const recent = {
+      ...template,
+      chronology: buildCampaignChronology([{ date: instant('08:00'), endDate: instant('09:00') }]),
+    };
+    const older = {
+      ...template,
+      campaignKey: 'older',
+      chronology: buildCampaignChronology([{ date: instant('06:00'), endDate: instant('07:00') }]),
+    };
+    const range = { from: instant('05:00'), to: instant('10:00') };
+    const finite = buildCampaignTimeline([recent], range);
+    expect(finite.axis).toMatchObject({ startMs: epoch('05:00'), endMs: epoch('10:00') });
+    expect(buildCampaignTimeline([recent, older], range).axis).toEqual(finite.axis);
+    expect(buildCampaignTimeline([], range).axis).toEqual(finite.axis);
+    const fitted = buildCampaignTimeline([recent], allHistory);
+    const appended = buildCampaignTimeline([recent, older], allHistory, fitted.axis);
+    expect(appended.axis).toBe(fitted.axis);
+    expect(appended.groups[0]?.campaigns.find(({ item }) => item.campaignKey === recent.campaignKey)?.bar).toEqual(
+      fitted.groups[0]?.campaigns[0]?.bar,
+    );
+    expect(appended.groups[0]?.campaigns.find(({ item }) => item.campaignKey === 'older')).toMatchObject({
+      bar: null,
+      outsideRange: true,
+    });
+    expect(buildCampaignTimeline([recent, older], allHistory).axis).toMatchObject({
+      startMs: epoch('06:00'),
+      endMs: epoch('09:00'),
     });
   });
 
