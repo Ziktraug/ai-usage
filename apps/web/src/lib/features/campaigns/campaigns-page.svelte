@@ -4,11 +4,7 @@
   import { ghostButton } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
   import { buildCampaignMap, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
-  import {
-    type SessionPresentationRow,
-    type SessionQueryRequest,
-    sessionQueryFingerprint,
-  } from '@ai-usage/report-core/session-query';
+  import { type SessionPresentationRow, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
   import {
     createInfiniteQuery,
     createQuery,
@@ -16,7 +12,7 @@
     type QueryKey,
     useQueryClient,
   } from '@tanstack/svelte-query';
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -26,9 +22,14 @@
   import { sessionAnalysisTargetForSession } from '../../../session-analysis-target';
   import { dashboardUrlFor, parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
   import { fmtCompact } from '../../foundation/presentation/format';
-  import { loadNextCampaignPage, retainedCampaignQuery } from '../../query/options/campaigns';
+  import {
+    loadNextCampaignPage,
+    pruneCampaignExplorations,
+    retainedCampaignOptions,
+    retainedCampaignQuery,
+  } from '../../query/options/campaigns';
   import { campaignLabelOverridesQueryOptions, reportBootstrapQueryOptions } from '../../query/options/report';
-  import { SessionRevisionExpiredError } from '../../query/options/session-window';
+  import { SessionRevisionExpiredError, type SessionWindowIntent } from '../../query/options/session-window';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createReportClient } from '../../rpc/report-client';
   import { createSessionClientAdapter } from '../../rpc/session-client';
@@ -39,9 +40,18 @@
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import CampaignAgentMap from './campaign-agent-map.svelte';
   import CampaignProjectTimeline from './campaign-project-timeline.svelte';
-  import { buildCampaignTimeline } from './campaign-timeline-model';
+  import { buildCampaignTimeline, type CampaignTimelineAxis } from './campaign-timeline-model';
+  import CampaignVirtualList from './campaign-virtual-list.svelte';
+  import type { CampaignScrollState } from './campaign-virtual-window';
   import type { CampaignsPageData } from './campaigns-load';
-  import { campaignMembersOptions, campaignsListOptions, campaignsRequest } from './campaigns-query';
+  import {
+    type CampaignExplorationAnchors,
+    type CampaignExplorationData,
+    campaignMatchingMembersOptions,
+    campaignsExplorationOptions,
+    campaignsListOptions,
+    campaignsRequest,
+  } from './campaigns-query';
   import { readCampaignSelection } from './campaigns-selection';
   import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
@@ -66,10 +76,29 @@
   });
   let selection = $state<SessionSelectionInput | null>(null);
   let navigationError = $state<string | null>(null);
-  let previousListKey = $state<QueryKey>();
-  let previousListRequest = $state<SessionQueryRequest>();
-  let previousMembersKey = $state<{ campaignKey: string; queryKey: QueryKey }>();
-  let recoveredExpiredRevision = $state<string>();
+  let previousKey = $state<QueryKey>();
+  let inspected = $state<{ revision: string; generatedAt: string } | null>(null);
+  let topDepth = $state(1);
+  let memberDepths = $state<Record<string, number>>({});
+  let automaticCampaign = $state('');
+  let anchors = $state<CampaignExplorationAnchors>({});
+  let matchingRestoration = $state<{ campaignKey: string; depth: number; rowIds: readonly string[] } | null>(null);
+  let listNavigation = $state<CampaignScrollState>({});
+  let mapNavigation = $state<CampaignScrollState>({});
+  let timelineNavigation = $state<CampaignScrollState>({});
+  let collapsedNodes = $state<ReadonlySet<string>>(new Set());
+  let collapsedProjects = $state<ReadonlySet<string>>(new Set());
+  let expansion = $state<{ key: string; open: boolean } | null>(null);
+  let timelineAxis = $state<CampaignTimelineAxis | null>(null);
+  let mapVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
+  let timelineVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
+  let mobileMap = $state(false);
+  let searchExpanded = $state(false);
+  let searchNavigation = $state<CampaignScrollState>({});
+  let searchVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
+  let pendingFocus = '';
+  let checkedExpiredRevision = '';
+  let previousScope = '';
   const bootstrapQuery = createQuery(() =>
     reportBootstrapQueryOptions(clients.report, { browser: browser && data.mode === 'live' }),
   );
@@ -81,9 +110,17 @@
     campaignLabelOverridesQueryOptions(clients.report, { browser: browser && data.mode === 'live' }),
   );
   const labels = $derived(indexCampaignLabelOverrides(data.mode === 'live' ? (labelsQuery.data ?? []) : []));
-  const revision = $derived(data.mode === 'live' ? bootstrap?.manifest.revision : 'synthetic-campaign-map-v1');
-  const generatedAt = $derived(bootstrap?.bootstrap.support.generatedAt ?? campaignMapFixtureGeneratedAt);
+  const latest = $derived.by(() => {
+    if (data.mode !== 'live') {
+      return { revision: 'synthetic-campaign-map-v1', generatedAt: campaignMapFixtureGeneratedAt };
+    }
+    return bootstrap
+      ? { revision: bootstrap.manifest.revision, generatedAt: bootstrap.bootstrap.support.generatedAt }
+      : null;
+  });
+  const revision = $derived(inspected?.revision ?? latest?.revision);
   const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  const scope = $derived(JSON.stringify(search));
   const harnessSelection = $derived(search.harness.length > 1 ? MULTIPLE_HARNESSES : (search.harness[0] ?? ''));
   const campaignView = $derived(page.url.searchParams.get('campaignView') === 'timeline' ? 'timeline' : 'list');
   const inheritedFilters = $derived([
@@ -92,56 +129,66 @@
     ...search.origin.map((value) => `origin: ${value}`),
     ...(search.timeCell ? [`local time: ${search.timeCell}`] : []),
   ]);
-  const request = $derived(campaignsRequest(search, generatedAt, revision ?? 'pending-campaigns'));
-  const listQuery = createInfiniteQuery(() => ({
-    ...campaignsListOptions(clients.session, request),
+  const request = $derived(
+    campaignsRequest(
+      search,
+      inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt,
+      revision ?? 'pending-campaigns',
+    ),
+  );
+  const urlSelection = $derived(readCampaignSelection(page.url, request));
+  let requestedCampaign = $state(
+    untrack(() => {
+      if (urlSelection.status === 'selected') {
+        return urlSelection.campaignKey;
+      }
+      const hydrated = retainedCampaignQuery<CampaignExplorationData['list']>(
+        queryClient,
+        campaignsListOptions(clients.session, request).queryKey,
+      );
+      return hydrated?.pages[0]?.items[0]?.campaignKey ?? '';
+    }),
+  );
+  const selectedSessionId = $derived(page.url.searchParams.get('selectedSession') ?? '');
+  const intent = $derived<SessionWindowIntent>({
+    topLevelDepth: topDepth,
+    campaignChildrenDepth: {},
+    campaignSessionsDepth: requestedCampaign ? { [requestedCampaign]: memberDepths[requestedCampaign] ?? 1 } : {},
+  });
+  const options = $derived(
+    campaignsExplorationOptions({
+      client: clients.session,
+      queryClient,
+      request,
+      intent,
+      anchors,
+      ...(matchingRestoration ? { matching: matchingRestoration } : {}),
+    }),
+  );
+  const exploration = createQuery(() => ({
+    ...options,
     enabled: browser && revision !== undefined,
     placeholderData: keepPreviousData,
   }));
-  const listData = $derived(
-    listQuery.data ?? retainedCampaignQuery<NonNullable<typeof listQuery.data>>(queryClient, previousListKey),
-  );
-  const listPages = $derived(listData?.pages ?? []);
+  const retained = createQuery(() => retainedCampaignOptions<CampaignExplorationData>(previousKey));
+  const visible = $derived(exploration.data ?? retained.data);
+  const listPages = $derived(visible?.list.pages ?? []);
   const items = $derived(listPages.flatMap((entry) => entry.items));
-  const visibleRevision = $derived(listPages[0]?.revision);
-  const listAnswersRequest = $derived(
-    visibleRevision === request.revision && listPages[0]?.requestFingerprint === sessionQueryFingerprint(request),
-  );
-  const visibleListRequest = $derived.by(() => {
-    if (listAnswersRequest) {
-      return request;
-    }
-    if (
-      previousListRequest &&
-      previousListRequest.revision === visibleRevision &&
-      listPages[0]?.requestFingerprint === sessionQueryFingerprint(previousListRequest)
-    ) {
-      return previousListRequest;
-    }
-    return null;
-  });
-  const timeline = $derived(buildCampaignTimeline(items, visibleListRequest?.range ?? { from: null, to: null }));
-  const urlSelection = $derived(readCampaignSelection(page.url, request));
+  const virtualCampaigns = $derived(items.map((item) => ({ key: item.campaignKey, item })));
   const selectedKey = $derived(
-    urlSelection.status === 'selected' ? urlSelection.campaignKey : (items[0]?.campaignKey ?? ''),
+    urlSelection.status === 'selected' ? urlSelection.campaignKey : automaticCampaign || items[0]?.campaignKey || '',
   );
   const selectedItem = $derived(items.find((item) => item.campaignKey === selectedKey));
-  const membersQuery = createInfiniteQuery(() => ({
-    ...campaignMembersOptions(
-      clients.session,
-      visibleRevision ?? 'pending-campaigns',
-      selectedKey || 'pending-campaign-selection',
-    ),
-    enabled: browser && visibleRevision !== undefined && selectedKey.length > 0,
-    placeholderData: (previous) => (previous?.pages[0]?.campaignKey === selectedKey ? previous : undefined),
-  }));
-  const memberData = $derived(
-    membersQuery.data ??
-      (previousMembersKey?.campaignKey === selectedKey
-        ? retainedCampaignQuery<NonNullable<typeof membersQuery.data>>(queryClient, previousMembersKey.queryKey)
-        : undefined),
+  const visibleRevision = $derived(visible?.request.revision);
+  const listAnswersRequest = $derived(
+    visibleRevision === request.revision &&
+      visible &&
+      sessionQueryFingerprint(visible.request) === sessionQueryFingerprint(request),
   );
-  const memberPages = $derived(memberData?.pages ?? []);
+  const timeline = $derived(
+    buildCampaignTimeline(items, visible?.request.range ?? { from: null, to: null }, timelineAxis),
+  );
+  const memberPages = $derived(visible?.members.find((entry) => entry.campaignKey === selectedKey)?.data.pages ?? []);
   const root = $derived(memberPages[0]?.root);
   const mapRevision = $derived(memberPages[0]?.revision);
   const map = $derived(
@@ -157,50 +204,209 @@
   const rows = $derived(map?.nodes.map((node) => node.row) ?? []);
   const presentedMap = $derived(map ? { ...map, title: campaignLabelFor(labels, selectedKey, map.title) } : null);
   const timelineMap = $derived(mapRevision === visibleRevision ? presentedMap : null);
-  const isRefreshing = $derived(listQuery.isFetching || membersQuery.isFetching);
-  const recoverExpiredRevision = async (expiredRevision: string): Promise<void> => {
-    const refreshed = await bootstrapQuery.refetch();
-    if (refreshed.data?.ok && refreshed.data.manifest.revision === expiredRevision) {
-      if (listQuery.error instanceof SessionRevisionExpiredError) {
-        await listQuery.refetch();
-      }
-      if (membersQuery.error instanceof SessionRevisionExpiredError) {
-        await membersQuery.refetch();
-      }
+  const hasMoreCampaigns = $derived(Boolean(listPages.at(-1)?.nextCursor));
+  const hasMoreSessions = $derived(Boolean(memberPages.at(-1)?.nextCursor));
+  const matchingOptions = $derived(
+    campaignMatchingMembersOptions(clients.session, visible?.request ?? request, selectedKey || 'pending-selection'),
+  );
+  const matching = createInfiniteQuery(() => ({
+    ...matchingOptions,
+    enabled: browser && Boolean(search.q && selectedKey && visibleRevision && listAnswersRequest),
+  }));
+  const matchedRows = $derived(
+    search.q &&
+      matching.data?.pages[0]?.revision === visibleRevision &&
+      matching.data?.pages[0]?.campaignKey === selectedKey &&
+      retainedCampaignQuery(queryClient, matchingOptions.queryKey) === matching.data
+      ? (matching.data?.pages.flatMap((entry) => entry.items) ?? [])
+      : [],
+  );
+  const matchRows = $derived(matchedRows.map((row) => ({ key: row.rowId, row })));
+  const detailRows = $derived.by(() => {
+    const known = new Map(rows.map((row) => [row.rowId, row]));
+    for (const row of matchedRows) {
+      known.set(row.rowId, row);
     }
+    return [...known.values()];
+  });
+  const rowRevisionFor = (rowId: string): string | undefined =>
+    matchedRows.some((row) => row.rowId === rowId) ? matching.data?.pages[0]?.revision : mapRevision;
+  const loadMatches = (): boolean => {
+    if (
+      !matching.hasNextPage ||
+      matching.isFetching ||
+      matching.error ||
+      exploration.isFetching ||
+      !listAnswersRequest
+    ) {
+      return false;
+    }
+    loadNextCampaignPage(matching);
+    return true;
   };
+  const pendingRevision = $derived(latest && visibleRevision && latest.revision !== visibleRevision);
+  const isRefreshing = $derived(exploration.isFetching);
+
   $effect(() => {
-    if (listQuery.data && !listQuery.isPlaceholderData && listAnswersRequest) {
-      previousListKey = campaignsListOptions(clients.session, request).queryKey;
-      previousListRequest = request;
-    }
-  });
-  $effect(() => {
-    if (membersQuery.data && !membersQuery.isPlaceholderData && visibleRevision) {
-      previousMembersKey = {
-        campaignKey: selectedKey,
-        queryKey: campaignMembersOptions(clients.session, visibleRevision, selectedKey).queryKey,
-      };
-    }
-  });
-  $effect(() => {
-    const expired =
-      listQuery.error instanceof SessionRevisionExpiredError ||
-      membersQuery.error instanceof SessionRevisionExpiredError;
-    if (data.mode === 'live' && expired && revision && recoveredExpiredRevision !== revision) {
-      recoveredExpiredRevision = revision;
-      recoverExpiredRevision(revision);
-    }
-  });
-  $effect(() => {
-    const selected = selection;
-    if (selected && (selected.revision !== mapRevision || !rows.some((row) => row.rowId === selected.row.rowId))) {
-      selection = null;
+    if (
+      browser &&
+      window.matchMedia('(min-width: 1024px)').matches &&
+      (mapNavigation.focusKey || (mapNavigation.anchor && mapNavigation.anchor.key !== root?.rowId))
+    ) {
+      mobileMap = true;
     }
   });
 
+  $effect(() => {
+    if (!inspected && latest) {
+      inspected = latest;
+    }
+  });
+  $effect(() => {
+    if (previousScope && previousScope !== scope) {
+      automaticCampaign = '';
+      searchExpanded = false;
+      searchNavigation = {};
+      topDepth = 1;
+      memberDepths = {};
+      anchors = {};
+      matchingRestoration = null;
+      timelineAxis = null;
+      listNavigation = {};
+      mapNavigation = {};
+      timelineNavigation = {};
+      collapsedNodes = new Set();
+      collapsedProjects = new Set();
+    }
+    previousScope = scope;
+  });
+  $effect(() => {
+    requestedCampaign = selectedKey;
+    if (!automaticCampaign && listAnswersRequest && items[0]) {
+      automaticCampaign = items[0].campaignKey;
+    }
+  });
+  $effect(() => {
+    if (
+      exploration.data &&
+      !exploration.isPlaceholderData &&
+      retainedCampaignQuery<CampaignExplorationData>(queryClient, options.queryKey) === exploration.data
+    ) {
+      previousKey = options.queryKey;
+      pruneCampaignExplorations(queryClient, options.queryKey);
+      if (!timelineAxis && timeline.axis) {
+        timelineAxis = timeline.axis;
+      }
+    }
+  });
+  $effect(() => {
+    const row = detailRows.find((entry) => entry.rowId === selectedSessionId);
+    const selectedRevision = rowRevisionFor(selectedSessionId);
+    if (row && selectedRevision) {
+      selection = { row, revision: selectedRevision, target: sessionAnalysisTargetForSession(row) };
+    } else if (!selectedSessionId) {
+      selection = null;
+    } else if (visible?.missingAnchors.includes(selectedSessionId)) {
+      selection = null;
+      navigationError = 'The selected session is no longer present in this revision. The campaign remains available.';
+    }
+  });
+  // A bookmark restores bounded selection, not an unbounded download of earlier pages.
+  $effect(() => {
+    if (
+      selectedKey &&
+      selectedSessionId &&
+      !selection &&
+      !exploration.error &&
+      !anchors.memberRowIds?.[selectedKey]?.includes(selectedSessionId)
+    ) {
+      anchors = { ...anchors, memberRowIds: { [selectedKey]: [selectedSessionId] } };
+    }
+  });
+  $effect(() => {
+    if (
+      data.mode === 'live' &&
+      exploration.error instanceof SessionRevisionExpiredError &&
+      revision &&
+      checkedExpiredRevision !== revision
+    ) {
+      checkedExpiredRevision = revision;
+      bootstrapQuery.refetch();
+    }
+  });
+  const loadCampaigns = (): boolean => {
+    if (!hasMoreCampaigns || isRefreshing || exploration.error || !listAnswersRequest) {
+      return false;
+    }
+    topDepth = listPages.length + 1;
+    return true;
+  };
+  const loadMembers = (): boolean => {
+    if (!hasMoreSessions || isRefreshing || exploration.error || !listAnswersRequest) {
+      return false;
+    }
+    memberDepths = { ...memberDepths, [selectedKey]: memberPages.length + 1 };
+    return true;
+  };
+  const refresh = (): void => {
+    if (!latest) {
+      return;
+    }
+    matchingRestoration =
+      search.q && matching.data
+        ? {
+            campaignKey: selectedKey,
+            depth: matching.data.pages.length,
+            rowIds: [searchNavigation.anchor?.key, selectedSessionId].filter(
+              (key): key is string => Boolean(key) && matchedRows.some((row) => row.rowId === key),
+            ),
+          }
+        : null;
+    const campaignAnchor = listNavigation.anchor?.key;
+    const timelineAnchor = timelineNavigation.anchor?.key;
+    let timelineCampaignAnchor: string | undefined;
+    if (timelineAnchor?.startsWith('campaign:')) {
+      timelineCampaignAnchor = timelineAnchor.slice('campaign:'.length);
+    } else if (timelineAnchor?.startsWith('project-continuation:')) {
+      timelineCampaignAnchor = timelineAnchor.slice('project-continuation:'.length);
+    } else if (timelineAnchor?.startsWith('project:')) {
+      timelineCampaignAnchor = items.find(
+        (item) => item.row.projectKey === timelineAnchor.slice('project:'.length),
+      )?.campaignKey;
+    } else if (timelineAnchor && rows.some((row) => row.rowId === timelineAnchor)) {
+      timelineCampaignAnchor = selectedKey;
+    }
+    const memberAnchor = campaignView === 'timeline' ? timelineNavigation.anchor?.key : mapNavigation.anchor?.key;
+    anchors = {
+      campaignKeys: [...new Set([campaignAnchor, timelineCampaignAnchor].filter((key): key is string => Boolean(key)))],
+      memberRowIds: selectedKey
+        ? {
+            [selectedKey]: [
+              selectedSessionId,
+              rows.some((row) => row.rowId === memberAnchor) ? memberAnchor : undefined,
+            ].filter((key): key is string => Boolean(key)),
+          }
+        : {},
+    };
+    topDepth = Math.max(topDepth, listPages.length);
+    memberDepths = { ...memberDepths, [selectedKey]: Math.max(memberDepths[selectedKey] ?? 1, memberPages.length) };
+    inspected = latest;
+  };
+  const restart = (): void => {
+    anchors = {};
+    matchingRestoration = null;
+    topDepth = 1;
+    memberDepths = {};
+    listNavigation = {};
+    mapNavigation = {};
+    timelineNavigation = {};
+    timelineAxis = null;
+    inspected = latest;
+    const url = new URL(page.url);
+    url.searchParams.delete('selectedSession');
+    navigate(url);
+  };
   const navigate = async (url: URL): Promise<void> => {
-    selection = null;
     navigationError = null;
     try {
       await goto(url, { keepFocus: true, noScroll: true });
@@ -211,6 +417,14 @@
   const selectCampaign = (campaignKey: string): void => {
     const url = new URL(page.url);
     url.searchParams.set('selectedCampaign', campaignKey);
+    if (campaignKey !== selectedKey) {
+      matchingRestoration = null;
+      searchNavigation = {};
+      url.searchParams.delete('selectedSession');
+      mapNavigation = {};
+      collapsedNodes = new Set();
+    }
+    mobileMap = true;
     navigate(url);
   };
   const selectView = (view: 'list' | 'timeline'): void => {
@@ -223,13 +437,16 @@
     navigate(url);
   };
   const clearSelection = (): void => {
+    automaticCampaign = '';
     const url = new URL(page.url);
     url.searchParams.delete('selectedCampaign');
+    url.searchParams.delete('selectedSession');
     navigate(url);
   };
   const clearFilters = (): void => {
     const url = dashboardUrlFor(page.url, dashboardSearchDefaultsFor('date'), dashboardSearchCodec);
     url.searchParams.delete('selectedCampaign');
+    url.searchParams.delete('selectedSession');
     navigate(url);
   };
   const applyFilters = (event: SubmitEvent): void => {
@@ -255,29 +472,93 @@
     };
     const url = dashboardUrlFor(page.url, next, dashboardSearchCodec);
     url.searchParams.delete('selectedCampaign');
+    url.searchParams.delete('selectedSession');
     navigate(url);
   };
+
   const openSession = (row: SessionPresentationRow): void => {
-    if (!mapRevision) {
+    const selectedRevision = rowRevisionFor(row.rowId);
+    if (!selectedRevision) {
       return;
     }
-    selection = { revision: mapRevision, row, target: sessionAnalysisTargetForSession(row) };
+    mobileMap = true;
+    selection = { revision: selectedRevision, row, target: sessionAnalysisTargetForSession(row) };
+    const url = new URL(page.url);
+    url.searchParams.set('selectedCampaign', selectedKey);
+    url.searchParams.set('selectedSession', row.rowId);
+    navigate(url);
+  };
+  const restoreFocus = async (): Promise<void> => {
+    if (!pendingFocus) {
+      return;
+    }
+    const key = pendingFocus;
+    pendingFocus = '';
+    await tick();
+    if (searchExpanded) {
+      await searchVirtualList?.focusKey(key);
+    } else {
+      const direct = document.querySelector<HTMLElement>(`[data-matching-row-id="${CSS.escape(key)}"]`);
+      if (direct) {
+        direct.focus({ preventScroll: true });
+      } else {
+        await (campaignView === 'timeline' ? timelineVirtualList : mapVirtualList)?.focusKey(key);
+      }
+    }
   };
   const changeSelection = (next: SessionSelectionInput | null): void => {
-    selection =
-      next && mapRevision
-        ? { ...next, revision: mapRevision, target: sessionAnalysisTargetForSession(next.row) }
-        : null;
+    if (next) {
+      openSession(next.row);
+      return;
+    }
+    pendingFocus = selection?.row.rowId ?? selectedSessionId;
+    selection = null;
+    const url = new URL(page.url);
+    url.searchParams.delete('selectedSession');
+    navigate(url).then(restoreFocus);
   };
   const retry = async (): Promise<void> => {
-    if (data.mode === 'live') {
-      await bootstrapQuery.refetch();
-    }
-    await listQuery.refetch();
-    if (selectedKey) {
-      await membersQuery.refetch();
-    }
+    await exploration.refetch();
   };
+  export const capture = () => ({
+    scope,
+    anchors,
+    matchingRestoration,
+    inspected,
+    automaticCampaign,
+    topDepth,
+    memberDepths,
+    listNavigation,
+    mapNavigation,
+    timelineNavigation,
+    timelineAxis,
+    collapsedNodes: [...collapsedNodes],
+    collapsedProjects: [...collapsedProjects],
+    expansion,
+    mobileMap,
+    searchExpanded,
+    searchNavigation,
+  });
+  export const restore = (saved: ReturnType<typeof capture>): void => {
+    previousScope = saved.scope;
+    anchors = saved.anchors;
+    matchingRestoration = saved.matchingRestoration;
+    inspected = saved.inspected;
+    automaticCampaign = saved.automaticCampaign;
+    topDepth = saved.topDepth;
+    memberDepths = saved.memberDepths;
+    listNavigation = saved.listNavigation;
+    mapNavigation = saved.mapNavigation;
+    timelineNavigation = saved.timelineNavigation;
+    timelineAxis = saved.timelineAxis;
+    collapsedNodes = new Set(saved.collapsedNodes);
+    collapsedProjects = new Set(saved.collapsedProjects);
+    expansion = saved.expansion;
+    mobileMap = saved.mobileMap;
+    searchExpanded = saved.searchExpanded;
+    searchNavigation = saved.searchNavigation;
+  };
+
   const recordedAt = (row: SessionPresentationRow): string => {
     const value = row.activeDate ?? row.endDate ?? row.date;
     const date = new Date(value ?? '');
@@ -320,14 +601,16 @@
     gridTemplateColumns: { base: 'minmax(0, 1fr)', lg: 'minmax(230px, 0.38fr) minmax(0, 1fr)' },
     alignItems: 'start',
     gap: '24px',
+    '&[data-mobile-map=true] > section': { display: { base: 'none', lg: 'block' } },
+    '&[data-mobile-map=false] > div': { display: { base: 'none', lg: 'grid' } },
     minW: 0,
   });
+  const mobileBack = css({ display: { base: 'block', lg: 'none' }, p: '12px', color: 'accent', cursor: 'pointer' });
   const campaignList = css({
     display: 'grid',
     gap: '6px',
     minW: 0,
-    maxH: { base: '360px', lg: 'calc(100vh - 260px)' },
-    overflowY: 'auto',
+    '& [data-campaign-scroll]': { h: { base: '65dvh', lg: 'calc(100dvh - 330px)' } },
     pr: '4px',
   });
   const card = css({
@@ -451,152 +734,241 @@
         <button class={ghostButton} onclick={clearSelection} type="button">Clear selection</button>
       </p>
     {/if}
-    {#if bootstrapUnavailable || bootstrapQuery.error || listQuery.error || membersQuery.error}
+    {#if bootstrapUnavailable || bootstrapQuery.error || exploration.error}
       <div class={notice} role="status">
-        {bootstrapUnavailable ?? bootstrapQuery.error?.message ?? listQuery.error?.message ?? membersQuery.error?.message}
+        {bootstrapUnavailable ?? bootstrapQuery.error?.message ?? exploration.error?.message}
         <button class={ghostButton} onclick={retry} type="button">Retry</button>
       </div>
     {/if}
     {#if labelsQuery.error}
       <p class={notice} role="status">Saved campaign labels are unavailable. Showing derived titles.</p>
     {/if}
-    {#if isRefreshing}
-      <p aria-live="polite" class={notice} role="status">Updating campaigns…</p>
-    {:else if data.mode === 'live' && bootstrapQuery.isPending}
+    {#if data.mode === 'live' && bootstrapQuery.isPending}
       <p aria-live="polite" class={notice} role="status">Loading report…</p>
     {/if}
     {#if listPages.length > 0 && !listAnswersRequest}
       <p class={notice} role="status">
         Showing last loaded campaigns. The requested filters or revision are
-        {listQuery.isFetching ? 'loading' : 'unavailable'}.
+        {exploration.isFetching ? 'loading' : 'unavailable'}.
       </p>
     {/if}
-    {#if campaignView === 'timeline'}
+    {#if pendingRevision}
+      <p class={notice} role="status">
+        New data is available. Your current exploration is preserved.
+        <button class={ghostButton} disabled={isRefreshing} onclick={refresh} type="button">Apply new data</button>
+      </p>
+    {/if}
+    {#if exploration.error}
+      <button class={ghostButton} onclick={restart} type="button">Return to latest results</button>
+    {/if}
+    {#if visible?.missingAnchors.length}
+      <p class={notice} role="status">
+        An earlier position is no longer present. Showing the remaining campaign context.
+      </p>
+    {/if}
+    {#snippet listFooter()}
+      <div class={notice}>
+        {#if exploration.error}
+          <span role="status">More campaigns are unavailable.</span>
+          <button class={ghostButton} onclick={retry} type="button">Retry campaigns</button>
+        {:else if isRefreshing}
+          <span role="status">Loading campaigns…</span>
+        {:else if hasMoreCampaigns}
+          More campaigns appear as you scroll.
+        {:else}
+          End of results · {items.length} campaigns
+        {/if}
+      </div>
+    {/snippet}
+    {#snippet membersFooter()}
+      <div class={notice}>
+        {#if exploration.error}
+          <span role="status">More sessions are unavailable.</span>
+          <button class={ghostButton} onclick={retry} type="button">Retry sessions</button>
+        {:else if isRefreshing}
+          <span role="status">Loading campaign sessions…</span>
+        {:else if hasMoreSessions}
+          More sessions appear as you scroll.
+        {:else}
+          End of campaign · {map?.totalCount ?? 0} sessions
+        {/if}
+      </div>
+    {/snippet}
+    {#if search.q && matchedRows.length > 0}
+      <section aria-label="Matching sessions" class={notice}>
+        <p>
+          {matching.data?.pages[0]?.itemCount ?? 0}
+          matching sessions in the selected campaign · search covers all its stored sessions.
+        </p>
+        {#if !searchExpanded}
+          {#each matchedRows.slice(0, 3) as row (row.rowId)}
+            <button class={ghostButton} data-matching-row-id={row.rowId} onclick={() => openSession(row)} type="button">
+              Open matching session {row.name || row.sessionLabel}
+            </button>
+          {/each}
+        {/if}
+        {#if matchedRows.length > 3 || matching.hasNextPage || searchExpanded}
+          <button class={ghostButton} onclick={() => searchExpanded = !searchExpanded} type="button">
+            {searchExpanded ? 'Return to full campaign' : 'Explore matching sessions'}
+          </button>
+        {/if}
+      </section>
+    {:else if search.q && matching.error}
+      <p class={notice} role="status">
+        Matching sessions are unavailable.
+        <button class={ghostButton} onclick={() => matching.refetch()} type="button">Retry search</button>
+      </p>
+    {/if}
+    {#if searchExpanded && search.q}
+      <CampaignVirtualList
+        estimate={90}
+        label="Matching session results"
+        onNearEnd={loadMatches}
+        rows={matchRows}
+        surface="search"
+        bind:this={searchVirtualList}
+        bind:navigation={searchNavigation}
+      >
+        {#snippet children(_entry)}
+          <button
+            class={card}
+            data-matching-row-id={_entry.row.rowId}
+            onclick={() => openSession(_entry.row)}
+            type="button"
+          >
+            Open matching session {_entry.row.name || _entry.row.sessionLabel}
+          </button>
+        {/snippet}
+        {#snippet footer()}
+          {#if matching.error}
+            <p role="status">More matching sessions are unavailable.</p>
+            <button class={ghostButton} onclick={() => loadNextCampaignPage(matching)} type="button">
+              Retry search
+            </button>
+          {:else if matching.isFetching}
+            <p role="status">Loading matching sessions…</p>
+          {:else if !matching.hasNextPage}
+            <p>End of matching sessions</p>
+          {/if}
+        {/snippet}
+      </CampaignVirtualList>
+    {:else if campaignView === 'timeline'}
+      <button
+        class={ghostButton}
+        onclick={() => timelineAxis = buildCampaignTimeline(items, visible?.request.range ?? {from:null,to:null}).axis}
+        type="button"
+      >
+        Fit loaded campaigns
+      </button>
       <CampaignProjectTimeline
-        hasMoreSessions={membersQuery.hasNextPage}
+        campaignPages={listPages.map((entry) => entry.items.map((item) => item.campaignKey))}
+        footer={listFooter}
+        {hasMoreSessions}
         labelFor={(key, label) => campaignLabelFor(labels, key, label)}
         map={timelineMap}
-        mapError={membersQuery.error?.message ?? null}
-        mapLoading={membersQuery.isFetching || (mapRevision !== visibleRevision && !membersQuery.error)}
-        onLoadMoreSessions={() => loadNextCampaignPage(membersQuery)}
+        mapError={exploration.error?.message ?? null}
+        mapLoading={isRefreshing}
+        onLoadMoreCampaigns={loadCampaigns}
+        onLoadMoreSessions={() => { if (exploration.error) {retry(); return false;} return loadMembers(); }}
         onOpenSession={openSession}
         onSelectCampaign={selectCampaign}
         selectedCampaignKey={selectedKey}
         {timeline}
+        bind:collapsedProjects
+        bind:expansion
+        bind:navigation={timelineNavigation}
+        bind:virtualList={timelineVirtualList}
       />
       <p class={notice}>
         {items.length}
-        of {listPages[0]?.itemCount ?? 0} campaigns loaded. Campaigns are discovered by recorded activity in the
-        selected period; their bars show the recorded campaign chronology.
+        of {listPages[0]?.itemCount ?? 0} campaigns loaded. Campaign discovery uses recorded activity; bars show
+        recorded chronology.
       </p>
-      {#if selectedKey && membersQuery.isSuccess && !membersQuery.isPlaceholderData && !root}
+      {#if selectedKey && memberPages.length > 0 && !root && !isRefreshing}
         <p class={notice} role="status">
           This campaign is unavailable in the current served revision.
           <button class={ghostButton} onclick={clearSelection} type="button">Clear selection</button>
         </p>
-      {:else if selectedKey && !selectedItem && (map || items.length > 0)}
+      {/if}
+      {#if selectedKey && !selectedItem && map}
         <p class={notice}>
           The selected campaign is outside the loaded results.
           <button class={ghostButton} onclick={() => selectView('list')} type="button">Open Agent Map</button>
         </p>
       {/if}
-      {#if listQuery.hasNextPage}
-        <button
-          class={ghostButton}
-          disabled={listQuery.isFetching}
-          onclick={() => loadNextCampaignPage(listQuery)}
-          type="button"
-        >
-          Load more campaigns
-        </button>
-      {/if}
-      {#if items.length === 0 && !listQuery.isPending}
-        <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
-      {/if}
     {:else}
-      <div class={layout}>
+      <button class={mobileBack} onclick={() => mobileMap = !mobileMap} type="button">
+        {mobileMap ? 'Back to campaigns' : 'View selected campaign'}
+      </button>
+      <div class={layout} data-mobile-map={mobileMap ? 'true' : 'false'}>
         <section aria-label="Recent campaigns" class={campaignList} data-campaign-list>
           <p class={muted}>{items.length} of {listPages[0]?.itemCount ?? 0} campaigns · most recent first</p>
-          {#each items as item (item.campaignKey)}
-            <button
-              aria-pressed={item.campaignKey === selectedKey ? 'true' : 'false'}
-              class={cx(card, item.campaignKey === selectedKey && activeCard)}
-              data-campaign-card
-              onclick={() => selectCampaign(item.campaignKey)}
-              type="button"
-            >
-              <span class={title}>{campaignLabelFor(labels, item.campaignKey, campaignMapTitle(item.row))}</span>
-              <span class={muted}>{item.row.projectLabel} · {item.row.harness}</span>
-              <span class={muted} title="Last recorded activity">{recordedAt(item.row)}</span>
-              <span class={muted}
-                >{sessionCount(item.row)}
-                ·
-                {item.row.partial || item.row.usageUnavailable ? '≥ ' : ''}
-                {fmtCompact(item.row.tokenTotal)}
-                recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount ? '' : ' in filter'}</span
-              >
-            </button>
-          {/each}
-          {#if listQuery.hasNextPage}
-            <button
-              class={ghostButton}
-              disabled={listQuery.isFetching}
-              onclick={() => loadNextCampaignPage(listQuery)}
-              type="button"
-            >
-              Load more campaigns
-            </button>
-          {/if}
-          {#if items.length === 0 && !listQuery.isPending}
-            <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
-          {/if}
-        </section>
-        {#if map}
-          <div class={detail} data-map-revision={mapRevision}>
-            <p class={muted}>{root?.projectLabel}· {map.harnesses.join(' · ')}</p>
-            {#if selectedItem && listAnswersRequest && mapRevision === visibleRevision && (selectedItem.row.campaignVisibleCount ?? map.totalCount) < map.totalCount}
-              <p class={muted}>{sessionCount(selectedItem.row)} match the list filters. Map scope: full campaign.</p>
-            {/if}
-            {#if mapRevision !== visibleRevision}
-              <p class={notice} role="status">Showing the last complete Agent Map while the newer revision loads.</p>
-            {/if}
-            {#if presentedMap}
-              <CampaignAgentMap map={presentedMap} onOpen={openSession} />
-            {/if}
-            {#if map.omittedCount > 0}
-              <p class={notice}>
-                {map.omittedCount}
-                sessions are not loaded yet. Counts and timing describe the loaded portion.
-              </p>
-            {/if}
-            {#if membersQuery.hasNextPage}
+          <CampaignVirtualList
+            estimate={150}
+            footer={listFooter}
+            label="Recent campaign results"
+            onNearEnd={loadCampaigns}
+            rows={virtualCampaigns}
+            surface="list"
+            bind:navigation={listNavigation}
+          >
+            {#snippet children(_entry)}
+              {@const item = _entry.item}
               <button
-                class={ghostButton}
-                disabled={membersQuery.isFetching}
-                onclick={() => loadNextCampaignPage(membersQuery)}
+                aria-pressed={item.campaignKey === selectedKey ? 'true' : 'false'}
+                class={cx(card, item.campaignKey === selectedKey && activeCard)}
+                data-campaign-card
+                data-campaign-key={item.campaignKey}
+                onclick={() => selectCampaign(item.campaignKey)}
                 type="button"
               >
-                Load more sessions
+                <span class={title}>{campaignLabelFor(labels, item.campaignKey, campaignMapTitle(item.row))}</span>
+                <span class={muted}>{item.row.projectLabel} · {item.row.harness}</span>
+                <span class={muted} title="Last recorded activity">{recordedAt(item.row)}</span>
+                <span class={muted}
+                  >{sessionCount(item.row)}
+                  ·
+                  {item.row.partial || item.row.usageUnavailable ? '≥ ' : ''}
+                  {fmtCompact(item.row.tokenTotal)}
+                  recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount ? '' : ' in filter'}</span
+                >
               </button>
+            {/snippet}
+          </CampaignVirtualList>
+        </section>
+        <div class={detail} data-map-revision={mapRevision}>
+          {#if map && presentedMap}
+            <p class={muted}>{root?.projectLabel} · {map.harnesses.join(' · ')}</p>
+            {#if selectedItem && (selectedItem.row.campaignVisibleCount ?? map.totalCount) < map.totalCount}
+              <p class={muted}>{sessionCount(selectedItem.row)} match the list filters. Map scope: full campaign.</p>
             {/if}
-          </div>
-        {:else if membersQuery.isPending && selectedKey}
-          <div class={empty} role="status">Loading campaign hierarchy…</div>
-        {:else if selectedKey && membersQuery.isSuccess}
-          <div class={empty} role="status">
-            This campaign is unavailable in the current served revision.
-            <button class={ghostButton} onclick={clearSelection} type="button">Show recent campaigns</button>
-          </div>
-        {:else}
-          <div class={empty}>Select a campaign to inspect its Agent Map.</div>
-        {/if}
+            <CampaignAgentMap
+              footer={membersFooter}
+              map={presentedMap}
+              onNearEnd={loadMembers}
+              onOpen={openSession}
+              bind:collapsed={collapsedNodes}
+              bind:navigation={mapNavigation}
+              bind:virtualList={mapVirtualList}
+            />
+          {:else if isRefreshing}
+            <p role="status">Loading campaign hierarchy…</p>
+          {:else if selectedKey}
+            <p role="status">This campaign is unavailable in the current served revision.</p>
+          {:else}
+            <p>Select a campaign to inspect its Agent Map.</p>
+          {/if}
+        </div>
       </div>
+    {/if}
+    {#if items.length === 0 && !isRefreshing}
+      <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
     {/if}
     <SessionDetailQuerySlot
       client={clients.session}
       onSelectionChange={changeSelection}
       {queryClient}
-      {rows}
+      rows={detailRows}
       {selection}
     />
   </div>

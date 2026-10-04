@@ -4,10 +4,28 @@
   import { ghostButton } from '@ai-usage/design-system/report';
   import type { CampaignMap, CampaignMapNode } from '@ai-usage/report-core/campaign-map';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
+  import type { Snippet } from 'svelte';
   import { fmtCompact } from '../../foundation/presentation/format';
+  import CampaignVirtualList from './campaign-virtual-list.svelte';
+  import type { CampaignScrollState } from './campaign-virtual-window';
 
-  let { map, onOpen }: { map: CampaignMap; onOpen: (row: SessionPresentationRow) => void } = $props();
-  let collapsed = $state<ReadonlySet<string>>(new Set());
+  let {
+    map,
+    onOpen,
+    onNearEnd,
+    footer,
+    navigation = $bindable({}),
+    collapsed = $bindable(new Set()),
+    virtualList = $bindable(),
+  }: {
+    map: CampaignMap;
+    onOpen: (row: SessionPresentationRow) => void;
+    onNearEnd: () => boolean;
+    footer: Snippet;
+    navigation?: CampaignScrollState;
+    collapsed?: ReadonlySet<string>;
+    virtualList?: { focusKey: (key: string) => Promise<boolean> } | undefined;
+  } = $props();
   const visibleNodes = $derived.by(() => {
     const hidden = new Set<string>();
     return map.nodes.filter((node) => {
@@ -19,10 +37,10 @@
     });
   });
   const parents = $derived(new Set(map.nodes.flatMap((node) => (node.parentRowId ? [node.parentRowId] : []))));
-  const timedNodes = $derived(map.nodes.filter((node) => node.startMs !== null && node.endMs !== null));
-  const start = $derived(Math.min(...timedNodes.map((node) => node.startMs ?? 0)));
-  const end = $derived(Math.max(...timedNodes.map((node) => node.endMs ?? 0)));
+  const start = $derived(map.observedFromMs ?? 0);
+  const end = $derived(map.observedToMs ?? start);
   const span = $derived(Math.max(1, end - start));
+  const virtualRows = $derived(visibleNodes.map((node) => ({ key: node.row.rowId, node })));
   const time = (value: number): string => new Date(value).toISOString().slice(11, 19);
   const shortInstant = (value: string | null, missing: string): string =>
     value ? `${value.slice(5, 10)} ${value.slice(11, 19)}` : missing;
@@ -80,7 +98,6 @@
   });
   const metric = css({ display: 'grid', gap: '3px', fontSize: '13px', fontFamily: 'mono' });
   const label = css({ color: 'muted', fontSize: '10px', fontFamily: 'sans' });
-  const list = css({ display: 'grid', listStyle: 'none', p: 0, m: 0 });
   const row = css({
     display: 'grid',
     gridTemplateColumns: '24px minmax(0, 1fr)',
@@ -193,7 +210,7 @@
       token usage.
     </p>
   {/if}
-  {#if timedNodes.length > 0}
+  {#if map.observedFromMs !== null}
     <p class={muted}>
       {new Date(start).toISOString().slice(0, 10)} {time(start)} → {new Date(end).toISOString().slice(0, 10)}
       {time(end)}
@@ -207,10 +224,26 @@
       </div>
     </div>
   {/if}
-  <ol class={list}>
-    {#each visibleNodes as node, index (node.row.rowId)}
+  <CampaignVirtualList
+    estimate={100}
+    {footer}
+    label="Campaign sessions"
+    onNearEnd={() => !collapsed.has(map.rootRowId) && onNearEnd()}
+    rows={virtualRows}
+    surface="map"
+    bind:this={virtualList}
+    bind:navigation
+  >
+    {#snippet children(_entry, _index)}
+      {@const node = _entry.node}
       {@const expanded = !collapsed.has(node.row.rowId)}
-      <li class={row} data-campaign-node data-depth={node.depth} data-relationship={node.relationship}>
+      <div
+        class={row}
+        data-campaign-node
+        data-depth={node.depth}
+        data-relationship={node.relationship}
+        data-row-id={node.row.rowId}
+      >
         {#if parents.has(node.row.rowId)}
           <button
             aria-expanded={expanded}
@@ -225,7 +258,7 @@
           <span></span>
         {/if}
         <button
-          aria-describedby={`campaign-node-description-${index}`}
+          aria-describedby={`campaign-node-description-${_index}`}
           aria-label={`Open session ${node.title}`}
           class={nodeButton}
           onclick={() => onOpen(node.row)}
@@ -233,7 +266,7 @@
         >
           <span style:padding-left={`${Math.min(node.depth, 8) * 12}px`}>
             <span class={nodeTitle}>{nodePrefix(node)}{node.title}</span>
-            <span class={meta} id={`campaign-node-description-${index}`}
+            <span class={meta} id={`campaign-node-description-${_index}`}
               >{relationshipLabel(node)}
               · {node.row.harness} · {node.row.modelLabel || 'Model not recorded'}</span
             >
@@ -250,22 +283,24 @@
               <span class={meta}>Lineage: {node.lineageIssue.replaceAll('-', ' ')}</span>
             {/if}
           </span>
-          {#if node.startMs !== null && node.endMs !== null}
+          {#if node.startMs !== null || node.endMs !== null}
             <span aria-hidden="true" class={track}
               ><span
                 class={cx(bar, node.relationship === 'root' && rootBar, node.relationship === 'review' && reviewBar)}
                 data-campaign-bar
-                style:left={`${((node.startMs - start) / span) * 100}%`}
-                style:width={`${((node.endMs - node.startMs) / span) * 100}%`}
+                data-timing={node.timingStatus}
+                style:border-radius={node.startMs === null || node.endMs === null ? '50%' : undefined}
+                style:left={`${(((node.startMs ?? node.endMs ?? start) - start) / span) * 100}%`}
+                style:width={`${(((node.endMs ?? node.startMs ?? start) - (node.startMs ?? node.endMs ?? start)) / span) * 100}%`}
               ></span></span
             >
           {:else}
             <span class={meta}>Timing {node.timingStatus.replaceAll('-', ' ')}</span>
           {/if}
         </button>
-      </li>
-    {/each}
-  </ol>
+      </div>
+    {/snippet}
+  </CampaignVirtualList>
   <p class={muted}>
     Recorded session spans · UTC. Overlap shows concurrent session lifetimes; it does not prove continuous agent
     activity.

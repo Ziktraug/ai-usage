@@ -5,9 +5,13 @@
   import { type CampaignMap, type CampaignMapNode, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import { barForInterval, type CampaignTimeline, type CampaignTimelineBar } from './campaign-timeline-model';
+  import { campaignProjectSegments } from './campaign-timeline-projection';
+  import CampaignVirtualList from './campaign-virtual-list.svelte';
+  import type { CampaignScrollState } from './campaign-virtual-window';
 
   let {
     timeline,
+    campaignPages,
     selectedCampaignKey,
     map,
     mapLoading,
@@ -17,8 +21,15 @@
     onSelectCampaign,
     onOpenSession,
     onLoadMoreSessions,
+    onLoadMoreCampaigns,
+    footer,
+    navigation = $bindable({}),
+    collapsedProjects = $bindable(new Set()),
+    expansion = $bindable(null),
+    virtualList = $bindable(),
   }: {
     timeline: CampaignTimeline;
+    campaignPages: readonly (readonly string[])[];
     selectedCampaignKey: string;
     map: CampaignMap | null;
     mapLoading: boolean;
@@ -27,11 +38,50 @@
     labelFor: (key: string, derived: string) => string;
     onSelectCampaign: (key: string) => void;
     onOpenSession: (row: SessionPresentationRow) => void;
-    onLoadMoreSessions: () => Promise<void>;
+    onLoadMoreSessions: () => boolean;
+    onLoadMoreCampaigns: () => boolean;
+    footer: import('svelte').Snippet;
+    navigation?: CampaignScrollState;
+    collapsedProjects?: ReadonlySet<string>;
+    expansion?: { key: string; open: boolean } | null;
+    virtualList?: { focusKey: (key: string) => Promise<boolean> } | undefined;
   } = $props();
 
-  let collapsedProjects = $state<ReadonlySet<string>>(new Set());
-  let expansion = $state<{ key: string; open: boolean } | null>(null);
+  type Project = CampaignTimeline['groups'][number];
+  type Campaign = Project['campaigns'][number];
+  type TimelineRow =
+    | { key: string; kind: 'project'; project: Project; continuation: boolean }
+    | { key: string; kind: 'campaign'; campaign: Campaign }
+    | { key: string; kind: 'session'; node: CampaignMapNode }
+    | { key: string; kind: 'boundary' };
+  const virtualRows = $derived.by(() => {
+    const result: TimelineRow[] = [];
+    for (const segment of campaignProjectSegments(timeline, campaignPages)) {
+      const project = segment.project;
+      result.push({ ...segment, kind: 'project' });
+      if (collapsedProjects.has(project.projectKey)) {
+        continue;
+      }
+      for (const campaign of project.campaigns) {
+        const key = campaign.item.campaignKey;
+        result.push({ key: `campaign:${key}`, kind: 'campaign', campaign });
+        if (key !== expandedCampaignKey) {
+          continue;
+        }
+        if (map?.campaignKey === key) {
+          for (const node of map.nodes) {
+            result.push({ key: node.row.rowId, kind: 'session', node });
+          }
+        }
+        result.push({ key: `boundary:${key}`, kind: 'boundary' });
+      }
+    }
+    return result;
+  });
+  const acquireVisible = (start: number, end: number): boolean =>
+    virtualRows.slice(start, end).some((row) => row.kind === 'boundary') && hasMoreSessions && !mapLoading && !mapError
+      ? onLoadMoreSessions()
+      : false;
   const expandedCampaignKey = $derived.by(() => {
     if (expansion?.key === selectedCampaignKey && !expansion.open) {
       return null;
@@ -139,7 +189,6 @@
   const fullTick = css({ display: { base: 'none', md: 'inline' } });
   const compactTick = css({ display: { base: 'inline', md: 'none' } });
   const screenReader = css({ srOnly: true });
-  const group = css({ minW: 0, '& + &': { borderTop: '1px solid token(colors.lineStrong)' } });
   const projectRow = css({ px: { base: '10px', md: '20px' }, py: '10px', bg: 'surfaceMuted' });
   const projectHeading = css({ m: 0, minW: 0 });
   const projectButton = css({
@@ -256,7 +305,6 @@
     fontSize: '16px',
     lineHeight: 1,
   });
-  const sessions = css({ listStyle: 'none', p: 0, m: 0, bg: 'surfaceMuted' });
   const sessionButton = css({
     w: 'full',
     textAlign: 'left',
@@ -315,202 +363,203 @@
       </div>
     </div>
   {/if}
-  {#each timeline.groups as project (project.projectKey)}
-    <section
-      aria-label={project.projectLabel}
-      class={group}
-      data-project-key={project.projectKey}
-      data-timeline-project
-    >
-      <div class={cx(grid, projectRow)}>
-        <h3 class={projectHeading}>
+  <CampaignVirtualList
+    estimate={90}
+    {footer}
+    label="Project timeline rows"
+    onNearEnd={onLoadMoreCampaigns}
+    onRange={acquireVisible}
+    rows={virtualRows}
+    surface="timeline"
+    bind:this={virtualList}
+    bind:navigation
+  >
+    {#snippet children(_entry)}
+      {#if _entry.kind === 'project'}
+        {@const project = _entry.project}
+        <div class={cx(grid, projectRow)} data-project-key={project.projectKey} data-timeline-project>
+          <h3 class={projectHeading}>
+            <button
+              aria-describedby={`timeline-project-count-${encodeURIComponent(_entry.key)}`}
+              aria-expanded={collapsedProjects.has(project.projectKey) ? 'false' : 'true'}
+              aria-label={`${collapsedProjects.has(project.projectKey) ? 'Expand' : 'Collapse'} project ${project.projectLabel}`}
+              class={projectButton}
+              onclick={() => toggleProject(project.projectKey)}
+              type="button"
+            >
+              <span aria-hidden="true">{collapsedProjects.has(project.projectKey) ? '▸' : '▾'}</span>
+              <span
+                ><span class={projectTitle}>{project.projectLabel}{_entry.continuation ? ' · continued' : ''}</span
+                ><span class={meta} id={`timeline-project-count-${encodeURIComponent(_entry.key)}`}
+                  >{project.campaigns.length}
+                  {project.campaigns.length === 1 ? 'campaign' : 'campaigns'}
+                  shown here</span
+                ></span
+              >
+            </button>
+          </h3>
+          <span aria-hidden="true" class={lane}>
+            {#each project.bars as span, index (index)}
+              <span
+                class={cx(bar, span.point ? pointBar : projectBar, barTone(span.timing === 'partial', false, projectTone))}
+                data-timeline-project-bar
+                data-timing={span.timing}
+                style:left={`${span.leftPercent}%`}
+                style:width={span.point ? undefined : `${span.widthPercent}%`}
+              ></span>
+            {/each}
+          </span>
+        </div>
+      {:else if _entry.kind === 'campaign'}
+        {@const campaign = _entry.campaign}
+        {@const key = campaign.item.campaignKey}
+        {@const label = labelFor(key, campaignMapTitle(campaign.item.row))}
+        {@const expanded = expandedCampaignKey === key}
+        {@const descriptionId = `timeline-campaign-description-${encodeURIComponent(key)}`}
+        <div
+          class={cx(grid, campaignRow, selectedCampaignKey === key && selectedRow)}
+          data-campaign-key={key}
+          data-end={campaign.item.chronology.endedAt}
+          data-start={campaign.item.chronology.startedAt}
+          data-timeline-campaign
+        >
+          <div class={campaignLabel}>
+            <span class={screenReader} id={descriptionId}>
+              {campaign.item.chronology.sessionCount}
+              sessions. {campaign.item.row.harness}. Started {campaign.item.chronology.startedAt ?? 'not recorded'}.
+              Ended {campaign.item.chronology.endedAt ?? 'not recorded'}. Timing {campaign.timing}.
+              {campaign.bar ? clipLabel(campaign.bar) : ''}
+              {campaign.outsideRange ? 'Outside visible time window.' : ''}
+            </span>
+            <button
+              aria-expanded={expanded ? 'true' : 'false'}
+              aria-label={`${expanded ? 'Collapse' : 'Expand'} sessions for ${label}`}
+              class={disclosure}
+              onclick={() => toggleCampaign(key)}
+              type="button"
+            >
+              {expanded ? '▾' : '▸'}
+            </button>
+            <button
+              aria-describedby={descriptionId}
+              aria-label={`Select campaign ${label}`}
+              aria-pressed={selectedCampaignKey === key ? 'true' : 'false'}
+              class={labelButton}
+              onclick={() => selectCampaign(key)}
+              type="button"
+            >
+              <span class={title}>{label}</span>
+              <span class={meta}
+                >{campaign.item.chronology.sessionCount}
+                {campaign.item.chronology.sessionCount === 1 ? 'session' : 'sessions'}
+                ·
+                {campaign.item.row.harness}</span
+              >
+              {#if campaign.timing === 'partial'}
+                <span class={meta}>Timing incomplete</span>
+              {/if}
+              {#if campaign.timing === 'unavailable'}
+                <span class={meta}>Timing unavailable</span>
+              {/if}
+            </button>
+          </div>
+          {#if campaign.bar}
+            <button
+              aria-describedby={descriptionId}
+              aria-label={`Select campaign timing ${label}`}
+              class={cx(lane, laneButton)}
+              onclick={() => selectCampaign(key)}
+              title={`${campaign.item.chronology.observedFrom ?? ''} → ${campaign.item.chronology.observedTo ?? ''}. ${clipLabel(campaign.bar)}`}
+              type="button"
+            >
+              <span
+                aria-hidden="true"
+                class={cx(bar, campaign.bar.point ? pointBar : campaignBar, barTone(campaign.timing === 'partial', selectedCampaignKey === key, campaignTone))}
+                data-timeline-campaign-bar
+                style:left={`${campaign.bar.leftPercent}%`}
+                style:width={campaign.bar.point ? undefined : `${campaign.bar.widthPercent}%`}
+              ></span>
+              {#if campaign.bar.clippedStart}
+                <span aria-hidden="true" class={clipStart}>‹</span>
+              {/if}
+              {#if campaign.bar.clippedEnd}
+                <span aria-hidden="true" class={clipEnd}>›</span>
+              {/if}
+            </button>
+          {:else}
+            <span class={meta}>{campaign.outsideRange ? 'Outside visible time window' : 'Timing unavailable'}</span>
+          {/if}
+        </div>
+      {:else if _entry.kind === 'session'}
+        {@const node = _entry.node}
+        {@const nodeBar = barForInterval(node.startMs, node.endMs, timeline.axis)}
+        {@const nodeDescriptionId = `timeline-session-description-${encodeURIComponent(node.row.rowId)}`}
+        <div
+          data-depth={node.depth}
+          data-relationship={node.relationship}
+          data-row-id={node.row.rowId}
+          data-timeline-session
+        >
           <button
-            aria-describedby={`timeline-project-count-${encodeURIComponent(project.projectKey)}`}
-            aria-expanded={collapsedProjects.has(project.projectKey) ? 'false' : 'true'}
-            aria-label={`${collapsedProjects.has(project.projectKey) ? 'Expand' : 'Collapse'} project ${project.projectLabel}`}
-            class={projectButton}
-            onclick={() => toggleProject(project.projectKey)}
+            aria-describedby={nodeDescriptionId}
+            aria-label={`Open session ${node.title}`}
+            class={cx(grid, sessionButton)}
+            onclick={() => onOpenSession(node.row)}
             type="button"
           >
-            <span aria-hidden="true">{collapsedProjects.has(project.projectKey) ? '▸' : '▾'}</span>
-            <span
-              ><span class={projectTitle}>{project.projectLabel}</span
-              ><span class={meta} id={`timeline-project-count-${encodeURIComponent(project.projectKey)}`}
-                >{project.campaigns.length}
-                loaded {project.campaigns.length === 1 ? 'campaign' : 'campaigns'}</span
-              ></span
-            >
-          </button>
-        </h3>
-        <span aria-hidden="true" class={lane}>
-          {#each project.bars as span, index (index)}
-            <span
-              class={cx(bar, span.point ? pointBar : projectBar, projectTone)}
-              data-timeline-project-bar
-              style:left={`${span.leftPercent}%`}
-              style:width={span.point ? undefined : `${span.widthPercent}%`}
-            ></span>
-          {/each}
-        </span>
-      </div>
-      {#if !collapsedProjects.has(project.projectKey)}
-        {#each project.campaigns as campaign (campaign.item.campaignKey)}
-          {@const key = campaign.item.campaignKey}
-          {@const label = labelFor(key, campaignMapTitle(campaign.item.row))}
-          {@const expanded = expandedCampaignKey === key}
-          {@const descriptionId = `timeline-campaign-description-${encodeURIComponent(key)}`}
-          <div
-            class={cx(grid, campaignRow, selectedCampaignKey === key && selectedRow)}
-            data-campaign-key={key}
-            data-end={campaign.item.chronology.endedAt}
-            data-start={campaign.item.chronology.startedAt}
-            data-timeline-campaign
-          >
-            <div class={campaignLabel}>
-              <span class={screenReader} id={descriptionId}>
-                {campaign.item.chronology.sessionCount}
-                sessions. {campaign.item.row.harness}. Started {campaign.item.chronology.startedAt ?? 'not recorded'}.
-                Ended {campaign.item.chronology.endedAt ?? 'not recorded'}. Timing {campaign.timing}.
-                {campaign.bar ? clipLabel(campaign.bar) : ''}
-                {campaign.outsideRange ? 'Outside visible time window.' : ''}
+            <span class={sessionLabel} style:padding-left={`${Math.min(node.depth + 1, 7) * 10}px`}>
+              <span class={screenReader} id={nodeDescriptionId}>
+                {nodeRole(node)}. {node.row.harness}. {node.row.modelLabel}. Started
+                {node.startedAt ?? 'not recorded'}. Ended {node.endedAt ?? 'not recorded'}.
+                {node.lineageIssue ? `Lineage: ${node.lineageIssue.replaceAll('-', ' ')}.` : ''}
+                {nodeBar ? clipLabel(nodeBar) : ''}
               </span>
-              <button
-                aria-expanded={expanded ? 'true' : 'false'}
-                aria-label={`${expanded ? 'Collapse' : 'Expand'} sessions for ${label}`}
-                class={disclosure}
-                onclick={() => toggleCampaign(key)}
-                type="button"
+              <span class={title}>{nodePrefix(node)}{node.title}</span>
+              <span class={meta}>{nodeRole(node)} ·{node.row.modelLabel || node.row.harness}</span>
+              <span class={meta}
+                >{sessionInstant(node.startedAt, 'Start not recorded')}
+                → {sessionInstant(node.endedAt, 'End not recorded')}</span
               >
-                {expanded ? '▾' : '▸'}
-              </button>
-              <button
-                aria-describedby={descriptionId}
-                aria-label={`Select campaign ${label}`}
-                aria-pressed={selectedCampaignKey === key ? 'true' : 'false'}
-                class={labelButton}
-                onclick={() => selectCampaign(key)}
-                type="button"
-              >
-                <span class={title}>{label}</span>
-                <span class={meta}
-                  >{campaign.item.chronology.sessionCount}
-                  {campaign.item.chronology.sessionCount === 1 ? 'session' : 'sessions'}
-                  ·
-                  {campaign.item.row.harness}</span
-                >
-                {#if campaign.timing === 'partial'}
-                  <span class={meta}>Timing incomplete</span>
-                {/if}
-                {#if campaign.timing === 'unavailable'}
-                  <span class={meta}>Timing unavailable</span>
-                {/if}
-              </button>
-            </div>
-            {#if campaign.bar}
-              <button
-                aria-describedby={descriptionId}
-                aria-label={`Select campaign timing ${label}`}
-                class={cx(lane, laneButton)}
-                onclick={() => selectCampaign(key)}
-                title={`${campaign.item.chronology.observedFrom ?? ''} → ${campaign.item.chronology.observedTo ?? ''}. ${clipLabel(campaign.bar)}`}
-                type="button"
-              >
+              {#if node.lineageIssue}
+                <span class={meta}>Lineage: {node.lineageIssue.replaceAll('-', ' ')}</span>
+              {/if}
+            </span>
+            {#if nodeBar}
+              <span aria-hidden="true" class={lane}>
                 <span
-                  aria-hidden="true"
-                  class={cx(bar, campaign.bar.point ? pointBar : campaignBar, barTone(campaign.timing === 'partial', selectedCampaignKey === key, campaignTone))}
-                  data-timeline-campaign-bar
-                  style:left={`${campaign.bar.leftPercent}%`}
-                  style:width={campaign.bar.point ? undefined : `${campaign.bar.widthPercent}%`}
+                  class={cx(bar, nodeBar.point ? pointBar : sessionBar, barTone(node.timingStatus !== 'recorded', node.relationship === 'root', sessionTone))}
+                  data-timeline-session-bar
+                  style:left={`${nodeBar.leftPercent}%`}
+                  style:width={nodeBar.point ? undefined : `${nodeBar.widthPercent}%`}
                 ></span>
-                {#if campaign.bar.clippedStart}
-                  <span aria-hidden="true" class={clipStart}>‹</span>
+                {#if nodeBar.clippedStart}
+                  <span class={clipStart}>‹</span>
                 {/if}
-                {#if campaign.bar.clippedEnd}
-                  <span aria-hidden="true" class={clipEnd}>›</span>
+                {#if nodeBar.clippedEnd}
+                  <span class={clipEnd}>›</span>
                 {/if}
-              </button>
+              </span>
             {:else}
-              <span class={meta}>{campaign.outsideRange ? 'Outside visible time window' : 'Timing unavailable'}</span>
+              <span class={meta}
+                >{node.startedAt || node.endedAt ? 'Outside visible time window' : 'Timing unavailable'}</span
+              >
             {/if}
-          </div>
-          {#if expanded}
-            {#if map?.campaignKey === key}
-              <ol class={sessions}>
-                {#each map.nodes as node (node.row.rowId)}
-                  {@const nodeBar = barForInterval(node.startMs, node.endMs, timeline.axis)}
-                  {@const nodeDescriptionId = `timeline-session-description-${encodeURIComponent(node.row.rowId)}`}
-                  <li data-depth={node.depth} data-relationship={node.relationship} data-timeline-session>
-                    <button
-                      aria-describedby={nodeDescriptionId}
-                      aria-label={`Open session ${node.title}`}
-                      class={cx(grid, sessionButton)}
-                      onclick={() => onOpenSession(node.row)}
-                      type="button"
-                    >
-                      <span class={sessionLabel} style:padding-left={`${Math.min(node.depth + 1, 7) * 10}px`}>
-                        <span class={screenReader} id={nodeDescriptionId}>
-                          {nodeRole(node)}. {node.row.harness}. {node.row.modelLabel}. Started
-                          {node.startedAt ?? 'not recorded'}. Ended {node.endedAt ?? 'not recorded'}.
-                          {node.lineageIssue ? `Lineage: ${node.lineageIssue.replaceAll('-', ' ')}.` : ''}
-                          {nodeBar ? clipLabel(nodeBar) : ''}
-                        </span>
-                        <span class={title}>{nodePrefix(node)}{node.title}</span>
-                        <span class={meta}>{nodeRole(node)} ·{node.row.modelLabel || node.row.harness}</span>
-                        <span class={meta}
-                          >{sessionInstant(node.startedAt, 'Start not recorded')}
-                          → {sessionInstant(node.endedAt, 'End not recorded')}</span
-                        >
-                        {#if node.lineageIssue}
-                          <span class={meta}>Lineage: {node.lineageIssue.replaceAll('-', ' ')}</span>
-                        {/if}
-                      </span>
-                      {#if nodeBar}
-                        <span aria-hidden="true" class={lane}>
-                          <span
-                            class={cx(bar, nodeBar.point ? pointBar : sessionBar, barTone(node.timingStatus !== 'recorded', node.relationship === 'root', sessionTone))}
-                            data-timeline-session-bar
-                            style:left={`${nodeBar.leftPercent}%`}
-                            style:width={nodeBar.point ? undefined : `${nodeBar.widthPercent}%`}
-                          ></span>
-                          {#if nodeBar.clippedStart}
-                            <span class={clipStart}>‹</span>
-                          {/if}
-                          {#if nodeBar.clippedEnd}
-                            <span class={clipEnd}>›</span>
-                          {/if}
-                        </span>
-                      {:else}
-                        <span class={meta}
-                          >{node.startedAt || node.endedAt ? 'Outside visible time window' : 'Timing unavailable'}</span
-                        >
-                      {/if}
-                    </button>
-                  </li>
-                {/each}
-              </ol>
-              {#if map.omittedCount > 0}
-                <p class={detailNotice}>
-                  {map.loadedCount}
-                  of {map.totalCount} sessions loaded. {map.omittedCount} remain outside this expanded page.
-                </p>
-              {/if}
-              {#if hasMoreSessions}
-                <div class={detailNotice}>
-                  <button class={ghostButton} disabled={mapLoading} onclick={onLoadMoreSessions} type="button">
-                    Load more sessions
-                  </button>
-                </div>
-              {/if}
-            {:else if mapLoading}
-              <p class={detailNotice} role="status">Loading campaign sessions…</p>
-            {:else}
-              <p class={detailNotice} role="status">
-                {mapError ?? 'Campaign sessions are unavailable in this served revision.'}
-              </p>
-            {/if}
+          </button>
+        </div>
+      {:else}
+        <div class={detailNotice}>
+          {#if mapError}
+            <p role="status">{mapError}</p>
+            <button class={ghostButton} onclick={onLoadMoreSessions} type="button">Retry sessions</button>
+          {:else if mapLoading}
+            <p role="status">Loading campaign sessions…</p>
+          {:else if hasMoreSessions}
+            <p>More sessions appear as you scroll.</p>
+          {:else}
+            <p>End of campaign · {map?.totalCount ?? 0} sessions</p>
           {/if}
-        {/each}
+        </div>
       {/if}
-    </section>
-  {/each}
+    {/snippet}
+  </CampaignVirtualList>
 </section>
