@@ -1,10 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * This server is `bun --bun vite` in demo mode, not a built artifact, so it shares the dev
- * server's startup profile and its known startup-hang class. Measured on the 2026-08-25 green CI
- * run: ~6s from the SvelteKit tsconfig warning to tests running. 20s is ~3x headroom; a miss is a
- * hang, not a slow start, and a larger number only buys a slower red.
+ * A cold Bun/Vite start can stall when HTTP readiness probes arrive before Vite has
+ * finished initializing. Wait for its strict loopback listener announcement instead;
+ * the browser suite then verifies the real HTTP response. Do not combine this with a
+ * webServer URL: Playwright races output and HTTP readiness instead of sequencing them.
  */
 const WEB_SERVER_COLD_START_TIMEOUT_MS = 20_000;
 
@@ -28,7 +28,8 @@ export default defineConfig({
     command: 'bun --no-env-file ../../tools/run-web-demo.ts --serve-only',
     gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     reuseExistingServer: false,
+    stdout: 'pipe',
     timeout: WEB_SERVER_COLD_START_TIMEOUT_MS,
-    url: 'http://127.0.0.1:4176',
+    wait: { stdout: /Local:\s+http:\/\/127\.0\.0\.1:4176\// },
   },
 });
