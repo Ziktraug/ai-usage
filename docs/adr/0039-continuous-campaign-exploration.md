@@ -1,6 +1,6 @@
 # ADR 0039: Preserve context during continuous campaign exploration
 
-- **Status**: Accepted
+- **Status**: Accepted; selected-identity recovery and reload clauses amended by 0041
 - **Date**: 2026-10-04
 - **Amends**: 0004 and 0012
 

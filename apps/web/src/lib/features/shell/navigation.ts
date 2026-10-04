@@ -12,6 +12,7 @@ import {
   dashboardUrlFor,
   parseDashboardSearchUrl,
 } from '../../foundation/navigation/svelte/dashboard-url';
+import { isReportPathname } from '../sessions/detail/session-route';
 
 export type ShellIconName =
   | 'breakdown'
@@ -83,8 +84,12 @@ export const navigationTypeForScroll = (type: string): 'enter' | 'form' | 'goto'
   return 'link';
 };
 
+/**
+ * The report index and its session/campaign detail routes share one mounted
+ * table, so moving between them keeps the reader's scroll position.
+ */
 export const shouldPreserveReportScroll = (from: URL | null, to: URL | null): boolean =>
-  from?.pathname === '/' && to?.pathname === '/';
+  from !== null && to !== null && isReportPathname(from.pathname) && isReportPathname(to.pathname);
 
 export interface HistoryEntryState {
   readonly aiUsageNavigationKey?: string;

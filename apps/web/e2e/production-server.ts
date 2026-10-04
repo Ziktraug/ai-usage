@@ -58,6 +58,15 @@ try {
     `#!/usr/bin/env bun\nprocess.stderr.write(${JSON.stringify(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL)});\nprocess.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));\n`,
   );
   await chmod(fakeGhPath, 0o700);
+  // A host Codex app-server migrates its native state database even without
+  // credentials. Keep quota acquisition unavailable in this isolated fixture
+  // so it cannot mutate the seeded thread evidence used by session details.
+  const fakeCodexPath = path.join(fixtureBinDirectory, 'codex');
+  await writeFile(
+    fakeCodexPath,
+    '#!/usr/bin/env bun\nprocess.stderr.write("Codex quota acquisition is unavailable in the production fixture.\\n");\nprocess.exitCode = 1;\n',
+  );
+  await chmod(fakeCodexPath, 0o700);
   const codexSessionCount = scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT;
   await seedHarnessHome(temporaryHome, {
     codexSessionCount: campaignContinuityFixture ? 2 : codexSessionCount,

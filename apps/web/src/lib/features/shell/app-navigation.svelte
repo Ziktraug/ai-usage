@@ -1,7 +1,7 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { onMount, tick } from 'svelte';
-  import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import type { RuntimeMode } from '../../../runtime-mode';
   import {
@@ -16,6 +16,7 @@
     type ScrollLifecycle,
     type ScrollLifecycleEvent,
   } from '../../foundation/navigation/svelte/navigation';
+  import { isReportPathname } from '../sessions/detail/session-route';
   import { useDirtyGuardRegistry } from './dirty-navigation-context';
   import DiscardNavigationDialog from './discard-navigation-dialog.svelte';
   import ManageButton from './manage-button.svelte';
@@ -29,6 +30,7 @@
     shouldPreserveReportScroll,
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
+  import { useShellNavigationOwner } from './navigation-owner-context';
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import ProviderQuotaRail from './provider-quota-rail.svelte';
@@ -191,6 +193,7 @@
   ] as const;
   const showManage = $derived(runtimeMode !== 'demo');
   const dirtyRegistry = useDirtyGuardRegistry();
+  const shellNavigation = useShellNavigationOwner();
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
 
   let manageOpen = $state(false);
@@ -227,12 +230,18 @@
   beforeNavigate((navigation) => {
     const fromKey = currentEntryKey || seedCurrentEntry();
     const isHistoryTraversal = navigation.type === 'popstate' && navigation.delta !== undefined;
+    const isReplacement = shellNavigation.consumeReplacement(navigation.type, navigation.to?.url ?? null);
     const preserveReportScroll = shouldPreserveReportScroll(navigation.from?.url ?? null, navigation.to?.url ?? null);
     sessionWindowAnchorOwner.beginNavigation(preserveReportScroll);
-    pendingHistoryCursor = isHistoryTraversal ? historyCursor + navigation.delta : historyCursor + 1;
-    pendingEntryKey = isHistoryTraversal
-      ? (keysByHistoryCursor.get(pendingHistoryCursor) ?? createEntryKey())
-      : createEntryKey();
+    if (isReplacement) {
+      pendingHistoryCursor = historyCursor;
+      pendingEntryKey = fromKey;
+    } else {
+      pendingHistoryCursor = isHistoryTraversal ? historyCursor + navigation.delta : historyCursor + 1;
+      pendingEntryKey = isHistoryTraversal
+        ? (keysByHistoryCursor.get(pendingHistoryCursor) ?? createEntryKey())
+        : createEntryKey();
+    }
     const scrollEvent: ScrollLifecycleEvent = {
       fromKey,
       ...(preserveReportScroll ? { requestedReset: false } : {}),
@@ -332,7 +341,7 @@
     });
     const port = createSvelteNavigationPort({
       getCurrentUrl: () => page.url,
-      goto,
+      goto: shellNavigation.goto,
       history: window.history,
       onFailure: () => {
         sessionWindowAnchorOwner.cancelNavigation();
@@ -432,8 +441,8 @@
     <div class={navigationGroupLabel}>Report</div>
     {#each reportTabs as destination (destination.tab)}
       <NavigationLink
-        active={page.url.pathname === '/' && activeReportTab(page.url) === destination.tab}
-        class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab)}
+        active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}
+        class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab)}
         href={reportDestinationUrl(page.url, destination.tab).href}
         icon={destination.icon}
         label={destination.label}
@@ -476,8 +485,8 @@
 >
   {#each reportTabs as destination (destination.tab)}
     <NavigationLink
-      active={page.url.pathname === '/' && activeReportTab(page.url) === destination.tab}
-      class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab, true)}
+      active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}
+      class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab, true)}
       href={reportDestinationUrl(page.url, destination.tab).href}
       label={destination.label}
       preserveScroll

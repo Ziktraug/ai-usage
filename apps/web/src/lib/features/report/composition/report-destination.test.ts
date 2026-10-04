@@ -30,6 +30,7 @@ import {
 import { initialSessionWindowIntent } from '../../../query/options/session-window';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { syntheticCampaignRow } from '../../sessions/table/session-table.fixtures';
+import { type FocusedReportDestination, FocusedReportRevisionExpiredError } from './report-destination';
 
 const { rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
 
@@ -120,7 +121,14 @@ const successfulSessionPage = (request: SessionQueryRequest, nextCursor: string 
 
 const sessionClientWithPage = (page: SessionClientAdapter['page']): SessionClientAdapter => {
   const unexpected = () => Promise.reject(new Error('Unexpected Session operation'));
-  return { campaignChildren: unexpected, detail: unexpected, neighbors: unexpected, page, vcs: unexpected };
+  return {
+    campaignChildren: unexpected,
+    detail: unexpected,
+    lookup: unexpected,
+    neighbors: unexpected,
+    page,
+    vcs: unexpected,
+  };
 };
 
 const overviewDependencies = (getFocusedReportOverview: ReportQueryClient['getFocusedReportOverview']) => ({
@@ -395,6 +403,128 @@ describe('report destination Query', () => {
       queryClient.clear();
     }
   });
+
+  test.each([
+    ['Overview', overviewDestination()],
+    ['Breakdown', breakdownDestination()],
+  ] as const)('keeps the inspected %s revision until an explicit refresh', async (_name, destination) => {
+    const dependencies = overviewDependencies((request) => Promise.resolve(successfulOverview(request)));
+    const reportClient: ReportQueryClient = {
+      ...dependencies.reportClient,
+      getFocusedReportBreakdown: (request) => Promise.resolve(successfulBreakdown(request)),
+    };
+    const scoped = { ...dependencies, reportClient };
+    try {
+      const original = await refreshReportDestination(scoped, destination);
+      dependencies.queryClient.setQueryData(
+        reportBootstrapQueryOptions(reportClient, { browser: true }).queryKey,
+        bootstrap('new-publication'),
+      );
+      const preserved = await refreshReportDestination(scoped, destination, initialSessionWindowIntent(), true);
+      expect(preserved).toBe(original);
+      expect(preserved.descriptor.revision).toBe('revision-refresh');
+      const refreshed = await refreshReportDestination(scoped, destination);
+      expect(refreshed.descriptor.revision).toBe('new-publication');
+      expect(refreshed.overview.revision).toBe(refreshed.descriptor.revision);
+      if (destination.kind === 'breakdown') {
+        expect(refreshed.breakdown?.revision).toBe(refreshed.descriptor.revision);
+      }
+    } finally {
+      dependencies.queryClient.clear();
+    }
+  });
+
+  test.each([
+    ['Overview project', 'project', overviewDestination()],
+    ['Overview model', 'model', overviewDestination()],
+    ['Sessions project', 'project', sessionsDestination()],
+    ['Breakdown model', 'model', breakdownDestination()],
+  ] as const)('keeps the inspected revision when filtering %s', async (_name, field, destination) => {
+    const requests: string[] = [];
+    const overview = overviewDependencies((request) => {
+      requests.push(request.query.revision);
+      return Promise.resolve(successfulOverview(request));
+    });
+    const dependencies = {
+      ...overview,
+      reportClient: {
+        ...overview.reportClient,
+        getFocusedReportBreakdown: (request: Parameters<ReportQueryClient['getFocusedReportBreakdown']>[0]) =>
+          Promise.resolve(successfulBreakdown(request)),
+      },
+      sessionClient: sessionClientWithPage((request) => Promise.resolve(successfulSessionPage(request))),
+    };
+    try {
+      const original = await refreshReportDestination(dependencies, destination);
+      dependencies.queryClient.setQueryData(
+        reportBootstrapQueryOptions(dependencies.reportClient, { browser: true }).queryKey,
+        bootstrap('new-publication'),
+      );
+      const filters = { ...destination.query.filters, fields: { [field]: 'selected-value' } };
+      const filtered: FocusedReportDestination = {
+        ...destination,
+        query: { ...destination.query, filters },
+        ...(destination.kind === 'sessions' ? { sessions: { ...destination.sessions, filters } } : {}),
+      };
+      const changed = await refreshReportDestination(dependencies, filtered, initialSessionWindowIntent(), true);
+      expect(changed.descriptor).toBe(original.descriptor);
+      expect(changed.overview.revision).toBe('revision-refresh');
+      expect(changed.destination.query.filters.fields).toEqual({ [field]: 'selected-value' });
+      if (filtered.kind === 'sessions') {
+        expect(changed.sessions?.query.revision).toBe('revision-refresh');
+      } else if (filtered.kind === 'breakdown') {
+        expect(changed.breakdown?.revision).toBe('revision-refresh');
+      }
+      expect(requests).toEqual(['revision-refresh', 'revision-refresh']);
+      const refreshed = await refreshReportDestination(dependencies, filtered);
+      expect(refreshed.descriptor.revision).toBe('new-publication');
+      expect(refreshed.destination.query.filters.fields).toEqual({ [field]: 'selected-value' });
+    } finally {
+      dependencies.queryClient.clear();
+    }
+  });
+
+  test.each([
+    '',
+    'changed-filter',
+  ])('surfaces an inspected Overview expiry for scope "%s" without substituting the current revision', async (filter) => {
+    let expire = false;
+    const calls: string[] = [];
+    const dependencies = overviewDependencies((request) => {
+      calls.push(request.query.revision);
+      return Promise.resolve(
+        expire && request.query.revision === 'revision-refresh'
+          ? {
+              error: { message: 'expired', revision: request.query.revision, tag: 'RevisionExpired' as const },
+              ok: false as const,
+              requestFingerprint: focusedOverviewFingerprint(request),
+              revision: request.query.revision,
+            }
+          : successfulOverview(request),
+      );
+    });
+    const destination = overviewDestination();
+    try {
+      const original = await refreshReportDestination(dependencies, destination);
+      dependencies.queryClient.setQueryData(
+        reportBootstrapQueryOptions(dependencies.reportClient, { browser: true }).queryKey,
+        bootstrap('new-publication'),
+      );
+      // The visible alias may outlive its inactive exact entries during a long read.
+      dependencies.queryClient.removeQueries({ queryKey: ['web', 'immutable-revision'] });
+      expire = true;
+      const requested = overviewDestination(filter);
+      await expect(
+        refreshReportDestination(dependencies, requested, initialSessionWindowIntent(), true),
+      ).rejects.toThrow(FocusedReportRevisionExpiredError);
+      expect(calls).toEqual(['revision-refresh', 'revision-refresh']);
+      expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toBe(original);
+      expect((await refreshReportDestination(dependencies, requested)).descriptor.revision).toBe('new-publication');
+    } finally {
+      dependencies.queryClient.clear();
+    }
+  });
+
   test('QUERY-REPORT-DESTINATION: caches one complete Breakdown value and reuses it while fresh', async () => {
     const queryClient = createWebQueryClient();
     const calls = { bootstrap: 0, breakdown: 0, overview: 0 };

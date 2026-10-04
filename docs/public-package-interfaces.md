@@ -46,6 +46,9 @@ This package imports no other `@ai-usage/*` package.
 - `./report-budgets`: frozen row/byte/query/import budgets.
 - `./report-capture-fingerprint`: semantic capture fingerprinting.
 - `./report-data`: serialized report payloads and preparation.
+- `./session-detail-request`: lightweight canonical detail request parsing,
+  fingerprint, and shared validation error, without loading response validation.
+  These exports remain available through `./session-detail`.
 - `./session-detail`: strict detail request, anchor, comparison, and local
   projection contracts.
 - `./session-lineage`: parent/root session normalization.

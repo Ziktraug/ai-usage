@@ -50,6 +50,19 @@ describe('Svelte application shell navigation', () => {
       shouldPreserveReportScroll(new URL('http://localhost/?tab=overview'), new URL('http://localhost/?tab=sessions')),
     ).toBe(true);
     expect(shouldPreserveReportScroll(new URL('http://localhost/'), new URL('http://localhost/skills'))).toBe(false);
+    // Opening or closing a session or campaign panel stays on the same mounted report.
+    expect(
+      shouldPreserveReportScroll(
+        new URL('http://localhost/?tab=sessions'),
+        new URL('http://localhost/sessions/row-1?tab=sessions'),
+      ),
+    ).toBe(true);
+    expect(
+      shouldPreserveReportScroll(new URL('http://localhost/campaigns/c-1?tab=sessions'), new URL('http://localhost/')),
+    ).toBe(true);
+    expect(
+      shouldPreserveReportScroll(new URL('http://localhost/sessions/row-1'), new URL('http://localhost/projects')),
+    ).toBe(false);
   });
 
   test('keeps one hydrated retry and a same-URL progressive fallback', async () => {

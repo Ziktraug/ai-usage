@@ -187,13 +187,9 @@ export const reportDestinationQueryOptions = (
     enabled: execution.browser,
     queryFn: async ({ signal }) => {
       const visible = dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey());
-      const preservedDescriptor =
-        execution.preserveSessionRevision &&
-        destination.kind === 'sessions' &&
-        visible?.destination.kind === 'sessions' &&
-        destinationFingerprint(visible.destination) === destinationFingerprint(destination)
-          ? visible.descriptor
-          : undefined;
+      // Drawer filters change the destination while the reader still inspects this revision.
+      // Reproject the requested scope at that descriptor until preservation is released.
+      const preservedDescriptor = execution.preserveSessionRevision ? visible?.descriptor : undefined;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
           const descriptor = preservedDescriptor ?? (await descriptorFor(dependencies, attempt > 0));

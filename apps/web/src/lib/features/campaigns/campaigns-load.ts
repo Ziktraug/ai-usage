@@ -1,9 +1,15 @@
+import {
+  parseSessionLookupRequest,
+  type SessionLookupRequest,
+  SessionQueryValidationError,
+} from '@ai-usage/report-core/session-query';
 import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
 import type { RuntimeMode } from '../../../runtime-mode';
 import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
 import type { WebQueryHydrationState } from '../../query/client';
 import type { WebQueryRuntimeOptions } from '../../query/composition';
 import { campaignLabelOverridesQueryOptions, reportBootstrapQueryOptions } from '../../query/options/report';
+import { sessionLookupQueryOptions } from '../../query/options/session';
 import { initialSessionWindowIntent } from '../../query/options/session-window';
 import { createReportClient } from '../../rpc/report-client';
 import { createSessionClientAdapter } from '../../rpc/session-client';
@@ -56,7 +62,7 @@ export const loadCampaignsPageData = async (
     const selection = readCampaignSelection(options.url, request);
     const selectedKey = selection.status === 'selected' ? selection.campaignKey : list.pages[0]?.items[0]?.campaignKey;
     if (selectedKey) {
-      await runtime.queryClient.fetchQuery(
+      const exploration = await runtime.queryClient.fetchQuery(
         campaignsExplorationOptions({
           client: sessionClient,
           intent: { ...initialSessionWindowIntent(), campaignSessionsDepth: { [selectedKey]: 1 } },
@@ -65,6 +71,30 @@ export const loadCampaignsPageData = async (
           timelineRange: campaignTimelineRange(search.range, generatedAt),
         }),
       );
+      const selectedRowId = options.url.searchParams.get('selectedSession');
+      if (!selectedRowId) {
+        return;
+      }
+      const knownPages = exploration.members.find((entry) => entry.campaignKey === selectedKey)?.data.pages ?? [];
+      if (
+        knownPages.some(
+          (page) => page.root?.rowId === selectedRowId || page.items.some((row) => row.rowId === selectedRowId),
+        )
+      ) {
+        return;
+      }
+      let lookupRequest: SessionLookupRequest;
+      try {
+        lookupRequest = parseSessionLookupRequest({ revision: exploration.request.revision, rowId: selectedRowId });
+      } catch (cause) {
+        if (cause instanceof SessionQueryValidationError) {
+          return;
+        }
+        throw cause;
+      }
+      // The browser observes this same exact identity. Hydrate metadata only;
+      // native history remains behind its dependent detail query.
+      await runtime.queryClient.fetchQuery(sessionLookupQueryOptions(sessionClient, lookupRequest, { browser: false }));
     }
   }),
 });

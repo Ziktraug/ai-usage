@@ -1,5 +1,6 @@
 import {
   projectSessionCampaignChildren,
+  projectSessionLookup,
   projectSessionNeighbors,
   projectSessionPage,
 } from '@ai-usage/report-core/session-query';
@@ -17,6 +18,10 @@ export const createSyntheticCampaignClient = (): SessionClientAdapter => ({
       reason: 'unsupported',
       status: 'unavailable',
     }),
+  lookup: (request) => {
+    const data = projectSessionLookup(campaignMapFixtureRows, request);
+    return Promise.resolve({ data, ok: true, requestFingerprint: data.requestFingerprint, revision: data.revision });
+  },
   neighbors: (request) => {
     const data = projectSessionNeighbors(campaignMapFixtureRows, request);
     return Promise.resolve({ data, ok: true, requestFingerprint: data.requestFingerprint, revision: data.revision });

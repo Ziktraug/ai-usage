@@ -1,6 +1,7 @@
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const OPEN_BUILD_REPORT_UI_PATTERN = /^Open details for Build report UI\./;
+const COMPETING_MEMBER_PATTERN = /Review analytics model/;
 
 test('uses one token magnitude and accessible drawer explanations', async ({ page }) => {
   await openHydratedReport(page, '/?origin=%5B%5D');
@@ -15,9 +16,14 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await expect(totalTokens).toContainText('401k');
   await expect(totalTokens).not.toContainText('400,900');
 
-  // Subscription value is a Cursor-only field; this campaign is Codex, so the hint geometry is read
-  // from the API value item, which every row carries.
+  // Subscription value is a Cursor-only field; this campaign is Codex, so the Summary tab must not
+  // list it, and the hint geometry is read from the API value item, which every row carries.
+  await drawer.getByRole('tab', { name: 'Summary' }).click();
+  await expect(drawer.locator('[data-detail-item="Started"]')).toBeVisible();
   await expect(drawer.locator('[data-detail-item="Subscription value"]')).toHaveCount(0);
+  // The competing action below is a campaign member button, which the Members tab renders.
+  await drawer.getByRole('tab', { name: 'Members · 3' }).click();
+  await expect(drawer.getByRole('button', { name: COMPETING_MEMBER_PATTERN })).toBeVisible();
   const subValueHelp = drawer.getByRole('button', {
     name: 'About API value',
   });
@@ -59,6 +65,8 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   );
   await expect(taskOpenExplanation).toBeVisible();
 
+  // The duration hint is still open when the close starts, so closing must wait for its exit.
+  await expect(taskOpenExplanation).toBeVisible();
   await drawer.getByRole('button', { name: 'Close session details' }).evaluate(async (button) => {
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error('Expected the Drawer close control to be a button');
@@ -93,6 +101,8 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await waitForFocusedReportSettled(page);
   const partialSessionRow = page.locator('tbody tr').filter({ hasText: 'Explore report sketch' });
   await partialSessionRow.locator('td').first().click();
+  // Partial coverage is a Summary detail; the tab choice survives moving to the neighbour row.
+  await drawer.getByRole('tab', { name: 'Summary' }).click();
 
   const partialHelp = drawer.getByRole('button', { name: 'About Partial' });
   await expect(partialHelp).toHaveAttribute('aria-haspopup', 'dialog');

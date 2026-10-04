@@ -2879,4 +2879,91 @@ Preserve the existing aggregation semantics.`,
       rejectedRecords: 1,
     });
   });
+
+  test('prices a task that switched models like its phases and reports turns past the budget', () => {
+    const storage = new TestMemoryStorage();
+    const tokenCount = (timestamp: string, total: number, input: number, output: number) => ({
+      timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            total_tokens: total,
+            input_tokens: input,
+            cached_input_tokens: 0,
+            output_tokens: output,
+          },
+        },
+      },
+    });
+    storage.writeText(
+      '.codex/sessions/2026/rollout-2026-01-01T00-00-00-switch-thread.jsonl',
+      jsonl(
+        { timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'switch-thread', cwd: '/work' } },
+        { timestamp: '2026-01-01T00:01:00.000Z', payload: { type: 'task_started', turn_id: 'turn-1' } },
+        {
+          timestamp: '2026-01-01T00:01:00.010Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'turn-1' },
+        },
+        {
+          timestamp: '2026-01-01T00:01:00.040Z',
+          type: 'event_msg',
+          payload: { type: 'user_message', message: 'Switch' },
+        },
+        tokenCount('2026-01-01T00:02:00.000Z', 1000, 1000, 0),
+        {
+          timestamp: '2026-01-01T00:02:30.000Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-terra', turn_id: 'turn-1' },
+        },
+        tokenCount('2026-01-01T00:03:00.000Z', 2000, 2000, 0),
+        { timestamp: '2026-01-01T00:04:00.000Z', payload: { type: 'task_complete', turn_id: 'turn-1' } },
+      ),
+    );
+    const detail = runWithStorage(readCodexDetailForTest('switch-thread'), storage);
+    expect(detail?.turns).toHaveLength(1);
+    const phaseCost = detail?.phases.reduce((total, phase) => total + (phase.cost ?? 0), 0) ?? Number.NaN;
+    expect(detail?.turns[0]?.costKind).toBe('approximate');
+    expect(detail?.turns[0]?.cost).toBeCloseTo(phaseCost, 10);
+    expect(detail?.turns[0]?.calls).toBeNull();
+
+    const busy = new TestMemoryStorage();
+    const events: unknown[] = [
+      { timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'busy-thread', cwd: '/work' } },
+    ];
+    const base = Date.parse('2026-01-01T00:01:00.000Z');
+    for (let index = 0; index < 1025; index += 1) {
+      const start = new Date(base + index * 10_000);
+      events.push(
+        { timestamp: start.toISOString(), payload: { type: 'task_started', turn_id: `turn-${index}` } },
+        {
+          timestamp: new Date(start.getTime() + 10).toISOString(),
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: `turn-${index}` },
+        },
+        {
+          timestamp: new Date(start.getTime() + 20).toISOString(),
+          type: 'event_msg',
+          payload: { type: 'user_message', message: `Prompt ${index}` },
+        },
+        {
+          timestamp: new Date(start.getTime() + 5000).toISOString(),
+          payload: { type: 'task_complete', turn_id: `turn-${index}` },
+        },
+      );
+    }
+    busy.writeText('.codex/sessions/2026/rollout-2026-01-01T00-00-00-busy-thread.jsonl', jsonl(...events));
+    const busyDetail = runWithStorage(readCodexDetailForTest('busy-thread'), busy);
+    expect(busyDetail?.turns).toHaveLength(1024);
+    expect(busyDetail?.coverage.grouping).toEqual({ omittedCount: 1, reasons: ['turn-budget'], status: 'partial' });
+    expect(busyDetail?.coverage.promptBodies).toEqual({
+      omittedCount: 1,
+      reasons: ['prompt-body-budget', 'prompt-budget'],
+      status: 'partial',
+    });
+    expect(busyDetail).not.toBeNull();
+    expect(parseSessionDetail(busyDetail)).toEqual(busyDetail as SessionDetail);
+  });
 });

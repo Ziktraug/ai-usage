@@ -14,6 +14,7 @@ export default defineConfig({
     'campaign-continuity.scale.ts',
     'campaign-period-continuity.scale.ts',
     'campaign-bootstrap-recovery.scale.ts',
+    'session-detail-integration.scale.ts',
   ],
   timeout: 180_000,
   use: {

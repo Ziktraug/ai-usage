@@ -12,6 +12,7 @@ import {
   createBrowserRequestAbortAllowance,
   isCancelledSvelteKitRouteDataRequest,
 } from './browser-request-abort-allowance';
+import { createBrowserScriptResponseAllowance } from './browser-script-response-allowance';
 import { isExpectedSkillsSaveFailureResponse, RPC_PATH_PREFIX } from './rpc-test-transport';
 
 const CRITICAL_RESOURCE_TYPES = new Set(['document', 'fetch', 'xhr']);
@@ -64,6 +65,7 @@ interface PageListeners {
 
 export interface BrowserFailureGate {
   allowRequestAbortOnce: (expectation: BrowserRequestAbortExpectation) => () => void;
+  allowScriptResponseOnce: (expectation: { url: string; status: number }) => () => void;
 }
 
 export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
@@ -110,6 +112,7 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
     async ({ context }, use) => {
       const failures: string[] = [];
       const requestAbortAllowance = createBrowserRequestAbortAllowance();
+      const scriptResponseAllowance = createBrowserScriptResponseAllowance();
       const listenersByPage = new Map<Page, PageListeners>();
 
       const attach = (page: Page): void => {
@@ -146,9 +149,13 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
           },
           finalize: () => {
             for (const error of pendingResourceErrors) {
-              if (!expectedShellErrorUrls.has(error.url)) {
-                failures.push(`console error${error.source}: ${error.message}`);
+              if (expectedShellErrorUrls.has(error.url)) {
+                continue;
               }
+              if (scriptResponseAllowance.consumeConsole(error)) {
+                continue;
+              }
+              failures.push(`console error${error.source}: ${error.message}`);
             }
           },
           pageError: (error) => failures.push(`uncaught page error: ${error.stack ?? error.message}`),
@@ -176,6 +183,15 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
             failures.push(`${request.resourceType()} request failed for ${requestPath(request)}: ${errorText}`);
           },
           response: (response) => {
+            if (
+              scriptResponseAllowance.consumeResponse({
+                resourceType: response.request().resourceType(),
+                status: response.status(),
+                url: response.url(),
+              })
+            ) {
+              return;
+            }
             if (response.status() < 400 || !isCriticalRequest(response.request())) {
               return;
             }
@@ -210,7 +226,10 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
       }
       context.on('page', attach);
 
-      await use({ allowRequestAbortOnce: requestAbortAllowance.allowOnce });
+      await use({
+        allowRequestAbortOnce: requestAbortAllowance.allowOnce,
+        allowScriptResponseOnce: scriptResponseAllowance.allowOnce,
+      });
 
       context.off('page', attach);
       for (const [page, listeners] of listenersByPage) {

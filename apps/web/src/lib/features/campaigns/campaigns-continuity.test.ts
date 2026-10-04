@@ -75,6 +75,7 @@ const clientWith = (overrides: Partial<SessionClientAdapter> = {}): SessionClien
   return {
     campaignChildren: async (request) => members(request),
     detail: unexpected,
+    lookup: unexpected,
     neighbors: unexpected,
     page: async (request) => page(request),
     vcs: unexpected,

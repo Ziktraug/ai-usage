@@ -411,4 +411,401 @@ describe('parseClaudeSessionFacts', () => {
     expect(facts?.source.vcs?.repository).toEqual(repository);
     expect(facts?.source.vcs?.branches.every(({ webUrl }) => webUrl === null)).toBe(true);
   });
+
+  test('keeps one round per prompt across deep ancestry and broken chains, with observed bounds', () => {
+    const records: Record<string, unknown>[] = [
+      event({
+        type: 'user',
+        timestamp: '2026-08-17T10:00:00.000Z',
+        uuid: 'prompt-1',
+        promptId: 'recorded-prompt-1',
+        message: { role: 'user', content: [{ type: 'text', text: 'Migrate every route' }] },
+      }),
+    ];
+    // 150 alternating assistant/tool-result hops, far past the former 64-hop cap.
+    let parent = 'prompt-1';
+    for (let hop = 0; hop < 150; hop += 1) {
+      const at = new Date(Date.parse('2026-08-17T10:00:00.000Z') + (hop + 1) * 10_000).toISOString();
+      records.push(
+        event({
+          type: 'assistant',
+          timestamp: at,
+          uuid: `assistant-${hop}`,
+          parentUuid: parent,
+          requestId: `request-${hop}`,
+          message: {
+            id: `message-${hop}`,
+            model: 'claude-sonnet-4-6',
+            content: [{ type: 'tool_use', id: `toolu-${hop}`, name: 'Read', input: {} }],
+            usage: { input_tokens: 5, output_tokens: 1 },
+          },
+        }),
+        event({
+          type: 'user',
+          timestamp: at,
+          uuid: `result-${hop}`,
+          parentUuid: `assistant-${hop}`,
+          promptId: 'recorded-prompt-1',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu-${hop}`, content: 'ok' }] },
+        }),
+      );
+      parent = `result-${hop}`;
+    }
+    // A record whose parent was dropped as oversized: only Claude's promptId stamp links it back.
+    records.push(
+      event({
+        type: 'assistant',
+        timestamp: '2026-08-17T10:30:00.000Z',
+        uuid: 'assistant-orphan',
+        parentUuid: 'dropped-oversized-record',
+        requestId: 'request-orphan',
+        message: {
+          id: 'message-orphan',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'done' }],
+          usage: { input_tokens: 2, output_tokens: 2 },
+        },
+      }),
+      event({
+        type: 'user',
+        timestamp: '2026-08-17T10:31:00.000Z',
+        uuid: 'result-orphan',
+        parentUuid: 'assistant-orphan',
+        promptId: 'recorded-prompt-1',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu-x', content: 'late result' }] },
+      }),
+    );
+    // The orphan assistant's own parent is missing, but its child tool result carries the stamp;
+    // model the real transcript shape where the assistant's parent is the stamped tool result.
+    const orphan = records.find((record) => record.uuid === 'assistant-orphan');
+    if (orphan) {
+      orphan.parentUuid = 'result-orphan-parent';
+    }
+    records.push(
+      event({
+        type: 'user',
+        timestamp: '2026-08-17T10:29:00.000Z',
+        uuid: 'result-orphan-parent',
+        parentUuid: 'dropped-oversized-record',
+        promptId: 'recorded-prompt-1',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu-w', content: 'earlier' }] },
+      }),
+    );
+
+    const facts = parseClaudeSessionFacts({ isAgentFile: false, records, repository: null, sourceSessionId: 'deep' });
+    expect(facts?.detailFacts.turns).toHaveLength(1);
+    expect(facts?.detailFacts.turns[0]).toMatchObject({
+      calls: 151,
+      costKind: 'approximate',
+      endAt: '2026-08-17T10:31:00.000Z',
+      promptIds: ['prompt-1'],
+      startAt: '2026-08-17T10:00:00.000Z',
+      timingStatus: 'unavailable',
+      tools: 150,
+    });
+    expect(facts?.detailFacts.coverage.grouping.status).toBe('complete');
+    expect(facts?.detailFacts.coverage.recordedTiming).toEqual({
+      omittedCount: 1,
+      reasons: ['timing-not-recorded'],
+      status: 'unavailable',
+    });
+  });
+
+  test('links sub-agents to the round that launched or messaged them, once per agent', () => {
+    const facts = parseClaudeSessionFacts({
+      agentMetas: [
+        {
+          agentId: 'agent-ae',
+          agentType: 'codex:codex-rescue',
+          description: 'Independent UI critique',
+          toolUseId: 'toolu-spawn',
+          workflowRunId: null,
+        },
+        {
+          agentId: 'agent-meta-only',
+          agentType: 'Explore',
+          description: 'Locate loaders',
+          toolUseId: 'toolu-lost',
+          workflowRunId: null,
+        },
+        {
+          agentId: 'agent-wf-1',
+          agentType: 'workflow-subagent',
+          description: null,
+          toolUseId: null,
+          workflowRunId: 'wf_run',
+        },
+        {
+          agentId: 'agent-wf-2',
+          agentType: 'workflow-subagent',
+          description: null,
+          toolUseId: null,
+          workflowRunId: 'wf_run',
+        },
+      ],
+      agentMetasUnreadable: 1,
+      isAgentFile: false,
+      records: [
+        event({
+          type: 'user',
+          timestamp: '2026-08-17T10:00:00.000Z',
+          uuid: 'prompt-1',
+          message: { role: 'user', content: 'Start the migration' },
+        }),
+        event({
+          type: 'assistant',
+          timestamp: '2026-08-17T10:00:10.000Z',
+          uuid: 'assistant-1',
+          parentUuid: 'prompt-1',
+          requestId: 'request-1',
+          message: {
+            id: 'message-1',
+            model: 'claude-sonnet-4-6',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu-spawn',
+                name: 'Agent',
+                input: { description: 'Independent UI critique', subagent_type: 'codex:codex-rescue' },
+              },
+            ],
+            usage: { input_tokens: 5, output_tokens: 1 },
+          },
+        }),
+        event({
+          type: 'user',
+          timestamp: '2026-08-17T10:00:20.000Z',
+          uuid: 'result-1',
+          parentUuid: 'assistant-1',
+          toolUseResult: { agentId: 'agent-ae', status: 'async_launched' },
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'toolu-spawn', content: 'launched' }],
+          },
+        }),
+        event({
+          type: 'user',
+          timestamp: '2026-08-17T11:00:00.000Z',
+          uuid: 'prompt-2',
+          message: { role: 'user', content: 'Ask the critic to go deeper' },
+        }),
+        event({
+          type: 'assistant',
+          timestamp: '2026-08-17T11:00:10.000Z',
+          uuid: 'assistant-2',
+          parentUuid: 'prompt-2',
+          requestId: 'request-2',
+          message: {
+            id: 'message-2',
+            model: 'claude-sonnet-4-6',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu-message',
+                name: 'SendMessage',
+                input: { to: 'agent-ae', summary: 'Go deeper' },
+              },
+              { type: 'tool_use', id: 'toolu-unanswered', name: 'Task', input: { description: 'Never answered' } },
+              { type: 'tool_use', id: 'toolu-workflow', name: 'Workflow', input: { description: 'Audit in parallel' } },
+            ],
+            usage: { input_tokens: 5, output_tokens: 1 },
+          },
+        }),
+        event({
+          type: 'user',
+          timestamp: '2026-08-17T11:00:20.000Z',
+          uuid: 'result-workflow',
+          parentUuid: 'assistant-2',
+          toolUseResult: { runId: 'wf_run', status: 'async_launched' },
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'toolu-workflow', content: 'started' }],
+          },
+        }),
+      ],
+      repository: null,
+      sourceSessionId: 'links',
+    });
+
+    expect(facts?.detailFacts.children).toEqual([
+      {
+        agentType: 'codex:codex-rescue',
+        evidence: 'claude-agent-link',
+        label: 'Independent UI critique',
+        sourceSessionId: 'agent-ae',
+        spawnTurnIndex: 0,
+      },
+      {
+        agentType: 'workflow-subagent',
+        evidence: 'claude-agent-meta',
+        label: null,
+        sourceSessionId: 'agent-wf-1',
+        spawnTurnIndex: 1,
+      },
+      {
+        agentType: 'workflow-subagent',
+        evidence: 'claude-agent-meta',
+        label: null,
+        sourceSessionId: 'agent-wf-2',
+        spawnTurnIndex: 1,
+      },
+      {
+        agentType: 'Explore',
+        evidence: 'claude-agent-meta',
+        label: 'Locate loaders',
+        sourceSessionId: 'agent-meta-only',
+        spawnTurnIndex: null,
+      },
+    ]);
+    expect(facts?.detailFacts.interactions).toEqual([
+      {
+        at: '2026-08-17T10:00:10.000Z',
+        childSourceSessionId: 'agent-ae',
+        kind: 'spawn',
+        label: 'Independent UI critique',
+        toolUseId: 'toolu-spawn',
+        turnIndex: 0,
+      },
+      {
+        at: '2026-08-17T11:00:10.000Z',
+        childSourceSessionId: 'agent-ae',
+        kind: 'message',
+        label: 'Go deeper',
+        toolUseId: 'toolu-message',
+        turnIndex: 1,
+      },
+      {
+        at: '2026-08-17T11:00:10.000Z',
+        childSourceSessionId: null,
+        kind: 'spawn',
+        label: 'Never answered',
+        toolUseId: 'toolu-unanswered',
+        turnIndex: 1,
+      },
+      {
+        at: '2026-08-17T11:00:10.000Z',
+        childSourceSessionId: null,
+        kind: 'spawn',
+        label: 'Audit in parallel',
+        toolUseId: 'toolu-workflow',
+        turnIndex: 1,
+      },
+    ]);
+    expect(facts?.detailFacts.coverage.childDiscovery).toEqual({
+      omittedCount: 2,
+      reasons: ['child-result-missing', 'child-metadata-unreadable'],
+      status: 'partial',
+    });
+    expect(facts?.detailFacts.coverage.interactionAttribution.status).toBe('complete');
+    expect(facts?.detailFacts.turns[0]?.endAt).toBe('2026-08-17T10:00:20.000Z');
+    expect(facts?.detailFacts.turns[1]?.endAt).toBe('2026-08-17T11:00:20.000Z');
+    expect(JSON.stringify(facts?.report)).not.toContain('Independent UI critique');
+  });
+
+  test('keeps prompt identities past the body budget so late rounds still group', () => {
+    const records: Record<string, unknown>[] = [];
+    const bigBody = 'x'.repeat(32 * 1024);
+    for (let index = 0; index < 34; index += 1) {
+      const at = new Date(Date.parse('2026-08-17T10:00:00.000Z') + index * 60_000);
+      records.push(
+        event({
+          type: 'user',
+          timestamp: at.toISOString(),
+          uuid: `prompt-${index}`,
+          message: { role: 'user', content: `${index} ${bigBody}` },
+        }),
+        event({
+          type: 'assistant',
+          timestamp: new Date(at.getTime() + 1000).toISOString(),
+          uuid: `assistant-${index}`,
+          parentUuid: `prompt-${index}`,
+          requestId: `request-${index}`,
+          message: {
+            id: `message-${index}`,
+            model: 'claude-sonnet-4-6',
+            content: [{ type: 'text', text: 'ok' }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+      );
+    }
+    const facts = parseClaudeSessionFacts({ isAgentFile: false, records, repository: null, sourceSessionId: 'budget' });
+    expect(facts?.detailFacts.prompts).toHaveLength(34);
+    expect(facts?.detailFacts.turns).toHaveLength(34);
+    expect(facts?.detailFacts.turns.every((turn) => turn.promptIds.length === 1)).toBe(true);
+    const emptyBodies = facts?.detailFacts.prompts.filter(({ text }) => text.length === 0) ?? [];
+    expect(emptyBodies.length).toBeGreaterThan(0);
+    expect(emptyBodies.every(({ truncated }) => truncated)).toBe(true);
+    expect(facts?.detailFacts.coverage.promptBodies).toMatchObject({
+      reasons: ['prompt-body-budget'],
+      status: 'partial',
+    });
+    expect(facts?.detailFacts.coverage.grouping.status).toBe('complete');
+  });
+
+  test('names child sessions the way the collector does and bounds link labels', () => {
+    const facts = parseClaudeSessionFacts({
+      agentMetas: [
+        {
+          agentId: 'a6331997c22b0d1fb',
+          agentType: 'general-purpose',
+          description: 'y'.repeat(300),
+          toolUseId: 'toolu-1',
+          workflowRunId: null,
+        },
+      ],
+      isAgentFile: false,
+      records: [
+        event({
+          type: 'user',
+          timestamp: '2026-08-17T10:00:00.000Z',
+          uuid: 'prompt-1',
+          message: { role: 'user', content: 'Go' },
+        }),
+        event({
+          type: 'assistant',
+          timestamp: '2026-08-17T10:00:10.000Z',
+          uuid: 'assistant-1',
+          parentUuid: 'prompt-1',
+          requestId: 'request-1',
+          message: {
+            id: 'message-1',
+            model: 'claude-sonnet-4-6',
+            content: [{ type: 'tool_use', id: 'toolu-1', name: 'Task', input: { description: 'x'.repeat(300) } }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+        event({
+          type: 'assistant',
+          timestamp: '2026-08-17T10:00:10.000Z',
+          uuid: 'assistant-1-streamed',
+          parentUuid: 'prompt-1',
+          requestId: 'request-1',
+          message: {
+            id: 'message-1',
+            model: 'claude-sonnet-4-6',
+            content: [{ type: 'tool_use', id: 'toolu-1', name: 'Task', input: { description: 'x'.repeat(300) } }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+        event({
+          type: 'user',
+          timestamp: '2026-08-17T10:00:20.000Z',
+          uuid: 'result-1',
+          parentUuid: 'assistant-1',
+          toolUseResult: { agentId: 'a6331997c22b0d1fb' },
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu-1', content: 'launched' }] },
+        }),
+      ],
+      repository: null,
+      sourceSessionId: 'prefix',
+    });
+    expect(facts?.detailFacts.children.map(({ sourceSessionId }) => sourceSessionId)).toEqual([
+      'agent-a6331997c22b0d1fb',
+    ]);
+    expect(facts?.detailFacts.children[0]?.label).toHaveLength(256);
+    expect(facts?.detailFacts.interactions).toHaveLength(1);
+    expect(facts?.detailFacts.interactions[0]?.childSourceSessionId).toBe('agent-a6331997c22b0d1fb');
+    expect(facts?.detailFacts.interactions[0]?.label).toHaveLength(256);
+  });
 });

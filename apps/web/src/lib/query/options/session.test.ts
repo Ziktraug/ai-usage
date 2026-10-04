@@ -1,20 +1,30 @@
 import { describe, expect, test } from 'bun:test';
 import {
   parseSessionQueryRequest,
+  type SessionLookupRequest,
+  type SessionLookupResult,
   type SessionPageResult,
   type SessionQueryRequest,
   type SessionQueryServerResult,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { isCancelledError, QueryObserver } from '@tanstack/svelte-query';
+import { sessionDetailFixtureResponse } from '../../features/sessions/detail/session-detail.fixtures';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { createWebQueryClient } from '../client';
 import { DEFAULT_BOUNDED_GC_TIME_MS } from '../policies';
 import {
+  optionalSessionDetailQueryOptions,
+  optionalSessionLookupQueryOptions,
+  optionalSessionPageQueryOptions,
   sessionCampaignChildrenKey,
   sessionCampaignChildrenQueryOptions,
   sessionDetailKey,
+  sessionDetailQueryOptions,
+  sessionLookupKey,
+  sessionLookupQueryOptions,
   sessionNeighborsKey,
   sessionPageKey,
   sessionPageQueryOptions,
@@ -51,9 +61,20 @@ const pageResult = (request = query): SessionQueryServerResult<SessionPageResult
 
 const unusedRpc = (): Promise<never> => Promise.reject(new Error('Unexpected SessionClientAdapter call'));
 
+const lookupResult = (request: SessionLookupRequest): SessionQueryServerResult<SessionLookupResult> => {
+  const requestFingerprint = sessionLookupFingerprint(request);
+  return {
+    data: { found: false, requestFingerprint, revision: request.revision, row: null },
+    ok: true,
+    requestFingerprint,
+    revision: request.revision,
+  };
+};
+
 const createSessionClientStub = (overrides: Partial<SessionClientAdapter> = {}): SessionClientAdapter => ({
   campaignChildren: unusedRpc,
   detail: unusedRpc,
+  lookup: unusedRpc,
   neighbors: unusedRpc,
   page: unusedRpc,
   vcs: unusedRpc,
@@ -61,6 +82,141 @@ const createSessionClientStub = (overrides: Partial<SessionClientAdapter> = {}):
 });
 
 describe('Session Query options', () => {
+  test('retains lookup data at its original revision only while the same session is requested', () => {
+    const queryClient = createWebQueryClient();
+    const client = createSessionClientStub({ lookup: () => new Promise(() => undefined) });
+    const request = { revision: 'revision-a', rowId: 'row-a' };
+    const initial = sessionLookupQueryOptions(client, request, { browser: true });
+    const response = lookupResult(request);
+    queryClient.setQueryData(initial.queryKey, response);
+    const observer = new QueryObserver(queryClient, initial);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      observer.setOptions(sessionLookupQueryOptions(client, { ...request, revision: 'revision-b' }, { browser: true }));
+      expect(observer.getCurrentResult()).toMatchObject({
+        data: response,
+        isFetching: true,
+        isPlaceholderData: true,
+      });
+      expect(observer.getCurrentResult().data?.revision).toBe('revision-a');
+      observer.setOptions(sessionLookupQueryOptions(client, { ...request, rowId: 'row-b' }, { browser: true }));
+      expect(observer.getCurrentResult().data).toBeUndefined();
+      observer.setOptions(initial);
+      observer.setOptions(optionalSessionLookupQueryOptions(client, undefined, { browser: true }));
+      expect(observer.getCurrentResult().data).toBeUndefined();
+    } finally {
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  test('cancels superseded lookups and never publishes a late response for the previous session', async () => {
+    const queryClient = createWebQueryClient();
+    const firstRequest = { revision: 'revision-a', rowId: 'row-a' };
+    const secondRequest = { revision: 'revision-a', rowId: 'row-b' };
+    const firstStarted = Promise.withResolvers<AbortSignal>();
+    const secondStarted = Promise.withResolvers<AbortSignal>();
+    const firstResponse = Promise.withResolvers<SessionQueryServerResult<SessionLookupResult>>();
+    const secondResponse = Promise.withResolvers<SessionQueryServerResult<SessionLookupResult>>();
+    const calls: SessionLookupRequest[] = [];
+    const client = createSessionClientStub({
+      lookup: (request, signal) => {
+        if (!signal) {
+          throw new Error('Missing lookup cancellation signal');
+        }
+        calls.push(request);
+        if (request.rowId === firstRequest.rowId) {
+          firstStarted.resolve(signal);
+          // Deliberately finish even after abort: Query must prevent a late transport response from publishing.
+          return firstResponse.promise;
+        }
+        secondStarted.resolve(signal);
+        return secondResponse.promise;
+      },
+    });
+    const firstOptions = sessionLookupQueryOptions(client, firstRequest, { browser: true });
+    const secondOptions = sessionLookupQueryOptions(client, secondRequest, { browser: true });
+    const observer = new QueryObserver(queryClient, firstOptions);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      const firstSignal = await firstStarted.promise;
+      observer.setOptions(secondOptions);
+      const secondSignal = await secondStarted.promise;
+      expect(firstSignal.aborted).toBe(true);
+      expect(secondSignal.aborted).toBe(false);
+      expect(observer.getCurrentResult().data).toBeUndefined();
+      secondResponse.resolve(lookupResult(secondRequest));
+      await queryClient.fetchQuery(secondOptions);
+      expect(observer.getCurrentResult().data).toEqual(lookupResult(secondRequest));
+      firstResponse.resolve(lookupResult(firstRequest));
+      await firstResponse.promise;
+      expect(observer.getCurrentResult().data).toEqual(lookupResult(secondRequest));
+      expect(queryClient.getQueryData(firstOptions.queryKey)).toBeUndefined();
+      expect(calls).toEqual([firstRequest, secondRequest]);
+    } finally {
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  test('retains only the same session history through superseding revision reads', () => {
+    const queryClient = createWebQueryClient();
+    const client = createSessionClientStub({ detail: () => new Promise(() => undefined) });
+    const first = { revision: 'revision-1', rowId: 'row-1' };
+    const initial = sessionDetailQueryOptions(client, first, { browser: true });
+    const response = sessionDetailFixtureResponse(first.revision, first.rowId);
+    queryClient.setQueryData(initial.queryKey, response);
+    const observer = new QueryObserver(queryClient, initial);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      for (const revision of ['revision-2', 'revision-3']) {
+        observer.setOptions(sessionDetailQueryOptions(client, { ...first, revision }, { browser: true }));
+        expect(observer.getCurrentResult()).toMatchObject({
+          data: response,
+          isFetching: true,
+          isPlaceholderData: true,
+        });
+      }
+      observer.setOptions(
+        sessionDetailQueryOptions(client, { ...first, revision: 'revision-3', rowId: 'row-2' }, { browser: true }),
+      );
+      expect(observer.getCurrentResult().data).toBeUndefined();
+      observer.setOptions(initial);
+      observer.setOptions(optionalSessionDetailQueryOptions(client, undefined, { browser: true }));
+      expect(observer.getCurrentResult().data).toBeUndefined();
+    } finally {
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  test('keeps route lookup results at their original revision only for the same campaign scope', () => {
+    const queryClient = createWebQueryClient();
+    const client = createSessionClientStub({ page: () => new Promise(() => undefined) });
+    const initial = optionalSessionPageQueryOptions(client, query, { browser: true });
+    const response = pageResult(query);
+    queryClient.setQueryData(initial.queryKey, response);
+    const observer = new QueryObserver(queryClient, initial);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      observer.setOptions(
+        optionalSessionPageQueryOptions(client, { ...query, revision: 'revision-2' }, { browser: true }),
+      );
+      expect(observer.getCurrentResult()).toMatchObject({ data: response, isPlaceholderData: true });
+      observer.setOptions(
+        optionalSessionPageQueryOptions(
+          client,
+          { ...query, filters: { ...query.filters, query: 'another campaign' }, revision: 'revision-2' },
+          { browser: true },
+        ),
+      );
+      expect(observer.getCurrentResult().data).toBeUndefined();
+    } finally {
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
   test('QUERY-SESSION-EXACT-IMMUTABLE: separates revision, fingerprint, destination, cursor, and row identity', () => {
     const pageMutations: SessionQueryRequest[] = [
       { ...query, cursor: 'cursor-1' },
@@ -99,6 +255,9 @@ describe('Session Query options', () => {
       sessionNeighborsKey(neighborRequest),
     );
     const rowRequest = { revision: query.revision, rowId: 'row-1' };
+    expect(sessionLookupKey(rowRequest)).not.toEqual(sessionDetailKey(rowRequest));
+    expect(sessionLookupKey({ ...rowRequest, rowId: 'row-2' })).not.toEqual(sessionLookupKey(rowRequest));
+    expect(sessionLookupKey({ ...rowRequest, revision: 'revision-2' })).not.toEqual(sessionLookupKey(rowRequest));
     expect(sessionDetailKey(rowRequest)).not.toEqual(sessionVcsKey(rowRequest));
     expect(sessionDetailKey({ ...rowRequest, rowId: 'row-2' })).not.toEqual(sessionDetailKey(rowRequest));
     expect(sessionDetailKey({ ...rowRequest, revision: 'revision-2' })).not.toEqual(sessionDetailKey(rowRequest));

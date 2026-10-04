@@ -22,7 +22,15 @@ controller snapshot.
 7. Wire project/model filters, closing, history, and focus restoration to the
    existing dashboard interaction adapters.
 
-Campaign-label and campaign-session controls remain in `campaignSlot` between
+Campaign controls arrive as two snippets: `campaignLabelSlot` (the label editor)
+renders under the identity block, and `campaignSlot` (the member list) renders
+in the Members tab, which the drawer shows only for campaigns of more than one
+session. `memberRows` carries the campaign's loaded member rows so the rounds
+reader joins child links to the canonical report rows (ADR 0018) instead of
+re-pricing them, and `onSelectMember` lets it open a member through the
+destination's own route change. The local detail loads as soon as a row is
+selected: Rounds is the panel's first view, and the Timeline and Summary tabs
+read the same response.
 
 ## X0 process-token evidence
 

@@ -2,6 +2,8 @@ import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type {
   LocalSessionAnalysis,
   SessionDetail,
+  SessionDetailChildLink,
+  SessionDetailCoverageFact,
   SessionDetailPhase,
   SessionDetailPrompt,
   SessionDetailTokenCounts,
@@ -137,7 +139,8 @@ interface CodexSessionParseResult {
 
 export const CODEX_LINEAGE_MAX_DEPTH = 32;
 export const CODEX_DETAIL_MAX_PHASES = 256;
-const CODEX_DETAIL_MAX_PROMPTS = 256;
+// Prompt identities share the turn budget; bodies stay bounded by bytes.
+const CODEX_DETAIL_MAX_PROMPTS = 1024;
 const CODEX_DETAIL_MAX_PROMPT_BYTES = 32 * 1024;
 const CODEX_DETAIL_MAX_PROMPT_TOTAL_BYTES = 1024 * 1024;
 const CODEX_DETAIL_MAX_TURNS = 1024;
@@ -204,6 +207,56 @@ export interface CodexThreadSpawnEdgeRow {
   child?: string | null;
   parent?: string | null;
 }
+
+/**
+ * Child threads of one session as the detail contract states them. A spawn
+ * edge proves parentage, not the task that launched the child, so every link
+ * leaves its spawning turn unknown and the coverage fact says why.
+ */
+export interface CodexChildLinks {
+  childDiscovery: SessionDetailCoverageFact;
+  children: SessionDetailChildLink[];
+}
+
+export const codexChildLinksWithoutDatabase = (): CodexChildLinks => ({
+  childDiscovery: { omittedCount: null, reasons: ['harness-no-child-evidence'], status: 'unavailable' },
+  children: [],
+});
+
+export const codexChildLinksFromEdges = (
+  parentSessionId: string,
+  edges: readonly CodexThreadSpawnEdgeRow[],
+  nicknames: ReadonlyMap<string, string | null>,
+  maximumChildren: number,
+): CodexChildLinks => {
+  const childIds = new Set<string>();
+  for (const edge of edges) {
+    const child = nonEmpty(edge.child);
+    if (child && nonEmpty(edge.parent) === parentSessionId && child !== parentSessionId) {
+      childIds.add(child);
+    }
+  }
+  const ordered = [...childIds].sort((left, right) => left.localeCompare(right));
+  const children: SessionDetailChildLink[] = ordered.slice(0, maximumChildren).map((child) => ({
+    agentType: null,
+    evidence: 'codex-thread-edge',
+    label: nicknames.get(child) ?? null,
+    sourceSessionId: child,
+    spawnTurnIndex: null,
+  }));
+  const omitted = ordered.length - children.length;
+  if (children.length === 0 && omitted === 0) {
+    return { childDiscovery: { omittedCount: 0, reasons: [], status: 'complete' }, children };
+  }
+  return {
+    childDiscovery: {
+      omittedCount: omitted,
+      reasons: omitted > 0 ? ['harness-no-spawn-evidence', 'child-budget'] : ['harness-no-spawn-evidence'],
+      status: 'partial',
+    },
+    children,
+  };
+};
 
 export const codexParentsFromEdges = (edges: readonly CodexThreadSpawnEdgeRow[]): Map<string, string> => {
   const candidates = new Map<string, Set<string>>();
@@ -445,6 +498,8 @@ interface MutableCodexTask {
   lastPromptAt: Date | null;
   lastPromptNormalized: string | null;
   model: string;
+  /** Tokens per model in effect when they were recorded, so a task that switched models is priced like its phases. */
+  modelTokens: Map<string, SessionDetailTokenCounts>;
   observedEnd: Date;
   pendingResponsePrompt: { at: Date; text: string } | null;
   promptIds: string[];
@@ -621,6 +676,9 @@ export const createCodexSessionParser = (captureDetail = false) => {
   let legacyMaxTokens: CodexTokenSnapshot | null = null;
   let previousTokens: CodexTokenSnapshot | null = null;
   let promptBytes = 0;
+  let promptIdentitiesOmitted = 0;
+  let promptBodiesOmitted = 0;
+  let anchoredTaskCount = 0;
   let promptsTruncated = false;
   let taskObservedEnd: Date | null = null;
   let taskObservedStart: Date | null = null;
@@ -701,27 +759,25 @@ export const createCodexSessionParser = (captureDetail = false) => {
     task.lastPromptNormalized = normalized;
     if (prompts.length >= CODEX_DETAIL_MAX_PROMPTS) {
       promptsTruncated = true;
+      promptIdentitiesOmitted += 1;
       return;
     }
+    // The identity is kept past the body budget so the task still groups as
+    // a prompt-led round; only the body is dropped, and the drop is counted.
     const remainingBytes = CODEX_DETAIL_MAX_PROMPT_TOTAL_BYTES - promptBytes;
-    if (remainingBytes <= 0) {
-      promptsTruncated = true;
-      return;
-    }
-    const maximumBytes = Math.min(CODEX_DETAIL_MAX_PROMPT_BYTES, remainingBytes);
-    const bounded = truncatePrompt(text.trim(), maximumBytes);
+    const maximumBytes = Math.min(CODEX_DETAIL_MAX_PROMPT_BYTES, Math.max(0, remainingBytes));
+    const bounded = remainingBytes > 0 ? truncatePrompt(text.trim(), maximumBytes) : { text: '', truncated: true };
     if (!bounded.text) {
       promptsTruncated = true;
-      return;
-    }
-    if (Buffer.byteLength(text.trim(), 'utf8') > remainingBytes) {
+      promptBodiesOmitted += 1;
+    } else if (Buffer.byteLength(text.trim(), 'utf8') > remainingBytes) {
       promptsTruncated = true;
     }
     const prompt = {
       id: `prompt-${prompts.length + 1}`,
       text: bounded.text,
       timestamp: at.toISOString(),
-      truncated: bounded.truncated,
+      truncated: bounded.text ? bounded.truncated : true,
     };
     prompts.push(prompt);
     promptBytes += Buffer.byteLength(prompt.text, 'utf8');
@@ -791,6 +847,9 @@ export const createCodexSessionParser = (captureDetail = false) => {
       phase.tout += delta.output;
     }
     addDetailTokens(task.tokens, delta);
+    const bucket = task.modelTokens.get(currentModel) ?? emptyDetailTokens();
+    addDetailTokens(bucket, delta);
+    task.modelTokens.set(currentModel, bucket);
   };
 
   const recordTokens = (payload: Record<string, unknown>, at: Date): void => {
@@ -1015,6 +1074,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
         lastPromptAt: null,
         lastPromptNormalized: null,
         model: currentModel,
+        modelTokens: new Map(),
         observedEnd: date < taskStart ? taskStart : date,
         pendingResponsePrompt: null,
         promptIds: [],
@@ -1043,6 +1103,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
             endMs: turnEnd.getTime(),
             startMs: task.start.getTime(),
           });
+          anchoredTaskCount += 1;
           if (captureDetail && completedTasks.length < CODEX_DETAIL_MAX_TURNS) {
             completedTasks.push({ ...task, durationMs, end: turnEnd });
           }
@@ -1260,36 +1321,99 @@ export const createCodexSessionParser = (captureDetail = false) => {
       }
     }
     tasks.sort((left, right) => left.start.getTime() - right.start.getTime());
-    return tasks.slice(0, CODEX_DETAIL_MAX_TURNS).map((task, index) => ({
-      durationMs: task.durationMs,
-      effort: task.effort,
-      effortKind: task.effort ? ('recorded' as const) : ('default' as const),
-      endAt: task.end.toISOString(),
-      index,
-      intervals: [{ endAt: task.end.toISOString(), startAt: task.start.toISOString() }],
-      model: task.model === 'codex' ? session.model : task.model,
-      promptIds: task.promptIds,
-      startAt: task.start.toISOString(),
-      timingStatus: 'recorded',
-      tokens: task.tokens,
-      tools: task.tools,
-    }));
+    return tasks.slice(0, CODEX_DETAIL_MAX_TURNS).map((task, index) => {
+      const model = task.model === 'codex' ? session.model : task.model;
+      // Same pricing convention as the phases above: each model in effect
+      // prices its own tokens, Codex reports cache reads but no billable cache
+      // writes, so `cw` stays 0.
+      let cost: number | null = 0;
+      for (const [bucketModel, tokens] of task.modelTokens) {
+        const pricing = priceFor(bucketModel === 'codex' ? session.model : bucketModel, { at: task.end });
+        if (!pricing.known && tokens.total > 0) {
+          cost = null;
+          break;
+        }
+        cost += approxCost(pricing.rates, { cr: tokens.cacheRead, cw: 0, in: tokens.input, out: tokens.output });
+      }
+      return {
+        // Codex records token counts per task, not the API calls behind them.
+        calls: null,
+        cost,
+        costKind: cost === null ? ('unknown' as const) : ('approximate' as const),
+        durationMs: task.durationMs,
+        effort: task.effort,
+        effortKind: task.effort ? ('recorded' as const) : ('default' as const),
+        endAt: task.end.toISOString(),
+        index,
+        intervals: [{ endAt: task.end.toISOString(), startAt: task.start.toISOString() }],
+        model,
+        promptIds: task.promptIds,
+        startAt: task.start.toISOString(),
+        timingStatus: 'recorded' as const,
+        tokens: task.tokens,
+        tools: task.tools,
+      };
+    });
   };
 
-  const detail = (): SessionDetail | null => {
+  const detail = (links: CodexChildLinks = codexChildLinksWithoutDatabase()): SessionDetail | null => {
     if (!(captureDetail && session.id && session.start && session.end)) {
       return null;
     }
-    const activeDurationMs = session.activeDurationMs ?? 0;
     const elapsedDurationMs = session.end.getTime() - session.start.getTime();
     const turns = detailTurns();
+    const openAnchoredTasks = [...openTasks.values()].filter((task) => task.hasContext && !task.replayed).length;
+    const omittedTurns = Math.max(0, anchoredTaskCount + openAnchoredTasks - turns.length);
+    // Past the turn budget the retained turns no longer cover every observed
+    // task, so active time is restated over what is actually listed and the
+    // timing reads as partial; the session row keeps the complete figure.
+    const activeDurationMs =
+      omittedTurns > 0
+        ? Math.min(
+            elapsedDurationMs,
+            mergedIntervalDurationMs(
+              turns.flatMap((turn) =>
+                turn.intervals.map((interval) => ({
+                  endMs: Date.parse(interval.endAt),
+                  startMs: Date.parse(interval.startAt),
+                })),
+              ),
+            ),
+          )
+        : (session.activeDurationMs ?? 0);
+    const durationPartial = timingPartial || omittedTurns > 0;
     return {
       activeDurationMs,
-      durationStatus: timingPartial ? 'partial' : 'recorded',
+      children: links.children,
+      coverage: {
+        childDiscovery: links.childDiscovery,
+        grouping:
+          omittedTurns > 0
+            ? { omittedCount: omittedTurns, reasons: ['turn-budget'], status: 'partial' }
+            : { omittedCount: 0, reasons: [], status: 'complete' },
+        // Codex records which thread spawned a child, never the task that did.
+        interactionAttribution: { omittedCount: null, reasons: ['harness-no-spawn-evidence'], status: 'unavailable' },
+        promptBodies: promptsTruncated
+          ? {
+              omittedCount: promptBodiesOmitted + promptIdentitiesOmitted,
+              reasons: promptIdentitiesOmitted > 0 ? ['prompt-body-budget', 'prompt-budget'] : ['prompt-body-budget'],
+              status: 'partial',
+            }
+          : { omittedCount: 0, reasons: [], status: 'complete' },
+        recordedTiming: durationPartial
+          ? {
+              omittedCount: omittedTurns > 0 ? omittedTurns : null,
+              reasons: omittedTurns > 0 ? ['turn-budget'] : ['timing-rejected'],
+              status: 'partial',
+            }
+          : { omittedCount: 0, reasons: [], status: 'complete' },
+      },
+      durationStatus: durationPartial ? 'partial' : 'recorded',
       efforts: [...new Set(session.phases.flatMap((phase) => (phase.effort ? [phase.effort] : [])))],
       elapsedDurationMs,
       endedAt: session.end.toISOString(),
       idleDurationMs: Math.max(0, elapsedDurationMs - activeDurationMs),
+      interactions: [],
       models: session.models,
       observedAt: new Date().toISOString(),
       phases: detailPhases(),
@@ -1302,8 +1426,11 @@ export const createCodexSessionParser = (captureDetail = false) => {
     };
   };
 
-  const analysis = (usageOwnership: CodexUsageOwnership = 'session'): LocalSessionAnalysis | null => {
-    const parsedDetail = detail();
+  const analysis = (
+    usageOwnership: CodexUsageOwnership = 'session',
+    links?: CodexChildLinks,
+  ): LocalSessionAnalysis | null => {
+    const parsedDetail = detail(links);
     if (!parsedDetail) {
       return null;
     }

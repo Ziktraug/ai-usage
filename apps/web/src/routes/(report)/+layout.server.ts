@@ -5,14 +5,16 @@ import {
   ReportBootstrapUnavailableError,
 } from '$lib/features/report/core/report-bootstrap';
 import { recordReportHydrationBytes } from '$lib/server/perf/report-hydration-perf';
-import type { PageServerLoad } from './$types';
+import type { LayoutServerLoad } from './$types';
 
 /**
  * Report acquisition lives on the server so SvelteKit serialises the result into the document.
+ * It is a layout load: the session and campaign detail routes below share the mounted report and
+ * must not re-acquire it when the detail path changes.
  * A universal `load` would re-run during hydration and re-acquire everything over the network — the
  * serialised SSR fetch cache cannot replay the Overview, whose request body is a Blob by then.
  */
-export const load: PageServerLoad = async ({ depends, fetch, isDataRequest, locals, untrack, url }) => {
+export const load: LayoutServerLoad = async ({ depends, fetch, isDataRequest, locals, untrack, url }) => {
   depends('ai-usage:report-root');
   if (locals.shellE2eError) {
     error(503, 'Synthetic shell route failure');

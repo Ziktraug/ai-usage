@@ -1,11 +1,9 @@
-import {
-  parseSessionDetailRequest,
-  parseSessionDetailResponse,
-  SessionDetailValidationError,
-} from '@ai-usage/report-core/session-detail';
+import { parseSessionDetailRequest, SessionDetailValidationError } from '@ai-usage/report-core/session-detail-request';
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenServerResult,
+  parseSessionLookupRequest,
+  parseSessionLookupServerResult,
   parseSessionNeighborRequest,
   parseSessionNeighborServerResult,
   parseSessionPageServerResult,
@@ -18,6 +16,8 @@ import type {
   SessionContractClient,
   SessionDetailRequest,
   SessionDetailResponse,
+  SessionLookupRequest,
+  SessionLookupResult,
   SessionNeighborRequest,
   SessionNeighborResult,
   SessionPageResult,
@@ -29,7 +29,7 @@ import type {
 
 export type SessionRpcTransport = Pick<
   SessionContractClient,
-  'campaignChildren' | 'detail' | 'neighbors' | 'page' | 'vcs'
+  'campaignChildren' | 'detail' | 'lookup' | 'neighbors' | 'page' | 'vcs'
 >;
 
 interface SessionCallOptions {
@@ -44,6 +44,7 @@ export interface SessionClientAdapter {
     signal?: AbortSignal,
   ) => Promise<SessionQueryServerResult<SessionCampaignChildrenResult>>;
   detail: (input: SessionDetailRequest, signal?: AbortSignal) => Promise<SessionDetailResponse>;
+  lookup: (input: SessionLookupRequest, signal?: AbortSignal) => Promise<SessionQueryServerResult<SessionLookupResult>>;
   neighbors: (
     input: SessionNeighborRequest,
     signal?: AbortSignal,
@@ -60,11 +61,20 @@ export const createSessionClientAdapter = (transport: SessionRpcTransport): Sess
   },
   detail: async (input, signal) => {
     const request = parseSessionDetailRequest(input);
-    const response = parseSessionDetailResponse(await transport.detail(request, signalOptions(signal)));
+    const [{ parseSessionDetailResponse }, rawResponse] = await Promise.all([
+      import('@ai-usage/report-core/session-detail'),
+      transport.detail(request, signalOptions(signal)),
+    ]);
+    const response = parseSessionDetailResponse(rawResponse);
     if (response.status === 'available' && response.revision !== request.revision) {
       throw new SessionDetailValidationError('Session detail response does not match its requested revision');
     }
     return response;
+  },
+  lookup: async (input, signal) => {
+    const request = parseSessionLookupRequest(input);
+    const response = await transport.lookup(request, signalOptions(signal));
+    return parseSessionLookupServerResult(response, request);
   },
   neighbors: async (input, signal) => {
     const request = parseSessionNeighborRequest(input);

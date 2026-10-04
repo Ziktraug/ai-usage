@@ -1,8 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 const LEADING_SLASH_PATTERN = /^\/+/;
+const ROUTE_GROUP_PATTERN = /\/\([^/]+\)/g;
+const requireGeneratedManifest = createRequire(import.meta.url);
 
 interface ClientManifestEntry {
   readonly css?: readonly string[];
@@ -12,6 +15,34 @@ interface ClientManifestEntry {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Route groups can move the report into a layout and renumber every generated node. */
+export const reportRouteClientEntryKeys = (appDir: string): readonly string[] => {
+  const manifestPath = path.join(appDir, '.svelte-kit/build/output/server/manifest-full.js');
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Expected the generated SvelteKit route manifest at ${manifestPath}`);
+  }
+  const generated: unknown = requireGeneratedManifest(manifestPath);
+  const manifest = isRecord(generated) ? generated.manifest : undefined;
+  const internal = isRecord(manifest) ? manifest._ : undefined;
+  if (!(isRecord(internal) && Array.isArray(internal.routes))) {
+    throw new Error('Expected the generated SvelteKit manifest to expose routes');
+  }
+  const matches = internal.routes.filter(
+    (route: unknown) =>
+      isRecord(route) && typeof route.id === 'string' && (route.id.replace(ROUTE_GROUP_PATTERN, '') || '/') === '/',
+  );
+  const route: unknown = matches[0];
+  const page = isRecord(route) ? route.page : undefined;
+  if (!(matches.length === 1 && isRecord(page) && Array.isArray(page.layouts))) {
+    throw new Error('Expected exactly one generated report route with layout and page nodes');
+  }
+  const nodes: unknown[] = [...page.layouts.filter((node: unknown) => node !== undefined && node !== null), page.leaf];
+  if (!nodes.every((node) => typeof node === 'number' && Number.isSafeInteger(node) && node >= 0)) {
+    throw new Error('Expected report route nodes to have valid generated indexes');
+  }
+  return [...new Set(nodes)].map((node) => `.svelte-kit/build/generated/client-optimized/nodes/${node}.js`);
+};
 
 const optionalStringArray = (value: unknown, label: string): readonly string[] | undefined => {
   if (value === undefined) {
@@ -60,8 +91,7 @@ const initialAssetPaths = (appDir: string): string[] => {
   const pending = [
     '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
     '.svelte-kit/build/generated/client-optimized/app.js',
-    '.svelte-kit/build/generated/client-optimized/nodes/0.js',
-    '.svelte-kit/build/generated/client-optimized/nodes/3.js',
+    ...reportRouteClientEntryKeys(appDir),
   ];
   const visited = new Set<string>();
   const assets = new Set<string>();

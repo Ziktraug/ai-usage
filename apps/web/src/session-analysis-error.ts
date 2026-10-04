@@ -1,4 +1,4 @@
-import { SessionDetailValidationError } from '@ai-usage/report-core/session-detail';
+import { SessionDetailValidationError } from '@ai-usage/report-core/session-detail-request';
 
 export type SessionAnalysisError = { kind: 'terminal'; message: string } | { kind: 'transient'; message: string };
 

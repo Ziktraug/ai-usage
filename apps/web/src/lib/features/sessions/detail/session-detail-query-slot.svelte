@@ -11,9 +11,10 @@
     optionalSessionVcsQueryOptions,
   } from '../../../query/options/session';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
+  import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
   import type { SessionDetailController, SessionDetailControllerSnapshot, SessionSelectionInput } from './types';
 
-  type SessionDrawerModule = typeof import('./session-drawer.svelte');
+  type SessionDrawerModule = typeof import('./session-detail-members-query-slot.svelte');
   const interactiveElementTagPattern = /^(INPUT|SELECT|TEXTAREA)$/;
   const openDrawerContentSelector = '[data-scope="drawer"][data-part="content"][data-state="open"][role="dialog"]';
 
@@ -29,31 +30,40 @@
   };
 
   let {
+    campaignLabelSlot,
     campaignSlot,
     client,
+    memberRows = [],
     onClosingChange,
     onFieldFilter,
     onSelectionChange,
+    onSelectMember,
     queryClient,
     rows,
     selection,
   }: {
+    campaignLabelSlot?: Snippet;
     campaignSlot?: Snippet;
     client: SessionClientAdapter;
+    /** Campaign member rows the panel joins child sessions to; usage stays on those rows. */
+    memberRows?: readonly SessionPresentationRow[];
     onClosingChange?: (closing: boolean) => void;
     onFieldFilter?: (key: 'model' | 'project', value: string) => void;
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
+    /** Opens a campaign member from the rounds reader; the destination owns the route change. */
+    onSelectMember?: (row: SessionPresentationRow) => void;
     queryClient: QueryClient;
     rows: readonly SessionPresentationRow[];
     selection: SessionSelectionInput | null;
   } = $props();
 
-  let analysisOpen = $state(false);
+  // Rounds are the panel's first view, so the local detail loads as soon as a
+  // row is selected; the toggle only lets the reader release it.
+  let analysisOpen = $state(true);
   let vcsRequested = $state(false);
   let selectedIdentity = $state('');
   let drawerModule = $state<SessionDrawerModule>();
   let drawerLoadFailed = $state(false);
-  let drawerLoad: Promise<void> | undefined;
   let drawerClosing = false;
 
   const handleClosingChange = (closing: boolean): void => {
@@ -120,15 +130,16 @@
     vcsResolving: vcsQuery.isFetching,
   });
 
-  const ensureDrawer = (): void => {
-    drawerLoad ??= import('./session-drawer.svelte')
-      .then((module) => {
-        drawerModule = module;
-      })
-      .catch(() => {
-        drawerLoadFailed = true;
-      });
-  };
+  const drawerLoader = createLazyModuleLoader({
+    importModule: () => import('./session-detail-members-query-slot.svelte'),
+    onFailureChange: (failed) => {
+      drawerLoadFailed = failed;
+    },
+    onLoaded: (module) => {
+      drawerModule = module;
+    },
+  });
+  const reloadSessionDetails = (): void => window.location.reload();
 
   const navigate = (delta: -1 | 1): void => {
     if (drawerClosing) {
@@ -147,9 +158,13 @@
       return;
     }
     const index = rows.findIndex((row) => row.rowId === current.row.rowId);
+    if (index < 0) {
+      return;
+    }
     const next = rows[index + delta];
     if (next) {
-      onSelectionChange({ row: next });
+      const { target: _target, ...preserved } = current;
+      onSelectionChange({ ...preserved, row: next });
     }
   };
 
@@ -158,7 +173,8 @@
     current: () => snapshot,
     dispose: () => undefined,
     handleKeyDown: (event) => {
-      if (drawerClosing || !snapshot.row) {
+      // A component that already answered the key (the rounds rail's arrows) opts out.
+      if (drawerClosing || !snapshot.row || event.defaultPrevented) {
         return;
       }
       if (escapeBelongsToActiveOverlay(event)) {
@@ -210,10 +226,10 @@
       return;
     }
     selectedIdentity = identity;
-    analysisOpen = false;
+    analysisOpen = true;
     vcsRequested = false;
-    if (selection) {
-      ensureDrawer();
+    if (selection && !drawerModule) {
+      drawerLoader.start();
     }
   });
 
@@ -228,14 +244,22 @@
   {#if drawerModule}
     {@const SessionDrawer = drawerModule.default}
     <SessionDrawer
+      {...(campaignLabelSlot === undefined ? {} : { campaignLabelSlot })}
       {...(campaignSlot === undefined ? {} : { campaignSlot })}
+      {client}
       {controller}
+      {memberRows}
       onClosingChange={handleClosingChange}
       {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
+      {...(onSelectMember === undefined ? {} : { onSelectMember })}
+      {queryClient}
       {rows}
       {snapshot}
     />
   {:else if selection?.row && drawerLoadFailed}
-    <p role="status">Session details are temporarily unavailable.</p>
+    <p role="status">
+      Session details are temporarily unavailable.
+      <button onclick={reloadSessionDetails} type="button">Reload session details</button>
+    </p>
   {/if}
 </div>

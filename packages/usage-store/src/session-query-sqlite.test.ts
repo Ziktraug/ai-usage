@@ -13,6 +13,7 @@ import {
   compareSessionIdentityValues,
   enrichSessionPresentationRow,
   projectSessionCampaignChildren,
+  projectSessionLookup,
   projectSessionNeighbors,
   projectSessionPage,
   type SessionQueryRequest,
@@ -712,6 +713,129 @@ describe('durable session query SQLite projections', () => {
     } finally {
       database.close();
     }
+  });
+
+  test('looks up one row by identity with a single indexed read', async () => {
+    const { database } = await openFixtureDatabase();
+    const target = rows.find((candidate) => candidate.source?.sourceSessionId === 'campaign-root');
+    if (!target) {
+      throw new Error('Expected a lookup target');
+    }
+    const lookupRequest = { revision: 'revision-a', rowId: sessionRowIdentity(target) };
+    const traces: { params: readonly unknown[]; sql: string }[] = [];
+    try {
+      expect(
+        executeMaterializedSessionQuery(database, 'session-lookup', lookupRequest, (query) => traces.push(query)),
+      ).toEqual(projectSessionLookup(rows, lookupRequest));
+      expect(traces).toHaveLength(1);
+      const lookupTrace = traces[0];
+      if (!lookupTrace) {
+        throw new Error('Expected the lookup SQL trace');
+      }
+      const plan = database.query(`EXPLAIN QUERY PLAN ${lookupTrace.sql}`).all(...lookupTrace.params);
+      const details = plan.map((step) => {
+        if (typeof step !== 'object' || step === null || !('detail' in step) || typeof step.detail !== 'string') {
+          throw new Error('Expected a SQLite query plan detail');
+        }
+        return step.detail;
+      });
+      expect(details.some((detail) => detail.includes('SEARCH served_report_rows USING INDEX'))).toBe(true);
+      expect(details.some((detail) => detail.includes('(revision=? AND row_id=?)'))).toBe(true);
+      expect(details.some((detail) => detail.includes('SCAN served_report_rows'))).toBe(false);
+      expect(
+        executeMaterializedSessionQuery(database, 'session-lookup', { ...lookupRequest, rowId: 'absent' }),
+      ).toEqual(projectSessionLookup(rows, { ...lookupRequest, rowId: 'absent' }));
+    } finally {
+      database.close();
+    }
+  });
+
+  test('looks up canonical root and child sessions without acquiring their preceding campaign pages', async () => {
+    const { database } = await openFixtureDatabase();
+    const request = queryRequest({ pageSize: 1, sort: [{ desc: false, id: 'session' }] });
+    const campaignKey = 'machine-a:codex:campaign-root';
+    try {
+      const members = executeMaterializedSessionQuery(database, 'campaign-children', { campaignKey, query: request });
+      const rootLookup = executeMaterializedSessionQuery(database, 'session-lookup', {
+        revision: request.revision,
+        rowId: sessionRowIdentity(rows[1]!),
+      });
+      const childLookup = executeMaterializedSessionQuery(database, 'session-lookup', {
+        revision: request.revision,
+        rowId: sessionRowIdentity(rows[3]!),
+      });
+      expect(members.nextCursor).not.toBeNull();
+      expect(members.items.some((member) => member.rowId === childLookup.row?.rowId)).toBe(false);
+      expect(rootLookup.row).toEqual(members.root);
+      expect(rootLookup.row?.tokenTotal).toBe(rows[1]?.tokenTotal);
+      expect(rootLookup.row?.campaignTotalCount).toBeUndefined();
+      const nextMembers = executeMaterializedSessionQuery(database, 'campaign-children', {
+        campaignKey,
+        query: { ...request, cursor: members.nextCursor },
+      });
+      const nextMember = nextMembers.items[0];
+      if (!nextMember) {
+        throw new Error('Expected the next campaign member');
+      }
+      expect(childLookup.row).toEqual(nextMember);
+      expect(childLookup.row?.rowId).toBe(sessionRowIdentity(rows[3]!));
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps lookup content at its requested revision and reports expiry without falling through to current', async () => {
+    const firstRows = [row('same-session', 10), row('only-in-a', 1)];
+    const secondRows = [row('same-session', 20), row('only-in-b', 1)];
+    const { database, dbPath } = await openRowsDatabase(firstRows);
+    database.close();
+    const lookup = (revision: string, rowId: string, now = 2001) =>
+      queryServedRevisionData({ dbPath, kind: 'session-lookup', now, request: { revision, rowId }, revision });
+    const rowId = sessionRowIdentity(firstRows[0]!);
+    const before = await Effect.runPromise(lookup('revision-a', rowId, 1001));
+    await Effect.runPromise(
+      publishServedReportRevision({
+        assemble: () => ({
+          configFingerprint: 'c'.repeat(64),
+          generatedAt: '2026-07-13T00:01:00.000Z',
+          projectAliases: [],
+          projectGroupConfigs: [],
+          rows: secondRows,
+          sourceAuthorities: secondRows.map(() => 'local-observed' as const),
+          support: support(secondRows.length),
+        }),
+        dbPath,
+        now: 2000,
+        revision: 'revision-b',
+        ttlMs: 300_000,
+      }),
+    );
+    expect(await Effect.runPromise(lookup('revision-a', rowId))).toEqual(before);
+    expect(before).toMatchObject({ found: true, revision: 'revision-a', row: { rowId, tokenTotal: 40 } });
+    expect(await Effect.runPromise(lookup('revision-b', rowId))).toMatchObject({
+      found: true,
+      revision: 'revision-b',
+      row: { rowId, tokenTotal: 80 },
+    });
+    expect(await Effect.runPromise(lookup('revision-a', sessionRowIdentity(secondRows[1]!)))).toMatchObject({
+      found: false,
+      revision: 'revision-a',
+      row: null,
+    });
+    expect(await Effect.runPromise(lookup('revision-b', sessionRowIdentity(firstRows[1]!)))).toMatchObject({
+      found: false,
+      revision: 'revision-b',
+      row: null,
+    });
+    expect(await Effect.runPromise(Effect.either(lookup('revision-a', rowId, 301_001)))).toMatchObject({
+      _tag: 'Left',
+      left: { reason: 'revision-expired' },
+    });
+    expect(await Effect.runPromise(lookup('revision-b', rowId, 301_001))).toMatchObject({
+      found: true,
+      revision: 'revision-b',
+      row: { rowId, tokenTotal: 80 },
+    });
   });
 
   test('applies filters before campaign aggregation from the durable projection', async () => {

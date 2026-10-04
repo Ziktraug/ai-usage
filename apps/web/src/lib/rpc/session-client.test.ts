@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { type SessionDetailResponse, SessionDetailValidationError } from '@ai-usage/report-core/session-detail';
+import { SessionDetailValidationError as RequestValidationError } from '@ai-usage/report-core/session-detail-request';
 import {
   parseSessionQueryRequest,
   SessionQueryValidationError,
   sessionCampaignChildrenFingerprint,
+  sessionLookupFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
+import { classifySessionAnalysisError } from '../../session-analysis-error';
 import { createSessionClientAdapter, type SessionRpcTransport } from './session-client';
 
 const rawQuery = {
@@ -25,6 +28,18 @@ const rawQuery = {
 const query = parseSessionQueryRequest(rawQuery);
 const campaignRequest = { campaignKey: 'campaign-1', query };
 const neighborRequest = { query, rowId: 'row-1' };
+const lookupRequest = { revision: query.revision, rowId: 'row-1' };
+const lookupEnvelope = () => ({
+  data: {
+    found: false,
+    requestFingerprint: sessionLookupFingerprint(lookupRequest),
+    revision: query.revision,
+    row: null,
+  },
+  ok: true as const,
+  requestFingerprint: sessionLookupFingerprint(lookupRequest),
+  revision: query.revision,
+});
 const detailUnavailable = {
   message: 'Local history is unavailable.',
   reason: 'history-unavailable' as const,
@@ -88,11 +103,20 @@ const availableDetail = {
   consistency: { checkedFields: ['tokens'], status: 'matches-report' },
   detail: {
     activeDurationMs: null,
+    children: [],
+    coverage: {
+      childDiscovery: { omittedCount: 0, reasons: [], status: 'complete' },
+      grouping: { omittedCount: 0, reasons: [], status: 'complete' },
+      interactionAttribution: { omittedCount: 0, reasons: [], status: 'complete' },
+      promptBodies: { omittedCount: 0, reasons: [], status: 'complete' },
+      recordedTiming: { omittedCount: 0, reasons: [], status: 'complete' },
+    },
     durationStatus: 'unavailable',
     efforts: [],
     elapsedDurationMs: 60_000,
     endedAt: '2026-07-18T10:01:00.000Z',
     idleDurationMs: null,
+    interactions: [],
     models: [],
     observedAt: '2026-07-18T10:01:01.000Z',
     phases: [],
@@ -110,12 +134,60 @@ const availableDetail = {
 const defaultTransport = (): SessionRpcTransport => ({
   campaignChildren: () => Promise.resolve(campaignEnvelope()),
   detail: () => Promise.resolve(detailUnavailable),
+  lookup: () => Promise.resolve(lookupEnvelope()),
   neighbors: () => Promise.resolve(neighborEnvelope()),
   page: () => Promise.resolve(pageEnvelope()),
   vcs: () => Promise.resolve(vcsUnavailable),
 });
 
 describe('Session RPC browser adapter', () => {
+  test('validates the detail response lazily with the same terminal error identity', async () => {
+    const adapter = createSessionClientAdapter({
+      ...defaultTransport(),
+      detail: () =>
+        Promise.resolve({
+          ...availableDetail,
+          detail: {
+            ...availableDetail.detail,
+            coverage: {
+              ...availableDetail.detail.coverage,
+              childDiscovery: { omittedCount: -1, reasons: [], status: 'complete' },
+            },
+          },
+        }),
+    });
+    const error = await adapter.detail({ revision: query.revision, rowId: 'row-1' }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(SessionDetailValidationError);
+    expect(error).toBeInstanceOf(RequestValidationError);
+    expect(classifySessionAnalysisError(error)).toMatchObject({ kind: 'terminal' });
+  });
+
+  test('rejects invalid detail identities before transport and keeps cancellation during lazy validation', async () => {
+    const started = Promise.withResolvers<AbortSignal>();
+    const adapter = createSessionClientAdapter({
+      ...defaultTransport(),
+      detail: (_input, options) => {
+        const signal = options?.signal;
+        if (!signal) {
+          throw new Error('Expected the original cancellation signal');
+        }
+        started.resolve(signal);
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    });
+    await expect(adapter.detail({ revision: query.revision, rowId: '' })).rejects.toThrow(RequestValidationError);
+    const controller = new AbortController();
+    const pending = adapter
+      .detail({ revision: query.revision, rowId: 'row-1' }, controller.signal)
+      .catch((error: unknown) => error);
+    expect(await started.promise).toBe(controller.signal);
+    const reason = new DOMException('Detail closed', 'AbortError');
+    controller.abort(reason);
+    expect(await pending).toBe(reason);
+  });
+
   test('canonicalizes each exact input and forwards the caller signal', async () => {
     const calls: Array<{ input: unknown; name: string; signal: AbortSignal | undefined }> = [];
     const transport: SessionRpcTransport = {
@@ -126,6 +198,10 @@ describe('Session RPC browser adapter', () => {
       detail: (input, options) => {
         calls.push({ input, name: 'detail', signal: options?.signal });
         return Promise.resolve(detailUnavailable);
+      },
+      lookup: (input, options) => {
+        calls.push({ input, name: 'lookup', signal: options?.signal });
+        return Promise.resolve(lookupEnvelope());
       },
       neighbors: (input, options) => {
         calls.push({ input, name: 'neighbors', signal: options?.signal });
@@ -235,5 +311,27 @@ describe('Session RPC browser adapter', () => {
       page: () => Promise.resolve({ ...pageEnvelope(), privatePath: '/private/store.sqlite' }),
     });
     await expect(adapter.page(query)).rejects.toThrow(SessionQueryValidationError);
+  });
+
+  test('canonicalizes lookup requests and rejects stale lookup envelopes', async () => {
+    const seen: unknown[] = [];
+    const adapter = createSessionClientAdapter({
+      ...defaultTransport(),
+      lookup: (input) => {
+        seen.push(input);
+        return Promise.resolve(lookupEnvelope());
+      },
+    });
+    expect(await adapter.lookup({ revision: query.revision, rowId: 'row-1' })).toEqual(lookupEnvelope());
+    await expect(adapter.lookup({ revision: query.revision, rowId: ' row-1 ' })).rejects.toThrow(
+      SessionQueryValidationError,
+    );
+    expect(seen).toEqual([lookupRequest]);
+
+    const stale = createSessionClientAdapter({
+      ...defaultTransport(),
+      lookup: () => Promise.resolve({ ...lookupEnvelope(), revision: 'stale-revision' }),
+    });
+    await expect(stale.lookup(lookupRequest)).rejects.toThrow(SessionQueryValidationError);
   });
 });

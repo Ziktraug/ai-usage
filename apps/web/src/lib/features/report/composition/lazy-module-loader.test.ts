@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createLazyModuleLoader } from './lazy-module-loader';
 
-test('deduplicates an active module load and permits an explicit retry after failure', async () => {
+test('deduplicates automatic module startup and permits an explicit retry after failure', async () => {
   let attempts = 0;
   let release: ((value: { readonly name: string }) => void) | undefined;
   const failures: boolean[] = [];
@@ -20,6 +20,9 @@ test('deduplicates an active module load and permits an explicit retry after fai
     onLoaded: (module) => loaded.push(module.name),
   });
 
+  loader.start();
+  loader.start();
+  expect(attempts).toBe(1);
   expect(await loader.load()).toBe('failed');
   const retry = loader.retry();
   const duplicate = loader.load();

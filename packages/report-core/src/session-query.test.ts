@@ -14,6 +14,9 @@ import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenResult,
   parseSessionCampaignChildrenServerResult,
+  parseSessionLookupRequest,
+  parseSessionLookupResult,
+  parseSessionLookupServerResult,
   parseSessionNeighborRequest,
   parseSessionNeighborResult,
   parseSessionNeighborServerResult,
@@ -21,6 +24,7 @@ import {
   parseSessionPageServerResult,
   parseSessionQueryRequest,
   projectSessionCampaignChildren,
+  projectSessionLookup,
   projectSessionNeighbors,
   projectSessionPage,
   SessionQueryCursorError,
@@ -1079,6 +1083,66 @@ describe('session query contracts', () => {
       requestFingerprint: neighbors.requestFingerprint,
       revision: neighbors.revision,
     });
+
+    const lookupRequest = parseSessionLookupRequest({ revision: pageRequest.revision, rowId: neighborRequest.rowId });
+    const lookup = projectSessionLookup(rows, lookupRequest);
+    expect(lookup.found).toBe(true);
+    expect(lookup.row?.rowId).toBe(neighborRequest.rowId);
+    expect(parseSessionLookupResult(lookup, lookupRequest)).toEqual(lookup);
+    expect(
+      parseSessionLookupServerResult(
+        { data: lookup, ok: true, requestFingerprint: lookup.requestFingerprint, revision: lookup.revision },
+        lookupRequest,
+      ),
+    ).toEqual({
+      data: lookup,
+      ok: true,
+      requestFingerprint: lookup.requestFingerprint,
+      revision: lookup.revision,
+    });
+    const missing = projectSessionLookup(rows, { ...lookupRequest, rowId: 'absent-row' });
+    expect(missing).toMatchObject({ found: false, row: null });
+    expect(() => parseSessionLookupResult({ ...lookup, found: false }, lookupRequest)).toThrow(
+      SessionQueryValidationError,
+    );
+    expect(() => parseSessionLookupResult({ ...lookup, row: null }, lookupRequest)).toThrow(
+      SessionQueryValidationError,
+    );
+    expect(() =>
+      parseSessionLookupResult({ ...lookup, row: { ...lookup.row, rowId: 'other-row' } }, lookupRequest),
+    ).toThrow(SessionQueryValidationError);
+  });
+
+  test('rejects lookup results and expiry envelopes for another exact revision or session', () => {
+    const rows = [sourcedRow('alpha'), sourcedRow('beta')];
+    const request = { revision: 'revision-1', rowId: sessionRowIdentity(rows[0]!) };
+    const result = projectSessionLookup(rows, request);
+    const envelope = {
+      data: result,
+      ok: true,
+      requestFingerprint: result.requestFingerprint,
+      revision: request.revision,
+    };
+    for (const otherRequest of [
+      { ...request, revision: 'revision-2' },
+      { ...request, rowId: sessionRowIdentity(rows[1]!) },
+    ]) {
+      expect(() => parseSessionLookupResult(result, otherRequest)).toThrow(SessionQueryValidationError);
+      expect(() => parseSessionLookupServerResult(envelope, otherRequest)).toThrow(SessionQueryValidationError);
+    }
+    expect(() =>
+      parseSessionLookupServerResult({ ...envelope, data: { ...result, revision: 'revision-2' } }, request),
+    ).toThrow(SessionQueryValidationError);
+    const expired = {
+      error: { message: 'expired', revision: request.revision, tag: 'RevisionExpired' as const },
+      ok: false as const,
+      requestFingerprint: result.requestFingerprint,
+      revision: request.revision,
+    };
+    expect(parseSessionLookupServerResult(expired, request)).toEqual(expired);
+    expect(() => parseSessionLookupServerResult(expired, { ...request, revision: 'revision-2' })).toThrow(
+      SessionQueryValidationError,
+    );
   });
 
   test('rejects malformed Session rows, counts, cursors, identities, and error envelopes', () => {

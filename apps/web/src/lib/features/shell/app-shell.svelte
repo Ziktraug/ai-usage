@@ -1,7 +1,7 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import type { Snippet } from 'svelte';
-  import { replaceState } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import type { RuntimeMode } from '../../../runtime-mode';
   import AppNavigation from './app-navigation.svelte';
@@ -12,6 +12,7 @@
     reportDestinationHeading,
     shellManagementDestinations,
   } from './navigation';
+  import { createShellNavigationOwner, provideShellNavigationOwner } from './navigation-owner-context';
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import { createSessionWindowAnchorOwner, provideSessionWindowAnchorOwner } from './session-window-anchor-context';
@@ -29,6 +30,7 @@
     sourceControlSummary?: Snippet;
   } = $props();
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
+  provideShellNavigationOwner(createShellNavigationOwner({ currentUrl: () => page.url, goto }));
   provideSourceControlSummary(() => sourceControlSummary);
   provideSessionWindowAnchorOwner(
     createSessionWindowAnchorOwner({

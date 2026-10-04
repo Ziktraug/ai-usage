@@ -34,6 +34,7 @@
     "./skill-observation-evidence": "./src/skill-observation-evidence.ts",
     "./skill-observation-summary": "./src/skill-observation-summary.ts",
     "./session-detail": "./src/session-detail.ts",
+    "./session-detail-request": "./src/session-detail-request.ts",
     "./session-lineage": "./src/session-lineage.ts",
     "./served-revision": "./src/served-revision.ts",
     "./snapshot": "./src/snapshot.ts",

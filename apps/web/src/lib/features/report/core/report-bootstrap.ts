@@ -1,3 +1,4 @@
+import { parseSessionQueryRequest } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { demoReportPayload } from '../../../../report-data';
 import type { RuntimeMode } from '../../../../runtime-mode';
@@ -8,10 +9,15 @@ import { createWebQueryLoadState, type WebQueryRuntime, type WebQueryRuntimeOpti
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapQueryOptions } from '../../../query/options/report';
 import { reportDestinationQueryOptions } from '../../../query/options/report-destination';
+import { sessionLookupQueryOptions, sessionPageQueryOptions } from '../../../query/options/session';
+import { initialSessionWindowIntent, sessionWindowView } from '../../../query/options/session-window';
 import { createReportClient } from '../../../rpc/report-client';
 import { createSessionClientAdapter, type SessionClientAdapter } from '../../../rpc/session-client';
+import { resolveDetailSelection } from '../../sessions/detail/detail-selection';
+import { sessionRouteFor } from '../../sessions/detail/session-route';
 import { dashboardSearchCodec } from '../../shell/navigation';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
+import { campaignSessionSelectionQuery } from '../actions/campaign-session-controls-binding';
 import { initialReportTimelineFor, reportDestinationForSearch } from '../composition/report-search';
 
 export interface LiveReportPageData {
@@ -107,19 +113,61 @@ const prefetchInitialDestination = async (
 ): Promise<void> => {
   try {
     const search = parseDashboardSearchUrl(pageUrl, dashboardSearchCodec);
-    const { focused } = reportDestinationForSearch(
+    const destination = reportDestinationForSearch(
       search,
       bootstrap.bootstrap.support.generatedAt,
       initialReportTimelineFor(search.range, bootstrap.bootstrap.support.generatedAt),
     );
+    const { focused } = destination;
     if (focused === null) {
       return;
     }
-    await runtime.queryClient.fetchQuery(
+    const commit = await runtime.queryClient.fetchQuery(
       reportDestinationQueryOptions({ queryClient: runtime.queryClient, reportClient, sessionClient }, focused, {
         browser: false,
       }),
     );
+    const route = sessionRouteFor(pageUrl.pathname);
+    if (route === null) {
+      return;
+    }
+    const selection = resolveDetailSelection({
+      campaignLookup: undefined,
+      contextRows: commit.overview.view.topSessions.map((item) => item.row),
+      lookupRow: undefined,
+      revision: commit.descriptor.revision,
+      route,
+      window: commit.sessions ? sessionWindowView(commit.sessions, initialSessionWindowIntent(), false) : undefined,
+    });
+    if (selection.kind !== 'loading') {
+      return;
+    }
+    if (route.kind === 'session') {
+      // Hydrate only the missing presentation row at the successfully acquired revision.
+      // Native prompts and detail stay behind the browser's dependent detail query.
+      await runtime.queryClient.fetchQuery(
+        sessionLookupQueryOptions(
+          sessionClient,
+          { revision: commit.descriptor.revision, rowId: route.rowId },
+          { browser: false },
+        ),
+      );
+    } else {
+      const query =
+        commit.sessions?.query ??
+        parseSessionQueryRequest({
+          ...destination.sessions,
+          cursor: null,
+          revision: commit.descriptor.revision,
+        });
+      await runtime.queryClient.fetchQuery(
+        sessionPageQueryOptions(
+          sessionClient,
+          { ...campaignSessionSelectionQuery(query, route.campaignKey), pageSize: 1 },
+          { browser: false },
+        ),
+      );
+    }
   } catch {
     return;
   }

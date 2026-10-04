@@ -12,7 +12,7 @@ import { createServerStateNetworkTrace } from './server-state-network';
 import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
 const OPEN_SESSION_PATTERN = /^Open session/;
-const ANALYSE_SESSION_PATTERN = /Analyze session chronology/;
+const ROUNDS_TAB_PATTERN = /^Rounds/;
 const EXPAND_CAMPAIGN_PATTERN = /^Expand sessions for/;
 
 const scrollThroughBoundary = async (page: Page, surface: Locator): Promise<void> => {
@@ -113,13 +113,13 @@ test('opens the canonical child details from a production campaign without losin
   const child = page
     .locator('[data-campaign-node][data-depth="1"]')
     .getByRole('button', { name: OPEN_SESSION_PATTERN });
-  await child.click();
-  const drawer = page.getByRole('dialog');
-  await expect(drawer).toBeVisible();
   const detailsResponse = page.waitForResponse(
     (candidate) => new URL(candidate.url()).pathname === '/rpc/session/detail',
   );
-  await drawer.getByRole('button', { name: ANALYSE_SESSION_PATTERN }).click();
+  await child.click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole('tab', { name: ROUNDS_TAB_PATTERN })).toHaveAttribute('aria-selected', 'true');
   const details = await (await detailsResponse).text();
   expect(new Set(rpcStringFieldValues(details, 'revision'))).toEqual(new Set([revision]));
   await expect(drawer).toContainText('Implement fixture child');
@@ -189,13 +189,13 @@ test('serves bounded project chronology without fetching every campaign hierarch
   expect(trace.counts().operations['session.page'] ?? 0).toBe(0);
 
   const session = page.locator('[data-timeline-session]').getByRole('button', { name: OPEN_SESSION_PATTERN });
-  await session.click();
-  const drawer = page.getByRole('dialog');
-  await expect(drawer).toBeVisible();
   const detailResponse = page.waitForResponse(
     (candidate) => new URL(candidate.url()).pathname === '/rpc/session/detail',
   );
-  await drawer.getByRole('button', { name: ANALYSE_SESSION_PATTERN }).click();
+  await session.click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole('tab', { name: ROUNDS_TAB_PATTERN })).toHaveAttribute('aria-selected', 'true');
   const detail = await (await detailResponse).text();
   expect(new Set(rpcStringFieldValues(detail, 'revision'))).toEqual(new Set([revision]));
   await page.keyboard.press('Escape');

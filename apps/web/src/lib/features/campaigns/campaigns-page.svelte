@@ -4,7 +4,12 @@
   import { ghostButton } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
   import { buildCampaignMap, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
-  import { type SessionPresentationRow, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+  import {
+    parseSessionLookupRequest,
+    type SessionPresentationRow,
+    SessionQueryValidationError,
+    sessionQueryFingerprint,
+  } from '@ai-usage/report-core/session-query';
   import {
     createInfiniteQuery,
     createQuery,
@@ -12,14 +17,13 @@
     type QueryKey,
     useQueryClient,
   } from '@tanstack/svelte-query';
-  import { tick, untrack } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import { browser } from '$app/environment';
-  import { goto } from '$app/navigation';
+  import { afterNavigate, beforeNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import { campaignLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
   import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
   import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../../dashboard-search';
-  import { sessionAnalysisTargetForSession } from '../../../session-analysis-target';
   import { dashboardUrlFor, parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
   import { fmtCompact } from '../../foundation/presentation/format';
   import {
@@ -29,16 +33,20 @@
     retainedCampaignQuery,
   } from '../../query/options/campaigns';
   import { campaignLabelOverridesQueryOptions, reportBootstrapQueryOptions } from '../../query/options/report';
+  import { optionalSessionLookupQueryOptions } from '../../query/options/session';
   import { SessionRevisionExpiredError, type SessionWindowIntent } from '../../query/options/session-window';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createReportClient } from '../../rpc/report-client';
   import { createSessionClientAdapter } from '../../rpc/session-client';
   import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
   import SessionDetailQuerySlot from '../sessions/detail/session-detail-query-slot.svelte';
+  import { panelOpenedFromReport, sessionPanelHistoryState } from '../sessions/detail/session-route';
   import type { SessionSelectionInput } from '../sessions/detail/types';
   import { dashboardSearchCodec } from '../shell/navigation';
+  import { useShellNavigationOwner } from '../shell/navigation-owner-context';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import CampaignAgentMap from './campaign-agent-map.svelte';
+  import { resolveCampaignDetailSelection } from './campaign-detail-selection';
   import CampaignProjectTimeline from './campaign-project-timeline.svelte';
   import { buildCampaignTimeline, type CampaignTimelineAxis, campaignTimelineRange } from './campaign-timeline-model';
   import CampaignVirtualList from './campaign-virtual-list.svelte';
@@ -59,6 +67,7 @@
 
   let { data }: { data: CampaignsPageData } = $props();
   const queryClient = useQueryClient();
+  const shellNavigation = useShellNavigationOwner();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
   const clients = untrack(() => {
     const report =
@@ -74,7 +83,6 @@
         : ssrUnavailableClient<ReturnType<typeof createSessionClientAdapter>>('campaigns session');
     return { report, session };
   });
-  let selection = $state<SessionSelectionInput | null>(null);
   let navigationError = $state<string | null>(null);
   let previousKey = $state<QueryKey>();
   let inspected = $state<{ revision: string; generatedAt: string } | null>(null);
@@ -97,6 +105,8 @@
   let searchNavigation = $state<CampaignScrollState>({});
   let searchVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
   let pendingFocus = '';
+  let detailOpenerId = $state('');
+  let focusRestoreGeneration = 0;
   let checkedExpiredRevision = '';
   let previousScope = '';
   const bootstrapQuery = createQuery(() =>
@@ -245,6 +255,69 @@
   });
   const rowRevisionFor = (rowId: string): string | undefined =>
     matchedRows.some((row) => row.rowId === rowId) ? matching.data?.pages[0]?.revision : mapRevision;
+  const localDetailSelection = $derived(
+    resolveCampaignDetailSelection({
+      campaignKey: selectedKey,
+      knownRevision: rowRevisionFor(selectedSessionId),
+      knownRows: detailRows,
+      lookup: undefined,
+      revision: visibleRevision,
+      rowId: selectedSessionId,
+    }),
+  );
+  const selectedLookupRequest = $derived.by(() => {
+    if (localDetailSelection.kind !== 'loading' || !visibleRevision) {
+      return;
+    }
+    try {
+      return parseSessionLookupRequest({ revision: visibleRevision, rowId: selectedSessionId });
+    } catch (cause) {
+      if (cause instanceof SessionQueryValidationError) {
+        return;
+      }
+      throw cause;
+    }
+  });
+  const selectedLookup = createQuery(() =>
+    optionalSessionLookupQueryOptions(clients.session, selectedLookupRequest, { browser }),
+  );
+  const detailSelection = $derived(
+    resolveCampaignDetailSelection({
+      campaignKey: selectedKey,
+      knownRevision: rowRevisionFor(selectedSessionId),
+      knownRows: detailRows,
+      lookup: selectedLookup.data?.ok ? selectedLookup.data.data : undefined,
+      revision: visibleRevision,
+      rowId: selectedSessionId,
+    }),
+  );
+  const selection = $derived(detailSelection.kind === 'open' ? detailSelection.selection : null);
+  const compatibleMemberRows = $derived.by(() => {
+    const selectionRevision = selection?.revision;
+    if (!selectionRevision) {
+      return [];
+    }
+    const compatible = new Map((mapRevision === selectionRevision ? rows : []).map((row) => [row.rowId, row]));
+    if (matching.data?.pages[0]?.revision === selectionRevision) {
+      for (const row of matchedRows) {
+        compatible.set(row.rowId, row);
+      }
+    }
+    return [...compatible.values()];
+  });
+  // A directly looked-up session has no acquired neighbors yet. Do not make
+  // j/k jump from an absent index to the first loaded campaign member.
+  const detailNavigationRows = $derived(
+    selection && !compatibleMemberRows.some((row) => row.rowId === selection.row.rowId)
+      ? [selection.row]
+      : compatibleMemberRows,
+  );
+  const detailLookupFailed = $derived(
+    detailSelection.kind === 'loading' && (selectedLookup.isError || selectedLookup.data?.ok === false),
+  );
+  const invalidSessionLink = $derived(
+    Boolean(selectedSessionId && visibleRevision && localDetailSelection.kind === 'loading' && !selectedLookupRequest),
+  );
   const loadMatches = (): boolean => {
     if (
       !matching.hasNextPage ||
@@ -318,33 +391,10 @@
     }
   });
   $effect(() => {
-    const row = detailRows.find((entry) => entry.rowId === selectedSessionId);
-    const selectedRevision = rowRevisionFor(selectedSessionId);
-    if (row && selectedRevision) {
-      selection = { row, revision: selectedRevision, target: sessionAnalysisTargetForSession(row) };
-    } else if (!selectedSessionId) {
-      selection = null;
-    } else if (visible?.missingAnchors.includes(selectedSessionId)) {
-      selection = null;
-      navigationError = 'The selected session is no longer present in this revision. The campaign remains available.';
-    }
-  });
-  // A bookmark restores bounded selection, not an unbounded download of earlier pages.
-  $effect(() => {
-    if (
-      selectedKey &&
-      selectedSessionId &&
-      !selection &&
-      !exploration.error &&
-      !anchors.memberRowIds?.[selectedKey]?.includes(selectedSessionId)
-    ) {
-      anchors = { ...anchors, memberRowIds: { [selectedKey]: [selectedSessionId] } };
-    }
-  });
-  $effect(() => {
     if (
       data.mode === 'live' &&
-      exploration.error instanceof SessionRevisionExpiredError &&
+      (exploration.error instanceof SessionRevisionExpiredError ||
+        (selectedLookup.data?.ok === false && selectedLookup.data.error.tag === 'RevisionExpired')) &&
       revision &&
       checkedExpiredRevision !== revision
     ) {
@@ -395,18 +445,13 @@
       timelineCampaignAnchor = selectedKey;
     }
     const memberAnchor = campaignView === 'timeline' ? timelineNavigation.anchor?.key : mapNavigation.anchor?.key;
-    const selectedMemberAnchor =
-      !matchingRestoration?.rowIds.includes(selectedSessionId) || rows.some((row) => row.rowId === selectedSessionId)
-        ? selectedSessionId
-        : undefined;
     anchors = {
       campaignKeys: [...new Set([campaignAnchor, timelineCampaignAnchor].filter((key): key is string => Boolean(key)))],
       memberRowIds: selectedKey
         ? {
-            [selectedKey]: [
-              selectedMemberAnchor,
-              rows.some((row) => row.rowId === memberAnchor) ? memberAnchor : undefined,
-            ].filter((key): key is string => Boolean(key)),
+            [selectedKey]: [rows.some((row) => row.rowId === memberAnchor) ? memberAnchor : undefined].filter(
+              (key): key is string => Boolean(key),
+            ),
           }
         : {},
     };
@@ -428,10 +473,13 @@
     url.searchParams.delete('selectedSession');
     navigate(url);
   };
-  const navigate = async (url: URL): Promise<void> => {
+  const navigate = async (
+    url: URL,
+    options: { readonly replaceState?: boolean; readonly state?: App.PageState } = {},
+  ): Promise<void> => {
     navigationError = null;
     try {
-      await goto(url, { keepFocus: true, noScroll: true });
+      await shellNavigation.goto(url, { keepFocus: true, noScroll: true, ...options });
     } catch (cause) {
       navigationError = cause instanceof Error ? cause.message : 'Campaign navigation failed.';
     }
@@ -504,11 +552,17 @@
       return;
     }
     mobileMap = true;
-    selection = { revision: selectedRevision, row, target: sessionAnalysisTargetForSession(row) };
+    if (!selectedSessionId) {
+      detailOpenerId = row.rowId;
+    }
     const url = new URL(page.url);
     url.searchParams.set('selectedCampaign', selectedKey);
     url.searchParams.set('selectedSession', row.rowId);
-    navigate(url);
+    const replacing = Boolean(selectedSessionId);
+    navigate(url, {
+      replaceState: replacing,
+      state: replacing && !panelOpenedFromReport(page.state) ? page.state : sessionPanelHistoryState(page.state),
+    });
   };
   const restoreFocus = async (): Promise<void> => {
     if (!pendingFocus) {
@@ -516,28 +570,68 @@
     }
     const key = pendingFocus;
     pendingFocus = '';
+    const generation = focusRestoreGeneration;
     await tick();
+    if (generation !== focusRestoreGeneration || selectedSessionId || page.url.pathname !== '/campaigns') {
+      return;
+    }
+    detailOpenerId = '';
+    let restored = false;
     if (searchExpanded) {
-      await searchVirtualList?.focusKey(key);
+      restored = (await searchVirtualList?.focusKey(key)) ?? false;
     } else {
       const direct = document.querySelector<HTMLElement>(`[data-matching-row-id="${CSS.escape(key)}"]`);
       if (direct) {
         direct.focus({ preventScroll: true });
+        restored = document.activeElement === direct;
       } else {
-        await (campaignView === 'timeline' ? timelineVirtualList : mapVirtualList)?.focusKey(key);
+        restored = (await (campaignView === 'timeline' ? timelineVirtualList : mapVirtualList)?.focusKey(key)) ?? false;
       }
     }
+    if (restored || generation !== focusRestoreGeneration || selectedSessionId || page.url.pathname !== '/campaigns') {
+      return;
+    }
+    // A direct mobile link can close onto the campaign list while the Map is
+    // hidden. Focus the visible viewport without revealing or acquiring rows.
+    const visibleSurfaces = [...document.querySelectorAll<HTMLElement>('[data-campaign-scroll]')].filter(
+      (element) =>
+        element.getClientRects().length > 0 &&
+        getComputedStyle(element).visibility !== 'hidden' &&
+        !element.closest('[hidden], [inert]'),
+    );
+    if (!visibleSurfaces.some((element) => element === document.activeElement)) {
+      visibleSurfaces[0]?.focus({ preventScroll: true });
+    }
   };
+  beforeNavigate((navigation) => {
+    focusRestoreGeneration += 1;
+    const from = navigation.from?.url;
+    const to = navigation.to?.url;
+    if (from?.pathname === '/campaigns' && to?.pathname === '/campaigns' && !to.searchParams.has('selectedSession')) {
+      pendingFocus = detailOpenerId || from.searchParams.get('selectedSession') || '';
+    }
+  });
+  afterNavigate(() => {
+    restoreFocus().catch((cause: unknown) => {
+      navigationError = cause instanceof Error ? cause.message : 'Session focus could not be restored.';
+    });
+  });
+  onDestroy(() => {
+    focusRestoreGeneration += 1;
+  });
   const changeSelection = (next: SessionSelectionInput | null): void => {
     if (next) {
       openSession(next.row);
       return;
     }
     pendingFocus = selection?.row.rowId ?? selectedSessionId;
-    selection = null;
+    if (panelOpenedFromReport(page.state)) {
+      window.history.back();
+      return;
+    }
     const url = new URL(page.url);
     url.searchParams.delete('selectedSession');
-    navigate(url).then(restoreFocus);
+    navigate(url, { replaceState: true });
   };
   const retry = async (): Promise<void> => {
     if (recoveryBusy) {
@@ -569,6 +663,7 @@
     mobileMap,
     searchExpanded,
     searchNavigation,
+    detailOpenerId,
   });
   export const restore = (saved: ReturnType<typeof capture>): void => {
     previousScope = saved.scope;
@@ -588,6 +683,7 @@
     mobileMap = saved.mobileMap;
     searchExpanded = saved.searchExpanded;
     searchNavigation = saved.searchNavigation;
+    detailOpenerId = saved.detailOpenerId;
   };
 
   const recordedAt = (row: SessionPresentationRow): string => {
@@ -758,6 +854,20 @@
     {/if}
     {#if navigationError}
       <p class={notice} role="alert">{navigationError}</p>
+    {/if}
+    {#if detailSelection.kind === 'missing' || invalidSessionLink}
+      <p class={notice} data-session-route-status="missing" role="status">
+        This session is not part of the selected campaign in this report revision.
+        <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close session details</button>
+      </p>
+    {:else if detailLookupFailed}
+      <p class={notice} data-session-route-status="failed" role="status">
+        {selectedLookup.data?.ok === false ? selectedLookup.data.error.message : 'The selected session could not be loaded.'}
+        <button class={ghostButton} onclick={() => selectedLookup.refetch()} type="button">Retry session</button>
+        <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close session details</button>
+      </p>
+    {:else if detailSelection.kind === 'loading'}
+      <p class={notice} data-session-route-status="loading" role="status">Loading session details…</p>
     {/if}
     {#if urlSelection.status === 'invalid'}
       <p class={notice} role="status">
@@ -1005,9 +1115,11 @@
     {/if}
     <SessionDetailQuerySlot
       client={clients.session}
+      memberRows={compatibleMemberRows}
       onSelectionChange={changeSelection}
+      onSelectMember={openSession}
       {queryClient}
-      rows={detailRows}
+      rows={detailNavigationRows}
       {selection}
     />
   </div>
