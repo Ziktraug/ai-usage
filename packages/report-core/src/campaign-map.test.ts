@@ -277,6 +277,15 @@ describe('campaign temporal map', () => {
     ]);
     expect(map.wallClockDurationMs).toBeNull();
     expect(map.observedSpanMs).toBe(120 * MINUTE);
+    expect(map).toMatchObject({ observedFromMs: START - 20 * MINUTE, observedToMs: START + 100 * MINUTE });
+    expect(map.nodes.find((node) => node.row.name === 'earlier-end')).toMatchObject({
+      startMs: null,
+      endMs: START - 20 * MINUTE,
+    });
+    expect(map.nodes.find((node) => node.row.name === 'later-start')).toMatchObject({
+      startMs: START + 100 * MINUTE,
+      endMs: null,
+    });
     expect(project(row('root', { date: null })).observedSpanMs).toBeNull();
     expect(project(row('root', { endDate: null })).observedSpanMs).toBeNull();
     expect(project(row('root', { date: null, endDate: null })).observedSpanMs).toBeNull();

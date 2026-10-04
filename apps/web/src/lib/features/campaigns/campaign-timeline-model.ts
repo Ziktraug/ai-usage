@@ -22,11 +22,15 @@ export interface CampaignTimelineCampaign {
 }
 
 export interface CampaignTimelineProject {
-  /** Union of recorded campaign spans; gaps between campaigns remain gaps. */
-  bars: readonly CampaignTimelineBar[];
+  /** Union of observed spans; merged bands retain the weakest timing quality. */
+  bars: readonly CampaignTimelineProjectBar[];
   campaigns: readonly CampaignTimelineCampaign[];
   projectKey: string;
   projectLabel: string;
+}
+
+export interface CampaignTimelineProjectBar extends CampaignTimelineBar {
+  timing: 'complete' | 'partial';
 }
 
 export interface CampaignTimeline {
@@ -86,8 +90,12 @@ const axisFor = (items: readonly SessionPageItem[], range: SessionQueryRange): C
       }
     }
   }
-  const startMs = Math.max(earliest, timestamp(range.from) ?? Number.NEGATIVE_INFINITY);
-  const endMs = Math.min(latest, timestamp(range.to) ?? Number.POSITIVE_INFINITY);
+  const from = timestamp(range.from);
+  const to = timestamp(range.to);
+  // A finite discovery period owns its scale, independently of loaded pages.
+  const finiteRange = from !== null && to !== null;
+  const startMs = finiteRange ? from : Math.max(earliest, from ?? Number.NEGATIVE_INFINITY);
+  const endMs = finiteRange ? to : Math.min(latest, to ?? Number.POSITIVE_INFINITY);
   if (!(Number.isFinite(startMs) && Number.isFinite(endMs)) || endMs < startMs) {
     return null;
   }
@@ -109,30 +117,38 @@ const axisFor = (items: readonly SessionPageItem[], range: SessionQueryRange): C
 const projectBands = (
   campaigns: readonly CampaignTimelineCampaign[],
   axis: CampaignTimelineAxis | null,
-): CampaignTimelineBar[] => {
-  const intervals: Array<{ start: number; end: number }> = [];
-  for (const { item } of campaigns) {
+): CampaignTimelineProjectBar[] => {
+  interface Interval {
+    end: number;
+    start: number;
+    timing: CampaignTimelineProjectBar['timing'];
+  }
+  const intervals: Interval[] = [];
+  for (const { item, timing } of campaigns) {
     const from = timestamp(item.chronology.observedFrom);
     const to = timestamp(item.chronology.observedTo);
     const start = from ?? to;
     const end = to ?? from;
-    if (start !== null && end !== null && end >= start) {
-      intervals.push({ start, end });
+    if (start !== null && end !== null && end >= start && timing !== 'unavailable') {
+      intervals.push({ start, end, timing });
     }
   }
   intervals.sort((left, right) => left.start - right.start || left.end - right.end);
-  const merged: Array<{ start: number; end: number }> = [];
+  const merged: Interval[] = [];
   for (const interval of intervals) {
     const previous = merged.at(-1);
     if (previous && interval.start <= previous.end) {
       previous.end = Math.max(previous.end, interval.end);
+      if (interval.timing === 'partial') {
+        previous.timing = 'partial';
+      }
     } else {
       merged.push({ ...interval });
     }
   }
-  return merged.flatMap(({ start, end }) => {
+  return merged.flatMap(({ start, end, timing }) => {
     const bar = barForInterval(start, end, axis);
-    return bar ? [bar] : [];
+    return bar ? [{ ...bar, timing }] : [];
   });
 };
 
@@ -140,8 +156,9 @@ const projectBands = (
 export const buildCampaignTimeline = (
   items: readonly SessionPageItem[],
   range: SessionQueryRange,
+  retainedAxis?: CampaignTimelineAxis | null,
 ): CampaignTimeline => {
-  const axis = axisFor(items, range);
+  const axis = retainedAxis ?? axisFor(items, range);
   const grouped = new Map<string, { label: string; campaigns: CampaignTimelineCampaign[]; latest: number }>();
   for (const item of items) {
     const { chronology, row } = item;

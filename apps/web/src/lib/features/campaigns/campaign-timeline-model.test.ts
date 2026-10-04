@@ -3,6 +3,7 @@ import { buildCampaignChronology, type SessionPageItem } from '@ai-usage/report-
 import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
 import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
 import { barForInterval, buildCampaignTimeline } from './campaign-timeline-model';
+import { campaignProjectSegments } from './campaign-timeline-projection';
 import { campaignsRequest } from './campaigns-query';
 import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
@@ -25,6 +26,35 @@ const fixtureItems = async (): Promise<SessionPageItem[]> => {
 };
 
 describe('project campaign timeline', () => {
+  test('appends continuations without inserting campaigns into previously traversed project segments', async () => {
+    const template = (await fixtureItems())[0]!;
+    const items = Array.from(
+      { length: 120 },
+      (_, index): SessionPageItem => ({
+        ...template,
+        campaignKey: `campaign-${index}`,
+        row: { ...template.row, projectKey: `project-${index % 12}` },
+      }),
+    );
+    const pages = [items.slice(0, 40), items.slice(40, 80), items.slice(80)];
+    const project = (count: number) =>
+      campaignProjectSegments(
+        buildCampaignTimeline(pages.slice(0, count).flat(), allHistory),
+        pages.slice(0, count).map((entries) => entries.map((item) => item.campaignKey)),
+      );
+    const keys = (count: number) =>
+      project(count).flatMap((segment) => [
+        segment.key,
+        ...segment.project.campaigns.map((campaign) => campaign.item.campaignKey),
+      ]);
+    const first = keys(1);
+    const second = keys(2);
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(keys(3).slice(0, second.length)).toEqual(second);
+    expect(project(3).flatMap((segment) => segment.project.campaigns)).toHaveLength(120);
+    expect(new Set(keys(3)).size).toBe(keys(3).length);
+    expect(project(3).filter((segment) => segment.continuation)).toHaveLength(24);
+  });
   test('places projects and complete campaign spans on one scale and retains one-sided timing as a point', async () => {
     const items = await fixtureItems();
     const result = buildCampaignTimeline(items, allHistory);
@@ -81,6 +111,57 @@ describe('project campaign timeline', () => {
     expect(barForInterval(epoch('08:30'), epoch('09:00'), result.axis)).toMatchObject({
       leftPercent: 25,
       widthPercent: 25,
+    });
+  });
+
+  test('keeps timing quality through project unions and leaves complete bands across real gaps', async () => {
+    const template = (await fixtureItems())[0]!;
+    const item = (key: string, start: string, end: string, partial: boolean): SessionPageItem => ({
+      ...template,
+      campaignKey: key,
+      chronology: buildCampaignChronology([
+        { date: instant(start), endDate: instant(end) },
+        ...(partial ? [{ date: null, endDate: null }] : []),
+      ]),
+    });
+    const complete = item('complete', '08:00', '08:20', false);
+    const partial = item('partial', '08:10', '08:40', true);
+    expect(buildCampaignTimeline([complete], allHistory).groups[0]?.bars[0]).toMatchObject({ timing: 'complete' });
+    expect(buildCampaignTimeline([partial], allHistory).groups[0]?.bars[0]).toMatchObject({ timing: 'partial' });
+    const mixed = buildCampaignTimeline([complete, partial, item('after-gap', '09:00', '09:20', false)], allHistory);
+    expect(mixed.groups[0]?.bars).toHaveLength(2);
+    expect(mixed.groups[0]?.bars.map(({ timing }) => timing)).toEqual(['partial', 'complete']);
+  });
+
+  test('fixes finite periods and retains a fitted all-history axis while older pages append', async () => {
+    const template = (await fixtureItems())[0]!;
+    const recent = {
+      ...template,
+      chronology: buildCampaignChronology([{ date: instant('08:00'), endDate: instant('09:00') }]),
+    };
+    const older = {
+      ...template,
+      campaignKey: 'older',
+      chronology: buildCampaignChronology([{ date: instant('06:00'), endDate: instant('07:00') }]),
+    };
+    const range = { from: instant('05:00'), to: instant('10:00') };
+    const finite = buildCampaignTimeline([recent], range);
+    expect(finite.axis).toMatchObject({ startMs: epoch('05:00'), endMs: epoch('10:00') });
+    expect(buildCampaignTimeline([recent, older], range).axis).toEqual(finite.axis);
+    expect(buildCampaignTimeline([], range).axis).toEqual(finite.axis);
+    const fitted = buildCampaignTimeline([recent], allHistory);
+    const appended = buildCampaignTimeline([recent, older], allHistory, fitted.axis);
+    expect(appended.axis).toBe(fitted.axis);
+    expect(appended.groups[0]?.campaigns.find(({ item }) => item.campaignKey === recent.campaignKey)?.bar).toEqual(
+      fitted.groups[0]?.campaigns[0]?.bar,
+    );
+    expect(appended.groups[0]?.campaigns.find(({ item }) => item.campaignKey === 'older')).toMatchObject({
+      bar: null,
+      outsideRange: true,
+    });
+    expect(buildCampaignTimeline([recent, older], allHistory).axis).toMatchObject({
+      startMs: epoch('06:00'),
+      endMs: epoch('09:00'),
     });
   });
 

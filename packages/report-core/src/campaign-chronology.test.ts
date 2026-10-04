@@ -1,9 +1,31 @@
 import { describe, expect, test } from 'bun:test';
-import { buildCampaignChronology } from './campaign-chronology';
+import { buildCampaignChronology, createCampaignChronologyAccumulator } from './campaign-chronology';
 
 const instant = (minute: number) => new Date(Date.UTC(2026, 5, 11, 8, minute)).toISOString();
 
 describe('full campaign chronology', () => {
+  test('accumulates interleaved campaigns without retaining their mutable input rows', () => {
+    const first = createCampaignChronologyAccumulator();
+    const second = createCampaignChronologyAccumulator();
+    const member = { date: instant(0), endDate: instant(10) };
+    first.add(member);
+    const initial = first.finish();
+    member.endDate = instant(1000);
+    second.add(member);
+    first.add({ date: null, endDate: instant(30) });
+    first.add({ date: instant(40), endDate: instant(20) });
+    expect(initial).toMatchObject({ observedTo: instant(10), sessionCount: 1, timedSessionCount: 1 });
+    expect(first.finish()).toEqual({
+      endedAt: instant(30),
+      observedFrom: instant(0),
+      observedTo: instant(30),
+      sessionCount: 3,
+      startedAt: instant(0),
+      timedSessionCount: 1,
+    });
+    expect(second.finish()).toMatchObject({ observedTo: instant(1000), sessionCount: 1, timedSessionCount: 1 });
+  });
+
   test('uses every member for the observed bounds, including children outside their root interval', () => {
     const rows = [
       { date: instant(10), endDate: instant(40) },

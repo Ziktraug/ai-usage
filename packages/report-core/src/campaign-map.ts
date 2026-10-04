@@ -32,10 +32,13 @@ export interface CampaignMap {
   maxConcurrency: number | null;
   models: string[];
   nodes: CampaignMapNode[];
+  /** Bounds of every known timestamp, including one-sided observations. */
+  observedFromMs: number | null;
   /** Lower bound from loaded members with a recorded, nonzero interval. */
   observedMaxConcurrency: number;
   /** Span of all known timestamp anchors; incomplete members can widen this lower bound. */
   observedSpanMs: number | null;
+  observedToMs: number | null;
   omittedCount: number;
   rootRowId: string;
   startedAt: string | null;
@@ -354,9 +357,11 @@ export const buildCampaignMap = (input: CampaignMapInput): CampaignMap => {
       ),
     ].sort(),
     nodes: orderedHierarchy(nodes, input.root.rowId, title),
+    observedFromMs: earliestAnchor,
     observedMaxConcurrency,
     observedSpanMs:
       anchorCount < 2 || earliestAnchor === null || latestAnchor === null ? null : latestAnchor - earliestAnchor,
+    observedToMs: latestAnchor,
     omittedCount,
     rootRowId: input.root.rowId,
     startMs,

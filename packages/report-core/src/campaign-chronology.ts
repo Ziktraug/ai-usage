@@ -21,27 +21,32 @@ const iso = (value: number | null): string | null => (value === null ? null : ne
 const minimum = (current: number | null, next: number): number => (current === null ? next : Math.min(current, next));
 const maximum = (current: number | null, next: number): number => (current === null ? next : Math.max(current, next));
 
-/** Full-campaign observed chronology, independent of discovery filters and active-duration metrics. */
-export const buildCampaignChronology = (rows: Iterable<CampaignTimingRow>): CampaignChronology => {
+export interface CampaignChronologyAccumulator {
+  add(row: CampaignTimingRow): void;
+  finish(): CampaignChronology;
+}
+
+/** Keeps only the observed bounds and counts while a campaign's members stream past. */
+export const createCampaignChronologyAccumulator = (): CampaignChronologyAccumulator => {
   let sessionCount = 0;
   let timedSessionCount = 0;
   let startedAt: number | null = null;
   let endedAt: number | null = null;
   let observedFrom: number | null = null;
   let observedTo: number | null = null;
-  for (const row of rows) {
+  const add = (row: CampaignTimingRow): void => {
     sessionCount += 1;
     if (
       (row.date !== null && !isStrictIsoTimestamp(row.date)) ||
       (row.endDate !== null && !isStrictIsoTimestamp(row.endDate))
     ) {
-      continue;
+      return;
     }
     const start = row.date === null ? null : Date.parse(row.date);
     const end = row.endDate === null ? null : Date.parse(row.endDate);
     if (start !== null && end !== null) {
       if (end < start) {
-        continue;
+        return;
       }
       timedSessionCount += 1;
     }
@@ -55,13 +60,25 @@ export const buildCampaignChronology = (rows: Iterable<CampaignTimingRow>): Camp
       observedFrom = minimum(observedFrom, end);
       observedTo = maximum(observedTo, end);
     }
-  }
-  return {
-    endedAt: iso(endedAt),
-    observedFrom: iso(observedFrom),
-    observedTo: iso(observedTo),
-    sessionCount,
-    startedAt: iso(startedAt),
-    timedSessionCount,
   };
+  return {
+    add,
+    finish: () => ({
+      endedAt: iso(endedAt),
+      observedFrom: iso(observedFrom),
+      observedTo: iso(observedTo),
+      sessionCount,
+      startedAt: iso(startedAt),
+      timedSessionCount,
+    }),
+  };
+};
+
+/** Full-campaign observed chronology, independent of discovery filters and active-duration metrics. */
+export const buildCampaignChronology = (rows: Iterable<CampaignTimingRow>): CampaignChronology => {
+  const accumulator = createCampaignChronologyAccumulator();
+  for (const row of rows) {
+    accumulator.add(row);
+  }
+  return accumulator.finish();
 };
