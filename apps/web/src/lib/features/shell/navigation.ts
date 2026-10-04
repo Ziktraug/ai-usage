@@ -15,6 +15,7 @@ import {
 
 export type ShellIconName =
   | 'breakdown'
+  | 'campaigns'
   | 'memory'
   | 'overview'
   | 'projects'

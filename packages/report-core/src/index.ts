@@ -1,5 +1,6 @@
 export * from './analytics';
 export * from './auth';
+export * from './campaign-map';
 export * from './canonical-instant';
 export * from './csv';
 export * from './datasets';

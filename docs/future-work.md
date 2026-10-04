@@ -69,9 +69,12 @@ over-emphasize it or build ROI/break-even features on top of it.
 - Per-metric provenance/limitations: instead of a global completeness badge, let
   individual columns/cards carry their own caveats (partial Cursor counters,
   ambiguous reconciliation, usage-unavailable sessions) where they apply.
-- Session intention via `firstPrompt` + parent linking: propagate `firstPrompt`
-  into `UsageRow`, then cluster sessions by intent. Parent linking is already in
-  place (see below); the remaining work is the intent signal and grouping UI.
+- Project → Campaign → Session timeline: extend the Campaigns Agent Map with a
+  shared time scale across projects using a bounded exact-revision summary query.
+  Derive campaign-wide bounds from all members rather than reusing the root's
+  active duration or issuing a member query for every list item.
+- Campaign outcomes: surface recorded repository/branch/commit/PR facts without
+  interpreting a mentioned commit as produced work or a recorded PR as merged.
 - Timeline charts now collapse additive tails beyond 12 categories into a
   non-filterable `Other` series while retaining its member keys in the UI model.
   Add an explicit expand/drill-down interaction only if users need to inspect
@@ -88,18 +91,17 @@ over-emphasize it or build ROI/break-even features on top of it.
 
 - Codex parent-link propagation now exists through `parentSourceSessionId` on
   `UsageRow.source`, and report normalization derives `rootSourceSessionId` via
-  `packages/report-core/src/session-lineage.ts`. The remaining useful work is
-  around `firstPrompt` propagation, campaign-level intent/title display, and how
-  child sessions inherit or group under parent titles.
-- Claude Code remains harness-asymmetric: raw logs do not expose the same
-  cross-session parent pointer (only the in-file `isSidechain` flag and
-  `agent-*` filename convention). Reflect that as a per-metric limitation
-  rather than pretending parity across harnesses.
+  `packages/report-core/src/session-lineage.ts`. `/campaigns` now displays the
+  canonical grouping with nested chronology and session drill-down, including
+  paged campaigns, standalone sessions, and unresolved parent links.
+- Claude Code remains harness-asymmetric: use parent metadata when observed;
+  the in-file `isSidechain` flag and `agent-*` convention alone do not establish
+  a parent. The Agent Map identifies unavailable or undeclared parents locally.
 - Titles are already extracted per harness (Claude `ai-title` event, Codex
   `threads.title`, OpenCode `session.title`, Cursor `composerData.name`) and
-  shown in Top Sessions. Remaining gap is narrower: subagent/orchestrator
-  children fall back to generic ids — children could inherit the parent's title
-  once campaign grouping is surfaced in the UI.
+  shown in Top Sessions. Campaigns reuses these published labels and existing
+  local campaign names, and gives generic child labels explicit parent context.
+  No new `firstPrompt` field is propagated into revisions or portable exports.
 
 ## AI Operations And Memory Platform (plans 099–110)
 

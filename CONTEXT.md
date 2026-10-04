@@ -82,6 +82,15 @@ _Avoid_: remote usage, cloud billing data
 A single conversation or agent run found in local history. A session can include child sessions, such as Codex subagent threads.
 _Avoid_: chat, transcript, thread
 
+**Campaign**:
+An observed execution grouping: a root Session and the related Sessions resolved
+by collected lineage within the same machine and harness. A standalone Session
+is a one-session Campaign. Campaign identity comes from the served revision's
+existing session grouping; proximity in time, a shared project, or similar
+titles do not establish a parent relationship. A Campaign is distinct from a
+durable Work thread.
+_Avoid_: work thread, inferred task, active agent fleet
+
 **Session origin**:
 The declared way a session was started, with three values: human, delegated, or automated review. It is absent when the harness did not declare one. An absent attribute is expressed by provenance, never by a sentinel value in its own domain.
 An automated review with a declared parent contributes to that parent's campaign. A review shape that declares no parent remains a standalone one-session review campaign; a declared but unresolved parent remains an integrity error.

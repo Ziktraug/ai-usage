@@ -17,7 +17,12 @@
   const brushAxis = css({ position: 'relative', minH: '14px', color: 'muted', fontSize: '10px', lineHeight: 1 });
   const brushTick = css({ position: 'absolute', top: 0, transform: 'translateX(-50%)', whiteSpace: 'nowrap' });
   const executiveMetricGroup = css({
+    display: 'flex',
+    gap: '2px',
+    justifyContent: 'flex-start',
     border: 0,
+    borderRadius: 'md',
+    bg: 'surfaceMuted',
     m: 0,
     minW: 0,
     p: 0,
@@ -59,7 +64,6 @@
     panelSub,
     panelTitle,
     presetButton,
-    presetGroup,
     SegmentedControl,
     timeChartOptions,
     timeChartOptionsCurrent,
@@ -469,7 +473,7 @@
     <span title={selectedMetricSummary.title ?? undefined}>{selectedMetricSummary.label}</span>
   </div>
   <div class={toolbarRow} data-activity-toolbar>
-    <fieldset aria-label="Activity metric" class={cx(presetGroup, executiveMetricGroup)}>
+    <fieldset aria-label="Activity metric" class={executiveMetricGroup}>
       {#each valueItems as item (item.value)}
         <button
           aria-pressed={value === item.value}
