@@ -7,6 +7,7 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
   seedHarnessHome,
 } from '@ai-usage/local-machine/testing/harness-home';
+import { CONTINUITY_HOME_RECORD_ENV, seedCampaignContinuity } from './campaign-continuity-fixture';
 import { CLOCK_EPOCH_ENVIRONMENT_KEY } from './production-clock';
 import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
 
@@ -19,6 +20,7 @@ const PRODUCTION_FIXTURE_EPOCH = '2026-07-03T12:00:00.000Z';
 const rootDirectory = path.resolve(import.meta.dirname, '../../..');
 const productionClockUrl = pathToFileURL(path.join(import.meta.dirname, 'production-clock.ts')).href;
 const scaleFixture = process.env[SCALE_FIXTURE_ENVIRONMENT_KEY] === '1';
+const campaignContinuityFixture = process.env.AI_USAGE_CAMPAIGN_CONTINUITY_E2E === '1';
 const listenerPort = process.env[LISTENER_PORT_ENVIRONMENT_KEY] ?? DEFAULT_LISTENER_PORT;
 
 if (!(LISTENER_PORT_PATTERN.test(listenerPort) && Number(listenerPort) <= 65_535)) {
@@ -56,10 +58,27 @@ try {
     `#!/usr/bin/env bun\nprocess.stderr.write(${JSON.stringify(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL)});\nprocess.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));\n`,
   );
   await chmod(fakeGhPath, 0o700);
+  // A host Codex app-server migrates its native state database even without
+  // credentials. Keep quota acquisition unavailable in this isolated fixture
+  // so it cannot mutate the seeded thread evidence used by session details.
+  const fakeCodexPath = path.join(fixtureBinDirectory, 'codex');
+  await writeFile(
+    fakeCodexPath,
+    '#!/usr/bin/env bun\nprocess.stderr.write("Codex quota acquisition is unavailable in the production fixture.\\n");\nprocess.exitCode = 1;\n',
+  );
+  await chmod(fakeCodexPath, 0o700);
+  const codexSessionCount = scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT;
   await seedHarnessHome(temporaryHome, {
-    codexSessionCount: scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT,
-    harnesses: scaleFixture ? ['codex'] : ['claude', 'codex'],
+    codexSessionCount: campaignContinuityFixture ? 2 : codexSessionCount,
+    harnesses: scaleFixture || campaignContinuityFixture ? ['codex'] : ['claude', 'codex'],
   });
+  if (campaignContinuityFixture) {
+    await seedCampaignContinuity(temporaryHome);
+    const homeRecord = process.env[CONTINUITY_HOME_RECORD_ENV];
+    if (homeRecord) {
+      await writeFile(homeRecord, JSON.stringify({ home: temporaryHome }), { mode: 0o600 });
+    }
+  }
   await writeFile(
     machineConfigPath,
     `${JSON.stringify({ id: 'production-e2e-machine', label: 'Production fixture machine' })}\n`,
@@ -122,4 +141,8 @@ try {
   // The child's exit is awaited above before its HOME is removed. This keeps
   // shutdown from racing revision-registry and SQLite cleanup.
   cleanupHome();
+  const homeRecord = process.env[CONTINUITY_HOME_RECORD_ENV];
+  if (campaignContinuityFixture && homeRecord) {
+    rmSync(homeRecord, { force: true });
+  }
 }

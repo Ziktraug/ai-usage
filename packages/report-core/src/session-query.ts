@@ -1,3 +1,4 @@
+import { buildCampaignChronology, type CampaignChronology } from './campaign-chronology';
 import { rtkSavingsPct } from './csv';
 import { modelGroupKey } from './model-identity';
 import { normalizeProjectIdentity } from './project-group';
@@ -8,6 +9,7 @@ import {
   hasValidSerializedUsageDerivedFields,
   isRecord,
   isSerializedUsageRowShape,
+  isStrictIsoTimestamp,
   SERIALIZED_USAGE_ROW_KEYS,
 } from './serialized-usage-validation';
 import { parseServedRevision } from './served-revision';
@@ -15,6 +17,13 @@ import { zonedWeekdayHourForTimestamp } from './time-zone';
 import { isSessionOrigin, type SessionOrigin } from './types';
 import { usageRowApiPriceMeasurement, usageRowModelContributions } from './usage-row';
 
+export {
+  buildCampaignChronology,
+  type CampaignChronology,
+  type CampaignChronologyAccumulator,
+  type CampaignTimingRow,
+  createCampaignChronologyAccumulator,
+} from './campaign-chronology';
 export { MAX_SESSION_QUERY_PAGE_SIZE } from './report-budgets';
 export type { SessionOrigin } from './types';
 export { isSessionOrigin, sessionOrigins } from './types';
@@ -273,6 +282,8 @@ export interface SessionCampaignTableItem {
 
 export interface SessionPageItem {
   campaignKey: string;
+  /** Observed chronology of every campaign member, including those outside the discovery filters. */
+  chronology: CampaignChronology;
   kind: 'campaign';
   row: SessionPresentationRow;
 }
@@ -730,14 +741,78 @@ const parseResultCursor = (value: unknown, label: string): string | null => {
   return value;
 };
 
+const parseCampaignChronology = (value: unknown, label: string): CampaignChronology => {
+  const record = requireRecord(value, label);
+  assertExactKeys(
+    record,
+    ['startedAt', 'endedAt', 'observedFrom', 'observedTo', 'sessionCount', 'timedSessionCount'],
+    label,
+  );
+  const instant = (key: string): string | null => {
+    const next = record[key];
+    if (next === null || isStrictIsoTimestamp(next)) {
+      return next;
+    }
+    throw new SessionQueryValidationError(`${label}.${key} must be a canonical timestamp or null`);
+  };
+  const chronology = {
+    endedAt: instant('endedAt'),
+    observedFrom: instant('observedFrom'),
+    observedTo: instant('observedTo'),
+    sessionCount: requireNonNegativeSafeInteger(record.sessionCount, `${label}.sessionCount`),
+    startedAt: instant('startedAt'),
+    timedSessionCount: requireNonNegativeSafeInteger(record.timedSessionCount, `${label}.timedSessionCount`),
+  };
+  const { endedAt, observedFrom, observedTo, sessionCount, startedAt, timedSessionCount } = chronology;
+  if (sessionCount < 1 || timedSessionCount > sessionCount) {
+    throw new SessionQueryValidationError(`${label} contains inconsistent member counts`);
+  }
+  if ((observedFrom === null) !== (observedTo === null)) {
+    throw new SessionQueryValidationError(`${label} contains an incomplete observed envelope`);
+  }
+  if (observedFrom !== null && observedTo !== null && Date.parse(observedFrom) > Date.parse(observedTo)) {
+    throw new SessionQueryValidationError(`${label} contains a reversed observed envelope`);
+  }
+  if ((startedAt === null && observedTo !== endedAt) || (endedAt === null && observedFrom !== startedAt)) {
+    throw new SessionQueryValidationError(`${label} contains observed bounds unsupported by its timestamps`);
+  }
+  for (const bound of [startedAt, endedAt]) {
+    if (
+      bound !== null &&
+      (observedFrom === null ||
+        observedTo === null ||
+        Date.parse(bound) < Date.parse(observedFrom) ||
+        Date.parse(bound) > Date.parse(observedTo))
+    ) {
+      throw new SessionQueryValidationError(`${label} contains a timestamp outside the observed envelope`);
+    }
+  }
+  if (
+    timedSessionCount > 0 &&
+    (startedAt === null || endedAt === null || Date.parse(startedAt) > Date.parse(endedAt))
+  ) {
+    throw new SessionQueryValidationError(`${label} omits valid interval bounds`);
+  }
+  if (timedSessionCount === sessionCount && (observedFrom !== startedAt || observedTo !== endedAt)) {
+    throw new SessionQueryValidationError(`${label} contains inconsistent complete interval bounds`);
+  }
+  return chronology;
+};
+
 const parseSessionPageItem = (value: unknown, label: string): SessionPageItem => {
   const record = requireRecord(value, label);
   if (record.kind === 'campaign') {
-    assertExactKeys(record, ['campaignKey', 'kind', 'row'], label);
+    assertExactKeys(record, ['campaignKey', 'chronology', 'kind', 'row'], label);
+    const row = parseSessionPresentationRow(record.row, `${label}.row`);
+    const chronology = parseCampaignChronology(record.chronology, `${label}.chronology`);
+    if (row.campaignTotalCount !== undefined && chronology.sessionCount !== row.campaignTotalCount) {
+      throw new SessionQueryValidationError(`${label}.chronology does not match its campaign member count`);
+    }
     return {
       campaignKey: requireTrimmedString(record.campaignKey, `${label}.campaignKey`, MAX_CURSOR_LENGTH),
+      chronology,
       kind: 'campaign',
-      row: parseSessionPresentationRow(record.row, `${label}.row`),
+      row,
     };
   }
   throw new SessionQueryValidationError(`${label}.kind is invalid`);
@@ -1590,6 +1665,7 @@ export const projectSessionPage = (
   const page = boundedPage(campaignItems, request.pageSize, offset);
   const items: SessionPageItem[] = page.items.map((item) => ({
     campaignKey: item.campaign.campaignKey,
+    chronology: buildCampaignChronology(item.campaign.allRows),
     kind: 'campaign',
     row: sessionCampaignDisplayRow(item.campaign, request.sort, false),
   }));

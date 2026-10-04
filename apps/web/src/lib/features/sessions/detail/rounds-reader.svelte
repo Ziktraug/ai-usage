@@ -250,6 +250,7 @@
     loading,
     onOpenChild,
     onRetry,
+    refreshing = false,
     scopeNote: scopeNoteText = null,
     selectedRoundId = $bindable(null),
     unavailable = null,
@@ -259,6 +260,7 @@
     loading: boolean;
     onOpenChild?: ((row: SessionPresentationRow) => void) | undefined;
     onRetry?: (() => void) | undefined;
+    refreshing?: boolean;
     /** Names what the rounds read when the panel's numbers cover more than one session. */
     scopeNote?: string | null;
     /** Owned by the drawer so switching tabs and back keeps the reader's place. */
@@ -412,6 +414,11 @@
   {:else if view}
     {@const unrounded = view.unroundedChildren.length + view.unattributedInteractions.length}
     <div class={preamble}>
+      {#if refreshing}
+        <p class={scopeNote} data-session-rounds-refreshing role="status">
+          Updating local history. Showing the previous report revision.
+        </p>
+      {/if}
       {#if scopeNoteText}
         <p class={scopeNote} data-session-rounds-scope>{scopeNoteText}</p>
       {/if}

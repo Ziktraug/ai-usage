@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionPageItem, SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import { buildCampaignChronology } from '@ai-usage/report-core/session-query';
 import { type DetailSelectionWindow, resolveDetailSelection, routeForRow, routeForSelection } from './detail-selection';
 
 const query: SessionQueryRequest = {
@@ -16,6 +17,7 @@ const row = (rowId: string, overrides: Partial<SessionPresentationRow> = {}): Se
 
 const campaignItem = (campaignKey: string, rowId: string): SessionPageItem => ({
   campaignKey,
+  chronology: buildCampaignChronology([row(rowId, { campaignKey })]),
   kind: 'campaign',
   row: row(rowId, { campaignKey, campaignTotalCount: 3, campaignVisibleCount: 3 }),
 });
@@ -30,6 +32,17 @@ const window = (overrides: Partial<DetailSelectionWindow> = {}): DetailSelection
 });
 
 describe('detail selection from the route', () => {
+  test('keeps an explicitly selected root member separate from its campaign aggregate', () => {
+    const root = row('root-a', { campaignKey: 'campaign-a' });
+    expect(
+      routeForSelection(
+        { row: root, target: { kind: 'session', reportRowId: root.rowId, summaryRow: root } },
+        window(),
+      ),
+    ).toEqual({ kind: 'session', rowId: 'root-a' });
+    expect(routeForSelection({ row: root }, window())).toEqual({ campaignKey: 'campaign-a', kind: 'campaign' });
+  });
+
   test('never relabels retained lookup rows with the new report revision', () => {
     const input = {
       campaignLookup: campaignItem('outside-window', 'old-root'),
@@ -151,6 +164,7 @@ describe('detail selection from the route', () => {
         items: [
           {
             campaignKey: 'campaign-solo',
+            chronology: buildCampaignChronology([row('solo')]),
             kind: 'campaign',
             row: row('solo', { campaignKey: 'campaign-solo', campaignTotalCount: 1, campaignVisibleCount: 1 }),
           },

@@ -122,3 +122,17 @@ restoration, 390 px). Real-history smoke: the 26-session Claude campaign shows
   fine, thousands would need ADR 0004 treatment); observed-span lanes; the
   agent view; the Linux visual-regression snapshot of the drawer must be
   regenerated in CI.
+- 2026-10-04 — Integration with PRs #56–#58: detail identity uses a bounded
+  exact lookup independently of scroll reconstruction. A scoped shell owner
+  reconciles report paths and Campaigns selection/history. Members now loads
+  through the lazy detail owner from Overview, Sessions and direct links, using
+  the same immutable paged Query as Agent Map and a virtual continuous list.
+  This completes the deferred member-ownership item above; the remaining phase
+  4 items are unchanged. Rounds ADR renumbered 0040 after the parallel 0039
+  collision; ADR 0041 records the navigation and acquisition reconciliation.
+  The combined browser suite covers exact-revision Sessions, Map and Timeline
+  navigation, SSR deep links, delayed selection, publication/apply, bounded
+  Members, mobile focus and explicit recovery after a failed detail download.
+  Acceptance results and the integration review are recorded in
+  [PR #55](https://github.com/Ziktraug/ai-usage/pull/55). The Linux Overview
+  baseline was regenerated and inspected with both navigation and panel changes.

@@ -14,6 +14,11 @@ import {
   sessionDetailRequestFingerprint,
   sessionProjectionFactsForSerializedRow,
 } from './session-detail';
+import {
+  SessionDetailValidationError as LightweightValidationError,
+  sessionDetailRequestFingerprint as lightweightFingerprint,
+  parseSessionDetailRequest as parseLightweightRequest,
+} from './session-detail-request';
 import type { UsageRow } from './types';
 
 const tokens = { cacheRead: 60, cacheWrite: 0, input: 30, output: 10, total: 100 };
@@ -144,6 +149,17 @@ const usageRow: UsageRow = {
 };
 
 describe('session detail contract', () => {
+  test('preserves the public request functions and shared error across the lazy response boundary', () => {
+    expect(parseSessionDetailRequest).toBe(parseLightweightRequest);
+    expect(sessionDetailRequestFingerprint).toBe(lightweightFingerprint);
+    expect(SessionDetailValidationError).toBe(LightweightValidationError);
+    expect(() => parseSessionDetailResponse({ status: 'available' })).toThrow(LightweightValidationError);
+    expect(() => parseLightweightRequest({ revision: 'revision-a', rowId: 'x'.repeat(513) })).toThrow(
+      SessionDetailValidationError,
+    );
+    expect(parseLightweightRequest({ revision: 'revision-a', rowId: 'x'.repeat(512) }).rowId).toHaveLength(512);
+  });
+
   test('projects validated serialized rows into canonical comparable facts', () => {
     expect(sessionProjectionFactsForSerializedRow(serializeUsageRow(usageRow))).toEqual({
       calls: 2,

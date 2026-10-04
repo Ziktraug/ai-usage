@@ -220,6 +220,102 @@ const openFixtureDatabase = async (): Promise<{ database: TestQueryDatabase; dbP
   openRowsDatabase(rows);
 
 describe('durable session query SQLite projections', () => {
+  test('hydrates full chronology in the existing batch while preserving filtered costs and classifier rollups', async () => {
+    const instant = (minute: number) => new Date(Date.UTC(2026, 6, 1, 10, minute)).toISOString();
+    const timedRow = (
+      id: string,
+      units: number,
+      start: number | null,
+      end: number | null,
+      parent = 'timeline-root',
+    ): SerializedRow => {
+      const date = start === null ? null : instant(start);
+      const endDate = end === null ? null : instant(end);
+      return {
+        ...row(id, units, { ...(id === 'timeline-root' ? {} : { parent }), root: 'timeline-root' }),
+        activeDate: endDate ?? date,
+        date,
+        endDate,
+      };
+    };
+    const fixtureRows = [
+      timedRow('timeline-root', 10, 10, 20),
+      timedRow('earlier-child', 20, 0, 5),
+      timedRow('nested-child', 30, 25, 40, 'earlier-child'),
+      { ...timedRow('review', 7, 1, 2), origin: 'classifier' as const },
+      timedRow('end-only', 1, null, -20),
+      timedRow('start-only', 1, 100, null),
+      timedRow('missing', 1, null, null),
+      timedRow('reversed', 1, 1000, -1000),
+    ];
+    const { database, dbPath } = await openRowsDatabase(fixtureRows);
+    try {
+      const request = queryRequest({ range: { from: instant(19), to: instant(21) } });
+      const traces: { params: readonly unknown[]; sql: string }[] = [];
+      const actual = executeMaterializedSessionQuery(database, 'sessions', request, (entry) => traces.push(entry));
+      expect(actual).toEqual(projectSessionPage(fixtureRows, request));
+      if (!('items' in actual && 'chronology' in actual.items[0]!)) {
+        throw new Error('Expected a campaign chronology result');
+      }
+      expect(actual.items).toHaveLength(1);
+      expect(actual.items[0]?.chronology).toEqual({
+        endedAt: instant(40),
+        observedFrom: instant(-20),
+        observedTo: instant(100),
+        sessionCount: 8,
+        startedAt: instant(0),
+        timedSessionCount: 4,
+      });
+      expect(actual.items[0]?.row).toMatchObject({
+        campaignTotalCount: 8,
+        campaignVisibleCount: 1,
+        costActual: 0.17,
+        costApprox: 1.7,
+        costQuota: 0.17,
+      });
+      const batches = traces.filter(({ sql }) => sql.includes('AS contributes_to_totals'));
+      expect(batches).toHaveLength(1);
+      expect(batches[0]?.params).toEqual([
+        Date.parse(instant(19)),
+        Date.parse(instant(21)),
+        'machine-a:codex:timeline-root',
+      ]);
+      expect(traces).toHaveLength(5);
+    } finally {
+      database.close();
+    }
+    const exactRequest = queryRequest({ revision: 'revision-a' });
+    const exact = await Effect.runPromise(
+      queryServedRevisionData({
+        dbPath,
+        kind: 'sessions',
+        now: 1001,
+        request: exactRequest,
+        revision: exactRequest.revision,
+      }),
+    );
+    expect(exact).toEqual(projectSessionPage(fixtureRows, exactRequest));
+  });
+
+  test('keeps missing and zero-length chronology in parity without a report schema change', async () => {
+    const instant = '1970-01-01T00:00:00.000Z';
+    const expanded = '+010000-01-01T00:00:00.000Z';
+    const fixtureRows = [
+      { ...row('missing', 1), date: null, endDate: null, activeDate: null },
+      { ...row('zero', 1), date: instant, endDate: instant, activeDate: instant, durationMs: 0 },
+      { ...row('expanded', 1), date: expanded, endDate: expanded, activeDate: expanded, durationMs: 0 },
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    try {
+      const request = queryRequest({ pageSize: 3 });
+      expect(executeMaterializedSessionQuery(database, 'sessions', request)).toEqual(
+        projectSessionPage(fixtureRows, request),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   test('rejects duplicate report row identities during publication', async () => {
     const duplicate = row('duplicate-source', 10);
 
@@ -632,13 +728,114 @@ describe('durable session query SQLite projections', () => {
         executeMaterializedSessionQuery(database, 'session-lookup', lookupRequest, (query) => traces.push(query)),
       ).toEqual(projectSessionLookup(rows, lookupRequest));
       expect(traces).toHaveLength(1);
-      expect(traces[0]?.sql).toContain('WHERE row_id = ?');
+      const lookupTrace = traces[0];
+      if (!lookupTrace) {
+        throw new Error('Expected the lookup SQL trace');
+      }
+      const plan = database.query(`EXPLAIN QUERY PLAN ${lookupTrace.sql}`).all(...lookupTrace.params);
+      const details = plan.map((step) => {
+        if (typeof step !== 'object' || step === null || !('detail' in step) || typeof step.detail !== 'string') {
+          throw new Error('Expected a SQLite query plan detail');
+        }
+        return step.detail;
+      });
+      expect(details.some((detail) => detail.includes('SEARCH served_report_rows USING INDEX'))).toBe(true);
+      expect(details.some((detail) => detail.includes('(revision=? AND row_id=?)'))).toBe(true);
+      expect(details.some((detail) => detail.includes('SCAN served_report_rows'))).toBe(false);
       expect(
         executeMaterializedSessionQuery(database, 'session-lookup', { ...lookupRequest, rowId: 'absent' }),
       ).toEqual(projectSessionLookup(rows, { ...lookupRequest, rowId: 'absent' }));
     } finally {
       database.close();
     }
+  });
+
+  test('looks up canonical root and child sessions without acquiring their preceding campaign pages', async () => {
+    const { database } = await openFixtureDatabase();
+    const request = queryRequest({ pageSize: 1, sort: [{ desc: false, id: 'session' }] });
+    const campaignKey = 'machine-a:codex:campaign-root';
+    try {
+      const members = executeMaterializedSessionQuery(database, 'campaign-children', { campaignKey, query: request });
+      const rootLookup = executeMaterializedSessionQuery(database, 'session-lookup', {
+        revision: request.revision,
+        rowId: sessionRowIdentity(rows[1]!),
+      });
+      const childLookup = executeMaterializedSessionQuery(database, 'session-lookup', {
+        revision: request.revision,
+        rowId: sessionRowIdentity(rows[3]!),
+      });
+      expect(members.nextCursor).not.toBeNull();
+      expect(members.items.some((member) => member.rowId === childLookup.row?.rowId)).toBe(false);
+      expect(rootLookup.row).toEqual(members.root);
+      expect(rootLookup.row?.tokenTotal).toBe(rows[1]?.tokenTotal);
+      expect(rootLookup.row?.campaignTotalCount).toBeUndefined();
+      const nextMembers = executeMaterializedSessionQuery(database, 'campaign-children', {
+        campaignKey,
+        query: { ...request, cursor: members.nextCursor },
+      });
+      const nextMember = nextMembers.items[0];
+      if (!nextMember) {
+        throw new Error('Expected the next campaign member');
+      }
+      expect(childLookup.row).toEqual(nextMember);
+      expect(childLookup.row?.rowId).toBe(sessionRowIdentity(rows[3]!));
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps lookup content at its requested revision and reports expiry without falling through to current', async () => {
+    const firstRows = [row('same-session', 10), row('only-in-a', 1)];
+    const secondRows = [row('same-session', 20), row('only-in-b', 1)];
+    const { database, dbPath } = await openRowsDatabase(firstRows);
+    database.close();
+    const lookup = (revision: string, rowId: string, now = 2001) =>
+      queryServedRevisionData({ dbPath, kind: 'session-lookup', now, request: { revision, rowId }, revision });
+    const rowId = sessionRowIdentity(firstRows[0]!);
+    const before = await Effect.runPromise(lookup('revision-a', rowId, 1001));
+    await Effect.runPromise(
+      publishServedReportRevision({
+        assemble: () => ({
+          configFingerprint: 'c'.repeat(64),
+          generatedAt: '2026-07-13T00:01:00.000Z',
+          projectAliases: [],
+          projectGroupConfigs: [],
+          rows: secondRows,
+          sourceAuthorities: secondRows.map(() => 'local-observed' as const),
+          support: support(secondRows.length),
+        }),
+        dbPath,
+        now: 2000,
+        revision: 'revision-b',
+        ttlMs: 300_000,
+      }),
+    );
+    expect(await Effect.runPromise(lookup('revision-a', rowId))).toEqual(before);
+    expect(before).toMatchObject({ found: true, revision: 'revision-a', row: { rowId, tokenTotal: 40 } });
+    expect(await Effect.runPromise(lookup('revision-b', rowId))).toMatchObject({
+      found: true,
+      revision: 'revision-b',
+      row: { rowId, tokenTotal: 80 },
+    });
+    expect(await Effect.runPromise(lookup('revision-a', sessionRowIdentity(secondRows[1]!)))).toMatchObject({
+      found: false,
+      revision: 'revision-a',
+      row: null,
+    });
+    expect(await Effect.runPromise(lookup('revision-b', sessionRowIdentity(firstRows[1]!)))).toMatchObject({
+      found: false,
+      revision: 'revision-b',
+      row: null,
+    });
+    expect(await Effect.runPromise(Effect.either(lookup('revision-a', rowId, 301_001)))).toMatchObject({
+      _tag: 'Left',
+      left: { reason: 'revision-expired' },
+    });
+    expect(await Effect.runPromise(lookup('revision-b', rowId, 301_001))).toMatchObject({
+      found: true,
+      revision: 'revision-b',
+      row: { rowId, tokenTotal: 80 },
+    });
   });
 
   test('applies filters before campaign aggregation from the durable projection', async () => {

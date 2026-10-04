@@ -8,6 +8,8 @@ import {
   sessionProjectionFactsForSerializedRow,
 } from '@ai-usage/report-core/session-detail';
 import type {
+  CampaignChronology,
+  CampaignChronologyAccumulator,
   SessionCampaignChildrenRequest,
   SessionCampaignChildrenResult,
   SessionNeighborRequest,
@@ -20,6 +22,7 @@ import type {
   SessionSortField,
 } from '@ai-usage/report-core/session-query';
 import {
+  createCampaignChronologyAccumulator,
   parseSessionCampaignChildrenRequest,
   parseSessionLookupRequest,
   parseSessionNeighborRequest,
@@ -106,6 +109,7 @@ interface ItemRecord {
   ambiguous: number | null;
   calls: number | null;
   campaign_key: string | null;
+  chronology?: CampaignChronology;
   classifier_count: number | null;
   classifier_fresh_tokens: number | null;
   cost_actual: number | null;
@@ -153,11 +157,19 @@ interface SessionDetailAnchorRecord {
 
 interface CampaignCostRecord {
   campaign_key: string;
+  contributes_to_totals: number | null;
   cost_actual: number | null;
   cost_approx: number;
   cost_known: number;
   cost_quota: number | null;
   row_json: string;
+}
+
+interface CampaignSummaryTotals {
+  actual: number;
+  priceMeasurement: ApiPriceMeasurement;
+  quota: number;
+  timing: CampaignChronologyAccumulator;
 }
 
 interface CampaignRootRecord {
@@ -628,7 +640,7 @@ const hydrateCampaignRoots = (
   }
 };
 
-const hydrateExactCampaignCosts = (
+const hydrateCampaignSummaries = (
   database: SessionQuerySqliteDatabase,
   records: ItemRecord[],
   filter: { params: unknown[]; where: string },
@@ -641,27 +653,32 @@ const hydrateExactCampaignCosts = (
   if (campaignKeys.length === 0) {
     return;
   }
-  const sql = `SELECT campaign_key, cost_actual, cost_approx, cost_known, cost_quota, row_json
+  const sql = `SELECT campaign_key, cost_actual, cost_approx, cost_known, cost_quota, row_json,
+      ((${filter.where}) OR origin = 'classifier') AS contributes_to_totals
     FROM session_rows
     WHERE campaign_key IN (${campaignKeys.map(() => '?').join(', ')})
-      AND ((${filter.where}) OR origin = 'classifier')
     ORDER BY campaign_key, campaign_root DESC, ordinal`;
-  const params = [...campaignKeys, ...filter.params];
+  const params = [...filter.params, ...campaignKeys];
   trace?.({ params, sql });
-  const totals = new Map<string, { actual: number; priceMeasurement: ApiPriceMeasurement; quota: number }>();
+  const totals = new Map<string, CampaignSummaryTotals>();
   for (const value of database.query(sql).iterate(...params)) {
     const row = value as CampaignCostRecord;
-    const total = totals.get(row.campaign_key) ?? {
+    const total: CampaignSummaryTotals = totals.get(row.campaign_key) ?? {
       actual: 0,
       priceMeasurement: EMPTY_API_PRICE_MEASUREMENT,
       quota: 0,
+      timing: createCampaignChronologyAccumulator(),
     };
-    total.actual += row.cost_actual ?? 0;
-    total.priceMeasurement = combineApiPriceMeasurements([
-      total.priceMeasurement,
-      usageRowApiPriceMeasurement(parsePresentationRow(row.row_json)),
-    ]);
-    total.quota += row.cost_quota ?? 0;
+    const member = parsePresentationRow(row.row_json);
+    total.timing.add(member);
+    if (row.contributes_to_totals === 1) {
+      total.actual += row.cost_actual ?? 0;
+      total.priceMeasurement = combineApiPriceMeasurements([
+        total.priceMeasurement,
+        usageRowApiPriceMeasurement(member),
+      ]);
+      total.quota += row.cost_quota ?? 0;
+    }
     totals.set(row.campaign_key, total);
   }
   for (const record of campaignRecords) {
@@ -674,6 +691,7 @@ const hydrateExactCampaignCosts = (
     record.cost_known = total.priceMeasurement.state === 'partially measured' ? 0 : 1;
     record.cost_quota = total.quota;
     record.price_measurement = total.priceMeasurement;
+    record.chronology = total.timing.finish();
   }
 };
 
@@ -811,12 +829,18 @@ const runSessionPage = (
   const pageRecords = pageWithSentinel.slice(0, request.pageSize);
   const items: SessionPageItem[] = measureSessionQueryPerfPhase('materialize', () => {
     hydrateCampaignRoots(database, pageRecords, trace);
-    hydrateExactCampaignCosts(database, pageRecords, filter, trace);
-    return pageRecords.map((record) => ({
-      campaignKey: record.campaign_key!,
-      kind: 'campaign' as const,
-      row: campaignDisplayRow(record),
-    }));
+    hydrateCampaignSummaries(database, pageRecords, filter, trace);
+    return pageRecords.map((record) => {
+      if (record.campaign_key === null || record.chronology === undefined) {
+        throw new Error('Session query database omitted a paged campaign chronology');
+      }
+      return {
+        campaignKey: record.campaign_key,
+        chronology: record.chronology,
+        kind: 'campaign' as const,
+        row: campaignDisplayRow(record),
+      };
+    });
   });
   return {
     itemCount: counts.itemCount,

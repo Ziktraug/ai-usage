@@ -60,7 +60,7 @@
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import DrawerDetailItem from './drawer-detail-item.svelte';
-  import { buildRoundsView } from './rounds-model';
+  import { buildRoundsViewForRevision } from './rounds-model';
   import RoundsReader from './rounds-reader.svelte';
   import SessionAnalysis from './session-analysis.svelte';
   import SessionVcsSummary from './session-vcs-summary.svelte';
@@ -174,10 +174,8 @@
     sessionDurationSemantics(row?.source?.harnessKey, target?.kind === 'campaign-root'),
   );
 
-  // The rounds view is derived once per detail response and shared by the tab
-  // label and the reader; the reader never re-derives it.
-  const availableDetail = $derived(
-    snapshot.analysisResponse?.status === 'available' ? snapshot.analysisResponse.detail : null,
+  const refreshingHistory = $derived(
+    snapshot.analysisResponse?.status === 'available' && snapshot.analysisResponse.revision !== snapshot.revision,
   );
   // Without a served revision there is no local history to read, and the reader
   // says so instead of waiting for a load that will never start.
@@ -193,7 +191,9 @@
     }
     return null;
   });
-  const roundsView = $derived(availableDetail ? buildRoundsView(availableDetail, memberRows) : null);
+  // Share one view between the tab label and reader. Retained history must not
+  // acquire child usage or links from the newly served report revision.
+  const roundsView = $derived(buildRoundsViewForRevision(snapshot.analysisResponse, snapshot.revision, memberRows));
   const membersAvailable = $derived(campaignScope !== null && campaignSlot !== undefined);
   let activeTab = $state<DetailTab>('rounds');
   // The reader's place survives a tab switch; a new row starts at its first round.
@@ -370,6 +370,7 @@
     loading={snapshot.analysisLoading}
     onOpenChild={onSelectMember}
     onRetry={() => controller.retryAnalysis()}
+    refreshing={refreshingHistory}
     scopeNote={roundsScopeNote}
     unavailable={unavailableDetail}
     view={roundsView}
@@ -379,7 +380,7 @@
 
 {#snippet membersPane()}
   <div class={pane} data-session-drawer-members>
-    {#if memberRows.length === 0}
+    {#if memberRows.length === 0 && campaignSlot === undefined}
       <p class={muted} data-session-drawer-members-empty>
         No member list is loaded for this campaign yet. Members load with the Sessions view; open the campaign there to
         browse them.
@@ -398,7 +399,7 @@
       harnessKey={row.source?.harnessKey ?? ''}
       loading={snapshot.analysisLoading}
       onRetry={() => controller.retryAnalysis()}
-      refreshing={snapshot.analysisResponse?.status === 'available' && snapshot.analysisResponse.revision !== snapshot.revision}
+      refreshing={refreshingHistory}
       response={snapshot.analysisResponse}
       {target}
     />

@@ -18,6 +18,19 @@ revision/fingerprint Query entries; no table owner mirrors them in `$state`.
 5. Desktop and mobile variants share one expansion/focus/virtual state and one
    active surface at the `session-surface-mode.ts` boundary.
 
+Once the reader has paged, expanded a campaign, or opened a detail, background
+revalidation and further depth requests keep the displayed descriptor revision.
+New publications have an explicit update control; the detail must be closed
+before applying it. Expiry remains an error on the inspected revision instead
+of silently substituting a newer report.
+
+When the visible row projection changes within the same query scope, the table
+captures a stable row identity, its viewport offset, and the focused row. It
+restores the appropriate virtual window before correcting measured geometry and
+focus. If that anchor disappeared from the new window, it uses the nearest row
+and announces the fallback. Explicit search or filter changes still reset the
+window to the start.
+
 The composition remains downstream of demo/synthetic selection. Demo and E2E
 payload modes create no live client, descriptor acquisition, or Session request.
 

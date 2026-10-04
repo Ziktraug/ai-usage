@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type SessionDetailResponse, SessionDetailValidationError } from '@ai-usage/report-core/session-detail';
+import { SessionDetailValidationError as RequestValidationError } from '@ai-usage/report-core/session-detail-request';
 import {
   parseSessionQueryRequest,
   SessionQueryValidationError,
@@ -8,6 +9,7 @@ import {
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
+import { classifySessionAnalysisError } from '../../session-analysis-error';
 import { createSessionClientAdapter, type SessionRpcTransport } from './session-client';
 
 const rawQuery = {
@@ -139,6 +141,53 @@ const defaultTransport = (): SessionRpcTransport => ({
 });
 
 describe('Session RPC browser adapter', () => {
+  test('validates the detail response lazily with the same terminal error identity', async () => {
+    const adapter = createSessionClientAdapter({
+      ...defaultTransport(),
+      detail: () =>
+        Promise.resolve({
+          ...availableDetail,
+          detail: {
+            ...availableDetail.detail,
+            coverage: {
+              ...availableDetail.detail.coverage,
+              childDiscovery: { omittedCount: -1, reasons: [], status: 'complete' },
+            },
+          },
+        }),
+    });
+    const error = await adapter.detail({ revision: query.revision, rowId: 'row-1' }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(SessionDetailValidationError);
+    expect(error).toBeInstanceOf(RequestValidationError);
+    expect(classifySessionAnalysisError(error)).toMatchObject({ kind: 'terminal' });
+  });
+
+  test('rejects invalid detail identities before transport and keeps cancellation during lazy validation', async () => {
+    const started = Promise.withResolvers<AbortSignal>();
+    const adapter = createSessionClientAdapter({
+      ...defaultTransport(),
+      detail: (_input, options) => {
+        const signal = options?.signal;
+        if (!signal) {
+          throw new Error('Expected the original cancellation signal');
+        }
+        started.resolve(signal);
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    });
+    await expect(adapter.detail({ revision: query.revision, rowId: '' })).rejects.toThrow(RequestValidationError);
+    const controller = new AbortController();
+    const pending = adapter
+      .detail({ revision: query.revision, rowId: 'row-1' }, controller.signal)
+      .catch((error: unknown) => error);
+    expect(await started.promise).toBe(controller.signal);
+    const reason = new DOMException('Detail closed', 'AbortError');
+    controller.abort(reason);
+    expect(await pending).toBe(reason);
+  });
+
   test('canonicalizes each exact input and forwards the caller signal', async () => {
     const calls: Array<{ input: unknown; name: string; signal: AbortSignal | undefined }> = [];
     const transport: SessionRpcTransport = {

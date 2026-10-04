@@ -43,6 +43,7 @@ export interface ReportDestinationQueryData extends FocusedReportCommit {
 
 export interface ReportDestinationQueryExecution {
   readonly browser: boolean;
+  readonly preserveSessionRevision?: boolean;
 }
 
 export interface ReportDestinationQueryDependencies {
@@ -185,9 +186,13 @@ export const reportDestinationQueryOptions = (
     ...queryPolicy('current-alias-swr'),
     enabled: execution.browser,
     queryFn: async ({ signal }) => {
+      const visible = dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey());
+      // Drawer filters change the destination while the reader still inspects this revision.
+      // Reproject the requested scope at that descriptor until preservation is released.
+      const preservedDescriptor = execution.preserveSessionRevision ? visible?.descriptor : undefined;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          const descriptor = await descriptorFor(dependencies, attempt > 0);
+          const descriptor = preservedDescriptor ?? (await descriptorFor(dependencies, attempt > 0));
           signal.throwIfAborted();
           const result = await dependencies.queryClient.fetchQuery(
             exactDestinationQueryOptions(dependencies, destination, descriptor, sessionWindowIntent),
@@ -195,9 +200,10 @@ export const reportDestinationQueryOptions = (
           signal.throwIfAborted();
           return result;
         } catch (error) {
+          signal.throwIfAborted();
           const expired =
             error instanceof FocusedReportRevisionExpiredError || error instanceof SessionRevisionExpiredError;
-          if (!(expired && attempt === 0)) {
+          if (!(expired && attempt === 0) || preservedDescriptor !== undefined) {
             throw error;
           }
         }
@@ -211,12 +217,26 @@ export const refreshReportDestination = async (
   dependencies: ReportDestinationQueryDependencies,
   destination: FocusedReportDestination,
   sessionWindowIntent: SessionWindowIntent = initialSessionWindowIntent(),
+  preserveSessionRevision = false,
 ): Promise<ReportDestinationQueryData> => {
-  const options = reportDestinationQueryOptions(dependencies, destination, { browser: true }, sessionWindowIntent);
-  await dependencies.queryClient.invalidateQueries({
+  const options = reportDestinationQueryOptions(
+    dependencies,
+    destination,
+    { browser: true, preserveSessionRevision },
+    sessionWindowIntent,
+  );
+  // The shared alias can still be acquiring another destination. Supersede it
+  // synchronously so a new intent cannot join the obsolete acquisition.
+  const cancellation = dependencies.queryClient.cancelQueries(
+    { exact: true, queryKey: options.queryKey },
+    { silent: true },
+  );
+  const invalidation = dependencies.queryClient.invalidateQueries({
     exact: true,
     queryKey: options.queryKey,
     refetchType: 'none',
   });
-  return await dependencies.queryClient.fetchQuery(options);
+  const acquisition = dependencies.queryClient.fetchQuery(options);
+  const [, , result] = await Promise.all([cancellation, invalidation, acquisition]);
+  return result;
 };

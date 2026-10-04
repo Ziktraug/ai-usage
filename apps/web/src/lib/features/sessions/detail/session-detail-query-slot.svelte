@@ -11,9 +11,10 @@
     optionalSessionVcsQueryOptions,
   } from '../../../query/options/session';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
+  import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
   import type { SessionDetailController, SessionDetailControllerSnapshot, SessionSelectionInput } from './types';
 
-  type SessionDrawerModule = typeof import('./session-drawer.svelte');
+  type SessionDrawerModule = typeof import('./session-detail-members-query-slot.svelte');
   const interactiveElementTagPattern = /^(INPUT|SELECT|TEXTAREA)$/;
   const openDrawerContentSelector = '[data-scope="drawer"][data-part="content"][data-state="open"][role="dialog"]';
 
@@ -63,7 +64,6 @@
   let selectedIdentity = $state('');
   let drawerModule = $state<SessionDrawerModule>();
   let drawerLoadFailed = $state(false);
-  let drawerLoad: Promise<void> | undefined;
   let drawerClosing = false;
 
   const handleClosingChange = (closing: boolean): void => {
@@ -130,15 +130,16 @@
     vcsResolving: vcsQuery.isFetching,
   });
 
-  const ensureDrawer = (): void => {
-    drawerLoad ??= import('./session-drawer.svelte')
-      .then((module) => {
-        drawerModule = module;
-      })
-      .catch(() => {
-        drawerLoadFailed = true;
-      });
-  };
+  const drawerLoader = createLazyModuleLoader({
+    importModule: () => import('./session-detail-members-query-slot.svelte'),
+    onFailureChange: (failed) => {
+      drawerLoadFailed = failed;
+    },
+    onLoaded: (module) => {
+      drawerModule = module;
+    },
+  });
+  const reloadSessionDetails = (): void => window.location.reload();
 
   const navigate = (delta: -1 | 1): void => {
     if (drawerClosing) {
@@ -157,9 +158,13 @@
       return;
     }
     const index = rows.findIndex((row) => row.rowId === current.row.rowId);
+    if (index < 0) {
+      return;
+    }
     const next = rows[index + delta];
     if (next) {
-      onSelectionChange({ row: next });
+      const { target: _target, ...preserved } = current;
+      onSelectionChange({ ...preserved, row: next });
     }
   };
 
@@ -223,8 +228,8 @@
     selectedIdentity = identity;
     analysisOpen = true;
     vcsRequested = false;
-    if (selection) {
-      ensureDrawer();
+    if (selection && !drawerModule) {
+      drawerLoader.start();
     }
   });
 
@@ -241,15 +246,20 @@
     <SessionDrawer
       {...(campaignLabelSlot === undefined ? {} : { campaignLabelSlot })}
       {...(campaignSlot === undefined ? {} : { campaignSlot })}
+      {client}
       {controller}
       {memberRows}
       onClosingChange={handleClosingChange}
       {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
       {...(onSelectMember === undefined ? {} : { onSelectMember })}
+      {queryClient}
       {rows}
       {snapshot}
     />
   {:else if selection?.row && drawerLoadFailed}
-    <p role="status">Session details are temporarily unavailable.</p>
+    <p role="status">
+      Session details are temporarily unavailable.
+      <button onclick={reloadSessionDetails} type="button">Reload session details</button>
+    </p>
   {/if}
 </div>

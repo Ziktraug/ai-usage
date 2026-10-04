@@ -195,6 +195,9 @@ export const routeForSelection = (
   if (selection.target?.kind === 'campaign-root') {
     return { campaignKey: selection.target.campaignKey, kind: 'campaign' };
   }
+  if (selection.target?.kind === 'session') {
+    return { kind: 'session', rowId: selection.target.reportRowId };
+  }
   const rootItem = window?.items.find((item) => item.row.rowId === selection.row.rowId);
   if (rootItem && (rootItem.row.campaignTotalCount ?? 1) > 1) {
     return { campaignKey: rootItem.campaignKey, kind: 'campaign' };

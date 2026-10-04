@@ -1,4 +1,7 @@
-import { parseSessionDetailRequest, sessionDetailRequestFingerprint } from '@ai-usage/report-core/session-detail';
+import {
+  parseSessionDetailRequest,
+  sessionDetailRequestFingerprint,
+} from '@ai-usage/report-core/session-detail-request';
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionLookupRequest,

@@ -1,7 +1,9 @@
-# ADR 0039: Rounds are derived once from native turns, and child links carry their evidence
+# ADR 0040: Rounds are derived once from native turns, and child links carry their evidence
 
 - **Status**: Accepted
 - **Date**: 2026-09-09 (records the product decisions of plan 114)
+
+**Formerly:** ADR 0039 on the parallel Session panel branch; renumbered when integrated with continuous campaign exploration.
 
 ## Context
 

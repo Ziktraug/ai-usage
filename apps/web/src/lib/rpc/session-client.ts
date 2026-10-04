@@ -1,8 +1,4 @@
-import {
-  parseSessionDetailRequest,
-  parseSessionDetailResponse,
-  SessionDetailValidationError,
-} from '@ai-usage/report-core/session-detail';
+import { parseSessionDetailRequest, SessionDetailValidationError } from '@ai-usage/report-core/session-detail-request';
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenServerResult,
@@ -65,7 +61,11 @@ export const createSessionClientAdapter = (transport: SessionRpcTransport): Sess
   },
   detail: async (input, signal) => {
     const request = parseSessionDetailRequest(input);
-    const response = parseSessionDetailResponse(await transport.detail(request, signalOptions(signal)));
+    const [{ parseSessionDetailResponse }, rawResponse] = await Promise.all([
+      import('@ai-usage/report-core/session-detail'),
+      transport.detail(request, signalOptions(signal)),
+    ]);
+    const response = parseSessionDetailResponse(rawResponse);
     if (response.status === 'available' && response.revision !== request.revision) {
       throw new SessionDetailValidationError('Session detail response does not match its requested revision');
     }

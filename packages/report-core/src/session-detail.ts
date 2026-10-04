@@ -1,7 +1,20 @@
 import type { SerializedUsageRow } from './report-data';
 import { isSerializedUsageRow } from './serialized-usage-validation';
 import { parseServedRevision } from './served-revision';
+import {
+  parseSessionDetailRequest,
+  type SessionDetailRequest,
+  SessionDetailValidationError,
+  sessionDetailRequestFingerprint,
+} from './session-detail-request';
 import { parseSessionVcsContext, type SessionVcsContext } from './session-vcs';
+
+export {
+  parseSessionDetailRequest,
+  type SessionDetailRequest,
+  SessionDetailValidationError,
+  sessionDetailRequestFingerprint,
+} from './session-detail-request';
 
 const MAX_ID_LENGTH = 512;
 const MAX_LABEL_LENGTH = 256;
@@ -24,11 +37,6 @@ export type SessionDetailHarnessKey = (typeof sessionDetailHarnessKeys)[number];
 
 export const supportsSessionDetailHarness = (value: string): value is SessionDetailHarnessKey =>
   sessionDetailHarnessKeys.some((key) => key === value);
-
-export interface SessionDetailRequest {
-  revision: string;
-  rowId: string;
-}
 
 export interface SessionDetailTokenCounts {
   cacheRead: number;
@@ -329,13 +337,6 @@ export type SessionDetailUnavailableReason =
 export type SessionDetailResponse =
   | { consistency: SessionDetailConsistency; detail: SessionDetail; revision: string; status: 'available' }
   | { message: string; reason: SessionDetailUnavailableReason; status: 'unavailable' };
-
-export class SessionDetailValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SessionDetailValidationError';
-  }
-}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -694,32 +695,6 @@ const assertContainedInterval = (
   if (startMs < sessionStartMs || endMs > sessionEndMs) {
     throw new SessionDetailValidationError(`${label} falls outside its enclosing interval`);
   }
-};
-
-export const parseSessionDetailRequest = (value: unknown): SessionDetailRequest => {
-  if (!isRecord(value)) {
-    throw new SessionDetailValidationError('Session detail request must be an object');
-  }
-  assertExactKeys(value, ['revision', 'rowId'], 'Session detail request');
-  return {
-    revision: parseServedRevision(value.revision, 'Session detail request.revision'),
-    rowId: requireString(value.rowId, 'Session detail request.rowId', MAX_ID_LENGTH),
-  };
-};
-
-const fnv1a64 = (value: string): string => {
-  let hash = 0xcbf29ce484222325n;
-  for (const character of value) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: The XOR step is intrinsic to FNV-1a.
-    hash ^= BigInt(character.codePointAt(0) ?? 0);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return hash.toString(16).padStart(16, '0');
-};
-
-export const sessionDetailRequestFingerprint = (input: SessionDetailRequest): string => {
-  const request = parseSessionDetailRequest(input);
-  return `session-detail-v2:${fnv1a64(request.rowId)}`;
 };
 
 export const parseSessionDetailAnchorResult = (

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { onMount, tick } from 'svelte';
-  import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import type { RuntimeMode } from '../../../runtime-mode';
   import {
@@ -22,7 +22,6 @@
   import ManageButton from './manage-button.svelte';
   import {
     activeReportTab,
-    consumeReplaceNavigation,
     ensureHistoryEntryKey,
     isActiveManagementDestination,
     navigationTypeForScroll,
@@ -31,6 +30,7 @@
     shouldPreserveReportScroll,
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
+  import { useShellNavigationOwner } from './navigation-owner-context';
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import ProviderQuotaRail from './provider-quota-rail.svelte';
@@ -145,7 +145,7 @@
     bottom: 0,
     zIndex: 50,
     display: { base: 'grid', md: 'none' },
-    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
     minH: '64px',
     px: '8px',
     pb: 'max(6px, env(safe-area-inset-bottom))',
@@ -153,7 +153,7 @@
     bg: 'surface',
     _print: { display: 'none' },
   });
-  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' });
+  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
   const mobileLink = css({
     display: 'grid',
     placeItems: 'center',
@@ -193,6 +193,7 @@
   ] as const;
   const showManage = $derived(runtimeMode !== 'demo');
   const dirtyRegistry = useDirtyGuardRegistry();
+  const shellNavigation = useShellNavigationOwner();
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
 
   let manageOpen = $state(false);
@@ -229,7 +230,7 @@
   beforeNavigate((navigation) => {
     const fromKey = currentEntryKey || seedCurrentEntry();
     const isHistoryTraversal = navigation.type === 'popstate' && navigation.delta !== undefined;
-    const isReplacement = !isHistoryTraversal && consumeReplaceNavigation();
+    const isReplacement = shellNavigation.consumeReplacement(navigation.type, navigation.to?.url ?? null);
     const preserveReportScroll = shouldPreserveReportScroll(navigation.from?.url ?? null, navigation.to?.url ?? null);
     sessionWindowAnchorOwner.beginNavigation(preserveReportScroll);
     if (isReplacement) {
@@ -340,7 +341,7 @@
     });
     const port = createSvelteNavigationPort({
       getCurrentUrl: () => page.url,
-      goto,
+      goto: shellNavigation.goto,
       history: window.history,
       onFailure: () => {
         sessionWindowAnchorOwner.cancelNavigation();
@@ -448,6 +449,13 @@
         preserveScroll
       />
     {/each}
+    <NavigationLink
+      active={page.url.pathname === '/campaigns'}
+      class={linkClass(page.url.pathname === '/campaigns')}
+      href={`/campaigns${page.url.search}`}
+      icon="campaigns"
+      label="Campaigns"
+    />
   </nav>
   {#if showManage}
     <nav aria-label="Manage destinations" class={cx(navigationGroup, navigationGroupDivider)}>
@@ -484,6 +492,12 @@
       preserveScroll
     />
   {/each}
+  <NavigationLink
+    active={page.url.pathname === '/campaigns'}
+    class={linkClass(page.url.pathname === '/campaigns', true)}
+    href={`/campaigns${page.url.search}`}
+    label="Campaigns"
+  />
   {#if showManage}
     <ManageButton
       class={cx(

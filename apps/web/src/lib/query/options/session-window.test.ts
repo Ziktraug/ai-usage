@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildCampaignChronology,
   parseSessionQueryRequest,
   type SessionCampaignChildrenRequest,
   type SessionPageItem,
@@ -32,6 +33,7 @@ const child = syntheticSessionRow(2);
 
 const pageItem = (row = campaign): SessionPageItem => ({
   campaignKey: row.campaignKey ?? `campaign:${row.rowId}`,
+  chronology: buildCampaignChronology([row, ...(row.children ?? [])]),
   kind: 'campaign',
   row,
 });

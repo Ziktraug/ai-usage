@@ -209,6 +209,7 @@ test('matches the initial desktop light Overview at 1440x1000', async ({ page })
   await expectViewportProfile(page, OVERVIEW_DESKTOP_VIEWPORT, 'light');
   const { chart, kpi, metricItems, primaryValueFontSize } = await expectAtelierOverviewAtTop(page);
   expect(primaryValueFontSize).toBeGreaterThanOrEqual(MIN_PRIMARY_VALUE_FONT_SIZE_PX);
+  await expect(chart.getByRole('group', { name: 'Activity metric' })).toHaveCSS('padding', '0px');
 
   const foldBottoms = [
     await kpi.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),

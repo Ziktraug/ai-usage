@@ -9,6 +9,8 @@ export interface PricingContext {
 /** One leg of a published price schedule. `from: null` is the launch price. */
 interface PricePeriod {
   readonly from: string | null;
+  /** Time-of-day surcharge: `rates` is the off-peak price while this is set. */
+  readonly peak?: { readonly isPeak: (timestamp: number) => boolean; readonly rates: Rates };
   readonly rates: Rates;
 }
 
@@ -23,6 +25,8 @@ const PRICING: Readonly<Record<string, Rates>> = {
   // OpenAI. GPT-5.6 and later publish a distinct cache-write price at 1.25x
   // uncached input; earlier families do not, so their `cw` stays the input rate.
   'gpt-6-astra': { in: 10, out: 50, cr: 1, cw: 12.5 },
+  'gpt-6-sol': { in: 2, out: 10, cr: 0.2, cw: 2.5 },
+  'gpt-6-luna': { in: 0.1, out: 0.5, cr: 0.01, cw: 0.125 },
   'gpt-5.5-pro': { in: 30, out: 180, cr: 30, cw: 30 },
   'gpt-5.5': { in: 5, out: 30, cr: 0.5, cw: 5 },
   'gpt-5.4-pro': { in: 30, out: 180, cr: 30, cw: 30 },
@@ -41,12 +45,13 @@ const PRICING: Readonly<Record<string, Rates>> = {
   o3: { in: 2, out: 8, cr: 0.5, cw: 2 },
 
   // Anthropic. Cache reads are 0.1x base input, except on Fable 5.1 and
-  // Mythos 5.1, which publish a 0.025x rate. `cw` is the 5-minute write price;
-  // the 1-hour write price (2x input) is not represented.
+  // Mythos 5.1 (0.025x) and Opus 5.5 (0.05x). `cw` is the 5-minute write price;
+  // the 1-hour write price (2x input) and fast mode are not represented.
   'claude-fable-5-1': { in: 10, out: 50, cr: 0.25, cw: 12.5 },
   'claude-mythos-5-1': { in: 10, out: 50, cr: 0.25, cw: 12.5 },
   'claude-fable-5': { in: 10, out: 50, cr: 1, cw: 12.5 },
   'claude-mythos-5': { in: 10, out: 50, cr: 1, cw: 12.5 },
+  'claude-opus-5-5': { in: 4, out: 20, cr: 0.2, cw: 5 },
   'claude-opus-5': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
   'claude-opus-4-8': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
   'claude-opus-4-7': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
@@ -61,11 +66,10 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'claude-haiku-4-5': { in: 1, out: 5, cr: 0.1, cw: 1.25 },
   'claude-haiku-3-5': { in: 0.8, out: 4, cr: 0.08, cw: 1 },
 
-  // DeepSeek
-  'deepseek-v4-flash': { in: 0.14, out: 0.28, cr: 0.0028, cw: 0.14 },
-  'deepseek-v4-pro': { in: 0.435, out: 0.87, cr: 0.003_625, cw: 0.435 },
-
   // Z.AI / GLM text
+  'glm-5.3-flashx': { in: 0.37, out: 1.25, cr: 0.075, cw: 0 },
+  'glm-5.3-flash': { in: 0.15, out: 0.5, cr: 0.03, cw: 0 },
+  'glm-5.3': { in: 1.4, out: 4.4, cr: 0.26, cw: 0 },
   'glm-5.2': { in: 1.4, out: 4.4, cr: 0.26, cw: 0 },
   'glm-5.1': { in: 1.4, out: 4.4, cr: 0.26, cw: 0 },
   'glm-5-turbo': { in: 1.2, out: 4, cr: 0.24, cw: 0 },
@@ -91,6 +95,7 @@ const PRICING: Readonly<Record<string, Rates>> = {
 
   // Google Gemini Developer API. Context-cache storage is not included, and the
   // above-200k long-context tier is not represented.
+  'gemini-3.5-flash-lite': { in: 0.3, out: 2.5, cr: 0.03, cw: 0.3 },
   'gemini-3.5-flash': { in: 1.5, out: 9, cr: 0.15, cw: 1.5 },
   'gemini-3.1-flash-lite': { in: 0.25, out: 1.5, cr: 0.025, cw: 0.25 },
   'gemini-3.1-pro': { in: 2, out: 12, cr: 0.2, cw: 2 },
@@ -100,7 +105,12 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'gemini-2.5-flash': { in: 0.3, out: 2.5, cr: 0.03, cw: 0.3 },
   'gemini-2.5-flash-lite': { in: 0.1, out: 0.4, cr: 0.01, cw: 0.1 },
 
-  // xAI
+  // xAI. The above-200k long-context tier is not represented.
+  'grok-4.7': { in: 2, out: 6, cr: 0.5, cw: 2 },
+  'grok-4.6': { in: 2, out: 6, cr: 0.5, cw: 2 },
+  'grok-4.5': { in: 2, out: 6, cr: 0.3, cw: 2 },
+  'grok-4.3': { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 },
+  'grok-build-0.1': { in: 1, out: 2, cr: 0.2, cw: 1 },
   'grok-code-fast-1': { in: 0.2, out: 1.5, cr: 0.02, cw: 0.2 },
 
   // Cursor first-party models. Only the current generation is published; the
@@ -110,7 +120,8 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'composer-2.5-fast': { in: 3, out: 15, cr: 0.5, cw: 3 },
   'composer-2.5': { in: 0.5, out: 2.5, cr: 0.2, cw: 0.5 },
 
-  // Moonshot AI / Kimi
+  // Moonshot AI / Kimi. K3 publishes a distinct 5-minute cache-write price.
+  'kimi-k3': { in: 3, out: 15, cr: 0.3, cw: 3 },
   'kimi-k2.7-code-highspeed': { in: 1.9, out: 8, cr: 0.38, cw: 1.9 },
   'kimi-k2.7-code': { in: 0.95, out: 4, cr: 0.19, cw: 0.95 },
   'kimi-k2.6': { in: 0.95, out: 4, cr: 0.16, cw: 0.95 },
@@ -118,6 +129,13 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'moonshot-v1-8k': { in: 0.2, out: 2, cr: 0, cw: 0.2 },
   'moonshot-v1-32k': { in: 1, out: 3, cr: 0, cw: 1 },
   'moonshot-v1-128k': { in: 2, out: 5, cr: 0, cw: 2 },
+
+  // Alibaba Qwen (Model Studio international). List prices; limited-time
+  // discounts are not represented. Cache rates follow the explicit-cache rule
+  // (hit 0.1x input, creation 1.25x), which is also what OpenCode Go bills.
+  'qwen3.8-max': { in: 2, out: 6, cr: 0.2, cw: 2.5 },
+  'qwen3.8-flash': { in: 0.15, out: 0.47, cr: 0.015, cw: 0.1875 },
+  'qwen3.7-plus': { in: 0.4, out: 1.6, cr: 0.04, cw: 0.5 },
 
   // MiniMax
   'minimax-m3': { in: 0.3, out: 1.2, cr: 0.06, cw: 0.3 },
@@ -130,7 +148,32 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'minimax-m2': { in: 0.3, out: 1.2, cr: 0.03, cw: 0.375 },
 };
 
-// Models whose published price changed on a dated boundary. Periods are ordered
+// DeepSeek peak hours: 01:00-04:00 and 06:00-10:00 UTC, Monday to Friday.
+// Chinese public holidays are off-peak but not modeled, so they price as peak.
+const isDeepSeekPeak = (timestamp: number): boolean => {
+  const at = new Date(timestamp);
+  const day = at.getUTCDay();
+  const hour = at.getUTCHours();
+  return day >= 1 && day <= 5 && ((hour >= 1 && hour < 4) || (hour >= 6 && hour < 10));
+};
+
+const DEEPSEEK_PEAK_PRICING_FROM = '2026-08-16T16:00:00.000Z';
+
+// DeepSeek-V4.1-Flash, served as `deepseek-flash` and, since its retirement,
+// behind the legacy `deepseek-v4-flash` name. DeepSeek bills no cache writes
+// separately, so `cw` is the input rate.
+const DEEPSEEK_V4_1_FLASH_PERIOD: PricePeriod = {
+  from: '2026-09-10T04:00:00.000Z',
+  rates: { in: 0.15, out: 0.6, cr: 0.003, cw: 0.15 },
+  peak: { isPeak: isDeepSeekPeak, rates: { in: 0.3, out: 1.2, cr: 0.006, cw: 0.3 } },
+};
+
+const GEMINI_FLASH_LAUNCH_SCHEDULE: readonly PricePeriod[] = [
+  { from: null, rates: { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 } },
+  { from: '2027-01-01T00:00:00.000Z', rates: { in: 1.5, out: 7.5, cr: 0.15, cw: 1.5 } },
+];
+
+// Models whose published price changes on a dated boundary. Periods are ordered
 // oldest first; a session is priced with the last period in effect at its time,
 // so historical rows keep the rate they were actually billed at.
 const PRICE_SCHEDULES: Readonly<Record<string, readonly PricePeriod[]>> = {
@@ -147,10 +190,34 @@ const PRICE_SCHEDULES: Readonly<Record<string, readonly PricePeriod[]>> = {
     { from: null, rates: { in: 1, out: 6, cr: 0.1, cw: 1.25 } },
     { from: '2026-07-30T00:00:00.000Z', rates: { in: 0.2, out: 1.2, cr: 0.02, cw: 0.25 } },
   ],
+  'deepseek-v4-flash': [
+    { from: null, rates: { in: 0.14, out: 0.28, cr: 0.0028, cw: 0.14 } },
+    {
+      from: DEEPSEEK_PEAK_PRICING_FROM,
+      rates: { in: 0.22, out: 0.66, cr: 0.007, cw: 0.22 },
+      peak: { isPeak: isDeepSeekPeak, rates: { in: 0.44, out: 1.32, cr: 0.014, cw: 0.44 } },
+    },
+    DEEPSEEK_V4_1_FLASH_PERIOD,
+  ],
+  'deepseek-flash': [DEEPSEEK_V4_1_FLASH_PERIOD],
+  'deepseek-v4-pro': [
+    { from: null, rates: { in: 0.435, out: 0.87, cr: 0.003_625, cw: 0.435 } },
+    {
+      from: DEEPSEEK_PEAK_PRICING_FROM,
+      rates: { in: 0.66, out: 1.98, cr: 0.022, cw: 0.66 },
+      peak: { isPeak: isDeepSeekPeak, rates: { in: 1.32, out: 3.96, cr: 0.044, cw: 1.32 } },
+    },
+  ],
+  // Launch price published through 2026-12-31, standard rate from 2027-01-01.
+  'gemini-3.8-flash': GEMINI_FLASH_LAUNCH_SCHEDULE,
+  'gemini-3.7-flash': GEMINI_FLASH_LAUNCH_SCHEDULE,
+  'gemini-3.6-flash': GEMINI_FLASH_LAUNCH_SCHEDULE,
 };
 
 const ALIASES: Readonly<Record<string, string>> = {
   'gpt-5.6': 'gpt-5.6-sol',
+  'claude-5.5-opus': 'claude-opus-5-5',
+  'claude-opus-5.5': 'claude-opus-5-5',
   'claude-4.8-opus': 'claude-opus-4-8',
   'claude-opus-4.8': 'claude-opus-4-8',
   'claude-4.7-opus': 'claude-opus-4-7',
@@ -175,6 +242,7 @@ const ALIASES: Readonly<Record<string, string>> = {
   'claude-mythos-5.1': 'claude-mythos-5-1',
   'gemini-3.1-pro-preview-customtools': 'gemini-3.1-pro',
   'gemini-2.5-flash-lite-preview-09-2025': 'gemini-2.5-flash-lite',
+  'qwen3.8-max-0902': 'qwen3.8-max',
   'moonshot-v1-8k-vision-preview': 'moonshot-v1-8k',
   'moonshot-v1-32k-vision-preview': 'moonshot-v1-32k',
   'moonshot-v1-128k-vision-preview': 'moonshot-v1-128k',
@@ -220,15 +288,18 @@ const timestampFor = (context?: PricingContext): number => {
 };
 
 const ratesInEffect = (periods: readonly PricePeriod[], timestamp: number): Rates | null => {
-  let current: Rates | null = null;
+  let current: PricePeriod | null = null;
 
   for (const period of periods) {
     if (period.from === null || Date.parse(period.from) <= timestamp) {
-      current = period.rates;
+      current = period;
     }
   }
 
-  return current;
+  if (!current) {
+    return null;
+  }
+  return current.peak?.isPeak(timestamp) ? current.peak.rates : current.rates;
 };
 
 export const priceFor = (model: string, context?: PricingContext): { rates: Rates; known: boolean } => {
@@ -237,7 +308,8 @@ export const priceFor = (model: string, context?: PricingContext): { rates: Rate
 
   if (identity.baseId === 'deepseek-chat' || identity.baseId === 'deepseek-reasoner') {
     if (timestamp < DEEPSEEK_COMPATIBILITY_ALIASES_END_AT) {
-      return { rates: PRICING['deepseek-v4-flash'] ?? UNKNOWN, known: true };
+      const flash = PRICE_SCHEDULES['deepseek-v4-flash'];
+      return { rates: (flash && ratesInEffect(flash, timestamp)) ?? UNKNOWN, known: true };
     }
     return { rates: UNKNOWN, known: false };
   }

@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { onMount, untrack } from 'svelte';
-  import { afterNavigate, goto } from '$app/navigation';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import type { DashboardSearch } from '../../../../dashboard-search';
   import type { RuntimeMode } from '../../../../runtime-mode';
@@ -26,12 +26,14 @@
     sessionRouteFor,
     sessionRouteUrl,
   } from '../../sessions/detail/session-route';
-  import { dashboardSearchCodec, markReplaceNavigation } from '../../shell/navigation';
+  import { dashboardSearchCodec } from '../../shell/navigation';
+  import { useShellNavigationOwner } from '../../shell/navigation-owner-context';
   import ReportBootstrapOverview from '../core/report-bootstrap-overview.svelte';
   import type { ReportShellModel } from '../core/report-view-model';
   import ReportWarnings from '../core/report-warnings.svelte';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import LiveReportDestination from './live-report-destination.svelte';
+  import { createReportNavigation } from './report-navigation';
   import SyntheticReportDestination from './synthetic-report-destination.svelte';
 
   let {
@@ -45,6 +47,12 @@
   } = $props();
 
   const queryClient = useQueryClient();
+  const shellNavigation = useShellNavigationOwner();
+  const gotoReport = createReportNavigation({
+    currentState: () => page.state,
+    currentUrl: () => page.url,
+    goto: shellNavigation.goto,
+  });
   let navigationFailure = $state<string | null>(null);
   let browserNavigate: SearchNavigationIntent<DashboardSearch> = () => undefined;
   const navigate: SearchNavigationIntent<DashboardSearch> = (update, options) => browserNavigate(update, options);
@@ -63,6 +71,10 @@
   // restores focus the same way an explicit close does.
   let openRowId: string | null = null;
   let previousRoute: SessionRoute | null = null;
+  let focusRestoreGeneration = 0;
+  onDestroy(() => {
+    focusRestoreGeneration += 1;
+  });
   const rowTrigger = (rowId: string | null): HTMLElement | null => {
     if (rowId === null) {
       return null;
@@ -82,25 +94,42 @@
     return null;
   };
   afterNavigate(() => {
+    const generation = ++focusRestoreGeneration;
     const currentRoute = sessionRouteFor(page.url.pathname);
     const closed = previousRoute !== null && currentRoute === null;
     previousRoute = currentRoute;
     const restore = pendingFocusRestore;
     pendingFocusRestore = null;
-    if (currentRoute !== null || !(restore || closed)) {
+    if (currentRoute !== null || page.url.pathname !== '/' || !(restore || closed)) {
       return;
     }
-    const trigger =
-      panelTrigger instanceof HTMLElement && panelTrigger.isConnected && panelTrigger.getClientRects().length > 0
-        ? panelTrigger
-        : (rowTrigger(restore?.rowId ?? openRowId) ?? document.querySelector<HTMLElement>('main h1'));
+    const openingTrigger = panelTrigger;
+    const rowId = restore?.rowId ?? openRowId;
     panelTrigger = null;
-    if (trigger) {
-      if (trigger.tagName === 'H1' && !trigger.hasAttribute('tabindex')) {
-        trigger.setAttribute('tabindex', '-1');
-      }
-      queueMicrotask(() => trigger.focus({ preventScroll: true }));
-    }
+    tick()
+      .then(() => {
+        if (generation !== focusRestoreGeneration || sessionRouteFor(page.url.pathname) !== null) {
+          return;
+        }
+        // The virtual window may have replaced its rows while the detail was
+        // open. Resolve the target after rendering; the stable viewport is the
+        // fallback and focusing it must not move the reader's current anchor.
+        const trigger =
+          openingTrigger instanceof HTMLElement &&
+          openingTrigger.isConnected &&
+          openingTrigger.getClientRects().length > 0
+            ? openingTrigger
+            : (rowTrigger(rowId) ??
+              document.querySelector<HTMLElement>('[data-session-surface]') ??
+              document.querySelector<HTMLElement>('main h1'));
+        if (trigger) {
+          if (!trigger.hasAttribute('tabindex')) {
+            trigger.setAttribute('tabindex', '-1');
+          }
+          trigger.focus({ preventScroll: true });
+        }
+      })
+      .catch(reportNavigationFailure);
   });
   const reportNavigationFailure = (cause: unknown): void => {
     navigationFailure = cause instanceof Error ? cause.message : 'Report navigation failed.';
@@ -115,7 +144,7 @@
         window.history.back();
         return;
       }
-      goto(sessionListUrl(page.url), { keepFocus: true, noScroll: true }).catch(reportNavigationFailure);
+      gotoReport(sessionListUrl(page.url), { keepFocus: true, noScroll: true }).catch(reportNavigationFailure);
       return;
     }
     if (detailRoute === null) {
@@ -126,10 +155,7 @@
       return;
     }
     const replacing = detailRoute !== null;
-    if (replacing) {
-      markReplaceNavigation();
-    }
-    goto(sessionRouteUrl(page.url, route), {
+    gotoReport(sessionRouteUrl(page.url, route), {
       keepFocus: true,
       noScroll: true,
       replaceState: replacing,
@@ -167,7 +193,7 @@
   onMount(() => {
     const port = createSvelteNavigationPort({
       getCurrentUrl: () => page.url,
-      goto,
+      goto: gotoReport,
       history: window.history,
       onFailure: ({ cause }) => {
         navigationFailure = cause instanceof Error ? cause.message : 'Report navigation failed.';

@@ -6,7 +6,8 @@ import {
 } from '@ai-usage/local-machine/testing/harness-home';
 import { collectionSourceDefinitions } from '@ai-usage/report-core';
 import { parseSessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import type { Request } from '@playwright/test';
+import { parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
+import type { Page, Request } from '@playwright/test';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
 import {
@@ -17,8 +18,10 @@ import {
   rpcStringFieldValues,
 } from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
+import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
+const SERIALIZED_GENERATED_AT_PATTERN = /generatedAt:"([^"]+)"/;
 const API_VALUE_BUCKET_PATTERN = /API value: (?:≥ )?\$/;
 const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
@@ -73,6 +76,34 @@ const LIVE_ALL_TIME_CURRENT_FIRST_DAY = '2026-07-01T';
 const LIVE_ALL_TIME_HISTORICAL_FIRST_DAY = '2025-01-01T';
 const LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT = '2025-01-01T08:00:00.000Z';
 const LIVE_ALL_TIME_QUIESCENCE_MS = 250;
+
+/** Start action counts after the first source publication and its alias revalidation have completed. */
+const openSettledProductionReport = async (page: Page, url = '/'): Promise<void> => {
+  const pending = new Set<Request>();
+  const observe = (request: Request): void => {
+    if (isRpcPathname(new URL(request.url()).pathname)) {
+      pending.add(request);
+    }
+  };
+  const settle = (request: Request): void => {
+    pending.delete(request);
+  };
+  page.on('request', observe);
+  page.on('requestfinished', settle);
+  page.on('requestfailed', settle);
+  try {
+    await page.goto(url);
+    await expect(page.getByRole('button', { exact: true, name: 'Collect now' })).toBeEnabled();
+    await expect
+      .poll(() => pending.size, { message: 'The initial source publication RPCs must settle before action counts' })
+      .toBe(0);
+    await waitForFocusedReportSettled(page);
+  } finally {
+    page.off('request', observe);
+    page.off('requestfinished', settle);
+    page.off('requestfailed', settle);
+  }
+};
 
 const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -291,20 +322,27 @@ test('renders the report timeline on the initial production Overview', async ({ 
   serverStateTrace.dispose();
 });
 
-test('upgrades a live all-time Day cache exactly once after the date domain resolves to Week', async ({ page }) => {
+test('upgrades a live all-time Day cache exactly once after the date domain resolves to Week', async ({
+  page,
+  request,
+  baseURL,
+}) => {
   const trace = createServerStateNetworkTrace(page);
-  const upgradeStarted = Promise.withResolvers<void>();
   const releaseUpgrade = Promise.withResolvers<void>();
   const upgradeResponseBodies: string[] = [];
   let initialDocumentHtml = '';
   let initialDomainRewriteCount = 0;
+  let fixtureGeneratedAt = '';
+  let settledRevision = '';
 
   await expect
     .poll(async () => {
       const response = await page.request.get('/?range=all');
       const body = await response.text();
+      fixtureGeneratedAt = body.match(SERIALIZED_GENERATED_AT_PATTERN)?.[1] ?? '';
       return (
         response.ok() &&
+        fixtureGeneratedAt.length > 0 &&
         body.includes('Harness · Day · Estimated API-equivalent value') &&
         body.includes(LIVE_ALL_TIME_CURRENT_FIRST_DAY)
       );
@@ -323,20 +361,33 @@ test('upgrades a live all-time Day cache exactly once after the date domain reso
       });
     },
   );
+  await page.route(
+    (url) => url.pathname === REPORT_BOOTSTRAP_PATH,
+    async (route) => {
+      const response = await route.fetch();
+      const decoded = decodeRpcResponseBody(await response.text());
+      expect(rewriteDateDomainFirst(decoded, LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT)).toBeGreaterThan(0);
+      await route.fulfill({ body: encodeRpcResponseBody(decoded), response });
+    },
+  );
   await page.route('**/rpc/report/focusedOverview', async (route) => {
+    expect(rpcStringFieldValues(route.request().postData() ?? '', 'revision')).toEqual([settledRevision]);
     const response = await route.fetch();
     const decoded = decodeRpcResponseBody(await response.text());
     expect(rewriteDateDomainFirst(decoded, LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT)).toBeGreaterThan(0);
     const body = encodeRpcResponseBody(decoded);
     upgradeResponseBodies.push(body);
-    upgradeStarted.resolve();
     await releaseUpgrade.promise;
     await route.fulfill({ body, response });
   });
 
   try {
+    // This asserts one acquisition for one revision; a cadence publication is a different query.
+    settledRevision = await freezeSessionScrollCollectionSources(request, baseURL!);
+    // The production fixture owns server time; hydration must use that clock too.
+    await page.clock.setFixedTime(new Date(fixtureGeneratedAt));
     await page.goto('/?range=all');
-    await upgradeStarted.promise;
+    await expect.poll(() => upgradeResponseBodies.length, { message: 'The Week upgrade must begin' }).toBe(1);
 
     expect(initialDomainRewriteCount).toBeGreaterThan(0);
     expect(initialDocumentHtml).toContain('Harness · Day · Estimated API-equivalent value');
@@ -382,13 +433,50 @@ test('upgrades a live all-time Day cache exactly once after the date domain reso
   } finally {
     releaseUpgrade.resolve();
     trace.dispose();
+    await page.close();
+    // Other production tests exercise the fixture's normal enabled collection sources.
+    const restoreSource = async ({ defaultEnabled, id }: (typeof collectionSourceDefinitions)[number]) => {
+      const response = await request.post('/api/source-control/command', {
+        data: { command: 'set-enabled', enabled: defaultEnabled, sourceId: id },
+        headers: { origin: baseURL! },
+      });
+      const restored = parseSourceControlCommandResponse(await response.json());
+      if (!(response.ok() && restored.ok)) {
+        throw new Error('Could not restore the synthetic collection source');
+      }
+      return restored.snapshot;
+    };
+    for (const definition of collectionSourceDefinitions) {
+      await restoreSource(definition);
+    }
+    await expect
+      .poll(
+        async () => {
+          const snapshot = await restoreSource(collectionSourceDefinitions[0]!);
+          const { publication } = snapshot;
+          return {
+            policiesRestored: collectionSourceDefinitions.every(
+              ({ defaultEnabled, id }) =>
+                snapshot.sources.find((source) => source.id === id)?.policy ===
+                (defaultEnabled ? 'enabled' : 'disabled'),
+            ),
+            publicationSettled:
+              !(publication.dirty || publication.pendingDemand || publication.queued || publication.running) &&
+              publication.publishedGeneration >= publication.dirtyGeneration &&
+              publication.acknowledgedRequestGeneration >= publication.requestedGeneration,
+            queueDepth: snapshot.queueDepth,
+            runningCount: snapshot.runningCount,
+          };
+        },
+        { message: 'Restored fixture sources and their publication must settle before the next test', timeout: 60_000 },
+      )
+      .toEqual({ policiesRestored: true, publicationSettled: true, queueDepth: 0, runningCount: 0 });
   }
 });
 
 test('switches production Activity metrics without a business request', async ({ page }) => {
   const serverStateTrace = createServerStateNetworkTrace(page);
-  await page.goto('/');
-  await waitForFocusedReportSettled(page);
+  await openSettledProductionReport(page);
 
   const activity = page.getByRole('region', { name: 'Activity' });
   const metricControl = activity.getByRole('group', { name: 'Activity metric' });
@@ -439,10 +527,8 @@ test('reuses the current revision bootstrap across Sessions filter and sort with
     }
   });
 
-  await page.goto('/?tab=sessions');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openSettledProductionReport(page, '/?tab=sessions');
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
-  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
   trace.checkpoint('session-actions');
   browserBootstrapRequests.length = 0;
   routeDataRequests.length = 0;
@@ -481,7 +567,7 @@ test('reuses the current revision bootstrap across Sessions filter and sort with
 
 test('records destination request counts and report DOM identity', async ({ page }) => {
   const trace = createServerStateNetworkTrace(page);
-  await page.goto('/');
+  await openSettledProductionReport(page);
   const workspace = page.locator('[data-report-workspace]');
   const graph = page.locator('[data-report-range-part="chart"]');
   await expect(workspace).toBeVisible();
@@ -517,7 +603,7 @@ test('records destination request counts and report DOM identity', async ({ page
 
 test('records filter range sort and history request counts without route data', async ({ page }) => {
   const trace = createServerStateNetworkTrace(page);
-  await page.goto('/?tab=sessions');
+  await openSettledProductionReport(page, '/?tab=sessions');
   const workspace = page.locator('[data-report-workspace]');
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
   await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'history'));
@@ -573,7 +659,7 @@ test('records one exact expiry and one failed background refresh while retaining
   page,
 }) => {
   const trace = createServerStateNetworkTrace(page);
-  await page.goto('/');
+  await openSettledProductionReport(page);
   const workspace = page.locator('[data-report-workspace]');
   const completeOutput = page.locator('[data-report-complete-output]');
   await expect(completeOutput).toBeVisible();

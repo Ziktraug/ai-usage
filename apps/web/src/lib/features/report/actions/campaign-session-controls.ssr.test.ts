@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
-import type { SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import { buildCampaignChronology, type SessionQueryRequest } from '@ai-usage/report-core/session-query';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
@@ -137,7 +137,14 @@ describe('campaign session controls SSR', () => {
         ],
       ]),
       itemCount: 1,
-      items: [{ campaignKey, kind: 'campaign' as const, row: filteredCampaign }],
+      items: [
+        {
+          campaignKey,
+          chronology: buildCampaignChronology([root, listedClassifier]),
+          kind: 'campaign' as const,
+          row: filteredCampaign,
+        },
+      ],
       loadingMore: false,
       nextCursor: null,
       query: filteredQuery,

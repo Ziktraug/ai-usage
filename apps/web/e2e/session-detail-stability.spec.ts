@@ -47,7 +47,11 @@ test('retains Timeline during refresh and does not claim consistency with the ne
   await page.getByRole('button', { name: 'Publish revision', exact: true }).click();
   await expect(page.locator('[data-session-detail-fixture]')).toHaveAttribute('data-pending', 'true');
   await expect(timeline).toBeVisible();
-  await expect(page.getByText('Updating local history. Showing the previous report revision.')).toBeVisible();
+  await expect(
+    page
+      .getByRole('region', { name: 'Session analysis', exact: true })
+      .getByText('Updating local history. Showing the previous report revision.'),
+  ).toBeVisible();
   await expect(page.locator('[data-session-analysis-item="consistency-meta"]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Release detail', exact: true }).click();
   await expect(page.locator('[data-session-analysis-item="consistency-meta"]')).toBeVisible();

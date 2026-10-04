@@ -1,6 +1,5 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
-  import { ghostButton } from '@ai-usage/design-system/svelte';
 
   const detailRouteStatus = css({
     display: 'flex',
@@ -19,6 +18,7 @@
 </script>
 
 <script lang="ts">
+  import { ghostButton } from '@ai-usage/design-system/report';
   import type {
     FocusedDateDomain,
     FocusedOverviewSessionItem,
@@ -89,13 +89,9 @@
   import { campaignRenameMutation, campaignResetMutation } from '../actions/campaign';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
-  import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
   import {
     type CampaignSessionControlsBinding,
-    campaignFilterMatchesBinding,
-    campaignSessionSelectionFor,
     campaignSessionSelectionQuery,
-    campaignSessionsNeedInitialLoad,
   } from '../actions/campaign-session-controls-binding';
   import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from '../actions/project';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
@@ -170,7 +166,10 @@
       initialReportTimelineFor(search.range, bootstrapResult.bootstrap.support.generatedAt),
     ),
   );
-  let detailRows = $state<readonly SessionPresentationRow[]>([]);
+  let detailContext = $state.raw<{
+    readonly revision: string | undefined;
+    readonly rows: readonly SessionPresentationRow[];
+  }>({ revision: undefined, rows: [] });
   let sessionDrawerClosing = false;
   let quotaHistoryOpen = $state(false);
   let servedSessionCount = $state<number>();
@@ -242,11 +241,19 @@
       : defaultSessionWindowIntent;
   });
   const destinationDependencies = untrack(() => ({ queryClient, reportClient, sessionClient }));
+  let pendingRevisionApply = $state(false);
+  const preserveSessionRevision = $derived(
+    detailRoute !== null ||
+      pendingRevisionApply ||
+      (focusedDestination.kind === 'sessions' &&
+        (activeSessionWindowIntent.topLevelDepth > 1 ||
+          Object.keys(activeSessionWindowIntent.campaignChildrenDepth).length > 0)),
+  );
   const destinationQuery = createQuery(() =>
     reportDestinationQueryOptions(
       destinationDependencies,
       focusedDestination,
-      { browser: typeof globalThis.location !== 'undefined' },
+      { browser: typeof globalThis.location !== 'undefined', preserveSessionRevision },
       activeSessionWindowIntent,
     ),
   );
@@ -255,8 +262,30 @@
     commit?.sessions === undefined ? undefined : sessionWindowView(commit.sessions, activeSessionWindowIntent, false),
   );
   const servedRevision = $derived(commit?.descriptor.revision);
-  // A route the loaded window and context rows cannot answer resolves through one exact lookup.
-  const lookupRoute = $derived(detailRoute?.kind === 'session' && servedRevision !== undefined ? detailRoute : null);
+  const detailRows = $derived.by(() => {
+    if (detailContext.revision === servedRevision) {
+      return detailContext.rows;
+    }
+    return commit?.overview.view.topSessions.map((item) => item.row) ?? [];
+  });
+  const acquiredDetailRows = $derived([
+    ...detailRows,
+    ...(commit?.overview.view.topSessions.map((item) => item.row) ?? []),
+  ]);
+  // Acquired rows answer the route first. Only unresolved identities need a bounded exact lookup.
+  const acquiredDetailSelection = $derived(
+    resolveDetailSelection({
+      campaignLookup: undefined,
+      contextRows: acquiredDetailRows,
+      lookupRow: undefined,
+      revision: servedRevision,
+      route: detailRoute,
+      window: sessionWindow,
+    }),
+  );
+  const lookupRoute = $derived(
+    detailRoute?.kind === 'session' && acquiredDetailSelection.kind === 'loading' ? detailRoute : null,
+  );
   const lookupQuery = createQuery(() =>
     optionalSessionLookupQueryOptions(
       sessionClient,
@@ -275,7 +304,9 @@
       ? undefined
       : parseSessionQueryRequest({ ...destination.sessions, cursor: null, revision: servedRevision });
   });
-  const campaignLookupRoute = $derived(detailRoute?.kind === 'campaign' ? detailRoute : null);
+  const campaignLookupRoute = $derived(
+    detailRoute?.kind === 'campaign' && acquiredDetailSelection.kind === 'loading' ? detailRoute : null,
+  );
   const campaignLookupQuery = createQuery(() =>
     optionalSessionPageQueryOptions(
       sessionClient,
@@ -285,20 +316,11 @@
       { browser: typeof globalThis.location !== 'undefined' },
     ),
   );
-  // Rows retained from an earlier look belong to their revision; a new
-  // publication must not stamp them with a revision they were never part of.
-  let contextRevision = untrack(() => servedRevision);
-  $effect(() => {
-    if (servedRevision !== contextRevision) {
-      contextRevision = servedRevision;
-      detailRows = [];
-    }
-  });
   const detailSelectionState = $derived(
     resolveDetailSelection({
       campaignLookup: campaignLookupQuery.data?.ok ? (campaignLookupQuery.data.data.items[0] ?? null) : undefined,
       ...(campaignLookupQuery.data?.ok ? { campaignLookupRevision: campaignLookupQuery.data.revision } : {}),
-      contextRows: detailRows,
+      contextRows: acquiredDetailRows,
       lookupRow: lookupQuery.data?.ok ? lookupQuery.data.data.row : undefined,
       ...(lookupQuery.data?.ok ? { lookupRevision: lookupQuery.data.revision } : {}),
       revision: servedRevision,
@@ -312,6 +334,15 @@
       (detailSelectionState.lookup === 'session'
         ? lookupQuery.isError || lookupQuery.data?.ok === false
         : campaignLookupQuery.isError || campaignLookupQuery.data?.ok === false),
+  );
+  const detailLookupResult = $derived.by(() => {
+    if (detailSelectionState.kind !== 'loading') {
+      return;
+    }
+    return detailSelectionState.lookup === 'campaign' ? campaignLookupQuery.data : lookupQuery.data;
+  });
+  const detailLookupExpired = $derived(
+    detailLookupResult?.ok === false && detailLookupResult.error.tag === 'RevisionExpired',
   );
   const retryDetailLookup = async (): Promise<void> => {
     await (detailSelectionState.kind === 'loading' && detailSelectionState.lookup === 'campaign'
@@ -330,29 +361,26 @@
     }
     onDetailRouteChange(routeForSelection(next, sessionWindow), null);
   };
-  // An open campaign needs both member pages before the panel can list them: every
-  // member (the Members tab and the rounds' child joins) and the filtered children
-  // page that says which members the current filters hide. The guards read the
-  // requested intent, not the loaded data: a page arrives asynchronously, and
-  // asking again while it loads would loop the effect.
+  const newerSessionRevision = $derived(
+    preserveSessionRevision &&
+      commit !== undefined &&
+      sourceControl.state().publication?.revision !== undefined &&
+      sourceControl.state().publication?.revision !== commit.descriptor.revision,
+  );
   $effect(() => {
-    if (detailRoute?.kind !== 'campaign' || focusedDestination.kind !== 'sessions') {
-      return;
-    }
-    const { campaignKey } = detailRoute;
-    if (
-      (activeSessionWindowIntent.campaignSessionsDepth[campaignKey] ?? 0) === 0 &&
-      campaignSessionsNeedInitialLoad(sessionWindow?.campaignSessions, campaignKey)
-    ) {
-      increaseSessionDepth('campaign-sessions', campaignKey);
-    }
-    if (
-      (activeSessionWindowIntent.campaignChildrenDepth[campaignKey] ?? 0) === 0 &&
-      campaignSessionsNeedInitialLoad(sessionWindow?.campaignChildren, campaignKey)
-    ) {
-      increaseSessionDepth('campaign-children', campaignKey);
+    if (newerSessionRevision) {
+      // Closing an inspection must leave its pending publication for explicit Apply.
+      pendingRevisionApply = true;
     }
   });
+  const applyNewSessionRevision = async (): Promise<void> => {
+    try {
+      await refreshReportDestination(destinationDependencies, focusedDestination, activeSessionWindowIntent);
+      pendingRevisionApply = false;
+    } catch {
+      // The destination Query exposes the failure and retains the inspected revision.
+    }
+  };
   $effect(() => {
     const domain = commit?.overview.dateDomain;
     if (domain) {
@@ -375,10 +403,12 @@
     focused: FocusedReportDestination,
     publicationRevision: string | undefined,
     sessionIntent: SessionWindowIntent,
+    preserveRevision = false,
   ): string =>
     JSON.stringify({
       destination: destinationFingerprint(focused),
       publicationRevision,
+      preserveRevision,
       sessionWindow: focused.kind === 'sessions' ? sessionWindowIntentFingerprint(sessionIntent) : undefined,
     });
   let requestedRefreshIdentity = untrack(() => {
@@ -389,12 +419,18 @@
       initialDestination.focused,
       sourceControl.state().publication?.revision,
       activeSessionWindowIntent,
+      preserveSessionRevision,
     );
   });
   let visibleCommitIdentity = '';
   $effect(() => {
     const publicationRevision = sourceControl.state().publication?.revision;
-    const refreshIdentity = refreshIdentityFor(focusedDestination, publicationRevision, activeSessionWindowIntent);
+    const refreshIdentity = refreshIdentityFor(
+      focusedDestination,
+      publicationRevision,
+      activeSessionWindowIntent,
+      preserveSessionRevision,
+    );
     if (refreshIdentity === requestedRefreshIdentity) {
       return;
     }
@@ -404,6 +440,14 @@
       focusedDestination.kind !== 'sessions' ||
       (visible?.sessions !== undefined && sessionWindowSatisfiesIntent(visible.sessions, activeSessionWindowIntent));
     if (
+      preserveSessionRevision &&
+      visible !== undefined &&
+      destinationFingerprint(focusedDestination) === destinationFingerprint(visible.destination) &&
+      sessionWindowIsCurrent
+    ) {
+      return;
+    }
+    if (
       visible !== undefined &&
       publicationRevision === visible.descriptor.revision &&
       destinationFingerprint(focusedDestination) === destinationFingerprint(visible.destination) &&
@@ -411,9 +455,12 @@
     ) {
       return;
     }
-    refreshReportDestination(destinationDependencies, focusedDestination, activeSessionWindowIntent).catch(
-      () => undefined,
-    );
+    refreshReportDestination(
+      destinationDependencies,
+      focusedDestination,
+      activeSessionWindowIntent,
+      preserveSessionRevision,
+    ).catch(() => undefined);
   });
   $effect(() => {
     const nextCommit = commit;
@@ -576,9 +623,10 @@
       return;
     }
     const presented = presentSessionItem(item);
-    detailRows = commit?.overview.view.topSessions.map((candidate) => presentSessionItem(candidate).row) ?? [
-      presented.row,
-    ];
+    detailContext = {
+      revision: servedRevision,
+      rows: commit?.overview.view.topSessions.map((candidate) => presentSessionItem(candidate).row) ?? [presented.row],
+    };
     changeSelection({
       ...(commit?.overview.revision === undefined ? {} : { revision: commit.overview.revision }),
       row: presented.row,
@@ -589,16 +637,12 @@
     if (sessionDrawerClosing) {
       return;
     }
-    const controls = campaignSessionControls;
-    if (controls === null) {
+    const revision = selection?.query?.revision ?? selection?.revision;
+    if (revision === undefined) {
       return;
     }
-    const selected = campaignSessionSelectionFor(controls, row);
-    detailRows = controls.collection.items;
-    changeSelection({
-      ...selected,
-      target: sessionAnalysisTargetForSession(row),
-    });
+    detailContext = { revision, rows: [row] };
+    changeSelection({ revision, row, target: sessionAnalysisTargetForSession(row) });
   };
   const selectDay = (date: string): void =>
     navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }));
@@ -676,24 +720,6 @@
     <CampaignLabelEditor editor={selectedCampaignEditor} />
   {/if}
 {/snippet}
-{#snippet campaignSlot()}
-  {#if campaignSessionControls}
-    <CampaignSessionControls
-      campaign={campaignSessionControls.campaign}
-      collection={campaignSessionControls.collection}
-      onClearCampaignFilter={(campaignKey) => {
-        if (campaignFilterMatchesBinding(search.filters.campaign, campaignKey)) {
-          navigation.clearFieldFilter('campaign');
-        }
-      }}
-      onLoadMoreCampaignSessions={() => campaignSessionControls?.loadMore()}
-      onSelectSession={selectCampaignSession}
-      query={campaignSessionControls.query}
-      rolledUpClassifierCount={campaignSessionControls.rolledUpClassifierCount}
-      visibleRows={campaignSessionControls.visibleRows}
-    />
-  {/if}
-{/snippet}
 {#snippet activeFilterSummary(_filterPending: boolean)}
   <ActiveFilters
     hidden={Math.max(0, totalSessions - visibleSessions)}
@@ -733,7 +759,7 @@
       onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}
       onIncreaseQueryDepth={increaseSessionDepth}
       onInitialSessionWindowAnchor={sessionWindowAnchorOwner.consume}
-      onRowsChange={(rows) => (detailRows = rows)}
+      onRowsChange={(rows) => (detailContext = { revision: servedRevision, rows })}
       onSelectionChange={(nextSelection) => {
         if (sessionDrawerClosing) {
           return;
@@ -789,6 +815,22 @@
     />
   {/if}
 {/snippet}
+{#if newerSessionRevision}
+  <div aria-live="polite" data-session-revision-update role="status">
+    <span>New session data is available. Your current exploration is preserved.</span>
+    {#if detailRoute !== null}
+      <span>Close the session detail to apply it.</span>
+    {/if}
+    <button
+      class={ghostButton}
+      disabled={detailRoute !== null || destinationQuery.isFetching}
+      onclick={applyNewSessionRevision}
+      type="button"
+    >
+      Apply new session data
+    </button>
+  </div>
+{/if}
 <ReportDestinationPresentation
   activeView={visiblePrimary}
   breakdown={breakdownDestination}
@@ -869,6 +911,11 @@
       : 'This session is not part of the current report revision.'}
     <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close</button>
   </p>
+{:else if detailSelectionState.kind === 'loading' && detailLookupExpired}
+  <p class={detailRouteStatus} data-session-route-status="expired" role="status">
+    This report revision has expired. Close this detail and refresh the report to read the current revision.
+    <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close</button>
+  </p>
 {:else if detailSelectionState.kind === 'loading' && detailLookupFailed}
   <p class={detailRouteStatus} data-session-route-status="failed" role="status">
     The selected row could not be looked up in the current report revision.
@@ -880,9 +927,8 @@
 {/if}
 <SessionDetailQuerySlot
   {campaignLabelSlot}
-  {campaignSlot}
   client={sessionClient}
-  memberRows={campaignSessionControls?.collection.items ?? []}
+  memberRows={campaignSessionControls?.query.revision === (selection?.query?.revision ?? selection?.revision) ? campaignSessionControls?.collection.items ?? [] : []}
   onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={(key, value) => navigation.setFieldFilter(key, value)}
   onSelectionChange={(nextSelection) => {

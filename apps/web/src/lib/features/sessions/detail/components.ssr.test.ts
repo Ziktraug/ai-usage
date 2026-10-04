@@ -7,6 +7,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { syntheticSessionRow } from '../table/session-table.fixtures';
+import { buildRoundsView } from './rounds-model';
 import { emptySessionDetailSnapshot, type SessionDetailController } from './types';
 
 interface SvelteServerModule {
@@ -40,25 +41,29 @@ const viteServer = await createServer({
 });
 afterAll(async () => await viteServer.close());
 
-const [highlightModule, detailItemModule, analysisModule, vcsModule, drawerModule, serverModule] = await Promise.all([
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/highlighted-text.svelte'),
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/drawer-detail-item.svelte'),
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/session-analysis.svelte'),
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte'),
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/session-drawer.svelte'),
-  viteServer.ssrLoadModule('svelte/server'),
-]);
+const [highlightModule, detailItemModule, analysisModule, vcsModule, drawerModule, roundsModule, serverModule] =
+  await Promise.all([
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/highlighted-text.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/drawer-detail-item.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/session-analysis.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/session-drawer.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/detail/rounds-reader.svelte'),
+    viteServer.ssrLoadModule('svelte/server'),
+  ]);
 const HighlightedText = componentFrom(highlightModule);
 const DrawerDetailItem = componentFrom(detailItemModule);
 const SessionAnalysis = componentFrom(analysisModule);
 const SessionVcsSummary = componentFrom(vcsModule);
 const SessionDrawer = componentFrom(drawerModule);
+const RoundsReader = componentFrom(roundsModule);
 const { render } = rendererFrom(serverModule);
 
 const row = syntheticSessionRow(7);
 const target = { kind: 'session' as const, reportRowId: row.rowId, summaryRow: row };
 const tokens = (total: number) => ({ cacheRead: 0, cacheWrite: 0, input: total, output: 0, total });
 const orphanPromptText = `${'Orphan prompt content '.repeat(9)}tail`;
+const visibleRoundsRefreshNotice = /<p[^>]*data-session-rounds-refreshing[^>]*role="status"/;
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {
   day: '2-digit',
   hour: '2-digit',
@@ -205,6 +210,24 @@ const vcsContext: SessionVcsContext = {
 };
 
 describe('P4 Svelte detail rendering', () => {
+  test('visibly identifies retained rounds while preserving their prompts during a revision update', () => {
+    if (availableResponse.status !== 'available') {
+      throw new Error('Expected available local history');
+    }
+    const view = buildRoundsView(availableResponse.detail, []);
+    const html = render(RoundsReader, {
+      props: { loading: true, refreshing: true, view },
+    }).body;
+    expect(html).toContain('Explain the chronology clearly');
+    expect(html).toContain('Updating local history. Showing the previous report revision.');
+    expect(html).toMatch(visibleRoundsRefreshNotice);
+    const current = render(RoundsReader, {
+      props: { loading: false, refreshing: false, view },
+    }).body;
+    expect(current).toContain('Explain the chronology clearly');
+    expect(current).not.toContain('data-session-rounds-refreshing');
+  });
+
   test('preserves literal Unicode highlighting and Popover accessibility', () => {
     const highlighted = render(HighlightedText, {
       props: { query: '[β]', text: `prefix [β] ${'🧪'.repeat(220)}` },

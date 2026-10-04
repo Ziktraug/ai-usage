@@ -89,6 +89,14 @@ _Avoid_: turn (as the reading unit), task, exchange, step
 **Child session**:
 A session launched from another session, such as a Claude sub-agent, a Codex spawned thread, or an OpenCode child session. The link carries its evidence kind; a message sent to an existing child continues that same child session instead of creating a new one.
 _Avoid_: subagent run, agent instance, worker
+**Campaign**:
+An observed execution grouping: a root Session and the related Sessions resolved
+by collected lineage within the same machine and harness. A standalone Session
+is a one-session Campaign. Campaign identity comes from the served revision's
+existing session grouping; proximity in time, a shared project, or similar
+titles do not establish a parent relationship. A Campaign is distinct from a
+durable Work thread.
+_Avoid_: work thread, inferred task, active agent fleet
 
 **Session origin**:
 The declared way a session was started, with three values: human, delegated, or automated review. It is absent when the harness did not declare one. An absent attribute is expressed by provenance, never by a sentinel value in its own domain.

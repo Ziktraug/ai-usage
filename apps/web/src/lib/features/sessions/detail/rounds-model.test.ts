@@ -1,7 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import type { SessionDetail, SessionDetailTurn } from '@ai-usage/report-core/session-detail';
+import type { SessionDetail, SessionDetailResponse, SessionDetailTurn } from '@ai-usage/report-core/session-detail';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-import { buildRoundsView, interactionTitle, promptExcerpt, promptOpening, roundTitle } from './rounds-model';
+import { QueryObserver } from '@tanstack/svelte-query';
+import { createWebQueryClient } from '../../../query/client';
+import { sessionDetailQueryOptions } from '../../../query/options/session';
+import type { SessionClientAdapter } from '../../../rpc/session-client';
+import {
+  buildRoundsView,
+  buildRoundsViewForRevision,
+  interactionTitle,
+  promptExcerpt,
+  promptOpening,
+  roundTitle,
+} from './rounds-model';
 
 const tokens = { cacheRead: 0, cacheWrite: 0, input: 10, output: 5, total: 15 };
 const complete = { omittedCount: 0, reasons: [], status: 'complete' as const };
@@ -105,6 +116,61 @@ const memberRow = (sourceSessionId: string): SessionPresentationRow =>
   }) as unknown as SessionPresentationRow;
 
 describe('rounds view', () => {
+  test('keeps retained rounds separate from new member values until their exact revision commits', async () => {
+    const pending = Promise.withResolvers<SessionDetailResponse>();
+    const unexpected = (): Promise<never> => Promise.reject(new Error('Unexpected session acquisition'));
+    const client: SessionClientAdapter = {
+      campaignChildren: unexpected,
+      detail: () => pending.promise,
+      lookup: unexpected,
+      neighbors: unexpected,
+      page: unexpected,
+      vcs: unexpected,
+    };
+    const queryClient = createWebQueryClient();
+    const response: SessionDetailResponse = {
+      consistency: { checkedFields: ['tokens'], status: 'matches-report' },
+      detail,
+      revision: 'revision-a',
+      status: 'available',
+    };
+    const member = { ...memberRow('agent-a'), costApprox: 99.75, freshTokens: 999_777 };
+    const initial = sessionDetailQueryOptions(client, { revision: 'revision-a', rowId: 'root' }, { browser: true });
+    const replacement = sessionDetailQueryOptions(client, { revision: 'revision-b', rowId: 'root' }, { browser: true });
+    queryClient.setQueryData(initial.queryKey, response);
+    const observer = new QueryObserver(queryClient, initial);
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      observer.setOptions(replacement);
+      const retained = observer.getCurrentResult();
+      expect(retained.isPlaceholderData).toBe(true);
+      if (retained.data?.status !== 'available') {
+        throw new Error('The previous exact session history must remain available');
+      }
+      expect(retained.data.revision).toBe('revision-a');
+      const previous = buildRoundsViewForRevision(retained.data ?? null, 'revision-b', [member]);
+      expect(previous?.rounds[0]?.prompts).toEqual([detail.prompts[0]!]);
+      expect(previous?.rounds[0]?.interactions[0]?.child?.row).toBeNull();
+      expect(previous?.children[0]?.row).toBeNull();
+
+      pending.resolve({ ...response, revision: 'revision-b' });
+      await queryClient.fetchQuery(replacement);
+      const committed = observer.getCurrentResult();
+      expect(committed.isPlaceholderData).toBe(false);
+      const current = buildRoundsViewForRevision(committed.data ?? null, 'revision-b', [member]);
+      expect(current?.rounds[0]?.id).toBe(previous?.rounds[0]?.id);
+      expect(current?.rounds[0]?.prompts).toEqual(previous?.rounds[0]?.prompts);
+      expect(current?.rounds[0]?.interactions[0]?.child?.row).toMatchObject({
+        costApprox: 99.75,
+        freshTokens: 999_777,
+      });
+      expect(current?.children[0]?.row).toBe(member);
+    } finally {
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
   test('orders rounds, joins children to member rows, and keeps unattributed interactions visible', () => {
     const view = buildRoundsView(detail, [memberRow('agent-a')]);
     expect(view.rounds.map((round) => [round.index, round.kind, round.excerpt])).toEqual([

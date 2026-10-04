@@ -224,7 +224,7 @@ test('uses one primary navigation while preserving Breakdown deep links behind t
 
   const reportViews = reportViewsFor(page);
   await expect(reportViews).toHaveCount(1);
-  await expect(reportViews.getByRole('link')).toHaveText(['Overview', 'Sessions', 'Analysis']);
+  await expect(reportViews.getByRole('link')).toHaveText(['Overview', 'Sessions', 'Analysis', 'Campaigns']);
   await expect(page.getByRole('tablist', { name: 'Dashboard sections' })).toHaveCount(0);
   await expect(reportViews.getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
     'aria-current',

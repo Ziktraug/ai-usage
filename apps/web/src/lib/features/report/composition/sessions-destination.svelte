@@ -32,10 +32,7 @@
   } from '../../../query/options/session-window';
   import type { SessionSelectionInput } from '../../sessions/detail/types';
   import SessionTable from '../../sessions/table/session-table.svelte';
-  import {
-    type CampaignSessionControlsBinding,
-    campaignSessionsNeedInitialLoad,
-  } from '../actions/campaign-session-controls-binding';
+  import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
   import ReportSharingActions from '../actions/report-sharing-actions.svelte';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
@@ -170,13 +167,6 @@
       onLoadCampaignChildren={(campaignKey) => onIncreaseQueryDepth('campaign-children', campaignKey)}
       onLoadMoreRows={() => onIncreaseQueryDepth('top-level')}
       onSelect={(row) => {
-        if (
-          selectedRowId !== row.rowId &&
-          row.campaignKey !== undefined &&
-          campaignSessionsNeedInitialLoad(queryState?.campaignSessions, row.campaignKey)
-        ) {
-          onIncreaseQueryDepth('campaign-sessions', row.campaignKey);
-        }
         selectRow(row, queryState?.items ?? [], query, queryState?.sessionCount ?? _rows.length);
       }}
       onSortingChange={(updater) => {

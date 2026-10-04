@@ -1,5 +1,6 @@
 <script lang="ts">
   import WebQueryProvider from '../../../query/provider.svelte';
+  import { createShellNavigationOwner, provideShellNavigationOwner } from '../../shell/navigation-owner-context';
   import {
     createSessionWindowAnchorOwner,
     provideSessionWindowAnchorOwner,
@@ -13,6 +14,12 @@
 
   // The report renders during SSR now, so it reaches the shell-owned contexts. Mirroring what
   // AppShell provides keeps this fixture representative of the tree the route actually renders.
+  provideShellNavigationOwner(
+    createShellNavigationOwner({
+      currentUrl: () => new URL('http://report.invalid/'),
+      goto: () => Promise.reject(new Error('Server rendering must not navigate')),
+    }),
+  );
   provideSessionWindowAnchorOwner(createSessionWindowAnchorOwner({ replace: () => undefined, state: () => ({}) }));
   provideSourceControlSummary(() => undefined);
 </script>

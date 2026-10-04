@@ -7,6 +7,7 @@ import {
   type SessionDetailCoverageReason,
   type SessionDetailInteractionKind,
   type SessionDetailPrompt,
+  type SessionDetailResponse,
   type SessionDetailRoundKind,
   type SessionDetailTokenCounts,
 } from '@ai-usage/report-core/session-detail';
@@ -222,6 +223,16 @@ export const buildRoundsView = (detail: SessionDetail, memberRows: readonly Sess
     unroundedChildren: children.filter((child) => child.spawnRoundIndex === null),
   };
 };
+
+/** Retained history stays readable while member values wait for the same exact revision. */
+export const buildRoundsViewForRevision = (
+  response: SessionDetailResponse | null,
+  revision: string | null,
+  memberRows: readonly SessionPresentationRow[],
+): RoundsView | null =>
+  response?.status === 'available'
+    ? buildRoundsView(response.detail, response.revision === revision ? memberRows : [])
+    : null;
 
 export const roundTitle = (round: Pick<RoundView, 'excerpt' | 'index' | 'kind'>): string => {
   if (round.excerpt) {

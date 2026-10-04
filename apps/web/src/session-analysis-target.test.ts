@@ -75,7 +75,11 @@ describe('session analysis target', () => {
       campaignVisibleCount: 6,
     };
     expect(
-      sessionAnalysisTargetForPageItem({ campaignKey: 'fixture-campaign', kind: 'campaign', row: summaryRow }),
+      sessionAnalysisTargetForPageItem({
+        campaignKey: 'fixture-campaign',
+        kind: 'campaign',
+        row: summaryRow,
+      }),
     ).toMatchObject({
       campaignKey: 'fixture-campaign',
       kind: 'campaign-root',

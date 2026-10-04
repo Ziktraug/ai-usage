@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { reportRouteClientEntryKeys } from '../e2e/session-scroll-benchmark-closure';
 
 /**
  * These assertions read the emitted client build; they never produce one. Run `bun run build`
@@ -13,14 +14,13 @@ const CLIENT_PUBLIC_DIRECTORY = '.output-build/sveltekit/client';
 
 /**
  * What the browser downloads before the report can paint: the SvelteKit client runtime, the app
- * entry, node 0 (the shell layout, on every route) and node 3 (the report page). Anything behind a
+ * entry and all layouts/page nodes for the report route. Anything behind a
  * dynamic import or on another route is deliberately outside this closure.
  */
 const INITIAL_CLOSURE_ENTRY_KEYS = [
   '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
   '.svelte-kit/build/generated/client-optimized/app.js',
-  '.svelte-kit/build/generated/client-optimized/nodes/0.js',
-  '.svelte-kit/build/generated/client-optimized/nodes/3.js',
+  ...reportRouteClientEntryKeys(APP_DIRECTORY),
 ] as const;
 
 /**
@@ -31,14 +31,15 @@ const INITIAL_CLOSURE_ENTRY_KEYS = [
 const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 300_000;
 
 /**
- * The last measurement taken on main, and the tolerance around it. The ceiling alone cannot catch
+ * The last reviewed production measurement, and the tolerance around it. The ceiling alone cannot catch
  * the regression that actually matters — a dynamic import going eager, which lands in kilobytes —
  * because it can happen with headroom to spare. Two percent sits well above the few bytes that
  * differ between two builds of the same tree, and well below any real change of shape.
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-const RECORDED_GZIP_CLOSURE_BYTES = 290_372;
+// PR #58: campaign chronology and shared route chunks; CI run 37205221981.
+const RECORDED_GZIP_CLOSURE_BYTES = 296_243;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
@@ -170,15 +171,14 @@ describe('report app client bundle', () => {
   });
 
   test('splits server-only route UI out of the report entry', () => {
-    const nodesDirectory = path.join(APP_DIRECTORY, CLIENT_PUBLIC_DIRECTORY, '_app/immutable/nodes');
-    const javascriptFiles = readdirSync(nodesDirectory).filter((file) => file.endsWith('.js'));
-    const reportEntry = javascriptFiles.find((file) => file.startsWith('3.'));
-
-    expect(javascriptFiles.length).toBeGreaterThan(2);
-    if (!reportEntry) {
-      throw new Error('Expected the report build to emit an index JavaScript entry');
+    const manifest = readClientManifest();
+    for (const entryKey of reportRouteClientEntryKeys(APP_DIRECTORY)) {
+      const entry = manifest[entryKey];
+      if (!entry) {
+        throw new Error(`Expected the report build to emit ${entryKey}`);
+      }
+      expect(readInitialAsset(entry.file).byteLength).toBeLessThan(REPORT_ENTRY_MAXIMUM_BYTES);
     }
-    expect(readFileSync(path.join(nodesDirectory, reportEntry)).byteLength).toBeLessThan(REPORT_ENTRY_MAXIMUM_BYTES);
   });
 
   test('keeps the report first load within its gzip budget', () => {

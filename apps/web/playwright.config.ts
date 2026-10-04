@@ -1,17 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * This is not a boot budget -- Playwright waits for the first successful response, which means Vite
- * has optimised the dependency graph and transformed the app for SSR.
- *
- * Sized from measured CI cold starts, spawn to first test, on ubuntu-latest with two workers:
- * 6.87s, 6.88s, 7.02s across three consecutive green runs on 2026-08-25. The spread is under 150ms,
- * so 20s is ~3x headroom, not a squeeze.
- *
- * The previous 300s came from reading two "never became ready" failures as slowness. They were not:
- * a known `bun --bun vite` startup hang never becomes ready at any deadline, so a larger number
- * only buys a slower red. If this trips on runs that would otherwise pass, read the piped server
- * output below before raising it -- a miss here is a hang, not a slow start.
+ * A cold Bun/Vite start can stall when HTTP readiness probes arrive before Vite has
+ * finished initializing. Wait for its strict loopback listener announcement instead;
+ * the browser suite then verifies the real HTTP response. Do not combine this with a
+ * webServer URL: Playwright races output and HTTP readiness instead of sequencing them.
  */
 const WEB_SERVER_COLD_START_TIMEOUT_MS = 20_000;
 
@@ -41,7 +34,7 @@ export default defineConfig({
     // and the actual startup trace is thrown away, leaving nothing to diagnose.
     stdout: 'pipe',
     timeout: WEB_SERVER_COLD_START_TIMEOUT_MS,
-    url: 'http://127.0.0.1:4174',
+    wait: { stdout: /Local:\s+http:\/\/127\.0\.0\.1:4174\// },
   },
   workers: process.env.CI ? 2 : 4,
 });

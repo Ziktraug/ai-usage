@@ -2,11 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import {
   activeReportTab,
-  consumeReplaceNavigation,
   ensureHistoryEntryKey,
   isActiveManagementDestination,
   isManagementPath,
-  markReplaceNavigation,
   navigationTypeForScroll,
   reportDestinationHeading,
   reportDestinationUrl,
@@ -93,12 +91,5 @@ describe('report destination headings', () => {
     expect(reportDestinationHeading('overview')).toBe('Usage overview');
     expect(reportDestinationHeading('sessions')).toBe('Sessions');
     expect(reportDestinationHeading('breakdown')).toBe('Analysis');
-  });
-
-  test('hands a replace navigation mark to exactly one consumer', () => {
-    expect(consumeReplaceNavigation()).toBe(false);
-    markReplaceNavigation();
-    expect(consumeReplaceNavigation()).toBe(true);
-    expect(consumeReplaceNavigation()).toBe(false);
   });
 });

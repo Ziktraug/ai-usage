@@ -16,6 +16,7 @@ import { isReportPathname } from '../sessions/detail/session-route';
 
 export type ShellIconName =
   | 'breakdown'
+  | 'campaigns'
   | 'memory'
   | 'overview'
   | 'projects'
@@ -89,25 +90,6 @@ export const navigationTypeForScroll = (type: string): 'enter' | 'form' | 'goto'
  */
 export const shouldPreserveReportScroll = (from: URL | null, to: URL | null): boolean =>
   from !== null && to !== null && isReportPathname(from.pathname) && isReportPathname(to.pathname);
-
-/**
- * A navigation that replaces the current history entry (the session panel
- * browsing with j/k) must not advance the shell's logical history cursor,
- * or Back would later address the wrong stored entry key. The owner marks the
- * replacement just before `goto`; the shell consumes the mark in
- * `beforeNavigate`.
- */
-let replaceNavigationPending = false;
-
-export const markReplaceNavigation = (): void => {
-  replaceNavigationPending = true;
-};
-
-export const consumeReplaceNavigation = (): boolean => {
-  const pending = replaceNavigationPending;
-  replaceNavigationPending = false;
-  return pending;
-};
 
 export interface HistoryEntryState {
   readonly aiUsageNavigationKey?: string;
