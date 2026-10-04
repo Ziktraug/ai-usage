@@ -90,4 +90,60 @@ describe('campaign automatic acquisition budget', () => {
     expect(budget.run(() => undefined)).toBe(true);
     expect(budget.run(() => true)).toBe(false);
   });
+
+  test('fills short pages before using two lookahead pages on regular and tall viewports', () => {
+    for (const viewport of [800, 2060]) {
+      const budget = createCampaignAcquisitionBudget();
+      let total = 80;
+      let acquisitions = 0;
+      const acquire = () => {
+        total += 80;
+        acquisitions += 1;
+        return true;
+      };
+      for (let layout = 0; layout < 100; layout += 1) {
+        budget.run(acquire, { viewport, total });
+      }
+      expect(total).toBeGreaterThan(viewport);
+      expect(acquisitions).toBe(Math.ceil(viewport / 80) + 1);
+    }
+  });
+
+  test('unchanged and collapsed projections cannot drain pages or renew their allowance', () => {
+    const budget = createCampaignAcquisitionBudget();
+    let acquisitions = 0;
+    const acquire = () => {
+      acquisitions += 1;
+      return true;
+    };
+    for (let layout = 0; layout < 1000; layout += 1) {
+      budget.run(acquire, { viewport: 800, total: 80 });
+    }
+    expect(acquisitions).toBe(3);
+    for (let layout = 0; layout < 1000; layout += 1) {
+      budget.run(acquire, { viewport: 800, total: 40 });
+    }
+    expect(acquisitions).toBe(3);
+    budget.advance();
+    expect(budget.run(acquire, { viewport: 800, total: 40 })).toBe(true);
+  });
+
+  test('bounds gradual layout changes geometrically and keeps normal pages at two acquisitions', () => {
+    const budget = createCampaignAcquisitionBudget();
+    let acquisitions = 0;
+    const acquire = () => {
+      acquisitions += 1;
+      return true;
+    };
+    for (let total = 0; total < 800; total += 1) {
+      budget.run(acquire, { viewport: 800, total });
+    }
+    expect(acquisitions).toBe(Math.ceil(800 / 44) + 2);
+    budget.advance();
+    acquisitions = 0;
+    for (let total = 4000; total < 100_000; total += 1000) {
+      budget.run(acquire, { viewport: 800, total });
+    }
+    expect(acquisitions).toBe(2);
+  });
 });

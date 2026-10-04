@@ -377,12 +377,16 @@
       timelineCampaignAnchor = selectedKey;
     }
     const memberAnchor = campaignView === 'timeline' ? timelineNavigation.anchor?.key : mapNavigation.anchor?.key;
+    const selectedMemberAnchor =
+      !matchingRestoration?.rowIds.includes(selectedSessionId) || rows.some((row) => row.rowId === selectedSessionId)
+        ? selectedSessionId
+        : undefined;
     anchors = {
       campaignKeys: [...new Set([campaignAnchor, timelineCampaignAnchor].filter((key): key is string => Boolean(key)))],
       memberRowIds: selectedKey
         ? {
             [selectedKey]: [
-              selectedSessionId,
+              selectedMemberAnchor,
               rows.some((row) => row.rowId === memberAnchor) ? memberAnchor : undefined,
             ].filter((key): key is string => Boolean(key)),
           }
@@ -853,13 +857,15 @@
         {/snippet}
       </CampaignVirtualList>
     {:else if campaignView === 'timeline'}
-      <button
-        class={ghostButton}
-        onclick={() => timelineAxis = buildCampaignTimeline(items, visible?.request.range ?? {from:null,to:null}).axis}
-        type="button"
-      >
-        Fit loaded campaigns
-      </button>
+      {#if visible?.request.range.from === null && visible.request.range.to === null}
+        <button
+          class={ghostButton}
+          onclick={() => timelineAxis = buildCampaignTimeline(items, visible.request.range).axis}
+          type="button"
+        >
+          Fit loaded campaigns
+        </button>
+      {/if}
       <CampaignProjectTimeline
         campaignPages={listPages.map((entry) => entry.items.map((item) => item.campaignKey))}
         footer={listFooter}

@@ -16,7 +16,9 @@ changed the timeline scale.
 Acquisition remains exact-revision cursor paging (40 campaigns, 100 members).
 The visible virtual window requests the next page before its trailing edge.
 Only visible surfaces acquire; automatic advancement without a scroll or resize
-has a small budget. Errors retain the readable prefix and require local retry.
+has a small budget. Short pages receive a separate viewport-sized fill budget;
+continuations that do not grow the visible projection cannot renew it. Errors
+retain the readable prefix and require local retry.
 Repeated cursors, repeated identities and empty continuing pages are errors.
 
 One Query composite publishes the requested campaign and member depths together.
@@ -53,7 +55,9 @@ isolated timestamps remain points.
 
 Mouse, trackpad and keyboard navigation no longer require a page control.
 Search continues to run over the store, with filtered member discovery separate
-from full hierarchy inspection. Large reordering beyond the recovery budget is
+from full hierarchy inspection. Refresh restores a selected search result through
+the filtered query without replaying the preceding full hierarchy. Large
+reordering beyond the recovery budget is
 visible as a recovery choice, rather than a silent jump to the first page.
 
 ## Rejected alternative

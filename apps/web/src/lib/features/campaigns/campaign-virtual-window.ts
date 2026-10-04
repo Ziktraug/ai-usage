@@ -92,18 +92,41 @@ export const campaignRestoreAnchor = (
 /** Shared by range and end callbacks; layout changes alone never renew this budget. */
 export const createCampaignAcquisitionBudget = () => {
   let remaining = 2;
+  let fillLimit: number | undefined;
+  let filled = 0;
+  let previousFillHeight = -1;
   return {
     advance: (): void => {
       remaining = 2;
+      fillLimit = undefined;
+      filled = 0;
+      previousFillHeight = -1;
     },
-    run: (acquire: (() => boolean | undefined) | undefined): boolean => {
-      if (!acquire || remaining === 0) {
+    run: (
+      acquire: (() => boolean | undefined) | undefined,
+      geometry?: { viewport: number; total: number },
+    ): boolean => {
+      const limit = fillLimit ?? Math.ceil((geometry?.viewport ?? 0) / 44);
+      const fill =
+        geometry !== undefined &&
+        geometry.total < geometry.viewport &&
+        geometry.total > previousFillHeight &&
+        filled < limit;
+      if (!acquire || (!fill && remaining === 0)) {
         return false;
       }
       if (acquire() === false) {
         return false;
       }
-      remaining -= 1;
+      if (fill && geometry) {
+        // One control per short page can fill even a tall viewport. Unchanged or collapsed
+        // projections cannot renew this allowance, and the usual two-page lookahead stays separate.
+        fillLimit = limit;
+        filled += 1;
+        previousFillHeight = geometry.total;
+      } else {
+        remaining -= 1;
+      }
       return true;
     },
   };

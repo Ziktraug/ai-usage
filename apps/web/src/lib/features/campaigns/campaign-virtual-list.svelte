@@ -42,6 +42,8 @@
   let acquisition = $state(createCampaignAcquisitionBudget());
   const heights = new SvelteMap<string, number>();
   let previousKeys: readonly string[] = [];
+  let previousOffsets: readonly number[] | undefined;
+  let previousNavigation: CampaignScrollState | undefined;
   let layoutVersion = 0;
   let programmaticTop: number | null = null;
   let scrollIntentUntil = 0;
@@ -58,6 +60,10 @@
   const advance = (): void => {
     acquisition = createCampaignAcquisitionBudget();
   };
+  const updateNavigation = (next: CampaignScrollState): void => {
+    navigation = next;
+    previousNavigation = untrack(() => navigation);
+  };
   const capture = (): void => {
     if (!(element && visible(element))) {
       return;
@@ -71,9 +77,12 @@
       scrollIntentUntil = performance.now() + 1500;
     }
     top = nextTop;
+    if (programmed) {
+      return;
+    }
     const anchor = campaignAnchorFor(keys, offsets, top);
     if (anchor) {
-      navigation = { ...navigation, anchor };
+      updateNavigation({ ...navigation, anchor });
     }
   };
   const scrollTo = (host: HTMLElement, position: number): void => {
@@ -114,7 +123,7 @@
       scrollTo(host, start);
       const anchor = campaignAnchorFor(keys, offsets, top);
       if (anchor) {
-        navigation = { ...navigation, anchor };
+        updateNavigation({ ...navigation, anchor });
       }
     }
     await tick();
@@ -129,7 +138,7 @@
     const controls = focusable(row);
     const target = (last ? controls.at(-1) : controls[0]) ?? row;
     target.focus({ preventScroll: true });
-    navigation = { ...navigation, focusKey: key };
+    updateNavigation({ ...navigation, focusKey: key });
     return document.activeElement === target;
   };
   const keydown = (event: KeyboardEvent): void => {
@@ -175,8 +184,24 @@
     }
     const version = ++layoutVersion;
     const oldKeys = previousKeys;
-    const anchor = untrack(() => navigation.anchor);
-    const restored = anchor ? campaignRestoreAnchor(anchor, currentKeys, layout, oldKeys) : null;
+    const layoutChanged = layout !== previousOffsets || currentKeys !== oldKeys;
+    const savedNavigation = navigation;
+    const restoredNavigation = savedNavigation !== previousNavigation;
+    previousNavigation = savedNavigation;
+    if (restoredNavigation) {
+      scrollIntentUntil = 0;
+    }
+    // Native scrolling can advance before its scroll event. Capture the actual position against
+    // the previous layout so new measurements cannot replay an anchor from an earlier frame.
+    const pendingScroll = Math.abs(host.scrollTop - untrack(() => top)) > 0.5 && performance.now() < scrollIntentUntil;
+    const anchor =
+      previousOffsets && oldKeys.length > 0 && !restoredNavigation && pendingScroll
+        ? campaignAnchorFor(oldKeys, previousOffsets, host.scrollTop)
+        : savedNavigation.anchor;
+    const restored =
+      (layoutChanged || restoredNavigation) && anchor
+        ? campaignRestoreAnchor(anchor, currentKeys, layout, oldKeys)
+        : null;
     const focused =
       document.activeElement instanceof HTMLElement
         ? document.activeElement.closest<HTMLElement>('[data-virtual-key]')
@@ -198,13 +223,18 @@
       });
       previousKeys = currentKeys;
     }
+    previousOffsets = layout;
     tick().then(() => {
       if (version !== layoutVersion || !visible(host)) {
         return;
       }
       if (restored) {
-        scrollTo(host, restored.top);
-        navigation = { ...navigation, anchor: restored.anchor };
+        if (Math.abs(host.scrollTop - restored.top) > 0.5) {
+          scrollTo(host, restored.top);
+        }
+        updateNavigation({ ...navigation, anchor: restored.anchor });
+      } else if (restoredNavigation && !savedNavigation.anchor) {
+        scrollTo(host, 0);
       }
       if (focusedKey && focusIndex < 0) {
         if (removedFocus) {
@@ -222,11 +252,12 @@
     if (!active || viewport <= 0 || !element || !visible(element)) {
       return;
     }
+    const geometry = { viewport: availableHeight, total };
     if (onRange) {
-      acquisition.run(() => onRange?.(renderWindow.start, renderWindow.end));
+      acquisition.run(() => onRange?.(renderWindow.start, renderWindow.end), geometry);
     }
     if (total - top - viewport < viewport * 0.75) {
-      acquisition.run(onNearEnd);
+      acquisition.run(onNearEnd, geometry);
     }
   });
   onMount(() => {
@@ -269,7 +300,7 @@
     const focusin = (event: FocusEvent): void => {
       const row = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[data-virtual-key]') : null;
       if (row?.dataset.virtualKey) {
-        navigation = { ...navigation, focusKey: row.dataset.virtualKey };
+        updateNavigation({ ...navigation, focusKey: row.dataset.virtualKey });
       }
     };
     const resize = new ResizeObserver(scheduleViewport);
