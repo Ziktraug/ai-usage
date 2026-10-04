@@ -107,7 +107,7 @@
         'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
       ),
     ].filter((control) => control.tabIndex >= 0 && control.getClientRects().length > 0);
-  export const focusKey = async (key: string, last = false): Promise<boolean> => {
+  const focusRow = async (key: string, last: boolean, revealFully: boolean): Promise<boolean> => {
     const host = element;
     if (!(host && visible(host))) {
       return false;
@@ -119,7 +119,10 @@
     }
     const start = offsets[index] ?? 0;
     const end = offsets[index + 1] ?? start;
-    if (start < top || end > top + viewport) {
+    const viewTop = host.scrollTop;
+    const viewEnd = viewTop + host.clientHeight;
+    const needsReveal = revealFully ? start < viewTop || end > viewEnd : end <= viewTop || start >= viewEnd;
+    if (needsReveal) {
       scrollTo(host, start);
       const anchor = campaignAnchorFor(keys, offsets, top);
       if (anchor) {
@@ -141,6 +144,8 @@
     updateNavigation({ ...navigation, focusKey: key });
     return document.activeElement === target;
   };
+  // Closing a detail restores focus without shifting a row that is already partly visible.
+  export const focusKey = (key: string): Promise<boolean> => focusRow(key, false, false);
   const keydown = (event: KeyboardEvent): void => {
     if (!(event.target instanceof HTMLElement) || event.altKey || event.ctrlKey || event.metaKey) {
       return;
@@ -158,7 +163,7 @@
       if (next) {
         event.preventDefault();
         advance();
-        focusKey(next);
+        focusRow(next, false, true);
       }
     } else if (event.key === 'Tab' && row) {
       const controls = focusable(row);
@@ -168,7 +173,7 @@
       if (event.target === edge && next && (nextIndex < renderWindow.start || nextIndex >= renderWindow.end)) {
         event.preventDefault();
         advance();
-        focusKey(next, event.shiftKey);
+        focusRow(next, event.shiftKey, true);
       }
     }
   };
@@ -238,7 +243,7 @@
       }
       if (focusedKey && focusIndex < 0) {
         if (removedFocus) {
-          focusKey(removedFocus);
+          focusRow(removedFocus, false, true);
         } else {
           host.focus({ preventScroll: true });
         }
