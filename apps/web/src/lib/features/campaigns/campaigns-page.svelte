@@ -40,7 +40,7 @@
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import CampaignAgentMap from './campaign-agent-map.svelte';
   import CampaignProjectTimeline from './campaign-project-timeline.svelte';
-  import { buildCampaignTimeline, type CampaignTimelineAxis } from './campaign-timeline-model';
+  import { buildCampaignTimeline, type CampaignTimelineAxis, campaignTimelineRange } from './campaign-timeline-model';
   import CampaignVirtualList from './campaign-virtual-list.svelte';
   import type { CampaignScrollState } from './campaign-virtual-window';
   import type { CampaignsPageData } from './campaigns-load';
@@ -89,7 +89,7 @@
   let collapsedNodes = $state<ReadonlySet<string>>(new Set());
   let collapsedProjects = $state<ReadonlySet<string>>(new Set());
   let expansion = $state<{ key: string; open: boolean } | null>(null);
-  let timelineAxis = $state<CampaignTimelineAxis | null>(null);
+  let timelineAxis = $state<{ context: string; axis: CampaignTimelineAxis | null } | null>(null);
   let mapVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
   let timelineVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
   let mobileMap = $state(false);
@@ -136,6 +136,9 @@
       revision ?? 'pending-campaigns',
     ),
   );
+  const requestedTimelineRange = $derived(
+    campaignTimelineRange(search.range, inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt),
+  );
   const urlSelection = $derived(readCampaignSelection(page.url, request));
   let requestedCampaign = $state(
     untrack(() => {
@@ -160,6 +163,7 @@
       client: clients.session,
       queryClient,
       request,
+      timelineRange: requestedTimelineRange,
       intent,
       anchors,
       ...(matchingRestoration ? { matching: matchingRestoration } : {}),
@@ -167,7 +171,8 @@
   );
   const exploration = createQuery(() => ({
     ...options,
-    enabled: browser && revision !== undefined,
+    enabled:
+      browser && revision !== undefined && (data.mode !== 'live' || (bootstrap !== null && !bootstrapQuery.error)),
     placeholderData: keepPreviousData,
   }));
   const retained = createQuery(() => retainedCampaignOptions<CampaignExplorationData>(previousKey));
@@ -185,8 +190,17 @@
       visible &&
       sessionQueryFingerprint(visible.request) === sessionQueryFingerprint(request),
   );
+  // Placeholders and the retained Query value carry their own presentation context. Never fit
+  // an old response to the newly requested period while its replacement is still being acquired.
+  const timelineContext = $derived(
+    visible ? JSON.stringify([sessionQueryFingerprint(visible.request), visible.timelineRange]) : '',
+  );
   const timeline = $derived(
-    buildCampaignTimeline(items, visible?.request.range ?? { from: null, to: null }, timelineAxis),
+    buildCampaignTimeline(
+      items,
+      visible?.timelineRange ?? { from: null, to: null },
+      timelineAxis?.context === timelineContext ? timelineAxis.axis : null,
+    ),
   );
   const memberPages = $derived(visible?.members.find((entry) => entry.campaignKey === selectedKey)?.data.pages ?? []);
   const root = $derived(memberPages[0]?.root);
@@ -246,6 +260,8 @@
   };
   const pendingRevision = $derived(latest && visibleRevision && latest.revision !== visibleRevision);
   const isRefreshing = $derived(exploration.isFetching);
+  // The shell observes this from its first render, before conditional Retry controls appear.
+  const recoveryBusy = $derived(bootstrapQuery.isFetching || isRefreshing);
 
   $effect(() => {
     if (
@@ -271,7 +287,6 @@
       memberDepths = {};
       anchors = {};
       matchingRestoration = null;
-      timelineAxis = null;
       listNavigation = {};
       mapNavigation = {};
       timelineNavigation = {};
@@ -294,8 +309,8 @@
     ) {
       previousKey = options.queryKey;
       pruneCampaignExplorations(queryClient, options.queryKey);
-      if (!timelineAxis && timeline.axis) {
-        timelineAxis = timeline.axis;
+      if ((timelineAxis?.context !== timelineContext || !timelineAxis?.axis) && timeline.axis) {
+        timelineAxis = { context: timelineContext, axis: timeline.axis };
       }
     }
   });
@@ -522,7 +537,16 @@
     navigate(url).then(restoreFocus);
   };
   const retry = async (): Promise<void> => {
-    await exploration.refetch();
+    if (recoveryBusy) {
+      return;
+    }
+    if (data.mode === 'live' && (!bootstrap || bootstrapQuery.error)) {
+      // Recover the dependency through its existing Query observer. A valid bootstrap enables
+      // exploration reactively; an imperative follow-up would duplicate that acquisition.
+      await bootstrapQuery.refetch({ cancelRefetch: false });
+    } else if (revision !== undefined) {
+      await exploration.refetch({ cancelRefetch: false });
+    }
   };
   export const capture = () => ({
     scope,
@@ -659,7 +683,7 @@
 
 <svelte:head><title>Campaigns · ai-usage</title></svelte:head>
 
-<main class={pageClass} data-report-revision={visibleRevision} data-route-shell="campaigns">
+<main aria-busy={recoveryBusy} class={pageClass} data-report-revision={visibleRevision} data-route-shell="campaigns">
   <div class={shell}>
     <WorkspaceHeader
       description="Follow related sessions from intent to execution. Select a campaign to explore its agents and their recorded chronology."
@@ -740,8 +764,10 @@
     {/if}
     {#if bootstrapUnavailable || bootstrapQuery.error || exploration.error}
       <div class={notice} role="status">
-        {bootstrapUnavailable ?? bootstrapQuery.error?.message ?? exploration.error?.message}
-        <button class={ghostButton} onclick={retry} type="button">Retry</button>
+        {bootstrapQuery.error?.message ?? bootstrapUnavailable ?? exploration.error?.message}
+        <button aria-busy={recoveryBusy} class={ghostButton} disabled={recoveryBusy} onclick={retry} type="button">
+          Retry
+        </button>
       </div>
     {/if}
     {#if labelsQuery.error}
@@ -774,7 +800,9 @@
       <div class={notice}>
         {#if exploration.error}
           <span role="status">More campaigns are unavailable.</span>
-          <button class={ghostButton} onclick={retry} type="button">Retry campaigns</button>
+          <button aria-busy={recoveryBusy} class={ghostButton} disabled={recoveryBusy} onclick={retry} type="button">
+            Retry campaigns
+          </button>
         {:else if isRefreshing}
           <span role="status">Loading campaigns…</span>
         {:else if hasMoreCampaigns}
@@ -788,7 +816,9 @@
       <div class={notice}>
         {#if exploration.error}
           <span role="status">More sessions are unavailable.</span>
-          <button class={ghostButton} onclick={retry} type="button">Retry sessions</button>
+          <button aria-busy={recoveryBusy} class={ghostButton} disabled={recoveryBusy} onclick={retry} type="button">
+            Retry sessions
+          </button>
         {:else if isRefreshing}
           <span role="status">Loading campaign sessions…</span>
         {:else if hasMoreSessions}
@@ -857,10 +887,10 @@
         {/snippet}
       </CampaignVirtualList>
     {:else if campaignView === 'timeline'}
-      {#if visible?.request.range.from === null && visible.request.range.to === null}
+      {#if visible && (visible.timelineRange.from === null || visible.timelineRange.to === null)}
         <button
           class={ghostButton}
-          onclick={() => timelineAxis = buildCampaignTimeline(items, visible.request.range).axis}
+          onclick={() => timelineAxis = { context: timelineContext, axis: buildCampaignTimeline(items, visible.timelineRange).axis }}
           type="button"
         >
           Fit loaded campaigns

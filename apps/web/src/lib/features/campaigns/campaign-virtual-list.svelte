@@ -64,6 +64,10 @@
     navigation = next;
     previousNavigation = untrack(() => navigation);
   };
+  const rangeClamped = (host: HTMLElement, previousTop: number): boolean => {
+    const maximumTop = Math.max(0, host.scrollHeight - host.clientHeight);
+    return previousTop > maximumTop + 0.5 && Math.abs(host.scrollTop - maximumTop) < 1;
+  };
   const capture = (): void => {
     if (!(element && visible(element))) {
       return;
@@ -71,13 +75,16 @@
     const nextTop = element.scrollTop;
     const moved = Math.abs(nextTop - top) > 0.5;
     const programmed = programmaticTop !== null && Math.abs(nextTop - programmaticTop) < 1;
+    const clamped = rangeClamped(element, top);
     programmaticTop = null;
-    if (moved && !programmed && performance.now() < scrollIntentUntil) {
+    if (moved && !programmed && !clamped && performance.now() < scrollIntentUntil) {
       advance();
       scrollIntentUntil = performance.now() + 1500;
     }
     top = nextTop;
-    if (programmed) {
+    // Removing a retry notice can temporarily shrink the scroll range before new rows arrive.
+    // Keep the logical anchor through the browser's clamp so the append can restore it.
+    if (programmed || clamped) {
       return;
     }
     const anchor = campaignAnchorFor(keys, offsets, top);
@@ -198,7 +205,13 @@
     }
     // Native scrolling can advance before its scroll event. Capture the actual position against
     // the previous layout so new measurements cannot replay an anchor from an earlier frame.
-    const pendingScroll = Math.abs(host.scrollTop - untrack(() => top)) > 0.5 && performance.now() < scrollIntentUntil;
+    const pendingScroll =
+      Math.abs(host.scrollTop - untrack(() => top)) > 0.5 &&
+      !rangeClamped(
+        host,
+        untrack(() => top),
+      ) &&
+      performance.now() < scrollIntentUntil;
     const anchor =
       previousOffsets && oldKeys.length > 0 && !restoredNavigation && pendingScroll
         ? campaignAnchorFor(oldKeys, previousOffsets, host.scrollTop)

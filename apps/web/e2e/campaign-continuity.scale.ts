@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
+import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import AxeBuilder from '@axe-core/playwright';
 import type { APIRequestContext, Locator, Page, Request, Response, TestInfo } from '@playwright/test';
 import { expect, test, waitForHydratedNavigation } from './browser-test';
@@ -16,6 +17,9 @@ import { freezeSessionScrollCollectionSources } from './session-scroll-source-co
 const LIST_ROUTE = '/campaigns?range=all&q=Continuity';
 const PAGE_PATH = '/rpc/session/page';
 const CHILDREN_PATH = '/rpc/session/campaignChildren';
+const BOOTSTRAP_PATH = '/rpc/report/revisionBootstrap';
+const BOOTSTRAP_GLOB = '**/rpc/report/revisionBootstrap**';
+const BOOTSTRAP_UNAVAILABLE = 'The current fixture revision is temporarily unavailable.';
 const OPEN_SESSION_PATTERN = /^Open session/;
 const RETRY_PATTERN = /Retry/;
 const REFRESH_PATTERN = /^Apply new data$/;
@@ -395,10 +399,47 @@ test('scrolls a large hierarchy and restores the same session anchor and keyboar
 });
 
 for (const outcome of ['mismatched response', 'expired revision'] as const) {
-  test(`suspends a ${outcome} frontier, retains its rows and resumes with a local Retry`, async ({ page }) => {
+  test(`suspends a ${outcome} frontier, retains its rows and resumes with a local Retry`, async ({
+    page,
+  }, testInfo) => {
     await openCampaigns(page);
     const list = page.locator('[data-campaign-scroll="list"]');
+    const report = page.locator('main[data-route-shell="campaigns"]');
+    await expect(report).toHaveAttribute('aria-busy', 'false');
+    const release = Promise.withResolvers<void>();
+    const recoveryRelease = Promise.withResolvers<void>();
+    const geometry = async () =>
+      await list.evaluate((host) => ({
+        scrollTop: host.scrollTop,
+        scrollHeight: host.scrollHeight,
+        clientHeight: host.clientHeight,
+        top: host.getBoundingClientRect().top,
+        footerHeight: host.lastElementChild?.getBoundingClientRect().height,
+        loadedRows: host.getAttribute('data-loaded-rows'),
+        focusedControl: document.activeElement?.tagName,
+      }));
+    let failureReady = false;
+    let failureDelivered = false;
+    let recoveryReady = false;
     let failedRequests = 0;
+    let failedBootstraps = 0;
+    if (outcome === 'expired revision') {
+      await page.route(BOOTSTRAP_GLOB, async (route) => {
+        // An initial source-publication event can still revalidate the hydrated bootstrap.
+        // This failure belongs only to the refresh triggered by the rejected frontier.
+        if (!failureDelivered) {
+          await route.continue();
+          return;
+        }
+        failedBootstraps++;
+        const unavailable: ReportRevisionBootstrapResult = {
+          error: { tag: 'RevisionUnavailable', message: BOOTSTRAP_UNAVAILABLE },
+          ok: false,
+          requestFingerprint: 'report-bootstrap:v1:{}',
+        };
+        await route.fulfill({ body: encodeRpcResponseBody(unavailable), contentType: 'application/json', status: 200 });
+      });
+    }
     await page.route('**/rpc/session/page**', async (route) => {
       failedRequests++;
       const response = await route.fetch();
@@ -419,25 +460,80 @@ for (const outcome of ['mismatched response', 'expired revision'] as const) {
               },
             }
           : { ...decoded, revision: 'wrong-frontier-revision' };
+      failureReady = true;
+      await release.promise;
+      failureDelivered = true;
       await route.fulfill({ response, body: encodeRpcResponseBody(failure) });
     });
-    for (let index = 0; index < 20 && failedRequests === 0; index++) {
-      await wheel(page, list, 5000);
+    try {
+      for (let index = 0; index < 20 && failedRequests === 0; index++) {
+        await wheel(page, list, 5000);
+      }
+      await expect.poll(() => failureReady, { message: 'Scrolling must acquire the intercepted frontier' }).toBe(true);
+      const beforeFailure = await visibleAnchor(list, '[data-campaign-card]', 'data-campaign-key');
+      release.resolve();
+      const retry = list.getByRole('button', { name: 'Retry campaigns', exact: true });
+      await expect(retry).toBeVisible();
+      await expect(list.locator('[data-campaign-card]').first()).toBeVisible();
+      if (outcome === 'expired revision') {
+        await expect(page.getByText(BOOTSTRAP_UNAVAILABLE, { exact: false })).toBeVisible();
+        expect(failedBootstraps).toBe(1);
+      }
+      const afterFailure = await visibleAnchor(list, '[data-campaign-card]', 'data-campaign-key');
+      expect(afterFailure.key).toBe(beforeFailure.key);
+      expect(Math.abs(afterFailure.offset - beforeFailure.offset)).toBeLessThanOrEqual(2);
+      for (let index = 0; index < 5; index++) {
+        await wheel(page, list, 5000);
+      }
+      // An intentional quiescence interval detects automatic retry loops after the rejected frontier.
+      await page.waitForTimeout(1200);
+      expect(failedRequests).toBe(1);
+      await page.unroute('**/rpc/session/page**');
+      await page.unroute(BOOTSTRAP_GLOB);
+      await page.route('**/rpc/session/page**', async (route) => {
+        const response = await route.fetch();
+        recoveryReady = true;
+        if (outcome === 'expired revision') {
+          await recoveryRelease.promise;
+        }
+        await route.fulfill({ response });
+      });
+      const beforeRetry = await visibleAnchor(list, '[data-campaign-card]', 'data-campaign-key');
+      const beforeRetryGeometry = await geometry();
+      await expect(retry).toBeEnabled();
+      const recoveredBootstrap =
+        outcome === 'expired revision'
+          ? page.waitForResponse((response) => new URL(response.url()).pathname === BOOTSTRAP_PATH)
+          : null;
+      const acquired = page.waitForResponse((response) => new URL(response.url()).pathname === PAGE_PATH);
+      await retry.click();
+      if (recoveredBootstrap) {
+        expect((await recoveredBootstrap).ok()).toBe(true);
+      }
+      await expect.poll(() => recoveryReady).toBe(true);
+      const duringRetry = await visibleAnchor(list, '[data-campaign-card]', 'data-campaign-key');
+      const duringRetryGeometry = await geometry();
+      recoveryRelease.resolve();
+      expect((await acquired).ok()).toBe(true);
+      await expect(page.getByRole('button', { name: RETRY_PATTERN })).toHaveCount(0);
+      await expect(report).toHaveAttribute('aria-busy', 'false');
+      const afterRetry = await visibleAnchor(list, '[data-campaign-card]', 'data-campaign-key');
+      await saveMeasurements(testInfo, 'campaign-retry-anchors.json', {
+        beforeFailure,
+        afterFailure,
+        beforeRetry,
+        beforeRetryGeometry,
+        duringRetry,
+        duringRetryGeometry,
+        afterRetry,
+        afterRetryGeometry: await geometry(),
+      });
+      expect(afterRetry.key).toBe(beforeRetry.key);
+      expect(Math.abs(afterRetry.offset - beforeRetry.offset)).toBeLessThanOrEqual(2);
+    } finally {
+      release.resolve();
+      recoveryRelease.resolve();
     }
-    const retry = list.getByRole('button', { name: 'Retry campaigns', exact: true });
-    await expect(retry).toBeVisible();
-    await expect(list.locator('[data-campaign-card]').first()).toBeVisible();
-    for (let index = 0; index < 5; index++) {
-      await wheel(page, list, 5000);
-    }
-    // An intentional quiescence interval detects automatic retry loops after the rejected frontier.
-    await page.waitForTimeout(1200);
-    expect(failedRequests).toBe(1);
-    await page.unroute('**/rpc/session/page**');
-    const acquired = page.waitForResponse((response) => new URL(response.url()).pathname === PAGE_PATH);
-    await retry.click();
-    expect((await acquired).ok()).toBe(true);
-    await expect(page.getByRole('button', { name: RETRY_PATTERN })).toHaveCount(0);
   });
 }
 

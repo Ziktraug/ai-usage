@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { buildCampaignChronology, type SessionPageItem } from '@ai-usage/report-core/session-query';
 import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
 import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
-import { barForInterval, buildCampaignTimeline } from './campaign-timeline-model';
+import { endOfDay, startOfDay } from '../../../date-range';
+import { barForInterval, buildCampaignTimeline, campaignTimelineRange } from './campaign-timeline-model';
 import { campaignProjectSegments } from './campaign-timeline-projection';
 import { campaignsRequest } from './campaigns-query';
 import { createSyntheticCampaignClient } from './campaigns-synthetic';
@@ -26,6 +27,62 @@ const fixtureItems = async (): Promise<SessionPageItem[]> => {
 };
 
 describe('project campaign timeline', () => {
+  test.each(['7d', '30d', '90d'] as const)('%s covers its calendar period before older pages arrive', async (mode) => {
+    const search = validateDashboardSearch({ range: mode }, dashboardSearchDefaultsFor('date'));
+    const request = campaignsRequest(search, campaignMapFixtureGeneratedAt, 'timeline-revision');
+    const template = (await fixtureItems())[0]!;
+    const recent = {
+      ...template,
+      chronology: buildCampaignChronology([{ date: instant('08:00'), endDate: instant('09:00') }]),
+    };
+    const older = {
+      ...template,
+      campaignKey: 'older',
+      chronology: buildCampaignChronology([{ date: '2026-06-06T08:00:00.000Z', endDate: '2026-06-06T09:00:00.000Z' }]),
+    };
+    const domain = campaignTimelineRange(search.range, campaignMapFixtureGeneratedAt);
+    const first = buildCampaignTimeline([recent], domain);
+    expect(request.range.to).toBeNull();
+    expect(first.axis).toMatchObject({
+      startMs: Date.parse(request.range.from!),
+      endMs: endOfDay(new Date(campaignMapFixtureGeneratedAt)).getTime(),
+    });
+    const appended = buildCampaignTimeline([recent, older], domain, first.axis);
+    expect(appended.axis).toBe(first.axis);
+    expect(
+      appended.groups.flatMap((group) => group.campaigns).find(({ item }) => item.campaignKey === 'older')?.bar,
+    ).toMatchObject({ point: false });
+    expect(buildCampaignTimeline([], domain).axis).toEqual(first.axis);
+  });
+  test('anchors Today to the displayed revision, including an initially empty day', async () => {
+    const current = '2026-06-11T12:00:00.000Z';
+    const next = '2026-06-12T12:00:00.000Z';
+    const today = campaignTimelineRange({ mode: 'today' }, current);
+    const tomorrow = campaignTimelineRange({ mode: 'today' }, next);
+    expect(buildCampaignTimeline([], today).axis).toMatchObject({
+      startMs: startOfDay(new Date(current)).getTime(),
+      endMs: endOfDay(new Date(current)).getTime(),
+    });
+    const template = (await fixtureItems())[0]!;
+    const items = [{ ...template, chronology: buildCampaignChronology([{ date: next, endDate: next }]) }];
+    const result = buildCampaignTimeline(items, tomorrow);
+    expect(result.axis).toMatchObject({
+      startMs: startOfDay(new Date(next)).getTime(),
+      endMs: endOfDay(new Date(next)).getTime(),
+    });
+    expect(result.groups[0]?.campaigns[0]?.bar).toMatchObject({ point: true });
+  });
+
+  test.each([
+    { mode: 'all' },
+    { mode: 'custom', from: '2026-06-01' },
+    { mode: 'custom', to: '2026-06-30' },
+  ] as const)('keeps open presentation bounds for explicit fitting: %j', (range) => {
+    const search = { ...dashboardSearchDefaultsFor('date'), range };
+    expect(campaignTimelineRange(range, campaignMapFixtureGeneratedAt)).toEqual(
+      campaignsRequest(search, campaignMapFixtureGeneratedAt, 'revision').range,
+    );
+  });
   test('appends continuations without inserting campaigns into previously traversed project segments', async () => {
     const template = (await fixtureItems())[0]!;
     const items = Array.from(

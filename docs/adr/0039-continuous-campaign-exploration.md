@@ -42,7 +42,11 @@ navigation on Back/Forward; the URL carries filters, campaign and session
 selection. Full reload restores the selection within the bounded recovery
 window, not arbitrary scroll depth.
 
-Finite timeline axes use the selected time bounds. All-history axes retain their
+Finite timeline axes use the selected time bounds. Presets cover the selected
+calendar period at the displayed revision's reference date, independently of the
+query's filtering bounds. The presentation domain travels with the Query
+composite so retained data keeps its own axis during replacement. All-history
+and open custom axes retain their
 initial extent until an explicit fit action. Campaign acquisition order determines
 projection order. Newly acquired campaigns append as project continuations, so a
 downward traversal also encounters additions to earlier projects. Expansions and
@@ -67,7 +71,7 @@ client heap would break bounded acquisition or natural upward navigation.
 
 ## Evidence
 
-- [Campaign Query composition](../../apps/web/src/lib/features/campaigns/campaigns-query.ts)
+- [Campaign Query composition](../../apps/web/src/lib/query/options/campaigns.ts)
 - [Virtual collection](../../apps/web/src/lib/features/campaigns/campaign-virtual-list.svelte)
 - [Continuity regressions](../../apps/web/e2e/campaign-continuity.scale.ts)
 - [Query regressions](../../apps/web/src/lib/features/campaigns/campaigns-continuity.test.ts)

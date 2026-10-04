@@ -10,6 +10,7 @@ import { createSessionClientAdapter } from '../../rpc/session-client';
 import { requireAvailableReportBootstrap } from '../report/core/report-bootstrap';
 import { dashboardSearchCodec } from '../shell/navigation';
 import { createAwaitedRouteQueryState } from '../shell/query-load';
+import { campaignTimelineRange } from './campaign-timeline-model';
 import { campaignsExplorationOptions, campaignsListOptions, campaignsRequest } from './campaigns-query';
 import { readCampaignSelection } from './campaigns-selection';
 import { createSyntheticCampaignClient } from './campaigns-synthetic';
@@ -42,7 +43,8 @@ export const loadCampaignsPageData = async (
         : null;
     const revision = bootstrap?.manifest.revision ?? 'synthetic-campaign-map-v1';
     const generatedAt = bootstrap?.bootstrap.support.generatedAt ?? campaignMapFixtureGeneratedAt;
-    const request = campaignsRequest(parseDashboardSearchUrl(options.url, dashboardSearchCodec), generatedAt, revision);
+    const search = parseDashboardSearchUrl(options.url, dashboardSearchCodec);
+    const request = campaignsRequest(search, generatedAt, revision);
     const [list] = await Promise.all([
       runtime.queryClient.fetchInfiniteQuery(campaignsListOptions(sessionClient, request)),
       mode === 'live'
@@ -60,6 +62,7 @@ export const loadCampaignsPageData = async (
           intent: { ...initialSessionWindowIntent(), campaignSessionsDepth: { [selectedKey]: 1 } },
           queryClient: runtime.queryClient,
           request,
+          timelineRange: campaignTimelineRange(search.range, generatedAt),
         }),
       );
     }

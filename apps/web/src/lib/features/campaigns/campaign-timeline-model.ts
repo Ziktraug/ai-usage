@@ -1,4 +1,15 @@
 import type { SessionPageItem, SessionQueryRange } from '@ai-usage/report-core/session-query';
+import type { DashboardDateRangeSearch } from '../../../dashboard-search';
+import { endOfDay } from '../../../date-range';
+import { rangeBounds } from '../report/range/report-range-model';
+
+/** Presentation closes presets at the revision's calendar day; filtering keeps its existing bounds. */
+export const campaignTimelineRange = (range: DashboardDateRangeSearch, generatedAt: string): SessionQueryRange => {
+  const reference = new Date(generatedAt);
+  const bounds = rangeBounds(range, reference);
+  const to = range.mode === '7d' || range.mode === '30d' || range.mode === '90d' ? endOfDay(reference) : bounds.to;
+  return { from: bounds.from?.toISOString() ?? null, to: to?.toISOString() ?? null };
+};
 
 export interface CampaignTimelineAxis {
   endMs: number;

@@ -137,6 +137,59 @@ describe('Campaign acquisition continuity', () => {
 });
 
 describe('Campaign restoration boundaries', () => {
+  test('publishes the presentation range with the exact exploration context', async () => {
+    const queryClient = createWebQueryClient();
+    let listCalls = 0;
+    const client = clientWith({
+      page: (request) => {
+        listCalls += 1;
+        return Promise.resolve(page(request));
+      },
+    });
+    const request = requestFor('r1');
+    const options = {
+      client,
+      intent: initialSessionWindowIntent(),
+      queryClient,
+      request,
+    };
+    const firstRange = { from: '2026-10-03', to: '2026-10-03' };
+    const nextRange = { from: '2026-10-04', to: '2026-10-04' };
+    try {
+      const firstOptions = campaignsExplorationOptions({ ...options, timelineRange: firstRange });
+      const nextOptions = campaignsExplorationOptions({ ...options, timelineRange: nextRange });
+      expect(nextOptions.queryKey).not.toEqual(firstOptions.queryKey);
+      const first = await queryClient.fetchQuery(firstOptions);
+      const next = await queryClient.fetchQuery(nextOptions);
+      expect(first.timelineRange).toEqual(firstRange);
+      expect(next.timelineRange).toEqual(nextRange);
+      expect(queryClient.getQueryData<CampaignExplorationData>(firstOptions.queryKey)?.timelineRange).toEqual(
+        firstRange,
+      );
+      expect(listCalls).toBe(1);
+    } finally {
+      queryClient.clear();
+    }
+  });
+
+  test('defaults the presentation range to the acquired request for existing callers', async () => {
+    const queryClient = createWebQueryClient();
+    const request = requestFor('r1');
+    try {
+      const data = await queryClient.fetchQuery(
+        campaignsExplorationOptions({
+          client: clientWith(),
+          intent: initialSessionWindowIntent(),
+          queryClient,
+          request,
+        }),
+      );
+      expect(data.timelineRange).toEqual(request.range);
+    } finally {
+      queryClient.clear();
+    }
+  });
+
   test('continues a deep active exploration after inactive infinite entries are collected', async () => {
     const queryClient = createWebQueryClient();
     let listCalls = 0;
