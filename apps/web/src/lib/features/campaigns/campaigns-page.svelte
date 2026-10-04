@@ -261,7 +261,10 @@
   const pendingRevision = $derived(latest && visibleRevision && latest.revision !== visibleRevision);
   const isRefreshing = $derived(exploration.isFetching);
   // The shell observes this from its first render, before conditional Retry controls appear.
-  const recoveryBusy = $derived(bootstrapQuery.isFetching || isRefreshing);
+  const shellBusy = $derived(bootstrapQuery.isFetching || isRefreshing);
+  const bootstrapNeedsRecovery = $derived(data.mode === 'live' && (!bootstrap || Boolean(bootstrapQuery.error)));
+  // A healthy alias revalidation must not disable a Retry on the already inspected revision.
+  const recoveryBusy = $derived(isRefreshing || (bootstrapNeedsRecovery && bootstrapQuery.isFetching));
 
   $effect(() => {
     if (
@@ -540,7 +543,7 @@
     if (recoveryBusy) {
       return;
     }
-    if (data.mode === 'live' && (!bootstrap || bootstrapQuery.error)) {
+    if (bootstrapNeedsRecovery) {
       // Recover the dependency through its existing Query observer. A valid bootstrap enables
       // exploration reactively; an imperative follow-up would duplicate that acquisition.
       await bootstrapQuery.refetch({ cancelRefetch: false });
@@ -683,7 +686,7 @@
 
 <svelte:head><title>Campaigns · ai-usage</title></svelte:head>
 
-<main aria-busy={recoveryBusy} class={pageClass} data-report-revision={visibleRevision} data-route-shell="campaigns">
+<main aria-busy={shellBusy} class={pageClass} data-report-revision={visibleRevision} data-route-shell="campaigns">
   <div class={shell}>
     <WorkspaceHeader
       description="Follow related sessions from intent to execution. Select a campaign to explore its agents and their recorded chronology."

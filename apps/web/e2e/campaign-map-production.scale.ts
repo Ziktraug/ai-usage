@@ -4,7 +4,8 @@ import {
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
-import type { Locator, Page } from '@playwright/test';
+import { parseSessionQueryRequest, type SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import type { Locator, Page, Request } from '@playwright/test';
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 import { decodeRpcResponseBody, encodeRpcResponseBody, rpcStringFieldValues } from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
@@ -207,32 +208,125 @@ test('keeps the retained timeline on its original period until a failed filter c
   page,
   request,
   baseURL,
-}) => {
+}, testInfo) => {
   await freezeSessionScrollCollectionSources(request, baseURL!);
-  await page.goto('/campaigns?range=all&q=Implement%20fixture%20root&campaignView=timeline');
-  await waitForHydratedNavigation(page);
-  await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
-  const timeline = page.locator('[data-project-timeline]');
-  const start = await timeline.getAttribute('data-axis-start');
-  const end = await timeline.getAttribute('data-axis-end');
-  expect(start).toBeTruthy();
-  await page.route('**/rpc/session/page**', async (route) => {
-    const response = await route.fetch();
-    const decoded = decodeRpcResponseBody(await response.text());
-    if (!(typeof decoded === 'object' && decoded !== null && 'revision' in decoded)) {
-      throw new Error('The real Session response must expose its exact revision');
+  const trace = createServerStateNetworkTrace(page);
+  let phase = 'initial';
+  const sourceReleased = Promise.withResolvers<void>();
+  const bootstrapReleased = Promise.withResolvers<void>();
+  let holdBootstrap = false;
+  let bootstrapHeld = false;
+  let pointerHeld = false;
+  const acquisitions: Array<{ at: number; phase: string; query: SessionQueryRequest }> = [];
+  const observePage = (candidate: Request): void => {
+    if (new URL(candidate.url()).pathname !== '/rpc/session/page') {
+      return;
     }
-    await route.fulfill({ response, body: encodeRpcResponseBody({ ...decoded, revision: 'mismatched-revision' }) });
+    const input = candidate.postData() ?? new URL(candidate.url()).searchParams.get('data');
+    if (input === null) {
+      throw new Error('A Campaign page request must carry its exact query');
+    }
+    acquisitions.push({ at: Date.now(), phase, query: parseSessionQueryRequest(decodeRpcResponseBody(input)) });
+  };
+  page.on('request', observePage);
+  await page.route('**/api/source-control', async (route) => {
+    await sourceReleased.promise;
+    await route.continue();
   });
-  await page.getByRole('combobox', { name: 'Period', exact: true }).selectOption('today');
-  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
-  await expect(page.getByText('Showing last loaded campaigns.', { exact: false })).toBeVisible();
-  await expect(timeline).toHaveAttribute('data-axis-start', start!);
-  await expect(timeline).toHaveAttribute('data-axis-end', end!);
-  await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
-  await page.unroute('**/rpc/session/page**');
-  await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(page.locator('[data-timeline-campaign]')).toHaveCount(0);
-  await expect(page.getByText('No campaigns match this period and search.', { exact: false })).toBeVisible();
+  await page.route('**/rpc/report/revisionBootstrap**', async (route) => {
+    const response = await route.fetch();
+    if (holdBootstrap) {
+      bootstrapHeld = true;
+      await bootstrapReleased.promise;
+    }
+    await route.fulfill({ response });
+  });
+  try {
+    await page.goto('/campaigns?range=all&q=Implement%20fixture%20root&campaignView=timeline');
+    await waitForHydratedNavigation(page);
+    await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
+    const main = page.locator('main[data-route-shell="campaigns"]');
+    await expect(main).toHaveAttribute('aria-busy', 'false');
+    const revision = await main.getAttribute('data-report-revision');
+    const timeline = page.locator('[data-project-timeline]');
+    const start = await timeline.getAttribute('data-axis-start');
+    const end = await timeline.getAttribute('data-axis-end');
+    expect(start).toBeTruthy();
+    await page.route('**/rpc/session/page**', async (route) => {
+      const response = await route.fetch();
+      const decoded = decodeRpcResponseBody(await response.text());
+      if (!(typeof decoded === 'object' && decoded !== null && 'revision' in decoded)) {
+        throw new Error('The real Session response must expose its exact revision');
+      }
+      await route.fulfill({ response, body: encodeRpcResponseBody({ ...decoded, revision: 'mismatched-revision' }) });
+    });
+    const period = page.getByRole('combobox', { name: 'Period', exact: true });
+    await period.selectOption('today');
+    await expect(period).toHaveValue('today');
+    phase = 'filter';
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get('range')).toBe('today');
+    // The production fixture is July 3; this browser's calendar is Europe/Paris.
+    const expectedQuery = {
+      range: { from: '2026-07-02T22:00:00.000Z', to: '2026-07-03T21:59:59.999Z' },
+      revision,
+    };
+    expect(acquisitions.at(-1)?.query).toMatchObject(expectedQuery);
+    await expect(page.getByText('Showing last loaded campaigns.', { exact: false })).toBeVisible();
+    await expect(timeline).toHaveAttribute('data-axis-start', start!);
+    await expect(timeline).toHaveAttribute('data-axis-end', end!);
+    await expect(page.locator('[data-timeline-session]')).toHaveCount(2);
+    await page.unroute('**/rpc/session/page**');
+    phase = 'retry';
+    const retry = page.getByRole('button', { name: 'Retry', exact: true });
+    await expect(retry).toBeEnabled();
+    const retryBox = await retry.boundingBox();
+    if (!retryBox) {
+      throw new Error('The retained timeline must expose its Retry control');
+    }
+    holdBootstrap = true;
+    await page.mouse.move(retryBox.x + retryBox.width / 2, retryBox.y + retryBox.height / 2);
+    await page.mouse.down();
+    pointerHeld = true;
+    // A healthy alias revalidation between press and release must not discard this pinned Retry.
+    sourceReleased.resolve();
+    await expect.poll(() => bootstrapHeld).toBe(true);
+    await expect(main).toHaveAttribute('aria-busy', 'true');
+    await expect(retry).toBeEnabled();
+    await page.mouse.up();
+    pointerHeld = false;
+    await expect(page.locator('[data-timeline-campaign]')).toHaveCount(0);
+    await expect(page.getByText('No campaigns match this period and search.', { exact: false })).toBeVisible();
+    expect(acquisitions).toHaveLength(2);
+    expect(acquisitions.at(-1)?.query).toMatchObject(expectedQuery);
+    bootstrapReleased.resolve();
+    await expect(main).toHaveAttribute('aria-busy', 'false');
+  } finally {
+    sourceReleased.resolve();
+    bootstrapReleased.resolve();
+    if (pointerHeld) {
+      await page.mouse.up();
+    }
+    const finalState = await page.evaluate(() => {
+      const main = document.querySelector('main[data-route-shell="campaigns"]');
+      const timeline = document.querySelector('[data-project-timeline]');
+      return {
+        axisEnd: timeline?.getAttribute('data-axis-end'),
+        axisStart: timeline?.getAttribute('data-axis-start'),
+        busy: main?.getAttribute('aria-busy'),
+        campaigns: document.querySelectorAll('[data-timeline-campaign]').length,
+        notices: [...document.querySelectorAll('[role="status"]')].map((node) => node.textContent?.trim()),
+        period: document.querySelector<HTMLSelectElement>('select[name="range"]')?.value,
+        revision: main?.getAttribute('data-report-revision'),
+        url: window.location.href,
+      };
+    });
+    await testInfo.attach('campaign-filter-retry-context.json', {
+      body: JSON.stringify({ acquisitions, finalState, phase, requests: trace.records() }, null, 2),
+      contentType: 'application/json',
+    });
+    page.off('request', observePage);
+    trace.dispose();
+  }
 });
