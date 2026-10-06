@@ -18,7 +18,8 @@ const harnessMarkTones: Readonly<Record<string, string>> = {
   gemini: css({ fill: 'harness.gemini.fg' }),
 };
 
-const harnessFamily = (name: string): string => {
+/** Resolves a harness key, display label, or variant (`Claude Code`, `codex-cli`) to its family key. */
+export const harnessFamily = (name: string): string => {
   const lowerName = name.toLowerCase();
   return harnessFillTones[lowerName] ? lowerName : (lowerName.split(HARNESS_NAME_SEPARATOR)[0] ?? '');
 };

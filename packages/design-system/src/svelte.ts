@@ -151,3 +151,4 @@ export {
   provenanceMarkerClass,
 } from './svelte/overlays/styles';
 export { default as Tooltip } from './svelte/overlays/tooltip.svelte';
+export { default as ProviderMark } from './svelte/passive/provider-mark.svelte';

@@ -162,12 +162,17 @@ export const aiUsagePreset = definePreset({
             codex: dual('#0068C9', '#3D9DFA'),
           },
 
-          // Harness badge pairs, recalibrated per scheme.
+          // Harness badge pairs, recalibrated per scheme. Claude and Codex take their vendor's hue
+          // (clay, blue) so the colour confirms the mark. Cursor and OpenCode publish monochrome
+          // marks, so they get hues chosen to stay apart from those two, from each other under
+          // colour-vision deficiency, and from the lavender accent. AA text on light surfaces pins
+          // every fg to the same lightness band, which caps how far apart four hues can sit; the
+          // mark beside each badge is what keeps a harness identifiable when hue alone is not.
           harness: {
-            claude: { fg: dual('#8C3E74', '#D98ABC'), bg: dual('#F5E5EF', '#351E2F') },
-            codex: { fg: dual('#0E7569', '#46C3AC'), bg: dual('#E0F0EB', '#11302A') },
-            cursor: { fg: dual('#6A47C8', '#AC92F2'), bg: dual('#EDE8FB', '#271F40') },
-            opencode: { fg: dual('#2061B4', '#7FA9E8'), bg: dual('#E3EDF9', '#15263C') },
+            claude: { fg: dual('#A84A2C', '#E58C6B'), bg: dual('#F8E8E1', '#3A2119') },
+            codex: { fg: dual('#1A62B8', '#6AAEF5'), bg: dual('#E3EDF9', '#14263D') },
+            cursor: { fg: dual('#0A524C', '#86E6C8'), bg: dual('#DDEFEA', '#11302A') },
+            opencode: { fg: dual('#B03A78', '#D27BA8'), bg: dual('#F8E4EF', '#3A1C2E') },
             gemini: { fg: dual('#0F6FA8', '#5FB5E2'), bg: dual('#E1EFF8', '#102A3A') },
           },
 

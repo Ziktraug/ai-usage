@@ -29,15 +29,19 @@ export const clr = {
   cyanB: sgr('1;36'),
 };
 
-const harnessColorFn = (color: HarnessColor) =>
-  ({
-    magenta: clr.magenta,
-    cyan: clr.cyan,
-    green: clr.green,
-    blue: clr.blue,
-  })[color];
+// 256-colour approximations of the web hues; the 16 basic colours have no clay or raspberry.
+const harnessColors: Record<HarnessColor, (s: string) => string> = {
+  clay: sgr('38;5;173'),
+  blue: sgr('38;5;75'),
+  teal: sgr('38;5;79'),
+  raspberry: sgr('38;5;175'),
+};
 
-export const harnessColor = (h: string) => harnessColorFn(harnessMetadataForLabel(h)?.color ?? 'blue');
+// An unrecognised harness stays uncoloured rather than borrowing a known harness's identity.
+export const harnessColor = (h: string) => {
+  const color = harnessMetadataForLabel(h)?.color;
+  return color === undefined ? id : harnessColors[color];
+};
 
 const API_PROVIDER_PATTERN = /API/;
 

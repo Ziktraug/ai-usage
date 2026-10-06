@@ -1,16 +1,24 @@
 <script lang="ts" module>
   import { css, cx } from '@ai-usage/design-system/css';
+  import { harnessFamily } from '../passive/harness-fill';
+  import ProviderMark, { hasProviderMark } from '../passive/provider-mark.svelte';
 
   const badge = css({
     display: 'inline-flex',
     alignItems: 'center',
-    gap: '6px',
-    h: '22px',
-    px: '9px',
     borderRadius: 'full',
-    fontSize: '11px',
     fontWeight: 600,
     whiteSpace: 'nowrap',
+  });
+  // Sizes share no atom with `badge`: `cx()` resolves conflicting atoms by stylesheet order, not call
+  // order. `md` keeps the footprint the dot had, so the badge still fits the 100px table column.
+  const badgeSizes = {
+    md: css({ gap: '5px', h: '22px', px: '8px', fontSize: '11px' }),
+    lg: css({ gap: '7px', h: '30px', px: '12px', fontSize: '13px' }),
+  } as const;
+  const markSizes = { md: 10, lg: 15 } as const;
+  // A harness without a published mark keeps the plain dot, so an unknown tool still reads as a badge.
+  const badgeDot = css({
     _before: {
       content: '""',
       w: '6px',
@@ -41,12 +49,6 @@
     gemini: css({ bg: 'harness.gemini.bg', color: 'harness.gemini.fg' }),
   };
   const badgeNeutral = css({ bg: 'surfaceMuted', color: 'muted' });
-  const harnessNameSeparator = /[\s-]/;
-
-  const harnessFamily = (name: string): string => {
-    const lowerName = name.toLowerCase();
-    return badgeTones[lowerName] ? lowerName : (lowerName.split(harnessNameSeparator)[0] ?? '');
-  };
 
   const badgeToneFor = (name: string): string => badgeTones[harnessFamily(name)] ?? badgeNeutral;
 
@@ -54,6 +56,7 @@
     active?: boolean;
     name: string;
     onClick?: () => void;
+    size?: 'lg' | 'md';
     title?: string;
   }
 </script>
@@ -61,15 +64,24 @@
 <script lang="ts">
   import Toggle from './toggle.svelte';
 
-  let { active = false, name, onClick, title }: HarnessBadgeProps = $props();
+  let { active = false, name, onClick, size = 'md', title }: HarnessBadgeProps = $props();
+  const marked = $derived(hasProviderMark(name));
   const className = $derived(
-    cx(badge, badgeToneFor(name), onClick ? badgeButton : undefined, active ? badgeActive : undefined),
+    cx(
+      badge,
+      badgeSizes[size],
+      badgeToneFor(name),
+      marked ? undefined : badgeDot,
+      onClick ? badgeButton : undefined,
+      active ? badgeActive : undefined,
+    ),
   );
+  const markSize = $derived(markSizes[size]);
   const accessibleTitle = $derived(title ?? `Filter by ${name}`);
 </script>
 
 {#if onClick === undefined}
-  <span class={className}>{name}</span>
+  <span class={className}><ProviderMark {name} size={markSize} />{name}</span>
 {:else}
   <Toggle
     ariaLabel={accessibleTitle}
@@ -79,6 +91,6 @@
     pressed={active}
     title={accessibleTitle}
   >
-    {name}
+    <ProviderMark {name} size={markSize} />{name}
   </Toggle>
 {/if}

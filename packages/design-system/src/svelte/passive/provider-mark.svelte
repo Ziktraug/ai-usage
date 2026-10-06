@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import type { HarnessKey } from '@ai-usage/report-core/harness-metadata';
+  import { harnessFamily } from './harness-fill';
 
   interface ProviderMarkShape {
     readonly paths: readonly { readonly d: string; readonly opacity?: number; readonly rule?: 'evenodd' }[];
@@ -15,7 +15,7 @@
    * near-black badges that would vanish on a dark rail, and a filled badge nested inside a status ring
    * would put two coloured objects in the same 26px.
    */
-  const PROVIDER_MARKS: Record<HarnessKey, ProviderMarkShape> = {
+  const PROVIDER_MARKS: Readonly<Record<string, ProviderMarkShape>> = {
     claude: {
       paths: [
         {
@@ -49,23 +49,28 @@
       viewBox: '96 96 320 320',
     },
   };
+
+  /** Whether a harness key or display label (`Claude Code`, `codex`) resolves to a provider mark. */
+  export const hasProviderMark = (name: string): boolean => Object.hasOwn(PROVIDER_MARKS, harnessFamily(name));
 </script>
 
 <script lang="ts">
-  let { name, size = 12 }: { name: HarnessKey; size?: number } = $props();
-  const mark = $derived(PROVIDER_MARKS[name]);
+  let { name, size = 12 }: { name: string; size?: number } = $props();
+  const mark = $derived(PROVIDER_MARKS[harnessFamily(name)]);
 </script>
 
-<svg
-  aria-hidden="true"
-  fill="currentColor"
-  height={size}
-  style="flex-shrink: 0"
-  viewBox={mark.viewBox}
-  width={size}
-  xmlns="http://www.w3.org/2000/svg"
->
-  {#each mark.paths as path (path.d)}
-    <path d={path.d} fill-rule={path.rule} opacity={path.opacity}></path>
-  {/each}
-</svg>
+{#if mark}
+  <svg
+    aria-hidden="true"
+    fill="currentColor"
+    height={size}
+    style="flex-shrink: 0"
+    viewBox={mark.viewBox}
+    width={size}
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    {#each mark.paths as path (path.d)}
+      <path d={path.d} fill-rule={path.rule} opacity={path.opacity}></path>
+    {/each}
+  </svg>
+{/if}

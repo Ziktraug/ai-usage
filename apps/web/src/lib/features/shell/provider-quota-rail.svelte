@@ -202,8 +202,8 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
+  import { ProviderMark } from '@ai-usage/design-system/svelte';
   import { fmtDate, fmtDuration, fmtPct } from '../../foundation/presentation/format';
-  import ProviderMark from './provider-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import QuotaRing from './quota-ring.svelte';
 

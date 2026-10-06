@@ -31,9 +31,9 @@
     whiteSpace: 'nowrap',
   });
   const badgeTones: Record<ProviderStatusTone, string> = {
-    critical: css({ bg: 'harness.claude.bg', color: 'harness.claude.fg' }),
+    critical: css({ bg: 'status.dangerSoft', color: 'status.danger' }),
     muted: css({ bg: 'surface', color: 'muted' }),
-    ok: css({ bg: 'harness.codex.bg', color: 'harness.codex.fg' }),
+    ok: css({ bg: 'status.okSoft', color: 'status.ok' }),
     warning: css({ bg: 'accentSoft', color: 'accent' }),
   };
   const contextLine = css({ color: 'muted', fontSize: '12px', overflowWrap: 'anywhere' });
@@ -96,16 +96,16 @@
   });
   const barTones: Record<ProviderStatusTone, string> = {
     critical: css({
-      '&::-moz-progress-bar': { bg: 'harness.claude.fg' },
-      '&::-webkit-progress-value': { bg: 'harness.claude.fg' },
+      '&::-moz-progress-bar': { bg: 'status.danger' },
+      '&::-webkit-progress-value': { bg: 'status.danger' },
     }),
     muted: css({
       '&::-moz-progress-bar': { bg: 'muted' },
       '&::-webkit-progress-value': { bg: 'muted' },
     }),
     ok: css({
-      '&::-moz-progress-bar': { bg: 'harness.codex.fg' },
-      '&::-webkit-progress-value': { bg: 'harness.codex.fg' },
+      '&::-moz-progress-bar': { bg: 'status.ok' },
+      '&::-webkit-progress-value': { bg: 'status.ok' },
     }),
     warning: css({
       '&::-moz-progress-bar': { bg: 'accent' },
@@ -171,7 +171,7 @@
     overflowWrap: 'anywhere',
     p: 0,
   });
-  const criticalNote = css({ color: 'harness.claude.fg', fontSize: '12px', fontWeight: 600 });
+  const criticalNote = css({ color: 'status.danger', fontSize: '12px', fontWeight: 600 });
   const detailDisclosure = css({
     borderTop: '1px solid token(colors.line)',
     mt: '2px',

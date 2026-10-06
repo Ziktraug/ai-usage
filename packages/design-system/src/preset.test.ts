@@ -19,6 +19,11 @@ const GREEN_LUMINANCE_WEIGHT = 0.7152;
 const BLUE_LUMINANCE_WEIGHT = 0.0722;
 const CONTRAST_LUMINANCE_OFFSET = 0.05;
 const MINIMUM_ADJACENT_CVD_OKLAB_DISTANCE = 0.11;
+// Lower than the ranked-series floor: AA text on light surfaces pins all four harness hues to one
+// lightness band, and the provider mark carries identity where hue alone falls short. The previous,
+// unbranded palette sat at 0.02, so this still rules out the pairs that read as one colour.
+const MINIMUM_HARNESS_CVD_OKLAB_DISTANCE = 0.07;
+const MINIMUM_ACCENT_OKLAB_DISTANCE = 0.11;
 
 type LinearRgb = readonly [number, number, number];
 
@@ -211,6 +216,35 @@ describe('semantic palette roles', () => {
   }
 });
 
+describe('harness identity hues', () => {
+  const harnesses = ['claude', 'codex', 'cursor', 'opencode'] as const;
+
+  for (const scheme of ['_light', '_dark'] as const) {
+    test(`${scheme.slice(1)} keeps every harness apart from the others and from the accent`, () => {
+      const accent = linearRgbToOklab(linearRgb(colorFor('accent', scheme)));
+      for (const harness of harnesses) {
+        const hue = linearRgbToOklab(linearRgb(colorFor(`harness.${harness}.fg`, scheme)));
+        expect(oklabDistance(hue, accent), `${harness} beside the accent`).toBeGreaterThanOrEqual(
+          MINIMUM_ACCENT_OKLAB_DISTANCE,
+        );
+      }
+      for (const [vision, matrix] of Object.entries(colorVisionMatrices)) {
+        const perceived = harnesses.map((harness) =>
+          linearRgbToOklab(simulateColorVision(linearRgb(colorFor(`harness.${harness}.fg`, scheme)), matrix)),
+        );
+        for (const [index, current] of perceived.entries()) {
+          for (const [offset, other] of perceived.slice(index + 1).entries()) {
+            expect(
+              oklabDistance(current, other),
+              `${harnesses[index]} beside ${harnesses[index + offset + 1]} under ${vision} vision`,
+            ).toBeGreaterThanOrEqual(MINIMUM_HARNESS_CVD_OKLAB_DISTANCE);
+          }
+        }
+      }
+    });
+  }
+});
+
 describe('provider brand marks', () => {
   for (const scheme of ['_light', '_dark'] as const) {
     test(`${scheme.slice(1)} carries a brand color only for providers that publish one`, () => {
@@ -231,7 +265,7 @@ test('reserves a stable scrollbar gutter on the document scroll root', () => {
 
 test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
   const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
-  expect(presetHash).toBe('e2daab8f3247504a5a6147e713a2b4accadf3e1dfa00d4c88255d7087c6512cb');
+  expect(presetHash).toBe('a42924a863854fc018ea5878980f863d28c64856b2898cc85f413c1dbfeac1c8');
 });
 
 test('punchcard controls meet the minimum interactive target size', () => {

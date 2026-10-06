@@ -564,7 +564,7 @@
 >
   {#if row && target}
     <div class={drawerTop} data-session-drawer-header>
-      <span data-session-drawer-harness><HarnessBadge name={row.harness} /></span>
+      <span data-session-drawer-harness><HarnessBadge name={row.harness} size="lg" /></span>
       <nav aria-label={`Session navigation, ${positionLabel()}`} class={drawerNav} data-session-drawer-navigation>
         <span class={drawerPosition} data-session-drawer-position title={positionLabel()}>
           {positionLabel()}

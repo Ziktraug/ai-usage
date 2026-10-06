@@ -84,6 +84,17 @@ describe('Svelte basic controls fixture', () => {
     expect(fixtureHtml).toContain('data-parent-clicks="0"');
   });
 
+  test('HarnessBadge leads with the provider mark and keeps the dot only for unknown harnesses', () => {
+    const badges = fixtureHtml.slice(fixtureHtml.indexOf('data-testid="badge-fixture"'));
+    const claudeBadge = badges.slice(0, badges.indexOf('Claude Code<'));
+    const unknownBadge = badges.slice(badges.indexOf('Claude Code<'), badges.indexOf('Unknown Agent</span>'));
+
+    expect(claudeBadge).toContain('<svg aria-hidden="true"');
+    expect(claudeBadge).not.toContain('before:content');
+    expect(unknownBadge).not.toContain('<svg');
+    expect(unknownBadge).toContain('before:content');
+  });
+
   test('renders Checkbox native input, label, state and indicator', () => {
     expect(fixtureHtml).toContain('type="checkbox"');
     expect(fixtureHtml).toContain('checked=""');

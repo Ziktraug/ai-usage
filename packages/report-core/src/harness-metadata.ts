@@ -1,10 +1,12 @@
-export type HarnessColor = 'magenta' | 'cyan' | 'green' | 'blue';
+// Terminal counterparts of the web `harness.*` hues: clay for Claude, blue for Codex, and the same
+// teal and raspberry the web gives the two harnesses whose vendors publish monochrome marks.
+export type HarnessColor = 'clay' | 'blue' | 'teal' | 'raspberry';
 
 export const HARNESS_METADATA = {
   claude: {
     key: 'claude',
     label: 'Claude Code',
-    color: 'magenta',
+    color: 'clay',
     defaultEnabled: true,
     tracksLineDeltas: false,
     partial: false,
@@ -13,7 +15,7 @@ export const HARNESS_METADATA = {
   codex: {
     key: 'codex',
     label: 'Codex',
-    color: 'cyan',
+    color: 'blue',
     defaultEnabled: true,
     tracksLineDeltas: false,
     partial: false,
@@ -23,7 +25,7 @@ export const HARNESS_METADATA = {
   opencode: {
     key: 'opencode',
     label: 'OpenCode',
-    color: 'green',
+    color: 'raspberry',
     defaultEnabled: true,
     tracksLineDeltas: true,
     partial: false,
@@ -33,7 +35,7 @@ export const HARNESS_METADATA = {
   cursor: {
     key: 'cursor',
     label: 'Cursor',
-    color: 'blue',
+    color: 'teal',
     defaultEnabled: true,
     tracksLineDeltas: true,
     partial: true,
