@@ -45,6 +45,7 @@
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let contentHasFocus = false;
   let clock = $state(Date.now());
+  let viewSourcesLink = $state<HTMLAnchorElement | undefined>(undefined);
 
   const cancelClose = (): void => {
     clearTimeout(closeTimer);
@@ -78,6 +79,13 @@
     hoverOpened = true;
     contentHasFocus = false;
     isOpen = false;
+  };
+  const focusContentOnTab = (event: KeyboardEvent): void => {
+    if (event.key !== 'Tab' || event.shiftKey || !isOpen || hoverOpened || !viewSourcesLink) {
+      return;
+    }
+    event.preventDefault();
+    viewSourcesLink.focus();
   };
   $effect(() => {
     if (navigationKey) {
@@ -179,6 +187,7 @@
       aria-label="Collection status"
       class={trigger}
       onclick={() => { hoverOpened = false; }}
+      onkeydown={focusContentOnTab}
       onpointerenter={enter}
       onpointerleave={leave}
       type="button"
@@ -269,7 +278,7 @@
             <p role="alert">{controlState.commandError}</p>
           {/if}
           <div class={actions}>
-            <a class={link} href="/sources" onclick={closeForNavigation}>View sources</a>
+            <a class={link} href="/sources" onclick={closeForNavigation} bind:this={viewSourcesLink}>View sources</a>
             <button
               {...pendingAriaBusyAttributes(runPending)}
               class={ghostButton}
