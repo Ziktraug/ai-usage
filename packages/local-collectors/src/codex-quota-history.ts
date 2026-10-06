@@ -1,4 +1,5 @@
-import type { LocalHistoryError } from '@ai-usage/local-machine/errors';
+import { LocalHistoryError } from '@ai-usage/local-machine/errors';
+import { HISTORY_LINE_MAX_BYTES } from '@ai-usage/local-machine/history-budgets';
 import {
   historyPath,
   LocalHistoryStorage,
@@ -30,6 +31,7 @@ const readRange = (storage: LocalHistoryStorageService, filePath: string, offset
       );
 
 interface RolloutCursor {
+  awaitingAppend?: boolean;
   mtimeMs: number;
   offset: number;
   size: number;
@@ -50,7 +52,8 @@ const parseCursor = (value: unknown): RolloutCursor | null => {
     Number.isSafeInteger(cursor.offset) &&
     Number(cursor.offset) >= 0 &&
     Number.isSafeInteger(cursor.size) &&
-    Number(cursor.size) >= 0
+    Number(cursor.size) >= 0 &&
+    (cursor.awaitingAppend === undefined || typeof cursor.awaitingAppend === 'boolean')
     ? (cursor as unknown as RolloutCursor)
     : null;
 };
@@ -86,7 +89,7 @@ const isExpiredReplay = (observation: ProviderQuotaObservation): boolean => {
 const normalizeRolloutObservation = (
   rateLimits: unknown,
   timestamp: string,
-  request: ProviderQuotaCollectRequest,
+  request: Pick<ProviderQuotaCollectRequest, 'machineId' | 'machineLabel' | 'accountScope'>,
 ): ProviderQuotaObservation | null => {
   const status = normalizeCodexRateLimitStatus({
     generatedAt: timestamp,
@@ -122,10 +125,10 @@ const completeText = (text: string, reachedEnd: boolean): string => {
   return lastNewline < 0 ? '' : text.slice(0, lastNewline + 1);
 };
 
-export const collectCodexRolloutQuotaBatch = (
-  request: ProviderQuotaCollectRequest,
+export const collectCodexRolloutQuotaBatch = <CursorError = never>(
+  request: ProviderQuotaCollectRequest<CursorError>,
   options: CodexRolloutQuotaOptions = {},
-): Effect.Effect<ProviderQuotaBatch, LocalHistoryError, LocalHistoryStorageService> =>
+): Effect.Effect<ProviderQuotaBatch, LocalHistoryError | CursorError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const from =
@@ -141,35 +144,61 @@ export const collectCodexRolloutQuotaBatch = (
     let bytesRemaining = maximumBytes;
     let processedFiles = 0;
     let hasMore = false;
+    let cursors = request.cursors ?? {};
 
-    for (const filePath of files) {
+    for (const [index, filePath] of files.entries()) {
       if (processedFiles >= maximumFiles || bytesRemaining <= 0) {
         hasMore = true;
         break;
+      }
+      if (request.loadCursors && index % DEFAULT_MAXIMUM_FILES === 0) {
+        cursors = yield* request.loadCursors(files.slice(index, index + DEFAULT_MAXIMUM_FILES));
       }
       const metadata = yield* readMetadata(storage, filePath);
       if (metadata.mtimeMs > 0 && metadata.mtimeMs < from.getTime()) {
         continue;
       }
-      const cursor = parseCursor(request.cursors?.[filePath]);
+      const cursor = parseCursor(cursors[filePath]);
       if (
         cursor &&
         cursor.size === metadata.size &&
         cursor.mtimeMs === metadata.mtimeMs &&
-        cursor.offset >= metadata.size
+        (cursor.offset >= metadata.size || cursor.awaitingAppend)
       ) {
         continue;
       }
       const offset = cursor && metadata.size >= cursor.offset ? cursor.offset : 0;
+      processedFiles++;
       if (offset >= metadata.size) {
         checkpoints.push({ key: filePath, value: { ...metadata, offset } satisfies RolloutCursor });
         continue;
       }
-      processedFiles++;
       const maximumRead = Math.min(bytesRemaining, metadata.size - offset);
-      const range = yield* readRange(storage, filePath, offset, maximumRead);
+      let range = yield* readRange(storage, filePath, offset, maximumRead);
       bytesRemaining -= range.bytesRead;
-      const completed = completeText(range.text, offset + range.bytesRead >= metadata.size);
+      let completed = completeText(range.text, offset + range.bytesRead >= metadata.size);
+      if (completed.length === 0 && offset + range.bytesRead < metadata.size) {
+        // A normal 2 MiB chunk may end inside a prompt/image line. Read at most one
+        // bounded history record so the next run does not replay that same prefix forever.
+        range = yield* readRange(
+          storage,
+          filePath,
+          offset,
+          Math.min(HISTORY_LINE_MAX_BYTES + 1, metadata.size - offset),
+        );
+        bytesRemaining -= range.bytesRead;
+        const newline = range.text.indexOf('\n');
+        if (newline < 0 && range.bytesRead > HISTORY_LINE_MAX_BYTES) {
+          return yield* Effect.fail(
+            new LocalHistoryError({
+              operation: 'quotaHistoryLineBudget',
+              cause: new Error('Quota history record exceeds the history line budget'),
+              path: filePath,
+            }),
+          );
+        }
+        completed = newline < 0 ? '' : range.text.slice(0, newline + 1);
+      }
       let relativeOffset = 0;
       for (const line of completed.split('\n')) {
         if (!line) {
@@ -194,8 +223,19 @@ export const collectCodexRolloutQuotaBatch = (
       }
       const committedBytes = Buffer.byteLength(completed);
       const nextOffset = offset + committedBytes;
-      checkpoints.push({ key: filePath, value: { ...metadata, offset: nextOffset } satisfies RolloutCursor });
-      if (nextOffset < metadata.size) {
+      const awaitingAppend =
+        nextOffset < metadata.size &&
+        offset + range.bytesRead >= metadata.size &&
+        !range.text.slice(completed.length).includes('\n');
+      checkpoints.push({
+        key: filePath,
+        value: {
+          ...metadata,
+          offset: nextOffset,
+          ...(awaitingAppend ? { awaitingAppend } : {}),
+        } satisfies RolloutCursor,
+      });
+      if (nextOffset < metadata.size && !awaitingAppend) {
         hasMore = true;
       }
     }

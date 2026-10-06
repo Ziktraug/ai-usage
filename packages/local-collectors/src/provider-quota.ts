@@ -1,10 +1,12 @@
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import type { Effect } from 'effect';
 
-export interface ProviderQuotaCollectRequest {
+export interface ProviderQuotaCollectRequest<CursorError = unknown> {
   accountScope?: string | null;
   cursors?: Record<string, unknown>;
   from?: Date;
+  /** Read only the checkpoints for the current bounded group of history files. */
+  loadCursors?: (keys: readonly string[]) => Effect.Effect<Record<string, unknown>, CursorError>;
   machineId: string;
   machineLabel?: string | null;
   observedAt?: Date;
@@ -29,5 +31,7 @@ export interface ProviderQuotaBatch {
 }
 
 export interface ProviderQuotaBatchSource<Error = unknown> {
-  collect(request: ProviderQuotaCollectRequest): Effect.Effect<ProviderQuotaBatch, Error>;
+  collect<CursorError = never>(
+    request: ProviderQuotaCollectRequest<CursorError>,
+  ): Effect.Effect<ProviderQuotaBatch, Error | CursorError>;
 }

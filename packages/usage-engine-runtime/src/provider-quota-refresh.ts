@@ -229,15 +229,17 @@ const runRefresh = <PersistenceError, SourceError>(
     const backfillSource = input.backfillSource;
     if (backfillSource) {
       backfill = yield* Effect.gen(function* () {
-        const states = yield* persistence.queryBackfillStates({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          providerKey,
-          sourceKey: backfillSourceKey,
-        });
-        const cursors = Object.fromEntries(states.map((state) => [state.cursorKey, state.cursor]));
         const batch = yield* backfillSource.collect({
-          cursors,
+          loadCursors: (cursorKeys) =>
+            persistence
+              .queryBackfillStates({
+                cursorKeys,
+                dbPath: input.dbPath,
+                machineId: input.machine.id,
+                providerKey,
+                sourceKey: backfillSourceKey,
+              })
+              .pipe(Effect.map((states) => Object.fromEntries(states.map((state) => [state.cursorKey, state.cursor])))),
           from: new Date(input.now.getTime() - BACKFILL_DAYS * DAY_MS),
           machineId: input.machine.id,
           machineLabel: input.machine.label,

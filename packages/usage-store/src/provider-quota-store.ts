@@ -287,26 +287,6 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
     );
   };
 
-  const assertProviderQuotaSourceStateBudget = (
-    db: SqliteDatabase,
-    input: Pick<QueryProviderQuotaSourceStateInput, 'machineId' | 'providerKey' | 'sourceKey'>,
-  ): void => {
-    const rows = db
-      .query(`
-        SELECT 1 FROM provider_quota_source_state
-        WHERE provider_key = ? AND machine_id = ? AND source_key = ?
-        LIMIT ?
-      `)
-      .all(input.providerKey, input.machineId, input.sourceKey, MAX_PROVIDER_QUOTA_SOURCE_STATES + 1);
-    if (rows.length > MAX_PROVIDER_QUOTA_SOURCE_STATES) {
-      throw new UsageStoreError({
-        message: `Provider quota source state exceeds its ${MAX_PROVIDER_QUOTA_SOURCE_STATES}-cursor budget`,
-        operation: 'writeProviderQuotaSourceState',
-        reason: 'invalid-input',
-      });
-    }
-  };
-
   const importProviderQuotaBatch = (
     input: ImportProviderQuotaBatchInput,
   ): Effect.Effect<ProviderQuotaImportResult, UsageStoreError> => {
@@ -375,16 +355,6 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
             }
             for (const checkpoint of input.checkpointUpdates) {
               upsertQuotaCheckpoint(db, checkpoint, updatedAt);
-            }
-            const affectedSources = new Map<string, ProviderQuotaCheckpointUpdate>();
-            for (const checkpoint of input.checkpointUpdates) {
-              affectedSources.set(
-                JSON.stringify([checkpoint.providerKey, checkpoint.machineId, checkpoint.sourceKey]),
-                checkpoint,
-              );
-            }
-            for (const source of affectedSources.values()) {
-              assertProviderQuotaSourceStateBudget(db, source);
             }
             if (result.inserted > 0 || result.coalesced > 0 || input.checkpointUpdates.length > 0) {
               db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
@@ -686,24 +656,32 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
       Effect.try({
         try: () => {
           const maximumStates = input.maximumStates ?? MAX_PROVIDER_QUOTA_SOURCE_STATES;
+          const cursorKeys = input.cursorKeys;
           if (
             !(
               Number.isSafeInteger(maximumStates) &&
               maximumStates > 0 &&
-              maximumStates <= MAX_PROVIDER_QUOTA_SOURCE_STATES
+              maximumStates <= MAX_PROVIDER_QUOTA_SOURCE_STATES &&
+              (cursorKeys === undefined ||
+                (cursorKeys.length <= maximumStates &&
+                  cursorKeys.every((key) => typeof key === 'string' && key.length > 0)))
             )
           ) {
             throw usageStoreError(
               'queryProviderQuotaSourceStates',
               input.dbPath,
-              `maximumStates must be from 1 through ${MAX_PROVIDER_QUOTA_SOURCE_STATES}`,
+              `maximumStates must be from 1 through ${MAX_PROVIDER_QUOTA_SOURCE_STATES}; cursorKeys must fit that budget`,
               'invalid-input',
             );
+          }
+          if (cursorKeys?.length === 0) {
+            return [];
           }
           const rows = db
             .query(`
               SELECT * FROM provider_quota_source_state
               WHERE provider_key = ? AND machine_id = ? AND source_key = ?
+              ${cursorKeys ? `AND cursor_key IN (${cursorKeys.map(() => '?').join(', ')})` : ''}
               ORDER BY cursor_key
               LIMIT ?
             `)
@@ -711,10 +689,13 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
               input.providerKey,
               input.machineId,
               input.sourceKey,
+              ...(cursorKeys ?? []),
               maximumStates + 1,
             ) as ProviderQuotaSourceStateRecord[];
           if (rows.length > maximumStates) {
-            throw new Error('Corrupt provider quota source state exceeds its read budget');
+            throw new Error(
+              'Provider quota source state exceeds its read budget; select a bounded group of cursor keys',
+            );
           }
           return rows.map((row) => ({
             cursor: row.cursor_json === null ? null : (JSON.parse(row.cursor_json) as unknown),
@@ -883,7 +864,6 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
               attemptedAt,
               input.succeeded ? 1 : 0,
             );
-            assertProviderQuotaSourceStateBudget(db, input);
             db.exec('COMMIT');
           } catch (cause) {
             db.exec('ROLLBACK');

@@ -436,6 +436,8 @@ export interface QueryProviderQuotaSourceStateInput {
 }
 
 export interface QueryProviderQuotaSourceStatesInput {
+  /** Select a bounded group without loading the source's lifetime checkpoint catalogue. */
+  cursorKeys?: readonly string[];
   dbPath: string;
   machineId: string;
   maximumStates?: number;

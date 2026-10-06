@@ -23,6 +23,55 @@ const event = (timestamp: string, usedPercent: number): string =>
   });
 
 describe('Codex rollout quota backfill', () => {
+  test('advances past a record larger than the chunk budget without losing following quota events', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-quota-large-record-'));
+    const sessions = path.join(home, '.codex', 'sessions');
+    mkdirSync(sessions, { recursive: true });
+    const file = path.join(sessions, 'rollout.jsonl');
+    const largeLine = `${JSON.stringify({ payload: { type: 'message', text: 'x'.repeat(512) } })}\n`;
+    writeFileSync(file, `${largeLine}${event('2026-07-15T10:10:00.000Z', 30)}\n`);
+    const storage = createLocalHistoryStorage(home);
+    const request = { from: new Date('2026-07-01T00:00:00.000Z'), machineId: 'machine-1' };
+    const first = await Effect.runPromise(
+      collectCodexRolloutQuotaBatch(request, { maximumBytes: 64 }).pipe(
+        Effect.provideService(LocalHistoryStorage, storage),
+      ),
+    );
+    expect(first.checkpoints[0]?.value).toEqual(expect.objectContaining({ offset: Buffer.byteLength(largeLine) }));
+    expect(first.hasMore).toBe(true);
+    const second = await Effect.runPromise(
+      collectCodexRolloutQuotaBatch(
+        { ...request, cursors: Object.fromEntries(first.checkpoints.map(({ key, value }) => [key, value])) },
+        { maximumBytes: 64 },
+      ).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    expect(second.observations).toHaveLength(1);
+    expect(second.hasMore).toBe(false);
+  });
+
+  test('waits for an incomplete tail to change while continuing to later files', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-quota-partial-tail-'));
+    const sessions = path.join(home, '.codex', 'sessions');
+    mkdirSync(sessions, { recursive: true });
+    writeFileSync(path.join(sessions, 'a.jsonl'), '{"incomplete":');
+    writeFileSync(path.join(sessions, 'b.jsonl'), `${event('2026-07-15T10:10:00.000Z', 30)}\n`);
+    const storage = createLocalHistoryStorage(home);
+    const request = { from: new Date('2026-07-01T00:00:00.000Z'), machineId: 'machine-1' };
+    const first = await Effect.runPromise(
+      collectCodexRolloutQuotaBatch(request, { maximumFiles: 1 }).pipe(
+        Effect.provideService(LocalHistoryStorage, storage),
+      ),
+    );
+    expect(first.checkpoints[0]?.value).toEqual(expect.objectContaining({ offset: 0, awaitingAppend: true }));
+    const second = await Effect.runPromise(
+      collectCodexRolloutQuotaBatch(
+        { ...request, cursors: Object.fromEntries(first.checkpoints.map(({ key, value }) => [key, value])) },
+        { maximumFiles: 1 },
+      ).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    expect(second.observations).toHaveLength(1);
+  });
+
   test('resumes from a committed byte cursor and leaves partial lines unread', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-quota-history-'));
     const sessions = path.join(home, '.codex', 'sessions', '2026', '07', '15');

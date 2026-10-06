@@ -72,6 +72,14 @@ fiber. Joiners wait without owning cancellation; owner interruption aborts the
 provider child before another durable phase begins. Quota history is not part
 of `UsageReportPayload`, served report revisions, snapshots, or merge bundles.
 
+Rollout checkpoints are looked up by bounded groups of file keys, not loaded as
+one lifetime catalogue. The 1,000-checkpoint store budget applies to each read
+or import batch, not to the number of files previously visited. A normal backfill
+pass processes at most 20 files and 2 MiB; if a record crosses that byte budget,
+one additional read is capped by the shared history line limit and commits only
+that record. An unfinished tail waits for a file change without blocking later
+files. Observations and byte checkpoints still commit in the same transaction.
+
 ## Accepted platform topology
 
 Plans 100–110 extend the same monorepo and product with explicit local and

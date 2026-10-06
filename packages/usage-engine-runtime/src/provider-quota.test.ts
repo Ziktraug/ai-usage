@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -16,6 +16,7 @@ import {
   queryLatestProviderQuotaObservations,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
+import { importProviderQuotaBatch, queryProviderQuotaSourceStates } from '@ai-usage/usage-store/writer';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from 'effect';
 import { queryLocalProviderQuotaHistory, refreshLocalProviderQuotas } from './provider-quota';
 import {
@@ -95,6 +96,62 @@ const fakePersistence = (
 });
 
 describe('provider quota orchestration', () => {
+  test('resumes rollout history beyond 1000 checkpoints and revisits appended files', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'quota-lifetime-checkpoints-'));
+    quotaRoots.push(home);
+    const directory = path.join(home, '.codex', 'sessions');
+    mkdirSync(directory, { recursive: true });
+    const storage = createLocalHistoryStorage(home);
+    const dbPath = usageStorePath(home);
+    const source = { providerKey: 'codex', sourceKey: 'codex-rollout', machineId: 'machine-1' };
+    const line = (minute: number) =>
+      `${JSON.stringify({ timestamp: `2026-07-15T10:${String(minute).padStart(2, '0')}:00.000Z`, payload: { type: 'token_count', rate_limits: { primary: { used_percent: minute, window_minutes: 300, resets_at: '2026-07-15T15:00:00.000Z' } } } })}\n`;
+    const files = Array.from({ length: 1003 }, (_, index) =>
+      path.join(directory, `${String(index).padStart(4, '0')}.jsonl`),
+    );
+    for (const file of files) {
+      writeFileSync(file, line(1));
+    }
+    await Effect.runPromise(
+      importProviderQuotaBatch({
+        dbPath,
+        items: [],
+        checkpointUpdates: files.slice(0, 1000).map((file) => {
+          const { size, mtimeMs } = statSync(file);
+          return { ...source, cursorKey: file, cursor: { size, mtimeMs, offset: size } };
+        }),
+      }),
+    );
+    const refresh = () =>
+      Effect.runPromise(
+        refreshLocalProviderQuotas({
+          dbPath,
+          machine: { id: 'machine-1', label: 'Laptop' },
+          options: {
+            now: () => new Date('2026-07-15T10:10:00.000Z'),
+            liveCadenceMs: 0,
+            liveSource: { collect: () => Effect.succeed(emptyBatch) },
+          },
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+    const first = await refresh();
+    expect(first.backfill).toBe('complete');
+    expect(first.warnings).toEqual([]);
+    const persisted = await Effect.runPromise(
+      queryProviderQuotaSourceStates({ dbPath, ...source, cursorKeys: files.slice(1000) }),
+    );
+    expect(persisted).toHaveLength(3);
+    appendFileSync(files[0]!, line(2));
+    const second = await refresh();
+    expect(second.backfill).toBe('complete');
+    expect(second.warnings).toEqual([]);
+    expect(second.latest[0]?.windows[0]?.usedPercent).toBe(2);
+    const [updated] = await Effect.runPromise(
+      queryProviderQuotaSourceStates({ dbPath, ...source, cursorKeys: [files[0]!] }),
+    );
+    expect(updated?.cursor).toEqual(expect.objectContaining({ offset: statSync(files[0]!).size }));
+  });
+
   test('interrupts the owner inside the durable phase before its commit action', async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {

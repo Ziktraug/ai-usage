@@ -224,7 +224,7 @@ describe('bounded provider quota readers', () => {
     expect(latest.observations.map(({ firstObservedAt }) => firstObservedAt)).toEqual(['2026-07-15T01:00:00.000Z']);
   });
 
-  test('rolls back multi-call source-state admission beyond the reader budget', async () => {
+  test('admits lifetime checkpoints beyond one read budget while keeping reads bounded', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-store-quota-source-budget-'));
     temporaryRoots.push(root);
     const dbPath = path.join(root, 'usage-store.sqlite');
@@ -261,13 +261,28 @@ describe('bounded provider quota readers', () => {
         }),
       ),
     );
-    const states = await Effect.runPromise(queryProviderQuotaSourceStates({ dbPath, ...source }));
+    const states = await Effect.runPromise(
+      queryProviderQuotaSourceStates({
+        dbPath,
+        ...source,
+        cursorKeys: ['cursor-0999', 'overflow-batch', 'overflow-attempt'],
+      }),
+    );
 
-    expect(batchOverflow._tag).toBe('Left');
-    expect((batchOverflow as { left: UsageStoreError }).left.reason).toBe('invalid-input');
-    expect(attemptOverflow._tag).toBe('Left');
-    expect((attemptOverflow as { left: UsageStoreError }).left.reason).toBe('invalid-input');
-    expect(states).toHaveLength(1000);
-    expect(states.some(({ cursorKey }) => cursorKey.startsWith('overflow-'))).toBe(false);
+    expect(batchOverflow._tag).toBe('Right');
+    expect(attemptOverflow._tag).toBe('Right');
+    expect(states).toHaveLength(3);
+    const all = await Effect.runPromise(Effect.either(queryProviderQuotaSourceStates({ dbPath, ...source })));
+    expect(all._tag).toBe('Left');
+    const oversized = await Effect.runPromise(
+      Effect.either(
+        queryProviderQuotaSourceStates({
+          dbPath,
+          ...source,
+          cursorKeys: Array.from({ length: 1001 }, (_, index) => String(index)),
+        }),
+      ),
+    );
+    expect(oversized._tag).toBe('Left');
   });
 });
