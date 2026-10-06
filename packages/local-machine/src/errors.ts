@@ -8,7 +8,9 @@ export class LocalHistoryError extends Data.TaggedError('LocalHistoryError')<{
 }> {}
 
 export interface LocalHistoryWarning {
+  readonly affectedSessions?: number;
   readonly harness?: string;
+  readonly lastObservedAt?: string;
   readonly message: string;
   readonly operation: string;
   readonly path?: string;

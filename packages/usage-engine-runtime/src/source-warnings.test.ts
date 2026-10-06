@@ -3,6 +3,30 @@ import { sourceControlBounds } from '@ai-usage/report-core/source-control';
 import { sanitizeSourceWarnings } from './source-warnings';
 
 describe('source warning publication boundary', () => {
+  test('dates historical metric uncertainty without promoting recent, unknown or future dates to history', () => {
+    const now = new Date('2026-10-06T12:00:00.000Z');
+    const metric = { operation: 'metricValidation', affectedSessions: 13, rejectedRecords: 14 };
+    const warnings = sanitizeSourceWarnings(
+      'Codex sessions',
+      [
+        { ...metric, lastObservedAt: '2026-09-08T08:22:09.743Z' },
+        { ...metric, lastObservedAt: '2026-10-06T08:22:09.743Z' },
+        { ...metric, lastObservedAt: '2026-10-08T08:22:09.743Z' },
+        { ...metric, lastObservedAt: 'private-invalid-timestamp' },
+        metric,
+      ],
+      now,
+    );
+    expect(warnings.map(({ code }) => code)).toEqual([
+      'historicalMetricValidation',
+      ...Array.from({ length: 4 }, () => 'metricValidation'),
+    ]);
+    expect(warnings[0]?.message).toContain('13 historical sessions');
+    expect(warnings[0]?.message).toContain('2026-09-08');
+    expect(warnings[0]?.message).toContain('No metric anomalies in the last 7 days');
+    expect(JSON.stringify(warnings)).not.toContain('private-invalid-timestamp');
+  });
+
   test('publishes validated singular and plural counts without local diagnostic text', () => {
     const privateWarning = {
       message: 'Rejected value token=secret from /home/operator/history.db',

@@ -5,7 +5,7 @@ import type { Component } from 'svelte';
 import { createServer } from 'vite';
 
 const DISABLED_ATTRIBUTE_PATTERN = /\sdisabled(?:[\s=>])/u;
-const STATUS_LABEL_PATTERN = /data-source-summary-status="">Sources ready<\/span>/u;
+const STATUS_LABEL_PATTERN = /data-source-summary-status="">Up to date<\/span>/u;
 
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };

@@ -38,7 +38,7 @@ export const collectCodexResult = Effect.gen(function* () {
   const result = yield* readCodexUsageSessionsResult;
   const observationsTruncated =
     result.observationCompleteness.exposure.truncated || result.observationCompleteness.invocation.truncated;
-  const warning = metricValidationWarning('codex', result.rejectedMetricRecords);
+  const warning = metricValidationWarning('codex', result.rejectedMetricRecords, result.metricWarningContext);
   const observationWarning = skillObservationValidationWarning('codex', result.rejectedSkillObservationRecords);
   const oversizedWarning = oversizedHistoryLineWarning('codex', result.oversizedLines);
   const truncationWarning = observationsTruncated

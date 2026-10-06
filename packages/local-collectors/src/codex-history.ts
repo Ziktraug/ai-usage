@@ -151,7 +151,9 @@ interface SqliteDatabase {
 // entry was written when a pasted-image record could still abort the file, so an
 // unchanged rollout now yields more turns, tokens, and phases — and carries an
 // `oversizedLines` count that older entries cannot report.
-const CODEX_SESSION_CACHE_VERSION = 23;
+// Version 24 distinguishes fully recovered counter resets from uncertain metrics
+// and records the latest anomaly date, including on unchanged cached sessions.
+const CODEX_SESSION_CACHE_VERSION = 24;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child
@@ -358,6 +360,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       typeof value.subscription !== 'boolean' ||
       typeof value.hasTokenUsage !== 'boolean' ||
       typeof value.observedPriorTokenUsage !== 'boolean' ||
+      (value.lastRejectedMetricAt !== undefined &&
+        (typeof value.lastRejectedMetricAt !== 'string' || !Number.isFinite(Date.parse(value.lastRejectedMetricAt)))) ||
       typeof value.durationPartial !== 'boolean' ||
       typeof value.reportPartial !== 'boolean' ||
       (value.classifierParent !== null && typeof value.classifierParent !== 'string') ||
@@ -414,6 +418,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       tcr: tcr.value,
       tout: tout.value,
       rejectedMetricRecords: rejectedMetricRecords.value,
+      ...(typeof value.lastRejectedMetricAt === 'string' ? { lastRejectedMetricAt: value.lastRejectedMetricAt } : {}),
       rejectedSkillObservationRecords: rejectedSkillObservationRecords.value,
       oversizedLines: oversizedLines.value,
       hasTokenUsage: value.hasTokenUsage,
@@ -684,6 +689,7 @@ const readCodexSessions = (
   );
 
 export interface CodexUsageSessionsResult {
+  metricWarningContext: { affectedSessions: number; lastObservedAt?: string };
   observationCompleteness: SkillObservationCollectionCompleteness;
   /**
    * Codex declares no skill invocations, so these are `exposed` catalogue
@@ -797,7 +803,18 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       }
     }
 
+    const rejectedSessions = sessions.filter((session) => session.rejectedMetricRecords > 0);
+    const lastObservedAt = rejectedSessions.every((session) => session.lastRejectedMetricAt !== undefined)
+      ? rejectedSessions
+          .map((session) => session.lastRejectedMetricAt!)
+          .sort()
+          .at(-1)
+      : undefined;
     return {
+      metricWarningContext: {
+        affectedSessions: rejectedSessions.length,
+        ...(lastObservedAt ? { lastObservedAt } : {}),
+      },
       observationCompleteness,
       observations,
       oversizedLines,

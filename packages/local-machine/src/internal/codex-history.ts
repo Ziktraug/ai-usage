@@ -65,6 +65,7 @@ export interface CodexSession {
   firstUser: string | null;
   hasTokenUsage: boolean;
   id: string | null;
+  lastRejectedMetricAt?: string;
   maxTotal: number;
   model: string;
   models: string[];
@@ -828,13 +829,21 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     total: current.input - baseline.input + (current.output - baseline.output),
   });
 
+  const rejectMetric = (at: Date): void => {
+    session.rejectedMetricRecords++;
+    const timestamp = at.toISOString();
+    if (!session.lastRejectedMetricAt || timestamp > session.lastRejectedMetricAt) {
+      session.lastRejectedMetricAt = timestamp;
+    }
+  };
+
   const recordTokenDelta = (delta: SessionDetailTokenCounts, at: Date, task: MutableCodexTask): void => {
     if (delta.input < 0 || delta.cacheRead < 0 || delta.output < 0 || delta.total < 0) {
-      session.rejectedMetricRecords++;
+      rejectMetric(at);
       return;
     }
     if (delta.total !== delta.input + delta.cacheRead + delta.output) {
-      session.rejectedMetricRecords++;
+      rejectMetric(at);
       return;
     }
     session.tin += delta.input;
@@ -863,7 +872,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     const info = isRecord(payload.info) ? payload.info : null;
     const snapshot = tokenSnapshotFrom(isRecord(info?.total_token_usage) ? info.total_token_usage : null);
     if (!snapshot) {
-      session.rejectedMetricRecords++;
+      rejectMetric(at);
       return;
     }
     const lastUsage = tokenSnapshotFrom(isRecord(info?.last_token_usage) ? info.last_token_usage : null);
@@ -899,7 +908,23 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       snapshot.cacheRead < previousTokens.cacheRead ||
       snapshot.output < previousTokens.output;
     if (nonMonotonic) {
-      session.rejectedMetricRecords++;
+      // A complete reset is recoverable only when the new cumulative snapshot is exactly
+      // the last operation and that operation can be attributed to a contextual task.
+      const recovered =
+        contextualTask &&
+        lastUsage &&
+        snapshot.total < previousTokens.total &&
+        snapshot.input <= previousTokens.input &&
+        snapshot.cacheRead <= previousTokens.cacheRead &&
+        snapshot.output <= previousTokens.output &&
+        snapshot.total === snapshot.input + snapshot.output &&
+        snapshot.total === lastUsage.total &&
+        snapshot.input === lastUsage.input &&
+        snapshot.cacheRead === lastUsage.cacheRead &&
+        snapshot.output === lastUsage.output;
+      if (!recovered) {
+        rejectMetric(at);
+      }
       previousTokens = snapshot;
       if (lastUsage && contextualTask) {
         recordTokenDelta(detailDelta(lastUsage, { cacheRead: 0, input: 0, output: 0, total: 0 }), at, contextualTask);

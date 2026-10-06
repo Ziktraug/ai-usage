@@ -1,14 +1,27 @@
 import type { SourceControlClientState } from '../../../source-control-client';
-import { presentSourceState, type SourcePresentationTone } from '../../../source-control-presentation-model';
+import {
+  hasOnlyHistoricalWarnings,
+  presentSourceState,
+  type SourcePresentationTone,
+} from '../../../source-control-presentation-model';
 
 export interface SourceControlSummaryStatus {
   readonly detail: string;
   /** `snapshot.generation`, or null before the engine has pushed its first snapshot. */
   readonly generation: number | null;
+  readonly historicalSources: readonly string[];
   readonly label: string;
-  readonly phase: 'checking' | 'collecting' | 'preparing' | 'queued' | 'current' | 'unavailable' | 'failed';
+  readonly phase:
+    | 'checking'
+    | 'collecting'
+    | 'preparing'
+    | 'queued'
+    | 'current'
+    | 'attention'
+    | 'unavailable'
+    | 'failed';
   readonly tone: SourcePresentationTone;
-  /** Labels of the enabled sources the warning count is counting. */
+  /** Enabled sources with a current problem, shown in the collection details. */
   readonly warningSources: readonly string[];
 }
 
@@ -24,14 +37,21 @@ export const summarizeSourceControlStatus = (state: SourceControlClientState): S
   const { connection, snapshot } = state;
   const enabledSources = snapshot?.sources.filter((source) => source.policy === 'enabled') ?? [];
   const warningSources = enabledSources
-    .filter((source) => WARNING_TONES.includes(presentSourceState(source).tone))
+    .filter(
+      (source) =>
+        source.availability !== 'not-detected' &&
+        source.availability !== 'unsupported' &&
+        source.lifecycle !== 'pausing' &&
+        WARNING_TONES.includes(presentSourceState(source).tone),
+    )
     .map((source) => source.label);
   // 'stopped' is the state before the client has even been started — which is what the server render
   // and every frame before hydration see. Reporting that as "Unavailable" told the user sources were
   // broken when nothing had been attempted yet, so not-yet-known reads as its own neutral state.
   const awaitingFirstSnapshot = !snapshot && (connection === 'stopped' || connection === 'connecting');
   const generation = snapshot?.generation ?? null;
-  const common = { generation, warningSources };
+  const historicalSources = enabledSources.filter(hasOnlyHistoricalWarnings).map((source) => source.label);
+  const common = { generation, warningSources, historicalSources };
 
   if (awaitingFirstSnapshot) {
     return {
@@ -109,15 +129,15 @@ export const summarizeSourceControlStatus = (state: SourceControlClientState): S
   if (warningSources.length > 0) {
     return {
       ...common,
-      label: `${warningSources.length} warning${warningSources.length === 1 ? '' : 's'}`,
-      tone: 'danger',
-      phase: 'current',
+      label: 'Needs attention',
+      tone: 'warning',
+      phase: 'attention',
       detail: 'Collection needs attention. The latest available data is ready to explore.',
     };
   }
   return {
     ...common,
-    label: 'Sources ready',
+    label: 'Up to date',
     tone: 'ok',
     phase: 'current',
     detail: 'The report includes the latest collected data. Collection runs automatically.',

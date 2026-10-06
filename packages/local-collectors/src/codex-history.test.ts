@@ -6,6 +6,7 @@ import path from 'node:path';
 import { readCodexSessionAnalysis } from '@ai-usage/local-machine/codex-session-analysis';
 import { setCodexSkillObservationCeilingForTesting } from '@ai-usage/local-machine/codex-skill-observation';
 import { LocalHistoryError } from '@ai-usage/local-machine/errors';
+import { createCodexSessionParser } from '@ai-usage/local-machine/internal/codex-history';
 import {
   createLocalHistoryStorage,
   type LocalHistoryDirEntry,
@@ -1338,6 +1339,8 @@ Preserve the existing aggregation semantics.`,
     expect(result.rows[0]?.tokOut).toBe(8);
     expect(result.warnings).toEqual([
       {
+        affectedSessions: 1,
+        lastObservedAt: '2026-01-01T00:02:00.000Z',
         harness: 'codex',
         operation: 'metricValidation',
         message: 'Rejected 1 malformed codex metric record(s).',
@@ -2448,6 +2451,55 @@ Preserve the existing aggregation semantics.`,
     expect(detail?.turns.map((turn) => [turn.model, turn.tokens.total])).toEqual([['gpt-5.6-sol', 50]]);
   });
 
+  test.each([
+    { contextual: true, completeLastUsage: true, rejected: 0 },
+    { contextual: true, completeLastUsage: false, rejected: 1 },
+    { contextual: false, completeLastUsage: true, rejected: 1 },
+  ])('only clears a counter-reset warning when its usage is fully attributable: %j', ({
+    contextual,
+    completeLastUsage,
+    rejected,
+  }) => {
+    const parser = createCodexSessionParser();
+    const visit = (event: object) => parser.visit(JSON.stringify({ timestamp: '2026-10-01T12:00:00.000Z', ...event }));
+    visit({ type: 'session_meta', payload: { id: 'reset-session' } });
+    if (contextual) {
+      visit({ payload: { type: 'task_started', turn_id: 'task' } });
+      visit({ type: 'turn_context', payload: { turn_id: 'task', model: 'gpt-5.6-sol' } });
+    }
+    const usage = (input: number, cache: number, output: number) => ({
+      input_tokens: input,
+      cached_input_tokens: cache,
+      output_tokens: output,
+      total_tokens: input + output,
+    });
+    visit({
+      payload: {
+        type: 'token_count',
+        info: { total_token_usage: usage(100, 60, 20), last_token_usage: usage(100, 60, 20) },
+      },
+    });
+    const reset = {
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: usage(10, 6, 2),
+          last_token_usage: completeLastUsage ? usage(10, 6, 2) : usage(5, 3, 1),
+        },
+      },
+    };
+    visit(reset);
+    visit(reset); // Repeated snapshots must not double-count the recovery.
+    const result = parser.finish();
+    expect(result.rejectedMetricRecords).toBe(rejected);
+    if (contextual && completeLastUsage) {
+      expect([result.session.tin, result.session.tcr, result.session.tout]).toEqual([44, 66, 22]);
+      expect(result.session.lastRejectedMetricAt).toBeUndefined();
+    } else {
+      expect(result.session.lastRejectedMetricAt).toBe('2026-10-01T12:00:00.000Z');
+    }
+  });
+
   test('resets cumulative token baselines without producing negative deltas', () => {
     const storage = new TestMemoryStorage();
     const tokenEvent = (timestamp: string, total: unknown, input: unknown, cached: unknown, output: unknown) => ({
@@ -2506,7 +2558,7 @@ Preserve the existing aggregation semantics.`,
     expect(result.rows[0]?.tokOut).toBe(9);
     expect(detail?.phases[0]?.tokens.total).toBe(38);
     expect(detail?.turns[0]?.tokens.total).toBe(38);
-    expect(result.warnings[0]?.message).toBe('Rejected 2 malformed codex metric record(s).');
+    expect(result.warnings[0]?.message).toBe('Rejected 1 malformed codex metric record(s).');
   });
 
   test('caches parsed Codex session files by mtime and size', async () => {
@@ -2582,6 +2634,8 @@ Preserve the existing aggregation semantics.`,
       expect(second.rows[0]?.models).toEqual(['gpt-5.6-sol']);
       expect(second.warnings).toEqual([
         {
+          affectedSessions: 1,
+          lastObservedAt: '2026-01-01T00:03:00.000Z',
           harness: 'codex',
           operation: 'metricValidation',
           message: 'Rejected 1 malformed codex metric record(s).',

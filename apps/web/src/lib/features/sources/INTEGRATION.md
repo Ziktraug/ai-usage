@@ -24,6 +24,15 @@ Report destinations retain their own displayed-data timestamp and any explicit
 Apply action needed to preserve an exploration. These describe the displayed
 revision, while the header describes global collection and report preparation.
 
+The header reports active collection and publication first, then `Needs attention`
+for current failures or uncertain metrics, or `Up to date`. Uninstalled and
+unsupported harnesses are not failed collection runs. Dated metric anomalies
+whose latest occurrence is older than seven days remain visible under
+`Historical data` in the panel and on Sources, without a global alert. Unknown
+dates and mixed historical/current warnings remain actionable. The seven-day
+window is collection-wide and independent of report filters; old uncertainty is
+never erased or presented as repaired.
+
 `apps/web/src/routes/sources/+page.svelte` renders the canonical `SourcesPage`.
 The page owns its `main` landmark and heading and consumes the root provider
 rather than wrapping itself in another route frame or lifecycle owner.

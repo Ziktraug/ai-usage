@@ -113,7 +113,10 @@
       <p>Reason: {source.reason.message ?? source.reason.code}</p>
     {/if}
     {#each source.warnings as warning (`${warning.code}:${warning.message ?? ''}`)}
-      <p>Warning: {warning.message ?? warning.code}</p>
+      <p>
+        {warning.code === 'historicalMetricValidation' ? 'Historical note' : 'Warning'}:
+        {warning.message ?? warning.code}
+      </p>
     {/each}
   </div>
   <div class={sourceFooter}>

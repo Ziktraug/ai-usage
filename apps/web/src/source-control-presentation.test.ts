@@ -31,7 +31,7 @@ describe('source control presentation', () => {
     [{ lastOutcome: 'failed' }, 'Failed', 'danger'],
     [{ lifecycle: 'running' }, 'Running', 'ok'],
     [{ lifecycle: 'queued' }, 'Queued', 'info'],
-    [{ lastOutcome: 'warning' }, 'Completed with warnings', 'warning'],
+    [{ lastOutcome: 'warning' }, 'Needs attention', 'warning'],
     [{ lastOutcome: 'not-run' }, 'Not run yet', 'info'],
     [{ lastOutcome: 'skipped' }, 'Skipped', 'info'],
     [{}, 'Ready', 'ok'],

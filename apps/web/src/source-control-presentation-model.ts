@@ -8,6 +8,11 @@ export interface SourcePresentation {
   readonly tone: SourcePresentationTone;
 }
 
+export const hasOnlyHistoricalWarnings = (source: SourceControlEntryView): boolean =>
+  source.lastOutcome === 'warning' &&
+  source.warnings.length > 0 &&
+  source.warnings.every((warning) => warning.code === 'historicalMetricValidation');
+
 export type SourceProgressPresentation =
   | { readonly kind: 'determinate'; readonly max: number; readonly value: number }
   | { readonly kind: 'indeterminate' };
@@ -77,9 +82,18 @@ export const presentSourceState = (source: SourceControlEntryView): SourcePresen
     return { explanation: 'The source is waiting for a worker.', label: 'Queued', tone: 'info' };
   }
   if (source.lastOutcome === 'warning') {
+    if (hasOnlyHistoricalWarnings(source)) {
+      return {
+        explanation: 'Collection is current. Older sessions have uncertain metrics; see the dated details below.',
+        label: 'Historical anomalies',
+        tone: 'info',
+      };
+    }
     return {
-      explanation: 'The last run completed with partial or rejected local records.',
-      label: 'Completed with warnings',
+      explanation:
+        source.warnings.map((warning) => warning.message ?? warning.code).join(' ') ||
+        'The last run completed with partial or rejected local records.',
+      label: 'Needs attention',
       tone: 'warning',
     };
   }

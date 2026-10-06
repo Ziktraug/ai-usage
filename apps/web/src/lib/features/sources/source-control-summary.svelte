@@ -29,14 +29,17 @@
         status.warningSources.includes(source.label),
     ),
   );
+  const historicalSources = $derived(
+    enabledSources.filter(
+      (source) => status.historicalSources.includes(source.label) && !activeSources.includes(source),
+    ),
+  );
   const nextDueSource = $derived(
     enabledSources
       .filter((source) => source.nextDueAt !== undefined)
       .toSorted((left, right) => String(left.nextDueAt).localeCompare(String(right.nextDueAt)))[0],
   );
   const runPending = $derived(controlState.pendingCommand !== null);
-  const warningCount = $derived(status.warningSources.length);
-  const showWarningCount = $derived(warningCount > 0 && status.phase !== 'current');
   let isOpen = $state(false);
   let hoverOpened = $state(false);
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -114,7 +117,6 @@
   const dot = css({ w: '6px', h: '6px', flexShrink: 0, borderRadius: 'full', bg: 'status.ok' });
   const activeDot = css({ bg: 'accent' });
   const warningDot = css({ bg: 'status.warn' });
-  const count = css({ color: 'status.warn', fontSize: '10px' });
   const positioner = css({ zIndex: 70 });
   const card = css({
     zIndex: 70,
@@ -186,9 +188,6 @@
         class={cx(dot, status.tone === 'info' && activeDot, (status.tone === 'warning' || status.tone === 'danger') && warningDot)}
       ></span>
       <span aria-live="polite" data-source-summary-status>{status.label}</span>
-      {#if showWarningCount}
-        <span class={count}>· {warningCount} {warningCount === 1 ? 'warning' : 'warnings'}</span>
-      {/if}
     </Popover.Trigger>
     <Portal>
       <Popover.Positioner class={positioner}>
@@ -210,9 +209,31 @@
               <div class={sourceList}>
                 {#each activeSources as source (source.id)}
                   {@const presentation = presentSourceState(source)}
-                  <div class={sourceRow}>
-                    <span>{source.label}</span>
-                    <span class={cx(statusPill, sourceToneClass(presentation.tone))}>{presentation.label}</span>
+                  <div>
+                    <div class={sourceRow}>
+                      <span>{source.label}</span>
+                      <span class={cx(statusPill, sourceToneClass(presentation.tone))}>{presentation.label}</span>
+                    </div>
+                    {#if source.warnings.length > 0}
+                      {#each source.warnings as warning (`${warning.code}:${warning.message ?? ''}`)}
+                        <p class={muted}>{warning.message ?? warning.code}</p>
+                      {/each}
+                    {:else if presentation.tone === 'danger' || presentation.tone === 'warning'}
+                      <p class={muted}>{presentation.explanation}</p>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            {#if historicalSources.length > 0}
+              <div class={sourceList} data-source-history-notes>
+                <p class={muted}>Historical data</p>
+                {#each historicalSources as source (source.id)}
+                  <div>
+                    <p>{source.label}</p>
+                    {#each source.warnings as warning (`${warning.code}:${warning.message ?? ''}`)}
+                      <p class={muted}>{warning.message ?? warning.code}</p>
+                    {/each}
                   </div>
                 {/each}
               </div>

@@ -64,6 +64,38 @@ const warned = sourceEntry({ id: definition.id, label: definition.label, lastOut
 const secondWarned = sourceEntry({ id: secondDefinition.id, label: secondDefinition.label, lastOutcome: 'warning' });
 
 describe('collection source pill status', () => {
+  test('keeps historical uncertainty accessible without a global warning, but retains mixed active problems', () => {
+    const history = sourceEntry({
+      id: definition.id,
+      label: definition.label,
+      lastOutcome: 'warning',
+      warnings: [{ code: 'historicalMetricValidation', message: '13 historical sessions have uncertain metrics.' }],
+    });
+    const status = summarizeSourceControlStatus(stateOf(snapshotOf([history])));
+    expect(status.label).toBe('Up to date');
+    expect(status.warningSources).toEqual([]);
+    expect(status.historicalSources).toEqual([definition.label]);
+    expect(
+      summarizeSourceControlStatus(
+        stateOf(snapshotOf([{ ...history, warnings: [...history.warnings, { code: 'metricValidation' }] }])),
+      ).label,
+    ).toBe('Needs attention');
+    expect(summarizeSourceControlStatus(stateOf(snapshotOf([{ ...history, lastOutcome: 'failed' }]))).label).toBe(
+      'Needs attention',
+    );
+  });
+
+  test('does not treat an uninstalled or unsupported harness as a broken collection', () => {
+    expect(
+      summarizeSourceControlStatus(stateOf(snapshotOf([healthy, { ...secondWarned, availability: 'not-detected' }])))
+        .warningSources,
+    ).toEqual([]);
+    expect(
+      summarizeSourceControlStatus(stateOf(snapshotOf([healthy, { ...secondWarned, availability: 'unsupported' }])))
+        .warningSources,
+    ).toEqual([]);
+  });
+
   test('reads as not-yet-known before the first snapshot arrives', () => {
     const status = summarizeSourceControlStatus(stateOf(null, 'stopped'));
 
@@ -76,13 +108,13 @@ describe('collection source pill status', () => {
   test('counts and names the enabled sources whose last run needs attention', () => {
     const status = summarizeSourceControlStatus(stateOf(snapshotOf([warned, healthy])));
 
-    expect(status.label).toBe('1 warning');
-    expect(status.tone).toBe('danger');
+    expect(status.label).toBe('Needs attention');
+    expect(status.tone).toBe('warning');
     expect(status.warningSources).toEqual([definition.label]);
   });
 
-  test('pluralizes the warning count', () => {
-    expect(summarizeSourceControlStatus(stateOf(snapshotOf([warned, secondWarned]))).label).toBe('2 warnings');
+  test('keeps the header compact when multiple sources need attention', () => {
+    expect(summarizeSourceControlStatus(stateOf(snapshotOf([warned, secondWarned]))).label).toBe('Needs attention');
   });
 
   test('ignores a disabled source that failed', () => {
@@ -95,7 +127,7 @@ describe('collection source pill status', () => {
 
     const status = summarizeSourceControlStatus(stateOf(snapshotOf([healthy, disabled])));
 
-    expect(status.label).toBe('Sources ready');
+    expect(status.label).toBe('Up to date');
     expect(status.warningSources).toEqual([]);
   });
 
@@ -131,7 +163,7 @@ describe('collection source pill status', () => {
   test('reads as ready when every enabled source is healthy', () => {
     const status = summarizeSourceControlStatus(stateOf(snapshotOf([healthy])));
 
-    expect(status.label).toBe('Sources ready');
+    expect(status.label).toBe('Up to date');
     expect(status.tone).toBe('ok');
     expect(status.generation).toBe(7);
   });
