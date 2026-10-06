@@ -9,6 +9,31 @@ const REFERENCE_PRICE_DATE = new Date('2026-07-15T00:00:00.000Z');
 const priceAt = (model: string, at = REFERENCE_PRICE_DATE) => priceFor(model, { at });
 
 describe('model pricing', () => {
+  test('prices late-September releases and their harness aliases without reusing older cache rates', () => {
+    const at = new Date('2026-10-06T00:00:00.000Z');
+    const sol = { in: 2, out: 10, cr: 0.1, cw: 2.5 };
+    const sonnet = { in: 2, out: 10, cr: 0.2, cw: 2.5 };
+    const tokens = { in: 1_000_000, out: 1_000_000, cr: 1_000_000, cw: 1_000_000 };
+    for (const model of ['gpt-6.1-sol', 'openai/gpt-6.1-sol', 'gpt-6.1-sol-high']) {
+      const pricing = priceAt(model, at);
+      expect(pricing).toEqual({ rates: sol, known: true });
+      expect(approxCost(pricing.rates, tokens)).toBe(14.6);
+    }
+    for (const model of [
+      'claude-sonnet-5-5',
+      'anthropic/claude-sonnet-5-5',
+      'claude-sonnet-5.5',
+      'cursor/claude-5.5-sonnet-high',
+    ]) {
+      const pricing = priceAt(model, at);
+      expect(pricing).toEqual({ rates: sonnet, known: true });
+      expect(approxCost(pricing.rates, tokens)).toBe(14.7);
+    }
+    expect(priceAt('gpt-6-sol', at).rates.cr).toBe(0.2);
+    expect(priceAt('gpt-6.2-sol', at).known).toBe(false);
+    expect(priceAt('claude-sonnet-5-6', at).known).toBe(false);
+  });
+
   test('prices current OpenAI models at their exact first-party rates', () => {
     const cases: [model: string, rates: Rates][] = [
       ['gpt-5.6', { in: 5, out: 30, cr: 0.5, cw: 6.25 }],

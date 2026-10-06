@@ -32,6 +32,46 @@ const run = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, home: strin
   Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
 
 describe('readClaudeSessionAnalysis', () => {
+  test('recollects previously unpriced Sonnet 5.5 rows from an older cost cache', async () => {
+    const home = await makeHome();
+    const fixture = await seedHarnessHome(home, { harnesses: ['claude'] });
+    const transcript = Bun.file(fixture.paths.claudeRootTranscript);
+    await Bun.write(
+      fixture.paths.claudeRootTranscript,
+      (await transcript.text())
+        .replaceAll('claude-sonnet-4-6', 'claude-sonnet-5-5')
+        .replaceAll('claude-opus-4-1', 'claude-sonnet-5-5'),
+    );
+    await run(collectClaude, home);
+
+    const cachePath = path.join(home, '.config', 'ai-usage', 'claude-cache.json');
+    const cache: {
+      version: number;
+      rows: {
+        costApprox: number;
+        costKnown: boolean;
+        modelSegments?: { costApprox: number; costKnown: boolean }[];
+      }[];
+    } = await Bun.file(cachePath).json();
+    cache.version = 11;
+    for (const row of cache.rows) {
+      row.costApprox = 0;
+      row.costKnown = false;
+      for (const segment of row.modelSegments ?? []) {
+        segment.costApprox = 0;
+        segment.costKnown = false;
+      }
+    }
+    await Bun.write(cachePath, JSON.stringify(cache));
+
+    // No transcript changes: a fingerprint cache hit must not retain the old zero cost.
+    const row = (await run(collectClaude, home)).find(({ source }) => source?.sourceSessionId === fixture.ids.claude);
+    expect(row?.model).toBe('claude-sonnet-5-5');
+    expect(row?.costKnown).toBe(true);
+    expect(row?.costApprox).toBeCloseTo(0.000_667, 10);
+    expect(row?.modelSegments?.[0]?.costKnown).toBe(true);
+  });
+
   test('reads one bounded transcript and returns the same semantic facts without caching prompts', async () => {
     const home = await makeHome();
     const fixture = await seedHarnessHome(home, { harnesses: ['claude'] });

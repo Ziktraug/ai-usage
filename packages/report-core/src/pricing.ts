@@ -24,6 +24,9 @@ const FREE: Rates = { in: 0, out: 0, cr: 0, cw: 0 };
 const PRICING: Readonly<Record<string, Rates>> = {
   // OpenAI. GPT-5.6 and later publish a distinct cache-write price at 1.25x
   // uncached input; earlier families do not, so their `cw` stays the input rate.
+  // GPT-6.1 Sol: Standard short-context rates checked 2026-10-06 at
+  // https://developers.openai.com/api/docs/pricing (cache reads are 0.05x input).
+  'gpt-6.1-sol': { in: 2, out: 10, cr: 0.1, cw: 2.5 },
   'gpt-6-astra': { in: 10, out: 50, cr: 1, cw: 12.5 },
   'gpt-6-sol': { in: 2, out: 10, cr: 0.2, cw: 2.5 },
   'gpt-6-luna': { in: 0.1, out: 0.5, cr: 0.01, cw: 0.125 },
@@ -59,6 +62,9 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'claude-opus-4-5': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
   'claude-opus-4-1': { in: 15, out: 75, cr: 1.5, cw: 18.75 },
   'claude-opus-4': { in: 15, out: 75, cr: 1.5, cw: 18.75 },
+  // Sonnet 5.5: checked 2026-10-06 at
+  // https://platform.claude.com/docs/en/about-claude/pricing.
+  'claude-sonnet-5-5': { in: 2, out: 10, cr: 0.2, cw: 2.5 },
   'claude-sonnet-5': { in: 2, out: 10, cr: 0.2, cw: 2.5 },
   'claude-sonnet-4-6': { in: 3, out: 15, cr: 0.3, cw: 3.75 },
   'claude-sonnet-4-5': { in: 3, out: 15, cr: 0.3, cw: 3.75 },
@@ -229,6 +235,8 @@ const ALIASES: Readonly<Record<string, string>> = {
   'claude-4.1-opus': 'claude-opus-4-1',
   'claude-opus-4.1': 'claude-opus-4-1',
   'claude-4-opus': 'claude-opus-4',
+  'claude-5.5-sonnet': 'claude-sonnet-5-5',
+  'claude-sonnet-5.5': 'claude-sonnet-5-5',
   'claude-4.6-sonnet': 'claude-sonnet-4-6',
   'claude-sonnet-4.6': 'claude-sonnet-4-6',
   'claude-4.5-sonnet': 'claude-sonnet-4-5',
