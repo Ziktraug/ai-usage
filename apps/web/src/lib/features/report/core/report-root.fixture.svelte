@@ -5,7 +5,6 @@
     createSessionWindowAnchorOwner,
     provideSessionWindowAnchorOwner,
   } from '../../shell/session-window-anchor-context';
-  import { provideSourceControlSummary } from '../../shell/source-control-summary-context';
   import SourceControlProvider from '../../sources/source-control-provider.svelte';
   import type { ReportPageData } from './report-bootstrap';
   import ReportRoot from './report-root.svelte';
@@ -21,7 +20,6 @@
     }),
   );
   provideSessionWindowAnchorOwner(createSessionWindowAnchorOwner({ replace: () => undefined, state: () => ({}) }));
-  provideSourceControlSummary(() => undefined);
 </script>
 
 <WebQueryProvider hydrationState={data.queryState}>

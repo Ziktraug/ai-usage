@@ -10,8 +10,8 @@ const COMPACT_REVISION_PREFIX_LENGTH = 12;
 const COMPACT_REVISION_SUFFIX_LENGTH = 8;
 const FULL_REVISION_PATTERN = /^e2e-revision-(\d+)-[a-f\d]{32}$/;
 const PUBLICATION_JARGON_PATTERN = /Publication demand|RTK dependency|Caught up|acknowledged|not-run/;
-const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
-const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
+const RUNNING_ELAPSED_PATTERN = /Running:\s+Codex sessions \(\d+s elapsed\)/;
+const NEXT_DUE_PATTERN = /Next check:\s+.* ·/;
 let shouldRestoreCodexSessions = false;
 type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
 
@@ -155,9 +155,9 @@ test('keeps business sources independent through a picked disable and publishes 
   const reportPage = await context.newPage();
   await openHydratedReport(reportPage);
   const summary = reportPage.getByRole('region', { name: 'Collection source status' });
-  const summaryCard = summary.locator('[data-source-card]');
-  // The card opens from the status link, not from the whole group (which also holds the action button).
-  await summary.getByRole('link').hover();
+  const summaryCard = reportPage.getByRole('dialog', { name: 'Collection details' });
+  // Details live in the shared header and remain reachable while moving into the panel.
+  await summary.getByRole('button', { name: 'Collection status' }).hover();
   await expect(summaryCard).toBeVisible();
   await expect(summaryCard.getByText('Codex sessions', { exact: true })).toBeVisible();
   const runningDetail = summaryCard.getByText(RUNNING_ELAPSED_PATTERN);
@@ -168,11 +168,10 @@ test('keeps business sources independent through a picked disable and publishes 
 
   await reportPage.mouse.move(0, 0);
   await expect(summaryCard).toBeHidden();
-  const hiddenElapsed = await runningDetail.textContent();
-  await reportPage.waitForTimeout(1200);
-  expect(await runningDetail.textContent()).toBe(hiddenElapsed);
+  await expect(summaryCard).toHaveCount(0);
 
-  await summary.getByRole('link').focus();
+  await summary.getByRole('button', { name: 'Collection status' }).focus();
+  await reportPage.keyboard.press('Enter');
   await expect(summaryCard).toBeVisible();
   shouldRestoreCodexSessions = true;
   await sessions.getByRole('checkbox', { name: 'Enabled' }).uncheck();

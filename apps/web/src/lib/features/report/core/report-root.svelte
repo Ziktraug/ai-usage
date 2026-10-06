@@ -43,6 +43,7 @@
       hasReportData={model.hasReportData}
       heading={reportDestinationHeading(activeReportTab(pageState.url))}
       isDemo={model.isDemo}
+      showFreshness={data.mode !== 'live' || !liveResult?.ok}
     />
     <ReportDestinationOwner {liveResult} mode={data.mode} {model} />
   </div>

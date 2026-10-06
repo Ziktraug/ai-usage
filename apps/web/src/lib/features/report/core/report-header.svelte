@@ -8,7 +8,14 @@
     hasReportData,
     heading = 'Usage overview',
     isDemo,
-  }: { generatedAt: string | null; hasReportData: boolean; heading?: string; isDemo: boolean } = $props();
+    showFreshness = true,
+  }: {
+    generatedAt: string | null;
+    hasReportData: boolean;
+    heading?: string;
+    isDemo: boolean;
+    showFreshness?: boolean;
+  } = $props();
 
   const freshness = css({
     alignItems: 'center',
@@ -41,16 +48,18 @@
 <WorkspaceHeader atmospheric={heading === 'Usage overview'} {description} eyebrow="Local activity" {heading}>
   {#snippet meta()}
     <div class={freshness}>
-      <span
-        data-report-freshness
-        title="When the stored report was last assembled from collected usage. It changes only when the data changes, not when you navigate."
-      >
-        {#if hasReportData && generatedAt}
-          Data as of <time datetime={generatedAt}>{reportFreshnessTime(generatedAt)}</time>
-        {:else}
-          {reportFreshnessLabel(generatedAt, hasReportData)}
-        {/if}
-      </span>
+      {#if showFreshness}
+        <span
+          data-report-freshness
+          title="When the stored report was last assembled from collected usage. It changes only when the data changes, not when you navigate."
+        >
+          {#if hasReportData && generatedAt}
+            Data as of <time datetime={generatedAt}>{reportFreshnessTime(generatedAt)}</time>
+          {:else}
+            {reportFreshnessLabel(generatedAt, hasReportData)}
+          {/if}
+        </span>
+      {/if}
       {#if isDemo}
         <span class={demoBadge}>Demo data</span>
       {/if}

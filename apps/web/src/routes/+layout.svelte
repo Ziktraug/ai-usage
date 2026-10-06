@@ -17,7 +17,7 @@
 </svelte:head>
 
 {#snippet sourceControlSummary()}
-  <SourceControlSummary />
+  <SourceControlSummary navigationKey={page.url.href} />
 {/snippet}
 
 <WebQueryProvider {hydrationState}>

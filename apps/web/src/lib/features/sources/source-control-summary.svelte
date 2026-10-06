@@ -1,11 +1,16 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
+  import { Popover } from '@ark-ui/svelte/popover';
+  import { Portal } from '@ark-ui/svelte/portal';
+  import { onDestroy } from 'svelte';
   import { fmtDate } from '../../foundation/presentation/format';
   import { useSourceControl } from './context.svelte';
   import { pendingAriaBusyAttributes } from './model';
   import { presentSourceState, sourceToneClass } from './presentation';
   import { summarizeSourceControlStatus } from './source-control-summary-model';
   import { ghostButton, statusPill } from './styles';
+
+  let { navigationKey = '' }: { navigationKey?: string } = $props();
 
   const sourceControl = useSourceControl();
   const controlState = $derived(sourceControl.state());
@@ -15,19 +20,69 @@
   const runningSources = $derived(
     snapshot?.sources.filter((source) => source.lifecycle === 'running' || source.lifecycle === 'pausing') ?? [],
   );
-  const queuedSources = $derived(snapshot?.sources.filter((source) => source.lifecycle === 'queued') ?? []);
+  const activeSources = $derived(
+    enabledSources.filter(
+      (source) =>
+        source.lifecycle === 'running' ||
+        source.lifecycle === 'pausing' ||
+        source.lifecycle === 'queued' ||
+        status.warningSources.includes(source.label),
+    ),
+  );
   const nextDueSource = $derived(
-    snapshot?.sources
+    enabledSources
       .filter((source) => source.nextDueAt !== undefined)
       .toSorted((left, right) => String(left.nextDueAt).localeCompare(String(right.nextDueAt)))[0],
   );
   const runPending = $derived(controlState.pendingCommand !== null);
-  let hasFocus = $state(false);
-  let isHovered = $state(false);
+  const warningCount = $derived(status.warningSources.length);
+  const showWarningCount = $derived(warningCount > 0 && status.phase !== 'current');
+  let isOpen = $state(false);
+  let hoverOpened = $state(false);
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let contentHasFocus = false;
   let clock = $state(Date.now());
 
+  const cancelClose = (): void => {
+    clearTimeout(closeTimer);
+  };
+  const enter = (event: PointerEvent): void => {
+    if (event.pointerType !== 'mouse') {
+      return;
+    }
+    cancelClose();
+    if (!isOpen) {
+      hoverOpened = true;
+      isOpen = true;
+    }
+  };
+  const leave = (): void => {
+    cancelClose();
+    if (!hoverOpened) {
+      return;
+    }
+    // Keep the panel reachable across its small positioning gap, and retain it while using its controls.
+    closeTimer = setTimeout(() => {
+      if (!contentHasFocus) {
+        isOpen = false;
+      }
+    }, 180);
+  };
+  onDestroy(cancelClose);
+  const closeForNavigation = (): void => {
+    cancelClose();
+    // Route navigation owns focus. A hover preview must never restore focus over a new drawer.
+    hoverOpened = true;
+    contentHasFocus = false;
+    isOpen = false;
+  };
   $effect(() => {
-    if (!(hasFocus || isHovered) || runningSources.length === 0) {
+    if (navigationKey) {
+      closeForNavigation();
+    }
+  });
+  $effect(() => {
+    if (!isOpen || runningSources.length === 0) {
       return;
     }
     clock = Date.now();
@@ -36,76 +91,70 @@
     }, 1000);
     return () => window.clearInterval(timer);
   });
+  const elapsed = (startedAt: string | undefined): string =>
+    startedAt
+      ? `${Math.round(Math.max(0, clock - Date.parse(startedAt)) / 1000)}s elapsed`
+      : 'elapsed time unavailable';
 
-  const elapsed = (startedAt: string | undefined): string => {
-    if (!startedAt) {
-      return 'elapsed time unavailable';
-    }
-    return `${Math.round(Math.max(0, clock - Date.parse(startedAt)) / 1000)}s elapsed`;
-  };
-
-  const summary = css({
-    position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    ml: { base: '0', md: 'auto' },
-  });
-  const summaryLink = css({
+  const summary = css({ flexShrink: 0 });
+  const trigger = css({
     display: 'inline-flex',
-    flex: '1 1 auto',
     alignItems: 'center',
     gap: '6px',
-    minW: 0,
-    h: '36px',
-    px: '10px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
-    bg: 'surface',
-    color: 'ink',
-    fontSize: '12px',
-    fontWeight: 550,
-    textDecoration: 'none',
+    minH: '44px',
+    px: '4px',
+    color: 'muted',
+    fontSize: '11px',
     whiteSpace: 'nowrap',
-    _focus: { '& [data-source-card]': { display: 'grid' } },
+    cursor: 'pointer',
+    borderRadius: 'sm',
+    _hover: { color: 'ink' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-    _hover: { '& [data-source-card]': { display: 'grid' } },
   });
-  const summaryDot = css({ w: '8px', h: '8px', borderRadius: 'full', bg: 'status.ok' });
-  const summaryDotWarn = css({ bg: 'status.warn' });
-  const summaryDotDanger = css({ bg: 'status.danger' });
-  const summaryDotPending = css({ bg: 'faint' });
-  const summaryLabel = css({ minW: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  const dot = css({ w: '6px', h: '6px', flexShrink: 0, borderRadius: 'full', bg: 'status.ok' });
+  const activeDot = css({ bg: 'accent' });
+  const warningDot = css({ bg: 'status.warn' });
+  const count = css({ color: 'status.warn', fontSize: '10px' });
+  const positioner = css({ zIndex: 70 });
   const card = css({
-    display: 'none',
-    position: 'absolute',
-    zIndex: 40,
-    top: 'calc(100% + 8px)',
-    right: '0',
-    width: 'min(360px, calc(100vw - 40px))',
-    gap: '10px',
-    p: '18px',
+    zIndex: 70,
+    display: 'grid',
+    gap: '12px',
+    w: '320px',
+    maxW: 'calc(100vw - 24px)',
+    maxH: 'min(520px, calc(100dvh - 80px))',
+    overflowY: 'auto',
+    p: '16px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'md',
     bg: 'surface',
+    color: 'ink',
     boxShadow: 'overlay',
+    fontSize: '12px',
+    lineHeight: 1.5,
   });
-  const cardHeader = css({ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' });
-  const cardTitle = css({ fontSize: '13px', fontWeight: 600 });
-  const cardMeta = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
+  const title = css({ fontSize: '13px', fontWeight: 600 });
+  const muted = css({ color: 'muted' });
   const sourceList = css({ display: 'grid', gap: '6px' });
-  const sourceRow = css({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto',
-    gap: '8px',
+  const sourceRow = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' });
+  const attribution = css({ color: 'muted', fontSize: '10px' });
+  const actions = css({
+    display: 'flex',
     alignItems: 'center',
-    minW: 0,
+    justifyContent: 'space-between',
+    gap: '12px',
+    pt: '8px',
+    borderTop: '1px solid token(colors.line)',
+    '& a, & button': { minH: '36px' },
   });
-  const sourceLabel = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' });
-  // "Collect now" is one pixel too wide for the 390px filter row (plan 092 sized that row to the
-  // pixel). The accessible name stays "Collect now"; the visible label drops "now" below `sm`.
-  const wideLabel = css({ display: { base: 'none', sm: 'inline' } });
-  const narrowLabel = css({ display: { base: 'inline', sm: 'none' } });
+  const link = css({
+    display: 'inline-flex',
+    alignItems: 'center',
+    color: 'accent',
+    textDecoration: 'none',
+    _hover: { textDecoration: 'underline' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
 </script>
 
 <section
@@ -113,74 +162,105 @@
   class={summary}
   data-source-summary
   data-source-summary-generation={status.generation ?? ''}
+  data-source-summary-phase={status.phase}
 >
-  <a
-    class={summaryLink}
-    href="/sources"
-    onblur={() => (hasFocus = false)}
-    onfocus={() => (hasFocus = true)}
-    onmouseenter={() => (isHovered = true)}
-    onmouseleave={() => (isHovered = false)}
-    title={status.warningSources.length > 0 ? `Warnings: ${status.warningSources.join(', ')}` : undefined}
+  <Popover.Root
+    autoFocus={false}
+    lazyMount
+    onOpenChange={(details) => { cancelClose(); isOpen = details.open; if (!details.open) { contentHasFocus = false; } }}
+    open={isOpen}
+    positioning={{ placement: 'bottom-end', gutter: 8, strategy: 'fixed', overflowPadding: 12 }}
+    restoreFocus={!hoverOpened}
+    unmountOnExit
   >
-    <span
-      aria-hidden="true"
-      class={cx(
-        summaryDot,
-        status.tone === 'info' ? summaryDotPending : undefined,
-        status.tone === 'warning' ? summaryDotWarn : undefined,
-        status.tone === 'danger' ? summaryDotDanger : undefined,
-      )}
-    ></span>
-    <span class={summaryLabel} data-source-summary-status>{status.label}</span>
-    <div class={card} data-source-card>
-      <div class={cardHeader}>
-        <span class={cardTitle}>Collection sources</span
-        ><span class={cx(statusPill, sourceToneClass(status.tone))}>{status.label}</span>
-      </div>
-      {#if snapshot}
-        <div class={sourceList}>
-          {#each enabledSources as source (source.id)}
-            {@const presentation = presentSourceState(source)}
-            <div class={sourceRow}>
-              <span class={sourceLabel} title={`${source.label}: ${presentation.explanation}`}>{source.label}</span
-              ><span class={cx(statusPill, sourceToneClass(presentation.tone))}>{presentation.label}</span>
-            </div>
-          {/each}
-        </div>
-        {#if runningSources.length > 0}
-          <p class={cardMeta}>
-            Running: {runningSources.map((source) => `${source.label} (${elapsed(source.lastStartedAt)})`).join(', ')}
-          </p>
-        {/if}
-        {#if queuedSources.length > 0}
-          <p class={cardMeta}>Queued: {queuedSources.map((source) => source.label).join(', ')}</p>
-        {/if}
-        {#if nextDueSource}
-          <p class={cardMeta}>Next due: {nextDueSource.label} at {nextDueSource.nextDueAt}</p>
-        {/if}
-        <p class={cardMeta}>
-          Last success:
-          {enabledSources.flatMap((source) => source.lastSuccessAt ? [source.lastSuccessAt] : []).toSorted().at(-1) ?? 'none yet'}
-        </p>
-        <p class={cardMeta} data-source-summary-attribution>
-          This status is from the source check at {fmtDate(snapshot.generatedAt)}, update #{status.generation}.
-        </p>
-      {:else}
-        <p class={cardMeta}>Waiting for the server-owned source snapshot.</p>
+    <Popover.Trigger
+      aria-label="Collection status"
+      class={trigger}
+      onclick={() => { hoverOpened = false; }}
+      onpointerenter={enter}
+      onpointerleave={leave}
+      type="button"
+    >
+      <span
+        aria-hidden="true"
+        class={cx(dot, status.tone === 'info' && activeDot, (status.tone === 'warning' || status.tone === 'danger') && warningDot)}
+      ></span>
+      <span aria-live="polite" data-source-summary-status>{status.label}</span>
+      {#if showWarningCount}
+        <span class={count}>· {warningCount} {warningCount === 1 ? 'warning' : 'warnings'}</span>
       {/if}
-    </div>
-  </a>
-  <button
-    {...pendingAriaBusyAttributes(runPending)}
-    aria-label="Collect now"
-    class={ghostButton}
-    disabled={!snapshot || controlState.connection !== 'live' || runPending}
-    onclick={() => sourceControl.execute({ command: 'run-all' }).catch(() => undefined)}
-    title="Collect from every enabled source now. The report updates only if the collected data changed."
-    type="button"
-  >
-    <span aria-hidden="true" class={wideLabel}>Collect now</span
-    ><span aria-hidden="true" class={narrowLabel}>Collect</span>
-  </button>
+    </Popover.Trigger>
+    <Portal>
+      <Popover.Positioner class={positioner}>
+        <Popover.Content
+          aria-label="Collection details"
+          class={card}
+          data-source-card
+          onfocusin={() => { contentHasFocus = true; hoverOpened = false; }}
+          onfocusout={(event) => { contentHasFocus = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget); }}
+          onpointerenter={enter}
+          onpointerleave={leave}
+        >
+          <div>
+            <p class={title}>Collection</p>
+            <p class={muted}>{status.detail}</p>
+          </div>
+          {#if snapshot}
+            {#if activeSources.length > 0}
+              <div class={sourceList}>
+                {#each activeSources as source (source.id)}
+                  {@const presentation = presentSourceState(source)}
+                  <div class={sourceRow}>
+                    <span>{source.label}</span>
+                    <span class={cx(statusPill, sourceToneClass(presentation.tone))}>{presentation.label}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            {#if runningSources.length > 0}
+              <p class={muted}>
+                Running:
+                {runningSources.map((source) => `${source.label} (${elapsed(source.lastStartedAt)})`).join(', ')}
+              </p>
+            {/if}
+            <div class={muted}>
+              <p>{enabledSources.length} enabled collection sources</p>
+              {#if snapshot.publication.lastPublishedAt}
+                <p>
+                  Last report prepared:
+                  <time datetime={snapshot.publication.lastPublishedAt}
+                    >{fmtDate(snapshot.publication.lastPublishedAt)}</time
+                  >
+                </p>
+              {/if}
+              {#if nextDueSource}
+                <p>
+                  Next check: {nextDueSource.label} ·
+                  <time datetime={nextDueSource.nextDueAt}>{fmtDate(nextDueSource.nextDueAt!)}</time>
+                </p>
+              {/if}
+            </div>
+            <p class={attribution} data-source-summary-attribution>
+              Source status checked at {fmtDate(snapshot.generatedAt)}.
+            </p>
+          {/if}
+          {#if controlState.commandError}
+            <p role="alert">{controlState.commandError}</p>
+          {/if}
+          <div class={actions}>
+            <a class={link} href="/sources" onclick={closeForNavigation}>View sources</a>
+            <button
+              {...pendingAriaBusyAttributes(runPending)}
+              class={ghostButton}
+              disabled={!snapshot || controlState.connection !== 'live' || runPending}
+              onclick={() => sourceControl.execute({ command: 'run-all' }).catch(() => undefined)}
+              type="button"
+            >
+              Collect now
+            </button>
+          </div>
+        </Popover.Content>
+      </Popover.Positioner>
+    </Portal>
+  </Popover.Root>
 </section>

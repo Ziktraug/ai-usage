@@ -67,7 +67,8 @@ describe('collection source pill status', () => {
   test('reads as not-yet-known before the first snapshot arrives', () => {
     const status = summarizeSourceControlStatus(stateOf(null, 'stopped'));
 
-    expect(status.label).toBe('Checking sources…');
+    expect(status.label).toBe('Checking…');
+    expect(status.phase).toBe('checking');
     expect(status.tone).toBe('info');
     expect(status.generation).toBeNull();
   });
@@ -98,13 +99,33 @@ describe('collection source pill status', () => {
     expect(status.warningSources).toEqual([]);
   });
 
-  test('reports running collection only when nothing needs attention', () => {
+  test('reports running collection independently of warnings', () => {
     const running = sourceEntry({ id: definition.id, label: definition.label, lifecycle: 'running' });
 
-    const status = summarizeSourceControlStatus(stateOf(snapshotOf([running], 1)));
+    const status = summarizeSourceControlStatus(stateOf(snapshotOf([running, secondWarned], 1)));
 
-    expect(status.label).toBe('1 running');
-    expect(status.tone).toBe('ok');
+    expect(status.label).toBe('Updating…');
+    expect(status.detail).toContain(definition.label);
+    expect(status.phase).toBe('collecting');
+    expect(status.tone).toBe('info');
+    expect(status.warningSources).toEqual([secondDefinition.label]);
+  });
+
+  test('distinguishes queued work, preparation and failed publication', () => {
+    const snapshot = snapshotOf([healthy]);
+    expect(
+      summarizeSourceControlStatus(stateOf({ ...snapshot, publication: { ...snapshot.publication, queued: true } }))
+        .phase,
+    ).toBe('queued');
+    expect(
+      summarizeSourceControlStatus(stateOf({ ...snapshot, publication: { ...snapshot.publication, running: true } }))
+        .phase,
+    ).toBe('preparing');
+    expect(
+      summarizeSourceControlStatus(
+        stateOf({ ...snapshot, publication: { ...snapshot.publication, lastOutcome: 'failed', pendingDemand: true } }),
+      ).phase,
+    ).toBe('failed');
   });
 
   test('reads as ready when every enabled source is healthy', () => {
@@ -121,5 +142,10 @@ describe('collection source pill status', () => {
     expect(status.label).toBe('Reconnecting');
     expect(status.tone).toBe('warning');
     expect(status.generation).toBe(7);
+  });
+
+  test('does not report an old running snapshot as current activity after disconnect', () => {
+    const snapshot = snapshotOf([healthy], 1);
+    expect(summarizeSourceControlStatus(stateOf(snapshot, 'disconnected')).phase).toBe('unavailable');
   });
 });

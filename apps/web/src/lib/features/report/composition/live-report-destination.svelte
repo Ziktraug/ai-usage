@@ -98,6 +98,7 @@
   import { reportMutationsEnabled } from '../actions/report-mutation-availability';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
+  import ReportFreshness from '../core/report-freshness.svelte';
   import ReportWarnings from '../core/report-warnings.svelte';
   import {
     reportRangeProjection,
@@ -244,7 +245,7 @@
   let pendingRevisionApply = $state(false);
   const preserveSessionRevision = $derived(
     detailRoute !== null ||
-      pendingRevisionApply ||
+      (pendingRevisionApply && focusedDestination.kind === 'sessions') ||
       (focusedDestination.kind === 'sessions' &&
         (activeSessionWindowIntent.topLevelDepth > 1 ||
           Object.keys(activeSessionWindowIntent.campaignChildrenDepth).length > 0)),
@@ -368,9 +369,11 @@
       sourceControl.state().publication?.revision !== commit.descriptor.revision,
   );
   $effect(() => {
-    if (newerSessionRevision) {
-      // Closing an inspection must leave its pending publication for explicit Apply.
+    if (newerSessionRevision && focusedDestination.kind === 'sessions') {
+      // Preserve the Sessions exploration after closing its detail. Overview resumes live updates.
       pendingRevisionApply = true;
+    } else if (focusedDestination.kind !== 'sessions') {
+      pendingRevisionApply = false;
     }
   });
   const applyNewSessionRevision = async (): Promise<void> => {
@@ -815,22 +818,14 @@
     />
   {/if}
 {/snippet}
-{#if newerSessionRevision}
-  <div aria-live="polite" data-session-revision-update role="status">
-    <span>New session data is available. Your current exploration is preserved.</span>
-    {#if detailRoute !== null}
-      <span>Close the session detail to apply it.</span>
-    {/if}
-    <button
-      class={ghostButton}
-      disabled={detailRoute !== null || destinationQuery.isFetching}
-      onclick={applyNewSessionRevision}
-      type="button"
-    >
-      Apply new session data
-    </button>
-  </div>
-{/if}
+<ReportFreshness
+  detailOpen={detailRoute !== null}
+  displayedRevision={commit?.descriptor.revision ?? initialDescriptor.revision}
+  fetching={destinationQuery.isFetching}
+  generatedAt={bootstrap.support.generatedAt}
+  onApply={applyNewSessionRevision}
+  updateAvailable={newerSessionRevision}
+/>
 <ReportDestinationPresentation
   activeView={visiblePrimary}
   breakdown={breakdownDestination}

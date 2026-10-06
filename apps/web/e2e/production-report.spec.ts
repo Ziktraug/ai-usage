@@ -93,7 +93,10 @@ const openSettledProductionReport = async (page: Page, url = '/'): Promise<void>
   page.on('requestfailed', settle);
   try {
     await page.goto(url);
-    await expect(page.getByRole('button', { exact: true, name: 'Collect now' })).toBeEnabled();
+    await expect(page.locator('[data-source-summary]')).toHaveAttribute(
+      'data-source-summary-generation',
+      NON_EMPTY_ATTRIBUTE_PATTERN,
+    );
     await expect
       .poll(() => pending.size, { message: 'The initial source publication RPCs must settle before action counts' })
       .toBe(0);

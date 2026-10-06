@@ -3,9 +3,7 @@
   import { css } from '@ai-usage/design-system/css';
   import { Tooltip } from '@ai-usage/design-system/svelte';
   import type { SessionOrigin } from '@ai-usage/report-core/session-query';
-  import type { Snippet } from 'svelte';
   import type { DashboardSearch } from '../../../../dashboard-search';
-  import { useSourceControlSummary } from '../../shell/source-control-summary-context';
   import CheckboxFilter from './checkbox-filter.svelte';
   import { shouldFocusReportFilter } from './filter-shortcut';
   import type { BreakdownNavigation } from './navigation';
@@ -16,13 +14,11 @@
     freshnessStatus = null,
     freshnessUnavailable = false,
     harnessOptions,
-    isDemo = false,
     machineAttention = false,
     machineOptions,
     navigation,
     presentMachineLabel,
     search,
-    sourceControlSummary = useSourceControlSummary(),
   }: {
     freshnessStatus?: string | null;
     harnessOptions: string[];
@@ -33,7 +29,6 @@
     navigation: BreakdownNavigation;
     presentMachineLabel: (value: string) => string;
     search: DashboardSearch;
-    sourceControlSummary?: Snippet;
   } = $props();
   let editingQuery = false;
   let queryInput = $state<HTMLInputElement | undefined>();
@@ -141,7 +136,7 @@
         value={search.machine}
       />
     {/if}
-    {#if freshnessStatus || (!isDemo && sourceControlSummary)}
+    {#if freshnessStatus}
       <div class={actions} data-filter-actions>
         {#if freshnessStatus}
           {#if freshnessUnavailable}
@@ -163,9 +158,6 @@
               {freshnessStatus}
             </section>
           {/if}
-        {/if}
-        {#if !isDemo && sourceControlSummary}
-          {@render sourceControlSummary()}
         {/if}
       </div>
     {/if}

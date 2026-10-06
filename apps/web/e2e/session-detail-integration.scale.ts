@@ -29,6 +29,7 @@ const LINK_PARENT = 'Continuity child 0250';
 const LINK_CHILD = 'Continuity child 0013';
 const ROUNDS = /^Rounds/;
 const OPEN_SESSION = /^Open session/;
+const LONGEST_SESSION = /Longest session/;
 const MEMBERS = /^Members/;
 const EXPLORATION_TITLE = /Detail exploration \d{4}/;
 const FILTER_PROJECT = /^Filter project:/;
@@ -53,7 +54,10 @@ const expectRounds = async (page: Page, title: string): Promise<void> => {
 };
 
 const reportRevision = async (page: Page): Promise<string> => {
-  const revision = await page.locator('main[data-report-revision]').getAttribute('data-report-revision');
+  const revision = await page
+    .locator('main[data-report-revision], [data-report-overview]')
+    .last()
+    .getAttribute('data-report-revision');
   if (!revision) {
     throw new Error('The visible report must expose its served revision');
   }
@@ -189,6 +193,65 @@ const publishRevision = async (request: APIRequestContext, origin: string, batch
 
 test.beforeEach(async ({ request, baseURL }) => {
   await freezeSessionScrollCollectionSources(request, baseURL!);
+});
+
+test('explains freshness from first paint while the collection connection is delayed', async ({ page }) => {
+  const release = Promise.withResolvers<void>();
+  await page.route('**/api/source-control', async (route) => {
+    await release.promise;
+    await route.continue();
+  });
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const response = await openHydratedReport(page, '/?range=all');
+    expect(await response?.text()).toContain('Checking…');
+    const freshness = page.getByRole('region', { name: 'Report freshness' });
+    await expect(page.locator('[data-workspace-topbar] [data-source-summary]')).toHaveAttribute(
+      'data-source-summary-phase',
+      'checking',
+    );
+    await expect(page.locator('[data-report-overview]')).toBeVisible();
+    await expect(page.locator('[data-report-freshness]')).toHaveCount(1);
+    release.resolve();
+    await expect(page.locator('[data-source-summary]')).toHaveAttribute('data-source-summary-phase', 'current');
+    await expect(freshness).toHaveAttribute('data-freshness-revision', await reportRevision(page));
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const { violations } = await new AxeBuilder({ page }).include('[data-workspace-topbar]').analyze();
+    expect(violations).toEqual([]);
+  } finally {
+    release.resolve();
+  }
+});
+
+test('updates Overview automatically and resumes after closing a preserved detail', async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  await openHydratedReport(page, '/?range=all');
+  const freshness = page.getByRole('region', { name: 'Report freshness' });
+  await expect(page.locator('[data-source-summary]')).toHaveAttribute('data-source-summary-phase', 'current');
+  const originalRevision = await reportRevision(page);
+  await publishRevision(request, baseURL!, 'freshness-overview-auto');
+  await expect.poll(() => reportRevision(page)).not.toBe(originalRevision);
+  await expect(freshness).toHaveAttribute('data-freshness-revision', await reportRevision(page));
+  await expect(page.locator('[data-session-revision-update]')).toHaveCount(0);
+  await freezeSessionScrollCollectionSources(request, baseURL!);
+  await expect(page.locator('[data-source-summary]')).toHaveAttribute('data-source-summary-phase', 'current');
+  await page.getByRole('button', { name: LONGEST_SESSION }).click();
+  await expect(drawerFor(page)).toBeVisible();
+  const inspectedRevision = await reportRevision(page);
+  const displayedTime = await freshness.locator('time').getAttribute('datetime');
+  await publishRevision(request, baseURL!, 'freshness-overview-inspection');
+  await expect(page.locator('[data-session-revision-update]')).toBeVisible();
+  expect(await reportRevision(page)).toBe(inspectedRevision);
+  await expect(freshness.locator('time')).toHaveAttribute('datetime', displayedTime!);
+  await expect(freshness).toHaveAttribute('data-freshness-revision', inspectedRevision);
+  await drawerFor(page).getByRole('button', { name: 'Close session details', exact: true }).click();
+  await expect(drawerFor(page)).toBeHidden();
+  await expect.poll(() => reportRevision(page)).not.toBe(inspectedRevision);
+  await expect(page.locator('[data-session-revision-update]')).toHaveCount(0);
+  await expect(freshness).toHaveAttribute('data-freshness-revision', await reportRevision(page));
 });
 
 test('keeps a deeply acquired Sessions surface and anchor through Rounds, Back and Forward', async ({ page }) => {
@@ -532,6 +595,10 @@ test('pins Sessions Rounds through a real publication until Close and Apply new 
     await expect(apply).toBeVisible();
     await expect(apply).toBeDisabled();
     expect(await reportRevision(page)).toBe(originalRevision);
+    await expect(page.getByRole('region', { name: 'Report freshness' })).toHaveAttribute(
+      'data-freshness-revision',
+      originalRevision,
+    );
     expect(await prompt?.evaluate((element) => element.isConnected)).toBe(true);
     await expectRounds(page, title);
     await drawerFor(page).getByRole('tab', { name: 'Summary', exact: true }).click();

@@ -140,31 +140,22 @@ test('renders the longest machine option on one visible unclipped line', async (
   ).toBe(true);
 });
 
-test('keeps source status and its action in one bounded group at the 768px breakpoint', async ({ page }) => {
+test('keeps global collection status in the header at the 768px breakpoint', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 768 });
   await openHydratedReport(page);
-  const actions = page.locator('[data-filter-actions]');
-  await expect(actions).toBeVisible();
-  await expect(actions.locator('[aria-label="Collection source status"]')).toHaveCount(1);
-  const status = actions.getByRole('link', { name: 'Sources ready' });
-  const runAll = actions.getByRole('button', { name: 'Collect now' });
+  const header = page.locator('[data-workspace-topbar]');
+  const status = header.getByRole('button', { name: 'Collection status' });
   await expect(status).toBeVisible();
-  await expect(runAll).toBeVisible();
-  const toolbar = page.locator('[data-dashboard-filter-stack]');
-  const [actionsBox, statusBox, runAllBox, toolbarBox] = await Promise.all([
-    actions.boundingBox(),
-    status.boundingBox(),
-    runAll.boundingBox(),
-    toolbar.boundingBox(),
-  ]);
-  if (!(actionsBox && statusBox && runAllBox && toolbarBox)) {
-    throw new Error('Toolbar actions must expose geometry');
+  await expect(page.locator('[data-dashboard-filter-stack] [data-source-summary]')).toHaveCount(0);
+  const [statusBox, headerBox] = await Promise.all([status.boundingBox(), header.boundingBox()]);
+  if (!(statusBox && headerBox)) {
+    throw new Error('Header collection status must expose geometry');
   }
-  expect(Math.abs((statusBox?.y ?? 0) - (runAllBox?.y ?? 0))).toBeLessThanOrEqual(PIXEL_TOLERANCE);
-  expect(Math.abs(actionsBox.x + actionsBox.width - (toolbarBox.x + toolbarBox.width))).toBeLessThanOrEqual(
-    PIXEL_TOLERANCE,
-  );
-  expect(await actions.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
-    await actions.evaluate((element) => element.clientWidth),
-  );
+  expect(statusBox.y).toBeGreaterThanOrEqual(headerBox.y);
+  expect(statusBox.y + statusBox.height).toBeLessThanOrEqual(headerBox.y + headerBox.height);
+  expect(headerBox.height).toBeLessThanOrEqual(54);
+  await status.hover();
+  const details = page.getByRole('dialog', { name: 'Collection details' });
+  await expect(details.getByRole('button', { name: 'Collect now' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

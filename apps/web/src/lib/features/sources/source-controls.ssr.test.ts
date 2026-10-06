@@ -5,10 +5,7 @@ import type { Component } from 'svelte';
 import { createServer } from 'vite';
 
 const DISABLED_ATTRIBUTE_PATTERN = /\sdisabled(?:[\s=>])/u;
-const STATUS_LABEL_PATTERN = /<span class="[^"]*" data-source-summary-status="">Sources ready<\/span>/u;
-const ATTRIBUTION_PATTERN = /<p class="[^"]*" data-source-summary-attribution="">([\s\S]*?)<\/p>/u;
-const ATTRIBUTION_COPY_PATTERN =
-  /^This status is from the source check at \w{3} \d{2}(?: at|,) \d{2}:\d{2}, update #1\.$/u;
+const STATUS_LABEL_PATTERN = /data-source-summary-status="">Sources ready<\/span>/u;
 
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -37,7 +34,7 @@ const fixtureBlock = (html: string, fixture: 'actions' | 'summary'): string => {
   return html.slice(start, nextFixture < 0 ? undefined : nextFixture);
 };
 
-const renderedButton = (html: string, label: 'Collect now' | 'Run now'): string => {
+const renderedButton = (html: string, label: 'Run now'): string => {
   const buttonPattern = new RegExp(`<button\\b[^>]*>[\\s\\S]*?${label}[\\s\\S]*?<\\/button>`, 'u');
   const button = html.match(buttonPattern)?.[0];
   if (!button) {
@@ -67,17 +64,13 @@ const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(svelteServerModule);
 
 describe('rendered source-control pending semantics', () => {
-  test('renders aria-busy on both run actions while a command is pending', () => {
+  test('renders aria-busy on the run action while a command is pending', () => {
     const html = render(fixture, { props: { pending: true } }).body;
     const actions = fixtureBlock(html, 'actions');
-    const summary = fixtureBlock(html, 'summary');
 
     const runNow = renderedButton(actions, 'Run now');
-    const runAll = renderedButton(summary, 'Collect now');
     expect(runNow).toContain('aria-busy="true"');
     expect(DISABLED_ATTRIBUTE_PATTERN.test(runNow)).toBe(true);
-    expect(runAll).toContain('aria-busy="true"');
-    expect(DISABLED_ATTRIBUTE_PATTERN.test(runAll)).toBe(true);
   });
 
   test('stamps the engine snapshot generation next to the status the pill reports', () => {
@@ -87,28 +80,19 @@ describe('rendered source-control pending semantics', () => {
     expect(summary).toMatch(STATUS_LABEL_PATTERN);
   });
 
-  test('says in words which source check the pill is reporting', () => {
+  test('renders only the compact trigger until collection details are opened', () => {
     const summary = fixtureBlock(render(fixture, { props: { pending: false } }).body, 'summary');
-    const attribution = summary.match(ATTRIBUTION_PATTERN)?.[1]?.replaceAll(/\s+/gu, ' ').trim();
-
-    // The fixture snapshot is generation 1. The timestamp is left to `fmtDate` (and the runner's
-    // zone); what this pins is the sentence around it and the update number a reader compares.
-    expect(attribution).toMatch(ATTRIBUTION_COPY_PATTERN);
-    // Cross-cutting copy rule: no internal mechanism names in reader-facing text.
-    expect(attribution).not.toContain('Engine state');
-    expect(attribution).not.toContain('pushed');
+    expect(summary).toContain('aria-label="Collection status"');
+    expect(summary).not.toContain('data-source-card');
+    expect(summary).not.toContain('Collect now');
   });
 
-  test('omits aria-busy from both run actions while idle', () => {
+  test('omits aria-busy from the run action while idle', () => {
     const html = render(fixture, { props: { pending: false } }).body;
     const actions = fixtureBlock(html, 'actions');
-    const summary = fixtureBlock(html, 'summary');
 
     const runNow = renderedButton(actions, 'Run now');
-    const runAll = renderedButton(summary, 'Collect now');
     expect(runNow).not.toContain('aria-busy');
     expect(DISABLED_ATTRIBUTE_PATTERN.test(runNow)).toBe(false);
-    expect(runAll).not.toContain('aria-busy');
-    expect(DISABLED_ATTRIBUTE_PATTERN.test(runAll)).toBe(false);
   });
 });

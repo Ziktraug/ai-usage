@@ -12,10 +12,17 @@ mutation; pending/error state comes from its observer. A new publication
 invalidates only the current Report bootstrap/manifest aliases.
 
 The layout defines one `SourceControlSummary` snippet and passes it through
-`AppShell` to `AppNavigation`. Navigation renders that snippet once in each
-mutually exclusive responsive branch and never in demo mode. Feature code does
+`AppShell`, which renders it once in the workspace header on every route, except
+in demo mode. Its compact button opens collection details on hover or activation
+(keyboard and touch), including warnings and the Collect now action. The panel
+mounts only while open; elapsed-time updates stop when it closes. Report filters
+do not render collection controls. Feature code does
 not create another provider, source-control service, EventSource subscription,
 or summary instance.
+
+Report destinations retain their own displayed-data timestamp and any explicit
+Apply action needed to preserve an exploration. These describe the displayed
+revision, while the header describes global collection and report preparation.
 
 `apps/web/src/routes/sources/+page.svelte` renders the canonical `SourcesPage`.
 The page owns its `main` landmark and heading and consumes the root provider

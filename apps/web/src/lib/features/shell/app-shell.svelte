@@ -16,7 +16,6 @@
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import { createSessionWindowAnchorOwner, provideSessionWindowAnchorOwner } from './session-window-anchor-context';
-  import { provideSourceControlSummary } from './source-control-summary-context';
 
   let {
     children,
@@ -31,7 +30,6 @@
   } = $props();
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
   provideShellNavigationOwner(createShellNavigationOwner({ currentUrl: () => page.url, goto }));
-  provideSourceControlSummary(() => sourceControlSummary);
   provideSessionWindowAnchorOwner(
     createSessionWindowAnchorOwner({
       replace: (state) => replaceState(page.url, state),
@@ -84,7 +82,11 @@
       <span aria-hidden="true" class={locationRoot}>/</span>
       <span class={locationCurrent}>{destination}</span>
     </div>
-    <span class={workspaceLabel}>Local workspace</span>
+    {#if runtimeMode !== 'demo' && sourceControlSummary}
+      {@render sourceControlSummary()}
+    {:else if runtimeMode === 'demo'}
+      <span class={workspaceLabel}>Demo data</span>
+    {/if}
   </header>
   {@render children()}
 </div>

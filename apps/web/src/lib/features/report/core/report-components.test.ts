@@ -151,6 +151,9 @@ describe('report Svelte SSR components', () => {
     // The live destination — not the bootstrap placeholder — is what the server now emits.
     expect(body).toContain('data-dashboard-filter-stack');
     expect(body).not.toContain('data-report-bootstrap-overview');
+    expect(body).not.toContain('data-report-freshness-state');
+    expect(body.match(/data-report-freshness[\s=>]/g)).toHaveLength(1);
+    expect(body).toContain('data-freshness-revision="compatible-last-revision"');
   });
 
   it('renders filters, period, active summary, then the Overview in decision order', () => {
