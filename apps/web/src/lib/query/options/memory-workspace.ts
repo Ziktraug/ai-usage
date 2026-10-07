@@ -37,48 +37,60 @@ export const continueMemoryAnalysisWindow = (
     query.fetchNextPage();
   }
 };
+/**
+ * The RPC context is installed only in the browser, so an absent client is the server render: Memory
+ * reads stay disabled there rather than borrowing the report owners' SSR placeholder client.
+ */
+export const browserMemoryClient = <Client>(client: Client | undefined): Client => {
+  if (client === undefined) {
+    throw new Error('Memory reads run only in the browser.');
+  }
+  return client;
+};
 export const memoryWorkspaceProjectsOptions = (
-  client: SessionDistillationContractClient,
-  enabled: boolean,
+  client: SessionDistillationContractClient | undefined,
   cursor: string | null = null,
 ) =>
   queryOptions({
     ...webQueryPolicies.finiteSwr,
-    enabled,
+    enabled: client !== undefined,
     queryKey: finiteSwrKey('memory', 'projects', cursor ?? ''),
-    queryFn: ({ signal }) => client.projects({ kind: 'projects', limit: 50, cursor }, { signal }),
+    queryFn: ({ signal }) => browserMemoryClient(client).projects({ kind: 'projects', limit: 50, cursor }, { signal }),
   });
 export const memoryWorkspaceBrowseOptions = (
-  client: SessionDistillationContractClient,
+  client: SessionDistillationContractClient | undefined,
   input: SessionDistillationBrowseRequest,
   enabled: boolean,
 ) =>
   queryOptions({
     ...webQueryPolicies.finiteSwr,
-    enabled,
+    enabled: enabled && client !== undefined,
     queryKey: finiteSwrKey('memory', 'analyses', JSON.stringify(input)),
-    queryFn: ({ signal }) => client.browse(input, { signal }),
+    queryFn: ({ signal }) => browserMemoryClient(client).browse(input, { signal }),
   });
 export const memoryWorkspaceDiscoveryOptions = (
-  client: SessionDistillationContractClient,
+  client: SessionDistillationContractClient | undefined,
   input: SessionDistillationDiscoverRequest | undefined,
-  enabled: boolean,
 ) =>
   queryOptions({
     ...webQueryPolicies.finiteSwr,
-    enabled: enabled && input !== undefined,
+    enabled: client !== undefined && input !== undefined,
     queryKey: finiteSwrKey('memory', 'discovery', JSON.stringify(input ?? null)),
     queryFn: ({ signal }) => {
       if (!input) {
         throw new Error('Choose a Project before discovery.');
       }
-      return client.discover(input, { signal });
+      return browserMemoryClient(client).discover(input, { signal });
     },
   });
-export const memoryKnowledgeOptions = (client: MemoryContractClient, input: MemoryKnowledgeInput, enabled: boolean) =>
+export const memoryKnowledgeOptions = (
+  client: MemoryContractClient | undefined,
+  input: MemoryKnowledgeInput,
+  enabled: boolean,
+) =>
   queryOptions({
     ...webQueryPolicies.finiteSwr,
-    enabled,
+    enabled: enabled && client !== undefined,
     queryKey: finiteSwrKey('memory', 'knowledge', JSON.stringify(input)),
-    queryFn: ({ signal }) => client.knowledge(input, { signal }),
+    queryFn: ({ signal }) => browserMemoryClient(client).knowledge(input, { signal }),
   });

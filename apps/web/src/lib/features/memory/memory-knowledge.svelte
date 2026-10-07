@@ -1,13 +1,11 @@
 <script lang="ts">
-  import type { MemoryContractClient, MemoryKnowledgeInput } from '@ai-usage/web-contract/memory';
+  import type { MemoryKnowledgeInput } from '@ai-usage/web-contract/memory';
   import type { SessionDistillationContractClient } from '@ai-usage/web-contract/session-distillation';
   import { createQuery } from '@tanstack/svelte-query';
-  import { browser } from '$app/environment';
   import { immutableRevisionKey } from '../../query/keys';
-  import { memoryKnowledgeOptions } from '../../query/options/memory-workspace';
+  import { browserMemoryClient, memoryKnowledgeOptions } from '../../query/options/memory-workspace';
   import { webQueryPolicies } from '../../query/policies';
-  import { useWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
+  import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import MemorySearch from './memory-search.svelte';
   import {
     memoryButton,
@@ -24,20 +22,18 @@
   let kind = $state<MemoryKnowledgeInput['kind']>(null);
   let cursor = $state<string | null>(null);
   let searching = $state(false);
-  const rpc = browser ? useWebQueryRpcContext().rpc.memory : ssrUnavailableClient<MemoryContractClient>('memory');
-  const query = createQuery(() =>
-    memoryKnowledgeOptions(rpc, { projectId, kind, cursor, pageSize: 20 }, browser && !searching),
-  );
+  const rpc = useOptionalWebQueryRpcContext()?.rpc.memory;
+  const query = createQuery(() => memoryKnowledgeOptions(rpc, { projectId, kind, cursor, pageSize: 20 }, !searching));
   let selected = $state<{ itemId: string; revisionId: string } | null>(null);
   const detail = createQuery(() => ({
     ...webQueryPolicies.immutableRevision,
-    enabled: browser && selected !== null,
+    enabled: rpc !== undefined && selected !== null,
     queryKey: immutableRevisionKey('memory', selected?.revisionId ?? '', selected?.itemId ?? '', 'accepted-detail'),
     queryFn: ({ signal }) => {
       if (!selected) {
         throw new Error('Choose an accepted revision.');
       }
-      return rpc.getKnowledge(selected, { signal });
+      return browserMemoryClient(rpc).getKnowledge(selected, { signal });
     },
   }));
   const sourceLink = (value: unknown): string | null => {

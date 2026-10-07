@@ -2,15 +2,12 @@
   import type { MemoryContractClient } from '@ai-usage/web-contract/memory';
   import type {
     DistillationProjectsPage,
-    SessionDistillationContractClient,
     SessionDistillationDiscoverRequest,
   } from '@ai-usage/web-contract/session-distillation';
   import { createQuery } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
   import { memoryWorkspaceDiscoveryOptions } from '../../query/options/memory-workspace';
-  import { useWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
+  import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { memoryAnalysisError } from './memory-errors';
   import {
     memoryButton,
@@ -34,10 +31,8 @@
   let selectedRows = $state<string[]>([]);
   let copied = $state(false);
   let message = $state('');
-  const rpc = browser
-    ? useWebQueryRpcContext().rpc.sessionDistillation
-    : ssrUnavailableClient<SessionDistillationContractClient>('session-distillation');
-  const query = createQuery(() => memoryWorkspaceDiscoveryOptions(rpc, request, browser));
+  const rpc = useOptionalWebQueryRpcContext()?.rpc.sessionDistillation;
+  const query = createQuery(() => memoryWorkspaceDiscoveryOptions(rpc, request));
   const preview = $derived(query.data);
   $effect(() => {
     selectedRows = preview?.selections.map((selection) => selection.rowId) ?? [];

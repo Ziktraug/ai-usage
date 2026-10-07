@@ -2,18 +2,14 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import { page, shell } from '@ai-usage/design-system/svelte';
-  import type { MemoryContractClient, MemoryProposalReviewAction } from '@ai-usage/web-contract/memory';
-  import type {
-    SessionDistillationBrowseRequest,
-    SessionDistillationContractClient,
-  } from '@ai-usage/web-contract/session-distillation';
+  import type { MemoryProposalReviewAction } from '@ai-usage/web-contract/memory';
+  import type { SessionDistillationBrowseRequest } from '@ai-usage/web-contract/session-distillation';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/environment';
   import { acknowledgeMemoryProposalReview, memoryProposalReviewsKey } from '../../query/options/memory';
   import { memoryWorkspaceProjectsOptions } from '../../query/options/memory-workspace';
-  import { useWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
+  import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createLazyModuleLoader } from '../report/composition/lazy-module-loader';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import MemoryAnalysisList from './memory-analysis-list.svelte';
@@ -54,10 +50,8 @@
     project = location.projectId ?? '';
   });
   const queryClient = useQueryClient();
-  const sessionClient = browser
-    ? useWebQueryRpcContext().rpc.sessionDistillation
-    : ssrUnavailableClient<SessionDistillationContractClient>('session-distillation');
-  const projectsQuery = createQuery(() => memoryWorkspaceProjectsOptions(sessionClient, browser, projectsCursor));
+  const sessionClient = useOptionalWebQueryRpcContext()?.rpc.sessionDistillation;
+  const projectsQuery = createQuery(() => memoryWorkspaceProjectsOptions(sessionClient, projectsCursor));
   const proposalsQuery = createHydratedMemoryProposalQuery(
     browser,
     () => (location.view === 'review' ? location.cursor : null),

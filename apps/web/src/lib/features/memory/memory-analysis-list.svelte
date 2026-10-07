@@ -2,18 +2,14 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import type { MemoryContractClient } from '@ai-usage/web-contract/memory';
-  import type {
-    SessionDistillationBrowseRequest,
-    SessionDistillationContractClient,
-  } from '@ai-usage/web-contract/session-distillation';
+  import type { SessionDistillationBrowseRequest } from '@ai-usage/web-contract/session-distillation';
   import { createInfiniteQuery } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/environment';
   import { finiteSwrKey } from '../../query/keys';
-  import { continueMemoryAnalysisWindow } from '../../query/options/memory-workspace';
+  import { browserMemoryClient, continueMemoryAnalysisWindow } from '../../query/options/memory-workspace';
   import { webQueryPolicies } from '../../query/policies';
-  import { useWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
+  import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { memoryAnalysisError } from './memory-errors';
   import { memoryButton, memoryCopy, memoryHeading } from './memory-styles';
   import { analysisTitle, memoryHref } from './memory-url';
@@ -26,9 +22,7 @@
     address,
     selectedAnalysisId = null,
   }: { input: SessionDistillationBrowseRequest; address: string; selectedAnalysisId?: string | null } = $props();
-  const rpc = browser
-    ? useWebQueryRpcContext().rpc.sessionDistillation
-    : ssrUnavailableClient<SessionDistillationContractClient>('session-distillation');
+  const rpc = useOptionalWebQueryRpcContext()?.rpc.sessionDistillation;
   const initialCursor = untrack(() => input.cursor);
   const firstPage = 'first-page';
   const initialPageParam = initialCursor ?? firstPage;
@@ -41,12 +35,15 @@
   const query = createInfiniteQuery(() => ({
     ...webQueryPolicies.finiteSwr,
     refetchOnMount: false,
-    enabled: browser,
+    enabled: rpc !== undefined,
     queryKey: finiteSwrKey('memory', 'analysis-library', JSON.stringify({ ...input, cursor: initialCursor })),
     initialPageParam,
     maxPages: 5,
     queryFn: async ({ signal, pageParam }) =>
-      await rpc.browse({ ...input, cursor: pageParam === firstPage ? null : pageParam, limit: PAGE_SIZE }, { signal }),
+      await browserMemoryClient(rpc).browse(
+        { ...input, cursor: pageParam === firstPage ? null : pageParam, limit: PAGE_SIZE },
+        { signal },
+      ),
     getNextPageParam: (last, _pages, lastParam) => {
       if (!last.nextCursor) {
         return;
