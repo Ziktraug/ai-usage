@@ -153,7 +153,11 @@ stderr and exit with status 1; stdout remains reserved for successful JSON.
 **Propose as knowledge** selects an analysis element and opens an editable
 formulation, type, scope, sensitivity and evidence. The application loads the
 exact source revision and creates an Observation and Proposal with idempotent
-provenance. Acceptance is a second human action in **Pending review**. The original
+provenance. Acceptance is a second human action in **Pending review**. After
+saving, **Open Pending review** links to that exact proposal
+(`/memory?view=review&proposal=<id>`): the review page starts at it wherever it
+sits in the queue, through reload and history. A malformed, unknown,
+inaccessible or already reviewed proposal is refused explicitly. The original
 account remains unchanged. Accepted Items remain local unless a separate
 publication policy and consent authorize publication; sensitivity is not used
 as a substitute for that choice.

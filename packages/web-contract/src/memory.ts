@@ -204,7 +204,11 @@ export const memoryPromotionResultSchema = strictObject({
   localOnly: literal(true),
 });
 export type MemoryPromotionResult = InferOutput<typeof memoryPromotionResultSchema>;
-export const memoryProposalReviewInputSchema = strictObject({ cursor: optional(nullable(cursorSchema)) });
+/** A page continues after `cursor` or starts at one addressed pending `proposalId`, never both. */
+export const memoryProposalReviewInputSchema = union([
+  strictObject({ cursor: optional(nullable(cursorSchema)) }),
+  strictObject({ proposalId: uuidSchema }),
+]);
 export type MemoryProposalReviewInput = InferOutput<typeof memoryProposalReviewInputSchema>;
 
 const proposalReviewSchema = strictObject({

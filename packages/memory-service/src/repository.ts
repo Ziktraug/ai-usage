@@ -139,6 +139,12 @@ export interface ListMemoryItemsQuery {
 export interface ListMemoryProposalsQuery {
   readonly authorizationScope: AuthorizedResourceScope;
   readonly cursor?: string | null;
+  /**
+   * Addresses one proposal: the page starts at it (inclusive) instead of after `cursor`, so a
+   * proposal is reachable wherever it sits in the queue without reading the pages before it. A
+   * proposal that is absent, unauthorized or not in `status` fails as `not-found`.
+   */
+  readonly fromProposalId?: MemoryProposalId | null;
   readonly pageSize: number;
   readonly spaceId: SpaceId;
   readonly status: MemoryProposal['status'];

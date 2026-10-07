@@ -67,6 +67,40 @@ describe('Memory proposal Query options', () => {
     expect(observedSignals).toHaveLength(1);
   });
 
+  test('addresses one proposal under its own identity and forgets that page once it is reviewed', async () => {
+    const proposalId = '0198f179-4837-7000-8000-000000000003';
+    const positions: unknown[] = [];
+    const client = createWebQueryClient();
+    const options = memoryProposalReviewsQueryOptions(
+      {
+        proposalReviews: (_signal, position) => {
+          positions.push(position);
+          return Promise.resolve(snapshot);
+        },
+      },
+      { browser: true, enabled: true },
+      { proposalId },
+    );
+
+    await client.fetchQuery(options);
+    expect(options).toMatchObject({
+      queryKey: ['web', 'control-plane', 'memory', 'proposal-reviews', 'v1', 'proposal', proposalId],
+    });
+    expect(positions).toEqual([{ proposalId }]);
+    expect(memoryProposalReviewsKey({ cursor: 'next' })).toEqual([
+      'web',
+      'control-plane',
+      'memory',
+      'proposal-reviews',
+      'v1',
+      'next',
+    ]);
+    expect(memoryProposalReviewsKey({ cursor: null })).toEqual(memoryProposalReviewsKey());
+
+    await acknowledgeMemoryProposalReview(client, proposalId);
+    expect(client.getQueryData(memoryProposalReviewsKey({ proposalId }))).toBeUndefined();
+  });
+
   test('acknowledges only the successful proposal and leaves the snapshot stale', async () => {
     const client = createWebQueryClient();
     client.setQueryData(memoryProposalReviewsKey(), snapshot);

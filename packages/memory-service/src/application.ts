@@ -278,6 +278,8 @@ export interface ListMemoryItemsApplicationQuery extends MemoryCommandContext {
 
 export interface ListPendingMemoryProposalsQuery extends MemoryCommandContext {
   readonly cursor?: string | null;
+  /** Starts the page at this pending proposal; see `ListMemoryProposalsQuery.fromProposalId`. */
+  readonly fromProposalId?: MemoryProposalId | null;
   readonly pageSize: number;
   readonly spaceId: SpaceId;
 }
@@ -1313,6 +1315,7 @@ export const createMemoryApplicationService = (
         const result = await repository.listProposals({
           authorizationScope,
           ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+          ...(query.fromProposalId === undefined ? {} : { fromProposalId: query.fromProposalId }),
           pageSize: query.pageSize,
           spaceId: query.spaceId,
           status: 'pending',

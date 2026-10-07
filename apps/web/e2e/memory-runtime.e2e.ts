@@ -461,3 +461,78 @@ test('160 real saved accounts stay bounded through eviction, selection, filters 
   );
   await testInfo.attach('library-volume.json', { path: volumePath, contentType: 'application/json' });
 });
+
+test('a proposal past the first review page opens exactly through reload and history, and unknown links are refused', async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const ready = waitLine(runtime, (line) => line.includes('synthetic-review-queue-ready'));
+  runtime.kill('SIGUSR2');
+  const queue = JSON.parse(await ready) as { analysisId: string; projectId: string; proposalIds: string[] };
+  expect(queue.proposalIds).toHaveLength(105);
+  const reviewReads: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/rpc/memory/proposalReviews') {
+      reviewReads.push(decodeURIComponent(request.url()));
+    }
+  });
+  await page.goto(`/memory?analysis=${queue.analysisId}&analysisProject=${queue.projectId}`);
+  await page.getByRole('button', { name: 'Propose as knowledge', exact: true }).first().click();
+  await page.getByLabel('Knowledge title', { exact: true }).fill('Run the focused regression first');
+  await page.getByRole('checkbox', { name: 'Keep this knowledge on this device', exact: false }).check();
+  await page.getByRole('button', { name: 'Submit for human review' }).click();
+  await expect(page.getByText('Proposal saved for review.')).toBeVisible();
+  reviewReads.length = 0;
+  await page.getByRole('link', { name: 'Open Pending review', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('proposal')).not.toBeNull();
+  const addressedUrl = page.url();
+  const proposalId = new URL(addressedUrl).searchParams.get('proposal') ?? '';
+  // Every seeded identity sorts first, so the queue's first page cannot hold the new proposal.
+  expect(queue.proposalIds.every((seeded) => seeded < proposalId)).toBe(true);
+  const cards = page.locator('[data-memory-proposal]');
+  const target = page.locator('[data-memory-proposal-target]');
+  await expect(target).toHaveAttribute('data-memory-proposal', proposalId);
+  await expect(target).toContainText('Run the focused regression first');
+  await expect(target).toBeFocused();
+  await expect(cards.first()).toHaveAttribute('data-memory-proposal', proposalId);
+  // One addressed read reaches it; the pages before it are never fetched.
+  expect(reviewReads).toHaveLength(1);
+  expect(reviewReads[0]).toContain(proposalId);
+  expect(reviewReads[0]).not.toContain('cursor');
+
+  await page.getByRole('link', { name: 'Newest proposals', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('proposal')).toBeNull();
+  await expect(cards).toHaveCount(100);
+  await expect(page.locator(`[data-memory-proposal="${proposalId}"]`)).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'More proposals', exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(target).toHaveAttribute('data-memory-proposal', proposalId);
+  await page.goForward();
+  await expect(cards).toHaveCount(100);
+  await expect(target).toHaveCount(0);
+  await page.goBack();
+  await expect(target).toHaveAttribute('data-memory-proposal', proposalId);
+  await page.reload();
+  await expect(target).toHaveAttribute('data-memory-proposal', proposalId);
+  await expect(target).toBeFocused();
+  const accessibility = await new AxeBuilder({ page }).include('[data-route-shell="memory"]').analyze();
+  expect(accessibility.violations).toEqual([]);
+
+  // Reviewing the addressed proposal continues with the queue; its link then reads as unavailable.
+  await target.getByRole('button', { name: 'Accept proposal' }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('proposal')).toBeNull();
+  await expect(cards).toHaveCount(100);
+  const refusal = page.getByText('This Memory proposal is not pending review or is not accessible.');
+  await page.goto(addressedUrl);
+  await expect(refusal).toBeVisible();
+  await page.goto(`/memory?view=review&proposal=${crypto.randomUUID()}`);
+  await expect(refusal).toBeVisible();
+  reviewReads.length = 0;
+  await page.goto('/memory?view=review&proposal=not-a-proposal');
+  await expect(refusal).toBeVisible();
+  expect(reviewReads).toEqual([]);
+  await page.getByRole('link', { name: 'Open the review queue', exact: true }).click();
+  await expect(cards).toHaveCount(100);
+  expect(pageErrors).toEqual([]);
+});

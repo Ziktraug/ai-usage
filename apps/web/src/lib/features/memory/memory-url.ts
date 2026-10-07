@@ -7,6 +7,8 @@ export interface MemoryLocation {
   episodeId: string | null;
   periodError: string | null;
   projectId: string | null;
+  /** Pending proposal addressed by the review queue; validated with `isMemoryProposalId`. */
+  proposalId: string | null;
   query: string;
   since: string;
   until: string;
@@ -31,6 +33,7 @@ export const memoryLocation = (address: string): MemoryLocation => {
     since,
     until,
     cursor: params.get('cursor'),
+    proposalId: params.get('proposal'),
   };
 };
 export const memoryHref = (address: string, changes: Record<string, string | null>): string => {
@@ -45,6 +48,9 @@ export const memoryHref = (address: string, changes: Record<string, string | nul
   return `/memory${url.search}${url.hash}`;
 };
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
+const PROPOSAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+/** The web contract's proposal identity, checked before a malformed link reaches the service. */
+export const isMemoryProposalId = (value: string): boolean => PROPOSAL_ID.test(value);
 const ELEMENT_SUFFIX = /:result$|:decision:\d+$/u;
 export const memoryDateBound = (value: string): string | null => {
   if (!DATE.test(value)) {

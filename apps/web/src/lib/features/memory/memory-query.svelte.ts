@@ -1,6 +1,7 @@
 import type {
   MemoryProposalReviewAction,
   MemoryProposalReviewActionResult,
+  MemoryProposalReviewInput,
   MemoryProposalReviewSnapshot,
   MemorySearchInput,
   MemorySearchPage,
@@ -30,7 +31,7 @@ const createLazyClient = (): MemoryProposalReviewClient => {
 
 export const createHydratedMemoryProposalQuery = (
   browser: boolean,
-  cursor: () => string | null = () => null,
+  position: () => MemoryProposalReviewInput = () => ({}),
   enabled: () => boolean = () => true,
 ): CreateQueryResult<MemoryProposalReviewSnapshot, Error> =>
   createQuery(() =>
@@ -40,7 +41,7 @@ export const createHydratedMemoryProposalQuery = (
         browser,
         enabled: enabled(),
       },
-      cursor(),
+      position(),
     ),
   );
 

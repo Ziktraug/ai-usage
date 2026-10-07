@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { memoryAnalysisError } from './memory-errors';
+import { isMemoryProposalUnavailable, memoryAnalysisError } from './memory-errors';
 
 test('analysis errors distinguish unsupported modes, denied access and an unreachable service without displaying diagnostics', () => {
   expect(memoryAnalysisError({ code: 'ForbiddenDemo' }, 'fallback')).toContain('demo mode');
@@ -19,4 +19,13 @@ test('analysis errors distinguish unsupported modes, denied access and an unreac
   ]) {
     expect(memoryAnalysisError({ data: { reason } }, 'fallback')).toContain(recovery!);
   }
+});
+
+test('only a not-found refusal marks an addressed proposal as unavailable', () => {
+  expect(isMemoryProposalUnavailable({ code: 'Unavailable', data: { reason: 'not-found' } })).toBe(true);
+  expect(isMemoryProposalUnavailable({ code: 'Unavailable', data: { reason: 'memory-review-unavailable' } })).toBe(
+    false,
+  );
+  expect(isMemoryProposalUnavailable({ code: 'ForbiddenDemo' })).toBe(false);
+  expect(isMemoryProposalUnavailable(new Error('not-found'))).toBe(false);
 });

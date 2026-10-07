@@ -381,15 +381,15 @@ const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
       return await server.applyMemoryProposalReviewActionForServer(input, signal);
     }),
   isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
-  listProposalReviews: async (signal, cursor) =>
+  listProposalReviews: async (signal, position) =>
     await phaseBound(signal, async () => {
       const mode = await runtimeMode(abortOptions(signal));
       if (mode === 'e2e') {
         const fixture = await import('../../../server/memory-e2e-fixture.server');
-        return fixture.readE2EMemoryProposalReviews();
+        return fixture.readE2EMemoryProposalReviews(position);
       }
       const server = await import('../../../server/memory-service.server');
-      return await server.getMemoryProposalReviewsForServer(signal, cursor);
+      return await server.getMemoryProposalReviewsForServer(signal, position);
     }),
   searchMemory: async (input, signal) =>
     await phaseBound(signal, async () => {

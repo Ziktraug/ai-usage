@@ -1,4 +1,8 @@
-import type { MemoryProposalReviewSnapshot, MemorySearchInput } from '@ai-usage/web-contract/memory';
+import type {
+  MemoryProposalReviewInput,
+  MemoryProposalReviewSnapshot,
+  MemorySearchInput,
+} from '@ai-usage/web-contract/memory';
 import type { QueryClient } from '@tanstack/svelte-query';
 import { queryOptions } from '@tanstack/svelte-query';
 import type { MemoryBrowserAdapter } from '../../rpc/memory-client';
@@ -19,21 +23,26 @@ export interface MemorySearchQueryContext {
   readonly enabled: boolean;
 }
 
-export const memoryProposalReviewsKey = (cursor?: string | null): ControlPlaneQueryKey =>
-  cursor
-    ? controlPlaneKey('memory', 'proposal-reviews', 'v1', cursor)
+/** Without a position this is the first page, and the prefix of every proposal-review identity. */
+export const memoryProposalReviewsKey = (position: MemoryProposalReviewInput = {}): ControlPlaneQueryKey => {
+  if ('proposalId' in position) {
+    return controlPlaneKey('memory', 'proposal-reviews', 'v1', 'proposal', position.proposalId);
+  }
+  return position.cursor
+    ? controlPlaneKey('memory', 'proposal-reviews', 'v1', position.cursor)
     : controlPlaneKey('memory', 'proposal-reviews', 'v1');
+};
 
 export const memoryProposalReviewsQueryOptions = (
   client: MemoryProposalReviewClient,
   context: MemoryProposalReviewQueryContext,
-  cursor?: string | null,
+  position: MemoryProposalReviewInput = {},
 ) =>
   queryOptions({
     ...webQueryPolicies.boundedControlPlane,
     enabled: context.browser && context.enabled,
-    queryFn: ({ signal }) => client.proposalReviews(signal, cursor),
-    queryKey: memoryProposalReviewsKey(cursor),
+    queryFn: ({ signal }) => client.proposalReviews(signal, position),
+    queryKey: memoryProposalReviewsKey(position),
   });
 
 export const memorySearchKey = (input: MemorySearchInput): ControlPlaneQueryKey =>
@@ -76,6 +85,8 @@ export const acknowledgeMemoryProposalReview = async (client: QueryClient, propo
     queryKey: memoryProposalReviewsKey(),
     refetchType: 'none',
   });
+  // A reviewed proposal can no longer start a page; history back to its link reads the refusal.
+  client.removeQueries({ exact: true, queryKey: memoryProposalReviewsKey({ proposalId }) });
   await Promise.all([
     client.invalidateQueries({ queryKey: finiteSwrKey('memory', 'knowledge') }),
     client.invalidateQueries({ queryKey: controlPlaneKey('memory', 'search') }),

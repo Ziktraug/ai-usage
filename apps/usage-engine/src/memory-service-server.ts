@@ -27,6 +27,7 @@ import {
   parseMemorySearchReadRequest,
 } from '@ai-usage/memory-service/read-contract';
 import { type LocalIdentityKernel, MemoryIdentityStoreError } from '@ai-usage/memory-sqlite/identity';
+import { type MemoryProposalId, parseMemoryProposalId } from '@ai-usage/platform-core/identity';
 import {
   DistillationError,
   distillationBounds,
@@ -382,13 +383,27 @@ export const createLocalMemoryServiceHandler = async ({
         if (cursor !== null && cursor.length > 4096) {
           return errorResponse('invalid-request', 'Memory proposal cursor is invalid.', 400);
         }
+        const proposal = url.searchParams.get('proposal');
+        let fromProposalId: MemoryProposalId | null = null;
+        try {
+          fromProposalId = proposal === null ? null : parseMemoryProposalId(proposal);
+        } catch {
+          return errorResponse('invalid-request', 'Memory proposal identity is invalid.', 400);
+        }
+        if (cursor !== null && fromProposalId !== null) {
+          return errorResponse('invalid-request', 'Memory proposal cursor and identity are exclusive.', 400);
+        }
         const result = await memoryApplication.listPendingProposals({
           authorization: memoryAuthorization,
           ...(cursor === null ? {} : { cursor }),
+          ...(fromProposalId === null ? {} : { fromProposalId }),
           pageSize: memoryServiceBounds.maxProposals,
           principal,
           spaceId: bootstrap.space.id,
         });
+        if (result.kind === 'error' && result.error.code === 'not-found') {
+          return errorResponse('not-found', 'The Memory proposal is not pending review.', 404);
+        }
         if (result.kind === 'error') {
           const forbidden = result.error.code === 'authorization-denied';
           return errorResponse(

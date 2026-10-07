@@ -4,6 +4,8 @@ import type { MemoryProposalReviewSnapshot } from '@ai-usage/web-contract/memory
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
+import { createWebQueryClient, dehydrateWebQueryClient } from '../../query/client';
+import { memoryProposalReviewsKey } from '../../query/options/memory';
 import { loadMemoryPageData } from './memory-load';
 
 interface SvelteServerModule {
@@ -101,5 +103,27 @@ describe('Memory proposal review surface', () => {
     const initialLibrary = render(fixture, { props: { data, address: '/memory' } }).body;
     expect(initialLibrary).toContain('Reading recognized Projects');
     expect(initialLibrary).not.toContain('No recognized Projects');
+  });
+  test('marks the addressed proposal and refuses a malformed address before any read', () => {
+    const proposalId = snapshot.proposals[0]!.proposalId;
+    const client = createWebQueryClient();
+    client.setQueryData(memoryProposalReviewsKey({ proposalId }), snapshot);
+    const data = { queryState: dehydrateWebQueryClient(client) };
+    client.clear();
+
+    const addressed = render(fixture, {
+      props: { data, address: `/memory?view=review&proposal=${proposalId}` },
+    }).body;
+    expect(addressed).toContain('The requested proposal is shown first');
+    expect(addressed).toContain('Requested proposal · review required');
+    expect(addressed).toContain('data-memory-proposal-target');
+    expect(addressed).toContain('Newest proposals');
+
+    const malformed = render(fixture, {
+      props: { data, address: '/memory?view=review&proposal=not-a-proposal' },
+    }).body;
+    expect(malformed).toContain('This Memory proposal is not pending review or is not accessible.');
+    expect(malformed).toContain('Open the review queue');
+    expect(malformed).not.toContain('Keep Memory local');
   });
 });

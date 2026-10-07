@@ -12,7 +12,12 @@ import {
   memoryServiceRendezvousPath,
 } from '@ai-usage/memory-service/node';
 import { openLocalIdentityKernel } from '@ai-usage/memory-sqlite/identity';
-import { createCheckoutId, createProjectId, instantNow } from '@ai-usage/platform-core/identity';
+import {
+  createCheckoutId,
+  createMemoryProposalId,
+  createProjectId,
+  instantNow,
+} from '@ai-usage/platform-core/identity';
 import { DistillationError } from '@ai-usage/platform-core/session-distillation';
 import { createLocalMemoryServiceHandler, startLocalMemoryService } from './memory-service-server';
 
@@ -214,6 +219,13 @@ describe('local Memory service', () => {
       sourceKind: 'session',
       sourceLocator: 'synthetic:protocol',
     });
+    expect(await client.listProposalReviews({ proposalId: proposal.value })).toEqual(snapshot);
+    for (const position of [{ proposalId: 'not-a-proposal' }, { cursor: 'opaque', proposalId: proposal.value }]) {
+      await expect(client.listProposalReviews(position)).rejects.toMatchObject({ code: 'invalid-request' });
+    }
+    await expect(client.listProposalReviews({ proposalId: createMemoryProposalId() })).rejects.toMatchObject({
+      code: 'not-found',
+    });
     const accepted = await client.applyProposalReviewAction({
       kind: 'accept',
       proposalId: proposal.value,
@@ -222,6 +234,9 @@ describe('local Memory service', () => {
     });
     expect(accepted.kind).toBe('accepted');
     expect((await client.listProposalReviews()).proposals).toEqual([]);
+    await expect(client.listProposalReviews({ proposalId: proposal.value })).rejects.toMatchObject({
+      code: 'not-found',
+    });
     if (accepted.kind !== 'accepted') {
       throw new Error('Protocol fixture proposal was not accepted.');
     }

@@ -66,7 +66,7 @@ export interface MemoryServiceClient {
     options?: MemoryServiceRequestOptions,
   ) => Promise<MemoryItemsBrowsePage>;
   readonly listProposalReviews: (
-    cursor?: string | null,
+    position?: MemoryProposalReviewPosition,
     options?: MemoryServiceRequestOptions,
   ) => Promise<MemoryProposalReviewSnapshot>;
   readonly listResolutionReviews: (options?: MemoryServiceRequestOptions) => Promise<MemoryResolutionReviewSnapshot>;
@@ -82,6 +82,12 @@ export interface MemoryServiceClient {
 
 export interface MemoryServiceRequestOptions {
   readonly signal?: AbortSignal;
+}
+
+/** Continue after `cursor`, or start the page at one addressed pending `proposalId`; never both. */
+export interface MemoryProposalReviewPosition {
+  readonly cursor?: string | null | undefined;
+  readonly proposalId?: string | null | undefined;
 }
 
 export interface CreateMemoryServiceClientOptions {
@@ -242,14 +248,23 @@ export const createMemoryServiceClient = ({
       await request('/v1/repository-resolutions', 'GET', undefined, parseMemoryResolutionReviewSnapshot, options),
     applyProposalReviewAction: async (action, options) =>
       await request('/v1/memory-proposals/actions', 'POST', action, parseMemoryProposalReviewActionResult, options),
-    listProposalReviews: async (cursor, options) =>
-      await request(
-        `/v1/memory-proposals${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    listProposalReviews: async (position, options) => {
+      const search = new URLSearchParams();
+      if (position?.cursor) {
+        search.set('cursor', position.cursor);
+      }
+      if (position?.proposalId) {
+        search.set('proposal', position.proposalId);
+      }
+      const query = search.toString();
+      return await request(
+        `/v1/memory-proposals${query ? `?${query}` : ''}`,
         'GET',
         undefined,
         parseMemoryProposalReviewSnapshot,
         options,
-      ),
+      );
+    },
     getMemoryItem: async (input, options) => {
       const result = await request('/v1/memory-items/get', 'POST', input, parseMemoryItemReadResult, options);
       const expectedRevisionId = input.revisionId ?? result.item.currentRevisionId;

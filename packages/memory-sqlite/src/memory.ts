@@ -1681,21 +1681,30 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
         }
         const authorizedIds = JSON.stringify(authorizedMemoryIds(query, 'list-proposals'));
         const afterProposalId = decodeProposalCursor(query.cursor, query);
+        const fromProposalId = query.fromProposalId ?? null;
+        if (fromProposalId !== null && afterProposalId !== null) {
+          throw new MemoryRepositoryError('invalid-input', 'list-proposals');
+        }
         const rows = database
           .query(
             `${proposalSelect}
              WHERE space_id = $spaceId AND status = $status
                AND id IN (SELECT value FROM json_each($authorizedIds))
                AND ($afterProposalId IS NULL OR id > $afterProposalId)
+               AND ($fromProposalId IS NULL OR id >= $fromProposalId)
              ORDER BY id ASC LIMIT $limit`,
           )
           .all({
             afterProposalId,
             authorizedIds,
+            fromProposalId,
             limit: query.pageSize + 1,
             spaceId: query.spaceId,
             status: query.status,
           }) as ProposalRow[];
+        if (fromProposalId !== null && rows[0]?.id !== fromProposalId) {
+          throw new MemoryRepositoryError('not-found', 'list-proposals');
+        }
         const hasNext = rows.length > query.pageSize;
         const pageRows = hasNext ? rows.slice(0, query.pageSize) : rows;
         const sourcesQuery = database.query(

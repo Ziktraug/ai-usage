@@ -4,6 +4,7 @@ import {
   type MemoryKnowledgeInput,
   type MemoryPromotionInput,
   type MemoryProposalReviewAction,
+  type MemoryProposalReviewInput,
   type MemorySearchInput,
   memoryContract,
   memoryKnowledgeDetailSchema,
@@ -24,7 +25,10 @@ export interface MemoryRpcDependencies {
   readonly getKnowledge: (input: MemoryKnowledgeGetInput, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly isDemo: (signal: AbortSignal | undefined) => Promise<boolean>;
   readonly listKnowledge: (input: MemoryKnowledgeInput, signal: AbortSignal | undefined) => Promise<unknown>;
-  readonly listProposalReviews: (signal: AbortSignal | undefined, cursor?: string | null) => Promise<unknown>;
+  readonly listProposalReviews: (
+    signal: AbortSignal | undefined,
+    position: MemoryProposalReviewInput,
+  ) => Promise<unknown>;
   readonly promoteAnalysis: (input: MemoryPromotionInput, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly searchMemory: (input: MemorySearchInput, signal: AbortSignal | undefined) => Promise<unknown>;
 }
@@ -153,11 +157,17 @@ export const createMemoryRpcRouter = (dependencies: MemoryRpcDependencies) => {
         });
       }
       try {
-        return parse(memoryProposalReviewSnapshotSchema, await dependencies.listProposalReviews(signal, input.cursor));
+        return parse(memoryProposalReviewSnapshotSchema, await dependencies.listProposalReviews(signal, input));
       } catch (error) {
         signal?.throwIfAborted();
         if (isAbortError(error, signal)) {
           throw error;
+        }
+        if (error instanceof MemoryServiceClientError && error.code === 'not-found') {
+          throw errors.Unavailable({
+            data: { reason: 'not-found' },
+            message: 'This Memory proposal is not pending review or is not accessible.',
+          });
         }
         throw errors.Unavailable({
           data: { reason: 'memory-review-unavailable' },

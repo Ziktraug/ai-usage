@@ -9,10 +9,13 @@ import { memoryFingerprint } from '@ai-usage/memory-service/domain';
 import {
   createCaptureContextId,
   createDeviceId,
+  createMemoryProposalId,
   createPersonId,
   createProjectId,
   createSpaceId,
+  type MemoryProposalId,
   parseInstant,
+  parseMemoryProposalId,
 } from '@ai-usage/platform-core/identity';
 import { openLocalIdentityKernel } from './identity';
 
@@ -606,6 +609,97 @@ describe('local Memory application service', () => {
       });
     } finally {
       database.close(false);
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  test('addresses one pending proposal beyond the first page without reading the pages before it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-memory-addressed-proposal-'));
+    const kernel = await openLocalIdentityKernel({ databasePath: path.join(directory, 'memory.sqlite') });
+    try {
+      const identity = await kernel.getBootstrapIdentity();
+      const service = createMemoryApplicationService(
+        createSingleUserAuthorizer({
+          listKnownResources: async () =>
+            (await kernel.memory.listAuthorizationResourceIds(identity.space.id)).map((id) => ({
+              id,
+              kind: 'memory' as const,
+              spaceId: identity.space.id,
+            })),
+          localPersonId: identity.person.id,
+          personalSpaceId: identity.space.id,
+        }),
+        kernel.memory,
+        () => new Date('2026-10-07T12:00:00.000Z'),
+      );
+      const authorization = { activeSpaceId: identity.space.id, trustedDevice: true } as const;
+      const principal = { kind: 'person' as const, personId: identity.person.id };
+      const proposalIds: MemoryProposalId[] = [];
+      for (let index = 0; index < 103; index += 1) {
+        const created = await service.createProposal({
+          authorization,
+          guidance: [`Reuse lesson ${index}.`],
+          observationIds: [],
+          principal,
+          projectId: null,
+          proposedKind: 'lesson',
+          sensitivity: 'normal',
+          structuredContent: {},
+          summary: `Synthetic lesson ${index}.`,
+          title: `Synthetic lesson ${index}`,
+          trustCandidate: 'explicit',
+        });
+        if (created.kind !== 'success') {
+          throw new Error('Synthetic proposal was not created.');
+        }
+        proposalIds.push(created.value);
+      }
+      // The queue pages in identity order, so the greatest identities sit past the first page.
+      const queue = [...proposalIds].sort();
+      const target = parseMemoryProposalId(queue.at(-2));
+      const page = async (position: { cursor?: string; fromProposalId?: MemoryProposalId }, pageSize = 100) => {
+        const result = await service.listPendingProposals({
+          authorization,
+          pageSize,
+          principal,
+          spaceId: identity.space.id,
+          ...position,
+        });
+        if (result.kind !== 'success') {
+          return result;
+        }
+        return { ids: result.value.items.map(({ proposal }) => proposal.id), nextCursor: result.value.nextCursor };
+      };
+
+      const firstPage = await page({});
+      expect('ids' in firstPage && firstPage.ids).toEqual(queue.slice(0, 100));
+      expect(await page({ fromProposalId: target })).toEqual({ ids: queue.slice(-2), nextCursor: null });
+
+      const middle = await page({ fromProposalId: parseMemoryProposalId(queue[40]) }, 10);
+      expect(middle).toMatchObject({ ids: queue.slice(40, 50) });
+      if (!('nextCursor' in middle && middle.nextCursor)) {
+        throw new Error('An addressed page must continue through the ordinary cursor.');
+      }
+      expect(await page({ cursor: middle.nextCursor }, 10)).toMatchObject({ ids: queue.slice(50, 60) });
+      expect(await page({ cursor: middle.nextCursor, fromProposalId: target })).toEqual({
+        error: { code: 'invalid-input', operation: 'list-pending-proposals' },
+        kind: 'error',
+      });
+
+      const notFound = { error: { code: 'not-found', operation: 'list-pending-proposals' }, kind: 'error' } as const;
+      expect(await page({ fromProposalId: createMemoryProposalId() })).toEqual(notFound);
+      expect(
+        await service.rejectProposal({
+          authorization,
+          principal,
+          proposalId: target,
+          reason: 'Already covered.',
+          spaceId: identity.space.id,
+        }),
+      ).toMatchObject({ kind: 'success' });
+      expect(await page({ fromProposalId: target })).toEqual(notFound);
+    } finally {
+      await kernel.close();
       await rm(directory, { force: true, recursive: true });
     }
   });

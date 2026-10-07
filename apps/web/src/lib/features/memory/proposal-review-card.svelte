@@ -14,10 +14,13 @@
     onAction,
     proposal,
     spaceId,
+    targeted = false,
   }: {
     onAction: (action: MemoryProposalReviewAction) => Promise<boolean>;
     proposal: Proposal;
     spaceId: string;
+    /** The proposal a review link addressed; it is brought into view and receives focus once. */
+    targeted?: boolean;
   } = $props();
 
   const card = css({
@@ -28,6 +31,7 @@
     borderRadius: 'md',
     bg: 'surface',
   });
+  const targetCard = css({ borderColor: 'accent', boxShadow: '0 0 0 1.5px token(colors.accent)' });
   const summaryBlock = css({ display: 'grid', gap: '6px' });
   const eyebrow = css({
     color: 'muted',
@@ -119,6 +123,17 @@
   let sensitivity = $state<'normal' | 'sensitive'>(untrack(() => proposal.sensitivity));
   let structuredContent = $state(untrack(() => JSON.stringify(proposal.structuredContent, null, 2)));
   let rejectionReason = $state('');
+  let article = $state<HTMLElement>();
+  $effect(() => {
+    if (!(targeted && article)) {
+      return;
+    }
+    const element = article;
+    requestAnimationFrame(() => {
+      element.scrollIntoView({ block: 'start' });
+      element.focus({ preventScroll: true });
+    });
+  });
 
   const apply = async (action: MemoryProposalReviewAction): Promise<void> => {
     if (pending) {
@@ -176,9 +191,16 @@
   };
 </script>
 
-<article aria-labelledby={headingId} class={card}>
+<article
+  aria-labelledby={headingId}
+  class={[card, targeted ? targetCard : undefined]}
+  data-memory-proposal={proposal.proposalId}
+  data-memory-proposal-target={targeted ? '' : undefined}
+  tabindex="-1"
+  bind:this={article}
+>
   <div class={summaryBlock}>
-    <p class={eyebrow}>Generated proposal · review required</p>
+    <p class={eyebrow}>{targeted ? 'Requested proposal' : 'Generated proposal'} · review required</p>
     <h2 class={heading} id={headingId}>{proposal.title}</h2>
     {#if proposal.summary}
       <p class={summaryClass}>{proposal.summary}</p>

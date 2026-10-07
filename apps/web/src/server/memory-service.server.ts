@@ -8,6 +8,7 @@ import type {
   MemoryKnowledgeInput,
   MemoryPromotionInput,
   MemoryProposalReviewAction,
+  MemoryProposalReviewInput,
   MemorySearchInput,
 } from '@ai-usage/web-contract/memory';
 import type { ProjectResolutionAction } from '@ai-usage/web-contract/projects';
@@ -29,8 +30,10 @@ export const applyProjectResolutionActionForServer = async (input: ProjectResolu
     signal === undefined ? undefined : { signal },
   );
 
-export const getMemoryProposalReviewsForServer = async (signal?: AbortSignal, cursor: string | null = null) =>
-  await createClient().listProposalReviews(cursor, signal === undefined ? undefined : { signal });
+export const getMemoryProposalReviewsForServer = async (
+  signal?: AbortSignal,
+  position: MemoryProposalReviewInput = {},
+) => await createClient().listProposalReviews(position, signal === undefined ? undefined : { signal });
 
 export const listMemoryKnowledgeForServer = async (input: MemoryKnowledgeInput, signal?: AbortSignal) => {
   const page = await createClient().listMemoryItems(

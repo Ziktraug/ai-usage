@@ -1547,6 +1547,10 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
       } catch (error) {
         return Promise.reject(error);
       }
+      const fromProposalId = query.fromProposalId ?? null;
+      if (fromProposalId !== null && afterProposalId !== null) {
+        return Promise.reject(new MemoryRepositoryError('invalid-input', 'list-proposals'));
+      }
       return withMemoryTransaction(pool, query.spaceId, 'list-proposals', async (client) => {
         const authorization = memoryAuthorization(query, 'list-proposals');
         const result = await client.query<ProposalRow>(
@@ -1554,6 +1558,7 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
            ${proposalSelect}
            WHERE space_id = $1 AND status = $4
              AND ($5::UUID IS NULL OR id > $5::UUID)
+             AND ($7::UUID IS NULL OR id >= $7::UUID)
              AND EXISTS (SELECT 1 FROM authorized_resources authorized WHERE authorized.id = memory_proposals.id)
            ORDER BY id ASC LIMIT $6`,
           [
@@ -1563,8 +1568,12 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
             query.status,
             afterProposalId,
             query.pageSize + 1,
+            fromProposalId,
           ],
         );
+        if (fromProposalId !== null && result.rows[0]?.id !== fromProposalId) {
+          throw new MemoryRepositoryError('not-found', 'list-proposals');
+        }
         const hasNext = result.rows.length > query.pageSize;
         const pageRows = hasNext ? result.rows.slice(0, query.pageSize) : result.rows;
         const items = await Promise.all(

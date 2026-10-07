@@ -80,7 +80,12 @@
   {#if proposalId}
     <p class={memoryCopy} role="status">
       Proposal saved for review.
-      <a href={memoryHref('/memory',{view:'review',proposal:proposalId})}>Open Pending review</a>
+      <a
+        data-sveltekit-keepfocus
+        data-sveltekit-noscroll
+        href={memoryHref('/memory',{view:'review',proposal:proposalId})}
+        >Open Pending review</a
+      >
     </p>
   {:else}
     <form class={memoryStack} onsubmit={submit}>

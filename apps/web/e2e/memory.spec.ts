@@ -1,6 +1,12 @@
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 
 test('reviews provenance and edits a generated Memory proposal before accepting it', async ({ page }) => {
+  // Refusals answer with an error status this strict browser gate rejects; the runtime suite covers them.
+  await page.goto('/memory?view=review&proposal=0198f179-4837-7000-8000-000000000010');
+  await waitForHydratedNavigation(page);
+  await expect(page.getByText('Requested proposal · review required')).toBeVisible();
+  await expect(page.locator('[data-memory-proposal-target]')).toBeFocused();
+
   await page.goto('/memory?view=review');
   await waitForHydratedNavigation(page);
 

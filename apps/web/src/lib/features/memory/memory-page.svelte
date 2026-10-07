@@ -2,7 +2,7 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import { page, shell } from '@ai-usage/design-system/svelte';
-  import type { MemoryProposalReviewAction } from '@ai-usage/web-contract/memory';
+  import type { MemoryProposalReviewAction, MemoryProposalReviewInput } from '@ai-usage/web-contract/memory';
   import type { SessionDistillationBrowseRequest } from '@ai-usage/web-contract/session-distillation';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
@@ -14,7 +14,7 @@
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import MemoryAnalysisList from './memory-analysis-list.svelte';
   import MemoryDiscovery from './memory-discovery.svelte';
-  import { memoryAnalysisError } from './memory-errors';
+  import { isMemoryProposalUnavailable, memoryAnalysisError } from './memory-errors';
   import MemoryKnowledge from './memory-knowledge.svelte';
   import type { MemoryPageData } from './memory-load';
   import { createHydratedMemoryProposalQuery, createMemoryProposalActor } from './memory-query.svelte';
@@ -28,7 +28,7 @@
     memoryRow,
     memoryStack,
   } from './memory-styles';
-  import { memoryDateBound, memoryHref, memoryLocation } from './memory-url';
+  import { isMemoryProposalId, memoryDateBound, memoryHref, memoryLocation } from './memory-url';
   import ProposalReviewCard from './proposal-review-card.svelte';
 
   let {
@@ -52,10 +52,21 @@
   const queryClient = useQueryClient();
   const sessionClient = useOptionalWebQueryRpcContext()?.rpc.sessionDistillation;
   const projectsQuery = createQuery(() => memoryWorkspaceProjectsOptions(sessionClient, projectsCursor));
+  // An addressed proposal starts its own page, so it is found wherever it sits in the queue.
+  const targetProposalId = $derived(location.view === 'review' ? location.proposalId : null);
+  const targetMalformed = $derived(targetProposalId !== null && !isMemoryProposalId(targetProposalId));
+  const proposalPosition = $derived<MemoryProposalReviewInput>(
+    targetProposalId === null
+      ? { cursor: location.view === 'review' ? location.cursor : null }
+      : { proposalId: targetProposalId },
+  );
   const proposalsQuery = createHydratedMemoryProposalQuery(
     browser,
-    () => (location.view === 'review' ? location.cursor : null),
-    () => location.view === 'review',
+    () => proposalPosition,
+    () => location.view === 'review' && !targetMalformed,
+  );
+  const targetRefused = $derived(
+    targetMalformed || (targetProposalId !== null && isMemoryProposalUnavailable(proposalsQuery.error)),
   );
   const applyProposalAction = createMemoryProposalActor(browser);
   const snapshot = $derived(proposalsQuery.data);
@@ -113,6 +124,10 @@
     }
     try {
       await applyProposalAction(action);
+      if (action.proposalId === targetProposalId) {
+        // The reviewed proposal can no longer start a page; continue with the queue itself.
+        await onNavigate?.(memoryHref(address, { proposal: null, cursor: null }));
+      }
       await acknowledgeMemoryProposalReview(queryClient, action.proposalId);
       await queryClient.invalidateQueries({ queryKey: memoryProposalReviewsKey() });
       return true;
@@ -134,21 +149,21 @@
           aria-current={location.view==='analyses' ? 'page':undefined}
           class={location.view==='analyses' ? memoryCurrentButton : memoryButton}
           data-sveltekit-noscroll
-          href={memoryHref(address,{view:'analyses',cursor:null})}
+          href={memoryHref(address,{view:'analyses',cursor:null,proposal:null})}
           >Analysed sessions</a
         >
         <a
           aria-current={location.view==='review' ? 'page':undefined}
           class={location.view==='review' ? memoryCurrentButton : memoryButton}
           data-sveltekit-noscroll
-          href={memoryHref(address,{view:'review',cursor:null})}
+          href={memoryHref(address,{view:'review',cursor:null,proposal:null})}
           >Pending review</a
         >
         <a
           aria-current={location.view==='knowledge' ? 'page':undefined}
           class={location.view==='knowledge' ? memoryCurrentButton : memoryButton}
           data-sveltekit-noscroll
-          href={memoryHref(address,{view:'knowledge',cursor:null})}
+          href={memoryHref(address,{view:'knowledge',cursor:null,proposal:null})}
           >Knowledge</a
         >
       </nav>
@@ -243,20 +258,39 @@
           Only voluntarily submitted proposals appear here. Review their source and edit the guidance before accepting
           it. Saved session accounts need no acceptance.
         </p>
-        {#if snapshot}
+        {#if targetRefused}
+          <section class={memoryPanel}>
+            <p class={memoryCopy} role="alert">
+              This Memory proposal is not pending review or is not accessible. It may already have been accepted or
+              rejected.
+            </p>
+            <a class={memoryButton} href={memoryHref(address,{proposal:null,cursor:null})}>Open the review queue</a>
+          </section>
+        {:else if snapshot}
+          {#if targetProposalId}
+            <p class={memoryCopy} role="status">The requested proposal is shown first, followed by later proposals.</p>
+          {/if}
           {#if snapshot.proposals.length===0}
             <section aria-live="polite" class={memoryPanel}>No Memory proposals need review.</section>
           {:else}
             {#each snapshot.proposals as proposal (proposal.proposalId)}
-              <ProposalReviewCard {onAction} {proposal} spaceId={snapshot.spaceId} />
+              <ProposalReviewCard
+                {onAction}
+                {proposal}
+                spaceId={snapshot.spaceId}
+                targeted={proposal.proposalId===targetProposalId}
+              />
             {/each}
           {/if}
           <div class={memoryRow}>
-            {#if location.cursor}
-              <a class={memoryButton} href={memoryHref(address,{cursor:null})}>Newest proposals</a>
+            {#if location.cursor || targetProposalId}
+              <a class={memoryButton} href={memoryHref(address,{cursor:null,proposal:null})}>Newest proposals</a>
             {/if}
             {#if snapshot.nextCursor}
-              <a class={memoryButton} data-sveltekit-noscroll href={memoryHref(address,{cursor:snapshot.nextCursor})}
+              <a
+                class={memoryButton}
+                data-sveltekit-noscroll
+                href={memoryHref(address,{cursor:snapshot.nextCursor,proposal:null})}
                 >More proposals</a
               >
             {/if}
