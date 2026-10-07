@@ -20,7 +20,11 @@ import {
   createProjectId,
   createSpaceId,
 } from '@ai-usage/platform-core/identity';
-import { distillationBounds, type SessionAnalysisContent } from '@ai-usage/platform-core/session-distillation';
+import {
+  type DistillationProgress,
+  distillationBounds,
+  type SessionAnalysisContent,
+} from '@ai-usage/platform-core/session-distillation';
 import { createSqliteDistillationRepository } from './distillation';
 import { type LocalIdentityKernel, openLocalIdentityKernel } from './identity';
 import { localDistillationProgressSchema, localDistillationSchema } from './schema';
@@ -514,6 +518,89 @@ describe('local-only session distillation persistence', () => {
     expect(
       await f.kernel.distillation.getEvidencePackets(f.projectId, analysis.id, ['late-result', 'result-one']),
     ).toHaveLength(2);
+  });
+
+  test('the jobs catalog reports the progress claim and status report across segments, consolidation and restart', async () => {
+    const f = await fixture();
+    const first = structuredClone(f.packet);
+    first.window = { index: 0, startLine: 1, nextLine: 3, overlapEventIds: [] };
+    first.packetDigest = digest(distillationEvidenceDigestInput(first));
+    const second = structuredClone(first);
+    second.window = { index: 1, startLine: 3, nextLine: null, overlapEventIds: [] };
+    second.events = [{ ...second.events[1]!, id: 'late-result', line: 3, text: '12 pass, 0 fail' }];
+    second.coverage = { ...second.coverage, lines: 3, includedEvents: 1 };
+    second.packetDigest = digest(distillationEvidenceDigestInput(second));
+    const job = await f.kernel.distillation.prepare({ ...f.input, packet: first, revisionKey: 'progressive' });
+    const reported = async () => ({
+      jobs: (await f.kernel.distillation.jobs(f.projectId, 10, null)).items.find((item) => item.id === job.id)
+        ?.progress,
+      status: (await f.kernel.distillation.status(f.input.grant)).job?.progress,
+    });
+    const expectEveryReport = async (progress: DistillationProgress) => {
+      expect(await reported()).toEqual({ jobs: progress, status: progress });
+    };
+    const snapshotDigest = first.source.version.digest;
+
+    const firstLease = await f.kernel.distillation.claim(f.projectId, job.id);
+    const firstSegment: DistillationProgress = {
+      snapshotDigest,
+      segmentIndex: 0,
+      stage: 'segment',
+      completedSegments: 0,
+    };
+    expect(firstLease.job.progress).toEqual(firstSegment);
+    await expectEveryReport(firstSegment);
+
+    const step = {
+      extractorVersion: firstLease.extractorVersion,
+      projectId: f.projectId,
+      jobId: job.id,
+      leaseId: firstLease.leaseId,
+      packetDigest: first.packetDigest,
+      snapshotDigest,
+      segmentIndex: 0,
+      content: content(),
+      nextPacket: second,
+    };
+    const nextSegment: DistillationProgress = {
+      snapshotDigest,
+      segmentIndex: 1,
+      stage: 'segment',
+      completedSegments: 1,
+    };
+    expect((await f.kernel.distillation.advance(step)).progress).toEqual(nextSegment);
+    await expectEveryReport(nextSegment);
+    const secondLease = await f.kernel.distillation.claim(f.projectId, job.id);
+    expect(secondLease.job.progress).toEqual(nextSegment);
+    await expectEveryReport(nextSegment);
+
+    // The last window stays the current segment index; only submitted segments count as completed.
+    const consolidation: DistillationProgress = {
+      snapshotDigest,
+      segmentIndex: 1,
+      stage: 'consolidation',
+      completedSegments: 2,
+    };
+    await f.kernel.distillation.advance({
+      ...step,
+      leaseId: secondLease.leaseId,
+      packetDigest: second.packetDigest,
+      segmentIndex: 1,
+      nextPacket: null,
+    });
+    await expectEveryReport(consolidation);
+    expect((await f.kernel.distillation.claim(f.projectId, job.id)).job.progress).toEqual(consolidation);
+    await expectEveryReport(consolidation);
+
+    await f.reopen();
+    expect((await f.kernel.distillation.status(f.input.grant)).job).toMatchObject({
+      state: 'failed',
+      errorCode: 'worker-recovered',
+    });
+    await expectEveryReport(consolidation);
+    await f.kernel.distillation.retry(f.projectId, job.id);
+    expect((await f.kernel.distillation.claim(f.projectId, job.id)).job.progress).toEqual(consolidation);
+    await expectEveryReport(consolidation);
   });
 
   test('withdraws all session revisions, fences active regeneration, and purges packets and grants without reviving an older account', async () => {

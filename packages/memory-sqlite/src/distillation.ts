@@ -23,6 +23,7 @@ import {
   type DistillationJobView,
   distillationBounds,
   distillationText,
+  parseDistillationProgress,
   parseSessionAnalysis,
   parseSessionAnalysisContent,
   type SessionAnalysis,
@@ -30,6 +31,7 @@ import {
   validateAnalysisEvidence,
 } from '@ai-usage/platform-core/session-distillation';
 import { createDistillationCatalog } from './distillation-catalog';
+import { distillationProgressColumns, distillationProgressFields } from './distillation-progress';
 
 interface ProgressRow {
   checkpoint_json: string | null;
@@ -197,24 +199,14 @@ export const createSqliteDistillationRepository = (
   const progress = (jobId: string): ProgressRow | null =>
     database.query('SELECT * FROM distillation_progress WHERE job_id=?').get(jobId) as ProgressRow | null;
   const view = (job: JobViewRow): DistillationJobView => {
-    const current = progress(job.id);
-    const completed = current
-      ? (database
-          .query('SELECT COUNT(*) AS count FROM distillation_segments WHERE job_id=? AND content_digest IS NOT NULL')
-          .get(job.id) as { count: number })
-      : null;
+    const current = database
+      .query(
+        `SELECT ${distillationProgressColumns('progress.job_id')} FROM distillation_progress progress WHERE progress.job_id=?`,
+      )
+      .get(job.id) as Record<string, unknown> | null;
     return {
       ...jobView(job),
-      ...(current
-        ? {
-            progress: {
-              snapshotDigest: current.source_digest,
-              segmentIndex: current.segment_index,
-              stage: current.stage,
-              completedSegments: completed?.count ?? 0,
-            },
-          }
-        : {}),
+      ...(current ? { progress: parseDistillationProgress(distillationProgressFields(current)) } : {}),
     };
   };
   const evidenceForContent = (job: JobRow, value: SessionAnalysisContent): DistillationEvidenceEvent[] => {

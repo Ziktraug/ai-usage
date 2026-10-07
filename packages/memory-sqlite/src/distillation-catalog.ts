@@ -10,6 +10,7 @@ import {
   parseAnalysisRevisionMetadata,
   parseDistillationJobView,
 } from '@ai-usage/platform-core/session-distillation';
+import { distillationProgressColumns, distillationProgressFields } from './distillation-progress';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const operation = <T>(run: () => T): Promise<T> => {
@@ -277,7 +278,7 @@ export const createDistillationCatalog = (database: Database): DistillationCatal
       const cutoff = cursor === null ? maximumRowId(database, 'distillation_jobs', projectId) : position.cutoff;
       const rows = database
         .query(
-          `SELECT a.*,progress.segment_index,progress.stage,progress.source_digest FROM distillation_jobs a LEFT JOIN distillation_progress progress ON progress.job_id=a.id WHERE a.project_id=? AND a.rowid<=? AND ${accessibleProject} ORDER BY a.rowid DESC LIMIT ? OFFSET ?`,
+          `SELECT a.*,${distillationProgressColumns('a.id')} FROM distillation_jobs a LEFT JOIN distillation_progress progress ON progress.job_id=a.id WHERE a.project_id=? AND a.rowid<=? AND ${accessibleProject} ORDER BY a.rowid DESC LIMIT ? OFFSET ?`,
         )
         .all(projectId, cutoff, limit + 1, position.offset) as Record<string, unknown>[];
       const items = rows.slice(0, limit).map((row) => ({
@@ -287,16 +288,7 @@ export const createDistillationCatalog = (database: Database): DistillationCatal
           attempt: row.attempt,
           errorCode: row.error_code,
           analysisId: row.analysis_id,
-          ...(row.segment_index === null
-            ? {}
-            : {
-                progress: {
-                  segmentIndex: row.segment_index,
-                  completedSegments: row.segment_index,
-                  stage: row.stage,
-                  snapshotDigest: row.source_digest,
-                },
-              }),
+          ...(row.segment_index === null ? {} : { progress: distillationProgressFields(row) }),
         }),
         nativeSessionId: String(row.native_session_id),
         updatedAt: String(row.updated_at),
