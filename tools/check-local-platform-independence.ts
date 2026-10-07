@@ -26,7 +26,8 @@ export class LocalPlatformIndependenceError extends Error {
     this.name = 'LocalPlatformIndependenceError';
     this.code = code;
     this.command = options.command ?? null;
-    this.detail = options.detail?.slice(0, commandOutputLimit) ?? null;
+    // Keep the tail: `bun test` prints its summary and the last failures there.
+    this.detail = options.detail?.slice(-commandOutputLimit) ?? null;
   }
 }
 
@@ -124,6 +125,13 @@ const runGuardedCommand = async (
   ]);
   clearTimeout(timeout);
   if (timedOut || exitCode !== 0) {
+    // The job log is the only place the failing test can be read, so forward
+    // the child's complete output there before the bounded error detail.
+    process.stderr.write(
+      `\n[local-platform] ${command.label} ${timedOut ? 'timed out' : `exited with code ${exitCode}`}; full output follows.\n`,
+    );
+    process.stderr.write(stdout);
+    process.stderr.write(stderr);
     throw new LocalPlatformIndependenceError('command-failed', {
       command: command.label,
       detail: stderr || stdout,
