@@ -67,6 +67,40 @@ describe('Memory proposal Query options', () => {
     expect(observedSignals).toHaveLength(1);
   });
 
+  test('addresses one proposal under its own identity and forgets that page once it is reviewed', async () => {
+    const proposalId = '0198f179-4837-7000-8000-000000000003';
+    const positions: unknown[] = [];
+    const client = createWebQueryClient();
+    const options = memoryProposalReviewsQueryOptions(
+      {
+        proposalReviews: (_signal, position) => {
+          positions.push(position);
+          return Promise.resolve(snapshot);
+        },
+      },
+      { browser: true, enabled: true },
+      { proposalId },
+    );
+
+    await client.fetchQuery(options);
+    expect(options).toMatchObject({
+      queryKey: ['web', 'control-plane', 'memory', 'proposal-reviews', 'v1', 'proposal', proposalId],
+    });
+    expect(positions).toEqual([{ proposalId }]);
+    expect(memoryProposalReviewsKey({ cursor: 'next' })).toEqual([
+      'web',
+      'control-plane',
+      'memory',
+      'proposal-reviews',
+      'v1',
+      'next',
+    ]);
+    expect(memoryProposalReviewsKey({ cursor: null })).toEqual(memoryProposalReviewsKey());
+
+    await acknowledgeMemoryProposalReview(client, proposalId);
+    expect(client.getQueryData(memoryProposalReviewsKey({ proposalId }))).toBeUndefined();
+  });
+
   test('acknowledges only the successful proposal and leaves the snapshot stale', async () => {
     const client = createWebQueryClient();
     client.setQueryData(memoryProposalReviewsKey(), snapshot);
@@ -117,10 +151,21 @@ describe('Memory search Query options', () => {
 
     await expect(client.fetchQuery(options)).resolves.toEqual(searchPage);
     expect(options).toMatchObject({
-      queryKey: ['web', 'control-plane', 'memory', 'search', 'v1', 'SQLITE_BUSY', '', false, 'literal', 10, ''],
+      queryKey: ['web', 'control-plane', 'memory', 'search', 'v1', 'SQLITE_BUSY', '', '[]', false, 'literal', 10, ''],
       retry: false,
     });
     expect(observedSignals).toHaveLength(1);
     expect(memorySearchKey({ ...searchInput, matchingMode: 'hybrid' })).not.toEqual(memorySearchKey(searchInput));
   });
+});
+
+test('acceptance invalidates an already cached empty knowledge page and accepted search', async () => {
+  const client = createWebQueryClient();
+  const knowledgeKey = ['web', 'finite-swr', 'memory', 'knowledge', 'empty-scope'] as const;
+  const searchKey = memorySearchKey(searchInput);
+  client.setQueryData(knowledgeKey, { items: [], nextCursor: null });
+  client.setQueryData(searchKey, searchPage);
+  await acknowledgeMemoryProposalReview(client, '0198f179-4837-7000-8000-000000000002');
+  expect(client.getQueryState(knowledgeKey)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(searchKey)?.isInvalidated).toBe(true);
 });

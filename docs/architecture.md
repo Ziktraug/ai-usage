@@ -113,6 +113,14 @@ bounded events. Memory data and mutations do not cross under that name. If a
 local application-service boundary needs IPC, it receives a separately named,
 authenticated, bounded Memory service seam.
 
+[Session distillation](session-distillation.md) adds a separate local generated
+corpus in the same Memory database: bounded jobs, immutable Session analyses
+and a dedicated FTS index. The active harness generates outside database
+transactions and submits through that Memory service; only the engine writes.
+The Session panel and `analyses` CLI read the same saved content. These tables
+do not participate in accepted Memory search, portable export, usage snapshots
+or replication, and distillation is unavailable in connected mode.
+
 ### Connected/shared composition
 
 ```text
@@ -250,9 +258,10 @@ After the usage writer starts, the engine acquires the Memory writer lease,
 opens the separate owner-only `memory.sqlite` identity kernel, and starts its
 independently authenticated Memory service. Memory bootstrap failure is an
 engine startup failure that releases both leases; there is no usage-only
-degraded mode (ADR 0038). The service carries bounded Project review, Memory review,
-exact-item, Project-context, and search operations; it is not the usage control
-plane. The engine closes the Memory service before the identity kernel and the
+degraded mode (ADR 0038). The service carries bounded Project review, Memory
+review, exact-item, Project-context, search and local Session distillation
+operations; it is not the usage control plane. The engine closes the Memory
+service before the identity kernel and the
 usage runtime. Only this post-writer-lease startup path replaces a stale Memory
 rendezvous left by a crashed engine; the generic publisher preserves existing
 files. This composition does not make identity data part of the usage database
@@ -502,7 +511,9 @@ plan 101–107 integration.
 Owns canonical branded UUID identity types, canonical instants, bounded identity
 text, and the shared Space, Person, Device, SCM, Repository, Project, Checkout,
 and Capture Context contracts. It is pure and exports no storage or transport
-implementation.
+implementation. Its Session distillation contracts validate evidence packets,
+generated assertions, analysis revisions and bounded operation requests;
+Memory services can use them without importing the usage-report domain.
 
 ### `@ai-usage/authorization-contract`
 
@@ -557,6 +568,8 @@ local replication outbox. It also owns deterministic FTS5 revision chunks,
 transactional projection maintenance, structured eligibility, cursor binding,
 and authorization-scoped local ranking. Only
 the usage-engine composition may open this write-capable adapter in production.
+Its local-only distillation repository shares that connection and owns job
+leases, analysis revisions and their separate FTS projection.
 
 ### `@ai-usage/memory-service`
 
@@ -782,7 +795,9 @@ files, the loopback setup UI, and CLI diagnostics. Stored reads use the SQLite
 reader without an engine. Fresh or mutating operations use one engine client or
 one bounded foreground engine, then read the committed revision. The CLI never
 imports collectors, engine-runtime, or `usage-store/writer`. `memory search` uses the separately authenticated local
-Memory client and never opens `memory.sqlite` or PostgreSQL.
+Memory client and never opens `memory.sqlite` or PostgreSQL. `analyses` uses
+that client for explicit batches, exact analysis reads and bounded generated
+context. It requires an already running engine and starts no provider process.
 
 Portable snapshot/output files remain explicit CLI writes performed after
 bounded reads. CLI wide-event delivery is file-only: it never writes event or

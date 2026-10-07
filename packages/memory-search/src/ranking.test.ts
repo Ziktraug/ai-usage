@@ -1,6 +1,23 @@
 import { describe, expect, test } from 'bun:test';
 import { compileMemorySearchQuery, explainMemorySearchMatch } from './ranking';
 
+test('includes truncation markers inside the accepted-search excerpt budget', () => {
+  for (const structuredContent of [
+    `direct reads ${'context '.repeat(100)}`,
+    `${'context '.repeat(100)}direct reads ${'context '.repeat(100)}`,
+    `${'context '.repeat(100)}direct reads`,
+  ]) {
+    const results = explainMemorySearchMatch(
+      { title: '', summary: '', guidance: '', structuredContent },
+      compileMemorySearchQuery('direct reads', 'hybrid'),
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]?.excerpt).toContain('direct reads');
+    expect(results[0]?.excerpt.length).toBeLessThanOrEqual(384);
+    expect(results[0]?.excerpt).toContain('…');
+  }
+});
+
 describe('Memory lexical query compilation', () => {
   test('preserves a literal while producing bounded multilingual FTS terms', () => {
     const compiled = compileMemorySearchQuery("direnv exec . bash -lc 'cd react && pnpm check'", 'hybrid');

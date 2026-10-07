@@ -60,6 +60,8 @@ without a numbering collision.
 | [0039](0039-continuous-campaign-exploration.md) | Preserve context during continuous campaign exploration | 2026-10-04 | Accepted; amends 0004 and 0012; amended by 0041 |
 | [0040](0040-rounds-are-derived-once-from-native-turns.md) | Rounds are derived once from native turns; child links carry their evidence | 2026-09-09 | Accepted; applies 0017 and 0018 to session detail |
 | [0041](0041-exact-detail-selection-with-continuous-exploration.md) | Resolve exact detail identity independently from bounded scroll restoration | 2026-10-04 | Accepted; amends 0039 |
+| [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Accepted; extends 0024, 0026, 0038, 0040, 0041 |
+| [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Accepted; amends 0042 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

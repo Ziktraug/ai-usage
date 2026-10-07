@@ -336,6 +336,36 @@ test('matches the mobile light session drawer at 390x844', async ({ page }) => {
     headerActionGeometry.every(({ height, width }) => height >= MIN_TOUCH_TARGET_PX && width >= MIN_TOUCH_TARGET_PX),
   ).toBe(true);
 
+  const tabs = drawer.getByRole('tab');
+  const tabGeometry = await tabs.evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return {
+        left: box.left,
+        right: box.right,
+        height: box.height,
+        scrollWidth: element.scrollWidth,
+        width: box.width,
+      };
+    }),
+  );
+  expect(tabGeometry.length).toBe(5);
+  for (const [index, tab] of tabGeometry.entries()) {
+    expect(tab.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    expect(tab.scrollWidth).toBeLessThanOrEqual(Math.ceil(tab.width));
+    if (index > 0) {
+      expect(tab.left).toBeGreaterThan(tabGeometry[index - 1]!.right);
+    }
+  }
+
+  // Every tab remains reachable when its label starts outside the mobile viewport.
+  await tabs.first().focus();
+  await page.keyboard.press('End');
+  await expect(drawer.getByRole('tab', { name: 'Summary' })).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(tabs.first()).toBeFocused();
+  await tabs.first().evaluate((element) => (element as HTMLElement).blur());
+
   await expect(page).toHaveScreenshot('overview-session-drawer.png', {
     ...screenshotOptions,
     maxDiffPixels: DRAWER_MAX_DIFF_PIXELS,

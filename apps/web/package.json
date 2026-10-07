@@ -53,6 +53,7 @@
     "start:web-only": "bun --no-env-file start.mjs",
     "typecheck": "bun run check:svelte && tsc -p tsconfig.e2e.json --noEmit",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "test:e2e-memory": "bun --bun playwright test --config playwright.memory.config.ts"
   }
 }

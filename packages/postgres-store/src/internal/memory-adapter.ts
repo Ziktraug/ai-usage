@@ -75,6 +75,7 @@ import { authorizationScopeSql } from './authorization-query';
 import { isPostgreSqlAuthorizationScopeBinding } from './authorization-scope-binding';
 
 interface ProposalRow extends QueryResultRow {
+  readonly accepted_memory_item_id: unknown;
   readonly guidance: unknown;
   readonly id: unknown;
   readonly project_id: unknown;
@@ -279,6 +280,7 @@ const mapPrincipal = (kind: unknown, id: unknown, operation: string): Authorizat
 };
 
 const mapProposal = (row: ProposalRow): MemoryProposal => ({
+  acceptedMemoryItemId: row.accepted_memory_item_id === null ? null : parseMemoryItemId(row.accepted_memory_item_id),
   guidance: guidanceValue(row.guidance, 'map-proposal'),
   id: parseMemoryProposalId(row.id),
   owningSpaceId: parseSpaceId(row.space_id),
@@ -711,7 +713,7 @@ const insertImportedRelation = async (client: PoolClient, relation: MemoryRelati
 const proposalSelect = `
   SELECT id, space_id, project_id, proposed_kind, title, summary, guidance,
          structured_content, trust_candidate, sensitivity, status,
-         proposed_by_kind, proposed_by_id, reviewed_by_person_id, reviewed_at, review_reason
+         proposed_by_kind, proposed_by_id, reviewed_by_person_id, reviewed_at, review_reason, accepted_memory_item_id
   FROM memory_proposals
 `;
 
@@ -840,6 +842,7 @@ const importSelect = `
 
 interface CursorPayload {
   readonly afterItemId: string;
+  readonly kind?: string | null;
   readonly projectId: string | null;
   readonly spaceId: string;
   readonly status: string | null;
@@ -863,6 +866,7 @@ const decodeCursor = (cursor: string | null | undefined, query: ListMemoryItemsQ
       candidate.spaceId !== query.spaceId ||
       candidate.projectId !== (query.projectId ?? null) ||
       candidate.status !== (query.status ?? null) ||
+      (candidate.kind ?? null) !== (query.kind ?? null) ||
       typeof candidate.afterItemId !== 'string'
     ) {
       throw new Error('invalid cursor');
@@ -1287,6 +1291,9 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
       }),
     createProposal: (input: CreateProposalInput) =>
       withMemoryTransaction(pool, input.proposal.owningSpaceId, 'create-proposal', async (client) => {
+        if (input.localAnalysisSource || input.localAnalysisObservation) {
+          throw new MemoryRepositoryError('invalid-input', 'create-local-analysis-proposal');
+        }
         const ownerPersonId =
           input.proposal.proposedByPrincipal.kind === 'person' ? input.proposal.proposedByPrincipal.personId : null;
         if (
@@ -1497,6 +1504,7 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
              AND ($4::UUID IS NULL OR item.project_id = $4::UUID)
              AND ($5::TEXT IS NULL OR item.status = $5::TEXT)
              AND ($6::UUID IS NULL OR item.id > $6::UUID)
+             AND ($8::TEXT IS NULL OR item.kind = $8::TEXT)
            ORDER BY item.id ASC
            LIMIT $7`,
           [
@@ -1507,6 +1515,7 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
             query.status ?? null,
             afterItemId,
             query.pageSize + 1,
+            query.kind ?? null,
           ],
         );
         const hasNext = result.rows.length > query.pageSize;
@@ -1518,6 +1527,7 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
             hasNext && lastItem
               ? encodeCursor({
                   afterItemId: lastItem.item.id,
+                  kind: query.kind ?? null,
                   projectId: query.projectId ?? null,
                   spaceId: query.spaceId,
                   status: query.status ?? null,
@@ -1537,6 +1547,10 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
       } catch (error) {
         return Promise.reject(error);
       }
+      const fromProposalId = query.fromProposalId ?? null;
+      if (fromProposalId !== null && afterProposalId !== null) {
+        return Promise.reject(new MemoryRepositoryError('invalid-input', 'list-proposals'));
+      }
       return withMemoryTransaction(pool, query.spaceId, 'list-proposals', async (client) => {
         const authorization = memoryAuthorization(query, 'list-proposals');
         const result = await client.query<ProposalRow>(
@@ -1544,6 +1558,7 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
            ${proposalSelect}
            WHERE space_id = $1 AND status = $4
              AND ($5::UUID IS NULL OR id > $5::UUID)
+             AND ($7::UUID IS NULL OR id >= $7::UUID)
              AND EXISTS (SELECT 1 FROM authorized_resources authorized WHERE authorized.id = memory_proposals.id)
            ORDER BY id ASC LIMIT $6`,
           [
@@ -1553,8 +1568,12 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
             query.status,
             afterProposalId,
             query.pageSize + 1,
+            fromProposalId,
           ],
         );
+        if (fromProposalId !== null && result.rows[0]?.id !== fromProposalId) {
+          throw new MemoryRepositoryError('not-found', 'list-proposals');
+        }
         const hasNext = result.rows.length > query.pageSize;
         const pageRows = hasNext ? result.rows.slice(0, query.pageSize) : result.rows;
         const items = await Promise.all(

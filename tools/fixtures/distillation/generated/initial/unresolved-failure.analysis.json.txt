@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "summary": {
+    "text": "The parser test could not execute because @synthetic/format was missing. Installing dependencies then failed on registry lookup, and an offline install failed because the tarball was not cached. The original parser behavior remains untested.",
+    "basis": "observed",
+    "evidence": [
+      { "eventId": "event:6:9a4c52b0de17dd0f", "quote": "error: Cannot find package '@synthetic/format' from '/synthetic/ai-usage/src/parser.ts'\nNo tests executed." },
+      { "eventId": "event:8:c4d4af03f6f7e8e9", "quote": "GET https://registry.invalid/@synthetic%2fformat failed: ENOTFOUND registry.invalid" },
+      { "eventId": "event:10:3ca366e716d0295d", "quote": "Missing cached tarball: @synthetic/format@1.0.0" }
+    ]
+  },
+  "episodes": [
+    {
+      "id": "parser-reproduction-blocked-by-dependency",
+      "objective": {
+        "text": "Reproduce the parser failure with bun test src/parser.test.ts.",
+        "basis": "reported",
+        "evidence": [{ "eventId": "event:4:aa53704371e378d5", "quote": "Reproduce the parser failure by running bun test src/parser.test.ts." }]
+      },
+      "attempts": [
+        {
+          "text": "The requested parser test command exited with code 1 before any tests ran: @synthetic/format could not be found from /synthetic/ai-usage/src/parser.ts.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:5:4deb8d75b94cbe02", "quote": "bun test src/parser.test.ts" },
+            { "eventId": "event:6:9a4c52b0de17dd0f", "quote": "Process exited with code 1\nerror: Cannot find package '@synthetic/format' from '/synthetic/ai-usage/src/parser.ts'\nNo tests executed." }
+          ]
+        },
+        {
+          "text": "A dependency recovery attempt using bun install --frozen-lockfile exited with code 1 because registry.invalid lookup failed with ENOTFOUND.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:7:4e6e36dbda6b9f27", "quote": "bun install --frozen-lockfile" },
+            { "eventId": "event:8:c4d4af03f6f7e8e9", "quote": "Process exited with code 1\nGET https://registry.invalid/@synthetic%2fformat failed: ENOTFOUND registry.invalid" }
+          ]
+        },
+        {
+          "text": "The subsequent bun install --offline --frozen-lockfile attempt also exited with code 1: the cached tarball for @synthetic/format@1.0.0 was missing.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:9:1d42b5b52534f492", "quote": "bun install --offline --frozen-lockfile" },
+            { "eventId": "event:10:3ca366e716d0295d", "quote": "Process exited with code 1\nMissing cached tarball: @synthetic/format@1.0.0" }
+          ]
+        }
+      ],
+      "result": {
+        "status": "unresolved",
+        "assertion": {
+          "text": "The assistant reported being blocked before test execution and confirmed that the original parser failure had not been reproduced.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:11:1eb88ff7b1cc0701", "quote": "Blocked before the parser test could run. The package is absent, registry lookup failed, and its tarball is not cached. The original parser failure is not yet reproduced." }]
+        }
+      },
+      "difficulties": [
+        {
+          "text": "The dependency was unavailable to the test runner, could not be fetched because of ENOTFOUND, and was unavailable in the offline cache. These are observed setup failures, not a reproduced parser assertion failure.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:6:9a4c52b0de17dd0f", "quote": "error: Cannot find package '@synthetic/format' from '/synthetic/ai-usage/src/parser.ts'\nNo tests executed." },
+            { "eventId": "event:8:c4d4af03f6f7e8e9", "quote": "ENOTFOUND registry.invalid" },
+            { "eventId": "event:10:3ca366e716d0295d", "quote": "Missing cached tarball: @synthetic/format@1.0.0" }
+          ]
+        }
+      ],
+      "decisions": [],
+      "entryPoints": [
+        {
+          "text": "The requested reproduction entry point is bun test src/parser.test.ts.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:4:aa53704371e378d5", "quote": "Reproduce the parser failure by running bun test src/parser.test.ts." }]
+        },
+        {
+          "text": "The recorded dependency error links @synthetic/format to /synthetic/ai-usage/src/parser.ts, while offline recovery identifies the unavailable version as @synthetic/format@1.0.0.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:6:9a4c52b0de17dd0f", "quote": "Cannot find package '@synthetic/format' from '/synthetic/ai-usage/src/parser.ts'" },
+            { "eventId": "event:10:3ca366e716d0295d", "quote": "Missing cached tarball: @synthetic/format@1.0.0" }
+          ]
+        }
+      ],
+      "openQuestions": [
+        {
+          "text": "Can the missing dependency be made available, and what result will the original parser test then produce? No parser assertion or root cause can be recovered from these setup failures.",
+          "basis": "unknown",
+          "evidence": [{ "eventId": "event:6:9a4c52b0de17dd0f", "quote": "No tests executed." }]
+        }
+      ]
+    }
+  ],
+  "abstention": null
+}

@@ -14,7 +14,13 @@ import {
 import { createMemoryApplicationService } from '@ai-usage/memory-service/application';
 import { runMemoryRepositoryConformance } from '@ai-usage/memory-service/conformance';
 import { memoryFingerprint } from '@ai-usage/memory-service/domain';
-import { createPersonId, createProjectId, createSpaceId, instantNow } from '@ai-usage/platform-core/identity';
+import {
+  createMemoryProposalId,
+  createPersonId,
+  createProjectId,
+  createSpaceId,
+  instantNow,
+} from '@ai-usage/platform-core/identity';
 import { createPlatformStore } from '@ai-usage/postgres-store/writer';
 import { Pool } from 'pg';
 import { startPostgresCluster } from './pg-harness';
@@ -146,6 +152,27 @@ if (runPostgresTests) {
           kind: 'success',
           value: { items: [{ proposal: { id: proposal.value } }] },
         });
+        expect(
+          await service.listPendingProposals({
+            authorization,
+            fromProposalId: proposal.value,
+            pageSize: 10,
+            principal,
+            spaceId,
+          }),
+        ).toMatchObject({
+          kind: 'success',
+          value: { items: [{ proposal: { id: proposal.value } }], nextCursor: null },
+        });
+        expect(
+          await service.listPendingProposals({
+            authorization,
+            fromProposalId: createMemoryProposalId(),
+            pageSize: 10,
+            principal,
+            spaceId,
+          }),
+        ).toEqual({ error: { code: 'not-found', operation: 'list-pending-proposals' }, kind: 'error' });
         const accepted = await service.acceptProposal({
           authorization,
           principal,
@@ -310,6 +337,15 @@ if (runPostgresTests) {
           }),
         ).resolves.toMatchObject({ items: [{ proposal: { id: pendingProposalId } }] });
         await expect(
+          store.memory.listProposals({
+            authorizationScope: materialized,
+            fromProposalId: pendingProposalId,
+            pageSize: 10,
+            spaceId: organizationSpaceId,
+            status: 'pending',
+          }),
+        ).resolves.toMatchObject({ items: [{ proposal: { id: pendingProposalId } }] });
+        await expect(
           store.memory.exportMemory({
             authorizationScope: materialized,
             projectId: null,
@@ -353,6 +389,15 @@ if (runPostgresTests) {
             status: 'pending',
           }),
         ).resolves.toMatchObject({ items: [] });
+        await expect(
+          store.memory.listProposals({
+            authorizationScope: materialized,
+            fromProposalId: pendingProposalId,
+            pageSize: 10,
+            spaceId: organizationSpaceId,
+            status: 'pending',
+          }),
+        ).rejects.toMatchObject({ code: 'not-found' });
         await expect(
           store.memory.exportMemory({
             authorizationScope: materialized,

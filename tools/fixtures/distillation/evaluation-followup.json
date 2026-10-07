@@ -1,0 +1,153 @@
+{
+  "format": "ai-usage-distillation-semantic-review-followup",
+  "version": 1,
+  "reviewedAt": "2026-10-04T22:00:03.070Z",
+  "previousReview": "evaluation.json",
+  "scope": "Only the two previously missed coverage checkpoints were reviewed against a fresh active-harness generation with declared input packet digests. The other checkpoints were not reevaluated on the revised outputs.",
+  "counts": {
+    "supported": 2,
+    "missed": 0,
+    "contradicted": 0,
+    "not-assessable": 0
+  },
+  "initialResultsPreserved": true,
+  "untouchedLimitation": "The initial malicious-data redaction lifecycle remains not-assessable in full; this retry does not establish original provider transmission or durable persistence.",
+  "outcomes": [
+    {
+      "caseId": "interrupted",
+      "checkpointId": "interruption",
+      "previousStatus": "missed",
+      "status": "supported",
+      "expected": "The session was interrupted before any command completion was recorded.",
+      "rationale": "The new generation names the interrupted Session and missing final statement while explicitly preserving uncertainty about subprocess termination and test outcome. The status unknown applies to the outcome, not an assertion that Session lifecycle is unknown.",
+      "generatedClaims": [
+        {
+          "pointer": "/summary",
+          "value": {
+            "text": "The packet covers an interrupted session. The importer test had started and was still running at the last recorded result; no completed verification or final assistant statement is included, so the test outcome remains unknown.",
+            "basis": "unknown",
+            "evidence": [
+              {
+                "eventId": "event:6:255975e972a9b56f",
+                "quote": "Process running with session ID 7007\nOutput:\nstarted importer.test.ts\nconnecting to disposable fixture"
+              }
+            ]
+          }
+        },
+        {
+          "pointer": "/episodes/0/difficulties/0",
+          "value": {
+            "text": "Runtime coverage is partial and marks the session interrupted. There is no included completion result or final assistant response after the startup output; subsequent process behavior is uncovered.",
+            "basis": "unknown",
+            "evidence": []
+          }
+        },
+        {
+          "pointer": "/episodes/0/result/assertion",
+          "value": {
+            "text": "No final test verdict or completed investigation is covered. The session interruption does not establish that the underlying process was killed, hung, passed, or failed.",
+            "basis": "unknown",
+            "evidence": [
+              {
+                "eventId": "event:6:255975e972a9b56f",
+                "quote": "Process running with session ID 7007"
+              }
+            ]
+          }
+        }
+      ],
+      "sourceReferences": [
+        {
+          "fixtureEventId": "interrupted-abort",
+          "file": "transcripts/interrupted.jsonl",
+          "line": 7,
+          "normalizedEventId": null,
+          "normalizationNote": "Native lifecycle event represented through packet coverage rather than an individual model-visible evidence event."
+        }
+      ],
+      "runtimeCoverage": {
+        "scope": "session-only",
+        "status": "partial",
+        "lines": 7,
+        "includedEvents": 3,
+        "exclusions": [],
+        "childrenNotAnalyzed": null,
+        "childDiscovery": "not-performed",
+        "completion": "interrupted"
+      },
+      "analysisFile": "generated/coverage-retry/interrupted.analysis.json.txt",
+      "analysisSha256": "36724ef519e6990715ebdf7d7fa30905809400ec1fb9934d0d937cfb60a9252e",
+      "packetFile": "generated/coverage-retry/interrupted.packet.json.txt",
+      "packetSha256": "0b52ffd89453902506a08e0e4e9e00bc40b367720c3de34bc475df9a99073ccd",
+      "generationPacketDigest": "f144fa299f99c69e8046d93b68290430e054f0f5428683b6f6460152ec863ef6",
+      "provenanceFile": "generated/coverage-retry/interrupted.provenance.json.txt",
+      "provenanceSha256": "253a656cb2732b4308c6efc4e3acdf0cd5cafe0a674ca6f841b9d8b1acc37abc",
+      "producer": "active-harness",
+      "producerModelId": null
+    },
+    {
+      "caseId": "truncated-output",
+      "checkpointId": "coverage-loss",
+      "previousStatus": "missed",
+      "status": "supported",
+      "expected": "The recorded command output is explicitly truncated, and this snapshot has no final assistant message.",
+      "rationale": "The new generation discloses both recorded tool-output truncation and the partial in-progress Session snapshot with no final assistant statement. Both parts of the original composite checkpoint are now present.",
+      "generatedClaims": [
+        {
+          "pointer": "/episodes/0/difficulties/0",
+          "value": {
+            "text": "The tool result reports an original output length of 4,812 characters and explicitly marks the excerpt truncated. Expected and actual assertion values are not visible in the retained excerpt.",
+            "basis": "observed",
+            "evidence": [
+              {
+                "eventId": "event:6:8d387007d09cdb47",
+                "quote": "Warning: truncated output (original character count: 4812)\nOutput:\nPASS report title\nFAIL report rendering\n[... output truncated ...]"
+              }
+            ]
+          }
+        },
+        {
+          "pointer": "/episodes/0/difficulties/1",
+          "value": {
+            "text": "Runtime coverage describes a partial, in-progress session snapshot with one recorded truncation. No final assistant statement or completed investigation is included; later diagnosis or resolution remains uncovered.",
+            "basis": "unknown",
+            "evidence": []
+          }
+        }
+      ],
+      "sourceReferences": [
+        {
+          "fixtureEventId": "truncated-result",
+          "file": "transcripts/truncated-output.jsonl",
+          "line": 6,
+          "normalizedEventId": "event:6:8d387007d09cdb47",
+          "normalizationNote": null
+        }
+      ],
+      "runtimeCoverage": {
+        "scope": "session-only",
+        "status": "partial",
+        "lines": 6,
+        "includedEvents": 3,
+        "exclusions": [
+          {
+            "reason": "recorded-truncation",
+            "count": 1
+          }
+        ],
+        "childrenNotAnalyzed": null,
+        "childDiscovery": "not-performed",
+        "completion": "in-progress"
+      },
+      "analysisFile": "generated/coverage-retry/truncated-output.analysis.json.txt",
+      "analysisSha256": "9288177bc30752169cfc86b4db97a27c7c40f7bd21073db4e57ab69da838586e",
+      "packetFile": "generated/coverage-retry/truncated-output.packet.json.txt",
+      "packetSha256": "7b7fbc8b7b2458c339131659c6bd053913bfd317ca85061ad0ca8c7fded41154",
+      "generationPacketDigest": "fe1836d9f9a5962a280eb1505b94816d997f9f9f7ad568b904ccdf57f08a04a0",
+      "provenanceFile": "generated/coverage-retry/truncated-output.provenance.json.txt",
+      "provenanceSha256": "4c1bb60f4cc26dc44949ebb19c268c367a3d0fa9ee3b1e7692ea3288984e9227",
+      "producer": "active-harness",
+      "producerModelId": null
+    }
+  ]
+}

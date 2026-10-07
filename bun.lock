@@ -68,6 +68,7 @@
         "@ai-usage/replication-client": "workspace:*",
         "@ai-usage/replication-outbox": "workspace:*",
         "@ai-usage/replication-protocol": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
         "@ai-usage/usage-engine-control": "workspace:*",
         "@ai-usage/usage-engine-runtime": "workspace:*",
         "@ai-usage/usage-store": "workspace:*",
@@ -169,6 +170,7 @@
       "name": "@ai-usage/local-machine",
       "version": "0.1.0",
       "dependencies": {
+        "@ai-usage/platform-core": "workspace:*",
         "@ai-usage/report-core": "workspace:*",
         "@ai-usage/skills": "workspace:*",
         "effect": "^3.21.4",
@@ -351,6 +353,7 @@
       "name": "@ai-usage/web-contract",
       "version": "0.1.0",
       "dependencies": {
+        "@ai-usage/platform-core": "workspace:*",
         "@ai-usage/report-core": "workspace:*",
         "@ai-usage/skills": "workspace:*",
         "@orpc/contract": "1.14.13",

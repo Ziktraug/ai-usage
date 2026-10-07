@@ -33,6 +33,8 @@ const preB949af04RepositoryIndexSql = `
     WHERE provider_repository_id IS NOT NULL;
 `;
 const spaceScopedRepositoryIndexClause = 'ON repositories (space_id, provider, provider_repository_id)';
+const removeDistillationSchemaSql =
+  'DROP TABLE memory_analysis_promotions; DROP TABLE distillation_progress; DROP TABLE distillation_segments; DROP TABLE distillation_withdrawals; DROP TABLE session_analyses_fts; DROP TABLE session_analyses; DROP TABLE distillation_jobs;';
 
 interface SchemaObject {
   readonly name: string;
@@ -60,6 +62,7 @@ const databaseFixture = async (): Promise<string> => {
 const isSnapshotTable = (object: SchemaObject): boolean =>
   object.type === 'table' &&
   !object.sql?.startsWith('CREATE VIRTUAL') &&
+  !object.name.startsWith('session_analyses_fts') &&
   !object.name.startsWith('memory_search_fts') &&
   !object.name.startsWith('memory_search_trigram_fts');
 
@@ -80,6 +83,28 @@ const snapshotStore = (databasePath: string): StoreSnapshot => {
     database.close(false);
   }
 };
+
+const withoutDistillation = (snapshot: StoreSnapshot): StoreSnapshot => ({
+  ...snapshot,
+  schema: snapshot.schema.filter(
+    (object) =>
+      !(
+        object.tbl_name.startsWith('distillation_') ||
+        object.tbl_name.startsWith('session_analyses') ||
+        object.tbl_name === 'memory_analysis_promotions'
+      ),
+  ),
+  rows: Object.fromEntries(
+    Object.entries(snapshot.rows).filter(
+      ([name]) =>
+        !(
+          name.startsWith('distillation_') ||
+          name.startsWith('session_analyses') ||
+          name === 'memory_analysis_promotions'
+        ),
+    ),
+  ),
+});
 
 const repositoryIndexSql = (snapshot: StoreSnapshot): string | null =>
   snapshot.schema.find((object) => object.name === 'repositories_provider_identity_unique')?.sql ?? null;
@@ -314,7 +339,25 @@ const openStore = async (databasePath: string): Promise<OpenedStore> => {
 };
 
 describe('local Memory store migration', () => {
-  test('rebuilds the pre-b949af04 repository index when carrying a version-5 store to version 6', async () => {
+  test('rolls the version-8 checkpoint and promotion migration back atomically and preserves prior Memory rows', async () => {
+    const databasePath = await databaseFixture();
+    const identity = await seedStore(databasePath);
+    const seeded = snapshotStore(databasePath);
+    rewriteStore(
+      databasePath,
+      'DROP TABLE memory_analysis_promotions; DROP TABLE distillation_progress; DROP TABLE distillation_segments; DROP TABLE distillation_withdrawals; CREATE TABLE distillation_segments(marker TEXT); PRAGMA user_version=7;',
+    );
+    const conflicting = snapshotStore(databasePath);
+    await expect(openLocalIdentityKernel({ clock, databasePath })).rejects.toMatchObject({
+      code: 'storage-failed',
+      name: 'MemoryIdentityStoreError',
+    });
+    expect(snapshotStore(databasePath)).toEqual(conflicting);
+    rewriteStore(databasePath, 'DROP TABLE distillation_segments;');
+    expect(await openStore(databasePath)).toEqual({ acknowledgedThroughGeneration: 0, identity, pending: 2 });
+    expect(snapshotStore(databasePath)).toEqual(seeded);
+  });
+  test('rebuilds the pre-b949af04 repository index when carrying a version-5 store to the current version', async () => {
     const databasePath = await databaseFixture();
     const identity = await seedStore(databasePath);
     const seeded = snapshotStore(databasePath);
@@ -322,12 +365,12 @@ describe('local Memory store migration', () => {
 
     rewriteStore(
       databasePath,
-      `DROP INDEX repositories_provider_identity_unique; ${preB949af04RepositoryIndexSql} PRAGMA user_version = 5;`,
+      `${removeDistillationSchemaSql} DROP INDEX repositories_provider_identity_unique; ${preB949af04RepositoryIndexSql} PRAGMA user_version = 5;`,
     );
     const legacy = snapshotStore(databasePath);
     expect(legacy.userVersion).toBe(5);
     expect(repositoryIndexSql(legacy)).toContain('ON repositories (provider, provider_repository_id)');
-    expect(legacy.rows).toEqual(seeded.rows);
+    expect(legacy.rows).toEqual(withoutDistillation(seeded).rows);
 
     expect(await openStore(databasePath)).toEqual({ acknowledgedThroughGeneration: 0, identity, pending: 2 });
 
@@ -338,14 +381,14 @@ describe('local Memory store migration', () => {
     expect(readConsistency(databasePath)).toEqual(consistent);
   });
 
-  test('carries a current version-5 store to version 6 without re-bootstrapping and stays idempotent', async () => {
+  test('carries a current version-5 store to the current version without re-bootstrapping and stays idempotent', async () => {
     const databasePath = await databaseFixture();
     const identity = await seedStore(databasePath);
     const seeded = snapshotStore(databasePath);
     expect(shapeOf(seeded)).toEqual(seededShape);
 
-    rewriteStore(databasePath, 'PRAGMA user_version = 5;');
-    expect(snapshotStore(databasePath)).toEqual({ ...seeded, userVersion: 5 });
+    rewriteStore(databasePath, `${removeDistillationSchemaSql} PRAGMA user_version = 5;`);
+    expect(snapshotStore(databasePath)).toEqual({ ...withoutDistillation(seeded), userVersion: 5 });
 
     expect(await openStore(databasePath)).toEqual({ acknowledgedThroughGeneration: 0, identity, pending: 2 });
     expect(snapshotStore(databasePath)).toEqual(seeded);
@@ -379,7 +422,7 @@ describe('local Memory store migration', () => {
 
     rewriteStore(
       databasePath,
-      `DROP INDEX repositories_provider_identity_unique;
+      `${removeDistillationSchemaSql} DROP INDEX repositories_provider_identity_unique;
        CREATE TABLE repositories_provider_identity_unique (marker TEXT NOT NULL) STRICT;
        PRAGMA user_version = 5;`,
     );
@@ -403,5 +446,39 @@ describe('local Memory store migration', () => {
     expect(await openStore(databasePath)).toEqual({ acknowledgedThroughGeneration: 0, identity, pending: 2 });
     expect(snapshotStore(databasePath)).toEqual(seeded);
     expect(readConsistency(databasePath)).toEqual(consistent);
+  });
+
+  test('adds the local-only generated corpus to version 6 without changing Memory, identities or outbox rows', async () => {
+    const databasePath = await databaseFixture();
+    const identity = await seedStore(databasePath);
+    const seeded = snapshotStore(databasePath);
+    rewriteStore(databasePath, `${removeDistillationSchemaSql} PRAGMA user_version = 6;`);
+    const previous = snapshotStore(databasePath);
+    expect(previous).toEqual({ ...withoutDistillation(seeded), userVersion: 6 });
+    expect(await openStore(databasePath)).toEqual({ acknowledgedThroughGeneration: 0, identity, pending: 2 });
+    const migrated = snapshotStore(databasePath);
+    expect(migrated).toEqual(seeded);
+    expect(migrated.rows.distillation_jobs).toEqual([]);
+    expect(migrated.rows.session_analyses).toEqual([]);
+    expect(readConsistency(databasePath)).toEqual(consistent);
+  });
+
+  test('rolls the entire version-7 migration back on a schema conflict and succeeds after repair', async () => {
+    const databasePath = await databaseFixture();
+    const identity = await seedStore(databasePath);
+    const seeded = snapshotStore(databasePath);
+    rewriteStore(
+      databasePath,
+      `${removeDistillationSchemaSql} CREATE TABLE session_analyses(marker TEXT); PRAGMA user_version = 6;`,
+    );
+    const conflicting = snapshotStore(databasePath);
+    await expect(openLocalIdentityKernel({ clock, databasePath })).rejects.toMatchObject({
+      code: 'storage-failed',
+      name: 'MemoryIdentityStoreError',
+    });
+    expect(snapshotStore(databasePath)).toEqual(conflicting);
+    rewriteStore(databasePath, 'DROP TABLE session_analyses;');
+    expect(await openStore(databasePath)).toEqual({ acknowledgedThroughGeneration: 0, identity, pending: 2 });
+    expect(snapshotStore(databasePath)).toEqual(seeded);
   });
 });

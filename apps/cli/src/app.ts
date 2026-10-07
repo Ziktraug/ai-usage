@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { type BoundaryClassification, classifyExit, runBoundaryEffect } from '@ai-usage/effect-runtime';
+import { MemoryServiceClientError } from '@ai-usage/memory-service/client';
+import { distillationServiceError } from '@ai-usage/memory-service/distillation-errors';
 import { parseProjectId } from '@ai-usage/platform-core/identity';
+import { DistillationError } from '@ai-usage/platform-core/session-distillation';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryPoint } from '@ai-usage/report-core/provider-quota';
@@ -22,6 +25,7 @@ import type {
 } from '@ai-usage/usage-engine-control';
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
 import { Console, Effect, Exit } from 'effect';
+import { executeAnalysesCommand } from './analyses';
 import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
 import { renderMemorySearch } from './memory';
@@ -127,6 +131,25 @@ const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown
 const fromPromise = <Value>(run: () => Promise<Value>): Effect.Effect<Value, unknown> =>
   Effect.tryPromise({ catch: (error: unknown) => error, try: run });
 
+class CliAnalysesError extends Error {
+  readonly code: MemoryServiceClientError['code'];
+
+  constructor(cause: unknown) {
+    super('Session analysis operation failed.');
+    if (cause instanceof MemoryServiceClientError) {
+      this.code = cause.code;
+    } else if (cause instanceof DistillationError) {
+      this.code = distillationServiceError(cause.code).code;
+    } else if (cause instanceof DOMException && cause.name === 'AbortError') {
+      this.code = 'cancelled';
+    } else if (cause instanceof SyntaxError) {
+      this.code = 'invalid-request';
+    } else {
+      this.code = 'service-unavailable';
+    }
+  }
+}
+
 const executeEngine = (runtime: CliRuntimeService, command: UsageEngineCommand) =>
   fromPromise(() => runtime.usageEngine.execute(command, { signal: runtime.signal }));
 
@@ -225,6 +248,13 @@ const renderReport = (args: Args, report: Awaited<ReturnType<typeof readServedUs
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
   const command = yield* parseCommand(runtime.argv);
+  if (command._tag === 'Analyses') {
+    const output = yield* fromPromise(() => executeAnalysesCommand(command.args, runtime.memory, runtime.signal)).pipe(
+      Effect.mapError((error) => new CliAnalysesError(error)),
+    );
+    yield* writeStdout(output);
+    return;
+  }
 
   if (command._tag === 'Help') {
     yield* Console.log(helpText);
@@ -564,7 +594,11 @@ const isAppError = (error: unknown): error is AppError =>
 export const runnableApp = app.pipe(
   Effect.as(0 as number),
   Effect.catchAll((error: unknown) =>
-    Console.error(`Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`).pipe(Effect.as(1)),
+    Console.error(
+      error instanceof CliAnalysesError
+        ? JSON.stringify({ error: { code: error.code } })
+        : `Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`,
+    ).pipe(Effect.as(1)),
   ),
   Effect.catchAllDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
 );

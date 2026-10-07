@@ -1,0 +1,138 @@
+{
+  "kind": "submit",
+  "projectId": "5a25084e-4455-488c-a439-3131e729dd8f",
+  "jobId": "630f9e59-ba32-42ad-8f63-504214b1100f",
+  "leaseId": "467010f1-1de5-4378-a70c-0625c7e846fe",
+  "packetDigest": "85c62b1b729a1bd5bd8c71dacec7b4126eef02c132b7be627a607dcbb56234b7",
+  "extractorVersion": "session-distillation-progressive-v1",
+  "snapshotDigest": "55336f98af1fb03cbd50462e0fbe7eef9d8998124f79e456e19c9ab9229b1cd0",
+  "segmentIndex": 1,
+  "content": {
+    "schemaVersion": 1,
+    "summary": {
+      "basis": "inferred",
+      "text": "The final recorded decision replaces the cache with direct reads, superseding the initial plan to extend its lifetime. The focused direct-read test reports 12 passes and no failures. The earlier claim that all tests passed was not then backed by recorded output. The snapshot was traversed, but one oversized diagnostic was unavailable and child sessions were not analyzed.",
+      "evidence": [
+        {
+          "eventId": "event:342:772a8c4b662b9bc9",
+          "quote": "Replace the cache with direct reads; the initial cache decision is superseded."
+        },
+        {
+          "eventId": "event:261:71a97e12a8fd6e59",
+          "quote": "12 pass, 0 fail"
+        },
+        {
+          "eventId": "event:5:ddcfabdf5b9f8d00",
+          "quote": "Keep the cache and increase its lifetime."
+        }
+      ]
+    },
+    "episodes": [
+      {
+        "id": "stale-reads",
+        "objective": {
+          "basis": "reported",
+          "text": "Repair stale reads and verify the final decision.",
+          "evidence": [
+            {
+              "eventId": "event:4:1014566e837acec0",
+              "quote": "Repair stale reads and verify the final decision."
+            }
+          ]
+        },
+        "attempts": [
+          {
+            "basis": "reported",
+            "text": "The assistant claims that all tests already pass; this window provides no output supporting that claim.",
+            "evidence": [
+              {
+                "eventId": "event:6:1e475bf2efac6ed1",
+                "quote": "All tests pass already."
+              }
+            ]
+          },
+          {
+            "basis": "inferred",
+            "text": "The focused command bun test src/direct-read.test.ts was requested before its result crossed the window boundary.",
+            "evidence": [
+              {
+                "eventId": "event:260:3b6416eff8b87696",
+                "quote": "bun test src/direct-read.test.ts"
+              }
+            ]
+          },
+          {
+            "basis": "observed",
+            "text": "The focused direct-read validation reports 12 pass, 0 fail.",
+            "evidence": [
+              {
+                "eventId": "event:261:71a97e12a8fd6e59",
+                "quote": "12 pass, 0 fail"
+              }
+            ]
+          }
+        ],
+        "result": {
+          "status": "observed-success",
+          "assertion": {
+            "basis": "observed",
+            "text": "The recorded focused test passed: 12 pass, 0 fail. This does not establish a full-suite pass, deployment or merge.",
+            "evidence": [
+              {
+                "eventId": "event:261:71a97e12a8fd6e59",
+                "quote": "12 pass, 0 fail"
+              }
+            ]
+          }
+        },
+        "decisions": [
+          {
+            "basis": "reported",
+            "text": "The initial decision to retain the cache and increase its lifetime was later superseded.",
+            "evidence": [
+              {
+                "eventId": "event:5:ddcfabdf5b9f8d00",
+                "quote": "Keep the cache and increase its lifetime."
+              },
+              {
+                "eventId": "event:342:772a8c4b662b9bc9",
+                "quote": "Replace the cache with direct reads; the initial cache decision is superseded."
+              }
+            ]
+          },
+          {
+            "basis": "reported",
+            "text": "Final decision: replace the cache with direct reads, explicitly superseding the initial cache decision.",
+            "evidence": [
+              {
+                "eventId": "event:342:772a8c4b662b9bc9",
+                "quote": "Replace the cache with direct reads; the initial cache decision is superseded."
+              }
+            ]
+          }
+        ],
+        "difficulties": [],
+        "entryPoints": [
+          {
+            "basis": "inferred",
+            "text": "The recorded command targets src/direct-read.test.ts.",
+            "evidence": [
+              {
+                "eventId": "event:260:3b6416eff8b87696",
+                "quote": "bun test src/direct-read.test.ts"
+              }
+            ]
+          }
+        ],
+        "openQuestions": [
+          {
+            "basis": "unknown",
+            "text": "No patch, full-suite result, deployment or merge is established by the available evidence.",
+            "evidence": []
+          }
+        ]
+      }
+    ],
+    "abstention": null
+  }
+}

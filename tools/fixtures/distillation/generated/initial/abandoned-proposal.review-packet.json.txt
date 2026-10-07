@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "normalizationVersion": 1,
+  "redactionVersion": 1,
+  "source": {
+    "harnessKey": "codex",
+    "machineId": "synthetic-machine",
+    "projectId": "synthetic-ai-usage",
+    "nativeSessionId": "00000000-0000-4000-8000-000000000004",
+    "reportAnchor": null,
+    "version": {
+      "digest": "2da7eee8427e1b4a947fd7c67bbb853af3e77c6e24e4e8972d06ea99cf58d4d4",
+      "bytes": 2263,
+      "totalBytes": 2263,
+      "modifiedAtMs": 1791150960506.0066
+    }
+  },
+  "packetDigest": "8c1c5857c46b25d651dfecd4bdeab0977adc807b1e941b5de8fcf9e4906f0f3d",
+  "events": [
+    {
+      "id": "event:4:aa8ebcbdb0f81a5f",
+      "line": 4,
+      "kind": "user",
+      "text": "Find a small way to make past investigations searchable.",
+      "timestamp": "2026-01-04T09:00:03.000Z",
+      "nativeTurnId": "abandoned-proposal-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:5:b32ebcf83be77109",
+      "line": 5,
+      "kind": "assistant",
+      "text": "One possible direction is to add embeddings and a background vector index. This is only a proposal; I have not changed anything.",
+      "timestamp": "2026-01-04T09:00:04.000Z",
+      "nativeTurnId": "abandoned-proposal-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:6:81fdd34aae1b403a",
+      "line": 6,
+      "kind": "user",
+      "text": "Reject that proposal. We will use the existing FTS index for the first version. No embeddings or background indexing. Stop after recording the choice in your response.",
+      "timestamp": "2026-01-04T09:00:05.000Z",
+      "nativeTurnId": "abandoned-proposal-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:7:e9aa3de118e85b4d",
+      "line": 7,
+      "kind": "assistant",
+      "text": "The vector-index proposal is abandoned. The chosen direction is the existing FTS index; no implementation was made in this session.",
+      "timestamp": "2026-01-04T09:00:06.000Z",
+      "nativeTurnId": "abandoned-proposal-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    }
+  ],
+  "coverage": {
+    "scope": "session-only",
+    "status": "complete",
+    "lines": 8,
+    "includedEvents": 4,
+    "exclusions": [],
+    "childrenNotAnalyzed": null,
+    "childDiscovery": "not-performed",
+    "completion": "completed"
+  }
+}

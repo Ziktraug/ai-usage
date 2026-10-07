@@ -1,8 +1,15 @@
 import { MemoryServiceClientError } from '@ai-usage/memory-service/client';
 import {
+  type MemoryKnowledgeGetInput,
+  type MemoryKnowledgeInput,
+  type MemoryPromotionInput,
   type MemoryProposalReviewAction,
+  type MemoryProposalReviewInput,
   type MemorySearchInput,
   memoryContract,
+  memoryKnowledgeDetailSchema,
+  memoryKnowledgePageSchema,
+  memoryPromotionResultSchema,
   memoryProposalReviewActionResultSchema,
   memoryProposalReviewSnapshotSchema,
   memorySearchPageSchema,
@@ -15,8 +22,14 @@ export interface MemoryRpcDependencies {
     input: MemoryProposalReviewAction,
     signal: AbortSignal | undefined,
   ) => Promise<unknown>;
+  readonly getKnowledge: (input: MemoryKnowledgeGetInput, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly isDemo: (signal: AbortSignal | undefined) => Promise<boolean>;
-  readonly listProposalReviews: (signal: AbortSignal | undefined) => Promise<unknown>;
+  readonly listKnowledge: (input: MemoryKnowledgeInput, signal: AbortSignal | undefined) => Promise<unknown>;
+  readonly listProposalReviews: (
+    signal: AbortSignal | undefined,
+    position: MemoryProposalReviewInput,
+  ) => Promise<unknown>;
+  readonly promoteAnalysis: (input: MemoryPromotionInput, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly searchMemory: (input: MemorySearchInput, signal: AbortSignal | undefined) => Promise<unknown>;
 }
 
@@ -26,6 +39,78 @@ const isAbortError = (error: unknown, signal: AbortSignal | undefined): boolean 
 export const createMemoryRpcRouter = (dependencies: MemoryRpcDependencies) => {
   const memory = implement(memoryContract);
   return {
+    getKnowledge: memory.getKnowledge.handler(async ({ errors, input, signal }) => {
+      if (await dependencies.isDemo(signal)) {
+        throw errors.ForbiddenDemo({
+          data: { reason: 'demo-read-only' },
+          message: 'Memory is unavailable in demo mode.',
+        });
+      }
+      try {
+        return parse(memoryKnowledgeDetailSchema, await dependencies.getKnowledge(input, signal));
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (isAbortError(error, signal)) {
+          throw error;
+        }
+        throw errors.Unavailable({
+          data: { reason: 'memory-revision-unavailable' },
+          message: 'The selected accepted revision could not be read.',
+        });
+      }
+    }),
+    knowledge: memory.knowledge.handler(async ({ errors, input, signal }) => {
+      if (await dependencies.isDemo(signal)) {
+        throw errors.ForbiddenDemo({
+          data: { reason: 'demo-read-only' },
+          message: 'Memory is unavailable in demo mode.',
+        });
+      }
+      try {
+        return parse(memoryKnowledgePageSchema, await dependencies.listKnowledge(input, signal));
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (isAbortError(error, signal)) {
+          throw error;
+        }
+        if (error instanceof MemoryServiceClientError && error.code === 'forbidden') {
+          throw errors.Forbidden({
+            data: { reason: 'memory-access-denied' },
+            message: 'This Memory is not accessible.',
+          });
+        }
+        throw errors.Unavailable({
+          data: { reason: 'memory-service-unavailable' },
+          message: 'Accepted Memory could not be read.',
+        });
+      }
+    }),
+    promote: memory.promote.handler(async ({ errors, input, signal }) => {
+      if (await dependencies.isDemo(signal)) {
+        throw errors.ForbiddenDemo({
+          data: { reason: 'demo-read-only' },
+          message: 'Proposals are unavailable in demo mode.',
+        });
+      }
+      try {
+        return parse(memoryPromotionResultSchema, await dependencies.promoteAnalysis(input, signal));
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (isAbortError(error, signal)) {
+          throw error;
+        }
+        if (error instanceof MemoryServiceClientError && error.code === 'forbidden') {
+          throw errors.Forbidden({
+            data: { reason: 'memory-promotion-forbidden' },
+            message: 'This analysis cannot be proposed as knowledge.',
+          });
+        }
+        throw errors.Unavailable({
+          data: { reason: 'memory-promotion-unavailable' },
+          message: 'The proposal could not be saved. Its analysis remains unchanged.',
+        });
+      }
+    }),
     applyProposalReviewAction: memory.applyProposalReviewAction.handler(async ({ errors, input, signal }) => {
       if (await dependencies.isDemo(signal)) {
         throw errors.ForbiddenDemo({
@@ -64,7 +149,7 @@ export const createMemoryRpcRouter = (dependencies: MemoryRpcDependencies) => {
         });
       }
     }),
-    proposalReviews: memory.proposalReviews.handler(async ({ errors, signal }) => {
+    proposalReviews: memory.proposalReviews.handler(async ({ errors, input, signal }) => {
       if (await dependencies.isDemo(signal)) {
         throw errors.ForbiddenDemo({
           data: { reason: 'demo-read-only' },
@@ -72,11 +157,17 @@ export const createMemoryRpcRouter = (dependencies: MemoryRpcDependencies) => {
         });
       }
       try {
-        return parse(memoryProposalReviewSnapshotSchema, await dependencies.listProposalReviews(signal));
+        return parse(memoryProposalReviewSnapshotSchema, await dependencies.listProposalReviews(signal, input));
       } catch (error) {
         signal?.throwIfAborted();
         if (isAbortError(error, signal)) {
           throw error;
+        }
+        if (error instanceof MemoryServiceClientError && error.code === 'not-found') {
+          throw errors.Unavailable({
+            data: { reason: 'not-found' },
+            message: 'This Memory proposal is not pending review or is not accessible.',
+          });
         }
         throw errors.Unavailable({
           data: { reason: 'memory-review-unavailable' },

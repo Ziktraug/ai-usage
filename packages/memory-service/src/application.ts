@@ -65,10 +65,12 @@ import {
 } from './migration';
 import { redactMemoryValue } from './redaction';
 import {
+  type LocalAnalysisPromotionSource,
   type MemoryAuditEvent,
   type MemoryRepository,
   MemoryRepositoryError,
   type PurgeMemoryItemInput,
+  type RecordObservationInput,
 } from './repository';
 import {
   type MemorySearchPage,
@@ -198,6 +200,8 @@ export interface RecordMemoryObservationCommand extends MemoryCommandContext {
 
 export interface CreateMemoryProposalCommand extends MemoryCommandContext {
   readonly guidance: readonly string[];
+  readonly localAnalysisObservation?: Pick<RecordMemoryObservationCommand, 'content' | 'fingerprint' | 'sourceLocator'>;
+  readonly localAnalysisSource?: LocalAnalysisPromotionSource;
   readonly observationIds: readonly MemoryObservationId[];
   readonly projectId: ProjectId | null;
   readonly proposedKind: MemoryKind;
@@ -265,6 +269,7 @@ export interface GetMemoryItemQuery extends MemoryCommandContext {
 
 export interface ListMemoryItemsApplicationQuery extends MemoryCommandContext {
   readonly cursor?: string | null;
+  readonly kind?: MemoryKind | null;
   readonly pageSize: number;
   readonly projectId?: ProjectId | null;
   readonly spaceId: SpaceId;
@@ -273,6 +278,8 @@ export interface ListMemoryItemsApplicationQuery extends MemoryCommandContext {
 
 export interface ListPendingMemoryProposalsQuery extends MemoryCommandContext {
   readonly cursor?: string | null;
+  /** Starts the page at this pending proposal; see `ListMemoryProposalsQuery.fromProposalId`. */
+  readonly fromProposalId?: MemoryProposalId | null;
   readonly pageSize: number;
   readonly spaceId: SpaceId;
 }
@@ -453,6 +460,44 @@ const audit = (
   subjectId: string,
   subjectType: MemoryAuditEvent['subjectType'],
 ): MemoryAuditEvent => ({ action, actor, recordedAt, result, spaceId, subjectId, subjectType });
+
+const prepareObservation = (command: RecordMemoryObservationCommand, clock: () => Date): RecordObservationInput => {
+  if (
+    !(fingerprintPattern.test(command.fingerprint) && validJson(command.content)) ||
+    (command.sourceLocator !== null && !validText(command.sourceLocator, 4096))
+  ) {
+    throw new MemoryRepositoryError('invalid-input', 'record-observation');
+  }
+  const spaceId = command.authorization.activeSpaceId;
+  const redacted = redactMemoryValue(command.content, command.sensitivity);
+  const observationId = memoryObservationIdForFingerprint(spaceId, command.fingerprint);
+  return {
+    audit: audit(
+      'record-memory-observation',
+      command.principal,
+      instantNow(clock),
+      'applied',
+      spaceId,
+      observationId,
+      'memory-observation',
+    ),
+    observation: {
+      captureContextId: command.captureContextId,
+      content: redacted.value,
+      contentHash: memoryContentHash(redacted.value),
+      createdByPrincipal: command.principal,
+      fingerprint: command.fingerprint,
+      id: observationId,
+      observedAt: command.observedAt ?? instantNow(clock),
+      owningSpaceId: spaceId,
+      projectId: command.projectId,
+      redactionRuleSetVersion: redacted.ruleSetVersion,
+      sensitivity: redacted.sensitivity,
+      sourceKind: command.sourceKind,
+      sourceLocator: command.sourceLocator,
+    },
+  };
+};
 
 const mapRepositoryError = (
   operation: MemoryApplicationOperation,
@@ -784,6 +829,22 @@ export const createMemoryApplicationService = (
         if (!proposal) {
           return errorResult(operation, 'not-found');
         }
+        if (proposal.status === 'accepted' && proposal.acceptedMemoryItemId) {
+          const accepted = await repository.getItem(command.spaceId, proposal.acceptedMemoryItemId);
+          if (!accepted || accepted.item.scope !== command.scope || accepted.revision.revisionNumber !== 1) {
+            return errorResult(operation, 'conflict');
+          }
+          if (command.edits) {
+            const draft = redactDraft(command.edits, command.edits.sensitivity);
+            if (
+              draft.sensitivity !== accepted.item.sensitivity ||
+              memoryContentHash(draftValue(draft)) !== memoryContentHash(draftValue(accepted.revision))
+            ) {
+              return errorResult(operation, 'conflict');
+            }
+          }
+          return success(accepted);
+        }
         if (proposal.status !== 'pending') {
           return errorResult(operation, 'conflict');
         }
@@ -916,8 +977,10 @@ export const createMemoryApplicationService = (
     },
     createProposal: async (command) => {
       const operation = 'create-proposal';
-      const proposalId = createMemoryProposalId();
       const spaceId = command.authorization.activeSpaceId;
+      const proposalId = command.localAnalysisSource
+        ? proposalIdFor(spaceId, command.localAnalysisSource.fingerprint)
+        : createMemoryProposalId();
       const resource: AuthorizationResource = command.projectId
         ? { id: command.projectId, kind: 'project', spaceId }
         : { id: spaceId, kind: 'space', spaceId };
@@ -934,12 +997,26 @@ export const createMemoryApplicationService = (
       }
       if (
         !validateDraft(command) ||
-        (command.trustCandidate === 'harvest-accepted' && command.observationIds.length === 0)
+        Boolean(command.localAnalysisSource) !== Boolean(command.localAnalysisObservation) ||
+        (command.trustCandidate === 'harvest-accepted' &&
+          command.observationIds.length === 0 &&
+          !command.localAnalysisObservation)
       ) {
         return errorResult(operation, 'invalid-input');
       }
       try {
         const redacted = redactDraft(command, command.sensitivity);
+        const localAnalysisObservation = command.localAnalysisObservation
+          ? prepareObservation(
+              {
+                ...command,
+                ...command.localAnalysisObservation,
+                captureContextId: null,
+                sourceKind: 'session',
+              },
+              clock,
+            )
+          : undefined;
         const proposal: MemoryProposal = {
           guidance: redacted.guidance,
           id: proposalId,
@@ -967,7 +1044,11 @@ export const createMemoryApplicationService = (
             proposalId,
             'memory-proposal',
           ),
-          observationIds: command.observationIds,
+          observationIds: localAnalysisObservation
+            ? [...command.observationIds, localAnalysisObservation.observation.id]
+            : command.observationIds,
+          ...(localAnalysisObservation ? { localAnalysisObservation } : {}),
+          ...(command.localAnalysisSource ? { localAnalysisSource: command.localAnalysisSource } : {}),
           proposal,
         });
         return success(created);
@@ -1195,6 +1276,7 @@ export const createMemoryApplicationService = (
           authorizationScope,
           ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
           pageSize: query.pageSize,
+          ...(query.kind === undefined ? {} : { kind: query.kind }),
           ...(query.projectId === undefined ? {} : { projectId: query.projectId }),
           spaceId: query.spaceId,
           ...(query.status === undefined ? {} : { status: query.status }),
@@ -1233,6 +1315,7 @@ export const createMemoryApplicationService = (
         const result = await repository.listProposals({
           authorizationScope,
           ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+          ...(query.fromProposalId === undefined ? {} : { fromProposalId: query.fromProposalId }),
           pageSize: query.pageSize,
           spaceId: query.spaceId,
           status: 'pending',
@@ -1378,45 +1461,8 @@ export const createMemoryApplicationService = (
       if (denied) {
         return denied;
       }
-      if (
-        !(fingerprintPattern.test(command.fingerprint) && validJson(command.content)) ||
-        (command.sourceLocator !== null && !validText(command.sourceLocator, 4096))
-      ) {
-        return errorResult(operation, 'invalid-input');
-      }
       try {
-        const redacted = redactMemoryValue(command.content, command.sensitivity);
-        const observationId = memoryObservationIdForFingerprint(spaceId, command.fingerprint);
-        const observedAt = command.observedAt ?? instantNow(clock);
-        const observation: MemoryObservation = {
-          captureContextId: command.captureContextId,
-          content: redacted.value,
-          contentHash: memoryContentHash(redacted.value),
-          createdByPrincipal: command.principal,
-          fingerprint: command.fingerprint,
-          id: observationId,
-          observedAt,
-          owningSpaceId: spaceId,
-          projectId: command.projectId,
-          redactionRuleSetVersion: redacted.ruleSetVersion,
-          sensitivity: redacted.sensitivity,
-          sourceKind: command.sourceKind,
-          sourceLocator: command.sourceLocator,
-        };
-        return success(
-          await repository.recordObservation({
-            audit: audit(
-              'record-memory-observation',
-              command.principal,
-              instantNow(clock),
-              'applied',
-              spaceId,
-              observationId,
-              'memory-observation',
-            ),
-            observation,
-          }),
-        );
+        return success(await repository.recordObservation(prepareObservation(command, clock)));
       } catch (error) {
         return mapRepositoryError(operation, error);
       }

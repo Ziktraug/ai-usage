@@ -77,6 +77,12 @@ state.
 - `./identity`: branded canonical UUID IDs, canonical instants, identity value
   validation, and Space/Person/Device/SCM/Repository/Project/Checkout/Capture
   Context domain contracts.
+- `./distillation-evidence`: bounded original-event packets, source snapshots,
+  progressive windows and source-reference validation.
+- `./session-distillation`: generated account content, immutable analysis and
+  worker lifecycle contracts, exact evidence and compact recall identities.
+- `./distillation-discovery`: bounded Project/session previews, immutable
+  selection requests, analysis library and revision-history read contracts.
 
 This package is pure and owns no storage, transport, authorization adapter, or
 application runtime.
@@ -275,6 +281,12 @@ This is a write-capable local adapter. Production composition is restricted to
 `apps/usage-engine`; Web, CLI, and MCP must use application-service seams.
 
 ## `@ai-usage/memory-service`
+
+- `./analysis-promotion`: explicit local analysis passage promotion through
+  Observation/Proposal ports, with immutable source references and replay identity.
+- `./browse`: bounded accepted-knowledge browse projections; complete revisions
+  remain accessible through exact reads.
+- `./distillation-errors`: closed operational failure categories for clients.
 
 - `.`: protocol-v1 contracts, strict parsers, fixed operation paths, and byte/
   count/deadline bounds.

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "summary": {
+    "text": "The focused report test exited with code 1: report title passed and report rendering failed. The recorded output was truncated, so the exact failing assertion is unknown.",
+    "basis": "observed",
+    "evidence": [{ "eventId": "event:6:8d387007d09cdb47", "quote": "Process exited with code 1\nWarning: truncated output (original character count: 4812)\nOutput:\nPASS report title\nFAIL report rendering\n[... output truncated ...]" }]
+  },
+  "episodes": [
+    {
+      "id": "report-test-truncated-failure",
+      "objective": {
+        "text": "Run the focused report test and identify its failing assertion.",
+        "basis": "reported",
+        "evidence": [{ "eventId": "event:4:f6d055f4783e9db5", "quote": "Run the focused report test and identify the failing assertion." }]
+      },
+      "attempts": [
+        {
+          "text": "The recorded bun test src/report.test.ts invocation returned exit code 1. The visible result names report rendering as failing and report title as passing.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:5:fd0efa90a0bf057a", "quote": "bun test src/report.test.ts" },
+            { "eventId": "event:6:8d387007d09cdb47", "quote": "Process exited with code 1\nWarning: truncated output (original character count: 4812)\nOutput:\nPASS report title\nFAIL report rendering" }
+          ]
+        }
+      ],
+      "result": {
+        "status": "failed",
+        "assertion": {
+          "text": "The test run failed with report rendering listed as the failing test.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:6:8d387007d09cdb47", "quote": "Process exited with code 1\nWarning: truncated output (original character count: 4812)\nOutput:\nPASS report title\nFAIL report rendering" }]
+        }
+      },
+      "difficulties": [
+        {
+          "text": "The tool result explicitly reports truncated output from an original 4,812 characters. The retained excerpt stops after the failing test name.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:6:8d387007d09cdb47", "quote": "Warning: truncated output (original character count: 4812)\nOutput:\nPASS report title\nFAIL report rendering\n[... output truncated ...]" }]
+        }
+      ],
+      "decisions": [],
+      "entryPoints": [
+        {
+          "text": "The historical failing command was bun test src/report.test.ts.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:5:fd0efa90a0bf057a", "quote": "bun test src/report.test.ts" },
+            { "eventId": "event:6:8d387007d09cdb47", "quote": "FAIL report rendering" }
+          ]
+        }
+      ],
+      "openQuestions": [
+        {
+          "text": "Which assertion within report rendering failed, and what were its expected and actual values? The visible excerpt does not supply them.",
+          "basis": "unknown",
+          "evidence": [{ "eventId": "event:6:8d387007d09cdb47", "quote": "FAIL report rendering\n[... output truncated ...]" }]
+        }
+      ]
+    }
+  ],
+  "abstention": null
+}

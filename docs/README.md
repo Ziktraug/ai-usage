@@ -26,6 +26,9 @@ living reference, the living reference wins.
   holds its binding delivered spec).
 - [`session-analysis-sources.md`](session-analysis-sources.md) — what each
   harness can truthfully provide, per metric.
+- [`session-distillation.md`](session-distillation.md) — explicit local Codex
+  analysis batches, the active-harness skill, Session-panel reading, agent
+  search/context, evidence limits and the separate generated corpus.
 - [`provider-quota-data-sources.md`](provider-quota-data-sources.md) — quota
   windows and supported sources per provider (research, re-verified
   2026-08-08).

@@ -1,6 +1,8 @@
+import { MemoryServiceClientError } from '@ai-usage/memory-service/client';
 import type {
   MemoryProposalReviewAction,
   MemoryProposalReviewActionResult,
+  MemoryProposalReviewInput,
   MemoryProposalReviewSnapshot,
   MemorySearchInput,
   MemorySearchPage,
@@ -10,35 +12,42 @@ const spaceId = '0198f179-4837-7000-8000-000000000001';
 const proposalId = '0198f179-4837-7000-8000-000000000010';
 let reviewed = false;
 
-export const readE2EMemoryProposalReviews = (): MemoryProposalReviewSnapshot => ({
-  nextCursor: null,
-  proposals: reviewed
-    ? []
-    : [
-        {
-          guidance: ['Keep the local Memory authority available without an account or network.'],
-          observationSources: [
-            {
-              id: '0198f179-4837-7000-8000-000000000011',
-              observedAt: '2026-08-29T08:30:00.000Z',
-              sensitivity: 'normal',
-              sourceKind: 'commit',
-              sourceLocator: 'commit:0123456789ab',
-            },
-          ],
-          projectId: null,
-          proposalId,
-          proposedByKind: 'service',
-          proposedKind: 'decision',
-          sensitivity: 'normal',
-          structuredContent: { authority: 'sqlite', topology: 'local' },
-          summary: 'The local Memory authority remains SQLite and offline-first.',
-          title: 'Keep local Memory offline-first',
-          trustCandidate: 'harvest-accepted',
-        },
-      ],
-  spaceId,
-});
+export const readE2EMemoryProposalReviews = (
+  position: MemoryProposalReviewInput = {},
+): MemoryProposalReviewSnapshot => {
+  if ('proposalId' in position && (reviewed || position.proposalId !== proposalId)) {
+    throw new MemoryServiceClientError('not-found', 'The E2E Memory proposal is not pending review.');
+  }
+  return {
+    nextCursor: null,
+    proposals: reviewed
+      ? []
+      : [
+          {
+            guidance: ['Keep the local Memory authority available without an account or network.'],
+            observationSources: [
+              {
+                id: '0198f179-4837-7000-8000-000000000011',
+                observedAt: '2026-08-29T08:30:00.000Z',
+                sensitivity: 'normal',
+                sourceKind: 'commit',
+                sourceLocator: 'commit:0123456789ab',
+              },
+            ],
+            projectId: null,
+            proposalId,
+            proposedByKind: 'service',
+            proposedKind: 'decision',
+            sensitivity: 'normal',
+            structuredContent: { authority: 'sqlite', topology: 'local' },
+            summary: 'The local Memory authority remains SQLite and offline-first.',
+            title: 'Keep local Memory offline-first',
+            trustCandidate: 'harvest-accepted',
+          },
+        ],
+    spaceId,
+  };
+};
 
 export const applyE2EMemoryProposalReviewAction = (
   action: MemoryProposalReviewAction,
@@ -102,3 +111,31 @@ export const searchE2EMemory = (input: MemorySearchInput): MemorySearchPage => {
     total: matches ? 1 : 0,
   };
 };
+
+export const browseE2EMemory = (
+  _input: import('@ai-usage/web-contract/memory').MemoryKnowledgeInput,
+): import('@ai-usage/web-contract/memory').MemoryKnowledgePage => ({
+  nextCursor: null,
+  items: searchE2EMemory({
+    cursor: null,
+    includeSpaceWide: false,
+    limit: 10,
+    matchingMode: 'hybrid',
+    projectId: null,
+    query: 'authorized',
+  }).items.map((item) => ({
+    id: item.id,
+    revisionId: item.revisionId,
+    revisionNumber: item.revisionNumber,
+    title: item.title,
+    summary: item.summary,
+    guidance: item.guidance,
+    projectId: item.projectId,
+    kind: item.kind,
+    sensitivity: item.sensitivity,
+    trust: item.trust,
+    createdAt: '2026-08-29T08:30:00.000Z',
+    contentOmitted: false,
+    provenance: { sourceLocator: null, sourceKind: null, analysisRevision: null },
+  })),
+});

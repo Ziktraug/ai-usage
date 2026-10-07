@@ -14,10 +14,13 @@
     onAction,
     proposal,
     spaceId,
+    targeted = false,
   }: {
     onAction: (action: MemoryProposalReviewAction) => Promise<boolean>;
     proposal: Proposal;
     spaceId: string;
+    /** The proposal a review link addressed; it is brought into view and receives focus once. */
+    targeted?: boolean;
   } = $props();
 
   const card = css({
@@ -28,6 +31,7 @@
     borderRadius: 'md',
     bg: 'surface',
   });
+  const targetCard = css({ borderColor: 'accent', boxShadow: '0 0 0 1.5px token(colors.accent)' });
   const summaryBlock = css({ display: 'grid', gap: '6px' });
   const eyebrow = css({
     color: 'muted',
@@ -101,6 +105,14 @@
   const pre = css({ overflowX: 'auto', mt: '8px', p: '10px', borderRadius: 'sm', bg: 'surfaceMuted', color: 'ink' });
 
   const headingId = $derived(`memory-proposal-${proposal.proposalId}`);
+  const localAnalysis = $derived(
+    typeof proposal.structuredContent === 'object' &&
+      proposal.structuredContent !== null &&
+      !Array.isArray(proposal.structuredContent) &&
+      'publicationPolicy' in proposal.structuredContent &&
+      proposal.structuredContent.publicationPolicy === 'local-only',
+  );
+  const sourceLink = (locator: string | null): string | null => (locator?.startsWith('/memory?') ? locator : null);
   let pending = $state(false);
   let message = $state('');
   let editing = $state(false);
@@ -111,6 +123,17 @@
   let sensitivity = $state<'normal' | 'sensitive'>(untrack(() => proposal.sensitivity));
   let structuredContent = $state(untrack(() => JSON.stringify(proposal.structuredContent, null, 2)));
   let rejectionReason = $state('');
+  let article = $state<HTMLElement>();
+  $effect(() => {
+    if (!(targeted && article)) {
+      return;
+    }
+    const element = article;
+    requestAnimationFrame(() => {
+      element.scrollIntoView({ block: 'start' });
+      element.focus({ preventScroll: true });
+    });
+  });
 
   const apply = async (action: MemoryProposalReviewAction): Promise<void> => {
     if (pending) {
@@ -168,9 +191,16 @@
   };
 </script>
 
-<article aria-labelledby={headingId} class={card}>
+<article
+  aria-labelledby={headingId}
+  class={[card, targeted ? targetCard : undefined]}
+  data-memory-proposal={proposal.proposalId}
+  data-memory-proposal-target={targeted ? '' : undefined}
+  tabindex="-1"
+  bind:this={article}
+>
   <div class={summaryBlock}>
-    <p class={eyebrow}>Generated proposal · review required</p>
+    <p class={eyebrow}>{targeted ? 'Requested proposal' : 'Generated proposal'} · review required</p>
     <h2 class={heading} id={headingId}>{proposal.title}</h2>
     {#if proposal.summary}
       <p class={summaryClass}>{proposal.summary}</p>
@@ -180,6 +210,9 @@
       <span class={badge}>{proposal.trustCandidate}</span>
       <span class={badge}>{proposal.sensitivity}</span>
       <span class={badge}>proposed by {proposal.proposedByKind}</span>
+      {#if localAnalysis}
+        <span class={badge}>Local only · remains local after acceptance</span>
+      {/if}
     </div>
   </div>
 
@@ -206,7 +239,11 @@
               <strong>{observation.sourceKind}</strong>
               <time datetime={observation.observedAt}>{observation.observedAt}</time>
             </div>
-            <span class={detailValue}>{observation.sourceLocator ?? 'No source locator'}</span>
+            {#if sourceLink(observation.sourceLocator)}
+              <a href={sourceLink(observation.sourceLocator)}>Read source analysis and evidence</a>
+            {:else}
+              <span class={detailValue}>{observation.sourceLocator ?? 'No source locator'}</span>
+            {/if}
             <span class={detailLabel}>{observation.sensitivity} evidence</span>
           </li>
         {/each}

@@ -385,8 +385,15 @@ test('the skills worktable has no detectable accessibility violations', async ({
 test('Memory has no detectable accessibility violations', async ({ page }) => {
   await page.goto('/memory');
   await waitForHydratedNavigation(page);
-  await expect(page.getByRole('heading', { level: 2, name: 'Keep local Memory offline-first' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Your session library starts here' })).toBeVisible();
+  await expectNoAxeViolations(page);
 
+  await page.getByRole('link', { name: 'Pending review', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Keep local Memory offline-first' })).toBeVisible();
+  await expectNoAxeViolations(page);
+
+  await page.getByRole('link', { name: 'Knowledge', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Search accepted Memory' })).toBeVisible();
   await expectNoAxeViolations(page);
 });
 

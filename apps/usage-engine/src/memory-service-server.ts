@@ -7,7 +7,13 @@ import {
   parseCheckoutResolutionAction,
   parseMemoryProposalReviewAction,
 } from '@ai-usage/memory-service';
+import {
+  createAnalysisPromotionService,
+  parseAnalysisPromotionRequest,
+} from '@ai-usage/memory-service/analysis-promotion';
 import { createMemoryApplicationService, type MemoryApplicationErrorCode } from '@ai-usage/memory-service/application';
+import { projectMemoryItemsBrowsePage } from '@ai-usage/memory-service/browse';
+import { distillationServiceError } from '@ai-usage/memory-service/distillation-errors';
 import {
   createMemoryServiceToken,
   type MemoryServiceToken,
@@ -16,10 +22,18 @@ import {
 } from '@ai-usage/memory-service/node';
 import {
   parseMemoryItemReadRequest,
+  parseMemoryItemsReadRequest,
   parseMemoryProjectContextReadRequest,
   parseMemorySearchReadRequest,
 } from '@ai-usage/memory-service/read-contract';
 import { type LocalIdentityKernel, MemoryIdentityStoreError } from '@ai-usage/memory-sqlite/identity';
+import { type MemoryProposalId, parseMemoryProposalId } from '@ai-usage/platform-core/identity';
+import {
+  DistillationError,
+  distillationBounds,
+  parseSessionAnalysis,
+} from '@ai-usage/platform-core/session-distillation';
+import type { DistillationRuntime } from './distillation-runtime';
 
 const jsonMediaType = 'application/json';
 const protocolHeader = 'x-ai-usage-memory-protocol-version';
@@ -30,6 +44,7 @@ export interface LocalMemoryServiceHandler {
 }
 
 export interface CreateLocalMemoryServiceHandlerOptions {
+  readonly distillation?: DistillationRuntime;
   readonly kernel: LocalIdentityKernel;
   readonly token: MemoryServiceToken;
 }
@@ -120,7 +135,7 @@ const tokenMatches = (request: Request, token: MemoryServiceToken): boolean => {
   return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
 };
 
-const readBoundedJson = async (request: Request): Promise<unknown> => {
+const readBoundedJson = async (request: Request, signal: AbortSignal = request.signal): Promise<unknown> => {
   const contentLengthValue = request.headers.get('content-length');
   if (contentLengthValue !== null) {
     const contentLength = Number(contentLengthValue);
@@ -135,12 +150,17 @@ const readBoundedJson = async (request: Request): Promise<unknown> => {
     throw new Error('missing-body');
   }
   const reader = request.body.getReader();
+  const abortRead = (): void => {
+    reader.cancel(signal.reason).catch(() => undefined);
+  };
+  signal.addEventListener('abort', abortRead, { once: true });
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     while (true) {
-      request.signal.throwIfAborted();
+      signal.throwIfAborted();
       const { done, value } = await reader.read();
+      signal.throwIfAborted();
       if (done) {
         break;
       }
@@ -151,6 +171,7 @@ const readBoundedJson = async (request: Request): Promise<unknown> => {
       chunks.push(value);
     }
   } finally {
+    signal.removeEventListener('abort', abortRead);
     reader.releaseLock();
   }
   const bytes = new Uint8Array(total);
@@ -163,6 +184,7 @@ const readBoundedJson = async (request: Request): Promise<unknown> => {
 };
 
 export const createLocalMemoryServiceHandler = async ({
+  distillation,
   kernel,
   token,
 }: CreateLocalMemoryServiceHandlerOptions): Promise<LocalMemoryServiceHandler> => {
@@ -179,6 +201,16 @@ export const createLocalMemoryServiceHandler = async ({
     personalSpaceId: bootstrap.space.id,
   });
   const memoryApplication = createMemoryApplicationService(authorizer, kernel.memory);
+  const promoteAnalysis = createAnalysisPromotionService({
+    authorizer,
+    repository: kernel.memory,
+    readAnalysis: async (projectId, analysisId) => {
+      if (!distillation) {
+        throw new DistillationError('unsupported-connected');
+      }
+      return parseSessionAnalysis(await distillation.execute({ kind: 'get', projectId, analysisId }));
+    },
+  });
   const memoryAuthorization = { activeSpaceId: bootstrap.space.id, trustedDevice: true } as const;
   const authorize = async (permission: 'manage_project' | 'manage_repository_binding' | 'view_repository_metadata') =>
     await authorizer.check({
@@ -204,6 +236,75 @@ export const createLocalMemoryServiceHandler = async ({
       }
       if (!tokenMatches(request, token)) {
         return errorResponse('authentication-failed', 'Memory service authentication failed.', 401);
+      }
+      if (url.pathname === '/v1/memory-items/list' || url.pathname === '/v1/memory-proposals/from-analysis') {
+        if (request.method !== 'POST') {
+          return new Response(null, { status: 405 });
+        }
+        if ((request.headers.get('content-type') ?? '').split(';', 1)[0]?.trim() !== jsonMediaType) {
+          return errorResponse('invalid-request', 'Memory operation requires JSON.', 415);
+        }
+        try {
+          const body = await readBoundedJson(request);
+          if (url.pathname === '/v1/memory-proposals/from-analysis') {
+            return successResponse(
+              await promoteAnalysis(parseAnalysisPromotionRequest(body), {
+                principal,
+                authorization: memoryAuthorization,
+              }),
+            );
+          }
+          const query = parseMemoryItemsReadRequest(body);
+          const result = await memoryApplication.listMemoryItems({
+            ...query,
+            principal,
+            authorization: memoryAuthorization,
+            spaceId: bootstrap.space.id,
+            status: 'active',
+          });
+          if (result.kind !== 'success') {
+            return memoryReadErrorResponse(result.error.code);
+          }
+          const page = projectMemoryItemsBrowsePage(result.value);
+          if (encoder.encode(JSON.stringify(page)).byteLength > memoryServiceBounds.maxResponseBytes - 256) {
+            return errorResponse('service-unavailable', 'Memory browse response exceeds its byte limit.', 503);
+          }
+          return successResponse(page);
+        } catch (error) {
+          if (error instanceof DistillationError) {
+            const mapped = distillationServiceError(error.code);
+            return errorResponse(mapped.code, `Memory operation: ${mapped.code}.`, mapped.status);
+          }
+          return errorResponse('invalid-request', 'Memory operation could not be applied.', 400);
+        }
+      }
+      if (url.pathname === '/v1/session-distillation') {
+        if (request.method !== 'POST') {
+          return new Response(null, { status: 405 });
+        }
+        if ((request.headers.get('content-type') ?? '').split(';', 1)[0]?.trim() !== jsonMediaType) {
+          return errorResponse('invalid-request', 'Session distillation requires JSON.', 415);
+        }
+        if (!distillation) {
+          return errorResponse('service-unavailable', 'Session distillation is unavailable in this runtime.', 503);
+        }
+        try {
+          const signal = AbortSignal.any([request.signal, AbortSignal.timeout(distillationBounds.operationMs)]);
+          const result = await distillation.execute(await readBoundedJson(request, signal), signal);
+          if (encoder.encode(JSON.stringify(result)).byteLength > memoryServiceBounds.maxResponseBytes - 256) {
+            return errorResponse('service-unavailable', 'Session distillation response exceeds its byte limit.', 503);
+          }
+          return successResponse(result);
+        } catch (error) {
+          if (error instanceof DistillationError) {
+            const mapped = distillationServiceError(error.code);
+            return errorResponse(mapped.code, `Session distillation: ${mapped.code}.`, mapped.status);
+          }
+          if (request.signal.aborted) {
+            return errorResponse('cancelled', 'Session distillation was cancelled.', 409);
+          }
+          return errorResponse('service-unavailable', 'Session distillation operation failed.', 503);
+        }
       }
       if (
         url.pathname === '/v1/memory-search' ||
@@ -282,13 +383,27 @@ export const createLocalMemoryServiceHandler = async ({
         if (cursor !== null && cursor.length > 4096) {
           return errorResponse('invalid-request', 'Memory proposal cursor is invalid.', 400);
         }
+        const proposal = url.searchParams.get('proposal');
+        let fromProposalId: MemoryProposalId | null = null;
+        try {
+          fromProposalId = proposal === null ? null : parseMemoryProposalId(proposal);
+        } catch {
+          return errorResponse('invalid-request', 'Memory proposal identity is invalid.', 400);
+        }
+        if (cursor !== null && fromProposalId !== null) {
+          return errorResponse('invalid-request', 'Memory proposal cursor and identity are exclusive.', 400);
+        }
         const result = await memoryApplication.listPendingProposals({
           authorization: memoryAuthorization,
           ...(cursor === null ? {} : { cursor }),
+          ...(fromProposalId === null ? {} : { fromProposalId }),
           pageSize: memoryServiceBounds.maxProposals,
           principal,
           spaceId: bootstrap.space.id,
         });
+        if (result.kind === 'error' && result.error.code === 'not-found') {
+          return errorResponse('not-found', 'The Memory proposal is not pending review.', 404);
+        }
         if (result.kind === 'error') {
           const forbidden = result.error.code === 'authorization-denied';
           return errorResponse(
@@ -427,6 +542,7 @@ export const createLocalMemoryServiceHandler = async ({
 };
 
 export const startLocalMemoryService = async ({
+  distillation,
   hostname = '127.0.0.1',
   kernel,
   port = 0,
@@ -440,7 +556,7 @@ export const startLocalMemoryService = async ({
   if (!(Number.isSafeInteger(port) && port >= 0 && port <= 65_535)) {
     throw new Error('Memory service port is invalid.');
   }
-  const handler = await createLocalMemoryServiceHandler({ kernel, token });
+  const handler = await createLocalMemoryServiceHandler({ ...(distillation ? { distillation } : {}), kernel, token });
   const server = Bun.serve({
     fetch: async (request, bunServer) => await handler.handle(request, bunServer.requestIP(request)?.address ?? null),
     hostname,

@@ -3,9 +3,9 @@
   import type { MemoryPageData } from './memory-load';
   import MemoryPage from './memory-page.svelte';
 
-  let { data }: { data: MemoryPageData } = $props();
+  let { data, address = '/memory?view=review' }: { data: MemoryPageData; address?: string } = $props();
 </script>
 
 <WebQueryProvider hydrationState={data.queryState}>
-  <MemoryPage {data} />
+  <MemoryPage {address} {data} />
 </WebQueryProvider>

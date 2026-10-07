@@ -20,7 +20,8 @@
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-engine-runtime": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
-    "effect": "^3.21.4"
+    "effect": "^3.21.4",
+    "@ai-usage/report-core": "workspace:*"
   },
   "scripts": {
     "dev": "bun --no-env-file src/dev.ts",

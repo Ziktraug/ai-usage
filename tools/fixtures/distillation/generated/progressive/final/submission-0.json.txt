@@ -1,0 +1,109 @@
+{
+  "kind": "advance",
+  "projectId": "2f70c7f2-e77a-443f-ba88-538325786040",
+  "jobId": "b7fda330-3350-4f21-b631-4ed058c8b32a",
+  "leaseId": "7e8c1706-c068-4131-b590-454f04bba3cc",
+  "packetDigest": "f0755b5f256f52e3160ca0ec0195afd4d0aa45102e55c036b68d2587efffa898",
+  "extractorVersion": "session-distillation-progressive-v1",
+  "snapshotDigest": "0b0b9c82056f3ac620b61613287719c32f1cc2ef4229efaa267bd89cb958d188",
+  "segmentIndex": 0,
+  "content": {
+    "schemaVersion": 1,
+    "summary": {
+      "basis": "inferred",
+      "text": "The stale-read investigation initially favors retaining the cache. An assistant says the tests already pass, but this window contains no recorded test result. A focused direct-read test is launched at the window boundary; its result and the final decision remain to be read.",
+      "evidence": [
+        {
+          "eventId": "event:5:ddcfabdf5b9f8d00",
+          "quote": "Keep the cache and increase its lifetime."
+        },
+        {
+          "eventId": "event:6:1e475bf2efac6ed1",
+          "quote": "All tests pass already."
+        },
+        {
+          "eventId": "event:259:3b6416eff8b87696",
+          "quote": "bun test src/direct-read.test.ts"
+        }
+      ]
+    },
+    "episodes": [
+      {
+        "id": "stale-reads",
+        "objective": {
+          "basis": "reported",
+          "text": "Repair stale reads and verify the final decision.",
+          "evidence": [
+            {
+              "eventId": "event:4:1014566e837acec0",
+              "quote": "Repair stale reads and verify the final decision."
+            }
+          ]
+        },
+        "attempts": [
+          {
+            "basis": "reported",
+            "text": "The assistant claims that all tests already pass; this window provides no output supporting that claim.",
+            "evidence": [
+              {
+                "eventId": "event:6:1e475bf2efac6ed1",
+                "quote": "All tests pass already."
+              }
+            ]
+          },
+          {
+            "basis": "inferred",
+            "text": "A focused direct-read regression command was requested; its result lies outside this window.",
+            "evidence": [
+              {
+                "eventId": "event:259:3b6416eff8b87696",
+                "quote": "bun test src/direct-read.test.ts"
+              }
+            ]
+          }
+        ],
+        "result": {
+          "status": "unresolved",
+          "assertion": {
+            "basis": "unknown",
+            "text": "Validation and the final approach cannot yet be established from this window.",
+            "evidence": []
+          }
+        },
+        "decisions": [
+          {
+            "basis": "reported",
+            "text": "Initial approach: keep the cache and increase its lifetime.",
+            "evidence": [
+              {
+                "eventId": "event:5:ddcfabdf5b9f8d00",
+                "quote": "Keep the cache and increase its lifetime."
+              }
+            ]
+          }
+        ],
+        "difficulties": [],
+        "entryPoints": [
+          {
+            "basis": "inferred",
+            "text": "The recorded command targets src/direct-read.test.ts.",
+            "evidence": [
+              {
+                "eventId": "event:259:3b6416eff8b87696",
+                "quote": "bun test src/direct-read.test.ts"
+              }
+            ]
+          }
+        ],
+        "openQuestions": [
+          {
+            "basis": "unknown",
+            "text": "What does the requested test report, and is the initial cache decision retained?",
+            "evidence": []
+          }
+        ]
+      }
+    ],
+    "abstention": null
+  }
+}

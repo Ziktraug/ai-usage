@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "summary": {
+    "text": "The packet covers an interrupted session. The importer test had started and was still running at the last recorded result; no completed verification or final assistant statement is included, so the test outcome remains unknown.",
+    "basis": "unknown",
+    "evidence": [{ "eventId": "event:6:255975e972a9b56f", "quote": "Process running with session ID 7007\nOutput:\nstarted importer.test.ts\nconnecting to disposable fixture" }]
+  },
+  "episodes": [
+    {
+      "id": "importer-test-with-interrupted-coverage",
+      "objective": {
+        "text": "Run bun test src/importer.test.ts and investigate if the test fails.",
+        "basis": "reported",
+        "evidence": [{ "eventId": "event:4:202cf73a079b89df", "quote": "Run bun test src/importer.test.ts and investigate if it fails." }]
+      },
+      "attempts": [
+        {
+          "text": "The requested focused test was invoked. Its returned output reports a running process with session ID 7007, the importer test starting, and a connection to a disposable fixture.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:5:6f50580ec5186b13", "quote": "bun test src/importer.test.ts" },
+            { "eventId": "event:6:255975e972a9b56f", "quote": "Process running with session ID 7007\nOutput:\nstarted importer.test.ts\nconnecting to disposable fixture" }
+          ]
+        }
+      ],
+      "result": {
+        "status": "unknown",
+        "assertion": {
+          "text": "No final test verdict or completed investigation is covered. The session interruption does not establish that the underlying process was killed, hung, passed, or failed.",
+          "basis": "unknown",
+          "evidence": [{ "eventId": "event:6:255975e972a9b56f", "quote": "Process running with session ID 7007" }]
+        }
+      },
+      "difficulties": [
+        {
+          "text": "Runtime coverage is partial and marks the session interrupted. There is no included completion result or final assistant response after the startup output; subsequent process behavior is uncovered.",
+          "basis": "unknown",
+          "evidence": []
+        }
+      ],
+      "decisions": [],
+      "entryPoints": [
+        {
+          "text": "The recorded verification entry point is bun test src/importer.test.ts.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:4:202cf73a079b89df", "quote": "Run bun test src/importer.test.ts and investigate if it fails." }]
+        }
+      ],
+      "openQuestions": [
+        {
+          "text": "What was the importer's final test outcome, and did it reveal a failure requiring investigation?",
+          "basis": "unknown",
+          "evidence": []
+        }
+      ]
+    }
+  ],
+  "abstention": null
+}

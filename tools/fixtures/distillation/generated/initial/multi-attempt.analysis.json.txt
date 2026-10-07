@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "summary": {
+    "text": "The focused revision-cache test first failed revision isolation. After a first patch, isolation passed but clearing all project revisions failed. A second patch was followed by 5 passing tests and 0 failures in the same focused file.",
+    "basis": "observed",
+    "evidence": [
+      { "eventId": "event:6:89b542f44baf0aec", "quote": "FAIL isolates revisions: expected revision r2, received r1" },
+      { "eventId": "event:11:3096b3eb8cbc9954", "quote": "PASS isolates revisions\nFAIL clears all project revisions: expected cache size 0, received 2" },
+      { "eventId": "event:16:8f4693cd14812369", "quote": "Process exited with code 0\nPASS isolates revisions\nPASS clears all project revisions\n5 pass\n0 fail" }
+    ]
+  },
+  "episodes": [
+    {
+      "id": "revision-isolation-and-project-invalidation",
+      "objective": {
+        "text": "Fix stale revision results in src/revision-cache.ts while preserving distinct results for different revisions and showing the regression test.",
+        "basis": "reported",
+        "evidence": [{ "eventId": "event:4:85e47f87fb73d0fa", "quote": "Fix the stale revision result in src/revision-cache.ts. Preserve separate results for different revisions and show the regression test." }]
+      },
+      "attempts": [
+        {
+          "text": "The initial bun test src/revision-cache.test.ts run failed isolation: expected revision r2, received r1. It returned exit code 1 with 4 pass and 1 fail.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:5:89a6b22e3a0a23b2", "quote": "bun test src/revision-cache.test.ts" },
+            { "eventId": "event:6:89b542f44baf0aec", "quote": "Process exited with code 1\nFAIL isolates revisions: expected revision r2, received r1\n4 pass\n1 fail" }
+          ]
+        },
+        {
+          "text": "The assistant hypothesized that the cache key omitted the revision and chose to add it to the key; this was a stated hypothesis, not a demonstrated production root cause.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:7:412a64ff936285c3", "quote": "The cache key may omit the revision. I will add it to the key." }]
+        },
+        {
+          "text": "The first patch changed the key from projectId to a project-and-revision string and the patch tool reported success. The next focused run passed revision isolation but failed project invalidation: expected cache size 0, received 2, with 4 pass and 1 fail overall.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:8:53fb425d68549942", "quote": "-const key = projectId;\\n+const key = `${projectId}:${revision}`;" },
+            { "eventId": "event:9:c17969df744790d5", "quote": "Success. Updated the following files:\nM src/revision-cache.ts" },
+            { "eventId": "event:11:3096b3eb8cbc9954", "quote": "Process exited with code 1\nPASS isolates revisions\nFAIL clears all project revisions: expected cache size 0, received 2\n4 pass\n1 fail" }
+          ]
+        },
+        {
+          "text": "The second patch replaced the single project-key deletion with iteration deleting keys that start with the project prefix. The patch tool reported success; the following focused run returned exit code 0 with isolation and project invalidation both passing, 5 pass and 0 fail.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:13:86a152c38c5b7b88", "quote": "-cache.delete(projectId);\\n+for (const key of cache.keys()) {\\n+  if (key.startsWith(`${projectId}:`)) cache.delete(key);\\n+}" },
+            { "eventId": "event:14:5219d7a292ff31a8", "quote": "Success. Updated the following files:\nM src/revision-cache.ts" },
+            { "eventId": "event:16:8f4693cd14812369", "quote": "Process exited with code 0\nPASS isolates revisions\nPASS clears all project revisions\n5 pass\n0 fail" }
+          ]
+        }
+      ],
+      "result": {
+        "status": "observed-success",
+        "assertion": {
+          "text": "The final focused revision-cache test run passed all 5 tests with exit code 0; this establishes the recorded regression-file outcome.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:16:8f4693cd14812369", "quote": "Process exited with code 0\nPASS isolates revisions\nPASS clears all project revisions\n5 pass\n0 fail" }]
+        }
+      },
+      "difficulties": [
+        {
+          "text": "The first correction was insufficient for the full focused file: project invalidation still left 2 cache entries even though revision isolation passed.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:11:3096b3eb8cbc9954", "quote": "PASS isolates revisions\nFAIL clears all project revisions: expected cache size 0, received 2" }]
+        },
+        {
+          "text": "The assistant explicitly reported not running the full suite or reproducing the production incident.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:17:7e7c9ac94f5d797e", "quote": "I did not run the full suite or reproduce the production incident." }]
+        }
+      ],
+      "decisions": [
+        {
+          "text": "The assistant chose to add revision to the cache key after proposing that its omission might explain the isolation failure.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:7:412a64ff936285c3", "quote": "The cache key may omit the revision. I will add it to the key." }]
+        },
+        {
+          "text": "After the invalidation failure, the assistant chose to delete every cache key with the project's prefix.",
+          "basis": "reported",
+          "evidence": [{ "eventId": "event:12:0475dcbba9307735", "quote": "I will change invalidation to delete every key with this project prefix." }]
+        }
+      ],
+      "entryPoints": [
+        {
+          "text": "The historical edit target was src/revision-cache.ts.",
+          "basis": "observed",
+          "evidence": [{ "eventId": "event:14:5219d7a292ff31a8", "quote": "M src/revision-cache.ts" }]
+        },
+        {
+          "text": "The recorded regression command was bun test src/revision-cache.test.ts; its final result covered isolates revisions and clears all project revisions.",
+          "basis": "observed",
+          "evidence": [
+            { "eventId": "event:15:71f9c7558231b954", "quote": "bun test src/revision-cache.test.ts" },
+            { "eventId": "event:16:8f4693cd14812369", "quote": "PASS isolates revisions\nPASS clears all project revisions" }
+          ]
+        }
+      ],
+      "openQuestions": [
+        {
+          "text": "Whether these changes resolve the production incident and pass the full suite remains unknown; the focused pass alone does not establish either outcome.",
+          "basis": "unknown",
+          "evidence": [{ "eventId": "event:17:7e7c9ac94f5d797e", "quote": "I did not run the full suite or reproduce the production incident." }]
+        }
+      ]
+    }
+  ],
+  "abstention": null
+}

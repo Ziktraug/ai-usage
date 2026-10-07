@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "normalizationVersion": 1,
+  "redactionVersion": 1,
+  "source": {
+    "harnessKey": "codex",
+    "machineId": "synthetic-machine",
+    "projectId": "synthetic-ai-usage",
+    "nativeSessionId": "00000000-0000-4000-8000-000000000002",
+    "reportAnchor": null,
+    "version": {
+      "digest": "210e451c306f0c771b44ac6e1fd0d6f861cd7e88d1776bb38daa1d8b03fce594",
+      "bytes": 3185,
+      "totalBytes": 3185,
+      "modifiedAtMs": 1791150960502.6482
+    }
+  },
+  "packetDigest": "76cfdeaad52213f92a481c31ea761dfed4f27ff8723037876dbfd12bba783ca7",
+  "events": [
+    {
+      "id": "event:4:aa53704371e378d5",
+      "line": 4,
+      "kind": "user",
+      "text": "Reproduce the parser failure by running bun test src/parser.test.ts.",
+      "timestamp": "2026-01-02T09:00:03.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:5:4deb8d75b94cbe02",
+      "line": 5,
+      "kind": "tool-call",
+      "text": "{\"cmd\":\"bun test src/parser.test.ts\"}",
+      "timestamp": "2026-01-02T09:00:04.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": "exec_command",
+      "callId": "unresolved-test-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:6:9a4c52b0de17dd0f",
+      "line": 6,
+      "kind": "tool-result",
+      "text": "Process exited with code 1\nerror: Cannot find package '@synthetic/format' from '/synthetic/ai-usage/src/parser.ts'\nNo tests executed.",
+      "timestamp": "2026-01-02T09:00:05.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": "unresolved-test-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:7:4e6e36dbda6b9f27",
+      "line": 7,
+      "kind": "tool-call",
+      "text": "{\"cmd\":\"bun install --frozen-lockfile\"}",
+      "timestamp": "2026-01-02T09:00:06.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": "exec_command",
+      "callId": "unresolved-install-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:8:c4d4af03f6f7e8e9",
+      "line": 8,
+      "kind": "tool-result",
+      "text": "Process exited with code 1\nGET https://registry.invalid/@synthetic%2fformat failed: ENOTFOUND registry.invalid",
+      "timestamp": "2026-01-02T09:00:07.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": "unresolved-install-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:9:1d42b5b52534f492",
+      "line": 9,
+      "kind": "tool-call",
+      "text": "{\"cmd\":\"bun install --offline --frozen-lockfile\"}",
+      "timestamp": "2026-01-02T09:00:08.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": "exec_command",
+      "callId": "unresolved-offline-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:10:3ca366e716d0295d",
+      "line": 10,
+      "kind": "tool-result",
+      "text": "Process exited with code 1\nMissing cached tarball: @synthetic/format@1.0.0",
+      "timestamp": "2026-01-02T09:00:09.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": "unresolved-offline-call",
+      "truncated": false,
+      "redacted": false
+    },
+    {
+      "id": "event:11:1eb88ff7b1cc0701",
+      "line": 11,
+      "kind": "assistant",
+      "text": "Blocked before the parser test could run. The package is absent, registry lookup failed, and its tarball is not cached. The original parser failure is not yet reproduced.",
+      "timestamp": "2026-01-02T09:00:10.000Z",
+      "nativeTurnId": "unresolved-failure-turn",
+      "roundId": "prompt:prompt-1",
+      "toolName": null,
+      "callId": null,
+      "truncated": false,
+      "redacted": false
+    }
+  ],
+  "coverage": {
+    "scope": "session-only",
+    "status": "complete",
+    "lines": 12,
+    "includedEvents": 8,
+    "exclusions": [],
+    "childrenNotAnalyzed": null,
+    "childDiscovery": "not-performed",
+    "completion": "completed"
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "exercise": "independent fresh-agent recall, synthetic snapshot only",
+  "startingSelector": {
+    "checkout": "/synthetic/ai-usage",
+    "suppliedProjectOrAnalysisIds": false
+  },
+  "provenance": {
+    "readInstructions": [
+      "AGENTS.md",
+      "skills/session-distillation/SKILL.md"
+    ],
+    "usedOnlyPublicAnalysesCommandsForEvidence": true,
+    "directDatabaseOrTranscriptReads": false,
+    "readOracleFixtureSource": false,
+    "readPriorEvaluationOutputs": false,
+    "engineMutations": false,
+    "operatorDefaultPathsUsed": false
+  },
+  "scope": {
+    "projectId": "2f70c7f2-e77a-443f-ba88-538325786040",
+    "analysisId": "af81f8c2-0cec-4c79-ab85-4242ebfa9101",
+    "revision": 1,
+    "packetDigest": "518a332791b12555bf0fa54f9ff60ef803a0a1c0c660110f9f1b6eb65bbfb727",
+    "sourceDigest": "0b0b9c82056f3ac620b61613287719c32f1cc2ef4229efaa267bd89cb958d188"
+  },
+  "metrics": {
+    "commandsAttempted": 10,
+    "commandsSucceeded": 10,
+    "commandsFailed": 0,
+    "naturalSearchResults": 1,
+    "literalSearchResults": 1,
+    "evidenceRequests": 5,
+    "evidenceEventsOpened": 5,
+    "allEvidenceAvailable": true,
+    "allEvidenceIdentityMatched": true,
+    "exactCompactResponseUtf8Bytes": 3409,
+    "exactFullAnalysisResponseUtf8Bytes": 4348,
+    "compactByteDifference": 939,
+    "compactByteReductionPercent": 21.596136154553818,
+    "compactDeclaredBytesMatchExactResponse": true,
+    "totalCliStdoutUtf8Bytes": 15330,
+    "totalCliStderrUtf8Bytes": 0,
+    "tokenSavingsMeasured": false,
+    "compactOmittedAnalyses": 0,
+    "compactOmittedEpisodes": 0
+  },
+  "answers": {
+    "staleReads": {
+      "conclusion": "The final recorded decision was to replace the cache with direct reads.",
+      "finalDecisionEvent": "event:341:772a8c4b662b9bc9",
+      "supersededDecision": "Keep the cache and increase its lifetime.",
+      "supersededDecisionEvent": "event:5:ddcfabdf5b9f8d00",
+      "validation": "Recorded focused command bun test src/direct-read.test.ts has tool output 12 pass, 0 fail.",
+      "commandEvent": "event:259:3b6416eff8b87696",
+      "outputEvent": "event:260:71a97e12a8fd6e59",
+      "pairing": "Tool call and result share callId final-validation.",
+      "unsupportedClaim": "All tests pass already.",
+      "unsupportedClaimEvent": "event:6:1e475bf2efac6ed1"
+    },
+    "literalOutput": {
+      "query": "12 pass, 0 fail",
+      "mode": "literal",
+      "found": true,
+      "originalEvidenceStatus": "available",
+      "originalEvent": "event:260:71a97e12a8fd6e59",
+      "originalKind": "tool-result",
+      "originalTruncated": false,
+      "originalRedacted": false
+    },
+    "broaderSuccess": {
+      "fullSuiteEstablished": false,
+      "deploymentEstablished": false,
+      "mergeEstablished": false,
+      "implementedPatchEstablished": false,
+      "reason": "The retrieved snapshot establishes a reported decision and a focused recorded test result. It does not establish an implementation patch or broader validation/publication. Absence of establishment is not proof those actions never happened."
+    }
+  },
+  "limitations": {
+    "coverage": {
+      "snapshotCoverage": "complete",
+      "textCoverage": "partial",
+      "scope": "session-only",
+      "status": "partial",
+      "lines": 342,
+      "includedEvents": 338,
+      "exclusions": [
+        {
+          "reason": "oversized-record",
+          "count": 1
+        },
+        {
+          "reason": "text-budget",
+          "count": 1
+        },
+        {
+          "reason": "identity-budget",
+          "count": 303
+        }
+      ],
+      "childrenNotAnalyzed": null,
+      "childDiscovery": "not-performed",
+      "completion": "completed"
+    },
+    "recordedTestPrecedesFinalDecision": true,
+    "liveFixOrCurrentRuntimeVerified": false,
+    "futureDataUsed": false,
+    "semanticSearchClaimed": false,
+    "scopeAmbiguityObserved": false,
+    "retrievalAmbiguityObserved": false,
+    "falseCertaintyObserved": false,
+    "failedAttempts": [],
+    "usabilityObservations": [
+      "Checkout discovery returned the exact Project scope and one available analysis without guessed IDs.",
+      "Task mode and literal mode each returned one relevant account and the stale-reads episode with no omitted analyses.",
+      "The 4096-byte compact context returned all account episodes and citations; selected events could be verified directly without transcript access.",
+      "Search returns account summary and episode IDs, so literal matching evidence requires the context/get and evidence steps.",
+      "The output preserves supersession, reported versus observed evidence, and incomplete source/child coverage.",
+      "Five proof responses were available and matched the immutable analysis, packet and source digests.",
+      "This is one synthetic case; no general retrieval quality or live-store safety conclusion follows."
+    ]
+  }
+}

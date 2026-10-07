@@ -48,6 +48,7 @@ export {
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
+  queryDistillationSessionMetadata,
   queryLatestLocalProviderQuotaObservations,
   queryLatestProviderQuotaObservations,
   queryLocalMergeBundle,
