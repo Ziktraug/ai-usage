@@ -3385,6 +3385,54 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
     }),
   );
 
+/** Bounded metadata discovery; authority and exact source mapping filter before selection. */
+export const queryDistillationSessionMetadata = (input: {
+  dbPath: string;
+  revision: string;
+  machineId: string;
+  projectSourceIds: readonly string[];
+  since: string | null;
+  until: string | null;
+  limit: number;
+}): Effect.Effect<{ rowId: string; label: string; sessionDate: string | null }[], UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        if (
+          !Number.isSafeInteger(input.limit) ||
+          input.limit < 1 ||
+          input.limit > 10 ||
+          input.projectSourceIds.length < 1 ||
+          input.projectSourceIds.length > 100
+        ) {
+          throw new Error('Invalid metadata discovery limits');
+        }
+        const rows = db
+          .query(`SELECT row_id AS rowId,
+          COALESCE(json_extract(source_row_json,'$.sessionLabel'),json_extract(source_row_json,'$.name'),'Codex session') AS label,
+          json_extract(source_row_json,'$.date') AS sessionDate
+        FROM served_report_rows WHERE revision=? AND source_authority='local-observed' AND machine_id=?
+        AND json_extract(source_row_json,'$.source.harnessKey')='codex'
+        AND json_extract(source_row_json,'$.projectSourceId') IN (${input.projectSourceIds.map(() => '?').join(',')})
+        AND (? IS NULL OR json_extract(source_row_json,'$.date')>=?)
+        AND (? IS NULL OR json_extract(source_row_json,'$.date')<?)
+        ORDER BY json_extract(source_row_json,'$.date') DESC,row_id LIMIT ?`)
+          .all(
+            input.revision,
+            input.machineId,
+            ...input.projectSourceIds,
+            input.since,
+            input.since,
+            input.until,
+            input.until,
+            input.limit,
+          );
+        return rows as { rowId: string; label: string; sessionDate: string | null }[];
+      },
+      catch: (cause) => usageStoreReadError('queryDistillationSessionMetadata', input.dbPath, cause),
+    }),
+  );
+
 const queryUsageMachineFleetWithDatabase = (
   db: SqliteDatabase,
   input: QueryUsageMachineFleetInput,

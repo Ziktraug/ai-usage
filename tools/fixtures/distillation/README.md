@@ -52,3 +52,14 @@ The first real active-harness generations and their checkpoint review are
 recorded in `evaluation.md` and `evaluation.json`. `generated/initial/` retains
 the unchanged model outputs and explicitly labeled review-time packets; its
 manifest records hashes and the unavailable initial-input provenance.
+
+The progressive follow-up is archived in
+[`generated/progressive/evaluation.json`](generated/progressive/evaluation.json).
+It keeps both development attempts, exact claimed packets, authored checkpoint
+outputs, submission envelopes and publication receipts as byte-preserved
+`.json.txt` files. The long-session oracle is declared in
+`apps/usage-engine/src/fixtures/distillation-long-session.ts`. The final attempt
+crossed both old limits, retained a tool call/result across a window boundary,
+and resumed consolidation after restarting only its disposable engine. It is a
+single synthetic case with shared evaluator context, not a blind accuracy or
+real-history quality estimate. Earlier generation archives are unchanged.

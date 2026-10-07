@@ -48,6 +48,16 @@ export type MemoryServiceErrorCode =
   | 'not-found'
   | 'protocol-mismatch'
   | 'request-too-large'
+  | 'worker-busy'
+  | 'lease-expired'
+  | 'conflict'
+  | 'source-modified'
+  | 'version-incompatible'
+  | 'cancelled'
+  | 'storage-unavailable'
+  | 'selection-stale'
+  | 'mapping-required'
+  | 'unsupported-mode'
   | 'service-unavailable';
 
 export interface MemoryResolutionReviewSnapshot {
@@ -494,6 +504,16 @@ export const parseMemoryServiceResponse = <Value>(
       'not-found',
       'protocol-mismatch',
       'request-too-large',
+      'worker-busy',
+      'lease-expired',
+      'conflict',
+      'source-modified',
+      'version-incompatible',
+      'cancelled',
+      'storage-unavailable',
+      'selection-stale',
+      'mapping-required',
+      'unsupported-mode',
       'service-unavailable',
     ].includes(value.error.code)
   ) {

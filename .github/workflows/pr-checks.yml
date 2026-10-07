@@ -173,6 +173,7 @@ jobs:
       - run: bun x playwright install --with-deps chromium
       - run: bun tools/retry-on-dev-server-hang.ts bun run test:e2e-demo
       - run: bun run test:e2e-production
+      - run: AI_USAGE_MEMORY_BROWSER_PRODUCTION=1 bun run test:e2e-memory
       - run: bun run --cwd apps/web benchmark:session-scroll
       - name: Upload production browser failure evidence
         if: failure()

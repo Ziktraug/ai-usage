@@ -1,0 +1,1 @@
+{"id":"b7fda330-3350-4f21-b631-4ed058c8b32a","state":"queued","attempt":1,"errorCode":null,"analysisId":null,"progress":{"snapshotDigest":"0b0b9c82056f3ac620b61613287719c32f1cc2ef4229efaa267bd89cb958d188","segmentIndex":1,"stage":"consolidation","completedSegments":2}}

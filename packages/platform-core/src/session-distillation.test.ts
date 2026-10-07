@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   distillationBounds,
+  parseDistillationEvidenceResult,
   parseDistillationRequest,
   parseSessionAnalysisContent,
   type SessionAnalysisContent,
@@ -25,6 +26,49 @@ const content = (): SessionAnalysisContent => ({
 });
 
 describe('generated session analysis contract', () => {
+  test('preserves exact proof identity for changed and denied sources and rejects mismatched available events', () => {
+    const identity = {
+      analysisId: 'analysis-one',
+      packetDigest: 'a'.repeat(64),
+      sourceDigest: 'b'.repeat(64),
+      eventIds: ['event-one'],
+    };
+    for (const status of ['changed', 'denied', 'unavailable'] as const) {
+      const response = { status, events: [] as [], identity };
+      expect(parseDistillationEvidenceResult(response)).toEqual(response);
+    }
+    expect(parseDistillationEvidenceResult({ status: 'unavailable', events: [] })).toEqual({
+      status: 'unavailable',
+      events: [],
+    });
+    expect(() => parseDistillationEvidenceResult({ status: 'available', events: [], identity })).toThrow(
+      'invalid-evidence-identity',
+    );
+    const event = {
+      ...tool,
+      id: 'event-one',
+      line: 2,
+      callId: null,
+      nativeTurnId: null,
+      roundId: null,
+      redacted: true,
+      timestamp: null,
+      toolName: null,
+      truncated: false,
+    };
+    expect(parseDistillationEvidenceResult({ status: 'available', events: [event], identity })).toEqual({
+      status: 'available',
+      events: [event],
+      identity,
+    });
+    expect(() =>
+      parseDistillationEvidenceResult({
+        status: 'changed',
+        events: [],
+        identity: { ...identity, sourceDigest: 'wrong' },
+      }),
+    ).toThrow('invalid-evidence-identity');
+  });
   test('accepts abstention, empty episodes and recorded reports without promoting their truth', () => {
     const result = parseSessionAnalysisContent({ ...content(), abstention: 'No durable lesson is supported.' });
     expect(result.episodes).toEqual([]);

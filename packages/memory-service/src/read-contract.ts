@@ -6,7 +6,13 @@ import {
   type SpaceId,
 } from '@ai-usage/platform-core/identity';
 import { type MemoryProjectContext, memoryProjectContextBounds } from './application';
-import { type MemoryItemResult, memoryKinds, parseCurrentMemoryItemResult, parseMemoryItemResult } from './domain';
+import {
+  type MemoryItemResult,
+  type MemoryKind,
+  memoryKinds,
+  parseCurrentMemoryItemResult,
+  parseMemoryItemResult,
+} from './domain';
 import {
   type MemorySearchParameters,
   type NormalizedMemorySearchParameters,
@@ -14,6 +20,35 @@ import {
 } from './search';
 
 export type MemorySearchReadRequest = Omit<MemorySearchParameters, 'spaceId'>;
+
+export interface MemoryItemsReadRequest {
+  readonly cursor?: string | null;
+  readonly kind?: MemoryKind | null;
+  readonly pageSize: number;
+  readonly projectId?: ReturnType<typeof parseProjectId> | null;
+}
+
+export const parseMemoryItemsReadRequest = (value: unknown): MemoryItemsReadRequest => {
+  if (
+    !(
+      isRecord(value) &&
+      hasOnlyKeys(value, ['cursor', 'projectId', 'pageSize', 'kind']) &&
+      Number.isSafeInteger(value.pageSize) &&
+      Number(value.pageSize) > 0 &&
+      Number(value.pageSize) <= 20 &&
+      (value.cursor == null || (typeof value.cursor === 'string' && value.cursor.length <= 4096)) &&
+      (value.kind == null || memoryKinds.includes(value.kind as MemoryKind))
+    )
+  ) {
+    throw new Error('Invalid Memory browse request.');
+  }
+  return {
+    pageSize: Number(value.pageSize),
+    cursor: value.cursor == null ? null : String(value.cursor),
+    projectId: value.projectId == null ? null : parseProjectId(value.projectId),
+    kind: value.kind == null ? null : (value.kind as MemoryKind),
+  };
+};
 
 export interface MemoryItemReadRequest {
   readonly itemId: ReturnType<typeof parseMemoryItemId>;

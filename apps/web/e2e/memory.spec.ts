@@ -1,7 +1,7 @@
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 
 test('reviews provenance and edits a generated Memory proposal before accepting it', async ({ page }) => {
-  await page.goto('/memory');
+  await page.goto('/memory?view=review');
   await waitForHydratedNavigation(page);
 
   await expect(page.getByRole('heading', { level: 1, name: 'Memory' })).toBeVisible();
@@ -10,6 +10,7 @@ test('reviews provenance and edits a generated Memory proposal before accepting 
   await expect(page.getByText('commit:0123456789ab')).toBeVisible();
   await expect(page.getByText('harvest-accepted', { exact: true })).toBeVisible();
 
+  await page.getByRole('link', { name: 'Knowledge', exact: true }).click();
   await page.getByLabel('Memory query').fill('authorized ranking');
   await page.getByRole('button', { name: 'Search Memory' }).click();
   await expect(page.getByRole('heading', { level: 3, name: 'Authorize before ranking' })).toBeVisible();
@@ -18,6 +19,7 @@ test('reviews provenance and edits a generated Memory proposal before accepting 
   await expect(page.getByText('revision 2 ·')).toBeVisible();
   await expect(page.getByText('provenance commit · accepted-proposal-evidence')).toBeVisible();
 
+  await page.getByRole('link', { name: 'Pending review', exact: true }).click();
   await page.getByRole('button', { name: 'Edit before accepting' }).click();
   await page.getByLabel('Title').fill('Keep reviewed Memory offline-first');
   await page.getByLabel('Sensitivity').selectOption('sensitive');

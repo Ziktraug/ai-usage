@@ -10,7 +10,12 @@ import {
 
 /** Generated accounts are a separate local corpus, never accepted Memory guidance. */
 export const DISTILLATION_SCHEMA_VERSION = 1 as const;
+const EVIDENCE_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 export const DISTILLATION_EXTRACTOR_VERSION = 'session-distillation-v1' as const;
+export const DISTILLATION_PROGRESSIVE_EXTRACTOR_VERSION = 'session-distillation-progressive-v1' as const;
+export type DistillationExtractorVersion =
+  | typeof DISTILLATION_EXTRACTOR_VERSION
+  | typeof DISTILLATION_PROGRESSIVE_EXTRACTOR_VERSION;
 export const distillationBounds = {
   sessions: 10,
   outputBytes: 48 * 1024,
@@ -24,6 +29,8 @@ export const distillationBounds = {
   attempts: 3,
   operationMs: 30_000,
   searchResults: 20,
+  stepsPerRun: 8,
+  checkpointBytes: 48 * 1024,
 } as const;
 
 export type AssertionBasis = 'observed' | 'reported' | 'inferred' | 'unknown';
@@ -249,7 +256,14 @@ export interface DistillationJobView {
   attempt: number;
   errorCode: string | null;
   id: string;
+  progress?: DistillationProgress;
   state: DistillationJobState;
+}
+export interface DistillationProgress {
+  completedSegments: number;
+  segmentIndex: number;
+  snapshotDigest: string;
+  stage: 'segment' | 'consolidation';
 }
 export interface AnalysisRevisionMetadata {
   createdAt: string;
@@ -264,7 +278,7 @@ export interface AnalysisRevisionMetadata {
 export interface SessionAnalysis extends AnalysisRevisionMetadata {
   content: SessionAnalysisContent;
   coverage: DistillationEvidenceCoverage;
-  extractorVersion: typeof DISTILLATION_EXTRACTOR_VERSION;
+  extractorVersion: DistillationExtractorVersion;
   normalizationVersion: number;
   producer: { kind: 'active-harness'; sessionId: string | null; attribution: 'worker-declared' | 'unknown' };
   schemaVersion: typeof DISTILLATION_SCHEMA_VERSION;
@@ -279,9 +293,16 @@ export interface DistillationStatus {
   sourceStatus: 'unchecked';
   state: Exclude<DistillationJobState, 'published'> | 'not-analyzed' | 'available';
 }
-export type DistillationEvidenceResult =
+export interface DistillationEvidenceIdentity {
+  analysisId: string;
+  eventIds: string[];
+  packetDigest: string;
+  sourceDigest: string;
+}
+export type DistillationEvidenceResult = (
   | { status: 'available'; events: DistillationEvidenceEvent[] }
-  | { status: 'changed' | 'unavailable'; events: [] };
+  | { status: 'changed' | 'unavailable' | 'denied'; events: [] }
+) & { identity?: DistillationEvidenceIdentity };
 export interface DistillationCandidate {
   eligible: boolean;
   machineId: string;
@@ -291,8 +312,9 @@ export interface DistillationCandidate {
   selection: DistillationSelection;
 }
 export interface DistillationLease {
+  checkpoint?: SessionAnalysisContent | null;
   expiresAt: string;
-  extractorVersion: typeof DISTILLATION_EXTRACTOR_VERSION;
+  extractorVersion: DistillationExtractorVersion;
   job: DistillationJobView;
   leaseId: string;
   packet: DistillationEvidencePacket;
@@ -310,21 +332,38 @@ export type DistillationRequest =
       revisionKey: string | null;
     }
   | { kind: 'claim'; projectId: string; jobId: string }
+  | { kind: 'segment'; projectId: string; jobId: string; snapshotDigest: string; segmentIndex: number }
   | {
-      kind: 'submit';
+      kind: 'submit' | 'advance';
       projectId: string;
       jobId: string;
       leaseId: string;
       packetDigest: string;
-      extractorVersion: typeof DISTILLATION_EXTRACTOR_VERSION;
+      extractorVersion: DistillationExtractorVersion;
       content: SessionAnalysisContent;
+      snapshotDigest?: string;
+      segmentIndex?: number;
     }
   | { kind: 'cancel' | 'retry'; projectId: string; jobId: string }
   | { kind: 'status'; selection: DistillationSelection }
   | ({ kind: 'get'; analysisId: string } & AnalysisReadScope)
-  | ({ kind: 'evidence'; analysisId: string; eventIds: string[] } & AnalysisReadScope)
-  | { kind: 'search'; projectId: string; query: string; limit: number }
-  | { kind: 'context'; projectId: string; query: string; maxBytes: number }
+  | ({
+      kind: 'evidence';
+      analysisId: string;
+      eventIds: string[];
+      identity?: { packetDigest: string; sourceDigest: string };
+    } & AnalysisReadScope)
+  | { kind: 'search'; projectId: string; query: string; limit: number; mode?: 'literal' | 'task' }
+  | { kind: 'context'; projectId: string; query: string; maxBytes: number; mode?: 'literal' | 'task' }
+  | { kind: 'removal-preview'; projectId: string; analysisId: string }
+  | {
+      kind: 'remove';
+      projectId: string;
+      analysisId: string;
+      mode: 'withdraw' | 'purge';
+      confirmed: true;
+      preserveKnowledge: true;
+    }
   | { kind: 'cleanup'; projectId: string; before: string };
 
 const parseSelection = (value: unknown): DistillationSelection => {
@@ -376,9 +415,32 @@ export const parseDistillationRequest = (value: unknown): DistillationRequest =>
     strictKeys(entry, ['kind', 'projectId', 'jobId']);
     return { kind, projectId: projectId(entry.projectId), jobId: distillationText(entry.jobId) };
   }
-  if (kind === 'submit') {
-    strictKeys(entry, ['kind', 'projectId', 'jobId', 'leaseId', 'packetDigest', 'extractorVersion', 'content']);
-    if (entry.extractorVersion !== DISTILLATION_EXTRACTOR_VERSION) {
+  if (kind === 'segment') {
+    strictKeys(entry, ['kind', 'projectId', 'jobId', 'snapshotDigest', 'segmentIndex']);
+    return {
+      kind,
+      projectId: projectId(entry.projectId),
+      jobId: distillationText(entry.jobId),
+      snapshotDigest: distillationText(entry.snapshotDigest, 64),
+      segmentIndex: distillationInteger(entry.segmentIndex, 0, Number.MAX_SAFE_INTEGER),
+    };
+  }
+  if (kind === 'submit' || kind === 'advance') {
+    strictKeys(entry, [
+      'kind',
+      'projectId',
+      'jobId',
+      'leaseId',
+      'packetDigest',
+      'extractorVersion',
+      'content',
+      ...('snapshotDigest' in entry ? ['snapshotDigest'] : []),
+      ...('segmentIndex' in entry ? ['segmentIndex'] : []),
+    ]);
+    if (
+      entry.extractorVersion !== DISTILLATION_EXTRACTOR_VERSION &&
+      entry.extractorVersion !== DISTILLATION_PROGRESSIVE_EXTRACTOR_VERSION
+    ) {
       throw new DistillationError('extractor-version-mismatch');
     }
     return {
@@ -387,8 +449,12 @@ export const parseDistillationRequest = (value: unknown): DistillationRequest =>
       jobId: distillationText(entry.jobId),
       leaseId: distillationText(entry.leaseId),
       packetDigest: distillationText(entry.packetDigest, 64),
-      extractorVersion: DISTILLATION_EXTRACTOR_VERSION,
+      extractorVersion: entry.extractorVersion,
       content: parseSessionAnalysisContent(entry.content),
+      ...(entry.snapshotDigest === undefined ? {} : { snapshotDigest: distillationText(entry.snapshotDigest, 64) }),
+      ...(entry.segmentIndex === undefined
+        ? {}
+        : { segmentIndex: distillationInteger(entry.segmentIndex, 0, Number.MAX_SAFE_INTEGER) }),
     };
   }
   if (kind === 'status') {
@@ -397,7 +463,12 @@ export const parseDistillationRequest = (value: unknown): DistillationRequest =>
   }
   if (kind === 'get' || kind === 'evidence') {
     const scopeKey = 'selection' in entry ? 'selection' : 'projectId';
-    strictKeys(entry, kind === 'get' ? ['kind', 'analysisId', scopeKey] : ['kind', 'analysisId', scopeKey, 'eventIds']);
+    strictKeys(
+      entry,
+      kind === 'get'
+        ? ['kind', 'analysisId', scopeKey]
+        : ['kind', 'analysisId', scopeKey, 'eventIds', ...('identity' in entry ? ['identity'] : [])],
+    );
     const scope =
       scopeKey === 'selection'
         ? { selection: parseSelection(entry.selection) }
@@ -405,14 +476,32 @@ export const parseDistillationRequest = (value: unknown): DistillationRequest =>
     const base = { analysisId: distillationText(entry.analysisId), ...scope };
     return kind === 'get'
       ? { kind, ...base }
-      : { kind, ...base, eventIds: boundedArray(entry.eventIds, 12, (id) => distillationText(id)) };
+      : {
+          kind,
+          ...base,
+          eventIds: boundedArray(entry.eventIds, 12, (id) => distillationText(id)),
+          ...(entry.identity === undefined
+            ? {}
+            : {
+                identity: {
+                  packetDigest: distillationText(distillationObject(entry.identity).packetDigest, 64),
+                  sourceDigest: distillationText(distillationObject(entry.identity).sourceDigest, 64),
+                },
+              }),
+        };
   }
   if (kind === 'search' || kind === 'context') {
     strictKeys(
       entry,
-      kind === 'search' ? ['kind', 'projectId', 'query', 'limit'] : ['kind', 'projectId', 'query', 'maxBytes'],
+      kind === 'search'
+        ? ['kind', 'projectId', 'query', 'limit', ...('mode' in entry ? ['mode'] : [])]
+        : ['kind', 'projectId', 'query', 'maxBytes', ...('mode' in entry ? ['mode'] : [])],
     );
-    const base = { projectId: projectId(entry.projectId), query: distillationText(entry.query, 1000) };
+    const base = {
+      projectId: projectId(entry.projectId),
+      query: distillationText(entry.query, 1000),
+      ...(entry.mode === undefined ? {} : { mode: oneOf(entry.mode, ['literal', 'task']) }),
+    };
     return kind === 'search'
       ? { kind, ...base, limit: distillationInteger(entry.limit, 1, distillationBounds.searchResults) }
       : { kind, ...base, maxBytes: distillationInteger(entry.maxBytes, 512, distillationBounds.contextBytes) };
@@ -424,6 +513,22 @@ export const parseDistillationRequest = (value: unknown): DistillationRequest =>
       throw new DistillationError('invalid-date');
     }
     return { kind, projectId: projectId(entry.projectId), before };
+  }
+  if (kind === 'remove' || kind === 'removal-preview') {
+    strictKeys(
+      entry,
+      kind === 'remove'
+        ? ['kind', 'projectId', 'analysisId', 'mode', 'confirmed', 'preserveKnowledge']
+        : ['kind', 'projectId', 'analysisId'],
+    );
+    const base = { projectId: projectId(entry.projectId), analysisId: distillationText(entry.analysisId) };
+    if (kind === 'removal-preview') {
+      return { kind, ...base };
+    }
+    if (entry.confirmed !== true || entry.preserveKnowledge !== true) {
+      throw new DistillationError('removal-confirmation-required');
+    }
+    return { kind, ...base, mode: oneOf(entry.mode, ['withdraw', 'purge']), confirmed: true, preserveKnowledge: true };
   }
   throw new DistillationError('unsupported-operation');
 };
@@ -438,8 +543,35 @@ export interface DistillationSearchResult {
   items: DistillationSearchHit[];
   omitted: number;
 }
+export interface CompactDistillationAssertion {
+  basis: AssertionBasis;
+  /** Indices into this account's deduplicated references. */
+  evidence: number[];
+  text: string;
+}
+export interface CompactDistillationEpisode {
+  attempts: CompactDistillationAssertion[];
+  decisions: CompactDistillationAssertion[];
+  difficulties: CompactDistillationAssertion[];
+  entryPoints: CompactDistillationAssertion[];
+  id: string;
+  objective: CompactDistillationAssertion;
+  openQuestions: CompactDistillationAssertion[];
+  result: { status: EpisodeOutcome; assertion: CompactDistillationAssertion };
+}
+export interface CompactDistillationAnalysis {
+  content: { summary: CompactDistillationAssertion; episodes: CompactDistillationEpisode[]; abstention: string | null };
+  coverage: DistillationEvidenceCoverage;
+  id: string;
+  omittedEpisodes: number;
+  packetDigest: string;
+  projectId: string;
+  references: EvidenceRef[];
+  revision: number;
+  sourceDigest: string;
+}
 export interface DistillationContext {
-  analyses: (SessionAnalysis & { omittedEpisodes: number })[];
+  analyses: CompactDistillationAnalysis[];
   bytes: number;
   corpus: 'session-analyses';
   maxBytes: number;
@@ -467,7 +599,8 @@ export const parseSessionAnalysis = (value: unknown): SessionAnalysis => {
   const entry = distillationObject(value);
   if (
     entry.schemaVersion !== DISTILLATION_SCHEMA_VERSION ||
-    entry.extractorVersion !== DISTILLATION_EXTRACTOR_VERSION ||
+    (entry.extractorVersion !== DISTILLATION_EXTRACTOR_VERSION &&
+      entry.extractorVersion !== DISTILLATION_PROGRESSIVE_EXTRACTOR_VERSION) ||
     entry.validation !== 'schema-and-references'
   ) {
     throw new DistillationError('analysis-version-mismatch');
@@ -489,7 +622,7 @@ export const parseSessionAnalysis = (value: unknown): SessionAnalysis => {
     ...metadata,
     schemaVersion: DISTILLATION_SCHEMA_VERSION,
     normalizationVersion: distillationInteger(entry.normalizationVersion, 1, 1),
-    extractorVersion: DISTILLATION_EXTRACTOR_VERSION,
+    extractorVersion: entry.extractorVersion,
     source,
     coverage: parseDistillationEvidenceCoverage(entry.coverage),
     content: parseSessionAnalysisContent(entry.content),
@@ -509,6 +642,16 @@ export const parseDistillationJobView = (value: unknown): DistillationJobView =>
     attempt: distillationInteger(entry.attempt, 0, distillationBounds.attempts),
     errorCode: entry.errorCode === null ? null : distillationText(entry.errorCode),
     analysisId: entry.analysisId === null ? null : distillationText(entry.analysisId),
+    ...(entry.progress === undefined ? {} : { progress: parseDistillationProgress(entry.progress) }),
+  };
+};
+export const parseDistillationProgress = (value: unknown): DistillationProgress => {
+  const entry = distillationObject(value);
+  return {
+    snapshotDigest: distillationText(entry.snapshotDigest, 64),
+    segmentIndex: distillationInteger(entry.segmentIndex, 0, Number.MAX_SAFE_INTEGER),
+    stage: oneOf(entry.stage, ['segment', 'consolidation']),
+    completedSegments: distillationInteger(entry.completedSegments, 0, Number.MAX_SAFE_INTEGER),
   };
 };
 export const parseDistillationStatus = (value: unknown): DistillationStatus => {
@@ -527,12 +670,37 @@ export const parseDistillationStatus = (value: unknown): DistillationStatus => {
 };
 export const parseDistillationEvidenceResult = (value: unknown): DistillationEvidenceResult => {
   const entry = distillationObject(value);
-  if (entry.status === 'available') {
-    return { status: 'available', events: boundedArray(entry.events, 12, parseDistillationEvidenceEvent) };
+  let identity: DistillationEvidenceIdentity | undefined;
+  if (entry.identity !== undefined) {
+    const source = distillationObject(entry.identity);
+    strictKeys(source, ['analysisId', 'packetDigest', 'sourceDigest', 'eventIds']);
+    const eventIds = boundedArray(source.eventIds, 12, (id) => distillationText(id));
+    const packetDigest = distillationText(source.packetDigest, 64);
+    const sourceDigest = distillationText(source.sourceDigest, 64);
+    if (
+      new Set(eventIds).size !== eventIds.length ||
+      !EVIDENCE_DIGEST_PATTERN.test(packetDigest) ||
+      !EVIDENCE_DIGEST_PATTERN.test(sourceDigest)
+    ) {
+      throw new DistillationError('invalid-evidence-identity');
+    }
+    identity = { analysisId: distillationText(source.analysisId), packetDigest, sourceDigest, eventIds };
   }
-  const status = oneOf(entry.status, ['changed', 'unavailable']);
+  if (entry.status === 'available') {
+    const events = boundedArray(entry.events, 12, parseDistillationEvidenceEvent);
+    if (
+      identity &&
+      (events.length !== identity.eventIds.length ||
+        new Set(events.map((event) => event.id)).size !== events.length ||
+        events.some((event) => !identity.eventIds.includes(event.id)))
+    ) {
+      throw new DistillationError('invalid-evidence-identity');
+    }
+    return { status: 'available', events, ...(identity ? { identity } : {}) };
+  }
+  const status = oneOf(entry.status, ['changed', 'unavailable', 'denied']);
   if (!Array.isArray(entry.events) || entry.events.length !== 0) {
     throw new DistillationError('invalid-evidence-result');
   }
-  return { status, events: [] };
+  return { status, events: [], ...(identity ? { identity } : {}) };
 };

@@ -1,227 +1,196 @@
 # Local Session distillation
 
-Session distillation produces a versioned, sourced account of one local Codex
-Session in an explicitly selected Project. The existing Session panel's
-**Analysis** tab reads its summary, episodes, decisions, outcomes, entry points
-and open questions. Agents use the same saved analyses through the `analyses`
-CLI. Generated accounts form a separate corpus from accepted Memory.
+Session distillation creates durable, sourced accounts of local Codex Sessions.
+Memory opens on **Analysed sessions**; **Pending review** contains deliberately
+submitted proposals; **Knowledge** contains accepted Items. A generated account
+is useful without accepting every summary. Accepted Memory search and MCP tools
+retain their accepted-only corpus.
 
-## Prerequisites and selection
+## Start without internal identifiers
 
-Use the already running local usage engine and the active harness. The engine
-prepares evidence and stores results; the harness performs generation with its
-existing authorized subscription. The CLI starts no provider process and has
-no paid API fallback. Connected and demo modes do not provide this feature.
-
-Follow [the paired-store upgrade procedure](local-store-upgrade.md) before
-running schema-7 code against operator stores. Development and verification
-use disposable stores and synthetic histories. Implementing or testing this
-feature does not authorize reading real histories or sending them to a
-provider. Both permissions must cover the selected Project and Sessions;
-existing authorization in the active task can be reused.
-
-Selection needs a durable **Project UUID**, a retained **report revision** and
-one or more exact **usage row IDs**:
-
-- Open the Session from Sessions, Agent Map or Project Timeline. In a report
-  detail URL, `/sessions/<encoded-row-id>` carries the row identity. The
-  browser's Analysis status request carries the exact
-  `selection: { revision, rowId }` in its request payload; use that pair when
-  inspecting a Campaign member or a pinned report revision. A Campaign key
-  and the harness's native Session ID are different identities.
-- Use the Project UUID from the acknowledged Checkout-to-Project resolution.
-  The existing `/projects` resolution action returns `projectId` when a
-  Project is created or linked. For an existing analysis, its status `latest`
-  and exact `get` response also contain `projectId`.
-- There is no dedicated CLI catalog of durable Project IDs or report
-  selections in this version. `projects list --paths --local` lists usage
-  Project sources; its names and source keys are not Project UUIDs. The
-  report's basename filter and Project groups do not grant local access.
-
-The runtime re-resolves the report row and acknowledged Project mapping. It
-requires a locally observed Codex source on this machine and checks the native
-Session metadata's exact working path. An ambiguous, missing, foreign-machine
-or portable source is ineligible; there is no basename fallback.
-
-## Run a bounded batch
-
-Read the command reference without opening histories:
+Use the already running local usage engine and repository CLI. Discovery reads
+bounded report/Project/Checkout metadata, never transcript bodies:
 
 ```sh
-bun run cli analyses --help
+bun run cli analyses projects
+bun run cli analyses discover --limit 5
+bun run cli analyses discover --checkout /absolute/checkout --limit 5
+bun run cli analyses discover --project 'Exact Project name' \
+  --since 2026-10-01T00:00:00Z --until 2026-10-07T00:00:00Z --limit 5
 ```
 
-After obtaining an authorized selection, use these placeholders with its exact
-values. `select` is a metadata-only dry run:
+The selector defaults to the current checkout, including a directory inside an
+acknowledged checkout. Exact Project names and IDs are accepted; ambiguous names,
+unmapped paths, imported IDs and basename matches do not grant access. Resolve
+missing or ambiguous mappings through the existing `/projects` workflow. The
+`projects` command accepts `--limit 1..50` and `--cursor` for bounded discovery.
+
+`discover` returns titles, work dates, analysis/job states, eligibility reasons,
+exact selections, and a copyable `prepareCommand`. Its opaque token binds the
+report revision, selected row identities and acknowledged mappings. The runtime
+rejects a stale revision or changed mapping; it never substitutes a new list.
+To choose a subset, append repeated `--row '<candidate.selection.rowId>'` values
+to that command. Values must belong to the same preview. The Memory preparation
+screen provides the same guided Project/session selection and copyable command.
+
+Before preparation, authorization must cover both local reading of the selected
+histories and processing by the active provider. Reuse existing authorization
+for the same scope. Running these commands or changing code does not authorize
+processing a real home directory. The skill uses the active harness and its
+subscription; the CLI never launches a provider or paid fallback. The browser
+prepares an explicit scope and hands it to the skill; it does not pretend a
+background generation worker exists.
+
+## Execute and resume
+
+Ask the active harness to use the repository's
+[`session-distillation` skill](../skills/session-distillation/SKILL.md). It runs
+the returned command, writes its own private submission files, and uses returned
+identities in these commands:
 
 ```sh
-DISTILLATION_PROJECT='<acknowledged-project-uuid>'
-DISTILLATION_REVISION='<retained-report-revision>'
-DISTILLATION_ROW='<exact-usage-row-id>'
-
-bun run cli analyses select --project "$DISTILLATION_PROJECT" \
-  --revision "$DISTILLATION_REVISION" --row "$DISTILLATION_ROW"
+bun run cli analyses prepare --selection "$SELECTION_TOKEN" --authorize-provider-processing
+bun run cli analyses claim --project "$PROJECT_ID" --job "$JOB_ID"
+bun run cli analyses submit --file "$PRIVATE_SUBMISSION_FILE"
+bun run cli analyses jobs --project "$PROJECT_ID" --limit 50
+bun run cli analyses get --project "$PROJECT_ID" --id "$ANALYSIS_ID"
 ```
 
-Ask the active harness to follow the repository's
-[`session-distillation` skill](../skills/session-distillation/SKILL.md) for this
-selection. Once local reading and provider processing are authorized, the
-skill prepares and claims each job, writes its own structured submission file,
-submits it and reads the saved result. The operator does not copy model JSON
-between steps. The underlying commands are:
+The token comes from discovery; Project/job/analysis IDs come from preceding JSON
+responses. No DevTools lookup or manual model-output copying is required.
+`--producer-session` records a known native worker identity for exclusion from
+future selection; otherwise leave it unknown. `--revision-key` explicitly asks
+for another interpretation. Repeating default preparation or continuing a job
+preserves its original snapshot and immutable published analyses.
+
+Long sessions are read as bounded source windows. An oversized event remains
+visibly truncated and does not prevent reaching later events. The packet fixes
+the source identity and end bound; source changes fail closed. `advance`
+submissions save bounded rolling checkpoints and queue another window; the final
+`submit` publishes atomically after consolidation. Intermediate assertions are
+interpretations, with citations still pointing to original events. The worker
+can reopen an archived window with:
 
 ```sh
-bun run cli analyses prepare --project "$DISTILLATION_PROJECT" \
-  --revision "$DISTILLATION_REVISION" --row "$DISTILLATION_ROW" \
-  --authorize-provider-processing
-bun run cli analyses claim --project "$DISTILLATION_PROJECT" --job '<job-id>'
-bun run cli analyses submit --file '<skill-written-submission.json>'
-bun run cli analyses status --revision "$DISTILLATION_REVISION" --row "$DISTILLATION_ROW"
-bun run cli analyses get --project "$DISTILLATION_PROJECT" --id '<analysis-id>'
+bun run cli analyses segment --project "$PROJECT_ID" --job "$JOB_ID" \
+  --snapshot "$SNAPSHOT_DIGEST" --segment 0
 ```
 
-Repeat `--row` to select at most ten Sessions at one retained report revision.
-Pass `--producer-session` only when the active harness's native identity is
-known. It records worker-declared provenance and excludes that Session from
-later default selection; it does not prove provider/model identity.
+Read the exact `job.progress` stage and completed-segment count. No semantic
+percentage is estimated. Snapshot completion, truncated text and unanalysed
+children are separate facts; a root Session is never a whole Campaign analysis.
+The skill budgets eight total steps per run, at most ten selected Sessions,
+one active 15-minute lease, 256 KiB packets and 48 KiB output per step. Exhausting
+the run budget leaves queued resumable work, not a completed account.
 
-Preparation reuses the existing job for the same snapshot and extractor.
-Changing only the report anchor or filesystem modification time does not
-create another default job. Add an explicit `--revision-key '<new-key>'` to
-prepare another interpretation; published analyses retain their earlier IDs
-and revision numbers.
+The current reader accepts a fixed snapshot of at most 128 MiB. Each step makes
+two bounded scans of that source under one 30-second deadline: extraction and
+digest verification. These scans keep bounded buffers, but repeatedly reading a
+large snapshot still has an I/O cost. An oversized event retains a bounded text
+prefix with visible truncation. Crossing the source-size or time limit refuses
+the step explicitly; it never reports the uncovered source as complete.
 
-There is one active lease for the local service. A lease lasts 15 minutes and
-a job has at most three attempts. After expiry or engine restart, use `retry`
-then `claim`; the old worker cannot publish. `cancel` is terminal. Published
-jobs cannot be retried or overwritten, and a different submission for the same
-published job conflicts. A failed regeneration leaves the earlier analysis
-readable.
+After interruption or engine restart, `jobs` lists durable jobs and progress;
+follow its `nextCursor` using `--cursor`. Claim a queued job, or explicitly `retry`
+an expired/recovered unpublished job before claiming. An old lease is fenced.
+A published job cannot be overwritten; identical submission retries return the
+same result. Do not create a new revision key merely to resume.
+
+## Browse, recall and verify
+
+Memory lists one current account per Session and keeps exact revisions and
+selected episodes addressable independently from temporary report revisions.
+Its detail separates narrative and outcomes from provenance/validation details.
+Opening, searching, scrolling or receiving SSE does not run inference. Local
+accounts are unavailable in connected mode; no corpus fallback occurs. Synthetic
+demo data stays isolated from operator stores.
+
+The CLI offers equivalent bounded reads:
 
 ```sh
-bun run cli analyses retry --project "$DISTILLATION_PROJECT" --job '<failed-job-id>'
-bun run cli analyses cancel --project "$DISTILLATION_PROJECT" --job '<job-id>'
-bun run cli analyses cleanup --project "$DISTILLATION_PROJECT" --before '<ISO-instant>'
+bun run cli analyses browse --limit 20
+bun run cli analyses browse --project "$PROJECT_ID" --query cache --limit 20
+bun run cli analyses history --project "$PROJECT_ID" --id "$ANALYSIS_ID"
+bun run cli analyses search --project "$PROJECT_ID" \
+  --query 'How did we resolve cache invalidation?' --mode task --limit 10
+bun run cli analyses search --project "$PROJECT_ID" \
+  --query 'ENOENT: src/cache.ts' --mode literal --limit 10
+bun run cli analyses get --project "$PROJECT_ID" --id "$ANALYSIS_ID" --episode "$EPISODE_ID"
+bun run cli analyses evidence --project "$PROJECT_ID" --id "$ANALYSIS_ID" --event "$EVENT_ID"
+bun run cli analyses context --project "$PROJECT_ID" \
+  --query 'cache invalidation' --mode task --max-bytes 16384
 ```
 
-Cleanup removes terminal job evidence packets, preserving analyses, source
-grants and native history. Cleaned failed jobs no longer have a packet to
-retry; a new explicitly keyed preparation is needed. The skill also removes
-its temporary files.
+`browse` supports `--since`, `--until`, `--project`, `--query`, `--cursor` and
+`--limit 1..50`. Dates describe the Session's work when known, separately from
+analysis generation. History also supports `--limit` and `--cursor`.
 
-## Read and resume
+Literal mode requires the exact case-insensitive punctuated phrase. Task mode
+uses at most 32 lexical terms, drops common English/French function words and
+ranks overlap within the chosen Project. It never silently widens scope or
+claims semantic equivalence. Search indexes current visible analyses; exact
+historical reads remain separate. Retrieval and counts filter authorization
+before ranking. Context stores each distinct citation once and refers to its
+index from assertions. It retains limitations and exact source digests, declares
+omitted episodes/accounts, and counts the full UTF-8 JSON envelope. The 32 KiB
+maximum is a byte bound, not an exact token or subscription-quota estimate.
 
-Open **Analysis** in the existing Session panel, choose an analysis revision
-and click a claim's evidence control to read the exact recorded excerpt. A
-changed or unavailable source is reported explicitly; an older analysis stays
-readable. Opening the panel, scrolling or receiving a usage publication does
-not trigger generation. Analysis revision and inspected usage revision remain
-separate.
+Evidence CLI first loads the immutable analysis and sends its packet/source
+digests. An event is `available` only for that identity. `changed`, `unavailable`
+and `denied` never return current text under an old citation. Historical
+quotations remain in the account with their original interpretation status.
 
-The CLI returns JSON and scopes search to one Project:
+Business error codes survive transport: `worker-busy`, `lease-expired`,
+`conflict`, `forbidden`, `source-modified`, `version-incompatible`, `cancelled`,
+`storage-unavailable`, `selection-stale`, `mapping-required`, `unsupported-mode`
+and `service-unavailable`. Inspect state and explicitly resolve the relevant
+condition; clients never replay mutations automatically or parse human messages.
+Execution failures from the analyses CLI write `{"error":{"code":"…"}}` to
+stderr and exit with status 1; stdout remains reserved for successful JSON.
+
+## Deliberate knowledge and deletion
+
+**Propose as knowledge** selects an analysis element and opens an editable
+formulation, type, scope, sensitivity and evidence. The application loads the
+exact source revision and creates an Observation and Proposal with idempotent
+provenance. Acceptance is a second human action in **Pending review**. The original
+account remains unchanged. Accepted Items remain local unless a separate
+publication policy and consent authorize publication; sensitivity is not used
+as a substitute for that choice.
 
 ```sh
-bun run cli analyses search --project "$DISTILLATION_PROJECT" --query 'ENOENT cache' --limit 10
-bun run cli analyses get --project "$DISTILLATION_PROJECT" --id '<analysis-id>' --episode '<episode-id>'
-bun run cli analyses context --project "$DISTILLATION_PROJECT" --query 'ENOENT cache' --max-bytes 16384
+bun run cli analyses cancel --project "$PROJECT_ID" --job "$JOB_ID"
+bun run cli analyses cleanup --project "$PROJECT_ID" --before 2026-10-07T00:00:00Z
+bun run cli analyses removal-preview --project "$PROJECT_ID" --id "$ANALYSIS_ID"
+bun run cli analyses remove --project "$PROJECT_ID" --id "$ANALYSIS_ID" \
+  --mode withdraw --confirm --preserve-knowledge
 ```
 
-Search indexes the latest analysis of each Session; older revisions remain
-available by exact ID. Search returns at most twenty results with an omission
-count. Context retains selected summaries, source identities and coverage,
-then fits episodes containing query terms within a UTF-8 byte bound, including
-the JSON envelope. Each entry reports `omittedEpisodes`; exact `get` remains
-complete. An analysis whose summary and metadata cannot fit is omitted and
-counted. The maximum context is 32 KiB; this is not a
-token or subscription-quota estimate. Historical commands and retrieved text
-are data to evaluate, never instructions to execute automatically.
+Cleanup removes terminal packets. Withdrawal removes search/library visibility.
+`--mode purge` deletes stored analyses and packets for the Session, preventing
+an earlier revision from silently becoming current. Active work is cancelled
+and fenced. The preview/result identifies dependent proposals and accepted
+knowledge, which are preserved; their existence prevents a claim that every
+derivative was erased. Native history and external backups are never removed.
+A fresh explicit revision key is required for deliberate reinterpretation
+after withdrawal.
 
-## Ownership, evidence and limits
+## Upgrade and validation scope
 
-`apps/usage-engine` remains the sole writer of both existing SQLite stores.
-The separately authenticated Memory service carries distillation operations;
-the usage control plane does not carry transcripts. Jobs, immutable analyses
-and their dedicated FTS index live in the existing Memory database's local-only
-tables. They do not create Memory Observations, Proposals or Items and are
-absent from usage snapshots, Memory export and replication/backfill. Promotion
-to accepted Memory is outside this first vertical. No additional daemon,
-database, scheduler, remote archive or MCP write tool is introduced.
+Follow the [paired-store upgrade procedure](local-store-upgrade.md), including
+backup of both stores and a single supervised restart, before running changed
+schema code against operator stores. There is no downgrade path. Existing
+version-1 analyses remain readable alongside progressive extractor outputs;
+mutation compatibility checks do not discard historical accounts.
 
-The reader uses hardened local primitives, a stable bounded JSONL prefix and
-the canonical Codex ownership/round derivation. It reads up to 4 MiB, retains
-at most 256 events and 16 KiB per event, and limits the packet to 256 KiB.
-Coverage records omitted content, budget cuts, recorded truncation and the last
-native task's completion state. Only the selected Session is analyzed; child
-discovery is not performed. Internal reasoning is excluded. Shared redaction
-runs before transmission and persistence; it reduces exposure but does not
-guarantee anonymization.
+Development tests use disposable homes, SQLite stores and localhost services.
+They cover discovery, immutable preview preparation, interruption/restart,
+long-session windows, exact evidence, bounded recall, library pagination and
+promotion. Deterministic outputs test software contracts; they do not establish
+semantic accuracy of actual model generations. Real-history reading, provider
+processing and live-store migration require separate targeted authorization.
 
-Native identity, source digest/version, redacted packet digest and optional
-report anchor are stored separately. Exact evidence reload verifies the
-expected snapshot rather than returning newer text under an older citation.
-Source modification time is part of that conservative reload check.
-
-Model output follows [the extractor contract](../skills/session-distillation/references/contract.md)
-and is bounded to 48 KiB. The shared runtime contracts live in
-[`platform-core/session-distillation`](../packages/platform-core/src/session-distillation.ts)
-and [`platform-core/distillation-evidence`](../packages/platform-core/src/distillation-evidence.ts).
-Runtime validation checks schema, exact quotations,
-event identity and evidence tiers. A recorded tool result differs from an
-assistant claim; a proposal differs from a decision; a patch differs from a
-test pass or merge. These checks do not establish semantic entailment or
-factual truth. Empty sections and abstention are valid, and no calibrated
-confidence or productivity score is inferred.
-
-## Synthetic evidence and verification
-
-The [nine-case corpus](../tools/fixtures/distillation/README.md) has expectations
-written before generation. Its [evaluation](../tools/fixtures/distillation/evaluation.md)
-preserves real active-harness outputs, the initial coverage misses, targeted
-retry results and provenance limitations. Examples include
-[multiple attempts](../tools/fixtures/distillation/generated/initial/multi-attempt.analysis.json.txt),
-[claimed success without recorded tests](../tools/fixtures/distillation/generated/initial/claimed-success.analysis.json.txt)
-and [trivial-session abstention](../tools/fixtures/distillation/generated/initial/trivial-no-lessons.analysis.json.txt).
-Review findings are not a measured accuracy score. Original input provenance
-for the initial generation is incomplete; the review states that limitation.
-
-A separate [persisted example](../tools/fixtures/distillation/generated/integration/multi-attempt.persisted-analysis.json.txt)
-was generated from a claimed packet, submitted through the real CLI, then
-read and replayed after closing/reopening the local writer and restarting its
-HTTP service. The [integration receipt](../tools/fixtures/distillation/generated/integration/receipt.json)
-records search, bounded context and real browser evidence reads. This is a
-synthetic integration proof, not a semantic quality score.
-
-```sh
-bun tools/fixtures/distillation/check-corpus.ts
-bun test packages/local-machine/src/distillation-evidence.test.ts
-bun test packages/memory-sqlite
-bun test apps/usage-engine/src/distillation-runtime.test.ts apps/cli/src/analyses.test.ts
-```
-
-Software tests use controlled producers and disposable stores. Real-provider
-generation is evaluated separately from those deterministic tests. No real
-Session history was authorized for this implementation's evaluation, and
-synthetic migration tests do not prove safety of an operator-store upgrade.
-
-For an isolated manual skill exercise, start the synthetic writer fixture:
-
-```sh
-bun --no-env-file apps/usage-engine/src/fixtures/distillation.ts multi-attempt
-```
-
-It prints `homeDirectory`, `stateDirectory`, `databasePath`, `projectId` and
-the exact selection. Give those values to the active harness running the skill.
-For its CLI commands, set `AI_USAGE_HOME`, `AI_USAGE_ENGINE_STATE_DIR` and
-`AI_USAGE_DATABASE_PATH` to those three printed paths. This fixture uses the
-real reader, service and SQLite adapter; it does not generate a model answer.
-After `bun run build`, the same three environment overrides also let the
-web-only process read that fixture:
-
-```sh
-PORT=4186 bun run start:web-only
-```
-
-Open `http://127.0.0.1:4186`, select the synthetic Session, then **Analysis**.
-`SIGHUP` closes/reopens its writer and restarts the service for the durability
-exercise. `SIGINT` or `SIGTERM` stops it and removes its disposable stores.
-This is a development fixture, separate from the read-only product demo.
+Run `bun run test:e2e-memory` for the browser journey through a disposable real
+engine and SQLite stores. After `bun run build`, use
+`AI_USAGE_MEMORY_BROWSER_PRODUCTION=1 bun run test:e2e-memory` to exercise the
+production server; the production browser CI job runs this variant.

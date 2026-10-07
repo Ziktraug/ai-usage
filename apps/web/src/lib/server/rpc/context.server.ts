@@ -331,12 +331,45 @@ const createSessionDistillationDependencies = (): WebRpcRouterDependencies['sess
   isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
   read: async (input, signal) =>
     await phaseBound(signal, async () => {
+      if ((await runtimeMode(abortOptions(signal))) === 'e2e') {
+        if (input.kind === 'projects' || input.kind === 'browse') {
+          return { items: [], nextCursor: null };
+        }
+        throw new Error('Synthetic browser mode does not acquire local analysis authority.');
+      }
       const server = await import('../../../server/session-distillation.server');
       return await server.readSessionDistillationForServer(input, signal);
     }),
 });
 
 const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
+  getKnowledge: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      if ((await runtimeMode(abortOptions(signal))) === 'e2e') {
+        throw new Error('Fixture compact guidance is already complete.');
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.getMemoryKnowledgeForServer(input, signal);
+    }),
+  listKnowledge: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const mode = await runtimeMode(abortOptions(signal));
+      if (mode === 'e2e') {
+        const fixture = await import('../../../server/memory-e2e-fixture.server');
+        return fixture.browseE2EMemory(input);
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.listMemoryKnowledgeForServer(input, signal);
+    }),
+  promoteAnalysis: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const mode = await runtimeMode(abortOptions(signal));
+      if (mode === 'e2e') {
+        throw new Error('Synthetic review fixture does not consume local analyses.');
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.promoteMemoryAnalysisForServer(input, signal);
+    }),
   applyProposalReviewAction: async (input, signal) =>
     await phaseBound(signal, async () => {
       const mode = await runtimeMode(abortOptions(signal));
@@ -348,7 +381,7 @@ const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
       return await server.applyMemoryProposalReviewActionForServer(input, signal);
     }),
   isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
-  listProposalReviews: async (signal) =>
+  listProposalReviews: async (signal, cursor) =>
     await phaseBound(signal, async () => {
       const mode = await runtimeMode(abortOptions(signal));
       if (mode === 'e2e') {
@@ -356,7 +389,7 @@ const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
         return fixture.readE2EMemoryProposalReviews();
       }
       const server = await import('../../../server/memory-service.server');
-      return await server.getMemoryProposalReviewsForServer(signal);
+      return await server.getMemoryProposalReviewsForServer(signal, cursor);
     }),
   searchMemory: async (input, signal) =>
     await phaseBound(signal, async () => {

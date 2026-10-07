@@ -1,6 +1,49 @@
 import { replicationOutboxSchemaSql } from '@ai-usage/replication-outbox';
 
-export const LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION = 7;
+/** Deliberate local promotion: independent from sensitivity and publication enrollment. */
+export const localAnalysisPromotionSchema = `
+  CREATE TABLE memory_analysis_promotions (
+    proposal_id TEXT PRIMARY KEY REFERENCES memory_proposals(id) ON DELETE CASCADE,
+    analysis_id TEXT NOT NULL,
+    analysis_revision INTEGER NOT NULL CHECK(analysis_revision > 0),
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    element_key TEXT NOT NULL,
+    snapshot_digest TEXT NOT NULL CHECK(length(snapshot_digest) = 64),
+    fingerprint TEXT NOT NULL UNIQUE CHECK(length(fingerprint) = 64),
+    publication_policy TEXT NOT NULL CHECK(publication_policy = 'local-only')
+  ) STRICT;
+  CREATE INDEX memory_analysis_promotions_source ON memory_analysis_promotions(analysis_id);
+`;
+
+export const LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION = 8;
+
+export const localDistillationProgressSchema = `
+  CREATE TABLE distillation_progress (
+    job_id TEXT PRIMARY KEY REFERENCES distillation_jobs(id) ON DELETE CASCADE,
+    segment_index INTEGER NOT NULL CHECK(segment_index >= 0),
+    stage TEXT NOT NULL CHECK(stage IN ('segment','consolidation')),
+    source_digest TEXT NOT NULL CHECK(length(source_digest)=64),
+    checkpoint_json TEXT CHECK(checkpoint_json IS NULL OR json_valid(checkpoint_json))
+  ) STRICT;
+  CREATE TABLE distillation_segments (
+    job_id TEXT NOT NULL REFERENCES distillation_jobs(id) ON DELETE CASCADE,
+    segment_index INTEGER NOT NULL CHECK(segment_index >= 0),
+    packet_json TEXT CHECK(packet_json IS NULL OR json_valid(packet_json)),
+    manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json)),
+    content_json TEXT CHECK(content_json IS NULL OR json_valid(content_json)),
+    content_digest TEXT,
+    lease_id TEXT,
+    PRIMARY KEY(job_id, segment_index)
+  ) STRICT;
+  CREATE TABLE distillation_withdrawals (
+    project_id TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    native_session_id TEXT NOT NULL,
+    withdrawn_at TEXT NOT NULL,
+    receipt_json TEXT NOT NULL CHECK(json_valid(receipt_json)),
+    PRIMARY KEY(project_id, machine_id, native_session_id)
+  ) STRICT;
+`;
 
 /** Local generated corpus. Deliberately absent from Memory export/search/replication projections. */
 export const localDistillationSchema = `

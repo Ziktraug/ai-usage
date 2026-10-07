@@ -2,6 +2,7 @@ import { type ContractRouterClient, oc } from '@orpc/contract';
 import {
   array,
   boolean,
+  exactOptional,
   finite,
   type InferOutput,
   literal,
@@ -11,6 +12,7 @@ import {
   minValue,
   nullable,
   number,
+  optional,
   parse,
   picklist,
   pipe,
@@ -21,7 +23,7 @@ import {
   union,
 } from 'valibot';
 import { publicErrorMap } from './errors';
-import { emptyInputSchema, jsonWireValueSchema } from './schema-conventions';
+import { jsonWireValueSchema } from './schema-conventions';
 
 const uuidSchema = pipe(string(), regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u));
 const instantSchema = pipe(string(), minLength(20), maxLength(64));
@@ -45,6 +47,12 @@ export const memorySearchInputSchema = pipe(
     limit: boundedResultLimitSchema,
     matchingMode: picklist(['hybrid', 'literal']),
     projectId: nullable(uuidSchema),
+    kinds: exactOptional(
+      pipe(
+        array(picklist(['decision', 'pattern', 'pitfall', 'command', 'constraint', 'handoff', 'lesson', 'preference'])),
+        maxLength(8),
+      ),
+    ),
     query: pipe(string(), minLength(1), maxLength(512)),
   }),
 );
@@ -110,6 +118,94 @@ const proposalObservationSourceSchema = strictObject({
   sourceKind: picklist(['agent', 'commit', 'file', 'import', 'pull-request', 'session', 'user']),
   sourceLocator: nullable(sourceLocatorSchema),
 });
+
+const memoryKindSchema = picklist([
+  'decision',
+  'pattern',
+  'pitfall',
+  'command',
+  'constraint',
+  'handoff',
+  'lesson',
+  'preference',
+]);
+export const memoryKnowledgeInputSchema = strictObject({
+  cursor: nullable(cursorSchema),
+  projectId: nullable(uuidSchema),
+  kind: nullable(memoryKindSchema),
+  pageSize: pipe(boundedPositiveIntegerSchema, maxValue(20)),
+});
+export type MemoryKnowledgeInput = InferOutput<typeof memoryKnowledgeInputSchema>;
+export const memoryKnowledgePageSchema = pipe(
+  jsonWireValueSchema,
+  strictObject({
+    nextCursor: nullable(cursorSchema),
+    items: pipe(
+      array(
+        strictObject({
+          id: uuidSchema,
+          revisionId: uuidSchema,
+          revisionNumber: boundedPositiveIntegerSchema,
+          title: titleSchema,
+          summary: summarySchema,
+          guidance: guidanceSchema,
+          projectId: nullable(uuidSchema),
+          kind: memoryKindSchema,
+          sensitivity: sensitivitySchema,
+          trust: picklist(['explicit', 'harvest-accepted']),
+          createdAt: instantSchema,
+          contentOmitted: boolean(),
+          provenance: strictObject({
+            sourceLocator: nullable(sourceLocatorSchema),
+            sourceKind: nullable(literal('session')),
+            analysisRevision: nullable(boundedPositiveIntegerSchema),
+          }),
+        }),
+      ),
+      maxLength(20),
+    ),
+  }),
+);
+export type MemoryKnowledgePage = InferOutput<typeof memoryKnowledgePageSchema>;
+export const parseMemoryKnowledgePage = (input: unknown): MemoryKnowledgePage =>
+  parse(memoryKnowledgePageSchema, input);
+export const memoryKnowledgeGetInputSchema = strictObject({ itemId: uuidSchema, revisionId: uuidSchema });
+export type MemoryKnowledgeGetInput = InferOutput<typeof memoryKnowledgeGetInputSchema>;
+export const memoryKnowledgeDetailSchema = pipe(
+  jsonWireValueSchema,
+  strictObject({
+    id: uuidSchema,
+    revisionId: uuidSchema,
+    title: titleSchema,
+    summary: summarySchema,
+    guidance: guidanceSchema,
+    structuredContent: jsonWireValueSchema,
+  }),
+);
+export type MemoryKnowledgeDetail = InferOutput<typeof memoryKnowledgeDetailSchema>;
+
+export const memoryPromotionInputSchema = pipe(
+  jsonWireValueSchema,
+  strictObject({
+    analysisId: pipe(string(), minLength(1), maxLength(128)),
+    projectId: uuidSchema,
+    elementKey: pipe(string(), minLength(1), maxLength(160)),
+    title: titleSchema,
+    kind: memoryKindSchema,
+    formulation: pipe(string(), minLength(1), maxLength(4096)),
+    sensitivity: sensitivitySchema,
+    localOnly: literal(true),
+  }),
+);
+export type MemoryPromotionInput = InferOutput<typeof memoryPromotionInputSchema>;
+export const memoryPromotionResultSchema = strictObject({
+  proposalId: uuidSchema,
+  sourceLocator: sourceLocatorSchema,
+  localOnly: literal(true),
+});
+export type MemoryPromotionResult = InferOutput<typeof memoryPromotionResultSchema>;
+export const memoryProposalReviewInputSchema = strictObject({ cursor: optional(nullable(cursorSchema)) });
+export type MemoryProposalReviewInput = InferOutput<typeof memoryProposalReviewInputSchema>;
 
 const proposalReviewSchema = strictObject({
   guidance: guidanceSchema,
@@ -213,6 +309,21 @@ const searchErrors = {
 } as const;
 
 export const memoryContract = {
+  getKnowledge: oc
+    .route({ method: 'POST', path: '/memory/getKnowledge' })
+    .input(memoryKnowledgeGetInputSchema)
+    .output(memoryKnowledgeDetailSchema)
+    .errors(searchErrors),
+  knowledge: oc
+    .route({ method: 'POST', path: '/memory/knowledge' })
+    .input(memoryKnowledgeInputSchema)
+    .output(memoryKnowledgePageSchema)
+    .errors(searchErrors),
+  promote: oc
+    .route({ method: 'POST', path: '/memory/promote' })
+    .input(memoryPromotionInputSchema)
+    .output(memoryPromotionResultSchema)
+    .errors(mutationErrors),
   applyProposalReviewAction: oc
     .route({ method: 'POST', path: '/memory/applyProposalReviewAction' })
     .input(memoryProposalReviewActionSchema)
@@ -220,7 +331,7 @@ export const memoryContract = {
     .errors(mutationErrors),
   proposalReviews: oc
     .route({ method: 'GET', path: '/memory/proposalReviews' })
-    .input(emptyInputSchema)
+    .input(memoryProposalReviewInputSchema)
     .output(memoryProposalReviewSnapshotSchema)
     .errors(queryErrors),
   search: oc

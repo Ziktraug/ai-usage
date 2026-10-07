@@ -107,6 +107,12 @@ test('loads the account on demand, keeps a chosen revision, and checks exact evi
         ? { status: 'changed', events: [] }
         : {
             status: 'available',
+            identity: {
+              analysisId: (input as { analysisId: string }).analysisId,
+              packetDigest: 'a'.repeat(64),
+              sourceDigest: 'b'.repeat(64),
+              eventIds: ['event-1'],
+            },
             events: [
               {
                 id: 'event-1',

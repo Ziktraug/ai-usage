@@ -123,10 +123,11 @@ const excerptAround = (value: string, needle: string): string => {
   const normalized = normalizeMemorySearchText(value);
   const matchIndex = normalized.indexOf(needle);
   const start = Math.max(0, matchIndex < 0 ? 0 : matchIndex - 96);
-  const end = Math.min(value.length, start + memorySearchBounds.maxExplanationExcerptCharacters);
   const prefix = start > 0 ? '…' : '';
+  const available = memorySearchBounds.maxExplanationExcerptCharacters - prefix.length;
+  const end = Math.min(value.length, start + available);
   const suffix = end < value.length ? '…' : '';
-  return `${prefix}${value.slice(start, end).trim()}${suffix}`;
+  return `${prefix}${value.slice(start, end - suffix.length).trim()}${suffix}`;
 };
 
 const explanationForField = (

@@ -494,6 +494,11 @@ const backfillMemoryReplicationContext = (
        FROM memory_items
        WHERE space_id = $localSpaceId AND project_id IS $localProjectId
          AND sensitivity = 'normal' AND id > $afterItemId
+         AND NOT EXISTS (
+           SELECT 1 FROM memory_analysis_promotions source
+           JOIN memory_proposals proposal ON proposal.id = source.proposal_id
+           WHERE proposal.accepted_memory_item_id = memory_items.id
+         )
        ORDER BY id
        LIMIT $limit`,
     )

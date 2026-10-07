@@ -23,7 +23,7 @@ Schema versions are the SQLite `user_version` pragma:
 | Store | Before PR #53 (`main` at `b2411c21`) | After PR #53 | Current |
 | --- | ---: | ---: | ---: |
 | usage store | 3 | 4 | 4 |
-| Memory store | absent | 6 | 7 |
+| Memory store | absent | 6 | 8 |
 
 Usage version 4 adds `replication_outbox_state` and
 `replication_outbox_events` (empty in local-only mode). Memory version 6
@@ -36,6 +36,13 @@ This additive migration preserves existing identities, Memory and outbox rows.
 Generated analyses are not accepted Memory and never enter Memory export or
 replication through these tables. The usage schema and served report revisions
 are unchanged. A version-6 binary cannot reopen the upgraded Memory store.
+
+Memory version 8 adds progressive distillation checkpoints, bounded segments,
+withdrawal tombstones and explicit local analysis promotion provenance. Existing
+version-1 analyses and their exact IDs remain readable. A version-7 binary cannot
+open a version-8 store. Publication policy is independent from sensitivity;
+knowledge explicitly promoted from a local analysis stays excluded from both
+live replication and later backfill.
 
 Migrations are forward-only and run inside one transaction per store, so an
 interrupted upgrade leaves the previous version in place. Code refuses a store
@@ -92,7 +99,7 @@ the engine is up.
 - The engine's stderr carries no `usage-engine startupFailureKind=…` line; both
   lock files and both rendezvous files exist while it runs; the `check`
   command reports `ok: true`.
-- `PRAGMA user_version` reads 4 (usage) and 7 (Memory); `PRAGMA
+- `PRAGMA user_version` reads 4 (usage) and 8 (Memory); `PRAGMA
   integrity_check` returns `ok` on both.
 - `usage_rows` count and the single `spaces` / `people` / `devices` rows match
   the pre-upgrade figures; the report Overview renders the same totals;

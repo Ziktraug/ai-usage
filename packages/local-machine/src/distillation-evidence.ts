@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
   DISTILLATION_EVENT_MAX_BYTES,
@@ -24,6 +25,8 @@ import { createCodexSessionParser, listCodexSessionFiles } from './internal/code
 import { createLocalHistoryStorage, LocalHistoryStorage, type LocalHistoryStorage as Storage } from './local-history';
 
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
+/** Full digest verification is bounded separately from the model's window budget. */
+export const DISTILLATION_SNAPSHOT_MAX_BYTES = 128 * 1024 * 1024;
 const MAX_LINE_BYTES = 256 * 1024;
 const SAFE_SESSION_ID = /^[a-z\d][a-z\d-]{0,127}$/i;
 const TRAILING_REPLACEMENT = /\uFFFD$/u;
@@ -64,6 +67,7 @@ export type DistillationEvidenceUnavailableReason =
   | 'source-ambiguous'
   | 'project-mismatch'
   | 'invalid-reference'
+  | 'source-budget-exceeded'
   | 'unsupported-reader';
 
 export type DistillationEvidenceReadResult =
@@ -152,9 +156,65 @@ const classify = (event: Record<string, unknown>, payload: Record<string, unknow
 interface Snapshot {
   incompleteRecord: boolean;
   prefixTruncated: boolean;
+  sourceLines?: Iterable<string | { oversizedPrefix: string }>;
   text: string;
   version: DistillationSourceVersion;
+  window?: { index: number; startLine: number };
 }
+
+/** Recover only a text prefix of an oversized allowed record; never expose an unknown role/channel. */
+const oversizedTextRecord = (prefix: string): string | null => {
+  const closings: string[] = [];
+  let quoted = false;
+  let escaped = false;
+  for (const character of prefix) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quoted && character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (quoted) {
+      continue;
+    }
+    if (character === '{') {
+      closings.push('}');
+    } else if (character === '[') {
+      closings.push(']');
+    } else if (character === '}' || character === ']') {
+      closings.pop();
+    }
+  }
+  if (!quoted) {
+    return null;
+  }
+  for (let trim = 0; trim <= 6; trim += 1) {
+    const candidate = `${prefix.slice(0, prefix.length - trim)}"${closings.toReversed().join('')}`;
+    try {
+      const record = asRecord(JSON.parse(candidate));
+      const payload = asRecord(record.payload);
+      const allowed =
+        payload.type === 'user_message' ||
+        payload.type === 'function_call_output' ||
+        payload.type === 'custom_tool_call_output' ||
+        payload.type === 'function_call' ||
+        payload.type === 'custom_tool_call' ||
+        (payload.type === 'message' &&
+          (payload.role === 'user' ||
+            (payload.role === 'assistant' && (payload.channel === 'commentary' || payload.channel === 'final'))));
+      return allowed ? candidate : null;
+    } catch {
+      /* A prefix can end in the middle of a JSON escape. */
+    }
+  }
+  return null;
+};
 
 const readSnapshot = (storage: Storage, filePath: string, sourceBytes: number) =>
   Effect.gen(function* () {
@@ -248,7 +308,7 @@ const normalizeSnapshot = (
   const eventBytes = bound(options.limits?.eventBytes, DISTILLATION_EVENT_MAX_BYTES);
   const maximumEvents = bound(options.limits?.events, DISTILLATION_MAX_EVENTS);
   const contentBytes = bound(options.limits?.contentBytes, MAX_EVENT_CONTENT_BYTES);
-  const parser = createCodexSessionParser(true);
+  const parser = createCodexSessionParser(true, snapshot.window !== undefined);
   const exclusions = new Map<DistillationExclusionReason, number>();
   const exclude = (reason: DistillationExclusionReason) => exclusions.set(reason, (exclusions.get(reason) ?? 0) + 1);
   const records: CandidateRecord[] = [];
@@ -259,21 +319,40 @@ const normalizeSnapshot = (
   let lines = 0;
   let metadataMatches = false;
   let metadataConflict = false;
+  let sessionDate: string | null = null;
   let completion: DistillationEvidenceCoverage['completion'] = 'unknown';
   const activeTasks = new Set<string>();
+  let nextLine: number | null = null;
+  const overlapEventIds: string[] = [];
+  let previousPrompt: CandidateRecord | null = null;
+  const previousCalls = new Map<string, CandidateRecord>();
   if (snapshot.prefixTruncated) {
     exclude('source-byte-budget');
   }
   if (snapshot.incompleteRecord) {
     exclude('incomplete-record');
   }
-  const sourceLines = snapshot.text.split('\n');
-  for (const [index, line] of sourceLines.entries()) {
-    if (line.length === 0 && index === sourceLines.length - 1) {
+  const sourceLines =
+    snapshot.sourceLines ??
+    snapshot.text.split('\n').filter((line, index, values) => line.length !== 0 || index !== values.length - 1);
+  for (const sourceLine of sourceLines) {
+    const oversized = typeof sourceLine !== 'string';
+    const recovered = oversized ? oversizedTextRecord(sourceLine.oversizedPrefix) : sourceLine;
+    if (oversized) {
+      exclude('oversized-record');
+    }
+    if (recovered === null) {
+      lines += 1;
       continue;
     }
-    lines = index + 1;
-    if (Buffer.byteLength(line) > lineBytes) {
+    const line = recovered;
+    if (line.length === 0) {
+      lines += 1;
+      exclude('malformed-record');
+      continue;
+    }
+    lines += 1;
+    if (!oversized && Buffer.byteLength(line) > lineBytes) {
       exclude('oversized-record');
       continue;
     }
@@ -290,6 +369,9 @@ const normalizeSnapshot = (
     }
     const payload = asRecord(parsed.payload);
     if (parsed.type === 'session_meta') {
+      if (typeof parsed.timestamp === 'string' && Number.isFinite(Date.parse(parsed.timestamp))) {
+        sessionDate ??= parsed.timestamp;
+      }
       const matches =
         payload.id === request.selection.sourceSessionId && payload.cwd === request.selection.checkoutPath;
       metadataMatches ||= matches;
@@ -349,10 +431,15 @@ const normalizeSnapshot = (
     const context = parser.evidenceContext(explicitTurnId);
     const callContext =
       candidate.kind === 'tool-result' && candidate.callId ? callTurns.get(candidate.callId) : undefined;
-    const nativeTurnId = callContext?.nativeTurnId ?? context?.turnId ?? null;
+    const missingCall = snapshot.window && candidate.kind === 'tool-result' && candidate.callId && !callContext;
+    const nativeTurnId = missingCall ? null : (callContext?.nativeTurnId ?? context?.turnId ?? null);
     const replayed = callContext?.replayed ?? context?.replayed ?? false;
     if (candidate.kind === 'tool-call' && candidate.callId) {
       callTurns.set(candidate.callId, { nativeTurnId, replayed });
+      if (snapshot.window && callTurns.size > 4096) {
+        callTurns.delete(callTurns.keys().next().value ?? '');
+        exclude('identity-budget');
+      }
     }
     if (replayed) {
       exclude('replayed-history');
@@ -369,7 +456,7 @@ const normalizeSnapshot = (
     // event of the same representation, even with identical text, remains a new attempt.
     const duplicateKey =
       candidate.kind === 'user' || candidate.kind === 'assistant'
-        ? JSON.stringify([nativeTurnId, candidate.kind, candidate.text])
+        ? JSON.stringify([nativeTurnId, candidate.kind, sha256(candidate.text)])
         : null;
     const mirrors = duplicateKey === null ? [] : (mirrorRepresentations.get(duplicateKey) ?? []);
     const mirrorIndex = mirrors.findIndex(
@@ -385,19 +472,26 @@ const normalizeSnapshot = (
       continue;
     }
     if ((candidate.kind === 'tool-call' || candidate.kind === 'tool-result') && candidate.callId) {
-      const nativeIdentity = JSON.stringify([nativeTurnId, candidate.kind, candidate.callId, candidate.text]);
+      const nativeIdentity = JSON.stringify([nativeTurnId, candidate.kind, candidate.callId, sha256(candidate.text)]);
       if (toolRepresentations.has(nativeIdentity)) {
         exclude('duplicate-representation');
         continue;
       }
       toolRepresentations.add(nativeIdentity);
+      if (snapshot.window && toolRepresentations.size > 4096) {
+        toolRepresentations.delete(toolRepresentations.values().next().value ?? '');
+        exclude('identity-budget');
+      }
     }
-    if (records.length >= maximumEvents) {
+    if (!snapshot.window && records.length >= maximumEvents) {
       exclude('event-budget');
       continue;
     }
     const redacted = options.redactText(candidate.text);
-    const bounded = truncate(redacted, Math.max(0, Math.min(eventBytes, contentBytes - retainedBytes)));
+    const bounded = truncate(
+      redacted,
+      snapshot.window ? eventBytes : Math.max(0, Math.min(eventBytes, contentBytes - retainedBytes)),
+    );
     if (bounded.truncated) {
       exclude('text-budget');
     }
@@ -418,18 +512,68 @@ const normalizeSnapshot = (
       roundId: null,
       toolName: candidate.toolName === null ? null : truncate(options.redactText(candidate.toolName), 512).text,
       callId: candidate.callId === null ? null : truncate(options.redactText(candidate.callId), 512).text,
-      truncated: bounded.truncated || recordedTruncation || partialContent,
+      truncated: oversized || bounded.truncated || recordedTruncation || partialContent,
       redacted: redacted !== candidate.text,
     };
+    const record: CandidateRecord = { event, representation: candidate.representation, duplicateKey };
+    if (snapshot.window && duplicateKey !== null) {
+      mirrors.push(record);
+      if (mirrors.length > 32) {
+        mirrors.shift();
+      }
+      mirrorRepresentations.set(duplicateKey, mirrors);
+      if (mirrorRepresentations.size > 32) {
+        mirrorRepresentations.delete(mirrorRepresentations.keys().next().value ?? '');
+        exclude('identity-budget');
+      }
+    }
+    if (snapshot.window && lines < snapshot.window.startLine) {
+      if (candidate.kind === 'user') {
+        previousPrompt = record;
+      }
+      if (candidate.kind === 'tool-call' && candidate.callId) {
+        previousCalls.set(candidate.callId, record);
+        if (previousCalls.size > 8) {
+          previousCalls.delete(previousCalls.keys().next().value ?? '');
+        }
+      }
+      continue;
+    }
+    if (snapshot.window && nextLine !== null) {
+      continue;
+    }
+    if (snapshot.window && records.length === 0 && previousPrompt) {
+      records.push(previousPrompt);
+      overlapEventIds.push(previousPrompt.event.id);
+      retainedBytes += Buffer.byteLength(JSON.stringify(previousPrompt.event));
+    }
+    const pairedCall =
+      candidate.kind === 'tool-result' && candidate.callId ? previousCalls.get(candidate.callId) : undefined;
+    if (snapshot.window && pairedCall && !records.some((item) => item.event.id === pairedCall.event.id)) {
+      records.push(pairedCall);
+      overlapEventIds.push(pairedCall.event.id);
+      retainedBytes += Buffer.byteLength(JSON.stringify(pairedCall.event));
+    }
+    if (records.length >= maximumEvents) {
+      if (snapshot.window) {
+        nextLine = lines;
+      } else {
+        exclude('event-budget');
+      }
+      continue;
+    }
     const serializedBytes = Buffer.byteLength(JSON.stringify(event));
     if (retainedBytes + serializedBytes > contentBytes) {
-      exclude('text-budget');
+      if (snapshot.window) {
+        nextLine = lines;
+      } else {
+        exclude('text-budget');
+      }
       continue;
     }
     retainedBytes += serializedBytes;
-    const record: CandidateRecord = { event, representation: candidate.representation, duplicateKey };
     records.push(record);
-    if (duplicateKey !== null) {
+    if (!snapshot.window && duplicateKey !== null) {
       mirrors.push(record);
       mirrorRepresentations.set(duplicateKey, mirrors);
     }
@@ -444,6 +588,13 @@ const normalizeSnapshot = (
     const index = event.nativeTurnId === null ? undefined : turnIndexes.get(event.nativeTurnId);
     return { ...event, roundId: index === undefined ? null : (rounds.get(index) ?? null) };
   });
+  if (snapshot.window) {
+    for (const event of events) {
+      if (event.nativeTurnId !== null && event.roundId === null) {
+        exclude('round-budget');
+      }
+    }
+  }
   const partial =
     completion !== 'completed' ||
     [...exclusions.keys()].some(
@@ -454,6 +605,7 @@ const normalizeSnapshot = (
         reason !== 'duplicate-representation',
     );
   const body = {
+    ...(snapshot.window ? { window: { ...snapshot.window, nextLine, overlapEventIds } } : {}),
     schemaVersion: DISTILLATION_EVIDENCE_VERSION,
     normalizationVersion: DISTILLATION_NORMALIZATION_VERSION,
     redactionVersion: options.redactionVersion,
@@ -464,11 +616,18 @@ const normalizeSnapshot = (
       nativeSessionId: request.selection.sourceSessionId,
       reportAnchor: request.selection.reportAnchor ?? null,
       version: snapshot.version,
+      ...(snapshot.window ? { sessionDate } : {}),
     },
     events,
     coverage: {
+      ...(snapshot.window
+        ? {
+            snapshotCoverage: nextLine === null ? ('complete' as const) : ('partial' as const),
+            textCoverage: partial ? ('partial' as const) : ('complete' as const),
+          }
+        : {}),
       scope: 'session-only' as const,
-      status: partial ? ('partial' as const) : ('complete' as const),
+      status: partial || nextLine !== null ? ('partial' as const) : ('complete' as const),
       lines,
       includedEvents: events.length,
       exclusions: [...exclusions].map(([reason, count]) => ({ reason, count })),
@@ -500,9 +659,171 @@ export const prepareCodexDistillationEvidence = (
   return Effect.runPromise(effect, options.signal === undefined ? undefined : { signal: options.signal });
 };
 
+/** Reads the fixed file horizon with bounded buffers. No unredacted snapshot is persisted. */
+function* progressiveSourceLines(
+  file: string,
+  version: DistillationSourceVersion,
+  deadline: number,
+  signal?: AbortSignal,
+): Generator<string | { oversizedPrefix: string }> {
+  const before = fs.lstatSync(file);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error('source-unavailable');
+  }
+  // biome-ignore lint/suspicious/noBitwiseOperators: hardened regular file open flags.
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const digest = createHash('sha256');
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let pending = '';
+  let discarding = false;
+  let oversizedPrefix = '';
+  let offset = 0;
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (
+      !opened.isFile() ||
+      opened.ino !== before.ino ||
+      opened.dev !== before.dev ||
+      before.size !== version.totalBytes ||
+      before.mtimeMs !== version.modifiedAtMs
+    ) {
+      throw new Error('source-changed');
+    }
+    while (offset < version.totalBytes) {
+      signal?.throwIfAborted();
+      if (Date.now() >= deadline) {
+        throw new Error('source-budget-exceeded');
+      }
+      const buffer = Buffer.alloc(Math.min(64 * 1024, version.totalBytes - offset));
+      const bytes = fs.readSync(descriptor, buffer, 0, buffer.length, offset);
+      if (!bytes) {
+        throw new Error('source-changed');
+      }
+      offset += bytes;
+      digest.update(buffer.subarray(0, bytes));
+      pending += decoder.decode(buffer.subarray(0, bytes), { stream: true });
+      for (;;) {
+        const newline = pending.indexOf('\n');
+        if (newline < 0) {
+          break;
+        }
+        const line = pending.slice(0, newline);
+        pending = pending.slice(newline + 1);
+        // A discarded record still occupies its original line identity.
+        yield discarding ? { oversizedPrefix } : line;
+        discarding = false;
+        oversizedPrefix = '';
+      }
+      if (Buffer.byteLength(pending) > MAX_LINE_BYTES) {
+        if (!discarding) {
+          oversizedPrefix = truncate(pending, MAX_LINE_BYTES).text;
+        }
+        pending = '';
+        discarding = true;
+      } else if (discarding) {
+        pending = '';
+      }
+    }
+    pending += decoder.decode();
+    if (discarding) {
+      yield { oversizedPrefix };
+    } else if (pending) {
+      yield pending;
+    }
+    const after = fs.lstatSync(file);
+    const current = fs.fstatSync(descriptor);
+    if (
+      after.isSymbolicLink() ||
+      after.ino !== before.ino ||
+      after.dev !== before.dev ||
+      after.size !== before.size ||
+      current.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      current.mtimeMs !== before.mtimeMs
+    ) {
+      throw new Error('source-changed');
+    }
+    version.bytes = offset;
+    version.digest = digest.digest('hex');
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+export const prepareCodexDistillationWindow = async (
+  request: CodexDistillationEvidenceRequest,
+  options: CodexDistillationEvidenceOptions,
+  continuation?: { version: DistillationSourceVersion; index: number; startLine: number },
+): Promise<DistillationEvidenceReadResult> => {
+  if (!isAuthorized(request)) {
+    return { status: 'unavailable', reason: 'unauthorized' };
+  }
+  const deadline = Date.now() + 30_000;
+  try {
+    const storage = options.storage ?? createLocalHistoryStorage(options.homePath);
+    const files = await Effect.runPromise(
+      listCodexSessionFiles.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      { signal: options.signal },
+    );
+    const sessionId = request.selection.sourceSessionId;
+    const matches = files.filter(
+      (file) => path.basename(file) === `${sessionId}.jsonl` || path.basename(file).endsWith(`-${sessionId}.jsonl`),
+    );
+    if (matches.length !== 1) {
+      return { status: 'unavailable', reason: matches.length ? 'source-ambiguous' : 'source-unavailable' };
+    }
+    const file = matches[0];
+    if (!file) {
+      return { status: 'unavailable', reason: 'source-unavailable' };
+    }
+    const metadata = fs.lstatSync(file);
+    if (metadata.size > DISTILLATION_SNAPSHOT_MAX_BYTES) {
+      return { status: 'unavailable', reason: 'source-budget-exceeded' };
+    }
+    const version = continuation
+      ? { ...continuation.version }
+      : { bytes: metadata.size, totalBytes: metadata.size, modifiedAtMs: metadata.mtimeMs, digest: '' };
+    const snapshot: Snapshot = {
+      text: '',
+      prefixTruncated: false,
+      incompleteRecord: false,
+      version,
+      window: { index: continuation?.index ?? 0, startLine: continuation?.startLine ?? 1 },
+      sourceLines: progressiveSourceLines(file, version, deadline, options.signal),
+    };
+    const result = normalizeSnapshot(snapshot, request, options);
+    if (result.status !== 'available') {
+      return result;
+    }
+    // A second bounded scan rejects an in-place rewrite even if metadata was restored.
+    const verified = { ...version };
+    const verification = progressiveSourceLines(file, verified, deadline, options.signal);
+    while (!verification.next().done) {
+      options.signal?.throwIfAborted();
+    }
+    if (verified.digest !== version.digest || (continuation && version.digest !== continuation.version.digest)) {
+      return { status: 'unavailable', reason: 'source-changed' };
+    }
+    return result;
+  } catch (cause) {
+    options.signal?.throwIfAborted();
+    let reason: DistillationEvidenceUnavailableReason = 'source-unavailable';
+    if (cause instanceof Error && cause.message === 'source-changed') {
+      reason = 'source-changed';
+    }
+    if (cause instanceof Error && cause.message === 'source-budget-exceeded') {
+      reason = 'source-budget-exceeded';
+    }
+    return {
+      status: 'unavailable',
+      reason,
+    };
+  }
+};
+
 export const reloadCodexDistillationEvidence = async (
   request: CodexDistillationEvidenceRequest,
-  expected: Pick<DistillationEvidencePacket, 'source' | 'packetDigest'>,
+  expected: Pick<DistillationEvidencePacket, 'source' | 'packetDigest' | 'window'>,
   reference: DistillationEvidenceRef,
   options: CodexDistillationEvidenceOptions,
 ): Promise<DistillationEvidenceReloadResult> => {
@@ -517,7 +838,13 @@ export const reloadCodexDistillationEvidence = async (
   ) {
     return { status: 'unavailable', reason: 'invalid-reference' };
   }
-  const result = await prepareCodexDistillationEvidence(request, options);
+  const result = expected.window
+    ? await prepareCodexDistillationWindow(request, options, {
+        version: expected.source.version,
+        index: expected.window.index,
+        startLine: expected.window.startLine,
+      })
+    : await prepareCodexDistillationEvidence(request, options);
   if (result.status === 'unavailable') {
     return result;
   }

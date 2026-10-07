@@ -1,4 +1,4 @@
-# Extractor v1
+# Session account content v1
 
 Only produce the `content` below. Job identity, source version, coverage,
 producer metadata and analysis revision are runtime-owned. All fields are
@@ -64,7 +64,7 @@ Keep a short useful summary even for a trivial session. Use empty arrays and
 invent a minimum number of findings. Include unresolved questions only when
 they matter to the recorded objective; a typo fix needs no manufactured inquiry.
 
-Submission envelope:
+Legacy single-packet submission envelope (historical format remains readable):
 
 ```ts
 {
@@ -72,6 +72,28 @@ Submission envelope:
   extractorVersion: 'session-distillation-v1', content
 }
 ```
+
+For a progressive claim, copy identities from the exact claim; never infer the
+next index or reuse a stale lease:
+
+```ts
+{
+  kind: job.progress.stage === 'segment' ? 'advance' : 'submit',
+  projectId, jobId: job.id, leaseId, packetDigest: packet.packetDigest,
+  extractorVersion,
+  snapshotDigest: job.progress.snapshotDigest,
+  segmentIndex: job.progress.segmentIndex,
+  content
+}
+```
+
+`advance` is a bounded rolling checkpoint, not a published analysis. Consolidate
+previous checkpoint findings with the current original events. Preserve old
+evidence IDs and exact quotations, superseded decisions and contrary outcomes;
+do not cite checkpoint prose as source evidence. Use the `segment` CLI command
+to revisit archived original source windows, one bounded packet at a time.
+`job.progress.stage` decides when final publication is allowed. A complete
+snapshot can still have text truncation or unknown children; keep those limits.
 
 The source of truth for validation is
 `packages/platform-core/src/session-distillation.ts` and the packet contract in

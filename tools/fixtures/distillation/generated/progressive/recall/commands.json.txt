@@ -1,0 +1,232 @@
+{
+  "cwd": "/home/nathan/Projects/Github/ai-usage",
+  "env": {
+    "AI_USAGE_HOME": "/tmp/nix-shell.8v9JBL/ai-usage-distillation-workflow-YwP0WZ/home",
+    "AI_USAGE_ENGINE_STATE_DIR": "/tmp/nix-shell.8v9JBL/ai-usage-distillation-workflow-YwP0WZ/state",
+    "AI_USAGE_DATABASE_PATH": "/tmp/nix-shell.8v9JBL/ai-usage-distillation-workflow-YwP0WZ/usage.sqlite"
+  },
+  "commands": [
+    {
+      "name": "01-discover",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "discover",
+        "--checkout",
+        "/synthetic/ai-usage",
+        "--limit",
+        "5"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "01-discover.stdout.json",
+      "stderrFile": "01-discover.stderr.txt",
+      "stdoutUtf8Bytes": 2945,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "eaf38f765bcbc94bb7d34d50466b60cddeba090f2a1a18a643f1c2e83508261c"
+    },
+    {
+      "name": "02-task-search",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "search",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--query",
+        "What did the prior investigation conclude about repairing stale reads, and what validation supports it?",
+        "--mode",
+        "task",
+        "--limit",
+        "10"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "02-task-search.stdout.json",
+      "stderrFile": "02-task-search.stderr.txt",
+      "stdoutUtf8Bytes": 851,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "1c4d6fdd9e8228e0b9be5155c663afc4c1409f683dd68e2520d3d471c60541da"
+    },
+    {
+      "name": "03-task-context",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "context",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--query",
+        "What did the prior investigation conclude about repairing stale reads, and what validation supports it?",
+        "--mode",
+        "task",
+        "--max-bytes",
+        "4096"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "03-task-context.stdout.json",
+      "stderrFile": "03-task-context.stderr.txt",
+      "stdoutUtf8Bytes": 3409,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "09537a9cc27f976e0e619e7877648ada9244ca232735279ac54ef32a3b046595"
+    },
+    {
+      "name": "04-literal-search",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "search",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--query",
+        "12 pass, 0 fail",
+        "--mode",
+        "literal",
+        "--limit",
+        "10"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "04-literal-search.stdout.json",
+      "stderrFile": "04-literal-search.stderr.txt",
+      "stdoutUtf8Bytes": 851,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "1c4d6fdd9e8228e0b9be5155c663afc4c1409f683dd68e2520d3d471c60541da"
+    },
+    {
+      "name": "05-full-get",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "get",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--id",
+        "af81f8c2-0cec-4c79-ab85-4242ebfa9101"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "05-full-get.stdout.json",
+      "stderrFile": "05-full-get.stderr.txt",
+      "stdoutUtf8Bytes": 4348,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "6639d324cf822f8788dd3894610e3ea13f8b017513f449aab9bb8886b466741d"
+    },
+    {
+      "name": "06-final-decision-evidence",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "evidence",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--id",
+        "af81f8c2-0cec-4c79-ab85-4242ebfa9101",
+        "--event",
+        "event:341:772a8c4b662b9bc9"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "06-final-decision-evidence.stdout.json",
+      "stderrFile": "06-final-decision-evidence.stderr.txt",
+      "stdoutUtf8Bytes": 617,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "de85b65268439ddead5d6c8ab87dcf47109d8d9b8c886cf413459908bf16f759"
+    },
+    {
+      "name": "07-test-output-evidence",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "evidence",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--id",
+        "af81f8c2-0cec-4c79-ab85-4242ebfa9101",
+        "--event",
+        "event:260:71a97e12a8fd6e59"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "07-test-output-evidence.stdout.json",
+      "stderrFile": "07-test-output-evidence.stderr.txt",
+      "stdoutUtf8Bytes": 570,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "62227a5b81bc6bcc647dee46532bc3159a0e6541d49c3292f2251bc7e6f0b633"
+    },
+    {
+      "name": "08-initial-decision-evidence",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "evidence",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--id",
+        "af81f8c2-0cec-4c79-ab85-4242ebfa9101",
+        "--event",
+        "event:5:ddcfabdf5b9f8d00"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "08-initial-decision-evidence.stdout.json",
+      "stderrFile": "08-initial-decision-evidence.stderr.txt",
+      "stdoutUtf8Bytes": 574,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "a63d81515ba6329579f37ba2a89e61b7c90989eceb5c911ee61c82f194cbcf63"
+    },
+    {
+      "name": "09-unsupported-claim-evidence",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "evidence",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--id",
+        "af81f8c2-0cec-4c79-ab85-4242ebfa9101",
+        "--event",
+        "event:6:1e475bf2efac6ed1"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "09-unsupported-claim-evidence.stdout.json",
+      "stderrFile": "09-unsupported-claim-evidence.stderr.txt",
+      "stdoutUtf8Bytes": 556,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "ba907b3b1f4751c83014d50c76dda60e71b0cd6c927e97e7b20c238337f656c1"
+    },
+    {
+      "name": "10-test-command-evidence",
+      "argv": [
+        "bun",
+        "--no-env-file",
+        "apps/cli/src/main.ts",
+        "analyses",
+        "evidence",
+        "--project",
+        "2f70c7f2-e77a-443f-ba88-538325786040",
+        "--id",
+        "af81f8c2-0cec-4c79-ab85-4242ebfa9101",
+        "--event",
+        "event:259:3b6416eff8b87696"
+      ],
+      "exitCode": 0,
+      "stdoutFile": "10-test-command-evidence.stdout.json",
+      "stderrFile": "10-test-command-evidence.stderr.txt",
+      "stdoutUtf8Bytes": 609,
+      "stderrUtf8Bytes": 0,
+      "stdoutSha256": "11754b036347b4e7153c08d66b7808826c65c95bde110e512a5c2c294ae07756"
+    }
+  ]
+}

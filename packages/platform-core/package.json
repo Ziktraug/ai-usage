@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./identity": "./src/identity.ts",
+    "./distillation-discovery": "./src/distillation-discovery.ts",
     "./session-distillation": "./src/session-distillation.ts",
     "./distillation-evidence": "./src/distillation-evidence.ts"
   },

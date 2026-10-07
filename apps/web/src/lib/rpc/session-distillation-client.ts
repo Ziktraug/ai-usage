@@ -24,7 +24,7 @@ export interface SessionDistillationClient {
 }
 
 export const createSessionDistillationClient = (
-  transport: SessionDistillationContractClient,
+  transport: Pick<SessionDistillationContractClient, 'evidence' | 'get' | 'status'>,
 ): SessionDistillationClient => ({
   evidence: async (input, signal) => {
     const request = parseSessionDistillationEvidenceRequest(input);
@@ -32,6 +32,15 @@ export const createSessionDistillationClient = (
     const response = parseDistillationEvidenceResult(await transport.evidence(request, signal ? { signal } : {}));
     signal?.throwIfAborted();
     if (response.status === 'available') {
+      if (
+        request.identity &&
+        (!response.identity ||
+          response.identity.analysisId !== request.analysisId ||
+          response.identity.packetDigest !== request.identity.packetDigest ||
+          response.identity.sourceDigest !== request.identity.sourceDigest)
+      ) {
+        throw new Error('Session evidence does not match the requested snapshot.');
+      }
       const requested = new Set(request.eventIds);
       if (
         response.events.length !== requested.size ||

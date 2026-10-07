@@ -15,7 +15,10 @@
   });
   // Tab triggers live inside the scrolling body, where every control keeps a
   // 44px touch target below `md` (ADR 0005).
-  const tabsShell = css({ minW: 0, '& [data-part="trigger"]': { minH: { base: '44px', md: 'auto' } } });
+  const tabsShell = css({
+    minW: 0,
+    '& [data-part="trigger"]': { flexShrink: 0, minH: { base: '44px', md: 'auto' } },
+  });
   const pane = css({ display: 'grid', gap: '20px', minW: 0 });
   const tokenSegmentClasses = {
     cacheRead: css({ bg: 'accent', opacity: 0.22 }),

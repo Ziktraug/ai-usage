@@ -648,7 +648,7 @@ interface PendingCodexCatalogueSignal {
   entries: CodexSkillCatalogueEntry[];
 }
 
-export const createCodexSessionParser = (captureDetail = false) => {
+export const createCodexSessionParser = (captureDetail = false, evidenceOnly = false) => {
   const session = emptySession();
   const completedTasks: (MutableCodexTask & { durationMs: number; end: Date })[] = [];
   const observedTaskIntervals: CodexTaskInterval[] = [];
@@ -982,9 +982,11 @@ export const createCodexSessionParser = (captureDetail = false) => {
         session.tools++;
         task.tools++;
       }
-      observeCodexSkillExec(payload, date);
+      if (!evidenceOnly) {
+        observeCodexSkillExec(payload, date);
+      }
     }
-    if (skillCatalogueLine) {
+    if (skillCatalogueLine && !evidenceOnly) {
       observeCodexSkillCatalogue(codexDeveloperMessageText(payload), date);
     }
     const sessionMetaId = event.type === 'session_meta' ? nonEmpty(payload.id) : null;
@@ -1099,10 +1101,12 @@ export const createCodexSessionParser = (captureDetail = false) => {
             : taskEnd.getTime() - task.start.getTime();
           const turnEnd = new Date(Math.min(taskEnd.getTime(), task.start.getTime() + recordedDurationMs));
           const durationMs = turnEnd.getTime() - task.start.getTime();
-          observedTaskIntervals.push({
-            endMs: turnEnd.getTime(),
-            startMs: task.start.getTime(),
-          });
+          if (!evidenceOnly) {
+            observedTaskIntervals.push({
+              endMs: turnEnd.getTime(),
+              startMs: task.start.getTime(),
+            });
+          }
           anchoredTaskCount += 1;
           if (captureDetail && completedTasks.length < CODEX_DETAIL_MAX_TURNS) {
             completedTasks.push({ ...task, durationMs, end: turnEnd });
@@ -1112,7 +1116,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
         }
       }
     }
-    if (payload.type === 'token_count') {
+    if (payload.type === 'token_count' && !evidenceOnly) {
       recordTokens(payload, date);
     }
   };

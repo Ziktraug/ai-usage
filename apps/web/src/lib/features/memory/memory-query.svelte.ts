@@ -30,12 +30,18 @@ const createLazyClient = (): MemoryProposalReviewClient => {
 
 export const createHydratedMemoryProposalQuery = (
   browser: boolean,
+  cursor: () => string | null = () => null,
+  enabled: () => boolean = () => true,
 ): CreateQueryResult<MemoryProposalReviewSnapshot, Error> =>
   createQuery(() =>
-    memoryProposalReviewsQueryOptions(browser ? createLazyClient() : { proposalReviews: unavailableReviews }, {
-      browser,
-      enabled: true,
-    }),
+    memoryProposalReviewsQueryOptions(
+      browser ? createLazyClient() : { proposalReviews: unavailableReviews },
+      {
+        browser,
+        enabled: enabled(),
+      },
+      cursor(),
+    ),
   );
 
 export const createMemoryProposalActor = (

@@ -21,7 +21,11 @@ export const sessionDistillationGetKey = (input: SessionDistillationGetRequest |
   immutableRevisionKey(
     'session-analysis',
     input?.analysisId ?? '',
-    JSON.stringify([input?.selection.revision ?? '', input?.selection.rowId ?? '']),
+    JSON.stringify(
+      input && 'projectId' in input
+        ? ['project', input.projectId]
+        : [input?.selection.revision ?? '', input?.selection.rowId ?? ''],
+    ),
     'analysis',
   );
 
@@ -29,8 +33,8 @@ export const sessionDistillationEvidenceKey = (input: SessionDistillationEvidenc
   finiteSwrKey(
     'session-analysis-evidence',
     input?.analysisId ?? '',
-    input?.selection.revision ?? '',
-    input?.selection.rowId ?? '',
+    input && 'projectId' in input ? 'project' : (input?.selection.revision ?? ''),
+    input && 'projectId' in input ? input.projectId : (input?.selection.rowId ?? ''),
     JSON.stringify(input?.eventIds ?? []),
   );
 
@@ -61,9 +65,8 @@ export const sessionDistillationGetOptions = (
         return;
       }
       const previousSelection: unknown = JSON.parse(identity);
-      return Array.isArray(previousSelection) && previousSelection[1] === input?.selection.rowId
-        ? previousData
-        : undefined;
+      const scopeIdentity = input && 'projectId' in input ? input.projectId : input?.selection.rowId;
+      return Array.isArray(previousSelection) && previousSelection[1] === scopeIdentity ? previousData : undefined;
     },
     queryFn: input ? ({ signal }) => client.get(input, signal) : skipToken,
     queryKey: sessionDistillationGetKey(input),

@@ -57,6 +57,8 @@ import {
 } from './replication';
 import {
   LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION,
+  localAnalysisPromotionSchema,
+  localDistillationProgressSchema,
   localDistillationSchema,
   localMemoryDomainSchema,
   localMemoryIdentitySchema,
@@ -385,6 +387,10 @@ const bootstrapDatabase = (database: Database, options: OpenLocalIdentityKernelO
     database.exec(localMemoryReplicationPublicationSchema);
     if (version < 7) {
       database.exec(localDistillationSchema);
+    }
+    if (version < 8) {
+      database.exec(localDistillationProgressSchema);
+      database.exec(localAnalysisPromotionSchema);
     }
     database.exec(`PRAGMA user_version = ${LOCAL_MEMORY_IDENTITY_SCHEMA_VERSION}`);
   });

@@ -98,5 +98,8 @@ describe('Memory proposal review surface', () => {
     expect(body).toContain('Edit before accepting');
     expect(body).toContain('Reject proposal');
     expect(body).not.toContain('proposedByPrincipal');
+    const initialLibrary = render(fixture, { props: { data, address: '/memory' } }).body;
+    expect(initialLibrary).toContain('Reading recognized Projects');
+    expect(initialLibrary).not.toContain('No recognized Projects');
   });
 });

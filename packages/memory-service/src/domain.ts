@@ -94,6 +94,7 @@ export interface MemoryObservation {
 }
 
 export interface MemoryProposal {
+  readonly acceptedMemoryItemId?: MemoryItemId | null;
   readonly guidance: readonly string[];
   readonly id: MemoryProposalId;
   readonly owningSpaceId: SpaceId;
@@ -180,7 +181,14 @@ export interface MemoryItemResult {
 export interface CurrentMemoryItemResult extends MemoryItemResult {}
 
 export interface MemoryItemPage {
-  readonly items: readonly CurrentMemoryItemResult[];
+  readonly items: readonly (CurrentMemoryItemResult & {
+    readonly analysisProvenance?: {
+      readonly analysisId: string;
+      readonly analysisRevision: number;
+      readonly elementKey: string;
+      readonly projectId: string;
+    };
+  })[];
   readonly nextCursor: string | null;
 }
 

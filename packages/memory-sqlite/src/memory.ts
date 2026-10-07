@@ -96,6 +96,7 @@ interface ObservationRow {
 }
 
 interface ProposalRow {
+  readonly accepted_memory_item_id: unknown;
   readonly guidance_json: unknown;
   readonly id: unknown;
   readonly project_id: unknown;
@@ -290,6 +291,7 @@ const mapPrincipal = (kind: unknown, id: unknown, operation: string): Authorizat
 };
 
 const mapProposal = (row: ProposalRow): MemoryProposal => ({
+  acceptedMemoryItemId: row.accepted_memory_item_id === null ? null : parseMemoryItemId(row.accepted_memory_item_id),
   guidance: guidanceValue(row.guidance_json, 'map-proposal'),
   id: parseMemoryProposalId(row.id),
   owningSpaceId: parseSpaceId(row.space_id),
@@ -364,6 +366,15 @@ const insertAudit = (database: Database, event: MemoryAuditEvent): void => {
 
 const insertOutbox = (database: Database, event: AcceptProposalInput['outboxEvent'], audit: MemoryAuditEvent): void => {
   if (!event) {
+    return;
+  }
+  if (
+    database
+      .query(`SELECT 1 FROM memory_analysis_promotions source
+      JOIN memory_proposals proposal ON proposal.id = source.proposal_id
+      WHERE proposal.accepted_memory_item_id = $itemId`)
+      .get({ itemId: event.payload.itemId })
+  ) {
     return;
   }
   const captureContext = resolveLocalMemoryReplicationContext(database, event.owningSpaceId, event.projectId);
@@ -610,7 +621,7 @@ export const rebuildSqliteMemorySearchProjection = (database: Database, selected
 const proposalSelect = `
   SELECT id, space_id, project_id, proposed_kind, title, summary, guidance_json,
          structured_content_json, trust_candidate, sensitivity, status,
-         proposed_by_kind, proposed_by_id, reviewed_by_person_id, reviewed_at, review_reason
+         proposed_by_kind, proposed_by_id, reviewed_by_person_id, reviewed_at, review_reason, accepted_memory_item_id
   FROM memory_proposals
 `;
 
@@ -623,6 +634,7 @@ const importSelect = `
 
 interface CursorPayload {
   readonly afterItemId: string;
+  readonly kind?: string | null;
   readonly projectId: string | null;
   readonly spaceId: string;
   readonly status: string | null;
@@ -646,6 +658,7 @@ const decodeCursor = (cursor: string | null | undefined, query: ListMemoryItemsQ
       candidate.spaceId !== query.spaceId ||
       candidate.projectId !== (query.projectId ?? null) ||
       candidate.status !== (query.status ?? null) ||
+      (candidate.kind ?? null) !== (query.kind ?? null) ||
       typeof candidate.afterItemId !== 'string'
     ) {
       throw new Error('invalid cursor');
@@ -1079,6 +1092,64 @@ const insertImportedRelation = (database: Database, relation: MemoryRelation): v
     });
 };
 
+/** Synchronous so promotion can record its source in the proposal transaction. */
+const recordObservation = (database: Database, input: RecordObservationInput) => {
+  const { observation } = input;
+  if (
+    observation.owningSpaceId !== input.audit.spaceId ||
+    memoryContentHash(observation.content) !== observation.contentHash
+  ) {
+    throw new MemoryRepositoryError('invalid-input', 'record-observation');
+  }
+  const existing = database
+    .query(
+      `SELECT id, content_hash FROM memory_observations
+       WHERE space_id = $spaceId AND fingerprint = $fingerprint`,
+    )
+    .get({
+      fingerprint: observation.fingerprint,
+      spaceId: observation.owningSpaceId,
+    }) as ExistingObservationRow | null;
+  if (existing) {
+    const existingId = parseMemoryObservationId(existing.id);
+    if (existingId !== observation.id || existing.content_hash !== observation.contentHash) {
+      throw new MemoryRepositoryError('conflict', 'record-observation');
+    }
+    insertAudit(database, input.audit);
+    return { created: false, id: existingId };
+  }
+  const actor = principalColumns(observation.createdByPrincipal);
+  database
+    .query(
+      `INSERT INTO memory_observations
+        (id, space_id, project_id, capture_context_id, source_kind, source_locator,
+         fingerprint, content_hash, observed_at, content_json, sensitivity,
+         redaction_rule_set_version, created_by_kind, created_by_id)
+       VALUES ($id, $spaceId, $projectId, $captureContextId, $sourceKind, $sourceLocator,
+               $fingerprint, $contentHash, $observedAt, $content, $sensitivity,
+               $ruleSetVersion, $actorKind, $actorId)`,
+    )
+    .run({
+      actorId: actor.id,
+      actorKind: actor.kind,
+      captureContextId: observation.captureContextId,
+      content: JSON.stringify(observation.content),
+      contentHash: observation.contentHash,
+      fingerprint: observation.fingerprint,
+      id: observation.id,
+      observedAt: observation.observedAt,
+      projectId: observation.projectId,
+      ruleSetVersion: observation.redactionRuleSetVersion,
+      sensitivity: observation.sensitivity,
+      sourceKind: observation.sourceKind,
+      sourceLocator: observation.sourceLocator,
+      spaceId: observation.owningSpaceId,
+    });
+  bumpMemoryState(database, observation.owningSpaceId);
+  insertAudit(database, input.audit);
+  return { created: true, id: observation.id };
+};
+
 export const createSqliteMemoryRepository = (database: Database): MemoryRepository => {
   rebuildSqliteMemorySearchProjection(database);
   const repository: MemoryRepository = {
@@ -1276,8 +1347,59 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
     createProposal: (input: CreateProposalInput) =>
       storageOperation('create-proposal', () => {
         const create = database.transaction(() => {
+          if (Boolean(input.localAnalysisSource) !== Boolean(input.localAnalysisObservation)) {
+            throw new MemoryRepositoryError('invalid-input', 'create-proposal');
+          }
+          if (input.localAnalysisSource && input.localAnalysisObservation) {
+            const source = input.localAnalysisSource;
+            const observation = input.localAnalysisObservation.observation;
+            if (
+              source.projectId !== input.proposal.projectId ||
+              observation.projectId !== source.projectId ||
+              observation.owningSpaceId !== input.proposal.owningSpaceId ||
+              !input.observationIds.includes(observation.id)
+            ) {
+              throw new MemoryRepositoryError('invalid-input', 'create-proposal');
+            }
+            // Removal and promotion serialize as SQLite writer transactions. A source read before
+            // withdrawal/purge never authorizes a new derivative after that removal.
+            const liveSource = database
+              .query(`SELECT 1 FROM session_analyses analysis
+              JOIN projects project ON project.id=analysis.project_id
+              WHERE analysis.id=$analysisId AND analysis.project_id=$projectId
+                AND analysis.revision=$revision AND project.space_id=$spaceId
+                AND json_extract(analysis.analysis_json, '$.source.version.digest')=$snapshotDigest
+                AND NOT EXISTS (SELECT 1 FROM distillation_withdrawals withdrawn
+                  WHERE withdrawn.project_id=analysis.project_id AND withdrawn.machine_id=analysis.machine_id
+                    AND withdrawn.native_session_id=analysis.native_session_id)`)
+              .get({
+                analysisId: source.analysisId,
+                projectId: source.projectId,
+                revision: source.analysisRevision,
+                snapshotDigest: source.snapshotDigest,
+                spaceId: input.proposal.owningSpaceId,
+              });
+            if (!liveSource) {
+              throw new MemoryRepositoryError('stale', 'create-proposal');
+            }
+          }
+          if (
+            input.localAnalysisSource &&
+            database
+              .query(`SELECT 1 FROM memory_analysis_promotions
+            WHERE proposal_id = $proposalId AND fingerprint = $fingerprint`)
+              .get({
+                proposalId: input.proposal.id,
+                fingerprint: input.localAnalysisSource.fingerprint,
+              })
+          ) {
+            return;
+          }
           if (input.proposal.owningSpaceId !== input.audit.spaceId || input.proposal.status !== 'pending') {
             throw new MemoryRepositoryError('invalid-input', 'create-proposal');
+          }
+          if (input.localAnalysisObservation) {
+            recordObservation(database, input.localAnalysisObservation);
           }
           const actor = principalColumns(input.proposal.proposedByPrincipal);
           database
@@ -1316,6 +1438,22 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
           );
           for (const observationId of uniqueObservationIds) {
             link.run({ observationId, proposalId: input.proposal.id, spaceId: input.proposal.owningSpaceId });
+          }
+          if (input.localAnalysisSource) {
+            const source = input.localAnalysisSource;
+            if (source.projectId !== input.proposal.projectId) {
+              throw new MemoryRepositoryError('invalid-input', 'create-proposal');
+            }
+            database
+              .query(`INSERT INTO memory_analysis_promotions
+                (proposal_id, analysis_id, analysis_revision, project_id, element_key,
+                 snapshot_digest, fingerprint, publication_policy)
+                VALUES ($proposalId, $analysisId, $analysisRevision, $projectId, $elementKey,
+                        $snapshotDigest, $fingerprint, 'local-only')`)
+              .run({
+                ...source,
+                proposalId: input.proposal.id,
+              });
           }
           bumpMemoryState(database, input.proposal.owningSpaceId);
           insertAudit(database, input.audit);
@@ -1482,6 +1620,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
                AND item.id IN (SELECT value FROM json_each($authorizedIds))
                AND ($projectId IS NULL OR item.project_id = $projectId)
                AND ($status IS NULL OR item.status = $status)
+               AND ($kind IS NULL OR item.kind = $kind)
                AND ($afterItemId IS NULL OR item.id > $afterItemId)
              ORDER BY item.id ASC
              LIMIT $limit`,
@@ -1490,12 +1629,35 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
             afterItemId,
             authorizedIds,
             limit: query.pageSize + 1,
+            kind: query.kind ?? null,
             projectId: query.projectId ?? null,
             spaceId: query.spaceId,
             status: query.status ?? null,
           }) as ItemRevisionRow[];
         const hasNext = rows.length > query.pageSize;
-        const items = (hasNext ? rows.slice(0, query.pageSize) : rows).map(mapItemResult);
+        const selected = (hasNext ? rows.slice(0, query.pageSize) : rows).map(mapItemResult);
+        const sources = database
+          .query(`
+          SELECT proposal.accepted_memory_item_id AS itemId, source.analysis_id AS analysisId,
+                 source.analysis_revision AS analysisRevision, source.element_key AS elementKey,
+                 source.project_id AS projectId
+          FROM memory_analysis_promotions source
+          JOIN memory_proposals proposal ON proposal.id = source.proposal_id
+          WHERE proposal.space_id = $spaceId
+            AND proposal.accepted_memory_item_id IN (SELECT value FROM json_each($itemIds))
+        `)
+          .all({ spaceId: query.spaceId, itemIds: JSON.stringify(selected.map(({ item }) => item.id)) }) as {
+          itemId: string;
+          analysisId: string;
+          analysisRevision: number;
+          elementKey: string;
+          projectId: string;
+        }[];
+        const byItem = new Map(sources.map(({ itemId, ...source }) => [itemId, source]));
+        const items = selected.map((result) => {
+          const analysisProvenance = byItem.get(result.item.id);
+          return analysisProvenance ? { ...result, analysisProvenance } : result;
+        });
         const lastItem = items.at(-1);
         return {
           items,
@@ -1503,6 +1665,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
             hasNext && lastItem
               ? encodeCursor({
                   afterItemId: lastItem.item.id,
+                  kind: query.kind ?? null,
                   projectId: query.projectId ?? null,
                   spaceId: query.spaceId,
                   status: query.status ?? null,
@@ -1698,6 +1861,13 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
                WHERE proposal.space_id = $spaceId AND proposal.accepted_memory_item_id = $itemId`,
             )
             .all({ itemId: input.itemId, spaceId: input.spaceId }) as { readonly observation_id: unknown }[];
+          // Check before deleting provenance; a local Item's purge must not emit a remote tombstone.
+          const localOnly =
+            database
+              .query(`SELECT 1 FROM memory_analysis_promotions source
+            JOIN memory_proposals proposal ON proposal.id = source.proposal_id
+            WHERE proposal.accepted_memory_item_id = $itemId`)
+              .get({ itemId: input.itemId }) !== null;
           database.query('INSERT INTO memory_privacy_purge_context (singleton) VALUES (1)').run();
           database
             .query(
@@ -1720,7 +1890,9 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
                WHERE space_id = $spaceId AND (from_memory_item_id = $itemId OR to_memory_item_id = $itemId)`,
             )
             .run({ itemId: input.itemId, spaceId: input.spaceId });
-          insertOutbox(database, input.outboxEvent, input.audit);
+          if (!localOnly) {
+            insertOutbox(database, input.outboxEvent, input.audit);
+          }
           database
             .query('DELETE FROM memory_revisions WHERE space_id = $spaceId AND memory_item_id = $itemId')
             .run({ itemId: input.itemId, spaceId: input.spaceId });
@@ -1753,62 +1925,7 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
       }),
     recordObservation: (input: RecordObservationInput) =>
       storageOperation('record-observation', () => {
-        const record = database.transaction(() => {
-          const { observation } = input;
-          if (
-            observation.owningSpaceId !== input.audit.spaceId ||
-            memoryContentHash(observation.content) !== observation.contentHash
-          ) {
-            throw new MemoryRepositoryError('invalid-input', 'record-observation');
-          }
-          const existing = database
-            .query(
-              `SELECT id, content_hash FROM memory_observations
-               WHERE space_id = $spaceId AND fingerprint = $fingerprint`,
-            )
-            .get({
-              fingerprint: observation.fingerprint,
-              spaceId: observation.owningSpaceId,
-            }) as ExistingObservationRow | null;
-          if (existing) {
-            const existingId = parseMemoryObservationId(existing.id);
-            if (existingId !== observation.id || existing.content_hash !== observation.contentHash) {
-              throw new MemoryRepositoryError('conflict', 'record-observation');
-            }
-            insertAudit(database, input.audit);
-            return { created: false, id: existingId };
-          }
-          const actor = principalColumns(observation.createdByPrincipal);
-          database
-            .query(
-              `INSERT INTO memory_observations
-                (id, space_id, project_id, capture_context_id, source_kind, source_locator,
-                 fingerprint, content_hash, observed_at, content_json, sensitivity,
-                 redaction_rule_set_version, created_by_kind, created_by_id)
-               VALUES ($id, $spaceId, $projectId, $captureContextId, $sourceKind, $sourceLocator,
-                       $fingerprint, $contentHash, $observedAt, $content, $sensitivity,
-                       $ruleSetVersion, $actorKind, $actorId)`,
-            )
-            .run({
-              actorId: actor.id,
-              actorKind: actor.kind,
-              captureContextId: observation.captureContextId,
-              content: JSON.stringify(observation.content),
-              contentHash: observation.contentHash,
-              fingerprint: observation.fingerprint,
-              id: observation.id,
-              observedAt: observation.observedAt,
-              projectId: observation.projectId,
-              ruleSetVersion: observation.redactionRuleSetVersion,
-              sensitivity: observation.sensitivity,
-              sourceKind: observation.sourceKind,
-              sourceLocator: observation.sourceLocator,
-              spaceId: observation.owningSpaceId,
-            });
-          bumpMemoryState(database, observation.owningSpaceId);
-          insertAudit(database, input.audit);
-          return { created: true, id: observation.id };
-        });
+        const record = database.transaction(() => recordObservation(database, input));
         return record.immediate();
       }),
     rejectProposal: (input: RejectProposalInput) =>

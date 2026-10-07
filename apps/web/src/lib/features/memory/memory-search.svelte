@@ -4,6 +4,16 @@
   import { browser } from '$app/environment';
   import { createMemorySearchQuery } from './memory-query.svelte';
 
+  let {
+    projectId = null,
+    kind = null,
+    onActiveChange,
+  }: {
+    projectId?: string | null;
+    kind?: NonNullable<MemorySearchInput['kinds']>[number] | null;
+    onActiveChange?: (active: boolean) => void;
+  } = $props();
+
   let draft = $state('');
   let submittedQuery = $state('');
   let matchingMode = $state<'hybrid' | 'literal'>('hybrid');
@@ -14,7 +24,8 @@
     includeSpaceWide: false,
     limit: 10,
     matchingMode,
-    projectId: null,
+    projectId,
+    ...(kind ? { kinds: [kind] } : {}),
     query: submittedQuery,
   });
   const searchQuery = createMemorySearchQuery(
@@ -111,11 +122,9 @@
   const submit = (event: SubmitEvent): void => {
     event.preventDefault();
     const query = draft.trim();
-    if (query.length === 0) {
-      return;
-    }
     cursor = null;
     submittedQuery = query;
+    onActiveChange?.(query.length > 0);
   };
 
   const nextPage = (): void => {
@@ -156,14 +165,14 @@
         <option value="literal">Literal</option>
       </select>
     </label>
-    <button class={button} disabled={draft.trim().length === 0 || searchQuery.isFetching} type="submit">
+    <button class={button} disabled={searchQuery.isFetching} type="submit">
       {searchQuery.isFetching ? 'Searching…' : 'Search Memory'}
     </button>
   </form>
 
   <div aria-live="polite" class={results}>
     {#if submittedQuery.length === 0}
-      <p class={status}>Enter a query to retrieve accepted Memory.</p>
+      <p class={status}>Browse accepted knowledge below, or enter a query to search it.</p>
     {:else if searchQuery.isPending}
       <p class={status}>Searching accepted Memory…</p>
     {:else if searchQuery.isError}

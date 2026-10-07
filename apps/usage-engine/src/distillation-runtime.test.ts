@@ -3,8 +3,9 @@ import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseDistillationEvidencePacket } from '@ai-usage/platform-core/distillation-evidence';
 import { createProjectId } from '@ai-usage/platform-core/identity';
+import type { DistillationLease, SessionAnalysisContent } from '@ai-usage/platform-core/session-distillation';
 import {
-  DISTILLATION_EXTRACTOR_VERSION,
+  DISTILLATION_PROGRESSIVE_EXTRACTOR_VERSION,
   distillationObject,
   parseDistillationStatus,
   parseSessionAnalysis,
@@ -14,6 +15,7 @@ import { queryUsageStoreGenerations } from '@ai-usage/usage-store/reader';
 import { Effect } from 'effect';
 import { createDistillationRuntime } from './distillation-runtime';
 import { createDistillationFixture } from './fixtures/distillation';
+import { longSessionExpectations } from './fixtures/distillation-long-session';
 
 const fixtures: Awaited<ReturnType<typeof createDistillationFixture>>[] = [];
 afterEach(async () => {
@@ -21,6 +23,112 @@ afterEach(async () => {
     await fixture.dispose();
   }
 });
+
+test('real multi-window workflow reaches late validation after recovery, keeps exact segments, and rejects a changed snapshot', async () => {
+  const f = await fixture('long-session');
+  const prepared = distillationObject(
+    await f.client.distillation({
+      kind: 'prepare',
+      projectId: f.projectId,
+      selections: [f.selection],
+      providerProcessingAuthorized: true,
+      producerSessionId: 'synthetic-distiller',
+      revisionKey: null,
+    }),
+  );
+  const jobId = (prepared.jobs as { id: string }[])[0]!.id;
+  let lease = (await f.client.distillation({ kind: 'claim', projectId: f.projectId, jobId })) as DistillationLease;
+  const firstPacket = structuredClone(lease.packet);
+  expect(firstPacket.source.version.bytes).toBeGreaterThan(longSessionExpectations.sourceBytesAbove);
+  const checkpoint: SessionAnalysisContent = {
+    schemaVersion: 1,
+    summary: { text: 'Initial observations remain unverified.', basis: 'unknown', evidence: [] },
+    episodes: [],
+    abstention: null,
+  };
+  const submission = (current: DistillationLease, content: SessionAnalysisContent) => ({
+    projectId: f.projectId,
+    jobId,
+    leaseId: current.leaseId,
+    packetDigest: current.packet.packetDigest,
+    extractorVersion: current.extractorVersion,
+    snapshotDigest: current.packet.source.version.digest,
+    segmentIndex: current.packet.window!.index,
+    content,
+  });
+  const first = { kind: 'advance' as const, ...submission(lease, checkpoint) };
+  const advanced = await f.client.distillation(first);
+  expect(await f.client.distillation(first)).toEqual(advanced);
+  lease = (await f.client.distillation({ kind: 'claim', projectId: f.projectId, jobId })) as DistillationLease;
+  const expired = lease;
+  await f.restart();
+  await f.client.distillation({ kind: 'retry', projectId: f.projectId, jobId });
+  lease = (await f.client.distillation({ kind: 'claim', projectId: f.projectId, jobId })) as DistillationLease;
+  expect(lease.checkpoint).toEqual(checkpoint);
+  expect(lease.packet.events.some((event) => event.text === longSessionExpectations.finalDecision)).toBe(true);
+  const observed = lease.packet.events.find((event) => event.text === longSessionExpectations.recordedValidation)!;
+  const finalContent: SessionAnalysisContent = {
+    schemaVersion: 1,
+    summary: {
+      text: 'The final recorded test passes; the earlier unsupported success claim is not the validation.',
+      basis: 'observed',
+      evidence: [{ eventId: observed.id, quote: observed.text }],
+    },
+    episodes: [],
+    abstention: null,
+  };
+  await expect(f.client.distillation({ kind: 'advance', ...submission(expired, finalContent) })).rejects.toThrow();
+  await f.client.distillation({ kind: 'advance', ...submission(lease, finalContent) });
+  const archived = distillationObject(
+    await f.client.distillation({
+      kind: 'segment',
+      projectId: f.projectId,
+      jobId,
+      snapshotDigest: firstPacket.source.version.digest,
+      segmentIndex: 0,
+    }),
+  );
+  expect(archived.packet).toEqual(firstPacket);
+  const consolidation = (await f.client.distillation({
+    kind: 'claim',
+    projectId: f.projectId,
+    jobId,
+  })) as DistillationLease;
+  const saved = parseSessionAnalysis(
+    await f.client.distillation({ kind: 'submit', ...submission(consolidation, finalContent) }),
+  );
+  expect(saved.coverage.includedEvents).toBeGreaterThan(longSessionExpectations.nativeEventsAbove);
+  expect(saved.coverage.status).toBe('partial');
+  expect(
+    await f.client.distillation({
+      kind: 'evidence',
+      projectId: f.projectId,
+      analysisId: saved.id,
+      eventIds: [observed.id],
+      identity: { packetDigest: saved.packetDigest, sourceDigest: saved.source.version.digest },
+    }),
+  ).toMatchObject({ status: 'available', events: [{ text: longSessionExpectations.recordedValidation }] });
+  const next = distillationObject(
+    await f.client.distillation({
+      kind: 'prepare',
+      projectId: f.projectId,
+      selections: [f.selection],
+      providerProcessingAuthorized: true,
+      producerSessionId: null,
+      revisionKey: 'mutation',
+    }),
+  );
+  const nextId = (next.jobs as { id: string }[])[0]!.id;
+  const pending = (await f.client.distillation({
+    kind: 'claim',
+    projectId: f.projectId,
+    jobId: nextId,
+  })) as DistillationLease;
+  await appendFile(f.sourceFile, '\n');
+  await expect(
+    f.client.distillation({ kind: 'advance', ...submission(pending, checkpoint), jobId: nextId }),
+  ).rejects.toThrow();
+}, 30_000);
 const fixture = async (caseId?: string) => {
   const value = await createDistillationFixture(caseId);
   fixtures.push(value);
@@ -64,7 +172,9 @@ test('real local service prepares, validates, publishes once, restarts, searches
     jobId: jobs[0]!.id,
     leaseId: String(lease.leaseId),
     packetDigest: packet.packetDigest,
-    extractorVersion: DISTILLATION_EXTRACTOR_VERSION,
+    extractorVersion: DISTILLATION_PROGRESSIVE_EXTRACTOR_VERSION,
+    snapshotDigest: packet.source.version.digest,
+    segmentIndex: packet.window?.index ?? 0,
     content,
   };
   const saved = parseSessionAnalysis(await f.client.distillation(submission));
@@ -95,7 +205,7 @@ test('real local service prepares, validates, publishes once, restarts, searches
   });
   expect(await f.client.distillation(evidence)).toMatchObject({ status: 'available' });
   await appendFile(f.sourceFile, '\n');
-  expect(await f.client.distillation(evidence)).toEqual({ status: 'changed', events: [] });
+  expect(await f.client.distillation(evidence)).toMatchObject({ status: 'changed', events: [] });
   expect(
     parseDistillationStatus(await f.client.distillation({ kind: 'status', selection: f.selection })).latest?.id,
   ).toBe(saved.id);
@@ -172,7 +282,9 @@ test('context retains a useful summary and relevant episodes when a full analysi
       jobId: job.id,
       leaseId: String(lease.leaseId),
       packetDigest: packet.packetDigest,
-      extractorVersion: DISTILLATION_EXTRACTOR_VERSION,
+      extractorVersion: DISTILLATION_PROGRESSIVE_EXTRACTOR_VERSION,
+      snapshotDigest: packet.source.version.digest,
+      segmentIndex: packet.window?.index ?? 0,
       content,
     }),
   );

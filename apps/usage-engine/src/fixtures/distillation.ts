@@ -12,6 +12,7 @@ import { importLocalRows, publishServedReportRevision, updateUsageMachineLabel }
 import { Effect } from 'effect';
 import { createDistillationRuntime } from '../distillation-runtime';
 import { createRandomMemoryServiceToken, startLocalMemoryService } from '../memory-service-server';
+import { createLongDistillationTranscript } from './distillation-long-session';
 
 /** Disposable writer composition for deterministic integration tests and a manual synthetic skill smoke. */
 export const createDistillationFixture = async (caseId = 'multi-attempt') => {
@@ -24,7 +25,7 @@ export const createDistillationFixture = async (caseId = 'multi-attempt') => {
   const corpus: { cases: { id: string; file: string; sessionId: string }[] } = JSON.parse(
     await readFile(path.join(fixtureRoot, 'corpus.json'), 'utf8'),
   );
-  const source = corpus.cases.find((entry) => entry.id === caseId);
+  const source = corpus.cases.find((entry) => entry.id === (caseId === 'long-session' ? 'multi-attempt' : caseId));
   if (!source) {
     await rm(root, { recursive: true, force: true });
     throw new Error('Unknown synthetic case');
@@ -35,7 +36,13 @@ export const createDistillationFixture = async (caseId = 'multi-attempt') => {
     mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
   ]);
   const sourceFile = path.join(nativeDirectory, `rollout-2026-10-04T12-00-00-${source.sessionId}.jsonl`);
-  await writeFile(sourceFile, await readFile(path.join(fixtureRoot, source.file)), { mode: 0o600 });
+  await writeFile(
+    sourceFile,
+    caseId === 'long-session'
+      ? createLongDistillationTranscript(source.sessionId)
+      : await readFile(path.join(fixtureRoot, source.file)),
+    { mode: 0o600 },
+  );
   const machine = { id: 'synthetic-machine', label: 'Synthetic distillation machine' };
   const projectSourceId = `${machine.id}|/synthetic/ai-usage`;
   const stamp = new Date().toISOString();

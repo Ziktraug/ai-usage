@@ -6,6 +6,8 @@
   "exports": {
     ".": "./src/contracts.ts",
     "./application": "./src/application.ts",
+    "./browse": "./src/browse.ts",
+    "./analysis-promotion": "./src/analysis-promotion.ts",
     "./client": "./src/client.ts",
     "./conformance": "./src/conformance.ts",
     "./domain": "./src/domain.ts",
@@ -17,6 +19,7 @@
     "./repository": "./src/repository.ts",
     "./search": "./src/search.ts",
     "./distillation-redaction": "./src/distillation-redaction.ts",
+    "./distillation-errors": "./src/distillation-errors.ts",
     "./distillation-repository": "./src/distillation-repository.ts"
   },
   "dependencies": {

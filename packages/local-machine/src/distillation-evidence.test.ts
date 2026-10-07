@@ -11,6 +11,7 @@ import {
   type CodexDistillationEvidenceOptions,
   type CodexDistillationEvidenceRequest,
   prepareCodexDistillationEvidence,
+  prepareCodexDistillationWindow,
   reloadCodexDistillationEvidence,
 } from './distillation-evidence';
 import { createLocalHistoryStorage, type LocalHistoryStorage } from './local-history';
@@ -79,6 +80,72 @@ const prepare = async (lines?: string[]) => {
 };
 
 describe('bounded Codex distillation evidence', () => {
+  test('progresses past 4 MiB and 256 events with stable prompt/tool overlap and a late superseding decision', async () => {
+    const seeded = await fixture([
+      meta(),
+      ...start(),
+      user('Initially use a cache; verify the final choice.'),
+      result('x'.repeat(5 * 1024 * 1024), 'giant-record'),
+      ...Array.from({ length: 253 }, (_, index) => assistant(`Uninformative observation ${index}`)),
+      call('boundary-call'),
+      result('validation: 12 pass, 0 fail', 'boundary-call'),
+      ...Array.from({ length: 80 }, (_, index) => assistant(`Later observation ${index}`)),
+      assistant('Final decision: replace the cache with direct reads; the initial cache decision is superseded.'),
+      complete(),
+    ]);
+    const first = await prepareCodexDistillationWindow(request, seeded.options);
+    expect(first.status).toBe('available');
+    if (first.status !== 'available') {
+      throw new Error('Expected first window');
+    }
+    expect(first.packet.source.version.bytes).toBeGreaterThan(4 * 1024 * 1024);
+    expect(first.packet.events).toHaveLength(256);
+    expect(first.packet.events.at(-1)?.callId).toBe('boundary-call');
+    expect(
+      first.packet.events.some(
+        (entry) => entry.kind === 'tool-result' && entry.truncated && entry.text.startsWith('xxxxx'),
+      ),
+    ).toBe(true);
+    expect(first.packet.window?.nextLine).not.toBeNull();
+    const next = await prepareCodexDistillationWindow(request, seeded.options, {
+      version: first.packet.source.version,
+      index: 1,
+      startLine: first.packet.window?.nextLine ?? 0,
+    });
+    if (next.status !== 'available') {
+      throw new Error('Expected continuation');
+    }
+    expect(next.packet.window?.nextLine).toBeNull();
+    expect(next.packet.events.some((entry) => entry.text.includes('superseded'))).toBe(true);
+    expect(next.packet.events.some((entry) => entry.text === 'validation: 12 pass, 0 fail')).toBe(true);
+    expect(next.packet.events.every((entry) => entry.roundId === 'prompt:prompt-1')).toBe(true);
+    expect(next.packet.window?.overlapEventIds).toContain(first.packet.events.at(-1)?.id ?? '');
+    for (const packet of [first.packet, next.packet]) {
+      expect(Buffer.byteLength(JSON.stringify(packet))).toBeLessThan(256 * 1024);
+    }
+    expect(next.packet.coverage.exclusions).toContainEqual({ reason: 'oversized-record', count: 1 });
+    const resultEvent = next.packet.events.find((entry) => entry.kind === 'tool-result');
+    expect(
+      await reloadCodexDistillationEvidence(
+        request,
+        next.packet,
+        {
+          packetDigest: next.packet.packetDigest,
+          sourceDigest: next.packet.source.version.digest,
+          eventIds: [resultEvent?.id ?? ''],
+        },
+        seeded.options,
+      ),
+    ).toMatchObject({ status: 'available' });
+    await writeFile(seeded.file, `${await readFile(seeded.file, 'utf8')}${assistant('New appended work')}\n`);
+    expect(
+      await prepareCodexDistillationWindow(request, seeded.options, {
+        version: first.packet.source.version,
+        index: 1,
+        startLine: first.packet.window?.nextLine ?? 0,
+      }),
+    ).toEqual({ status: 'unavailable', reason: 'source-changed' });
+  });
   test('reads user, assistant, tool input and recorded output with canonical rounds and immutable identities', async () => {
     const { packet, file } = await prepare();
     expect(packet.events.map((item) => item.kind)).toEqual(['user', 'assistant', 'tool-call', 'tool-result']);

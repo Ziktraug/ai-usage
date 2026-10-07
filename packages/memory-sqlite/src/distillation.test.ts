@@ -4,6 +4,9 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createSingleUserAuthorizer } from '@ai-usage/authorization/single-user';
+import { createAnalysisPromotionService } from '@ai-usage/memory-service/analysis-promotion';
+import { createMemoryApplicationService } from '@ai-usage/memory-service/application';
 import type { DistillationSourceGrant } from '@ai-usage/memory-service/distillation-repository';
 import {
   type DistillationEvidencePacket,
@@ -12,6 +15,7 @@ import {
 import {
   createCaptureContextId,
   createDeviceId,
+  createMemoryObservationId,
   createPersonId,
   createProjectId,
   createSpaceId,
@@ -19,7 +23,7 @@ import {
 import { distillationBounds, type SessionAnalysisContent } from '@ai-usage/platform-core/session-distillation';
 import { createSqliteDistillationRepository } from './distillation';
 import { type LocalIdentityKernel, openLocalIdentityKernel } from './identity';
-import { localDistillationSchema } from './schema';
+import { localDistillationProgressSchema, localDistillationSchema } from './schema';
 
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -199,6 +203,356 @@ const fixture = async () => {
 
 describe('local-only session distillation persistence', () => {
   test.each([
+    'withdraw',
+    'purge',
+  ] as const)('fences a promotion paused after source read when %s wins', async (mode) => {
+    const f = await fixture();
+    const published = await f.publish();
+    const authorizer = createSingleUserAuthorizer({
+      localPersonId: f.identity.person.id,
+      personalSpaceId: f.identity.space.id,
+      listKnownResources: async () => [],
+    });
+    const read = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const promotion = createAnalysisPromotionService({
+      authorizer,
+      repository: f.kernel.memory,
+      readAnalysis: async (projectId, analysisId) => {
+        const analysis = await f.kernel.distillation.get(projectId, analysisId);
+        read.resolve();
+        await resume.promise;
+        return analysis;
+      },
+    });
+    const pending = promotion(
+      {
+        analysisId: published.analysis.id,
+        projectId: f.projectId,
+        elementKey: 'summary',
+        title: 'Verify the cache regression',
+        kind: 'lesson',
+        formulation: 'Run the regression before claiming success.',
+        sensitivity: 'normal',
+        localOnly: true,
+      },
+      {
+        authorization: { activeSpaceId: f.identity.space.id, trustedDevice: true },
+        principal: { kind: 'person', personId: f.identity.person.id },
+      },
+    );
+    await read.promise;
+    expect(await f.kernel.distillation.remove(f.projectId, published.analysis.id, mode)).toMatchObject({
+      dependencyCount: 0,
+    });
+    resume.resolve();
+    await expect(pending).rejects.toMatchObject({ code: 'stale' });
+    expect(
+      f.read((database) =>
+        database
+          .query(`SELECT
+          (SELECT COUNT(*) FROM memory_observations) AS observations,
+          (SELECT COUNT(*) FROM memory_proposals) AS proposals,
+          (SELECT COUNT(*) FROM memory_analysis_promotions) AS promotions`)
+          .get(),
+      ),
+    ).toEqual({ observations: 0, proposals: 0, promotions: 0 });
+  });
+
+  test('real published analysis promotion survives withdrawal and content purge with dependencies visible and no outbox effects', async () => {
+    const f = await fixture();
+    const published = await f.publish();
+    await f.publish('newer-revision');
+    const authorizer = createSingleUserAuthorizer({
+      localPersonId: f.identity.person.id,
+      personalSpaceId: f.identity.space.id,
+      listKnownResources: async () =>
+        (await f.kernel.memory.listAuthorizationResourceIds(f.identity.space.id)).map((id) => ({
+          id,
+          kind: 'memory' as const,
+          spaceId: f.identity.space.id,
+        })),
+    });
+    const context = {
+      authorization: { activeSpaceId: f.identity.space.id, trustedDevice: true },
+      principal: { kind: 'person' as const, personId: f.identity.person.id },
+    };
+    const promotion = createAnalysisPromotionService({
+      authorizer,
+      repository: f.kernel.memory,
+      readAnalysis: (projectId, analysisId) => f.kernel.distillation.get(projectId, analysisId),
+    });
+    const request = {
+      analysisId: published.analysis.id,
+      projectId: f.projectId,
+      elementKey: 'summary',
+      title: 'Verify the cache regression',
+      kind: 'lesson' as const,
+      formulation: 'Run the focused regression before claiming the cache defect is resolved.',
+      sensitivity: 'normal' as const,
+      localOnly: true as const,
+    };
+    const proposed = await promotion(request, context);
+    expect(await promotion(request, context)).toEqual(proposed);
+    const application = createMemoryApplicationService(authorizer, f.kernel.memory);
+    expect(
+      await application.listMemoryItems({
+        ...context,
+        spaceId: f.identity.space.id,
+        projectId: f.projectId,
+        pageSize: 20,
+        status: 'active',
+      }),
+    ).toMatchObject({ kind: 'success', value: { items: [] } });
+    const accepted = await application.acceptProposal({
+      ...context,
+      proposalId: proposed.proposalId,
+      scope: 'project',
+      spaceId: f.identity.space.id,
+    });
+    if (accepted.kind !== 'success') {
+      throw new Error('Expected actual proposal acceptance');
+    }
+    const expectedDependency = { proposalId: proposed.proposalId, acceptedItemId: accepted.value.item.id };
+    expect(await f.kernel.distillation.removalPreview(f.projectId, published.analysis.id)).toMatchObject({
+      analysisCount: 2,
+      dependencyCount: 1,
+      dependencies: [expectedDependency],
+      dependenciesOmitted: 0,
+    });
+    await f.kernel.distillation.remove(f.projectId, published.analysis.id, 'withdraw');
+    expect((await f.kernel.distillation.search(f.projectId, 'ENOENT', 5)).items).toEqual([]);
+    expect(await f.kernel.distillation.get(f.projectId, published.analysis.id)).toEqual(published.analysis);
+    expect(await f.kernel.distillation.remove(f.projectId, published.analysis.id, 'purge')).toMatchObject({
+      removedAnalyses: 2,
+      retainsKnowledge: true,
+      dependencies: [expectedDependency],
+    });
+    await expect(f.kernel.distillation.get(f.projectId, published.analysis.id)).rejects.toMatchObject({
+      code: 'analysis-not-found',
+    });
+    await f.reopen();
+    const reopened = createMemoryApplicationService(authorizer, f.kernel.memory);
+    expect(
+      await reopened.listMemoryItems({
+        ...context,
+        spaceId: f.identity.space.id,
+        projectId: f.projectId,
+        pageSize: 20,
+        status: 'active',
+      }),
+    ).toMatchObject({
+      kind: 'success',
+      value: { items: [{ item: { id: accepted.value.item.id, sensitivity: 'normal' } }] },
+    });
+    expect(await f.kernel.distillation.removalPreview(f.projectId, published.analysis.id)).toMatchObject({
+      dependencies: [expectedDependency],
+    });
+    expect(
+      f.read((database) => database.query('SELECT COUNT(*) AS count FROM replication_outbox_events').get()),
+    ).toEqual({ count: 0 });
+    expect(
+      f.read((database) =>
+        database
+          .query('SELECT analysis_id FROM memory_analysis_promotions WHERE proposal_id=?')
+          .get(proposed.proposalId),
+      ),
+    ).toEqual({ analysis_id: published.analysis.id });
+  });
+
+  test('rolls back the source Observation when the promotion transaction cannot link its Proposal', async () => {
+    const f = await fixture();
+    const published = await f.publish();
+    const promotion = createAnalysisPromotionService({
+      authorizer: createSingleUserAuthorizer({
+        localPersonId: f.identity.person.id,
+        personalSpaceId: f.identity.space.id,
+        listKnownResources: async () => [],
+      }),
+      repository: {
+        ...f.kernel.memory,
+        createProposal: (input) =>
+          f.kernel.memory.createProposal({
+            ...input,
+            observationIds: [...input.observationIds, createMemoryObservationId()],
+          }),
+      },
+      readAnalysis: (projectId, analysisId) => f.kernel.distillation.get(projectId, analysisId),
+    });
+    await expect(
+      promotion(
+        {
+          analysisId: published.analysis.id,
+          projectId: f.projectId,
+          elementKey: 'summary',
+          title: 'Verify the cache regression',
+          kind: 'lesson',
+          formulation: 'Run the regression before claiming success.',
+          sensitivity: 'normal',
+          localOnly: true,
+        },
+        {
+          authorization: { activeSpaceId: f.identity.space.id, trustedDevice: true },
+          principal: { kind: 'person', personId: f.identity.person.id },
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'unavailable' });
+    expect(
+      f.read((database) =>
+        database
+          .query(`SELECT
+      (SELECT COUNT(*) FROM memory_observations) AS observations,
+      (SELECT COUNT(*) FROM memory_proposals) AS proposals,
+      (SELECT COUNT(*) FROM memory_analysis_promotions) AS promotions`)
+          .get(),
+      ),
+    ).toEqual({ observations: 0, proposals: 0, promotions: 0 });
+  });
+
+  test('bounds removal previews while purging every revision and replaying removal of an omitted-page selection', async () => {
+    const f = await fixture();
+    let latest = await f.publish('revision-0');
+    for (let revision = 1; revision < 105; revision += 1) {
+      latest = await f.publish(`revision-${revision}`);
+    }
+    const preview = await f.kernel.distillation.removalPreview(f.projectId, latest.analysis.id);
+    expect(preview.analysisIds).toHaveLength(100);
+    expect(preview.analysisIds).toContain(latest.analysis.id);
+    expect(preview).toMatchObject({
+      analysisCount: 105,
+      analysesOmitted: 5,
+      dependencyCount: 0,
+      dependenciesOmitted: 0,
+    });
+    expect((await f.kernel.distillation.remove(f.projectId, latest.analysis.id, 'purge')).removedAnalyses).toBe(105);
+    expect((await f.kernel.distillation.remove(f.projectId, latest.analysis.id, 'purge')).removedAnalyses).toBe(0);
+    expect((await f.kernel.distillation.status(f.input.grant)).revisions).toEqual([]);
+  });
+  test('upgrades a version-7 store forward while preserving the original immutable analysis and lease replay', async () => {
+    const f = await fixture();
+    const published = await f.publish();
+    await f.modifyClosedFixture(
+      'DROP TABLE memory_analysis_promotions; DROP TABLE distillation_progress; DROP TABLE distillation_segments; DROP TABLE distillation_withdrawals; PRAGMA user_version=7;',
+    );
+    expect(await f.kernel.distillation.get(f.projectId, published.analysis.id)).toEqual(published.analysis);
+    expect(await f.kernel.distillation.submit(published.submission)).toEqual(published.analysis);
+    expect(f.read((database) => database.query('PRAGMA user_version').get())).toEqual({ user_version: 8 });
+  });
+  test('checkpoints exact windows, resumes after recovery, consolidates original evidence and keeps legacy revisions readable', async () => {
+    const f = await fixture();
+    const legacy = await f.publish('legacy');
+    const first = structuredClone(f.packet);
+    first.window = { index: 0, startLine: 1, nextLine: 3, overlapEventIds: [] };
+    first.packetDigest = digest(distillationEvidenceDigestInput(first));
+    const second = structuredClone(first);
+    second.window = { index: 1, startLine: 3, nextLine: null, overlapEventIds: [] };
+    second.events = [{ ...second.events[1]!, id: 'late-result', line: 3, text: '12 pass, 0 fail' }];
+    second.coverage = { ...second.coverage, lines: 3, includedEvents: 1 };
+    second.packetDigest = digest(distillationEvidenceDigestInput(second));
+    const job = await f.kernel.distillation.prepare({ ...f.input, packet: first, revisionKey: 'progressive' });
+    const firstLease = await f.kernel.distillation.claim(f.projectId, job.id);
+    const step = {
+      extractorVersion: firstLease.extractorVersion,
+      projectId: f.projectId,
+      jobId: job.id,
+      leaseId: firstLease.leaseId,
+      packetDigest: first.packetDigest,
+      snapshotDigest: first.source.version.digest,
+      segmentIndex: 0,
+      content: content(),
+      nextPacket: second,
+    };
+    const queued = await f.kernel.distillation.advance(step);
+    expect(queued.progress).toMatchObject({ completedSegments: 1, segmentIndex: 1, stage: 'segment' });
+    expect(await f.kernel.distillation.advance(step)).toEqual(queued);
+    await expect(f.kernel.distillation.advance({ ...step, packetDigest: 'f'.repeat(64) })).rejects.toMatchObject({
+      code: 'stale-worker',
+    });
+    await expect(f.kernel.distillation.advance({ ...step, content: content('Different') })).rejects.toMatchObject({
+      code: 'submission-conflict',
+    });
+    const interrupted = await f.kernel.distillation.claim(f.projectId, job.id);
+    await f.reopen();
+    await f.kernel.distillation.retry(f.projectId, job.id);
+    const resumed = await f.kernel.distillation.claim(f.projectId, job.id);
+    expect(resumed.checkpoint).toEqual(content());
+    expect(resumed.packet).toEqual(second);
+    const finalContent: SessionAnalysisContent = {
+      schemaVersion: 1,
+      summary: {
+        basis: 'observed',
+        text: 'The final validation passed after an initial failed approach.',
+        evidence: [
+          { eventId: 'late-result', quote: '12 pass, 0 fail' },
+          { eventId: 'result-one', quote: '1 fail' },
+        ],
+      },
+      episodes: [],
+      abstention: null,
+    };
+    const lastStep = {
+      ...step,
+      leaseId: resumed.leaseId,
+      packetDigest: second.packetDigest,
+      segmentIndex: 1,
+      content: finalContent,
+      nextPacket: null,
+    };
+    await expect(f.kernel.distillation.advance({ ...lastStep, leaseId: interrupted.leaseId })).rejects.toMatchObject({
+      code: 'stale-worker',
+    });
+    await f.kernel.distillation.advance(lastStep);
+    const consolidation = await f.kernel.distillation.claim(f.projectId, job.id);
+    expect(consolidation.job.progress).toMatchObject({ completedSegments: 2, stage: 'consolidation' });
+    const { nextPacket: _nextPacket, ...submission } = { ...lastStep, leaseId: consolidation.leaseId };
+    const analysis = await f.kernel.distillation.submit(submission);
+    expect(analysis.coverage.includedEvents).toBe(3);
+    expect(analysis.extractorVersion).toBe('session-distillation-progressive-v1');
+    expect(await f.kernel.distillation.get(f.projectId, legacy.analysis.id)).toEqual(legacy.analysis);
+    expect(await f.kernel.distillation.submit(submission)).toEqual(analysis);
+    await f.kernel.distillation.cleanup(f.projectId, '2026-10-05T00:00:00Z');
+    expect(
+      await f.kernel.distillation.getEvidencePackets(f.projectId, analysis.id, ['late-result', 'result-one']),
+    ).toHaveLength(2);
+  });
+
+  test('withdraws all session revisions, fences active regeneration, and purges packets and grants without reviving an older account', async () => {
+    const f = await fixture();
+    const first = await f.publish('first');
+    const second = await f.publish('second');
+    const job = await f.prepare('unfinished');
+    const lease = await f.kernel.distillation.claim(f.projectId, job.id);
+    expect((await f.kernel.distillation.removalPreview(f.projectId, second.analysis.id)).analysisIds).toEqual([
+      first.analysis.id,
+      second.analysis.id,
+    ]);
+    await f.kernel.distillation.remove(f.projectId, second.analysis.id, 'withdraw');
+    expect((await f.kernel.distillation.search(f.projectId, 'ENOENT', 10)).items).toEqual([]);
+    expect((await f.kernel.distillation.status(f.input.grant)).latest).toBeNull();
+    expect(await f.kernel.distillation.get(f.projectId, first.analysis.id)).toEqual(first.analysis);
+    await expect(
+      f.kernel.distillation.submit({
+        projectId: f.projectId,
+        jobId: job.id,
+        leaseId: lease.leaseId,
+        packetDigest: f.packet.packetDigest,
+        content: content(),
+      }),
+    ).rejects.toMatchObject({ code: 'stale-worker' });
+    const result = await f.kernel.distillation.remove(f.projectId, second.analysis.id, 'purge');
+    expect(result).toMatchObject({ removedAnalyses: 2, retainsKnowledge: true, nativeHistoryUntouched: true });
+    await expect(f.kernel.distillation.get(f.projectId, first.analysis.id)).rejects.toMatchObject({
+      code: 'analysis-not-found',
+    });
+    expect(
+      f.read((database) =>
+        database.query('SELECT packet_json,grant_json FROM distillation_jobs WHERE project_id=?').all(f.projectId),
+      ),
+    ).toEqual(expect.arrayContaining([{ packet_json: null, grant_json: '{}' }]));
+    await expect(f.prepare()).rejects.toMatchObject({ code: 'analysis-withdrawn' });
+    expect((await f.kernel.distillation.remove(f.projectId, second.analysis.id, 'purge')).removedAnalyses).toBe(0);
+  });
+  test.each([
     'claim',
     'retry',
     'submit',
@@ -209,6 +563,7 @@ describe('local-only session distillation persistence', () => {
         "PRAGMA foreign_keys=ON; CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project-one');",
       );
       database.exec(localDistillationSchema);
+      database.exec(localDistillationProgressSchema);
       let milliseconds = Date.parse('2026-10-04T12:00:00.000Z');
       const repository = createSqliteDistillationRepository(database, () => new Date(milliseconds));
       const packet = packetFor('project-one');

@@ -5,8 +5,16 @@ import { sessionDistillationContract } from './session-distillation';
 const selection = { revision: 'report-1', rowId: 'row-1' };
 
 describe('Session distillation browser contract', () => {
-  test('exposes only bounded selection-scoped reads', () => {
-    expect(Object.keys(sessionDistillationContract).sort()).toEqual(['evidence', 'get', 'status']);
+  test('exposes bounded discovery and durable reads without generation operations', () => {
+    expect(Object.keys(sessionDistillationContract).sort()).toEqual([
+      'browse',
+      'discover',
+      'evidence',
+      'get',
+      'history',
+      'projects',
+      'status',
+    ]);
     for (const [procedure, input] of [
       [sessionDistillationContract.status, { kind: 'status', selection }],
       [sessionDistillationContract.get, { kind: 'get', selection, analysisId: 'analysis-1' }],
@@ -23,11 +31,9 @@ describe('Session distillation browser contract', () => {
     }
   });
 
-  test('rejects project authority, additional fields and oversized evidence selection', () => {
+  test('accepts durable Project-scoped reads but rejects forged source authority and oversized evidence selection', () => {
     const schema = sessionDistillationContract.get['~orpc'].inputSchema!;
-    expect(safeParse(schema, { kind: 'get', projectId: 'project-other', analysisId: 'analysis-1' }).success).toBe(
-      false,
-    );
+    expect(safeParse(schema, { kind: 'get', projectId: 'project-other', analysisId: 'analysis-1' }).success).toBe(true);
     expect(
       safeParse(schema, { kind: 'get', selection: { ...selection, machineId: 'other' }, analysisId: 'analysis-1' })
         .success,

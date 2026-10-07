@@ -16,6 +16,7 @@ import type {
   MemoryItem,
   MemoryItemPage,
   MemoryItemResult,
+  MemoryKind,
   MemoryObservation,
   MemoryProposal,
   MemoryProposalPage,
@@ -64,8 +65,21 @@ export interface RecordObservationInput {
 
 export interface CreateProposalInput {
   readonly audit: MemoryAuditEvent;
+  /** Paired with localAnalysisSource; revalidate that source and commit both records atomically, or reject. */
+  readonly localAnalysisObservation?: RecordObservationInput;
+  readonly localAnalysisSource?: LocalAnalysisPromotionSource;
   readonly observationIds: readonly MemoryObservationId[];
   readonly proposal: MemoryProposal;
+}
+
+/** Local publication consent is independent of sensitivity and survives acceptance. */
+export interface LocalAnalysisPromotionSource {
+  readonly analysisId: string;
+  readonly analysisRevision: number;
+  readonly elementKey: string;
+  readonly fingerprint: string;
+  readonly projectId: string;
+  readonly snapshotDigest: string;
 }
 
 export interface AcceptProposalInput {
@@ -115,6 +129,7 @@ export interface PurgeMemoryItemInput {
 export interface ListMemoryItemsQuery {
   readonly authorizationScope: AuthorizedResourceScope;
   readonly cursor?: string | null;
+  readonly kind?: MemoryKind | null;
   readonly pageSize: number;
   readonly projectId?: string | null;
   readonly spaceId: SpaceId;

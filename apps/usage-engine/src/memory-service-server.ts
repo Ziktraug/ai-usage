@@ -7,7 +7,13 @@ import {
   parseCheckoutResolutionAction,
   parseMemoryProposalReviewAction,
 } from '@ai-usage/memory-service';
+import {
+  createAnalysisPromotionService,
+  parseAnalysisPromotionRequest,
+} from '@ai-usage/memory-service/analysis-promotion';
 import { createMemoryApplicationService, type MemoryApplicationErrorCode } from '@ai-usage/memory-service/application';
+import { projectMemoryItemsBrowsePage } from '@ai-usage/memory-service/browse';
+import { distillationServiceError } from '@ai-usage/memory-service/distillation-errors';
 import {
   createMemoryServiceToken,
   type MemoryServiceToken,
@@ -16,11 +22,16 @@ import {
 } from '@ai-usage/memory-service/node';
 import {
   parseMemoryItemReadRequest,
+  parseMemoryItemsReadRequest,
   parseMemoryProjectContextReadRequest,
   parseMemorySearchReadRequest,
 } from '@ai-usage/memory-service/read-contract';
 import { type LocalIdentityKernel, MemoryIdentityStoreError } from '@ai-usage/memory-sqlite/identity';
-import { DistillationError, distillationBounds } from '@ai-usage/platform-core/session-distillation';
+import {
+  DistillationError,
+  distillationBounds,
+  parseSessionAnalysis,
+} from '@ai-usage/platform-core/session-distillation';
 import type { DistillationRuntime } from './distillation-runtime';
 
 const jsonMediaType = 'application/json';
@@ -189,6 +200,16 @@ export const createLocalMemoryServiceHandler = async ({
     personalSpaceId: bootstrap.space.id,
   });
   const memoryApplication = createMemoryApplicationService(authorizer, kernel.memory);
+  const promoteAnalysis = createAnalysisPromotionService({
+    authorizer,
+    repository: kernel.memory,
+    readAnalysis: async (projectId, analysisId) => {
+      if (!distillation) {
+        throw new DistillationError('unsupported-connected');
+      }
+      return parseSessionAnalysis(await distillation.execute({ kind: 'get', projectId, analysisId }));
+    },
+  });
   const memoryAuthorization = { activeSpaceId: bootstrap.space.id, trustedDevice: true } as const;
   const authorize = async (permission: 'manage_project' | 'manage_repository_binding' | 'view_repository_metadata') =>
     await authorizer.check({
@@ -215,6 +236,47 @@ export const createLocalMemoryServiceHandler = async ({
       if (!tokenMatches(request, token)) {
         return errorResponse('authentication-failed', 'Memory service authentication failed.', 401);
       }
+      if (url.pathname === '/v1/memory-items/list' || url.pathname === '/v1/memory-proposals/from-analysis') {
+        if (request.method !== 'POST') {
+          return new Response(null, { status: 405 });
+        }
+        if ((request.headers.get('content-type') ?? '').split(';', 1)[0]?.trim() !== jsonMediaType) {
+          return errorResponse('invalid-request', 'Memory operation requires JSON.', 415);
+        }
+        try {
+          const body = await readBoundedJson(request);
+          if (url.pathname === '/v1/memory-proposals/from-analysis') {
+            return successResponse(
+              await promoteAnalysis(parseAnalysisPromotionRequest(body), {
+                principal,
+                authorization: memoryAuthorization,
+              }),
+            );
+          }
+          const query = parseMemoryItemsReadRequest(body);
+          const result = await memoryApplication.listMemoryItems({
+            ...query,
+            principal,
+            authorization: memoryAuthorization,
+            spaceId: bootstrap.space.id,
+            status: 'active',
+          });
+          if (result.kind !== 'success') {
+            return memoryReadErrorResponse(result.error.code);
+          }
+          const page = projectMemoryItemsBrowsePage(result.value);
+          if (encoder.encode(JSON.stringify(page)).byteLength > memoryServiceBounds.maxResponseBytes - 256) {
+            return errorResponse('service-unavailable', 'Memory browse response exceeds its byte limit.', 503);
+          }
+          return successResponse(page);
+        } catch (error) {
+          if (error instanceof DistillationError) {
+            const mapped = distillationServiceError(error.code);
+            return errorResponse(mapped.code, `Memory operation: ${mapped.code}.`, mapped.status);
+          }
+          return errorResponse('invalid-request', 'Memory operation could not be applied.', 400);
+        }
+      }
       if (url.pathname === '/v1/session-distillation') {
         if (request.method !== 'POST') {
           return new Response(null, { status: 405 });
@@ -234,7 +296,11 @@ export const createLocalMemoryServiceHandler = async ({
           return successResponse(result);
         } catch (error) {
           if (error instanceof DistillationError) {
-            return errorResponse('invalid-request', error.message, 400);
+            const mapped = distillationServiceError(error.code);
+            return errorResponse(mapped.code, `Session distillation: ${mapped.code}.`, mapped.status);
+          }
+          if (request.signal.aborted) {
+            return errorResponse('cancelled', 'Session distillation was cancelled.', 409);
           }
           return errorResponse('service-unavailable', 'Session distillation operation failed.', 503);
         }

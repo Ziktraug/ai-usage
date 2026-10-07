@@ -102,3 +102,31 @@ export const searchE2EMemory = (input: MemorySearchInput): MemorySearchPage => {
     total: matches ? 1 : 0,
   };
 };
+
+export const browseE2EMemory = (
+  _input: import('@ai-usage/web-contract/memory').MemoryKnowledgeInput,
+): import('@ai-usage/web-contract/memory').MemoryKnowledgePage => ({
+  nextCursor: null,
+  items: searchE2EMemory({
+    cursor: null,
+    includeSpaceWide: false,
+    limit: 10,
+    matchingMode: 'hybrid',
+    projectId: null,
+    query: 'authorized',
+  }).items.map((item) => ({
+    id: item.id,
+    revisionId: item.revisionId,
+    revisionNumber: item.revisionNumber,
+    title: item.title,
+    summary: item.summary,
+    guidance: item.guidance,
+    projectId: item.projectId,
+    kind: item.kind,
+    sensitivity: item.sensitivity,
+    trust: item.trust,
+    createdAt: '2026-08-29T08:30:00.000Z',
+    contentOmitted: false,
+    provenance: { sourceLocator: null, sourceKind: null, analysisRevision: null },
+  })),
+});

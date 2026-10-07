@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { MemoryServiceClientError } from '@ai-usage/memory-service/client';
 import type { DistillationStatus } from '@ai-usage/web-contract/session-distillation';
 import { call, ORPCError } from '@orpc/server';
 import { createSessionDistillationRpcRouter } from './session-distillation';
@@ -14,6 +15,34 @@ const empty: DistillationStatus = {
 };
 
 describe('Session distillation RPC reads', () => {
+  test('keeps unsupported mode and unreachable service distinct without exposing private diagnostics', async () => {
+    for (const reason of [
+      'unsupported-mode',
+      'service-unavailable',
+      'mapping-required',
+      'selection-stale',
+      'version-incompatible',
+      'storage-unavailable',
+      'not-found',
+      'source-modified',
+    ] as const) {
+      const router = createSessionDistillationRpcRouter({
+        isDemo: async () => false,
+        read: () => Promise.reject(new MemoryServiceClientError(reason, '/private/native-history')),
+      });
+      await expect(
+        call(router.browse, {
+          kind: 'browse',
+          projectId: null,
+          since: null,
+          until: null,
+          query: '',
+          cursor: null,
+          limit: 20,
+        }),
+      ).rejects.toMatchObject({ code: 'Unavailable', data: { reason } });
+    }
+  });
   test('rejects demo before acquiring local Memory or history', async () => {
     let reads = 0;
     const router = createSessionDistillationRpcRouter({

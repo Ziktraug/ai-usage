@@ -4,7 +4,14 @@ import {
   parseDistillationRequest,
 } from '@ai-usage/platform-core/session-distillation';
 import type { CheckoutResolutionAction, CheckoutResolutionActionResult } from '@ai-usage/project-registry/review';
+import {
+  type AnalysisPromotionRequest,
+  type AnalysisPromotionResult,
+  parseAnalysisPromotionRequest,
+  parseAnalysisPromotionResult,
+} from './analysis-promotion';
 import type { MemoryProjectContext } from './application';
+import { type MemoryItemsBrowsePage, parseMemoryItemsBrowsePage } from './browse';
 import {
   MEMORY_SERVICE_PROTOCOL_VERSION,
   type MemoryProposalReviewAction,
@@ -23,9 +30,11 @@ import type { MemoryItemResult } from './domain';
 import { type MemoryServiceRendezvous, revealMemoryServiceToken } from './node';
 import {
   type MemoryItemReadRequest,
+  type MemoryItemsReadRequest,
   type MemoryProjectContextReadRequest,
   type MemorySearchReadRequest,
   parseMemoryItemReadResult,
+  parseMemoryItemsReadRequest,
   parseMemoryProjectContext,
   parseMemorySearchPage,
 } from './read-contract';
@@ -40,7 +49,10 @@ export interface MemoryServiceClient {
     action: CheckoutResolutionAction,
     options?: MemoryServiceRequestOptions,
   ) => Promise<CheckoutResolutionActionResult>;
-  readonly distillation: (input: DistillationRequest, options?: MemoryServiceRequestOptions) => Promise<unknown>;
+  readonly distillation: (
+    input: DistillationRequest | DistillationDiscoveryRequest,
+    options?: MemoryServiceRequestOptions,
+  ) => Promise<unknown>;
   readonly getMemoryItem: (
     input: MemoryItemReadRequest,
     options?: MemoryServiceRequestOptions,
@@ -49,11 +61,19 @@ export interface MemoryServiceClient {
     input: MemoryProjectContextReadRequest,
     options?: MemoryServiceRequestOptions,
   ) => Promise<MemoryProjectContext>;
+  readonly listMemoryItems: (
+    input: MemoryItemsReadRequest,
+    options?: MemoryServiceRequestOptions,
+  ) => Promise<MemoryItemsBrowsePage>;
   readonly listProposalReviews: (
     cursor?: string | null,
     options?: MemoryServiceRequestOptions,
   ) => Promise<MemoryProposalReviewSnapshot>;
   readonly listResolutionReviews: (options?: MemoryServiceRequestOptions) => Promise<MemoryResolutionReviewSnapshot>;
+  readonly promoteAnalysis: (
+    input: AnalysisPromotionRequest,
+    options?: MemoryServiceRequestOptions,
+  ) => Promise<AnalysisPromotionResult>;
   readonly searchMemory: (
     input: MemorySearchReadRequest,
     options?: MemoryServiceRequestOptions,
@@ -189,11 +209,29 @@ export const createMemoryServiceClient = ({
     }
   };
   const client: MemoryServiceClient = {
+    listMemoryItems: async (input, options) =>
+      await request(
+        '/v1/memory-items/list',
+        'POST',
+        parseMemoryItemsReadRequest(input),
+        parseMemoryItemsBrowsePage,
+        options,
+      ),
+    promoteAnalysis: async (input, options) =>
+      await request(
+        '/v1/memory-proposals/from-analysis',
+        'POST',
+        parseAnalysisPromotionRequest(input),
+        parseAnalysisPromotionResult,
+        options,
+      ),
     distillation: async (input, options) =>
       await request(
         '/v1/session-distillation',
         'POST',
-        parseDistillationRequest(input),
+        isDistillationDiscoveryRequest(input)
+          ? parseDistillationDiscoveryRequest(input)
+          : parseDistillationRequest(input),
         (value) => value,
         options,
         distillationBounds.operationMs,
@@ -227,3 +265,9 @@ export const createMemoryServiceClient = ({
   };
   return Object.freeze(client);
 };
+
+import {
+  type DistillationDiscoveryRequest,
+  isDistillationDiscoveryRequest,
+  parseDistillationDiscoveryRequest,
+} from '@ai-usage/platform-core/distillation-discovery';

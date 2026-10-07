@@ -1,0 +1,510 @@
+{
+  "format": "ai-usage-progressive-generation-evaluation",
+  "version": 1,
+  "baseCommit": "b16b06d6b692148e93bd8793e1de1bf426d53f45",
+  "producer": "active-harness",
+  "producerModelId": null,
+  "method": "The active assistant read the claimed packets and authored checkpoints and final content; no provider API or fallback harness. Packaging scripts copied identities from claims, not semantic generation. The final attempt reused earlier authored checkpoint text where source events were unchanged, adjusted exact event identities and corrected coverage after reading new packets.",
+  "oracle": "apps/usage-engine/src/fixtures/distillation-long-session.ts#longSessionExpectations, declared before generation",
+  "limitations": [
+    "One synthetic long-session case, two development attempts; not a blind accuracy estimate.",
+    "Reader and evaluator share implementation context; no independent model agreement claimed.",
+    "Full snapshot traversed; giant diagnostic text remains truncated and identity deduplication ceiling declared.",
+    "Child sessions not discovered or analyzed.",
+    "Earlier 9-case generated corpus is preserved separately and not re-evaluated by this result.",
+    "No real-history processing or operator-store migration performed."
+  ],
+  "semanticOutcomes": [
+    {
+      "checkpoint": "late final decision",
+      "status": "supported",
+      "sourceEvent": "event:341:772a8c4b662b9bc9"
+    },
+    {
+      "checkpoint": "focused validation after old source and event limits",
+      "status": "supported",
+      "sourceEvent": "event:260:71a97e12a8fd6e59"
+    },
+    {
+      "checkpoint": "tool call/result across window boundary",
+      "status": "supported",
+      "sourceEvents": [
+        "event:259:3b6416eff8b87696",
+        "event:260:71a97e12a8fd6e59"
+      ]
+    },
+    {
+      "checkpoint": "initial cache decision explicitly superseded",
+      "status": "supported",
+      "sourceEvents": [
+        "event:5:ddcfabdf5b9f8d00",
+        "event:341:772a8c4b662b9bc9"
+      ]
+    },
+    {
+      "checkpoint": "assistant all-tests claim not treated as observed validation",
+      "status": "supported",
+      "sourceEvent": "event:6:1e475bf2efac6ed1"
+    },
+    {
+      "checkpoint": "no inferred full-suite success, deployment or merge",
+      "status": "supported"
+    },
+    {
+      "checkpoint": "root/text/child coverage distinctions",
+      "status": "supported"
+    }
+  ],
+  "attempts": [
+    {
+      "name": "development",
+      "note": "Earlier reader omitted the oversized diagnostic entirely. Preserved original generation, never represented as final-reader input.",
+      "files": [
+        {
+          "file": "development/advance-0.json.txt",
+          "bytes": 263,
+          "sha256": "3875fc8fdbd7e3fb9aec2c206c172e0bb83678851d9812cd33fe6760552ef8fe"
+        },
+        {
+          "file": "development/advance-1.json.txt",
+          "bytes": 269,
+          "sha256": "64f5b8e571c7eda5d42d4c4702d8a5875cb96372c594a13051638e8e258c1835"
+        },
+        {
+          "file": "development/claim-0.json.txt",
+          "bytes": 71759,
+          "sha256": "69e05f4356bebc6ba5ad8302a79333ff40a2b110d1d308c57af92464f3040be6"
+        },
+        {
+          "file": "development/claim-1-interrupted.json.txt",
+          "bytes": 25516,
+          "sha256": "97e7632e39b6c3e09da40ba49f7d6f549b7f9b691abedb83c7ba730869c676d6"
+        },
+        {
+          "file": "development/claim-1.json.txt",
+          "bytes": 25516,
+          "sha256": "2c06cf29273d4d1fa9ef272ca2773d9cc1a94fa0e794820ff9de705b5a16efac"
+        },
+        {
+          "file": "development/claim-consolidation.json.txt",
+          "bytes": 26408,
+          "sha256": "3dbfee8a510cff849c278c9e3a47e7f64cc82b8bfd714dc0649131b55709db29"
+        },
+        {
+          "file": "development/content-0.json.txt",
+          "bytes": 2094,
+          "sha256": "a515f4edecb6762e2193d5f43285ad2aa9808aefe327e07706b09f70a9f737c4"
+        },
+        {
+          "file": "development/content-1.json.txt",
+          "bytes": 4259,
+          "sha256": "f09701c31ec923693353fa2aa3545a869934e73fe220a6951e9cd1ec3751bca8"
+        },
+        {
+          "file": "development/discovery.json.txt",
+          "bytes": 2012,
+          "sha256": "b7b778a2027505e124db4dd9e543a89bc40c6774bfd07e5a1c9a159c60bbe2ec"
+        },
+        {
+          "file": "development/final-submission.json.txt",
+          "bytes": 4965,
+          "sha256": "beb6e1f311f577044fbd3b2571a08655e3e56ec963ce54c7a61ca3ca23f87e12"
+        },
+        {
+          "file": "development/prepared.json.txt",
+          "bytes": 565,
+          "sha256": "b6291bad872f12fb617b5127eede0777fddabfc3ddaae96d50e3701c21a5564a"
+        },
+        {
+          "file": "development/published.json.txt",
+          "bytes": 4173,
+          "sha256": "825510f066405f953c5f83ffe7d00d7badeff56b33eca305d343ca99c5fe3c2a"
+        },
+        {
+          "file": "development/retry-after-restart.json.txt",
+          "bytes": 263,
+          "sha256": "2e008ec4a796284f57c536463b7575dee66e612eec7c8d12ff430a7458ab52d8"
+        },
+        {
+          "file": "development/submission-0.json.txt",
+          "bytes": 3649,
+          "sha256": "ae98b14535d8ed31ecd38ad54895dbf9cdd7e6076cac3645a99dc4303b20e461"
+        },
+        {
+          "file": "development/submission-1.json.txt",
+          "bytes": 4966,
+          "sha256": "8d09e527c4ac76b2432fd60c989a3daffcd95cf49e4aa1bcaa979b4a4d392013"
+        },
+        {
+          "file": "development/source-extra-record.jsonl.txt",
+          "bytes": 149,
+          "sha256": "d2d49b449d96cd5600f69017c00fc6ecea1ea4636f0c39a6468e19e799533878"
+        }
+      ],
+      "inputs": [
+        {
+          "file": "development/claim-0.json.txt",
+          "packetDigest": "99bf4e656ad8cb85dd5bf5f96620507a4c1c6f86b880e21697dfd9bff09b4c5c",
+          "segmentIndex": 0,
+          "events": 256,
+          "inputBytes": 71759
+        },
+        {
+          "file": "development/claim-1.json.txt",
+          "packetDigest": "85c62b1b729a1bd5bd8c71dacec7b4126eef02c132b7be627a607dcbb56234b7",
+          "segmentIndex": 1,
+          "events": 84,
+          "inputBytes": 25516
+        }
+      ],
+      "analysisId": "96ff7961-f27f-419a-9928-34f8c88834b2",
+      "snapshot": {
+        "digest": "55336f98af1fb03cbd50462e0fbe7eef9d8998124f79e456e19c9ab9229b1cd0",
+        "bytes": 5549786,
+        "totalBytes": 5549786,
+        "modifiedAtMs": 1791314159811.9663
+      },
+      "coverage": {
+        "scope": "session-only",
+        "status": "partial",
+        "lines": 343,
+        "includedEvents": 338,
+        "exclusions": [
+          {
+            "reason": "oversized-record",
+            "count": 1
+          }
+        ],
+        "childrenNotAnalyzed": null,
+        "childDiscovery": "not-performed",
+        "completion": "completed"
+      },
+      "extractorVersion": "session-distillation-progressive-v1",
+      "sourceReproduction": {
+        "baseGenerator": {
+          "file": "apps/usage-engine/src/fixtures/distillation-long-session.ts",
+          "export": "createLongDistillationTranscript",
+          "argument": "00000000-0000-4000-8000-000000000001"
+        },
+        "variation": "The development source had one additional filler event before the final-validation tool call: 252 filler records versus 251 in the final source generator.",
+        "insertion": {
+          "beforeNativeLine": 259,
+          "lineNumbering": "one-based",
+          "recordFile": "development/source-extra-record.jsonl.txt",
+          "recordBytes": 149,
+          "recordSha256": "d2d49b449d96cd5600f69017c00fc6ecea1ea4636f0c39a6468e19e799533878"
+        },
+        "recipe": "Split createLongDistillationTranscript(argument) on newline; splice the record file without its trailing newline at array index 258; join with newline, retaining the original trailing empty line.",
+        "reproducedBytes": 5549786,
+        "reproducedSha256": "55336f98af1fb03cbd50462e0fbe7eef9d8998124f79e456e19c9ab9229b1cd0"
+      }
+    },
+    {
+      "name": "final",
+      "note": "Frozen progressive reader retained a bounded diagnostic prefix. Separate exact inputs and authored outputs. Consolidation resumed after synthetic engine restart.",
+      "files": [
+        {
+          "file": "final/advance-0.json.txt",
+          "bytes": 263,
+          "sha256": "1b0e81fba95bcd3fc5e2e3158865182375189ce046e7f7b872f72922aaa28ee9"
+        },
+        {
+          "file": "final/advance-1.json.txt",
+          "bytes": 269,
+          "sha256": "4d6a46119e3965e046747ae59b065b2197b9ca98511abc885ad74bfd90f186d8"
+        },
+        {
+          "file": "final/claim-0.json.txt",
+          "bytes": 88194,
+          "sha256": "e0fc9bdfa40eb93edd3b7cd62c917355c0c42ac0f38b43d67f0958ada977d7da"
+        },
+        {
+          "file": "final/claim-1.json.txt",
+          "bytes": 25647,
+          "sha256": "c67120334dc7bfddef9c7082c18c0541b07e46fcbae1c16675b4745834cbbe00"
+        },
+        {
+          "file": "final/claim-consolidation-resumed.json.txt",
+          "bytes": 26583,
+          "sha256": "36214a0e32f6e3d4a3eeb2c64ffc759be1c43afb075ffd1b236a419245b0bbb7"
+        },
+        {
+          "file": "final/claim-consolidation.json.txt",
+          "bytes": 26583,
+          "sha256": "9419b452d7c643fc123dfc4d5fd495e2c0c277eff3c57319612698711b31b276"
+        },
+        {
+          "file": "final/content-0.json.txt",
+          "bytes": 2094,
+          "sha256": "be195f5bb473fea54eede73436bbbfe6e21dcaccce839f92d70ba56c4f469642"
+        },
+        {
+          "file": "final/content-1.json.txt",
+          "bytes": 4303,
+          "sha256": "daa02f18054968333e46791cb54436fc3ad0cbdae5a2dd1d5e43a516bccb4c70"
+        },
+        {
+          "file": "final/discovery.json.txt",
+          "bytes": 2012,
+          "sha256": "08358e6e7fbad4693223d3ec7710167ebf97317472905f92e0a36ab23c5151d0"
+        },
+        {
+          "file": "final/final-submission.json.txt",
+          "bytes": 5009,
+          "sha256": "6b13b62d95caea85d802f4adbf5b204a6d412790decfaeb05aa2201a7e99e535"
+        },
+        {
+          "file": "final/prepared.json.txt",
+          "bytes": 565,
+          "sha256": "6b1638ffe93de557573fadce77fc712bdbc8baa40438455437115759294910a8"
+        },
+        {
+          "file": "final/published.json.txt",
+          "bytes": 4348,
+          "sha256": "765559cfcc406142ac4251db6b0e04e470ae7ffa5b3b67c06257b619b69f41fb"
+        },
+        {
+          "file": "final/retry-after-restart.json.txt",
+          "bytes": 269,
+          "sha256": "4827b984e7751b9f9e2481bf1fab953d9cda2b2697c27777684c1632831d4b88"
+        },
+        {
+          "file": "final/source-manifest.json.txt",
+          "bytes": 1221,
+          "sha256": "a48f9e81ba6599cd199274125217f5c41e653bc39f489669d14cb044e8695b26"
+        },
+        {
+          "file": "final/submission-0.json.txt",
+          "bytes": 3649,
+          "sha256": "042a6a70f41aa290db8037df9c172e75e153be8cb2ae6b4adf8bd3aa041c7e0a"
+        },
+        {
+          "file": "final/submission-1.json.txt",
+          "bytes": 5010,
+          "sha256": "f297366a45b2843897397d79a87ba5270d62ce310498b1f3535cf1763d429c52"
+        }
+      ],
+      "inputs": [
+        {
+          "file": "final/claim-0.json.txt",
+          "packetDigest": "f0755b5f256f52e3160ca0ec0195afd4d0aa45102e55c036b68d2587efffa898",
+          "segmentIndex": 0,
+          "events": 256,
+          "inputBytes": 88194
+        },
+        {
+          "file": "final/claim-1.json.txt",
+          "packetDigest": "518a332791b12555bf0fa54f9ff60ef803a0a1c0c660110f9f1b6eb65bbfb727",
+          "segmentIndex": 1,
+          "events": 84,
+          "inputBytes": 25647
+        }
+      ],
+      "analysisId": "af81f8c2-0cec-4c79-ab85-4242ebfa9101",
+      "snapshot": {
+        "digest": "0b0b9c82056f3ac620b61613287719c32f1cc2ef4229efaa267bd89cb958d188",
+        "bytes": 5549637,
+        "totalBytes": 5549637,
+        "modifiedAtMs": 1791314380684.8818
+      },
+      "coverage": {
+        "snapshotCoverage": "complete",
+        "textCoverage": "partial",
+        "scope": "session-only",
+        "status": "partial",
+        "lines": 342,
+        "includedEvents": 338,
+        "exclusions": [
+          {
+            "reason": "oversized-record",
+            "count": 1
+          },
+          {
+            "reason": "text-budget",
+            "count": 1
+          },
+          {
+            "reason": "identity-budget",
+            "count": 303
+          }
+        ],
+        "childrenNotAnalyzed": null,
+        "childDiscovery": "not-performed",
+        "completion": "completed"
+      },
+      "extractorVersion": "session-distillation-progressive-v1"
+    }
+  ],
+  "freshAgentRecall": {
+    "method": "Separate agent without parent conversation. Given only checkout selector, CLI instructions, disposable engine environment and three questions. No oracle, native transcripts, DB or previous generation artifacts read.",
+    "commands": 10,
+    "successfulCommands": 10,
+    "verifiedEvidenceEvents": 5,
+    "compactResponseUtf8Bytes": 3409,
+    "fullAnalysisResponseUtf8Bytes": 4348,
+    "observedFalseCertainties": 0,
+    "limitations": "Single synthetic question set, not a general recall quality estimate. Test output precedes final decision and does not prove final implementation.",
+    "files": [
+      {
+        "file": "recall/01-discover.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/01-discover.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/01-discover.stdout.json.txt",
+        "bytes": 2945,
+        "sha256": "eaf38f765bcbc94bb7d34d50466b60cddeba090f2a1a18a643f1c2e83508261c"
+      },
+      {
+        "file": "recall/02-task-search.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/02-task-search.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/02-task-search.stdout.json.txt",
+        "bytes": 851,
+        "sha256": "1c4d6fdd9e8228e0b9be5155c663afc4c1409f683dd68e2520d3d471c60541da"
+      },
+      {
+        "file": "recall/03-task-context.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/03-task-context.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/03-task-context.stdout.json.txt",
+        "bytes": 3409,
+        "sha256": "09537a9cc27f976e0e619e7877648ada9244ca232735279ac54ef32a3b046595"
+      },
+      {
+        "file": "recall/04-literal-search.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/04-literal-search.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/04-literal-search.stdout.json.txt",
+        "bytes": 851,
+        "sha256": "1c4d6fdd9e8228e0b9be5155c663afc4c1409f683dd68e2520d3d471c60541da"
+      },
+      {
+        "file": "recall/05-full-get.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/05-full-get.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/05-full-get.stdout.json.txt",
+        "bytes": 4348,
+        "sha256": "6639d324cf822f8788dd3894610e3ea13f8b017513f449aab9bb8886b466741d"
+      },
+      {
+        "file": "recall/06-final-decision-evidence.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/06-final-decision-evidence.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/06-final-decision-evidence.stdout.json.txt",
+        "bytes": 617,
+        "sha256": "de85b65268439ddead5d6c8ab87dcf47109d8d9b8c886cf413459908bf16f759"
+      },
+      {
+        "file": "recall/07-test-output-evidence.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/07-test-output-evidence.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/07-test-output-evidence.stdout.json.txt",
+        "bytes": 570,
+        "sha256": "62227a5b81bc6bcc647dee46532bc3159a0e6541d49c3292f2251bc7e6f0b633"
+      },
+      {
+        "file": "recall/08-initial-decision-evidence.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/08-initial-decision-evidence.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/08-initial-decision-evidence.stdout.json.txt",
+        "bytes": 574,
+        "sha256": "a63d81515ba6329579f37ba2a89e61b7c90989eceb5c911ee61c82f194cbcf63"
+      },
+      {
+        "file": "recall/09-unsupported-claim-evidence.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/09-unsupported-claim-evidence.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/09-unsupported-claim-evidence.stdout.json.txt",
+        "bytes": 556,
+        "sha256": "ba907b3b1f4751c83014d50c76dda60e71b0cd6c927e97e7b20c238337f656c1"
+      },
+      {
+        "file": "recall/10-test-command-evidence.exit.txt.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "file": "recall/10-test-command-evidence.stderr.txt.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "recall/10-test-command-evidence.stdout.json.txt",
+        "bytes": 609,
+        "sha256": "11754b036347b4e7153c08d66b7808826c65c95bde110e512a5c2c294ae07756"
+      },
+      {
+        "file": "recall/assessment.json.txt",
+        "bytes": 4860,
+        "sha256": "66ee5410d1c356afa7ac9a2dee390548b95d18994ec1dd65090352a66857c134"
+      },
+      {
+        "file": "recall/commands.json.txt",
+        "bytes": 6927,
+        "sha256": "f6d28e045ac3e326f58b16077f1c94c61616845a4f5516c40fed6a5cfe7e28f2"
+      }
+    ]
+  }
+}

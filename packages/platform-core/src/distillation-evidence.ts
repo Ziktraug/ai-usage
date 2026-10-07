@@ -24,6 +24,7 @@ export interface DistillationEvidenceSource {
   nativeSessionId: string;
   projectId: string;
   reportAnchor: DistillationReportAnchor | null;
+  sessionDate?: string | null;
   version: DistillationSourceVersion;
 }
 
@@ -59,6 +60,8 @@ export const distillationExclusionReasons = [
   'incomplete-record',
   'unattributed-history',
   'recorded-truncation',
+  'round-budget',
+  'identity-budget',
 ] as const;
 export type DistillationExclusionReason = (typeof distillationExclusionReasons)[number];
 
@@ -72,7 +75,9 @@ export interface DistillationEvidenceCoverage {
   includedEvents: number;
   lines: number;
   scope: 'session-only';
+  snapshotCoverage?: 'complete' | 'partial';
   status: 'complete' | 'partial';
+  textCoverage?: 'complete' | 'partial';
 }
 
 export interface DistillationEvidencePacket {
@@ -84,6 +89,15 @@ export interface DistillationEvidencePacket {
   redactionVersion: number;
   schemaVersion: typeof DISTILLATION_EVIDENCE_VERSION;
   source: DistillationEvidenceSource;
+  /** Present only on progressive packets; original v1 packets remain readable. */
+  window?: DistillationEvidenceWindow;
+}
+
+export interface DistillationEvidenceWindow {
+  index: number;
+  nextLine: number | null;
+  overlapEventIds: string[];
+  startLine: number;
 }
 
 export interface DistillationEvidenceRef {
@@ -95,10 +109,12 @@ export interface DistillationEvidenceRef {
 /** Fixed wire order for the runtime SHA-256; independent of object insertion order after validation. */
 export const distillationEvidenceDigestInput = (packet: Omit<DistillationEvidencePacket, 'packetDigest'>): string =>
   JSON.stringify({
+    ...(packet.window === undefined ? {} : { window: packet.window }),
     schemaVersion: packet.schemaVersion,
     normalizationVersion: packet.normalizationVersion,
     redactionVersion: packet.redactionVersion,
     source: {
+      ...(packet.source.sessionDate === undefined ? {} : { sessionDate: packet.source.sessionDate }),
       harnessKey: packet.source.harnessKey,
       machineId: packet.source.machineId,
       projectId: packet.source.projectId,
@@ -131,6 +147,8 @@ export const distillationEvidenceDigestInput = (packet: Omit<DistillationEvidenc
       redacted: event.redacted,
     })),
     coverage: {
+      ...(packet.coverage.snapshotCoverage === undefined ? {} : { snapshotCoverage: packet.coverage.snapshotCoverage }),
+      ...(packet.coverage.textCoverage === undefined ? {} : { textCoverage: packet.coverage.textCoverage }),
       scope: packet.coverage.scope,
       status: packet.coverage.status,
       lines: packet.coverage.lines,
@@ -236,6 +254,7 @@ export const parseDistillationEvidenceSource = (value: unknown): DistillationEvi
     'nativeSessionId',
     'reportAnchor',
     'version',
+    'sessionDate',
   ]);
   if (source.harnessKey !== 'codex') {
     throw new DistillationEvidenceValidationError('Evidence harness is unsupported');
@@ -263,6 +282,7 @@ export const parseDistillationEvidenceSource = (value: unknown): DistillationEvi
         ? null
         : { revision: text(anchor.revision, 'Report revision'), rowId: text(anchor.rowId, 'Report row ID') },
     version: { digest: digest(version.digest, 'Source digest'), bytes, totalBytes, modifiedAtMs: version.modifiedAtMs },
+    ...(source.sessionDate === undefined ? {} : { sessionDate: nullableText(source.sessionDate, 'Session date') }),
   };
 };
 
@@ -279,6 +299,8 @@ export const parseDistillationEvidenceCoverage = (
     'childrenNotAnalyzed',
     'childDiscovery',
     'completion',
+    'snapshotCoverage',
+    'textCoverage',
   ]);
   if (
     item.scope !== 'session-only' ||
@@ -290,7 +312,11 @@ export const parseDistillationEvidenceCoverage = (
     throw new DistillationEvidenceValidationError('Evidence coverage is invalid');
   }
   const lines = integer(item.lines, 'Evidence lines');
-  const includedEvents = integer(item.includedEvents, 'Included events', DISTILLATION_MAX_EVENTS);
+  const includedEvents = integer(
+    item.includedEvents,
+    'Included events',
+    events ? DISTILLATION_MAX_EVENTS : Number.MAX_SAFE_INTEGER,
+  );
   if (events && (includedEvents !== events.length || events.some((event) => event.line > lines))) {
     throw new DistillationEvidenceValidationError('Evidence coverage does not match its events');
   }
@@ -310,7 +336,19 @@ export const parseDistillationEvidenceCoverage = (
     seen.add(reason);
     return { reason, count: integer(exclusion.count, 'Excluded events') };
   });
+  const optionalCoverage = (key: 'snapshotCoverage' | 'textCoverage') => {
+    const value = item[key];
+    if (value === undefined) {
+      return {};
+    }
+    if (value !== 'complete' && value !== 'partial') {
+      throw new DistillationEvidenceValidationError('Invalid coverage dimension');
+    }
+    return { [key]: value };
+  };
   return {
+    ...optionalCoverage('snapshotCoverage'),
+    ...optionalCoverage('textCoverage'),
     scope: 'session-only',
     status: item.status,
     lines,
@@ -335,6 +373,7 @@ export const parseDistillationEvidencePacket = (value: unknown): DistillationEvi
     'packetDigest',
     'events',
     'coverage',
+    'window',
   ]);
   if (
     packet.schemaVersion !== DISTILLATION_EVIDENCE_VERSION ||
@@ -356,6 +395,27 @@ export const parseDistillationEvidencePacket = (value: unknown): DistillationEvi
     packetDigest: digest(packet.packetDigest, 'Packet digest'),
     events,
     coverage: parseDistillationEvidenceCoverage(packet.coverage, events),
+    ...(packet.window === undefined ? {} : { window: parseDistillationEvidenceWindow(packet.window) }),
+  };
+};
+
+export const parseDistillationEvidenceWindow = (value: unknown): DistillationEvidenceWindow => {
+  const item = record(value, 'Evidence window', ['index', 'startLine', 'nextLine', 'overlapEventIds']);
+  const startLine = integer(item.startLine, 'Window start line');
+  const nextLine = item.nextLine === null ? null : integer(item.nextLine, 'Next window line');
+  if (
+    startLine < 1 ||
+    (nextLine !== null && nextLine <= startLine) ||
+    !Array.isArray(item.overlapEventIds) ||
+    item.overlapEventIds.length > 16
+  ) {
+    throw new DistillationEvidenceValidationError('Evidence window boundary is invalid');
+  }
+  return {
+    index: integer(item.index, 'Window index'),
+    startLine,
+    nextLine,
+    overlapEventIds: item.overlapEventIds.map((id) => text(id, 'Overlap event ID')),
   };
 };
 

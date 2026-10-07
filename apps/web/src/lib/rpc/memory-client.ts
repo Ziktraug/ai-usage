@@ -17,7 +17,7 @@ export interface MemoryBrowserAdapter {
     action: MemoryProposalReviewAction,
     signal?: AbortSignal,
   ) => Promise<MemoryProposalReviewActionResult>;
-  readonly proposalReviews: (signal?: AbortSignal) => Promise<MemoryProposalReviewSnapshot>;
+  readonly proposalReviews: (signal?: AbortSignal, cursor?: string | null) => Promise<MemoryProposalReviewSnapshot>;
   readonly search: (input: MemorySearchInput, signal?: AbortSignal) => Promise<MemorySearchPage>;
 }
 
@@ -28,9 +28,12 @@ export const createMemoryBrowserAdapter = (transport: MemoryRpcTransport): Memor
     signal?.throwIfAborted();
     return parseMemoryProposalReviewActionResult(result);
   },
-  proposalReviews: async (signal) => {
+  proposalReviews: async (signal, cursor) => {
     signal?.throwIfAborted();
-    const result = await transport.proposalReviews({}, signal === undefined ? undefined : { signal });
+    const result = await transport.proposalReviews(
+      cursor ? { cursor } : {},
+      signal === undefined ? undefined : { signal },
+    );
     signal?.throwIfAborted();
     return parseMemoryProposalReviewSnapshot(result);
   },

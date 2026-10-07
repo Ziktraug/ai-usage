@@ -20,6 +20,43 @@ const event = (id: string) => ({
 const unused = (): Promise<never> => Promise.reject(new Error('Unexpected operation'));
 
 describe('Session analysis browser adapter', () => {
+  test('rejects evidence from another snapshot even when event IDs match', async () => {
+    const identity = {
+      analysisId: request.analysisId,
+      packetDigest: 'a'.repeat(64),
+      sourceDigest: 'b'.repeat(64),
+      eventIds: request.eventIds,
+    };
+    const exactRequest = {
+      ...request,
+      identity: { packetDigest: identity.packetDigest, sourceDigest: identity.sourceDigest },
+    };
+    for (const returned of [
+      undefined,
+      { ...identity, analysisId: 'another-analysis' },
+      { ...identity, packetDigest: 'c'.repeat(64) },
+      { ...identity, sourceDigest: 'd'.repeat(64) },
+    ]) {
+      const client = createSessionDistillationClient({
+        evidence: () =>
+          Promise.resolve({
+            status: 'available',
+            events: request.eventIds.map(event),
+            ...(returned ? { identity: returned } : {}),
+          }),
+        get: unused,
+        status: unused,
+      });
+      await expect(client.evidence(exactRequest)).rejects.toThrow('requested snapshot');
+    }
+    const client = createSessionDistillationClient({
+      evidence: () => Promise.resolve({ status: 'available', events: request.eventIds.map(event), identity }),
+      get: unused,
+      status: unused,
+    });
+    expect((await client.evidence(exactRequest)).identity).toEqual(identity);
+  });
+
   test('rejects missing, repeated or unrelated evidence while preserving changed-source absence', async () => {
     for (const events of [
       [event('event-1')],
@@ -44,7 +81,7 @@ describe('Session analysis browser adapter', () => {
   test('forwards cancellation and rejects malformed successful output', async () => {
     const controller = new AbortController();
     let received: AbortSignal | undefined;
-    const transport: SessionDistillationContractClient = {
+    const transport: Pick<SessionDistillationContractClient, 'evidence' | 'get' | 'status'> = {
       evidence: (_input, options) => {
         received = options?.signal;
         return Promise.resolve({ status: 'available', events: request.eventIds.map(event) });

@@ -34,7 +34,7 @@ const preB949af04RepositoryIndexSql = `
 `;
 const spaceScopedRepositoryIndexClause = 'ON repositories (space_id, provider, provider_repository_id)';
 const removeDistillationSchemaSql =
-  'DROP TABLE session_analyses_fts; DROP TABLE session_analyses; DROP TABLE distillation_jobs;';
+  'DROP TABLE memory_analysis_promotions; DROP TABLE distillation_progress; DROP TABLE distillation_segments; DROP TABLE distillation_withdrawals; DROP TABLE session_analyses_fts; DROP TABLE session_analyses; DROP TABLE distillation_jobs;';
 
 interface SchemaObject {
   readonly name: string;
@@ -87,11 +87,21 @@ const snapshotStore = (databasePath: string): StoreSnapshot => {
 const withoutDistillation = (snapshot: StoreSnapshot): StoreSnapshot => ({
   ...snapshot,
   schema: snapshot.schema.filter(
-    (object) => !(object.tbl_name.startsWith('distillation_') || object.tbl_name.startsWith('session_analyses')),
+    (object) =>
+      !(
+        object.tbl_name.startsWith('distillation_') ||
+        object.tbl_name.startsWith('session_analyses') ||
+        object.tbl_name === 'memory_analysis_promotions'
+      ),
   ),
   rows: Object.fromEntries(
     Object.entries(snapshot.rows).filter(
-      ([name]) => !(name.startsWith('distillation_') || name.startsWith('session_analyses')),
+      ([name]) =>
+        !(
+          name.startsWith('distillation_') ||
+          name.startsWith('session_analyses') ||
+          name === 'memory_analysis_promotions'
+        ),
     ),
   ),
 });
@@ -329,6 +339,24 @@ const openStore = async (databasePath: string): Promise<OpenedStore> => {
 };
 
 describe('local Memory store migration', () => {
+  test('rolls the version-8 checkpoint and promotion migration back atomically and preserves prior Memory rows', async () => {
+    const databasePath = await databaseFixture();
+    const identity = await seedStore(databasePath);
+    const seeded = snapshotStore(databasePath);
+    rewriteStore(
+      databasePath,
+      'DROP TABLE memory_analysis_promotions; DROP TABLE distillation_progress; DROP TABLE distillation_segments; DROP TABLE distillation_withdrawals; CREATE TABLE distillation_segments(marker TEXT); PRAGMA user_version=7;',
+    );
+    const conflicting = snapshotStore(databasePath);
+    await expect(openLocalIdentityKernel({ clock, databasePath })).rejects.toMatchObject({
+      code: 'storage-failed',
+      name: 'MemoryIdentityStoreError',
+    });
+    expect(snapshotStore(databasePath)).toEqual(conflicting);
+    rewriteStore(databasePath, 'DROP TABLE distillation_segments;');
+    expect(await openStore(databasePath)).toEqual({ acknowledgedThroughGeneration: 0, identity, pending: 2 });
+    expect(snapshotStore(databasePath)).toEqual(seeded);
+  });
   test('rebuilds the pre-b949af04 repository index when carrying a version-5 store to the current version', async () => {
     const databasePath = await databaseFixture();
     const identity = await seedStore(databasePath);

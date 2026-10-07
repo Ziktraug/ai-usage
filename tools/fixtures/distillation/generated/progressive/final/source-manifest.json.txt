@@ -1,0 +1,33 @@
+{
+  "base": "b16b06d6b692148e93bd8793e1de1bf426d53f45",
+  "files": [
+    {
+      "file": "packages/local-machine/src/distillation-evidence.ts",
+      "sha256": "46c7db633687791c2f6d6b915a3227c81fe6b8142fd79a78a3ed457735493669"
+    },
+    {
+      "file": "packages/local-machine/src/internal/codex-history.ts",
+      "sha256": "97a23adce452f432fad7624157569e1b18974408e94179b703143e9a08f8077d"
+    },
+    {
+      "file": "packages/platform-core/src/distillation-evidence.ts",
+      "sha256": "ef1b1b56da35f58c8a292533f9b10f1de1c4589d07b697a5fea98f6192429794"
+    },
+    {
+      "file": "packages/platform-core/src/session-distillation.ts",
+      "sha256": "8abdebecf0714ee559b131b7bbbb50ba6e3fc2419ee667996e9d3012fa606f4b"
+    },
+    {
+      "file": "packages/memory-sqlite/src/distillation.ts",
+      "sha256": "bd74591bd4e0494329f4dabd16431b04fd14ec67ed43a8da97bdb47f5140acc1"
+    },
+    {
+      "file": "apps/usage-engine/src/distillation-runtime.ts",
+      "sha256": "92ee25a9f010f1b1a76e1a41cd8baf135d2ec3d5727be38e953e2fdb351b5b6e"
+    },
+    {
+      "file": "apps/usage-engine/src/fixtures/distillation-long-session.ts",
+      "sha256": "7cedfb7fbc0aa2b66909bca8f52f2525641086645a70af7e217f3dd288a677de"
+    }
+  ]
+}
