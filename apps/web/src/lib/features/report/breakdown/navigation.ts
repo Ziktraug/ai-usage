@@ -95,7 +95,8 @@ export const createBreakdownNavigation = (
         ...search,
         tab: primaryTabValue(search, tab),
       })),
-    setQuery: (q, replace) => update((search) => ({ ...search, q }), replace),
+    setQuery: (q, replace) =>
+      updateSearch((search) => ({ ...search, q }), { keepFocus: true, ...(replace === undefined ? {} : { replace }) }),
     setTimeCell: (cell) => update((search) => ({ ...search, timeCell: serializeDashboardTimeCell(cell) })),
     setTimelineDimensionFilter: (dimension, value) =>
       update((search) => applyTimelineDimensionFilter(search, dimension, value)),

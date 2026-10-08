@@ -3,6 +3,7 @@ import { expect, openHydratedReport, test } from './browser-test';
 
 const PIXEL_TOLERANCE = 1;
 const ZAG_OVERFLOW_PADDING = 8;
+const TYPED_QUERY_URL = /[?&]q=claude(?:&|$)/;
 
 const filterTrigger = (page: Page, name: 'harness' | 'machine' | 'origin'): Locator =>
   page.getByRole('button', { name: `Filter by ${name}` });
@@ -68,6 +69,19 @@ test('focuses the report query with slash but never steals an IME composition', 
 
   await page.keyboard.press('/');
   await expect(search).toBeFocused();
+});
+
+test('keeps the report query focused while each keystroke updates the URL', async ({ page }) => {
+  await openHydratedReport(page);
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await search.click();
+  // The delay lets every keystroke's navigation settle before the next one.
+  await search.pressSequentially('claude', { delay: 150 });
+  await expect(page).toHaveURL(TYPED_QUERY_URL);
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('claude');
 });
 
 test('presents a pressed All row for every neutral checkbox filter', async ({ page }) => {

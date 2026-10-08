@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { css, cx } from '@ai-usage/design-system/css';
   import { activeFilters, filterSummary, ghostButton, summaryPill } from '@ai-usage/design-system/svelte';
   import { sessionOriginLabel } from '@ai-usage/report-core/session-query';
   import {
@@ -30,44 +31,23 @@
   } = $props();
   const timeCell = $derived(selectedTimeCell(search));
   const fieldLabels = { campaign: 'Campaign', model: 'Model', project: 'Project', provider: 'Provider' } as const;
-  // A pending response must not restate counts it can no longer vouch for, but dropping them
-  // collapsed the row and threw "Clear all" ~300px sideways for the length of the request. Holding
-  // each slot at the width it last measured empties the text without moving anything around it.
-  //
-  // `offsetWidth`, not `clientWidth`: these boxes are border-box, so reserving a border-excluding
-  // measurement shrinks the slot by its border on every observation — a slow collapse, not a hold.
-  // The reservation is also latched off the settled render, so nothing re-measures under itself.
-  let visibleCountWidth = $state(0);
-  let hiddenCountWidth = $state(0);
-  let reservedWidths = $state({ hidden: 0, visible: 0 });
-  $effect(() => {
-    if (!pending) {
-      reservedWidths = { hidden: hiddenCountWidth, visible: visibleCountWidth };
-    }
-  });
-  const reserved = (width: number): string | undefined => (pending && width > 0 ? `${width}px` : undefined);
+  // A pending response keeps the previous counts on screen, dimmed and busy, like the report output
+  // it sits above. Emptying them made the row blink on every keystroke of the query field. The delay
+  // applies on the way in only, so requests shorter than it never flash.
+  const settledCount = css({ transition: 'opacity 120ms ease' });
+  const staleCount = css({ opacity: 0.5, transitionDelay: '180ms' });
   const busyAttributes = $derived(pending ? ({ 'aria-busy': 'true' } as const) : {});
 </script>
 
 <div class={filterSummary} data-active-filters data-pending={pending}>
-  <span
-    {...busyAttributes}
-    aria-live="polite"
-    class={summaryPill}
-    style:min-width={reserved(reservedWidths.visible)}
-    bind:offsetWidth={visibleCountWidth}
-  >
-    {#if !pending}
-      {fmtNum(visible)}
-      / {fmtNum(total)} sessions
-    {/if}
+  <span {...busyAttributes} aria-live="polite" class={cx(summaryPill, settledCount, pending && staleCount)}>
+    {fmtNum(visible)}
+    / {fmtNum(total)} sessions
   </span>
   {#if hidden > 0}
-    <span {...busyAttributes} style:min-width={reserved(reservedWidths.hidden)} bind:offsetWidth={hiddenCountWidth}>
-      {#if !pending}
-        {fmtNum(hidden)}
-        hidden by filters
-      {/if}
+    <span {...busyAttributes} class={cx(settledCount, pending && staleCount)}>
+      {fmtNum(hidden)}
+      hidden by filters
     </span>
   {/if}
   <div class={activeFilters}>

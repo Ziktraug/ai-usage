@@ -33,11 +33,9 @@ const OLDER_PROVIDER_SERIES_PATTERN = /^Older provider ·/;
 const CURSOR_SCORED_AT_PATTERN = /^Scored /;
 const SORT_URL_PATTERN = /sort=/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
-const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
 /** The quota chart's authored viewBox is 600x200; the drawer must present it at that ratio. */
 const QUOTA_CHART_ASPECT_RATIO = 3;
 const NO_SESSIONS_PATTERN = /No sessions/;
-const SESSION_COUNTER_PATTERN = /^\d+ \/ \d+ sessions$/;
 type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
 const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<ReturnType<Page['goto']>>> => {
   const response = await page.goto(url);
@@ -135,15 +133,14 @@ test('locks definitive output while a focused filter response is pending', async
     await expect(chart).toBeVisible();
     await expect(metrics).toBeVisible();
     await expect(page.getByRole('button', { name: `Query: ${query} ×` })).toBeVisible();
-    await expect(page.getByText(SESSION_COUNTER_PATTERN)).toHaveCount(0);
-    await expect(page.getByText(HIDDEN_FILTERS_PATTERN)).toHaveCount(0);
     await expect(page.getByText(NO_SESSIONS_PATTERN)).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
-    // Withholding the counts must not collapse their slot: dropping the boxes threw "Clear all"
-    // ~300px sideways for the length of the request. The pills stay, emptied and marked busy.
+    // The counts stay on screen, dimmed and busy, until the response lands: emptying them made
+    // the row blink on every keystroke of the query field.
     const counterSlot = page.locator('[data-active-filters] > span').first();
+    await expect(counterSlot).toHaveText('5 / 6 sessions');
     await expect(counterSlot).toHaveAttribute('aria-busy', 'true');
-    expect((await counterSlot.boundingBox())?.width ?? 0).toBeGreaterThan(0);
+    await expect(counterSlot).toHaveCSS('opacity', '0.5');
   } finally {
     await controlFocusedResponse(page, 'release');
   }

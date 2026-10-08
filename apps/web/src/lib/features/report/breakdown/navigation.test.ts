@@ -46,7 +46,10 @@ describe('P8 breakdown navigation', () => {
     navigation.setMachine(['raw-machine-id']);
     navigation.setFieldFilter('provider', 'openai');
 
-    expect(options.slice(0, 2)).toEqual([{ replace: false }, { replace: true }]);
+    expect(options.slice(0, 2)).toEqual([
+      { keepFocus: true, replace: false },
+      { keepFocus: true, replace: true },
+    ]);
     expect(current.machine).toEqual(['raw-machine-id']);
     expect(current.filters.provider).toBe('openai');
     navigation.setFieldFilter('provider', 'openai');
