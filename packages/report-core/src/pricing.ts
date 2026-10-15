@@ -24,6 +24,8 @@ const FREE: Rates = { in: 0, out: 0, cr: 0, cw: 0 };
 const PRICING: Readonly<Record<string, Rates>> = {
   // OpenAI. GPT-5.6 and later publish a distinct cache-write price at 1.25x
   // uncached input; earlier families do not, so their `cw` stays the input rate.
+  // Requests above 272k input tokens bill at a long-context tier (2x input) that
+  // is not represented. Rates checked 2026-10-15.
   // GPT-6.1 Sol: Standard short-context rates checked 2026-10-06 at
   // https://developers.openai.com/api/docs/pricing (cache reads are 0.05x input).
   'gpt-6.1-sol': { in: 2, out: 10, cr: 0.1, cw: 2.5 },
@@ -36,6 +38,7 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'gpt-5.4-mini': { in: 0.75, out: 4.5, cr: 0.075, cw: 0.75 },
   'gpt-5.4-nano': { in: 0.2, out: 1.25, cr: 0.02, cw: 0.2 },
   'gpt-5.4': { in: 2.5, out: 15, cr: 0.25, cw: 2.5 },
+  'gpt-5.2-pro': { in: 21, out: 168, cr: 21, cw: 21 },
   'gpt-5.3-codex': { in: 1.75, out: 14, cr: 0.175, cw: 1.75 },
   'gpt-5.2-codex': { in: 1.75, out: 14, cr: 0.175, cw: 1.75 },
   'gpt-5.2': { in: 1.75, out: 14, cr: 0.175, cw: 1.75 },
@@ -43,13 +46,23 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'gpt-5.1': { in: 1.25, out: 10, cr: 0.125, cw: 1.25 },
   'gpt-5-pro': { in: 15, out: 120, cr: 15, cw: 15 },
   'gpt-5-codex': { in: 1.25, out: 10, cr: 0.125, cw: 1.25 },
+  'gpt-5-mini': { in: 0.25, out: 2, cr: 0.025, cw: 0.25 },
+  'gpt-5-nano': { in: 0.05, out: 0.4, cr: 0.005, cw: 0.05 },
   'gpt-5': { in: 1.25, out: 10, cr: 0.125, cw: 1.25 },
   'o3-pro': { in: 20, out: 80, cr: 20, cw: 20 },
   o3: { in: 2, out: 8, cr: 0.5, cw: 2 },
+  'o4-mini': { in: 1.1, out: 4.4, cr: 0.275, cw: 1.1 },
+  'o3-mini': { in: 1.1, out: 4.4, cr: 0.55, cw: 1.1 },
+  'gpt-4.1-mini': { in: 0.4, out: 1.6, cr: 0.1, cw: 0.4 },
+  'gpt-4.1-nano': { in: 0.1, out: 0.4, cr: 0.025, cw: 0.1 },
+  'gpt-4.1': { in: 2, out: 8, cr: 0.5, cw: 2 },
+  'gpt-4o-mini': { in: 0.15, out: 0.6, cr: 0.075, cw: 0.15 },
+  'gpt-4o': { in: 2.5, out: 10, cr: 1.25, cw: 2.5 },
 
   // Anthropic. Cache reads are 0.1x base input, except on Fable 5.1 and
-  // Mythos 5.1 (0.025x) and Opus 5.5 (0.05x). `cw` is the 5-minute write price;
-  // the 1-hour write price (2x input) and fast mode are not represented.
+  // Mythos 5.1 (0.025x) and Opus 5.5 and Sonnet 5.5 (0.05x). `cw` is the
+  // 5-minute write price; the 1-hour write price (2x input) and fast mode are
+  // not represented.
   'claude-fable-5-1': { in: 10, out: 50, cr: 0.25, cw: 12.5 },
   'claude-mythos-5-1': { in: 10, out: 50, cr: 0.25, cw: 12.5 },
   'claude-fable-5': { in: 10, out: 50, cr: 1, cw: 12.5 },
@@ -62,13 +75,16 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'claude-opus-4-5': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
   'claude-opus-4-1': { in: 15, out: 75, cr: 1.5, cw: 18.75 },
   'claude-opus-4': { in: 15, out: 75, cr: 1.5, cw: 18.75 },
-  // Sonnet 5.5: checked 2026-10-06 at
+  // Sonnet 5.5 and Haiku 5.5: checked 2026-10-15 at
   // https://platform.claude.com/docs/en/about-claude/pricing.
-  'claude-sonnet-5-5': { in: 2, out: 10, cr: 0.2, cw: 2.5 },
+  'claude-sonnet-5-5': { in: 2, out: 10, cr: 0.1, cw: 2.5 },
   'claude-sonnet-5': { in: 2, out: 10, cr: 0.2, cw: 2.5 },
   'claude-sonnet-4-6': { in: 3, out: 15, cr: 0.3, cw: 3.75 },
   'claude-sonnet-4-5': { in: 3, out: 15, cr: 0.3, cw: 3.75 },
   'claude-sonnet-4': { in: 3, out: 15, cr: 0.3, cw: 3.75 },
+  // Haiku 5.5 bills prompts over 100k tokens at 5x; only the short-prompt tier
+  // is represented because rows aggregate many requests.
+  'claude-haiku-5-5': { in: 0.1, out: 0.5, cr: 0.01, cw: 0.125 },
   'claude-haiku-4-5': { in: 1, out: 5, cr: 0.1, cw: 1.25 },
   'claude-haiku-3-5': { in: 0.8, out: 4, cr: 0.08, cw: 1 },
 
@@ -116,6 +132,7 @@ const PRICING: Readonly<Record<string, Rates>> = {
   'grok-4.6': { in: 2, out: 6, cr: 0.5, cw: 2 },
   'grok-4.5': { in: 2, out: 6, cr: 0.3, cw: 2 },
   'grok-4.3': { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 },
+  'grok-4.20': { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 },
   'grok-build-0.1': { in: 1, out: 2, cr: 0.2, cw: 1 },
   'grok-code-fast-1': { in: 0.2, out: 1.5, cr: 0.02, cw: 0.2 },
 
@@ -141,6 +158,7 @@ const PRICING: Readonly<Record<string, Rates>> = {
   // (hit 0.1x input, creation 1.25x), which is also what OpenCode Go bills.
   'qwen3.8-max': { in: 2, out: 6, cr: 0.2, cw: 2.5 },
   'qwen3.8-flash': { in: 0.15, out: 0.47, cr: 0.015, cw: 0.1875 },
+  'qwen3.7-max': { in: 2.5, out: 7.5, cr: 0.25, cw: 3.125 },
   'qwen3.7-plus': { in: 0.4, out: 1.6, cr: 0.04, cw: 0.5 },
 
   // MiniMax
@@ -183,6 +201,11 @@ const GEMINI_FLASH_LAUNCH_SCHEDULE: readonly PricePeriod[] = [
 // oldest first; a session is priced with the last period in effect at its time,
 // so historical rows keep the rate they were actually billed at.
 const PRICE_SCHEDULES: Readonly<Record<string, readonly PricePeriod[]>> = {
+  // Launch price published through 2026-11-30, standard rate from 2026-12-01.
+  'gemini-4-argon': [
+    { from: null, rates: { in: 2, out: 10, cr: 0.1, cw: 2 } },
+    { from: '2026-12-01T00:00:00.000Z', rates: { in: 4, out: 20, cr: 0.2, cw: 4 } },
+  ],
   // Cut on 2026-08-21, promised held at least through 2026-11-21.
   'gpt-5.6-sol': [
     { from: null, rates: { in: 5, out: 30, cr: 0.5, cw: 6.25 } },
@@ -242,12 +265,17 @@ const ALIASES: Readonly<Record<string, string>> = {
   'claude-4.5-sonnet': 'claude-sonnet-4-5',
   'claude-sonnet-4.5': 'claude-sonnet-4-5',
   'claude-4-sonnet': 'claude-sonnet-4',
+  'claude-5.5-haiku': 'claude-haiku-5-5',
+  'claude-haiku-5.5': 'claude-haiku-5-5',
   'claude-4.5-haiku': 'claude-haiku-4-5',
   'claude-haiku-4.5': 'claude-haiku-4-5',
   'claude-3.5-haiku': 'claude-haiku-3-5',
   'claude-haiku-3.5': 'claude-haiku-3-5',
   'claude-fable-5.1': 'claude-fable-5-1',
   'claude-mythos-5.1': 'claude-mythos-5-1',
+  'grok-4.20-0309-reasoning': 'grok-4.20',
+  'grok-4.20-0309-non-reasoning': 'grok-4.20',
+  'grok-4.20-multi-agent-0309': 'grok-4.20',
   'gemini-3.1-pro-preview-customtools': 'gemini-3.1-pro',
   'gemini-2.5-flash-lite-preview-09-2025': 'gemini-2.5-flash-lite',
   'qwen3.8-max-0902': 'qwen3.8-max',

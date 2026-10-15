@@ -95,7 +95,7 @@ describe('readClaudeSessionAnalysis', () => {
     const row = (await run(collectClaude, home)).find(({ source }) => source?.sourceSessionId === fixture.ids.claude);
     expect(row?.model).toBe('claude-sonnet-5-5');
     expect(row?.costKnown).toBe(true);
-    expect(row?.costApprox).toBeCloseTo(0.000_667, 10);
+    expect(row?.costApprox).toBeCloseTo(0.000_663_5, 10);
     expect(row?.modelSegments?.[0]?.costKnown).toBe(true);
   });
 
@@ -154,7 +154,7 @@ describe('readClaudeSessionAnalysis', () => {
     // for these unchanged files.
     await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 12)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(20);
+    expect((await Bun.file(cachePath).json()).version).toBe(21);
     expect(await run(collectClaude, home)).toEqual(freshRows);
   });
 
@@ -191,7 +191,7 @@ describe('readClaudeSessionAnalysis', () => {
     // these unchanged files.
     await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 13)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(20);
+    expect((await Bun.file(cachePath).json()).version).toBe(21);
   });
 
   test('surfaces a typed failure for a no-follow unsafe transcript', async () => {

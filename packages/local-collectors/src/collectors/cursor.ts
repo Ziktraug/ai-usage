@@ -42,7 +42,8 @@ const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bub
 // records no skill observations and is not observable (ADR 0022), so its list is always
 // empty — but the entry shape changed, and an undeclared invalidation is worse
 // than a declared one.
-const CURSOR_DB_CACHE_VERSION = 6;
+// Rows include calculated costs; invalidate them when newly priced models land.
+const CURSOR_DB_CACHE_VERSION = 7;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
