@@ -59,7 +59,7 @@ interface ClaudeCache {
 // entry was written when a pasted-image record could still abort the transcript,
 // so it under-reports both the rows and the loss.
 // Rows include calculated costs; invalidate them when newly priced models land.
-const CLAUDE_CACHE_VERSION = 12;
+const CLAUDE_CACHE_VERSION = 13;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {

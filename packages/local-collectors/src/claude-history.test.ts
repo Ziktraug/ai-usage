@@ -68,7 +68,7 @@ describe('readClaudeSessionAnalysis', () => {
     const row = (await run(collectClaude, home)).find(({ source }) => source?.sourceSessionId === fixture.ids.claude);
     expect(row?.model).toBe('claude-sonnet-5-5');
     expect(row?.costKnown).toBe(true);
-    expect(row?.costApprox).toBeCloseTo(0.000_667, 10);
+    expect(row?.costApprox).toBeCloseTo(0.000_663_5, 10);
     expect(row?.modelSegments?.[0]?.costKnown).toBe(true);
   });
 

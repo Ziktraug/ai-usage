@@ -87,7 +87,8 @@ export interface OpenCodeCollectionResult {
 // Bumped to 12 for the skill-observation stream: an entry written by version 11
 // carries rows but no observations, and reusing it would report a machine with
 // history as a machine that has never invoked a skill.
-const OPENCODE_DB_CACHE_VERSION = 12;
+// Rows include calculated costs; invalidate them when newly priced models land.
+const OPENCODE_DB_CACHE_VERSION = 13;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 // Observations are tens to hundreds; the bound guards a corrupt database, not
 // ordinary volume.

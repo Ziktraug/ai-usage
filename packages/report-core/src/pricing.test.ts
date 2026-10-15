@@ -12,7 +12,7 @@ describe('model pricing', () => {
   test('prices late-September releases and their harness aliases without reusing older cache rates', () => {
     const at = new Date('2026-10-06T00:00:00.000Z');
     const sol = { in: 2, out: 10, cr: 0.1, cw: 2.5 };
-    const sonnet = { in: 2, out: 10, cr: 0.2, cw: 2.5 };
+    const sonnet = { in: 2, out: 10, cr: 0.1, cw: 2.5 };
     const tokens = { in: 1_000_000, out: 1_000_000, cr: 1_000_000, cw: 1_000_000 };
     for (const model of ['gpt-6.1-sol', 'openai/gpt-6.1-sol', 'gpt-6.1-sol-high']) {
       const pricing = priceAt(model, at);
@@ -27,7 +27,7 @@ describe('model pricing', () => {
     ]) {
       const pricing = priceAt(model, at);
       expect(pricing).toEqual({ rates: sonnet, known: true });
-      expect(approxCost(pricing.rates, tokens)).toBe(14.7);
+      expect(approxCost(pricing.rates, tokens)).toBe(14.6);
     }
     expect(priceAt('gpt-6-sol', at).rates.cr).toBe(0.2);
     expect(priceAt('gpt-6.2-sol', at).known).toBe(false);
@@ -55,7 +55,17 @@ describe('model pricing', () => {
       ['gpt-5.1-codex', { in: 1.25, out: 10, cr: 0.125, cw: 1.25 }],
       ['gpt-5-pro', { in: 15, out: 120, cr: 15, cw: 15 }],
       ['gpt-5-codex', { in: 1.25, out: 10, cr: 0.125, cw: 1.25 }],
+      ['gpt-5.2-pro', { in: 21, out: 168, cr: 21, cw: 21 }],
+      ['gpt-5-mini', { in: 0.25, out: 2, cr: 0.025, cw: 0.25 }],
+      ['gpt-5-nano', { in: 0.05, out: 0.4, cr: 0.005, cw: 0.05 }],
       ['gpt-5', { in: 1.25, out: 10, cr: 0.125, cw: 1.25 }],
+      ['o4-mini', { in: 1.1, out: 4.4, cr: 0.275, cw: 1.1 }],
+      ['o3-mini', { in: 1.1, out: 4.4, cr: 0.55, cw: 1.1 }],
+      ['gpt-4.1', { in: 2, out: 8, cr: 0.5, cw: 2 }],
+      ['gpt-4.1-mini', { in: 0.4, out: 1.6, cr: 0.1, cw: 0.4 }],
+      ['gpt-4.1-nano', { in: 0.1, out: 0.4, cr: 0.025, cw: 0.1 }],
+      ['gpt-4o', { in: 2.5, out: 10, cr: 1.25, cw: 2.5 }],
+      ['gpt-4o-mini', { in: 0.15, out: 0.6, cr: 0.075, cw: 0.15 }],
       ['o3-pro', { in: 20, out: 80, cr: 20, cw: 20 }],
       ['o3', { in: 2, out: 8, cr: 0.5, cw: 2 }],
     ];
@@ -79,6 +89,8 @@ describe('model pricing', () => {
       ['claude-sonnet-5', { in: 2, out: 10, cr: 0.2, cw: 2.5 }],
       ['claude-sonnet-4-6', { in: 3, out: 15, cr: 0.3, cw: 3.75 }],
       ['claude-sonnet-4', { in: 3, out: 15, cr: 0.3, cw: 3.75 }],
+      ['claude-haiku-5-5', { in: 0.1, out: 0.5, cr: 0.01, cw: 0.125 }],
+      ['claude-haiku-5.5', { in: 0.1, out: 0.5, cr: 0.01, cw: 0.125 }],
       ['claude-haiku-4-5', { in: 1, out: 5, cr: 0.1, cw: 1.25 }],
       ['claude-haiku-3-5', { in: 0.8, out: 4, cr: 0.08, cw: 1 }],
     ];
@@ -93,6 +105,21 @@ describe('model pricing', () => {
     for (const at of ['2026-08-31T23:59:59.999Z', '2026-09-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z']) {
       expect(priceAt('claude-sonnet-5', new Date(at))).toEqual({ rates: standard, known: true });
     }
+  });
+
+  test('moves Gemini 4 Argon from its launch price to the standard rate on 2026-12-01', () => {
+    expect(priceAt('gemini-4-argon', new Date('2026-11-30T23:59:59.999Z')).rates).toEqual({
+      in: 2,
+      out: 10,
+      cr: 0.1,
+      cw: 2,
+    });
+    expect(priceAt('gemini-4-argon', new Date('2026-12-01T00:00:00.000Z')).rates).toEqual({
+      in: 4,
+      out: 20,
+      cr: 0.2,
+      cw: 4,
+    });
   });
 
   test('prices each GPT-5.6 model from the leg of its schedule in effect', () => {
@@ -159,6 +186,7 @@ describe('model pricing', () => {
   test('prices supported paid-tier Gemini text models', () => {
     const cases: [model: string, rates: Rates][] = [
       ['gemini-3.8-flash', { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 }],
+      ['gemini-4-argon', { in: 2, out: 10, cr: 0.1, cw: 2 }],
       ['gemini-3.7-flash', { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 }],
       ['gemini-3.6-flash', { in: 0.75, out: 3.75, cr: 0.075, cw: 0.75 }],
       ['gemini-3.5-flash', { in: 1.5, out: 9, cr: 0.15, cw: 1.5 }],
@@ -194,6 +222,9 @@ describe('model pricing', () => {
       ['grok-4.6', { in: 2, out: 6, cr: 0.5, cw: 2 }],
       ['grok-4.5', { in: 2, out: 6, cr: 0.3, cw: 2 }],
       ['grok-4.3', { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 }],
+      ['grok-4.20', { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 }],
+      ['grok-4.20-0309-reasoning', { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 }],
+      ['grok-4.20-multi-agent-0309', { in: 1.25, out: 2.5, cr: 0.2, cw: 1.25 }],
       ['grok-build-0.1', { in: 1, out: 2, cr: 0.2, cw: 1 }],
     ];
 
@@ -237,6 +268,7 @@ describe('model pricing', () => {
       ['qwen3.8-max', { in: 2, out: 6, cr: 0.2, cw: 2.5 }],
       ['qwen3.8-max-0902', { in: 2, out: 6, cr: 0.2, cw: 2.5 }],
       ['qwen3.8-flash', { in: 0.15, out: 0.47, cr: 0.015, cw: 0.1875 }],
+      ['qwen3.7-max-2026-05-20', { in: 2.5, out: 7.5, cr: 0.25, cw: 3.125 }],
     ];
 
     for (const [model, rates] of cases) {
