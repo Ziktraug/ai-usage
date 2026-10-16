@@ -1,42 +1,33 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import { parseCommand } from './cli';
+import { type CliCommand, parseCommand, type QuotaArgs } from './cli';
+
+const quotaCommand = (overrides: Partial<QuotaArgs> = {}): CliCommand => ({
+  _tag: 'Quota',
+  color: null,
+  history: null,
+  json: false,
+  stored: false,
+  ...overrides,
+});
 
 describe('CLI command parsing', () => {
   test('parses quota output policy without leaking raw argv to main', () => {
-    expect(Effect.runSync(parseCommand(['quota', '--no-color']))).toEqual({
-      _tag: 'Quota',
-      color: false,
-      history: null,
-    });
-    expect(Effect.runSync(parseCommand(['quota', '--color']))).toEqual({
-      _tag: 'Quota',
-      color: true,
-      history: null,
-    });
+    expect(Effect.runSync(parseCommand(['quota', '--no-color']))).toEqual(quotaCommand({ color: false }));
+    expect(Effect.runSync(parseCommand(['quota', '--color']))).toEqual(quotaCommand({ color: true }));
   });
 
   test('defaults a bare quota --history to 7d and accepts every supported range', () => {
-    expect(Effect.runSync(parseCommand(['quota', '--history']))).toEqual({
-      _tag: 'Quota',
-      color: null,
-      history: '7d',
-    });
+    expect(Effect.runSync(parseCommand(['quota', '--history']))).toEqual(quotaCommand({ history: '7d' }));
     for (const range of ['24h', '7d', '30d'] as const) {
-      expect(Effect.runSync(parseCommand(['quota', '--history', range]))).toEqual({
-        _tag: 'Quota',
-        color: null,
-        history: range,
-      });
+      expect(Effect.runSync(parseCommand(['quota', '--history', range]))).toEqual(quotaCommand({ history: range }));
     }
   });
 
   test('reads the token after quota --history as a flag rather than a range', () => {
-    expect(Effect.runSync(parseCommand(['quota', '--history', '--color']))).toEqual({
-      _tag: 'Quota',
-      color: true,
-      history: '7d',
-    });
+    expect(Effect.runSync(parseCommand(['quota', '--history', '--color']))).toEqual(
+      quotaCommand({ color: true, history: '7d' }),
+    );
   });
 
   test('rejects an unsupported quota history range', () => {
@@ -49,6 +40,50 @@ describe('CLI command parsing', () => {
     const error = Effect.runSync(Effect.flip(parseCommand(['quota', '--wide'])));
 
     expect(error.message).toBe('Unknown option for quota: --wide');
+  });
+
+  test('parses the stored quota read and the JSON feed independently and together', () => {
+    expect(Effect.runSync(parseCommand(['quota', '--stored']))).toEqual(quotaCommand({ stored: true }));
+    expect(Effect.runSync(parseCommand(['quota', '--json']))).toEqual(quotaCommand({ json: true }));
+    expect(Effect.runSync(parseCommand(['quota', '--stored', '--json']))).toEqual(
+      quotaCommand({ json: true, stored: true }),
+    );
+    expect(Effect.runSync(parseCommand(['quota', '--json', '--stored']))).toEqual(
+      quotaCommand({ json: true, stored: true }),
+    );
+  });
+
+  test('accepts a colour policy beside the quota JSON feed, as report --json does', () => {
+    expect(Effect.runSync(parseCommand(['quota', '--json', '--no-color']))).toEqual(
+      quotaCommand({ color: false, json: true }),
+    );
+    expect(Effect.runSync(parseCommand(['quota', '--stored', '--json', '--color']))).toEqual(
+      quotaCommand({ color: true, json: true, stored: true }),
+    );
+  });
+
+  test('rejects quota --history combined with the JSON feed or the stored read as typed failures', () => {
+    const cases = [
+      { argv: ['quota', '--history', '--json'], flag: '--json' },
+      { argv: ['quota', '--json', '--history', '24h'], flag: '--json' },
+      { argv: ['quota', '--history', '30d', '--stored'], flag: '--stored' },
+      { argv: ['quota', '--stored', '--history'], flag: '--stored' },
+      { argv: ['quota', '--history', '--stored', '--json'], flag: '--json' },
+    ] as const;
+    for (const { argv, flag } of cases) {
+      const error = Effect.runSync(Effect.flip(parseCommand([...argv])));
+
+      expect(error._tag).toBe('CliArgumentError');
+      expect(error.message).toStartWith(`quota --history cannot be combined with ${flag}`);
+    }
+  });
+
+  test('still rejects report-only flags on quota', () => {
+    for (const flag of ['--csv', '--payload-json', '--harness']) {
+      const error = Effect.runSync(Effect.flip(parseCommand(['quota', '--stored', '--json', flag])));
+
+      expect(error.message).toBe(`Unknown option for quota: ${flag}`);
+    }
   });
 
   test('parses harness keys from metadata', () => {

@@ -63,6 +63,7 @@ without a numbering collision.
 | [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Accepted; extends 0024, 0026, 0038, 0040, 0041 |
 | [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Accepted; amends 0042 |
 | [0044](0044-local-checkout-observation.md) | Observe local Checkouts and bind them to Projects without review | 2026-10-07 | Accepted; amends 0024, 0042 |
+| [0045](0045-desktop-quota-feed-through-the-cli.md) | Desktop consumers read quota through the CLI JSON feed | 2026-10-12 | Accepted; extends 0009 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

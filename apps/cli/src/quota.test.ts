@@ -1,6 +1,11 @@
 import { beforeAll, expect, test } from 'bun:test';
 import type { ProviderQuotaHistoryPoint } from '@ai-usage/report-core/provider-quota';
-import { renderQuotaHistory } from './quota';
+import {
+  isProviderStatusDataset,
+  type ProviderStatus,
+  providerStatusWithFreshness,
+} from '@ai-usage/report-core/provider-status';
+import { providerStatusWithFeedFreshness, quotaStatusDataset, renderQuotaHistory, renderQuotaJson } from './quota';
 import { setColor } from './render/colors';
 
 const ANSI_ESCAPE = String.fromCharCode(27);
@@ -250,4 +255,136 @@ test('keeps the sparkline column bounded when history is heavily fragmented', ()
   const sparkline = row.slice(row.indexOf('5h') + '5h'.length, row.indexOf('→') - '  0% '.length);
   expect(sparkline.trim().length).toBeLessThanOrEqual(24);
   expect(row).toContain('·gap·');
+});
+
+const FEED_NOW = new Date('2026-07-15T12:00:00.000Z');
+
+const providerStatus = (
+  input: Partial<ProviderStatus> & Pick<ProviderStatus, 'generatedAt' | 'key' | 'label' | 'source'>,
+): ProviderStatus => ({
+  machineId: 'machine-1',
+  plan: 'pro',
+  state: 'ok',
+  windows: [
+    {
+      blocked: false,
+      group: '5h',
+      id: 'primary',
+      label: '5h',
+      limitSeconds: 18_000,
+      remainingPercent: 60,
+      resetsAt: '2026-07-15T14:00:00.000Z',
+      scope: 'global',
+      usedPercent: 40,
+    },
+  ],
+  ...input,
+});
+
+// A live reading 20 minutes old is past the 15-minute budget; the session-log reading is two days old,
+// which the feed also calls stale; the fresh live reading stays as observed.
+const feedProviders: ProviderStatus[] = [
+  providerStatus({ generatedAt: '2026-07-15T11:40:00.000Z', key: 'codex', label: 'Codex', source: 'live-api' }),
+  providerStatus({
+    generatedAt: '2026-07-13T12:00:00.000Z',
+    key: 'claude',
+    label: 'Claude',
+    source: 'local-history',
+  }),
+  providerStatus({
+    generatedAt: '2026-07-15T11:58:00.000Z',
+    key: 'codex:team',
+    label: 'Codex',
+    source: 'live-api',
+    state: 'partial',
+  }),
+];
+
+const TWO_DAYS_OLD = '2026-07-13T12:00:00.000Z';
+const TWENTY_MINUTES_OLD = '2026-07-15T11:40:00.000Z';
+const TWO_MINUTES_OLD = '2026-07-15T11:58:00.000Z';
+
+test('holds live and session-log readings to the same fifteen-minute feed budget', () => {
+  for (const source of ['live-api', 'local-history'] as const) {
+    const fresh = providerStatus({ generatedAt: TWO_MINUTES_OLD, key: 'codex', label: 'Codex', source });
+    const old = providerStatus({ generatedAt: TWENTY_MINUTES_OLD, key: 'codex', label: 'Codex', source });
+
+    expect(providerStatusWithFeedFreshness(fresh, FEED_NOW).state).toBe('ok');
+    expect(providerStatusWithFeedFreshness(old, FEED_NOW)).toEqual({ ...old, state: 'stale' });
+  }
+});
+
+test('is stricter than the report freshness, which never ages a session-log reading', () => {
+  const sessionLog = providerStatus({
+    generatedAt: TWO_DAYS_OLD,
+    key: 'codex',
+    label: 'Codex',
+    source: 'local-history',
+  });
+
+  expect(providerStatusWithFreshness(sessionLog, FEED_NOW).state).toBe('ok');
+  expect(providerStatusWithFeedFreshness(sessionLog, FEED_NOW).state).toBe('stale');
+});
+
+test('leaves manual and unsupported readings and already-terminal states as stored', () => {
+  for (const source of ['manual', 'unsupported'] as const) {
+    const provider = providerStatus({ generatedAt: TWO_DAYS_OLD, key: 'codex', label: 'Codex', source });
+
+    expect(providerStatusWithFeedFreshness(provider, FEED_NOW)).toBe(provider);
+  }
+  // `unsupported` is also a state (Claude without rate limits); aging it would replace that reason with `stale`.
+  for (const state of ['error', 'auth-required', 'stale', 'unsupported'] as const) {
+    for (const source of ['live-api', 'local-history'] as const) {
+      const provider = providerStatus({ generatedAt: TWO_DAYS_OLD, key: 'codex', label: 'Codex', source, state });
+
+      expect(providerStatusWithFeedFreshness(provider, FEED_NOW)).toBe(provider);
+    }
+  }
+});
+
+test('projects the quota feed as a versioned provider-status dataset stamped with the read time', () => {
+  const dataset = quotaStatusDataset(feedProviders, FEED_NOW);
+
+  expect(dataset.schemaVersion).toBe(1);
+  expect(dataset.generatedAt).toBe('2026-07-15T12:00:00.000Z');
+  expect(isProviderStatusDataset(dataset)).toBe(true);
+});
+
+test('applies freshness with the injected clock and preserves provider order', () => {
+  const dataset = quotaStatusDataset(feedProviders, FEED_NOW);
+
+  expect(dataset.providers.map(({ key }) => key)).toEqual(['codex', 'claude', 'codex:team']);
+  expect(dataset.providers.map(({ state }) => state)).toEqual(['stale', 'stale', 'partial']);
+  // The observation time is the provider's, never the read time.
+  expect(dataset.providers.map(({ generatedAt }) => generatedAt)).toEqual(
+    feedProviders.map(({ generatedAt }) => generatedAt),
+  );
+  expect(feedProviders[0]?.state).toBe('ok');
+});
+
+test('judges freshness against the clock it is given rather than the wall clock', () => {
+  const earlier = quotaStatusDataset(feedProviders, new Date('2026-07-15T11:50:00.000Z'));
+
+  expect(earlier.providers[0]?.state).toBe('ok');
+});
+
+test('projects an empty store read as an empty provider list', () => {
+  expect(quotaStatusDataset([], FEED_NOW)).toEqual({
+    generatedAt: '2026-07-15T12:00:00.000Z',
+    providers: [],
+    schemaVersion: 1,
+  });
+});
+
+test('renders the quota feed as indented JSON with no ANSI escapes even when colour is forced', () => {
+  setColor(true);
+  try {
+    const output = renderQuotaJson(quotaStatusDataset(feedProviders, FEED_NOW));
+
+    expect(output).not.toContain(ANSI_ESCAPE);
+    expect(output).toBe(JSON.stringify(quotaStatusDataset(feedProviders, FEED_NOW), null, 2));
+    expect(JSON.parse(output)).toEqual(quotaStatusDataset(feedProviders, FEED_NOW));
+  } finally {
+    setColor(false);
+  }
 });

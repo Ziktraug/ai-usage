@@ -22,6 +22,14 @@ usage-engine `once` process, waits for its terminal result, reads the committed
 revision, and reaps it. A live protocol/target mismatch never falls back to a
 second writer.
 
+`quota --stored` and `quota --history` are stored-only reads of provider
+quota observations: they issue no `collect-fresh-quota`, start no engine, and
+read a missing store as the empty state. `quota --json`, refreshed or stored,
+prints one `ProviderStatusDataset` (`schemaVersion` 1) with freshness already
+applied by the CLI. `quota --stored --json` is the supported seam for desktop
+and status-bar consumers; they never read SQLite or the control plane
+([ADR 0045](../../docs/adr/0045-desktop-quota-feed-through-the-cli.md)).
+
 Explicit portable output remains a CLI file write after a read. Snapshot inputs
 and operator files are bounded, explicit, regular/no-follow paths, and the
 engine revalidates mutating inputs. Engine diagnostics stay off structured
@@ -39,5 +47,6 @@ usage-engine-runtime, or `usage-store/writer` directly or transitively.
 
 Cover stored reads with engine down, daemon/foreground parity and concurrency,
 empty/incompatible store, stale rendezvous, protocol mismatch, Ctrl-C and
-forced child reap, quota/import/merge, large diagnostic drains, and byte-exact
-supported outputs using isolated homes/stores/state/logs/ports.
+forced child reap, quota/import/merge, the stored quota feed with no engine,
+large diagnostic drains, and byte-exact supported outputs using isolated
+homes/stores/state/logs/ports.

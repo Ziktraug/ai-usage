@@ -819,6 +819,14 @@ Memory client and never opens `memory.sqlite` or PostgreSQL. `analyses` uses
 that client for explicit batches, exact analysis reads and bounded generated
 context. It requires an already running engine and starts no provider process.
 
+`quota` refreshes through `collect-fresh-quota` on the engine seam, then reads
+the newest stored observation per provider; `quota --stored` and
+`quota --history` read stored observations only and start no engine.
+`quota --json` prints that newest-observation read as a `ProviderStatusDataset`
+with freshness applied by the CLI, and `quota --stored --json` is the
+supported seam for desktop and status-bar consumers
+([ADR 0045](adr/0045-desktop-quota-feed-through-the-cli.md)).
+
 Portable snapshot/output files remain explicit CLI writes performed after
 bounded reads. CLI wide-event delivery is file-only: it never writes event or
 sink diagnostics to stdout/stderr and drains its scoped appender before an

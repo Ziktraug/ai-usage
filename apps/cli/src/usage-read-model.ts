@@ -317,8 +317,13 @@ export const readUsageMachine = async (dbPath: string): Promise<UsageMachine> =>
  * and the renderer could already draw it, but the query in between asked for one provider by name.
  */
 export const readLatestProviderQuotas = async (dbPath: string) => {
-  const latest = await Effect.runPromise(queryLatestLocalProviderQuotaObservations({ dbPath }));
-  return latest.observations.map(projectLatestProviderQuotaObservation);
+  // Either-then-throw so `quota --stored` can tell a never-collected machine (store-missing) from a
+  // real read failure; Effect.runPromise alone would reject with an opaque fiber failure.
+  const result = await Effect.runPromise(Effect.either(queryLatestLocalProviderQuotaObservations({ dbPath })));
+  if (result._tag === 'Left') {
+    throw result.left;
+  }
+  return result.right.observations.map(projectLatestProviderQuotaObservation);
 };
 
 /** The web history read bounds itself by observation count rather than by point count; match it. */

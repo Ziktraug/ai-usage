@@ -29,7 +29,7 @@ import { executeAnalysesCommand } from './analyses';
 import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
 import { renderMemorySearch } from './memory';
-import { renderQuota, renderQuotaHistory } from './quota';
+import { quotaStatusDataset, renderQuota, renderQuotaHistory, renderQuotaJson } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
 import { renderReplicationStatus } from './replication';
@@ -67,7 +67,16 @@ interface CliQuotaHistoryBoundaryResult {
   readonly range: QuotaHistoryRange;
 }
 
-type CliQuotaBoundaryResult = CliQuotaHistoryBoundaryResult | CliQuotaRefreshBoundaryResult;
+/** `--stored` reads the newest stored observation per provider and issues no collection to grade. */
+interface CliQuotaStoredBoundaryResult {
+  readonly kind: 'stored';
+  readonly outputCount: number;
+}
+
+type CliQuotaBoundaryResult =
+  | CliQuotaHistoryBoundaryResult
+  | CliQuotaRefreshBoundaryResult
+  | CliQuotaStoredBoundaryResult;
 
 const QUOTA_HISTORY_DURATION_MS: Record<QuotaHistoryRange, number> = {
   '24h': 24 * 60 * 60 * 1000,
@@ -102,6 +111,13 @@ const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown
       annotations: { domainOutcome, outputCount: pointCount, quotaHistoryRange: range },
     };
   }
+  if (exit.value.kind === 'stored') {
+    const { outputCount } = exit.value;
+    return {
+      outcome: 'success',
+      annotations: { domainOutcome: outputCount === 0 ? 'empty' : 'success', outputCount },
+    };
+  }
   const { latest, sources } = exit.value;
   const hasUsableLatest = latest.length > 0;
   const warningCodes = sanitizeSourceWarningCodes(sources.flatMap(({ warnings }) => warnings));
@@ -128,8 +144,20 @@ const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown
   };
 };
 
+/**
+ * A status-bar poller runs `quota --stored` every minute, so every outcome of a stored read — success
+ * or failure — carries `quotaRead: 'stored'` to keep those reads apart from refreshes.
+ */
+const classifyCliStoredQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown>): BoundaryClassification => {
+  const classification = classifyCliQuotaOutcome(exit);
+  return { ...classification, annotations: { ...classification.annotations, quotaRead: 'stored' } };
+};
+
 const fromPromise = <Value>(run: () => Promise<Value>): Effect.Effect<Value, unknown> =>
   Effect.tryPromise({ catch: (error: unknown) => error, try: run });
+
+const isStoreMissing = (error: unknown): error is UsageStoreError =>
+  error instanceof UsageStoreError && error.reason === 'store-missing';
 
 class CliAnalysesError extends Error {
   readonly code: MemoryServiceClientError['code'];
@@ -263,7 +291,10 @@ export const app = Effect.gen(function* () {
 
   if (command._tag === 'Quota') {
     yield* runBoundaryEffect(
-      { boundary: 'cli.quota', classify: classifyCliQuotaOutcome },
+      {
+        boundary: 'cli.quota',
+        classify: command.stored ? classifyCliStoredQuotaOutcome : classifyCliQuotaOutcome,
+      },
       Effect.gen(function* () {
         yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
         const historyRange = command.history;
@@ -280,9 +311,8 @@ export const app = Effect.gen(function* () {
           ).pipe(
             // A machine that has never collected has no store file, which is "no history yet" rather
             // than a read failure — the same reading the report's stored-config path already takes.
-            Effect.catchIf(
-              (error): error is UsageStoreError => error instanceof UsageStoreError && error.reason === 'store-missing',
-              () => Effect.succeed({ partial: false, points: [] as ProviderQuotaHistoryPoint[] }),
+            Effect.catchIf(isStoreMissing, () =>
+              Effect.succeed({ partial: false, points: [] as ProviderQuotaHistoryPoint[] }),
             ),
           );
           yield* Console.log(renderQuotaHistory(history.points, historyRange, { partial: history.partial }));
@@ -292,6 +322,17 @@ export const app = Effect.gen(function* () {
             pointCount: history.points.length,
             range: historyRange,
           } as const;
+        }
+        if (command.stored) {
+          // The desktop feed polls this every minute, so it reads the durable-observation seam only: no
+          // collect-fresh-quota, no foreground engine, and no request to a running one. Plain `quota`
+          // (or a timer running it) owns refreshing.
+          const latest = yield* fromPromise(() => readLatestProviderQuotas(runtime.paths.databasePath)).pipe(
+            // Never collected means nothing stored yet, exactly as --history reads it, not a failure.
+            Effect.catchIf(isStoreMissing, () => Effect.succeed([] as ProviderStatus[])),
+          );
+          yield* writeQuota(command.json, latest);
+          return { kind: 'stored', outputCount: latest.length } as const;
         }
         const execution = yield* executeEngine(runtime, { command: 'collect-fresh-quota' });
         const quotaSourceIds = [...providerUsageSourceIds];
@@ -310,7 +351,7 @@ export const app = Effect.gen(function* () {
           );
         }
         const latest = yield* fromPromise(() => readLatestProviderQuotas(runtime.paths.databasePath));
-        yield* Console.log(renderQuota(latest));
+        yield* writeQuota(command.json, latest);
         return { kind: 'refresh', latest, sources } as const;
       }),
     );
@@ -551,6 +592,13 @@ const writeStderr = (text: string): Effect.Effect<void> =>
   Effect.async<void>((resume) => {
     process.stderr.write(text, () => resume(Effect.void));
   });
+
+/**
+ * The JSON feed drains through stdout like report's structured formats and is stamped with the time
+ * of this read; the terminal view keeps its established Console.log output.
+ */
+const writeQuota = (json: boolean, latest: readonly ProviderStatus[]): Effect.Effect<void> =>
+  json ? writeStdout(`${renderQuotaJson(quotaStatusDataset(latest, new Date()))}\n`) : Console.log(renderQuota(latest));
 
 const writeWarningsStderr = (warnings: UsageReportWarning[] | undefined): Effect.Effect<void> => {
   const output = renderWarnings(warnings);

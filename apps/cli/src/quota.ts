@@ -3,10 +3,55 @@ import {
   type ProviderQuotaHistoryPoint,
   segmentProviderQuotaHistoryPoints,
 } from '@ai-usage/report-core/provider-quota';
-import type { ProviderLimitWindow, ProviderStatus } from '@ai-usage/report-core/provider-status';
+import {
+  createProviderStatusDataset,
+  LIVE_PROVIDER_STATUS_MAX_AGE_MS,
+  type ProviderLimitWindow,
+  type ProviderStatus,
+  type ProviderStatusDataset,
+  type ProviderStatusState,
+} from '@ai-usage/report-core/provider-status';
 import type { QuotaHistoryRange } from './cli';
 import { clr } from './render/colors';
 import { fmtDate, pad, trunc } from './render/format';
+
+const FEED_AGED_SOURCES: ReadonlySet<ProviderStatus['source']> = new Set(['live-api', 'local-history']);
+const FEED_TERMINAL_STATES: ReadonlySet<ProviderStatusState> = new Set([
+  'auth-required',
+  'error',
+  'stale',
+  'unsupported',
+]);
+
+/**
+ * Freshness for the quota feed, deliberately stricter than report-core's `providerStatusWithFreshness`.
+ * The report ages only `live-api` readings, because a session-log reading is history it presents as
+ * such. The feed answers "is this current?" for a status bar, so a reading recovered from Codex session
+ * logs after the live source failed ages on the same budget; otherwise a days-old reading reads `ok`
+ * forever. Other sources and the states that already explain themselves (`error`, `auth-required`,
+ * `stale`, `unsupported`) pass through unchanged, so aging never overwrites a reason with `stale`.
+ */
+export const providerStatusWithFeedFreshness = (provider: ProviderStatus, now: Date): ProviderStatus => {
+  if (!FEED_AGED_SOURCES.has(provider.source) || FEED_TERMINAL_STATES.has(provider.state)) {
+    return provider;
+  }
+  const ageMs = now.getTime() - Date.parse(provider.generatedAt);
+  return Number.isFinite(ageMs) && ageMs > LIVE_PROVIDER_STATUS_MAX_AGE_MS ? { ...provider, state: 'stale' } : provider;
+};
+
+/**
+ * The machine-readable quota feed: the newest observation per provider, in stored order, as a
+ * versioned provider-status dataset stamped with the time of this read. Freshness is judged here
+ * against `now`, so a consumer reads `state: 'stale'` instead of re-deriving age from its own clock.
+ */
+export const quotaStatusDataset = (providers: readonly ProviderStatus[], now: Date): ProviderStatusDataset =>
+  createProviderStatusDataset(
+    providers.map((provider) => providerStatusWithFeedFreshness(provider, now)),
+    now,
+  );
+
+/** Plain JSON on purpose: the feed is parsed by other programs, so colour never reaches it. */
+export const renderQuotaJson = (dataset: ProviderStatusDataset): string => JSON.stringify(dataset, null, 2);
 
 export const renderQuota = (providers: readonly ProviderStatus[]): string => {
   if (providers.length === 0) {

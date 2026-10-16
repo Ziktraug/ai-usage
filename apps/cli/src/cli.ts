@@ -70,10 +70,19 @@ const DEFAULT_QUOTA_HISTORY_RANGE: QuotaHistoryRange = '7d';
 const isQuotaHistoryRange = (value: string): value is QuotaHistoryRange =>
   (QUOTA_HISTORY_RANGES as readonly string[]).includes(value);
 
+export interface QuotaArgs {
+  color: boolean | null;
+  history: QuotaHistoryRange | null;
+  /** Emit the versioned provider-status dataset instead of the terminal view. */
+  json: boolean;
+  /** Read the newest stored observation per provider without issuing collect-fresh-quota. */
+  stored: boolean;
+}
+
 export type CliCommand =
   | { _tag: 'Analyses'; args: AnalysesCommand }
   | { _tag: 'Help' }
-  | { _tag: 'Quota'; color: boolean | null; history: QuotaHistoryRange | null }
+  | ({ _tag: 'Quota' } & QuotaArgs)
   | { _tag: 'Report'; args: Args }
   | { _tag: 'Snapshot'; args: SnapshotArgs }
   | { _tag: 'Merge'; args: MergeArgs }
@@ -143,7 +152,7 @@ const parseHarness = (value: string): Effect.Effect<HarnessKey, CliArgumentError
 
 export const helpText =
   `ai-usage — per-session token usage across ${harnessLabelList}\n\n` +
-  'Usage: bun ai-usage.ts [report] [options]   |   bun ai-usage.ts quota [--history [24h|7d|30d]]\n\n' +
+  'Usage: bun ai-usage.ts [report] [options]   |   bun ai-usage.ts quota [--stored] [--json]\n\n' +
   'Subcommands:\n' +
   '  report (default)       per-session table + data analysis\n' +
   '  snapshot               write a portable usage snapshot\n' +
@@ -171,8 +180,12 @@ export const helpText =
   '  --payload-json         full report payload JSON for compatible consumers\n' +
   '\nQuota:\n' +
   '  quota                  refresh, then show the newest observation per provider\n' +
+  '  quota --stored         show the newest stored observation per provider; starts no engine\n' +
+  '  quota --json           print the newest observation per provider as a versioned JSON feed\n' +
+  '                         (schemaVersion 1, stale state applied); combine with --stored\n' +
   '  quota --history [range]\n' +
   '                         trend from stored observations only (24h|7d|30d, default 7d)\n' +
+  '                         (cannot be combined with --stored or --json)\n' +
   '\nSnapshot:\n' +
   '  snapshot --out <file>  export local usage rows with machine provenance\n' +
   '\nMerge:\n' +
@@ -252,12 +265,12 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
     return args;
   });
 
-const parseQuotaArgs = (
-  argv: string[],
-): Effect.Effect<{ color: boolean | null; history: QuotaHistoryRange | null }, CliArgumentError> =>
+const parseQuotaArgs = (argv: string[]): Effect.Effect<QuotaArgs, CliArgumentError> =>
   Effect.gen(function* () {
     let color: boolean | null = null;
     let history: QuotaHistoryRange | null = null;
+    let json = false;
+    let stored = false;
     const rest = [...argv];
     while (rest.length) {
       const arg = rest.shift()!;
@@ -265,6 +278,10 @@ const parseQuotaArgs = (
         color = false;
       } else if (arg === '--color') {
         color = true;
+      } else if (arg === '--json') {
+        json = true;
+      } else if (arg === '--stored') {
+        stored = true;
       } else if (arg === '--history') {
         // The range is optional: a bare --history means the default window, and anything starting
         // with "-" is the next flag rather than a range, so `--history --color` still parses.
@@ -286,7 +303,18 @@ const parseQuotaArgs = (
         return yield* Effect.fail(cliArgumentError(`Unknown option for quota: ${arg}`));
       }
     }
-    return { color, history };
+    // --history is a trend rather than the newest-observation feed, and it is already a stored-only read.
+    if (history !== null && json) {
+      return yield* Effect.fail(
+        cliArgumentError('quota --history cannot be combined with --json; the JSON feed is quota [--stored] --json'),
+      );
+    }
+    if (history !== null && stored) {
+      return yield* Effect.fail(
+        cliArgumentError('quota --history cannot be combined with --stored; --history already reads stored data only'),
+      );
+    }
+    return { color, history, json, stored };
   });
 
 const parseSnapshotArgs = (argv: string[]): Effect.Effect<SnapshotArgs, CliArgumentError> =>

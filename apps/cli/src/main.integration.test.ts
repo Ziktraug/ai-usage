@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { WideEventSnapshot } from '@ai-usage/effect-runtime';
+import { isProviderStatusDataset, type ProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import { parseUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { createUsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import { loadUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
@@ -588,5 +589,266 @@ test('quota --history reads stored observations without invoking provider collec
       outcome: 'success',
     });
     expect(events.some((event) => event.resource?.surface === 'engine')).toBe(false);
+  });
+});
+
+/** Parses the whole of stdout as one feed: any extra line or ANSI escape makes JSON.parse throw. */
+const parseQuotaFeed = (stdout: string): ProviderStatusDataset => {
+  const feed: unknown = JSON.parse(stdout);
+  if (!isProviderStatusDataset(feed)) {
+    throw new Error(`stdout is not a provider-status dataset: ${stdout}`);
+  }
+  return feed;
+};
+
+test('quota --stored --json reads an empty sandbox as an empty feed without starting an engine', async () => {
+  // No codex stub on PATH on purpose: a stored read must never reach a provider or an engine.
+  await withCliSandbox(async ({ root, runCli }) => {
+    const databasePath = path.join(root, 'store', 'usage.sqlite');
+    const logDirectory = path.join(root, 'logs');
+
+    const result = await runCli(['quota', '--stored', '--json']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout.endsWith('}\n')).toBe(true);
+    const feed = parseQuotaFeed(result.stdout);
+    expect(feed.schemaVersion).toBe(1);
+    expect(feed.providers).toEqual([]);
+    expect(Math.abs(Date.parse(feed.generatedAt) - Date.now())).toBeLessThan(60_000);
+    await expect(Bun.file(databasePath).exists()).resolves.toBe(false);
+    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
+    await expect(Bun.file(path.join(root, 'state', 'rendezvous.json')).exists()).resolves.toBe(false);
+    const events = await readWideEvents(logDirectory);
+    expect(events.some((event) => event.resource?.surface === 'engine')).toBe(false);
+    expect(events.filter((event) => event.resource?.surface === 'cli')).toEqual([
+      expect.objectContaining({
+        annotations: { domainOutcome: 'empty', outputCount: 0, quotaRead: 'stored' },
+        boundary: 'cli.quota',
+        outcome: 'success',
+      }),
+    ]);
+
+    const human = await runCli(['quota', '--stored']);
+
+    expect(human).toMatchObject({
+      exitCode: 0,
+      stderr: '',
+      stdout: 'No stored provider usage-limit observation is available.\n',
+    });
+    await expect(Bun.file(databasePath).exists()).resolves.toBe(false);
+  });
+});
+
+test('quota --json refreshes into the feed and quota --stored reads it back without collecting', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const binaryDirectory = path.join(root, 'bin');
+    const databasePath = path.join(root, 'store', 'usage.sqlite');
+    const markerPath = path.join(root, 'codex-invoked');
+    const sessionDirectory = path.join(root, 'profile', '.codex', 'sessions', '2026', '07', '15');
+    await mkdir(binaryDirectory, { recursive: true });
+    await mkdir(sessionDirectory, { recursive: true });
+    const fakeCodexPath = path.join(binaryDirectory, 'codex');
+    await writeFile(fakeCodexPath, `#!/bin/sh\ntouch "${markerPath}"\nexit 1\n`);
+    await chmod(fakeCodexPath, 0o700);
+    const observedAt = new Date(Date.now() - 60_000);
+    await writeFile(
+      path.join(sessionDirectory, 'rollout.jsonl'),
+      `${JSON.stringify({
+        timestamp: observedAt.toISOString(),
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          rate_limits: {
+            primary: {
+              resets_at: new Date(observedAt.getTime() + 5 * 60 * 60 * 1000).toISOString(),
+              used_percent: 20,
+              window_minutes: 300,
+            },
+          },
+        },
+      })}\n`,
+    );
+    const env = { PATH: `${binaryDirectory}:${process.env.PATH ?? ''}` };
+
+    // The refresh path: collect-fresh-quota through a bounded engine, then the same feed shape. The live
+    // provider fails, so the run is degraded and still exits 0 exactly as the human path does.
+    const refreshed = await runCli(['quota', '--json'], { env });
+
+    expect(refreshed.exitCode).toBe(0);
+    expect(refreshed.stderr).toBe('');
+    const refreshedFeed = parseQuotaFeed(refreshed.stdout);
+    expect(refreshedFeed.providers).toEqual([
+      expect.objectContaining({
+        key: 'codex',
+        label: 'Codex',
+        windows: [expect.objectContaining({ usedPercent: 20 })],
+      }),
+    ]);
+    expect(await Bun.file(markerPath).exists()).toBe(true);
+    await rm(markerPath);
+    const before = await stat(databasePath);
+
+    const storedLogDirectory = path.join(root, 'stored-logs');
+    const stored = await runCli(['quota', '--stored', '--json'], {
+      env: { ...env, AI_USAGE_LOG_DIR: storedLogDirectory },
+    });
+
+    expect(stored.exitCode).toBe(0);
+    expect(stored.stderr).toBe('');
+    expect(parseQuotaFeed(stored.stdout).providers).toEqual(refreshedFeed.providers);
+    const storedEvents = await readWideEvents(storedLogDirectory);
+    expect(storedEvents.some((event) => event.resource?.surface === 'engine')).toBe(false);
+    expect(storedEvents).toEqual([
+      expect.objectContaining({
+        annotations: { domainOutcome: 'success', outputCount: 1, quotaRead: 'stored' },
+        boundary: 'cli.quota',
+        outcome: 'success',
+      }),
+    ]);
+
+    const human = await runCli(['quota', '--stored', '--no-color'], { env });
+
+    expect(human.exitCode).toBe(0);
+    expect(human.stderr).toBe('');
+    expect(human.stdout).toContain('═══ Codex subscription quota ═══');
+    expect(human.stdout).toContain('20%');
+    // Neither stored read polled the provider, started an engine, or wrote the store.
+    expect(await Bun.file(markerPath).exists()).toBe(false);
+    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
+    await expect(Bun.file(path.join(root, 'state', 'rendezvous.json')).exists()).resolves.toBe(false);
+    const after = await stat(databasePath);
+    expect({ mtimeMs: after.mtimeMs, size: after.size }).toEqual({ mtimeMs: before.mtimeMs, size: before.size });
+  });
+});
+
+test('quota --json keeps the human failure contract when every provider source is paused', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const configDirectory = path.join(root, 'profile', '.config', 'ai-usage');
+    await mkdir(configDirectory, { mode: 0o700, recursive: true });
+    await writeFile(
+      path.join(configDirectory, 'config.json'),
+      JSON.stringify({
+        sourcePolicies: {
+          'claude.usage-limits': { enabled: false },
+          'codex.usage-limits': { enabled: false },
+        },
+      }),
+    );
+
+    const result = await runCli(['quota', '--json']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Provider usage-limit collection is paused');
+  });
+});
+
+const MINUTE_MS = 60_000;
+
+/** Writes identical Codex rate-limit readings at each time; the store merges them into one row. */
+const writeIdenticalCodexReadings = async (root: string, observedAt: readonly Date[]): Promise<void> => {
+  const sessionDirectory = path.join(root, 'profile', '.codex', 'sessions', '2026', '07', '15');
+  await mkdir(sessionDirectory, { recursive: true });
+  const resetsAt = new Date(Date.now() + 3 * 60 * MINUTE_MS).toISOString();
+  const lines = observedAt.map((at) =>
+    JSON.stringify({
+      timestamp: at.toISOString(),
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        rate_limits: { primary: { resets_at: resetsAt, used_percent: 20, window_minutes: 300 } },
+      },
+    }),
+  );
+  await writeFile(path.join(sessionDirectory, 'rollout.jsonl'), `${lines.join('\n')}\n`);
+};
+
+const failingCodexPath = async (root: string): Promise<Record<string, string>> => {
+  const binaryDirectory = path.join(root, 'bin');
+  await mkdir(binaryDirectory, { recursive: true });
+  await writeFile(path.join(binaryDirectory, 'codex'), '#!/bin/sh\nexit 1\n');
+  await chmod(path.join(binaryDirectory, 'codex'), 0o700);
+  return { PATH: `${binaryDirectory}:${process.env.PATH ?? ''}` };
+};
+
+test('quota --json dates a merged reading by its newest confirmation, so a steady reading stays fresh', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const env = await failingCodexPath(root);
+    const now = Date.now();
+    // First seen 20 minutes ago, confirmed unchanged 2 minutes ago: one stored row, still current.
+    const lastConfirmedAt = new Date(now - 2 * MINUTE_MS);
+    await writeIdenticalCodexReadings(root, [new Date(now - 20 * MINUTE_MS), lastConfirmedAt]);
+
+    const refreshed = await runCli(['quota', '--json'], { env });
+    const stored = await runCli(['quota', '--stored', '--json'], { env });
+
+    expect(refreshed.exitCode).toBe(0);
+    const expected = [
+      expect.objectContaining({
+        generatedAt: lastConfirmedAt.toISOString(),
+        key: 'codex',
+        source: 'local-history',
+        state: 'ok',
+      }),
+    ];
+    expect(parseQuotaFeed(refreshed.stdout).providers).toEqual(expected);
+    expect(stored.exitCode).toBe(0);
+    expect(parseQuotaFeed(stored.stdout).providers).toEqual(expected);
+  });
+});
+
+test('quota --stored --json reports a session-log reading as stale once its newest confirmation is old', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const env = await failingCodexPath(root);
+    const now = Date.now();
+    const lastConfirmedAt = new Date(now - 25 * MINUTE_MS);
+    await writeIdenticalCodexReadings(root, [new Date(now - 40 * MINUTE_MS), lastConfirmedAt]);
+    expect((await runCli(['quota', '--no-color'], { env })).exitCode).toBe(0);
+
+    const stored = await runCli(['quota', '--stored', '--json'], { env });
+
+    expect(stored.exitCode).toBe(0);
+    expect(parseQuotaFeed(stored.stdout).providers).toEqual([
+      expect.objectContaining({
+        generatedAt: lastConfirmedAt.toISOString(),
+        source: 'local-history',
+        state: 'stale',
+      }),
+    ]);
+  });
+});
+
+test('quota --stored fails visibly on a store that exists but cannot be read', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const databasePath = path.join(root, 'store', 'usage.sqlite');
+    const logDirectory = path.join(root, 'logs');
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const corrupt = 'not a usage store\n';
+    await writeFile(databasePath, corrupt);
+
+    const json = await runCli(['quota', '--stored', '--json']);
+    const human = await runCli(['quota', '--stored']);
+
+    for (const result of [json, human]) {
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toStartWith('Error: ');
+      expect(result.stderr).toContain(databasePath);
+    }
+    expect(await readFile(databasePath, 'utf8')).toBe(corrupt);
+    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
+    await expect(Bun.file(path.join(root, 'state', 'rendezvous.json')).exists()).resolves.toBe(false);
+    const events = await readWideEvents(logDirectory);
+    expect(events.some((event) => event.resource?.surface === 'engine')).toBe(false);
+    const cliEvents = events.filter((event) => event.resource?.surface === 'cli');
+    expect(cliEvents).toHaveLength(2);
+    for (const event of cliEvents) {
+      expect(event).toMatchObject({
+        annotations: { failureKind: 'quota-command-failed', quotaRead: 'stored' },
+        boundary: 'cli.quota',
+        outcome: 'failure',
+      });
+    }
   });
 });

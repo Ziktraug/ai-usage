@@ -1,12 +1,21 @@
 import { expect, test } from 'bun:test';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
-import type { ProviderQuotaHistoryPoint } from '@ai-usage/report-core/provider-quota';
+import {
+  type ProviderQuotaHistoryPoint,
+  projectLatestProviderQuotaObservation,
+} from '@ai-usage/report-core/provider-quota';
 import { createUsageReportPayload, prepareUsageReport, serializeUsageRow } from '@ai-usage/report-core/report-data';
 import type { SourcedRow } from '@ai-usage/report-core/types';
+import { type StoredProviderQuotaObservation, UsageStoreError } from '@ai-usage/usage-store/reader';
 import type { Args } from './cli';
+import { quotaStatusDataset } from './quota';
 import {
   createServedUsageReport,
   createServedUsageSnapshot,
+  readLatestProviderQuotas,
   reportSourceIdsFor,
   withoutPreRangePoints,
 } from './usage-read-model';
@@ -225,4 +234,87 @@ test('drops a series whose only observation predates the requested range', () =>
   const anchorOnly = historyPoint({ firstObservedAt: '2026-06-01T00:00:00.000Z', windowId: 'codex:monthly' });
 
   expect(withoutPreRangePoints([anchorOnly], from)).toEqual([]);
+});
+
+test('reports a missing store to latest-quota callers as a typed store-missing error without creating it', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-cli-latest-quota-'));
+  try {
+    const failure = await readLatestProviderQuotas(path.join(root, 'usage.sqlite')).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(UsageStoreError);
+    expect((failure as UsageStoreError).reason).toBe('store-missing');
+    expect(await readdir(root)).toEqual([]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+const LATEST_QUOTA_NOW = new Date('2026-07-15T12:00:00.000Z');
+
+/**
+ * The store merges identical consecutive readings into one row: firstObservedAt stays put and only
+ * lastObservedAt advances, so a healthy provider refreshed every few minutes keeps an old first time.
+ */
+const storedQuota = (
+  firstObservedAt: string,
+  lastObservedAt: string,
+  confidence: 'authoritative' | 'historical' = 'authoritative',
+): StoredProviderQuotaObservation => ({
+  firstObservedAt,
+  id: 1,
+  lastObservedAt,
+  observation: {
+    accountScope: null,
+    machineId: 'machine-1',
+    machineLabel: 'Laptop',
+    observedAt: firstObservedAt,
+    plan: 'pro',
+    providerGeneratedAt: null,
+    providerKey: 'codex',
+    providerLabel: 'Codex',
+    source: { confidence, key: 'codex-app-server', mode: 'poll' },
+    state: 'ok',
+    windows: [
+      {
+        blocked: false,
+        group: '5h',
+        id: 'primary',
+        label: '5h',
+        limitSeconds: 18_000,
+        remainingPercent: 80,
+        resetsAt: '2026-07-15T15:00:00.000Z',
+        scope: 'global',
+        usedPercent: 20,
+      },
+    ],
+  },
+});
+
+test('keeps a merged reading confirmed recently fresh even though it was first seen long ago', () => {
+  const feed = quotaStatusDataset(
+    [projectLatestProviderQuotaObservation(storedQuota('2026-07-15T11:30:00.000Z', '2026-07-15T11:58:00.000Z'))],
+    LATEST_QUOTA_NOW,
+  );
+
+  expect(feed.providers.map(({ state }) => state)).toEqual(['ok']);
+});
+
+test('marks a merged reading stale when even its most recent confirmation is past the budget', () => {
+  const feed = quotaStatusDataset(
+    [
+      projectLatestProviderQuotaObservation(storedQuota('2026-07-15T11:20:00.000Z', '2026-07-15T11:40:00.000Z')),
+      projectLatestProviderQuotaObservation(
+        storedQuota('2026-07-15T11:20:00.000Z', '2026-07-15T11:40:00.000Z', 'historical'),
+      ),
+    ],
+    LATEST_QUOTA_NOW,
+  );
+
+  expect(feed.providers.map(({ source, state }) => ({ source, state }))).toEqual([
+    { source: 'live-api', state: 'stale' },
+    { source: 'local-history', state: 'stale' },
+  ]);
 });

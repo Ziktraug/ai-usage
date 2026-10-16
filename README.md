@@ -65,6 +65,54 @@ Codex uses the installed `codex app-server`. Claude uses an experimental Agent S
 
 If one refresh fails and a durable observation exists, the command renders the available observations while the `cli.quota` diagnostic boundary is degraded. Without a durable observation, it reports `No stored provider usage-limit observation is available.` A paused source is distinct from provider unavailability; the command fails only when every provider quota source is paused and identifies the source IDs to re-enable.
 
+To show the newest stored observation per provider without refreshing, add `--stored`. It never starts or contacts a usage engine and never polls a provider; a machine that has never collected shows the empty state rather than an error:
+
+```sh
+bun run cli -- quota --stored
+```
+
+Add `--json` to either form to print the same observations as a provider-status dataset on stdout, with nothing else on stdout and diagnostics on stderr:
+
+```sh
+bun run cli -- quota --json            # refresh, then emit
+bun run cli -- quota --stored --json   # emit what is stored
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-12T09:00:00.000Z",
+  "providers": [
+    {
+      "generatedAt": "2026-10-12T08:58:00.000Z",
+      "key": "codex",
+      "label": "Codex",
+      "machineId": "…",
+      "plan": "pro",
+      "source": "live-api",
+      "state": "ok",
+      "windows": [
+        {
+          "blocked": false,
+          "group": "5h",
+          "id": "primary",
+          "label": "5h",
+          "limitSeconds": 18000,
+          "remainingPercent": 80,
+          "resetsAt": "2026-10-12T13:00:00.000Z",
+          "scope": "global",
+          "usedPercent": 20
+        }
+      ]
+    }
+  ]
+}
+```
+
+The shape is `ProviderStatusDataset` from `packages/report-core/src/provider-status.ts`. The top-level `generatedAt` is the time of the read. Each provider's `generatedAt` is the most recent time this reading was observed; identical consecutive readings are merged, so a steady provider keeps advancing it. ai-usage judges freshness before printing, so a consumer never re-derives it: a `live-api` reading, or a `local-history` reading recovered from Codex session logs, whose `generatedAt` is more than 15 minutes old reports `state: "stale"`. Readings already `error`, `auth-required`, `stale` or `unsupported` keep that state. The web report dates readings the same way but never ages session-log readings, so the two can disagree on the state of an old session-log reading. Exit codes match the human view: `quota --json` exits 1 when every provider source is paused and 0 for a degraded refresh. `quota --stored --json` exits 0 with `"providers": []` only when no store exists yet; a store that exists but cannot be read exits 1 with the error on stderr. `--json` and `--stored` cannot be combined with `--history`.
+
+`quota --stored --json` is the supported integration seam for desktop and status-bar consumers: poll it as often as needed, and run `quota --json` (for example from a timer) to refresh. Consumers must check `schemaVersion`; an incompatible change to the dataset increments it. Reading the SQLite store or the engine control plane directly is not supported ([ADR 0045](docs/adr/0045-desktop-quota-feed-through-the-cli.md)).
+
 Normal CLI reports are fresh: they ask the usage engine to collect and publish,
 then read the committed revision. To read the latest compatible stored revision
 without starting an engine, use:
