@@ -4,7 +4,7 @@ import { type HarnessKey, isHarnessKey } from '@ai-usage/report-core/harness-met
 import {
   downsampleProviderQuotaHistoryPoints,
   type ProviderQuotaHistoryPoint,
-  projectProviderQuotaObservation,
+  projectLatestProviderQuotaObservation,
 } from '@ai-usage/report-core/provider-quota';
 import {
   createUsageReportPayload,
@@ -318,7 +318,7 @@ export const readUsageMachine = async (dbPath: string): Promise<UsageMachine> =>
  */
 export const readLatestProviderQuotas = async (dbPath: string) => {
   const latest = await Effect.runPromise(queryLatestLocalProviderQuotaObservations({ dbPath }));
-  return latest.observations.map(({ observation }) => projectProviderQuotaObservation(observation));
+  return latest.observations.map(projectLatestProviderQuotaObservation);
 };
 
 /** The web history read bounds itself by observation count rather than by point count; match it. */

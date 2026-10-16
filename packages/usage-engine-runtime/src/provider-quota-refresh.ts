@@ -1,6 +1,7 @@
 import { type BoundaryOutcome, withMeasuredIfAvailable } from '@ai-usage/effect-runtime';
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
-import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { projectLatestProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type {
   ImportProviderQuotaBatchInput,
@@ -55,7 +56,7 @@ export const CLAUDE_QUOTA_SOURCE_IDENTITY: ProviderQuotaSourceIdentity = {
 
 export interface ProviderQuotaRefreshResult {
   backfill: 'advanced' | 'complete' | 'failed' | 'skipped';
-  latest: ReturnType<typeof projectProviderQuotaObservation>[];
+  latest: ProviderStatus[];
   live: 'refreshed' | 'skipped' | 'unsupported' | 'auth-required' | 'failed';
   warnings: string[];
 }
@@ -276,7 +277,7 @@ const runRefresh = <PersistenceError, SourceError>(
     });
     return {
       backfill,
-      latest: latest.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+      latest: latest.observations.map(projectLatestProviderQuotaObservation),
       live,
       warnings,
     };

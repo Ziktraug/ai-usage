@@ -39,6 +39,7 @@ import {
   type PreviewPeerMergeBundleResult,
   previewPeerMergeBundle,
   queryEnrichableUsageRows,
+  queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
@@ -2509,5 +2510,69 @@ describe('provider quota storage', () => {
     expect(queried.observations[0]?.lastObservedAt).toBe('2026-07-15T10:05:00.000Z');
     expect(queried.observations[1]?.firstObservedAt).toBe('2026-07-15T10:31:00.000Z');
     expect(checkpoint?.cursor).toEqual({ offset: 42 });
+  });
+
+  const importQuotaReading = (dbPath: string, observedAt: string, sourceEventKey: string) =>
+    Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [{ observation: quotaObservation(observedAt), sourceEventKey }],
+      }),
+    );
+
+  const storedQuotaReadings = async (dbPath: string) => {
+    const range = await Effect.runPromise(
+      queryProviderQuotaObservations({
+        dbPath,
+        from: '2026-07-15T11:00:00.000Z',
+        machineId: machineA.id,
+        providerKey: 'codex',
+        to: '2026-07-15T13:00:00.000Z',
+      }),
+    );
+    const latest = await Effect.runPromise(
+      queryLatestProviderQuotaObservations({ dbPath, machineId: machineA.id, providerKey: 'codex' }),
+    );
+    return { latest: latest.observations, range: range.observations };
+  };
+
+  test('a late-arriving confirmation never moves the last observation backwards', async () => {
+    const dbPath = usageStorePath(mkdtempSync(path.join(tmpdir(), 'ai-usage-store-quota-late-')));
+
+    await importQuotaReading(dbPath, '2026-07-15T12:00:00.000Z', 'rollout-a:1');
+    await importQuotaReading(dbPath, '2026-07-15T12:03:00.000Z', 'rollout-a:2');
+    const late = await importQuotaReading(dbPath, '2026-07-15T12:02:00.000Z', 'rollout-b:1');
+    const { latest, range } = await storedQuotaReadings(dbPath);
+
+    expect(late).toMatchObject({ coalesced: 1, inserted: 0, unchanged: 0 });
+    expect(range).toHaveLength(1);
+    expect(range[0]).toMatchObject({
+      firstObservedAt: '2026-07-15T12:00:00.000Z',
+      lastObservedAt: '2026-07-15T12:03:00.000Z',
+    });
+    expect(latest.map(({ lastObservedAt }) => lastObservedAt)).toEqual(['2026-07-15T12:03:00.000Z']);
+    // The late reading's event is still recorded, so replaying it is a no-op rather than a re-coalesce.
+    expect(await importQuotaReading(dbPath, '2026-07-15T12:02:00.000Z', 'rollout-b:1')).toMatchObject({
+      coalesced: 0,
+      inserted: 0,
+      unchanged: 1,
+    });
+  });
+
+  test('two sessions logging one reading out of order keep the later observation', async () => {
+    const dbPath = usageStorePath(mkdtempSync(path.join(tmpdir(), 'ai-usage-store-quota-sessions-')));
+
+    // Rollout files arrive in path order: session A (12:03) is imported before session B (12:02).
+    await importQuotaReading(dbPath, '2026-07-15T12:03:00.000Z', 'session-a:1');
+    const earlier = await importQuotaReading(dbPath, '2026-07-15T12:02:00.000Z', 'session-b:1');
+    const { latest, range } = await storedQuotaReadings(dbPath);
+
+    expect(earlier).toMatchObject({ coalesced: 1, inserted: 0, unchanged: 0 });
+    expect(range).toHaveLength(1);
+    expect(range[0]?.lastObservedAt).toBe('2026-07-15T12:03:00.000Z');
+    expect(latest.map(({ firstObservedAt, lastObservedAt }) => ({ firstObservedAt, lastObservedAt }))).toEqual([
+      { firstObservedAt: '2026-07-15T12:03:00.000Z', lastObservedAt: '2026-07-15T12:03:00.000Z' },
+    ]);
   });
 });

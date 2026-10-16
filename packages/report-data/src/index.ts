@@ -7,7 +7,7 @@ import {
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import type { AiUsageConfig, ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
-import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { projectLatestProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import type {
   ReportOptions,
@@ -297,7 +297,7 @@ const readStoredDatasets = (input: {
     const storedQuotaDataset = storedQuota?.observations.length
       ? {
           providerStatus: createProviderStatusDataset(
-            storedQuota.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+            storedQuota.observations.map(projectLatestProviderQuotaObservation),
           ),
         }
       : undefined;

@@ -1,6 +1,6 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
-import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { projectLatestProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { createProviderStatusDataset, type ProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import {
@@ -193,7 +193,7 @@ export const createSqliteUsageReadModel = (options: SqliteUsageReadModelOptions)
       callOptions,
     );
     return createProviderStatusDataset(
-      result.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+      result.observations.map(projectLatestProviderQuotaObservation),
       options.now === undefined ? undefined : new Date(options.now()),
     );
   },

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { CursorCommitAttributionRow, NormalizedDatasetItem } from '@ai-usage/report-core/datasets';
 import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
@@ -13,6 +14,7 @@ import {
   importLocalRows,
   importNormalizedDatasetItems,
   importPeerMergeBundle,
+  importProviderQuotaBatch,
   initializeUsageStore,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
@@ -77,6 +79,35 @@ const makeSourcedRow = (input: {
     sourcePath: input.sourcePath,
     sourceSessionId: input.sessionId,
   },
+});
+
+const QUOTA_FIRST_SIGHTING = '2026-07-30T08:00:00.000Z';
+const QUOTA_CONFIRMATION = '2026-07-30T08:20:00.000Z';
+
+const liveQuotaReading = (observedAt: string): ProviderQuotaObservation => ({
+  accountScope: null,
+  machineId: testMachine.id,
+  machineLabel: testMachine.label,
+  observedAt,
+  plan: 'plus',
+  providerGeneratedAt: null,
+  providerKey: 'codex',
+  providerLabel: 'Codex',
+  source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
+  state: 'ok',
+  windows: [
+    {
+      blocked: false,
+      group: '5h',
+      id: 'codex:primary',
+      label: '5h',
+      limitSeconds: 18_000,
+      remainingPercent: 75,
+      resetsAt: '2026-07-30T12:00:00.000Z',
+      scope: 'provider',
+      usedPercent: 25,
+    },
+  ],
 });
 
 describe('stored reporting', () => {
@@ -227,6 +258,45 @@ describe('stored reporting', () => {
       });
       expect(payload.datasets?.cursorCommitAttribution).toEqual([row]);
       expect(payload.warnings ?? []).toHaveLength(0);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('dates a coalesced live quota reading in the published overview by its latest confirmation', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'reporting-provider-quota-confirmation-'));
+    try {
+      const dbPath = usageStorePath(root);
+      await Effect.runPromise(importLocalRows({ dbPath, machine: testMachine, rows: [] }));
+      const imports = await Effect.runPromise(
+        Effect.forEach([QUOTA_FIRST_SIGHTING, QUOTA_CONFIRMATION], (observedAt, index) =>
+          importProviderQuotaBatch({
+            checkpointUpdates: [],
+            dbPath,
+            items: [{ observation: liveQuotaReading(observedAt), sourceEventKey: `live-${index}` }],
+          }),
+        ),
+      );
+      // The confirmation must merge into the first sighting's row, or there is nothing to date by it.
+      expect(imports).toMatchObject([{ inserted: 1 }, { coalesced: 1, inserted: 0 }]);
+
+      const capture = await Effect.runPromise(
+        createStoredReportCapture({
+          config: {},
+          dbPath,
+          generatedAt: new Date('2026-07-30T08:22:00.000Z'),
+          harness: null,
+          includeCursor: true,
+          includeFacets: true,
+          machine: testMachine,
+          options: defaultOptions,
+        }),
+      );
+      const publication = toStoredReportPublicationCapture(capture, 'c'.repeat(64));
+
+      const expected = [{ generatedAt: QUOTA_CONFIRMATION, key: 'codex', source: 'live-api', state: 'ok' }];
+      expect(capture.payload.datasets?.providerStatus?.providers).toMatchObject(expected);
+      expect(publication.support.datasets?.providerStatus?.providers).toMatchObject(expected);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

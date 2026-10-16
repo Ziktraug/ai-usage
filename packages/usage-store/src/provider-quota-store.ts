@@ -334,10 +334,13 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
                 ? Date.parse(observation.observedAt) - Date.parse(latest.first_observed_at)
                 : Number.POSITIVE_INFINITY;
               if (latest?.content_hash === contentHash && elapsedSinceFirst < 30 * 60 * 1000) {
-                db.query('UPDATE provider_quota_observations SET last_observed_at = ? WHERE id = ?').run(
-                  observation.observedAt,
-                  latest.id,
-                );
+                // Only advance: rollout files are imported in path order, not time order.
+                if (Date.parse(observation.observedAt) > Date.parse(latest.last_observed_at)) {
+                  db.query('UPDATE provider_quota_observations SET last_observed_at = ? WHERE id = ?').run(
+                    observation.observedAt,
+                    latest.id,
+                  );
+                }
                 insertQuotaSourceEvent(db, observation, item.sourceEventKey, latest.id);
                 result.coalesced++;
                 continue;

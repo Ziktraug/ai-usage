@@ -4,16 +4,20 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { FIXTURE_SKILL_NAMES, FIXTURE_SKILL_ROOT } from '@ai-usage/local-machine/testing/harness-home';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
+import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS } from '@ai-usage/report-core/skill-observation-evidence';
 import {
   importLocalRows,
+  importProviderQuotaBatch,
   importSkillObservations,
   publishServedReportRevision,
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
+import { buildProviderQuotaRail } from '../lib/features/shell/provider-quota-rail';
+import { buildProviderStatusViews } from '../provider-status-model';
 import { joinSkillObservations } from './skill-observation-join';
 import { createLiveUsageReadModel, createSqliteUsageReadModel } from './usage-read-model.server';
 
@@ -445,5 +449,89 @@ describe('SQLite usage read model', () => {
       name: 'AbortError',
     });
     await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+  });
+});
+
+const QUOTA_FIRST_SIGHTING = '2026-07-30T08:00:00.000Z';
+const QUOTA_CONFIRMATION = '2026-07-30T08:20:00.000Z';
+const QUOTA_READ_AT = Date.parse('2026-07-30T08:22:00.000Z');
+
+const liveQuotaReading = (observedAt: string): ProviderQuotaObservation => ({
+  accountScope: null,
+  machineId: 'machine-a',
+  machineLabel: 'Machine A',
+  observedAt,
+  plan: 'plus',
+  providerGeneratedAt: null,
+  providerKey: 'codex',
+  providerLabel: 'Codex',
+  source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
+  state: 'ok',
+  windows: [
+    {
+      blocked: false,
+      group: '5h',
+      id: 'codex:primary',
+      label: '5h',
+      limitSeconds: 18_000,
+      remainingPercent: 75,
+      resetsAt: '2026-07-30T12:00:00.000Z',
+      scope: 'provider',
+      usedPercent: 25,
+    },
+  ],
+});
+
+const storeWithLiveQuotaReadings = async (observedAts: readonly string[]): Promise<string> => {
+  const root = await mkdtemp(path.join(tmpdir(), 'web-provider-quota-freshness-'));
+  roots.push(root);
+  const dbPath = path.join(root, 'usage.sqlite');
+  for (const [index, observedAt] of observedAts.entries()) {
+    await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [{ observation: liveQuotaReading(observedAt), sourceEventKey: `live-${index}` }],
+      }),
+    );
+  }
+  return dbPath;
+};
+
+/**
+ * `readLatestProviderQuota` backs only the server-rendered rail. The published overview
+ * (`createStoredReportCapture`) and the hydrated live rail (`queryProviderQuotaHistory`) read through
+ * other paths, covered in packages/report-data by `reporting.test.ts` and `provider-quota-history.test.ts`.
+ */
+const readServerRailQuotaAt = async (dbPath: string, now: number) => {
+  const dataset = await createSqliteUsageReadModel({ dbPath, now: () => now }).readLatestProviderQuota();
+  const rail = buildProviderQuotaRail(dataset, new Date(now)).find((entry) => entry.key === 'codex');
+  const statusViews = buildProviderStatusViews(
+    { datasets: { providerStatus: dataset }, generatedAt: dataset.generatedAt },
+    [],
+    new Date(now),
+  );
+  return { provider: dataset.providers[0], rail, statusViews };
+};
+
+describe('SQLite usage read model latest provider quota for the server-rendered rail', () => {
+  test('dates an unchanged live reading by its latest confirmation, not its first sighting', async () => {
+    const dbPath = await storeWithLiveQuotaReadings([QUOTA_FIRST_SIGHTING, QUOTA_CONFIRMATION]);
+
+    const { provider, rail, statusViews } = await readServerRailQuotaAt(dbPath, QUOTA_READ_AT);
+
+    expect(provider).toMatchObject({ generatedAt: QUOTA_CONFIRMATION, source: 'live-api', state: 'ok' });
+    expect(rail).toMatchObject({ ageMs: 2 * 60 * 1000, measured: true, stale: false });
+    expect(statusViews.map((view) => view.provider.state)).toEqual(['ok']);
+  });
+
+  test('still marks a live reading seen only once as stale past the freshness budget', async () => {
+    const dbPath = await storeWithLiveQuotaReadings([QUOTA_FIRST_SIGHTING]);
+
+    const { provider, rail, statusViews } = await readServerRailQuotaAt(dbPath, QUOTA_READ_AT);
+
+    expect(provider).toMatchObject({ generatedAt: QUOTA_FIRST_SIGHTING, source: 'live-api', state: 'ok' });
+    expect(rail).toMatchObject({ ageMs: 22 * 60 * 1000, measured: true, stale: true });
+    expect(statusViews.map((view) => view.provider.state)).toEqual(['stale']);
   });
 });

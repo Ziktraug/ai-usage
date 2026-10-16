@@ -5,7 +5,7 @@ import {
   type ProviderQuotaHistoryRequest,
   type ProviderQuotaHistoryResult,
   parseProviderQuotaHistoryRequest,
-  projectProviderQuotaObservation,
+  projectLatestProviderQuotaObservation,
 } from '@ai-usage/report-core/provider-quota';
 import {
   queryLatestProviderQuotaObservations,
@@ -108,7 +108,7 @@ export const queryProviderQuotaHistory = (
     return {
       coverage: coverageForPoints(points),
       generatedAt: (input.now?.() ?? new Date()).toISOString(),
-      latest: latest.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+      latest: latest.observations.map(projectLatestProviderQuotaObservation),
       points: reduced.points,
       skipped: stored.skipped + latest.skipped,
       truncated: stored.truncated || reduced.truncated,

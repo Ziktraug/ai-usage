@@ -6,6 +6,7 @@ import {
   parseProviderQuotaHistoryRequest,
   parseProviderQuotaHistoryResult,
   parseProviderQuotaObservation,
+  projectLatestProviderQuotaObservation,
   providerQuotaObservationFingerprintInput,
   segmentProviderQuotaHistoryPoints,
 } from './provider-quota';
@@ -148,6 +149,42 @@ test('strictly parses observations and history request bounds', () => {
       to: '2026-07-15T10:00:00.000Z',
     }),
   ).toThrow();
+});
+
+describe('projectLatestProviderQuotaObservation', () => {
+  const firstSighting = observation('2026-07-15T10:00:00.000Z');
+
+  test('dates a merged reading by its most recent confirmation', () => {
+    const projected = projectLatestProviderQuotaObservation({
+      lastObservedAt: '2026-07-15T10:20:00.000Z',
+      observation: firstSighting,
+    });
+    const unconfirmed = projectLatestProviderQuotaObservation({
+      lastObservedAt: firstSighting.observedAt,
+      observation: firstSighting,
+    });
+
+    expect(projected.generatedAt).toBe('2026-07-15T10:20:00.000Z');
+    expect({ ...projected, generatedAt: unconfirmed.generatedAt }).toEqual(unconfirmed);
+    expect(projected).toEqual({
+      generatedAt: '2026-07-15T10:20:00.000Z',
+      key: 'codex',
+      label: 'Codex',
+      machineId: 'machine-1',
+      plan: 'plus',
+      source: 'live-api',
+      state: 'ok',
+      windows: firstSighting.windows,
+    });
+  });
+
+  test('keeps the first sighting when the last observation is not later', () => {
+    for (const lastObservedAt of ['2026-07-15T10:00:00.000Z', '2026-07-15T09:58:00.000Z', 'not-a-timestamp']) {
+      expect(projectLatestProviderQuotaObservation({ lastObservedAt, observation: firstSighting }).generatedAt).toBe(
+        '2026-07-15T10:00:00.000Z',
+      );
+    }
+  });
 });
 
 test('fingerprints normalized content independently of observation time and property order', () => {

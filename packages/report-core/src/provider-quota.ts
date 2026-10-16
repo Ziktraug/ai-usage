@@ -482,7 +482,7 @@ export const providerQuotaObservationFingerprintInput = (observation: ProviderQu
     }),
   );
 
-export const projectProviderQuotaObservation = (observation: ProviderQuotaObservation): ProviderStatus => ({
+const projectProviderQuotaObservation = (observation: ProviderQuotaObservation): ProviderStatus => ({
   generatedAt: observation.observedAt,
   key: observation.accountScope ? `${observation.providerKey}:${observation.accountScope}` : observation.providerKey,
   label: observation.providerLabel,
@@ -493,6 +493,28 @@ export const projectProviderQuotaObservation = (observation: ProviderQuotaObserv
   state: observation.state,
   windows: observation.windows,
 });
+
+/** A stored latest reading: the first sighting plus the most recent time an identical reading confirmed it. */
+export interface LatestProviderQuotaObservation {
+  readonly lastObservedAt: string;
+  readonly observation: ProviderQuotaObservation;
+}
+
+/**
+ * Dates a latest reading by its most recent confirmation, not its first sighting. The store merges
+ * identical consecutive readings into one row and only advances the last observation time, so a steady
+ * provider re-confirmed every few minutes must not look as old as the moment it was first seen.
+ */
+export const projectLatestProviderQuotaObservation = ({
+  lastObservedAt,
+  observation,
+}: LatestProviderQuotaObservation): ProviderStatus => {
+  const provider = projectProviderQuotaObservation(observation);
+  const confirmedAt = normalizeIsoTimestamp(lastObservedAt);
+  return confirmedAt !== null && Date.parse(confirmedAt) > Date.parse(observation.observedAt)
+    ? { ...provider, generatedAt: confirmedAt }
+    : provider;
+};
 
 export class ProviderQuotaValidationError extends Error {
   constructor(message: string) {

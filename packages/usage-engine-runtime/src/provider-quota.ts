@@ -16,7 +16,7 @@ import {
   type ProviderQuotaHistoryRequest,
   type ProviderQuotaHistoryResult,
   parseProviderQuotaHistoryRequest,
-  projectProviderQuotaObservation,
+  projectLatestProviderQuotaObservation,
 } from '@ai-usage/report-core/provider-quota';
 import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { createProviderStatusDataset, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
@@ -107,7 +107,7 @@ export const queryLatestLocalProviderQuotas = (
       ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
       ...(input.providerKey === undefined ? {} : { providerKey: input.providerKey }),
     });
-    return stored.observations.map(({ observation }) => projectProviderQuotaObservation(observation));
+    return stored.observations.map(projectLatestProviderQuotaObservation);
   });
 
 const productionBackfillSource = (storage: LocalHistoryStorageService): ProviderQuotaBatchSource => ({
@@ -234,7 +234,7 @@ export const queryLocalProviderQuotaHistory = (
     return {
       coverage: coverageForPoints(points),
       generatedAt: new Date().toISOString(),
-      latest: latest.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+      latest: latest.observations.map(projectLatestProviderQuotaObservation),
       points: reduced.points,
       skipped: stored.skipped + latest.skipped,
       truncated: stored.truncated || reduced.truncated,
