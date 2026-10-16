@@ -337,4 +337,125 @@ describe('local Memory identity kernel', () => {
     expect(await kernel.listResolutionReviews(bootstrap.space.id)).toEqual([]);
     await kernel.close();
   });
+
+  test('observes a Checkout by Device and path, keeping its identity and review state across observations', async () => {
+    const fixture = await databaseFixture();
+    const kernel = await openLocalIdentityKernel({ databasePath: fixture.databasePath });
+    const bootstrap = await kernel.getBootstrapIdentity();
+    const spaceId = bootstrap.space.id;
+    const base = {
+      deviceId: bootstrap.device.id,
+      lastObservedAt: observedAt,
+      localPath: '/private/work/observed',
+    } as const;
+
+    const created = await kernel.observeCheckout(spaceId, { ...base, observedRemote: null, status: 'missing' });
+    expect(created.outcome).toBe('created');
+    expect(created.resolutionStatus).toBe('unassigned');
+    expect(created.resolutionReviewedAt).toBeNull();
+    // A path that is missing on disk is never offered for review.
+    expect(await kernel.listResolutionReviews(spaceId)).toEqual([]);
+    const available = await kernel.observeCheckout(spaceId, { ...base, observedRemote: null, status: 'available' });
+    expect(available.outcome).toBe('unchanged');
+    expect((await kernel.listResolutionReviews(spaceId)).map((review) => review.checkoutId)).toEqual([
+      created.checkout.id,
+    ]);
+    expect(created.checkout).toMatchObject({
+      deviceId: bootstrap.device.id,
+      localPath: base.localPath,
+      observedRemote: null,
+      projectId: null,
+      repositoryId: null,
+      status: 'missing',
+    });
+
+    const laterAt = instantNow(() => new Date('2026-08-30T12:00:00.000Z'));
+    const seen = await kernel.observeCheckout(spaceId, {
+      ...base,
+      lastObservedAt: laterAt,
+      observedRemote: 'git@github.com:Example/Observed.git',
+      status: 'available',
+    });
+    expect(seen.outcome).toBe('remote-changed');
+    expect(seen.checkout.id).toBe(created.checkout.id);
+    expect(seen.checkout.lastObservedAt).toBe(laterAt);
+    expect(seen.checkout.status).toBe('available');
+    expect(seen.checkout.observedRemote).toBe('github.com/example/observed');
+
+    const createResult = await kernel.applyResolutionAction({
+      checkoutId: created.checkout.id,
+      displayName: 'Observed',
+      kind: 'create-project',
+      spaceId,
+    });
+    expect(createResult.kind).toBe('project-created');
+    const again = await kernel.observeCheckout(spaceId, {
+      ...base,
+      observedRemote: 'https://github.com/Example/Observed',
+      status: 'available',
+    });
+    expect(again.outcome).toBe('unchanged');
+    expect(again.checkout.id).toBe(created.checkout.id);
+    expect(again.checkout.projectId).toBe(createResult.kind === 'project-created' ? createResult.projectId : null);
+    expect(again.resolutionReviewedAt).not.toBeNull();
+    await expect(
+      kernel.observeCheckout(spaceId, { ...base, observedRemote: 'ftp://nope', status: 'available' }),
+    ).rejects.toMatchObject({ code: 'validation-failed', operation: 'observe-checkout' });
+
+    const other = await kernel.observeCheckout(spaceId, {
+      ...base,
+      localPath: '/private/work/other',
+      observedRemote: null,
+      status: 'available',
+    });
+    expect(other.outcome).toBe('created');
+    expect(other.checkout.id).not.toBe(created.checkout.id);
+    await kernel.close();
+  });
+
+  test('finds the Project bound to a Repository and subpath', async () => {
+    const fixture = await databaseFixture();
+    const kernel = await openLocalIdentityKernel({ databasePath: fixture.databasePath });
+    const bootstrap = await kernel.getBootstrapIdentity();
+    const spaceId = bootstrap.space.id;
+    const repositoryId = createRepositoryId();
+    await kernel.createRepositoryWithAlias(
+      {
+        canonicalHost: 'github.com',
+        canonicalName: 'found',
+        canonicalOwner: 'example',
+        id: repositoryId,
+        owningSpaceId: spaceId,
+        provider: 'github',
+        providerRepositoryId: null,
+        status: 'active',
+      },
+      {
+        firstObservedAt: observedAt,
+        id: createRepositoryAliasId(),
+        lastObservedAt: observedAt,
+        normalizedRemote: 'github.com/example/found',
+        owningSpaceId: spaceId,
+        repositoryId,
+        source: 'local-git',
+      },
+    );
+    expect(await kernel.findProjectByRepository(spaceId, repositoryId, null)).toBeNull();
+    const rootProject: Project = {
+      displayName: 'example/found',
+      id: createProjectId(),
+      kind: 'repository',
+      owningSpaceId: spaceId,
+      repositoryId,
+      repositorySubpath: null,
+      status: 'active',
+    };
+    const packageProject: Project = { ...rootProject, id: createProjectId(), repositorySubpath: 'packages/core' };
+    await kernel.createProject(rootProject);
+    await kernel.createProject(packageProject);
+    expect(await kernel.findProjectByRepository(spaceId, repositoryId, null)).toEqual(rootProject);
+    expect(await kernel.findProjectByRepository(spaceId, repositoryId, 'packages/core')).toEqual(packageProject);
+    expect(await kernel.findProjectByRepository(spaceId, repositoryId, 'packages/other')).toBeNull();
+    await kernel.close();
+  });
 });

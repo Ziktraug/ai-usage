@@ -21,9 +21,25 @@ bun run cli analyses discover --project 'Exact Project name' \
 
 The selector defaults to the current checkout, including a directory inside an
 acknowledged checkout. Exact Project names and IDs are accepted; ambiguous names,
-unmapped paths, imported IDs and basename matches do not grant access. Resolve
-missing or ambiguous mappings through the existing `/projects` workflow. The
+unmapped paths, imported IDs and basename matches do not grant access. The
 `projects` command accepts `--limit 1..50` and `--cursor` for bounded discovery.
+
+Mappings come from the engine's local Checkout observation (ADR 0044): after
+each publication it records one Checkout per local absolute path of this
+machine, binds it to the Project of its `origin` Repository (created on first
+sight, shared by every worktree of that remote) or to a local Project named
+after the directory, and acknowledges the `machineId|path` mapping. Only an
+ambiguous remote waits in the `/projects` review; `mapping-required` therefore
+means the path has not been published yet, is missing on disk, or awaits that
+review. A directory inside several acknowledged Checkouts (a repository under
+`~/Projects` under `~`, each with its own sessions) belongs to the nearest one.
+The engine logs `usage-engine checkouts=observed …` counts on stderr.
+
+The skill itself lives in `skills/session-distillation` and is projected into
+the harness directories this repository recognizes: `.claude/skills` for
+Claude Code and `.agents/skills` for Codex and other standard agents. Both are
+symlinks to the same source; a harness session started before they existed
+must be restarted to list the skill.
 
 `discover` returns titles, work dates, analysis/job states, eligibility reasons,
 exact selections, and a copyable `prepareCommand`. Its opaque token binds the

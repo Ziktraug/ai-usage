@@ -44,6 +44,8 @@ export interface LocalMemoryServiceHandler {
 }
 
 export interface CreateLocalMemoryServiceHandlerOptions {
+  /** Re-observes local Checkouts after a resolution action so the Project-source mapping lands before the reply. */
+  readonly checkoutObservation?: { readonly runNow: () => Promise<void> };
   readonly distillation?: DistillationRuntime;
   readonly kernel: LocalIdentityKernel;
   readonly token: MemoryServiceToken;
@@ -184,6 +186,7 @@ const readBoundedJson = async (request: Request, signal: AbortSignal = request.s
 };
 
 export const createLocalMemoryServiceHandler = async ({
+  checkoutObservation,
   distillation,
   kernel,
   token,
@@ -529,11 +532,16 @@ export const createLocalMemoryServiceHandler = async ({
         if (decision.kind !== 'allow') {
           return errorResponse('forbidden', 'Memory resolution action is not permitted.', 403);
         }
+        let result: Awaited<ReturnType<LocalIdentityKernel['applyResolutionAction']>>;
         try {
-          return successResponse(await kernel.applyResolutionAction(action));
+          result = await kernel.applyResolutionAction(action);
         } catch (error) {
           return resolutionErrorResponse(error, 'Memory resolution action could not be applied.');
         }
+        // The decision is durable already; the mapping refresh is best effort and
+        // the next publication repeats it, so its failure never fails the action.
+        await checkoutObservation?.runNow().catch(() => undefined);
+        return successResponse(result);
       }
       return new Response(null, { status: 404 });
     },
@@ -542,6 +550,7 @@ export const createLocalMemoryServiceHandler = async ({
 };
 
 export const startLocalMemoryService = async ({
+  checkoutObservation,
   distillation,
   hostname = '127.0.0.1',
   kernel,
@@ -556,7 +565,12 @@ export const startLocalMemoryService = async ({
   if (!(Number.isSafeInteger(port) && port >= 0 && port <= 65_535)) {
     throw new Error('Memory service port is invalid.');
   }
-  const handler = await createLocalMemoryServiceHandler({ ...(distillation ? { distillation } : {}), kernel, token });
+  const handler = await createLocalMemoryServiceHandler({
+    ...(checkoutObservation ? { checkoutObservation } : {}),
+    ...(distillation ? { distillation } : {}),
+    kernel,
+    token,
+  });
   const server = Bun.serve({
     fetch: async (request, bunServer) => await handler.handle(request, bunServer.requestIP(request)?.address ?? null),
     hostname,

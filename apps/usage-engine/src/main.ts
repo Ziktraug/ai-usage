@@ -6,6 +6,7 @@ import { createLocalHistoryStorage } from '@ai-usage/local-machine/local-history
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
+import { type CheckoutObservationDiagnostic, startLocalCheckoutObservation } from './checkout-observation-runtime';
 import { startUsageEngineControlServer, type UsageEngineInternalFailureBoundary } from './control-server';
 import { createDistillationRuntime } from './distillation-runtime';
 import { acquireUsageEngineLock, UsageEngineWriterLockContendedError } from './engine-lock';
@@ -54,6 +55,19 @@ const reportReplicationDiagnostic = (diagnostic: DeviceReplicationDiagnostic): v
   const stream = diagnostic.streamId === undefined ? '' : ` stream=${diagnostic.streamId}`;
   const problem = diagnostic.problemCode === undefined ? '' : ` problem=${diagnostic.problemCode}`;
   process.stderr.write(`usage-engine replication=${diagnostic.code}${stream}${problem}\n`);
+};
+
+const reportCheckoutObservationDiagnostic = (diagnostic: CheckoutObservationDiagnostic): void => {
+  if (diagnostic.code === 'observed') {
+    const { summary } = diagnostic;
+    process.stderr.write(
+      `usage-engine checkouts=observed revision=${summary.revision} observed=${summary.observed} created=${summary.created} resolved=${summary.resolved} ambiguous=${summary.ambiguous} invalid=${summary.invalid} missing=${summary.missing} mapped=${summary.mapped}\n`,
+    );
+    return;
+  }
+  if (diagnostic.code === 'failed') {
+    process.stderr.write(`usage-engine checkouts=failed reason=${diagnostic.reason}\n`);
+  }
 };
 
 const createProductionDependencies = (
@@ -136,18 +150,44 @@ const createProductionDependencies = (
               return Promise.resolve(replication);
             },
           }),
-      startService: async (kernel) =>
-        await startLocalMemoryService({
-          distillation: createDistillationRuntime({
-            kernel,
-            databasePath: paths.databasePath,
-            homeDirectory: paths.homeDirectory,
-            connected: env.AI_USAGE_PLATFORM_BASE_URL !== undefined,
-          }),
+      startService: async (kernel) => {
+        // The observation runs in this process beside the Memory writer: it is
+        // the only producer of Device-local Checkouts and Project-source
+        // mappings, fed by the usage runtime's publication events.
+        const checkoutObservation = startLocalCheckoutObservation({
+          databasePath: paths.databasePath,
           kernel,
-          stateDirectory: paths.stateDirectory,
-          token: createRandomMemoryServiceToken(),
-        }),
+          reportDiagnostic: reportCheckoutObservationDiagnostic,
+          runtime: usageRuntime,
+        });
+        let service: Awaited<ReturnType<typeof startLocalMemoryService>>;
+        try {
+          service = await startLocalMemoryService({
+            checkoutObservation,
+            distillation: createDistillationRuntime({
+              kernel,
+              databasePath: paths.databasePath,
+              homeDirectory: paths.homeDirectory,
+              connected: env.AI_USAGE_PLATFORM_BASE_URL !== undefined,
+            }),
+            kernel,
+            stateDirectory: paths.stateDirectory,
+            token: createRandomMemoryServiceToken(),
+          });
+        } catch (error) {
+          await checkoutObservation.dispose().catch(() => undefined);
+          throw error;
+        }
+        return {
+          dispose: async () => {
+            try {
+              await service.dispose();
+            } finally {
+              await checkoutObservation.dispose();
+            }
+          },
+        };
+      },
     });
   },
   createToken: () => createUsageEngineBearerToken(randomBytes(32).toString('base64url')),

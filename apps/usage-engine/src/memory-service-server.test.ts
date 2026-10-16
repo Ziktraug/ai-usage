@@ -152,6 +152,60 @@ describe('local Memory service', () => {
     await kernel.close();
   });
 
+  test('re-observes local Checkouts after an applied resolution action and tolerates that refresh failing', async () => {
+    const { kernel } = await fixture();
+    const bootstrap = await kernel.getBootstrapIdentity();
+    const token = createMemoryServiceToken('0123456789abcdefghijklmnopqrstuvwxyzABCDEFG');
+    const refreshes: string[] = [];
+    let refreshFails = false;
+    const handler = await createLocalMemoryServiceHandler({
+      checkoutObservation: {
+        runNow: () => {
+          refreshes.push('run');
+          return refreshFails ? Promise.reject(new Error('refresh failed')) : Promise.resolve();
+        },
+      },
+      kernel,
+      token,
+    });
+    const act = async (localPath: string) => {
+      const observed = await kernel.observeCheckout(bootstrap.space.id, {
+        deviceId: bootstrap.device.id,
+        lastObservedAt: instantNow(),
+        localPath,
+        observedRemote: null,
+        status: 'available',
+      });
+      const request = new Request('http://127.0.0.1/v1/repository-resolutions/actions', {
+        body: JSON.stringify({
+          checkoutId: observed.checkout.id,
+          displayName: 'Reviewed project',
+          kind: 'create-project',
+          spaceId: bootstrap.space.id,
+        }),
+        headers: {
+          authorization: 'Bearer 0123456789abcdefghijklmnopqrstuvwxyzABCDEFG',
+          'content-type': 'application/json',
+          'x-ai-usage-memory-protocol-version': '1',
+        },
+        method: 'POST',
+      });
+      return await handler.handle(request, '127.0.0.1');
+    };
+
+    const first = await act('/private/reviewed-one');
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ data: { kind: 'project-created' }, ok: true });
+    expect(refreshes).toEqual(['run']);
+
+    refreshFails = true;
+    const second = await act('/private/reviewed-two');
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ data: { kind: 'project-created' }, ok: true });
+    expect(refreshes).toEqual(['run', 'run']);
+    await kernel.close();
+  });
+
   test('reviews one pending Memory proposal through the authenticated local protocol', async () => {
     const { kernel, stateDirectory } = await fixture();
     const bootstrap = await kernel.getBootstrapIdentity();

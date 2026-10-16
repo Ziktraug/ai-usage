@@ -191,8 +191,13 @@ export const createDistillationCatalog = (database: Database): DistillationCatal
           filter = 'AND (p.id=? OR p.display_name=?)';
           params.push(selector.value, selector.value);
         } else {
-          filter = "AND (c.local_path=? OR substr(?,1,length(c.local_path)+1)=c.local_path || '/')";
-          params.push(selector.value, selector.value);
+          // A directory inside several acknowledged Checkouts (a repository
+          // under `~/Projects` under `~`) belongs to the nearest one: only the
+          // longest matching local path counts, so ancestors never make the
+          // selection ambiguous.
+          const within = "(c.local_path=? OR substr(?,1,length(c.local_path)+1)=c.local_path || '/')";
+          filter = `AND ${within} AND length(c.local_path)=(SELECT max(length(c.local_path)) FROM project_source_mappings m JOIN checkouts c ON c.id=m.checkout_id AND c.space_id=m.space_id JOIN projects p ON p.id=m.project_id AND p.space_id=m.space_id JOIN local_identity_metadata local ON local.personal_space_id=p.space_id WHERE p.status='active' AND c.project_id=p.id AND c.device_id=local.device_id AND c.status='available' AND ${within})`;
+          params.push(selector.value, selector.value, selector.value, selector.value);
         }
       }
       const rows = database

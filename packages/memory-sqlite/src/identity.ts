@@ -7,11 +7,13 @@ import type { MemoryRepository } from '@ai-usage/memory-service/repository';
 import {
   type Checkout,
   type CheckoutId,
+  createCheckoutId,
   createDeviceId,
   createPersonId,
   createProjectId,
   createSpaceId,
   type Device,
+  type DeviceId,
   type Instant,
   instantNow,
   type Person,
@@ -93,6 +95,23 @@ export interface RepositoryIdentityUpdate {
   readonly status: Repository['status'];
 }
 
+/** One Device-local observation of a working path, keyed by (Device, path) rather than by Checkout id. */
+export interface CheckoutObservation {
+  readonly deviceId: DeviceId;
+  readonly lastObservedAt: Instant;
+  readonly localPath: string;
+  readonly observedRemote: string | null;
+  readonly status: Checkout['status'];
+}
+
+export interface CheckoutObservationResult {
+  readonly checkout: Checkout;
+  /** `created` and `remote-changed` are the only outcomes that justify a new repository resolution. */
+  readonly outcome: 'created' | 'remote-changed' | 'unchanged';
+  readonly resolutionReviewedAt: Instant | null;
+  readonly resolutionStatus: 'ambiguous' | 'candidate' | 'resolved' | 'unassigned';
+}
+
 export interface LocalIdentityKernel {
   readonly acknowledgeProjectSourceMapping: (mapping: ProjectSourceMapping, spaceId: SpaceId) => Promise<void>;
   readonly applyResolutionAction: (action: CheckoutResolutionAction) => Promise<CheckoutResolutionActionResult>;
@@ -113,6 +132,11 @@ export interface LocalIdentityKernel {
   readonly createProject: (project: Project) => Promise<void>;
   readonly createRepositoryWithAlias: (repository: Repository, alias: RepositoryAlias) => Promise<void>;
   readonly distillation: DistillationRepository;
+  readonly findProjectByRepository: (
+    spaceId: SpaceId,
+    repositoryId: RepositoryId,
+    repositorySubpath: string | null,
+  ) => Promise<Project | null>;
   readonly findProjectSourceMapping: (
     spaceId: SpaceId,
     projectSourceId: string,
@@ -121,6 +145,12 @@ export interface LocalIdentityKernel {
   readonly listRepositoryCandidates: (spaceId: SpaceId) => Promise<readonly RepositoryResolutionCandidate[]>;
   readonly listResolutionReviews: (spaceId: SpaceId) => Promise<readonly CheckoutResolutionReview[]>;
   readonly memory: MemoryRepository;
+  /**
+   * Records a Device-local Checkout by (Device, path): a new path gets a fresh
+   * Checkout id with no Project; a known path keeps its id, Project, Repository
+   * and review state and only refreshes status, remote and observation time.
+   */
+  readonly observeCheckout: (spaceId: SpaceId, observation: CheckoutObservation) => Promise<CheckoutObservationResult>;
   readonly recordRepositoryResolution: (
     spaceId: SpaceId,
     checkoutId: CheckoutId,
@@ -186,6 +216,29 @@ interface ProjectSourceMappingRow {
   readonly checkout_id: unknown;
   readonly project_id: unknown;
   readonly project_source_id: unknown;
+}
+
+interface CheckoutRow {
+  readonly device_id: unknown;
+  readonly id: unknown;
+  readonly last_observed_at: unknown;
+  readonly local_path: unknown;
+  readonly observed_remote: unknown;
+  readonly project_id: unknown;
+  readonly repository_id: unknown;
+  readonly resolution_reviewed_at: unknown;
+  readonly resolution_status: unknown;
+  readonly status: unknown;
+}
+
+interface ProjectRow {
+  readonly display_name: unknown;
+  readonly id: unknown;
+  readonly kind: unknown;
+  readonly repository_id: unknown;
+  readonly repository_subpath: unknown;
+  readonly space_id: unknown;
+  readonly status: unknown;
 }
 
 interface CheckoutReviewRow {
@@ -289,6 +342,47 @@ const mapRepositoryAlias = (row: RepositoryAliasRow): RepositoryAlias => {
     owningSpaceId: parseSpaceId(row.space_id),
     repositoryId: parseRepositoryId(row.repository_id),
     source: row.source,
+  };
+};
+
+const checkoutColumns =
+  'id, device_id, project_id, repository_id, local_path, observed_remote, status, resolution_status, resolution_reviewed_at, last_observed_at';
+
+const mapCheckout = (row: CheckoutRow): Checkout => {
+  if (row.status !== 'available' && row.status !== 'missing' && row.status !== 'unknown') {
+    throw new MemoryIdentityStoreError('validation-failed', 'map-checkout');
+  }
+  return {
+    deviceId: parseDeviceId(row.device_id),
+    id: parseCheckoutId(row.id),
+    lastObservedAt: parseInstant(row.last_observed_at),
+    localPath: requiredText(row.local_path),
+    observedRemote: nullableText(row.observed_remote),
+    projectId: row.project_id === null ? null : parseProjectId(row.project_id),
+    repositoryId: row.repository_id === null ? null : parseRepositoryId(row.repository_id),
+    status: row.status,
+  };
+};
+
+const mapCheckoutResolutionStatus = (value: unknown): CheckoutObservationResult['resolutionStatus'] => {
+  if (value !== 'ambiguous' && value !== 'candidate' && value !== 'resolved' && value !== 'unassigned') {
+    throw new MemoryIdentityStoreError('validation-failed', 'map-checkout');
+  }
+  return value;
+};
+
+const mapProject = (row: ProjectRow): Project => {
+  if ((row.kind !== 'local' && row.kind !== 'repository') || (row.status !== 'active' && row.status !== 'archived')) {
+    throw new MemoryIdentityStoreError('validation-failed', 'map-project');
+  }
+  return {
+    displayName: requiredText(row.display_name),
+    id: parseProjectId(row.id),
+    kind: row.kind,
+    owningSpaceId: parseSpaceId(row.space_id),
+    repositoryId: row.repository_id === null ? null : parseRepositoryId(row.repository_id),
+    repositorySubpath: nullableText(row.repository_subpath),
+    status: row.status,
   };
 };
 
@@ -726,6 +820,18 @@ export const openLocalIdentityKernel = async (
         });
         create.immediate();
       }),
+    findProjectByRepository: (spaceId, repositoryId, repositorySubpath) =>
+      storageOperation('find-project-by-repository', (open) => {
+        const row = open
+          .query(
+            `SELECT id, space_id, kind, display_name, repository_id, repository_subpath, status
+             FROM projects
+             WHERE space_id = $spaceId AND repository_id = $repositoryId
+               AND IFNULL(repository_subpath, '') = $subpath`,
+          )
+          .get({ repositoryId, spaceId, subpath: repositorySubpath ?? '' }) as ProjectRow | null;
+        return row ? mapProject(row) : null;
+      }),
     findProjectSourceMapping: (spaceId, projectSourceId) =>
       storageOperation('find-project-source-mapping', (open) => {
         const row = open
@@ -780,6 +886,7 @@ export const openLocalIdentityKernel = async (
              FROM checkouts
              JOIN devices ON devices.id = checkouts.device_id
              WHERE checkouts.space_id = $spaceId
+               AND checkouts.status <> 'missing'
                AND checkouts.resolution_status IN ('ambiguous', 'candidate', 'unassigned')
                AND checkouts.resolution_reviewed_at IS NULL
              ORDER BY checkouts.id
@@ -839,6 +946,77 @@ export const openLocalIdentityKernel = async (
         });
       }),
     memory,
+    observeCheckout: (spaceId, observation) =>
+      storageOperation('observe-checkout', (open) => {
+        if (observation.localPath.length === 0 || observation.localPath.length > 4096) {
+          throw new MemoryIdentityStoreError('validation-failed', 'observe-checkout');
+        }
+        const observedRemote =
+          observation.observedRemote === null ? null : normalizeRepositoryAlias(observation.observedRemote);
+        if (observation.observedRemote !== null && observedRemote === null) {
+          throw new MemoryIdentityStoreError('validation-failed', 'observe-checkout');
+        }
+        const observe = open.transaction((): CheckoutObservationResult => {
+          const existing = open
+            .query(
+              `SELECT ${checkoutColumns} FROM checkouts
+               WHERE space_id = $spaceId AND device_id = $deviceId AND local_path = $localPath`,
+            )
+            .get({ deviceId: observation.deviceId, localPath: observation.localPath, spaceId }) as CheckoutRow | null;
+          let outcome: CheckoutObservationResult['outcome'];
+          let id: CheckoutId;
+          if (existing === null) {
+            id = createCheckoutId();
+            outcome = 'created';
+            open
+              .query(
+                `INSERT INTO checkouts
+                  (id, space_id, project_id, device_id, local_path, repository_id,
+                   observed_remote, status, last_observed_at)
+                 VALUES ($id, $spaceId, NULL, $deviceId, $localPath, NULL,
+                         $observedRemote, $status, $lastObservedAt)`,
+              )
+              .run({
+                deviceId: observation.deviceId,
+                id,
+                lastObservedAt: observation.lastObservedAt,
+                localPath: observation.localPath,
+                observedRemote,
+                spaceId,
+                status: observation.status,
+              });
+          } else {
+            id = parseCheckoutId(existing.id);
+            outcome = nullableText(existing.observed_remote) === observedRemote ? 'unchanged' : 'remote-changed';
+            open
+              .query(
+                `UPDATE checkouts
+                 SET observed_remote = $observedRemote, status = $status, last_observed_at = $lastObservedAt
+                 WHERE id = $id AND space_id = $spaceId`,
+              )
+              .run({
+                id,
+                lastObservedAt: observation.lastObservedAt,
+                observedRemote,
+                spaceId,
+                status: observation.status,
+              });
+          }
+          const row = open
+            .query(`SELECT ${checkoutColumns} FROM checkouts WHERE id = $id AND space_id = $spaceId`)
+            .get({ id, spaceId }) as CheckoutRow | null;
+          if (row === null) {
+            throw new MemoryIdentityStoreError('storage-failed', 'observe-checkout');
+          }
+          return {
+            checkout: mapCheckout(row),
+            outcome,
+            resolutionReviewedAt: nullableInstant(row.resolution_reviewed_at),
+            resolutionStatus: mapCheckoutResolutionStatus(row.resolution_status),
+          };
+        });
+        return observe.immediate();
+      }),
     replication: openedReplication,
     recordRepositoryResolution: (spaceId, checkoutId, resolution) =>
       storageOperation('record-repository-resolution', (open) => {

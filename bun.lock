@@ -65,6 +65,7 @@
         "@ai-usage/memory-service": "workspace:*",
         "@ai-usage/memory-sqlite": "workspace:*",
         "@ai-usage/platform-core": "workspace:*",
+        "@ai-usage/project-registry": "workspace:*",
         "@ai-usage/replication-client": "workspace:*",
         "@ai-usage/replication-outbox": "workspace:*",
         "@ai-usage/replication-protocol": "workspace:*",
