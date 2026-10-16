@@ -365,12 +365,20 @@ test('secrets inside JSON keys are redacted when a value change emits structured
 
 test('a key keeps its redacted text whatever its length', () => {
   const prefix = 'a'.repeat(245);
-  const untouched = JSON.stringify({ [`${prefix}"token":x`]: 1 });
-  expect(redactDistillationText(untouched)).toBe(untouched);
-  const output = redactDistillationText(JSON.stringify({ [`${prefix}"token":x`]: 1, password: 'p' }));
-  expect(output).toBe(JSON.stringify({ [`${prefix}"token": "[REDACTED]"`]: 1, password: '[REDACTED]' }));
-  expect(output).not.toContain(':x');
-  expect(redactDistillationText(output)).toBe(output);
+  // The raw text escapes the key's quotes, so only the structured pass redacts it, whether or not a value
+  // changes too.
+  for (const [value, expected] of [
+    [JSON.stringify({ [`${prefix}"token":x`]: 1 }), JSON.stringify({ [`${prefix}"token": "[REDACTED]"`]: 1 })],
+    [
+      JSON.stringify({ [`${prefix}"token":x`]: 1, password: 'p' }),
+      JSON.stringify({ [`${prefix}"token": "[REDACTED]"`]: 1, password: '[REDACTED]' }),
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain(':x');
+    expect(redactDistillationText(output)).toBe(output);
+  }
 });
 
 test('structured output is emitted without a raw-text pass over the JSON', () => {
@@ -523,9 +531,9 @@ test('JSON nested past the walk bound is replaced by an explicit marker', () => 
   ]) {
     expect(redactDistillationText(value)).toBe(DISTILLATION_TOO_DEEP_MARKER);
   }
-  // Text that is not JSON as a whole keeps the raw-text rules, whatever it embeds.
-  const embedded = `Output:\n${nest('', 300)}`;
-  expect(redactDistillationText(embedded)).toBe(embedded);
+  // Text that is not JSON as a whole keeps the raw-text rules; a document it embeds past the bound fails
+  // closed in place.
+  expect(redactDistillationText(`Output:\n${nest('', 300)}`)).toBe(`Output:\n${DISTILLATION_TOO_DEEP_MARKER}`);
 });
 
 test('JSON at the nesting bound is re-emitted structurally from a deep caller', () => {
@@ -788,25 +796,33 @@ test('the previous output stands unless covering only removes text after slots a
     expect(redactDistillationText(output)).toBe(output);
   }
   // Covered whole, these texts become JSON whose escaped URL chain unwinds one level per step past the
-  // step limit; the previous output is raw text that settles.
+  // step limit, so the output without covering stands. The nested pass then judges the escaped literal
+  // decoded, and the next round of the rules unwinds the chain within the limit: it ends in a slot.
   const chain = (levels: number, host: string, user: string): string =>
     `${String.raw`http:\/\/${host}:`.repeat(levels)}${user}${'@'.repeat(levels)}`;
   for (const [value, expected] of [
-    [`{"token":{"a": x y},"u":"${chain(7, 'a', 'p')}"}`, `{"token": "[REDACTED]" x y},"u":"${chain(7, 'a', 'p')}"}`],
+    [`{"token":{"a": x y},"u":"${chain(7, 'a', 'p')}"}`, '{"token": "[REDACTED]" x y},"u":"[REDACTED]"}'],
+    [`{"token":{"a": x y},"u":"${chain(6, 'a', 'p')}"}`, '{"token": "[REDACTED]" x y},"u":"[REDACTED]"}'],
     [
       `{"u":"http://a:x"http://b:p@@","v":"${chain(7, 'c', 'q')}","token":{"a":1,"b":2}}`,
-      `{"u":"[REDACTED]","v":"${chain(7, 'c', 'q')}","token": "[REDACTED]","b":2}}`,
+      '{"u":"[REDACTED]","v":"[REDACTED]","token": "[REDACTED]","b":2}}',
     ],
     [
-      `{"u":"http://a:x"http://b:p@@","v":"${chain(6, 'c', 'q')}","token":{"a":1,"b":2}}`,
-      `{"u":"[REDACTED]","v":"${chain(6, 'c', 'q')}","token": "[REDACTED]","b":2}}`,
+      `{"u":"http://a:x"http://b:p@@","v":"${chain(5, 'c', 'q')}","token":{"a":1,"b":2}}`,
+      '{"u":"[REDACTED]","v":"[REDACTED]","token": "[REDACTED]","b":2}}',
     ],
   ] as const) {
     const output = redactDistillationText(value);
     expect(output).toBe(expected);
-    expect(output).not.toBe('[REDACTED]');
+    expect(output).not.toContain('p@');
     expect(redactDistillationText(output)).toBe(output);
   }
+  // A chain in a key the nested pass reaches as a literal gets the key text rules a document gives its
+  // keys, so it unwinds the same way.
+  const keyed = `{"token":{"a": x y},"${chain(7, 'a', 'p')}":1}`;
+  expect(redactDistillationText(keyed)).toBe('{"token": "[REDACTED]" x y},"[REDACTED]":1}');
+  // A chain longer than the rounds can unwind is replaced outright.
+  expect(redactDistillationText(`{"token":{"a": x y},"u":"${chain(12, 'a', 'p')}"}`)).toBe('[REDACTED]');
 });
 
 test('covering keeps every other slot and the text between covered values', () => {
@@ -860,5 +876,659 @@ test('nested values have their own budget and never change tail absorption', () 
     expect(output.endsWith(last)).toBe(true);
     expect(output).not.toContain(': [');
     expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+// Escaped JSON the raw-text rules cannot see: a password inside a JSON string inside a JSON document.
+const escapedSecret = JSON.stringify({ args: JSON.stringify({ password: 'hunter2' }) });
+const escapedSlot = JSON.stringify({ args: '{"password": "[REDACTED]"}' });
+
+test('JSON embedded in tool envelopes is judged by the JSON pipeline', () => {
+  const chunk = 'Chunk ID: synthetic\nProcess exited with code 0\nOutput:\n';
+  for (const [value, expected] of [
+    [`Final output:\n${escapedSecret}`, `Final output:\n${escapedSlot}`],
+    [`${chunk}${escapedSecret}`, `${chunk}${escapedSlot}`],
+    [
+      `Final output:\n${JSON.stringify({ args: JSON.stringify({ password: 'hunter2' }) }, null, 2)}`,
+      `Final output:\n${escapedSlot}`,
+    ],
+    [`Output:\n[${escapedSecret}]`, `Output:\n[${escapedSlot}]`],
+    [
+      `Output:\n${escapedSecret}${JSON.stringify({ cmd: JSON.stringify({ token: 'hunter2' }) })}`,
+      `Output:\n${escapedSlot}${JSON.stringify({ cmd: '{"token": "[REDACTED]"}' })}`,
+    ],
+    [`${chunk}${escapedSecret}\nWall time: 0.1 seconds`, `${chunk}${escapedSlot}\nWall time: 0.1 seconds`],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('escaped JSON is judged at every nesting level', () => {
+  for (const [value, expected] of [
+    [
+      JSON.stringify({ args: JSON.stringify({ x: JSON.stringify({ password: 'hunter2' }) }) }),
+      JSON.stringify({ args: JSON.stringify({ x: '{"password": "[REDACTED]"}' }) }),
+    ],
+    [
+      JSON.stringify({ output: `Final output:\n${escapedSecret}` }),
+      JSON.stringify({ output: `Final output:\n${escapedSlot}` }),
+    ],
+    [
+      `Output:\n${JSON.stringify({ a: JSON.stringify({ b: JSON.stringify({ password: 'hunter2' }) }) })}`,
+      `Output:\n${JSON.stringify({ a: JSON.stringify({ b: '{"password": "[REDACTED]"}' }) })}`,
+    ],
+    [
+      `Output:\n${JSON.stringify({ a: JSON.stringify({ b: JSON.stringify({ c: JSON.stringify({ token: 'hunter2' }) }) }) })}`,
+      `Output:\n${JSON.stringify({ a: JSON.stringify({ b: JSON.stringify({ c: '{"token": "[REDACTED]"}' }) }) })}`,
+    ],
+    // Keys are documents too.
+    [JSON.stringify({ [escapedSecret]: 1 }), JSON.stringify({ [escapedSlot]: 1 })],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('sensitive keys the raw-text rules miss are judged inside envelopes', () => {
+  for (const [value, expected] of [
+    ['Output:\n{"my.token":"hunter2"}', 'Output:\n{"my.token":"[REDACTED]"}'],
+    ['Output:\n{"Secret Token":"hunter2","ok":true} done', 'Output:\n{"Secret Token":"[REDACTED]","ok":true} done'],
+    [
+      JSON.stringify({ log: 'Output:\n{"my.token":"hunter2"}' }),
+      JSON.stringify({ log: 'Output:\n{"my.token":"[REDACTED]"}' }),
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('duplicate-key documents are judged for nested secrets in every member', () => {
+  const dropped = `{"cmd":${JSON.stringify(escapedSecret)},"cmd":"ok"}`;
+  for (const [value, expected] of [
+    [`Output:\n${dropped}`, 'Output:\n{"cmd":"ok"}'],
+    [dropped, '{"cmd":"ok"}'],
+    [`{"cmd":"ok","cmd":${JSON.stringify(escapedSecret)}}`, JSON.stringify({ cmd: escapedSlot })],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+  for (const clean of [
+    'Output:\n{"status":"retry","status":"success"}',
+    `{"cmd":"ok","cmd":${JSON.stringify(escapedSlot)}}`,
+  ]) {
+    expect(redactDistillationText(clean)).toBe(clean);
+  }
+  // The members a nested duplicate-key document keeps are judged in the same pass, so a chain deeper
+  // than the step limit is still redacted rather than replaced outright.
+  let chain = escapedSecret;
+  let expected = escapedSlot;
+  for (let level = 0; level < 8; level += 1) {
+    chain = `{"c":"ok","c":${JSON.stringify(chain)}}`;
+    expected = JSON.stringify({ c: expected });
+  }
+  const output = redactDistillationText(`Output:\n${chain}`);
+  expect(output).toBe(`Output:\n${expected}`);
+  expect(redactDistillationText(output)).toBe(output);
+});
+
+test('a long chain of nested duplicate-key documents judges each member once', () => {
+  // Each level judges its members to find them unclean and again in its kept form; without remembering
+  // the first judgement the work doubles per level and the pass runs out of budget.
+  const pad = ' '.repeat(100_000);
+  for (const [inner, judged] of [
+    [
+      JSON.stringify({ p: pad, args: JSON.stringify({ password: 'hunter2' }) }),
+      JSON.stringify({ p: pad, args: '{"password": "[REDACTED]"}' }),
+    ],
+    [`[${'['.repeat(256)}${pad}${']'.repeat(256)}]`, DISTILLATION_TOO_DEEP_MARKER],
+  ] as const) {
+    let chain: string = inner;
+    let expected: string = judged;
+    for (let level = 0; level < 12; level += 1) {
+      chain = `{"a":1,"a":${JSON.stringify(chain)}}`;
+      expected = JSON.stringify({ a: expected });
+    }
+    const started = performance.now();
+    const output = redactDistillationText(`Output:\n${chain}`);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(output).toBe(`Output:\n${expected}`);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('redacted envelopes and the quotes taken from them stay fixed points', () => {
+  for (const value of [
+    `Final output:\n${escapedSlot}`,
+    escapedSlot,
+    String.raw`"args":"{\"password\": \"[REDACTED]\"}"`,
+    String.raw`{\"password\": \"[REDACTED]\"}`,
+    'Output:\n{"my.token":"[REDACTED]"}',
+    JSON.stringify({ args: JSON.stringify({ x: '{"password": "[REDACTED]"}' }) }),
+    JSON.stringify({ output: `Final output:\n${escapedSlot}` }),
+  ]) {
+    expect(redactDistillationText(value)).toBe(value);
+  }
+});
+
+test('envelopes the raw-text rules already settle keep their exact output', () => {
+  for (const [value, expected] of [
+    ['Output:\n{"ok":true,"n":1.0}', 'Output:\n{"ok":true,"n":1.0}'],
+    [
+      `Output:\n${String.raw`{"cmd":"{\"ok\":true}", "n": 1.0}`}`,
+      `Output:\n${String.raw`{"cmd":"{\"ok\":true}", "n": 1.0}`}`,
+    ],
+    ['Output:\n{"token":"hunter2"} trailing', 'Output:\n{"token": "[REDACTED]"} trailing'],
+    ['Output:\n{\n  "password": "hunter2"\n}', 'Output:\n{\n  "password": "[REDACTED]"\n}'],
+    [
+      'if (ready) { return [a, b]; } else { throw {code: 1}; }',
+      'if (ready) { return [a, b]; } else { throw {code: 1}; }',
+    ],
+    [
+      JSON.stringify({ cmd: 'cat <<EOF\n{"ok": true, "n": [1, 2.0]}\nEOF' }),
+      JSON.stringify({ cmd: 'cat <<EOF\n{"ok": true, "n": [1, 2.0]}\nEOF' }),
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('embedded JSON outside the Memory domain limits is judged like any other', () => {
+  const deep = (inner: string): string => `${'['.repeat(41)}${inner}${']'.repeat(41)}`;
+  for (const [value, expected] of [
+    [`Output:\n${deep(escapedSecret)}`, `Output:\n${deep(escapedSlot)}`],
+    [`Output:\n{"${'a'.repeat(300)}":1,"x":${escapedSecret}}`, `Output:\n{"${'a'.repeat(300)}":1,"x":${escapedSlot}}`],
+    [`Output:\n[${escapedSecret}${',0'.repeat(10_001)}]`, `Output:\n[${escapedSlot}${',0'.repeat(10_001)}]`],
+    // A re-emitted document writes a non-finite number as JSON.stringify does.
+    [`Output:\n{"n":1e400,"x":${escapedSecret}}`, `Output:\n{"n":null,"x":${escapedSlot}}`],
+    [JSON.stringify({ log: deep(escapedSecret) }), JSON.stringify({ log: deep(escapedSlot) })],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+  for (const value of [
+    `Output:\n${deep('1')}`,
+    `Output:\n{"":${escapedSlot}}`,
+    `Output:\n[${',0'.repeat(10_001).slice(1)}]`,
+    'Output:\n{"n":1e400,"ok":true}',
+  ]) {
+    expect(redactDistillationText(value)).toBe(value);
+  }
+});
+
+test('pathological embedded JSON finishes within the budget as a fixed point', () => {
+  let strings = 'x';
+  while (strings.length < 200_000) {
+    strings = JSON.stringify(strings);
+  }
+  for (const value of [
+    '['.repeat(262_144),
+    '{"a":'.repeat(52_000),
+    '["x",'.repeat(52_000),
+    `Output:\n${'{'.repeat(262_000)}`,
+    `Output:\n${'{"a":[1,'.repeat(32_000)}`,
+    `Output:\n${'{"'.repeat(87_000)}`,
+    strings,
+  ]) {
+    const started = performance.now();
+    const output = redactDistillationText(value);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+    expect(output).toBe(value);
+  }
+  // A document that closes past the bound fails closed in place.
+  const started = performance.now();
+  const output = redactDistillationText(`Output:\n${'['.repeat(131_000)}${']'.repeat(131_000)}`);
+  expect(performance.now() - started).toBeLessThan(1000);
+  expect(output).toBe(`Output:\n${DISTILLATION_TOO_DEEP_MARKER}`);
+  expect(redactDistillationText(output)).toBe(output);
+  let objects = escapedSecret;
+  let expected = escapedSlot;
+  while (objects.length < 200_000) {
+    objects = JSON.stringify({ a: objects });
+    expected = JSON.stringify({ a: expected });
+  }
+  const begun = performance.now();
+  const chain = redactDistillationText(objects);
+  const elapsed = performance.now() - begun;
+  expect(elapsed).toBeLessThan(1000);
+  expect(chain).toBe(expected);
+  expect(redactDistillationText(chain)).toBe(chain);
+});
+
+// An escaped document printed as a JSON string literal, as jq or a logger prints it.
+const printedSecret = JSON.stringify(JSON.stringify({ password: 'hunter2' }));
+const printedSlot = JSON.stringify('{"password": "[REDACTED]"}');
+
+test('escaped JSON string literals in non-JSON text are judged by the JSON pipeline', () => {
+  for (const [value, expected] of [
+    // The raw-text rules break the document (the value runs through its closing quote); the escaped
+    // literal after it is still judged.
+    [
+      `Output:\n${JSON.stringify({ cmd: 'export TOKEN=abc', args: JSON.stringify({ password: 'hunter2' }) })}`,
+      `Output:\n{"cmd":"export [REDACTED],"args":${printedSlot}}`,
+    ],
+    [`Output:\n${printedSecret}`, `Output:\n${printedSlot}`],
+    [`Output:\n${printedSecret}\nexit status 0`, `Output:\n${printedSlot}\nexit status 0`],
+    // A closing quote taken as an opening one pairs with the literal's opening quote; the literal is
+    // still found, also when the mispaired span is itself an escaped literal.
+    [`say "x" then ${printedSecret}`, `say "x" then ${printedSlot}`],
+    [String.raw`width: 1" a\tb ${printedSecret}`, String.raw`width: 1" a\tb ${printedSlot}`],
+    [
+      `Output:\n${JSON.stringify(JSON.stringify({ args: JSON.stringify({ token: 'hunter2' }) }))} done`,
+      `Output:\n${JSON.stringify(JSON.stringify({ args: '{"token": "[REDACTED]"}' }))} done`,
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('string literals the JSON pipeline judges clean leave the text byte-identical', () => {
+  for (const value of [
+    'Output:\n"plain" and "text"',
+    `Output:\n${String.raw`"{\"ok\":true}"`}`,
+    String.raw`dir C:\Users\"me" /s`,
+    String.raw`copy "C:\Users\me" "D:\backup" and "C:\\Users\\me"`,
+    `Output:\n{"cmd":"export [REDACTED],"args":${printedSlot}}`,
+    `Output:\n${printedSlot}\nexit status 0`,
+    printedSlot,
+    String.raw`\"password\": \"[REDACTED]\"`,
+    String.raw`"args":"{\"password\": \"[REDACTED]\"}"}`,
+    String.raw`\"[REDACTED]\"}"`,
+  ]) {
+    expect(redactDistillationText(value)).toBe(value);
+  }
+});
+
+test('pathological string literals finish within the budget as fixed points', () => {
+  for (const value of [
+    String.raw`"a\"b" `.repeat(37_449),
+    String.raw`\"`.repeat(131_072),
+    `${'"'.repeat(1023)}\n`.repeat(256),
+    '\\'.repeat(262_144),
+    `${'\\'.repeat(62)}"`.repeat(4161),
+    `${'\\'.repeat(63)}"`.repeat(4096),
+  ]) {
+    const started = performance.now();
+    const output = redactDistillationText(value);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+    expect(output).toBe(value);
+  }
+});
+
+test('large documents that cannot parse, or nest past the bound, do not exhaust the budget before a trailing secret', () => {
+  const tail = (secret: string): string => `\nFinal output:\n${secret}`;
+  let large: unknown = { k: 1 };
+  for (let level = 0; level < 40; level += 1) {
+    large = { a: large, items: Array.from({ length: 200 }, (_, k) => ({ k, v: `value-${k}` })) };
+  }
+  for (const [head, expected] of [
+    // Nested past the bound: the marker, before anything inside is read.
+    [`${'['.repeat(1500)}${']'.repeat(1500)}`, DISTILLATION_TOO_DEEP_MARKER],
+    [`${'{"a":'.repeat(1500)}1${'}'.repeat(1500)}`, DISTILLATION_TOO_DEEP_MARKER],
+    // Truncated: never closes.
+    ['{"a":['.repeat(43_000), '{"a":['.repeat(43_000)],
+    // Within the bound and clean, however large.
+    [JSON.stringify(large), JSON.stringify(large)],
+  ] as const) {
+    const started = performance.now();
+    const output = redactDistillationText(`${head}${tail(escapedSecret)}`);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+    expect(output).toBe(`${expected}${tail(escapedSlot)}`);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('embedded documents within the nesting bound are judged whole, whatever their size', () => {
+  // A sensitive member shows that the outer document was judged: only then does its value become the
+  // placeholder.
+  const deep = (arrays: number, secret: string): string => `${'['.repeat(arrays)}${secret}${']'.repeat(arrays)}`;
+  const wide = (zeros: number, secret: string): string => `[${secret}${',0'.repeat(zeros)}]`;
+  for (const [value, expected] of [
+    // Depth 32 and 33 (the escaped string under the arrays, an object and the outer object).
+    [
+      `Output:\n{"my.token":1,"x":${deep(30, escapedSecret)}}`,
+      `Output:\n{"my.token":"[REDACTED]","x":${deep(30, escapedSlot)}}`,
+    ],
+    [
+      `Output:\n{"my.token":1,"x":${deep(31, escapedSecret)}}`,
+      `Output:\n{"my.token":"[REDACTED]","x":${deep(31, escapedSlot)}}`,
+    ],
+    // 10 000 nodes, then 10 001.
+    [
+      `Output:\n{"my.token":1,"x":${wide(9995, escapedSecret)}}`,
+      `Output:\n{"my.token":"[REDACTED]","x":${wide(9995, escapedSlot)}}`,
+    ],
+    [
+      `Output:\n{"my.token":1,"x":${wide(9996, escapedSecret)}}`,
+      `Output:\n{"my.token":"[REDACTED]","x":${wide(9996, escapedSlot)}}`,
+    ],
+    // A duplicate key drops the deep member; the document the parser keeps is judged, also when the
+    // keys are equal only once decoded.
+    [`Output:\n{"x":${deep(40, '1')},"x":1,"my.token":1}`, 'Output:\n{"x":1,"my.token":"[REDACTED]"}'],
+    [`Output:\n{"\\u0078":${deep(40, '1')},"x":1,"my.token":1}`, 'Output:\n{"x":1,"my.token":"[REDACTED]"}'],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('a string literal followed by a colon is judged as a key, the same as inside its document', () => {
+  // The raw text escapes the credential in the key; the document's rules redact it as key text, and so do a
+  // prefix cut after the key and one cut before its colon, so quotes of either output stay fixed points.
+  for (const [value, expected] of [
+    ['Output:\n{"https:\\/\\/u:hunter2@h\\/x":1}', 'Output:\n{"[REDACTED]h/x":1}'],
+    ['Output:\n{"https:\\/\\/u:hunter2@h\\/x":1', 'Output:\n{"[REDACTED]h/x":1'],
+    ['Output:\n{"https:\\/\\/u:hunter2@h\\/x"', 'Output:\n{"[REDACTED]h/x"'],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    for (let end = 1; end <= output.length; end += 1) {
+      const quote = output.slice(0, end);
+      expect(redactDistillationText(quote)).toBe(quote);
+    }
+  }
+  for (const [value, expected] of [
+    [`Output:\n{${JSON.stringify(escapedSecret)}:1}`, `Output:\n{${JSON.stringify(escapedSlot)}:1}`],
+    [`Output:\n{${JSON.stringify(escapedSecret)}:1`, `Output:\n{${JSON.stringify(escapedSlot)}:1`],
+    [`Output:\n{${JSON.stringify(escapedSecret)} : 1`, `Output:\n{${JSON.stringify(escapedSlot)} : 1`],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('sensitive keys are judged for embedded documents and stay sensitive', () => {
+  const key = `${escapedSecret}token`;
+  const redactedKey = `${escapedSlot}token`;
+  const expected = JSON.stringify({ [redactedKey]: '[REDACTED]' });
+  for (const [value, result] of [
+    [JSON.stringify({ [key]: '[REDACTED]' }), expected],
+    [`{${JSON.stringify(key)}:"[REDACTED]",${JSON.stringify(key)}:"[REDACTED]"}`, expected],
+    [`Output:\n${JSON.stringify({ [key]: '[REDACTED]' })}`, `Output:\n${expected}`],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(result);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+  // The key keeps its sensitive ending, so its member keeps the placeholder.
+  expect(redactedKey.endsWith('token')).toBe(true);
+  expect(redactDistillationText(JSON.stringify(redactedKey))).toBe(JSON.stringify(redactedKey));
+});
+
+test('candidates that cannot parse are never parsed, and large clean ones are judged, before a trailing secret', () => {
+  const finalSecret = '\nFinal output:\n';
+  // 32 levels whose innermost one carries the defect, padded so every level spans about 125 KB.
+  const padded = (defect: string, wrap: (inner: string) => string): string => {
+    let document = `{"pad":"${'x'.repeat(125_000)}",${defect}}`;
+    for (let level = 0; level < 31; level += 1) {
+      document = wrap(document);
+    }
+    return document;
+  };
+  const nest = (inner: string): string => `{"a":${inner}}`;
+  for (const [head, tail, expected] of [
+    // A value after a closer without a comma.
+    [
+      `${'['.repeat(2000)}${']0'.repeat(2000)}`,
+      '\nFinal: {"my.token":"hunter2"}',
+      '\nFinal: {"my.token":"[REDACTED]"}',
+    ],
+    [padded('"q":1,', (inner) => `{"a":${inner},}`), `${finalSecret}${escapedSecret}`, `${finalSecret}${escapedSlot}`],
+    // Outside the Memory domain limits, yet JSON: judged and left as it is.
+    [padded('"":1', nest), `${finalSecret}${escapedSecret}`, `${finalSecret}${escapedSlot}`],
+    [padded(`"${'k'.repeat(256)}\\u006b":1`, nest), `${finalSecret}${escapedSecret}`, `${finalSecret}${escapedSlot}`],
+    [padded('"n":1e400', nest), `${finalSecret}${escapedSecret}`, `${finalSecret}${escapedSlot}`],
+  ] as const) {
+    const started = performance.now();
+    const output = redactDistillationText(`${head}${tail}`);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+    expect(output).toBe(`${head}${expected}`);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('a key the nested pass leaves unchanged keeps its text at any length', () => {
+  const event = `Output:\n{"${'a'.repeat(256)}\\u0062":1}`;
+  for (const value of [event, JSON.stringify({ log: event })]) {
+    expect(redactDistillationText(value)).toBe(value);
+  }
+});
+
+test('the scan budget grows with the text, so deep string nesting does not exhaust it before a secret', () => {
+  const tail = (secret: string): string => `\nFinal output:\n${secret}`;
+  // Content that needs no escaping barely grows per string-nesting level, and every level reads it again.
+  let codex = `[${' '.repeat(55_000)}]`;
+  for (let level = 0; level < 12; level += 1) {
+    codex = `{${JSON.stringify(codex)}:1}`;
+  }
+  // The deepest nesting that fits in 64 KiB, padded with spaces at the innermost level.
+  const deepest = (wrap: (inner: string) => string): string => {
+    let best = '';
+    for (let levels = 1; ; levels += 1) {
+      let overhead = '[]';
+      for (let level = 0; level < levels; level += 1) {
+        overhead = wrap(overhead);
+      }
+      const padding = 65_536 - 200 - overhead.length;
+      if (padding < 0) {
+        return best;
+      }
+      let head = `[${' '.repeat(padding)}]`;
+      for (let level = 0; level < levels; level += 1) {
+        head = wrap(head);
+      }
+      best = head;
+    }
+  };
+  for (const head of [
+    codex,
+    deepest((inner) => `{${JSON.stringify(inner)}:1}`),
+    deepest((inner) => `x ${JSON.stringify(inner)} y`),
+    deepest((inner) => `{"a":${JSON.stringify(inner)}}`),
+  ]) {
+    const started = performance.now();
+    const output = redactDistillationText(`Output:\n${head}${tail(escapedSecret)}`);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+    expect(output).toBe(`Output:\n${head}${tail(escapedSlot)}`);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('embedded JSON nested past the bound becomes the marker in place', () => {
+  const nest = (inner: string, levels: number): string => `${'['.repeat(levels)}${inner}${']'.repeat(levels)}`;
+  const marker = DISTILLATION_TOO_DEEP_MARKER;
+  for (const [value, expected] of [
+    // In an envelope, without and with strings inside.
+    [`Output:\n${nest('', 300)} done`, `Output:\n${marker} done`],
+    [`Output:\n${nest('{"password":"hunter2"}', 300)}`, `Output:\n${marker}`],
+    [`Output:\n${nest('"x"', 257)}`, `Output:\n${marker}`],
+    // Inside a JSON string value, as the whole string and embedded in it.
+    [JSON.stringify({ log: nest('', 300) }), JSON.stringify({ log: marker })],
+    [
+      JSON.stringify({ log: `Output:\n${nest('{"password":"hunter2"}', 300)} done` }),
+      JSON.stringify({ log: `Output:\n${marker} done` }),
+    ],
+    // As a JSON key, in a document and in a prefix cut after the key.
+    [JSON.stringify({ [nest('', 300)]: 1 }), JSON.stringify({ [marker]: 1 })],
+    [`Output:\n{${JSON.stringify(nest('', 300))}:1}`, `Output:\n{${JSON.stringify(marker)}:1}`],
+    [`Output:\n{${JSON.stringify(nest('', 300))}:1`, `Output:\n{${JSON.stringify(marker)}:1`],
+    // Inside an escaped string literal.
+    [`Output:\n${JSON.stringify(nest('"x"', 300))}`, `Output:\n${JSON.stringify(marker)}`],
+    [`Output:\n${JSON.stringify(nest('{"password":"hunter2"}', 300))} done`, `Output:\n${JSON.stringify(marker)} done`],
+    // In a member a duplicate key drops, and in the one it keeps.
+    [`{"cmd":${JSON.stringify(nest('', 300))},"cmd":"ok"}`, '{"cmd":"ok"}'],
+    [`{"cmd":"ok","cmd":${JSON.stringify(nest('', 300))}}`, JSON.stringify({ cmd: marker })],
+    // Secrets after the document are still redacted.
+    [`Output:\n${nest('', 300)}\nFinal output:\n${escapedSecret}`, `Output:\n${marker}\nFinal output:\n${escapedSlot}`],
+    [`Output:\n${nest('', 300)} {"password":"hunter2"}`, `Output:\n${marker} {"password": "[REDACTED]"}`],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(output).not.toContain('[[');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+  // The marker is a fixed point wherever it lands.
+  for (const value of [JSON.stringify({ log: marker }), `Output:\n${marker} done`, JSON.stringify({ [marker]: 1 })]) {
+    expect(redactDistillationText(value)).toBe(value);
+  }
+});
+
+test('the nesting bound of an embedded document counts every container, including hidden members', () => {
+  const nest = (inner: string, levels: number): string => `${'['.repeat(levels)}${inner}${']'.repeat(levels)}`;
+  const marker = DISTILLATION_TOO_DEEP_MARKER;
+  for (const [value, expected] of [
+    [`Output:\n${nest('', 256)}`, `Output:\n${nest('', 256)}`],
+    [`Output:\n${nest('', 257)}`, `Output:\n${marker}`],
+    // The object around the arrays is a level: 255 arrays fit, 256 do not.
+    [`Output:\n{"my.token":1,"x":${nest('"s"', 255)}}`, `Output:\n{"my.token":"[REDACTED]","x":${nest('"s"', 255)}}`],
+    [`Output:\n{"my.token":1,"x":${nest('"s"', 256)}}`, `Output:\n${marker}`],
+    // A member a duplicate key hides counts toward the bound.
+    [`Output:\n{"a":${nest('', 256)},"a":1}`, `Output:\n${marker}`],
+    [`Output:\n{"a":${nest('', 255)},"a":1,"my.token":1}`, 'Output:\n{"a":1,"my.token":"[REDACTED]"}'],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('a covered output is kept only when it shows nothing the output without covering hides', () => {
+  // Covered whole, the token's value leaves the truncated object unclosed, so the nested pass never judges
+  // the dotted key; without covering, the value's closer closes the object, the key is judged, and the
+  // value's rest stays visible. Neither output hides everything the other does, so the text fails closed.
+  for (const value of [
+    'Output: {"db.password":"hunter2","token":{"a":1,"b":2}',
+    JSON.stringify({ out: 'Output: {"db.password":"hunter2","token":{"a":1,"b":2}' }),
+  ]) {
+    expect(redactDistillationText(value)).toBe('[REDACTED]');
+  }
+  for (const [value, expected] of [
+    // Closed, the object is judged either way, and the covered output stands.
+    [
+      'Output: {"db.password":"hunter2","token":{"a":1,"b":2}}',
+      'Output: {"db.password":"[REDACTED]","token":"[REDACTED]"}',
+    ],
+    // The nested pass re-emits the covered document as the member its duplicate key keeps; every run of
+    // the result between placeholders is text the output without covering shows.
+    [
+      'Script output: {"my.token":[\n  "a",\n  {\n    "apiKey": {\n      "v": "hunter2"\n    }\n  }\n],"my.token":{"token":{"v":"hunter3"}}}\n',
+      'Script output: {"my.token":"[REDACTED]"}}\n',
+    ],
+    [
+      'Output: {"token":{"v":"hunter2"}} {"my.token":"hunter3"}',
+      'Output: {"token": "[REDACTED]"}} {"my.token":"[REDACTED]"}',
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('string nesting spelled with \\u escapes cannot grow the output past a bound', () => {
+  const literal = (inner: string): string => `"${inner.replaceAll('\\', '\\u005c').replaceAll('"', '\\u0022')}"`;
+  // The same through key literals of truncated objects, which only the key path of the pass reaches.
+  for (const levels of [24, 32]) {
+    let value = '{"db.password":"hunter2"}';
+    for (let level = 0; level < levels; level += 1) {
+      value = `x {${literal(value)}:1`;
+    }
+    const started = performance.now();
+    const output = redactDistillationText(value);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(output.length).toBeLessThan(4 * value.length + 1024);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+  // Each level encodes the quotes and backslashes of the next as \u escapes, so the input grows linearly
+  // per level while re-emission with short escapes would double per level.
+  const layered = (levels: number): string => {
+    let text = '{"db.password":"hunter2"}';
+    for (let level = 0; level < levels; level += 1) {
+      text = `"${text.replaceAll('\\', '\\u005c').replaceAll('"', '\\u0022')}"`;
+    }
+    return text;
+  };
+  for (const levels of [20, 40]) {
+    const value = layered(levels);
+    const started = performance.now();
+    const output = redactDistillationText(value);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(output.length).toBeLessThan(4 * value.length + 1024);
+    expect(output).not.toContain('hunter2');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('a covered output keeps a partly redacted value only when the other output shows that field too', () => {
+  // The value's own placeholders are text, not slots: the covered output shows `hunter2` as part of the
+  // password, which the output without covering hides there, so the text fails closed.
+  const value =
+    'Output: {"db.password":"[REDACTED]hunter2[REDACTED]","token":{"a":1,"b":"hunter2","z":{"c":1,"token":2}}';
+  expect(redactDistillationText(value)).toBe('[REDACTED]');
+  // Whitespace aside, a pretty-printed envelope compares with its compact re-emission.
+  const pretty = 'Output: {\n  "db.password": "x",\n  "token": {\n    "a": 1\n  },\n  "b": 2\n}';
+  const output = redactDistillationText(pretty);
+  expect(output).toBe('Output: {"db.password":"[REDACTED]","token":"[REDACTED]","b":2}');
+  expect(redactDistillationText(output)).toBe(output);
+});
+
+test('comparing a covered output costs linear time on long whitespace runs', () => {
+  const value = `Output: {"token":{"a":1,"b":2}}${' '.repeat(60_000)}"x"`;
+  const started = performance.now();
+  const output = redactDistillationText(value);
+  expect(performance.now() - started).toBeLessThan(1000);
+  expect(output).toBe(`Output: {"token": "[REDACTED]"}${' '.repeat(60_000)}"x"`);
+  expect(redactDistillationText(output)).toBe(output);
+});
+
+test('a credential inside a sensitive key is redacted while the key stays sensitive', () => {
+  for (const [value, expected] of [
+    ['Output:\n{"https:\\/\\/u:hunter2@h\\/token":"[REDACTED]"}', 'Output:\n{"[REDACTED]h/token":"[REDACTED]"}'],
+    ['Output:\n{"https:\\/\\/u:hunter2@h\\/token":1', 'Output:\n{"[REDACTED]h/token":1'],
+    ['Output:\n{"https:\\/\\/u:hunter2@h\\/token"', 'Output:\n{"[REDACTED]h/token"'],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    for (let end = 1; end <= output.length; end += 1) {
+      const quote = output.slice(0, end);
+      expect(redactDistillationText(quote)).toBe(quote);
+    }
+  }
+  // Names the shared rules would read as credentials themselves keep their text.
+  for (const value of ['{"secret:token":"[REDACTED]"}', '{"settings.database.password":"[REDACTED]"}']) {
+    expect(redactDistillationText(value)).toBe(value);
   }
 });

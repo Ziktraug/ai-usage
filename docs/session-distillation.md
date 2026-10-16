@@ -219,14 +219,33 @@ evidence for their earlier analyses reports `changed`. Events holding JSON with
 duplicate keys that needs redaction are among them: such JSON is now redacted
 from the members the parser keeps, while clean duplicate-key JSON stays
 byte-identical. So is text outside parsed JSON (tool envelopes, JSON string
-contents) whose secret-keyed value is a nested object or array that kept
-content visible past its first token: when its brackets balance and the
-covered output differs from the previous one only by text removed right after
-`[REDACTED]` slots, the whole value is now masked; otherwise the previous output
-stands. Evidence reload rebuilds
-packets with the current rules and version, so a version bump would report
-every published analysis as `changed`. Packets stored before a fix keep their
-text; re-redaction cannot recover a fragment the earlier rules left outside a
+contents) whose secret-keyed value is a nested object or array that kept content
+visible past its first token: when its brackets balance and the covered output
+differs from the previous one only by text removed right after `[REDACTED]`
+slots, the whole value is now masked; otherwise the previous output stands. So
+are events whose JSON embedded in a tool envelope (also as an escaped string
+literal) or nested in a JSON string needs redaction: once the raw-text rules
+leave the text unchanged, the JSON rules now judge such JSON at every level,
+without the Memory domain limits, and the version stays 1. The covering choice
+above is made on the whole text first; this pass judges what it leaves and never
+covers values itself, and the two alternate until neither changes the text. Once
+a covered output has stood, the rounds also run without covering, and the
+covered output is kept only when every run of it between whole-value
+placeholders is text the other output shows, whitespace aside; otherwise (a
+value covered whole can leave a truncated object unclosed, so the pass never
+judges it) the whole text becomes `[REDACTED]`. A secret the raw text escapes
+inside a JSON key (`https:\/\/user:password@host`) is now redacted as key text
+too, also in a sensitive key whose name survives it. A re-emitted document that
+outgrows its own text more than fourfold (string nesting spelled with `\u`
+escapes doubles per level) becomes `[REDACTED]`. Embedded JSON nested deeper
+than 256 levels is replaced in place by the marker below. This pass is bounded
+by a scan budget: past it, the rest of the text keeps the earlier rules' output.
+JSON the raw-text rules damage first (container values under sensitive keys,
+which a slot now covers whole; sensitive dotted keys the shared token-shaped
+rule rewrites) is judged only as far as it survives. Evidence reload rebuilds
+packets with the current rules and version, so a version bump would report every
+published analysis as `changed`. Packets stored before a fix keep their text;
+re-redaction cannot recover a fragment the earlier rules left outside a
 `[REDACTED]` slot.
 
 Event text is not Memory content, so the Memory domain's JSON limits (empty or
