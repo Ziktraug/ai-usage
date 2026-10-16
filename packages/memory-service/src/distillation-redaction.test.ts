@@ -559,3 +559,306 @@ test('large JSON documents redact within the time budget', () => {
   expect(redactDistillationText(secret)).toBe(JSON.stringify([...items, { password: '[REDACTED]' }]));
   expect(performance.now() - started).toBeLessThan(1000);
 });
+
+test('a nested object or array value is masked whole, not just its first token', () => {
+  for (const [value, expected, secret] of [
+    ['Output: {"password": {"value": "hunter2"}}', 'Output: {"password": "[REDACTED]"}', 'hunter2'],
+    ['Output: {"token": ["a", "hunter2"]}', 'Output: {"token": "[REDACTED]"}', 'hunter2'],
+    ["Result: {'api_key': {'v': 'hunter2'}} done", `Result: {'api_key': "[REDACTED]"} done`, 'hunter2'],
+    [
+      'Output:\n{\n  "token": {\n    "value": "hunter2",\n    "items": [1, 2]\n  },\n  "ok": true\n}\n',
+      'Output:\n{\n  "token": "[REDACTED]",\n  "ok": true\n}\n',
+      'hunter2',
+    ],
+    // Brackets and quotes inside the value's strings do not end it.
+    [
+      String.raw`Output: {"token": {"v": "a]b}c\"d", "w": "hunter2"}} done`,
+      'Output: {"token": "[REDACTED]"} done',
+      'hunter2',
+    ],
+    [`Output: {'token': ["it's", 'hunter2']} done`, `Output: {'token': "[REDACTED]"} done`, 'hunter2'],
+    [
+      'Output: {"token": [{"a": 1}, {"b": "hunter2"}], "ok": true} done',
+      'Output: {"token": "[REDACTED]", "ok": true} done',
+      'hunter2',
+    ],
+    // Secret keys nested in a plain object get their own slots; inside a covered value they are covered.
+    [
+      'Output: {"auth": {"password": "hunter2", "api_key": ["x", "hunter3"]}} done',
+      'Output: {"auth": {"password": "[REDACTED]", "api_key": "[REDACTED]"}} done',
+      'hunter3',
+    ],
+    ['Output: {"secret": {"password": {"token": "hunter2"}}} done', 'Output: {"secret": "[REDACTED]"} done', 'hunter2'],
+    // A secret the shared rules hide elsewhere in the envelope does not stop the value being covered.
+    [
+      'Output: {"token": ["a", "hunter2"]} Bearer abcdefghijkl',
+      'Output: {"token": "[REDACTED]"} [REDACTED]',
+      'hunter2',
+    ],
+    // The structured path masks a nested value inside a JSON string the same way.
+    [
+      JSON.stringify({ cmd: 'echo {"token": ["a", "hunter2"]}' }),
+      String.raw`{"cmd":"echo {\"token\": \"[REDACTED]\"}"}`,
+      'hunter2',
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain(secret);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('a nested value that leaves only brackets and separators visible keeps the existing output', () => {
+  for (const [value, expected] of [
+    ['"token":[redacted]', '"token": "[REDACTED]"]'],
+    ['"token":[REDACTED]', '"token":[REDACTED]'],
+    ['Output: {"token": []} rest', 'Output: {"token": "[REDACTED]"]} rest'],
+    ['Output: {"token": {}} rest', 'Output: {"token": "[REDACTED]"}} rest'],
+    ['"token": [ ]', '"token": "[REDACTED]" ]'],
+    ['"token":[x]', '"token": "[REDACTED]"]'],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('a nested value the slot cannot cover safely keeps the existing output', () => {
+  const nest = (inner: string, levels: number): string => `${'['.repeat(levels)}${inner}${']'.repeat(levels)}`;
+  for (const [value, expected, secret] of [
+    // Truncated or mismatched brackets.
+    ['Output: {"token": ["a", "hunter2"', 'Output: {"token": "[REDACTED]", "hunter2"', '"a"'],
+    ['Output: {"token": ["a", "hunter2"}] rest', 'Output: {"token": "[REDACTED]", "hunter2"}] rest', '"a"'],
+    // A shared-rule match starting inside the value runs past it; hiding its start would expose "def".
+    ['"token": [x, password=abc]def', '"token": "[REDACTED]", [REDACTED]', 'def'],
+    // A PEM footer inside the value closes a header before the slot; hiding it would expose the body.
+    [
+      '-----BEGIN RSA PRIVATE KEY-----\nPEMBODY\n"token": [x,\n-----END RSA PRIVATE KEY-----] tail',
+      '[REDACTED]] tail',
+      'PEMBODY',
+    ],
+    // A later slot straddles the value's end; cutting it would expose "y".
+    ['{"password": [a, "token":x]y}', '{"password": "[REDACTED]", "token": "[REDACTED]"}', 'y}'],
+    [
+      'Output: {"password": [a, "token":x]hunter2} rest',
+      'Output: {"password": "[REDACTED]", "token": "[REDACTED]"} rest',
+      'hunter2',
+    ],
+    // Masked whole, the text becomes JSON nested past the bound, which fails closed; the budget-free extent
+    // keeps the head only.
+    [nest('{"token":{"a": b c}}', 256), nest('{"token": "[REDACTED]" b c}}', 256), '{"a"'],
+    // There the budget-free extent shows a tail the masking without covering absorbs, so that output stands.
+    [nest('{"token":{"a":"x]hunter2}" b}}', 256), nest('{"token": "[REDACTED]"}" b}}', 256), 'hunter2'],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain(secret);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+  // JSON the Memory domain rejects (an empty key, a non-finite number) is covered like any other.
+  for (const [value, expected] of [
+    ['{"":1,"token":{"a": b c}}', '{"":1,"token": "[REDACTED]"}'],
+    ['{"":1,"token":{"a":"x]hunter2}" b}}', '{"":1,"token": "[REDACTED]"}'],
+    ['{"n":1e400,"token":{"a":"x]hunter2}" b}}', '{"n":1e400,"token": "[REDACTED]"}'],
+    [nest('{"token":{"a": b c}}', 255), nest('{"token": "[REDACTED]"}', 255)],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('a value the slot cannot cover safely keeps its extent while a later one is still covered', () => {
+  for (const [value, expected, hidden] of [
+    // A shared-rule match starting inside the value runs past it.
+    [
+      '"token": [x, password=abc]def Output: {"api_key": ["a", "hunter3"]}',
+      '"token": "[REDACTED]", [REDACTED] Output: {"api_key": "[REDACTED]"}',
+      'def',
+    ],
+    // A PEM footer inside the value closes a header before the slot.
+    [
+      '-----BEGIN RSA PRIVATE KEY-----\nPEMBODY\n"token": [x,\n-----END RSA PRIVATE KEY-----] tail Output: {"api_key": ["a", "hunter3"]}',
+      '[REDACTED]] tail Output: {"api_key": "[REDACTED]"}',
+      'PEMBODY',
+    ],
+    // A later slot straddles the value's end.
+    [
+      'Output: {"password": [a, "token":x]hunter2} rest Output: {"api_key": ["a", "hunter3"]}',
+      'Output: {"password": "[REDACTED]", "token": "[REDACTED]"} rest Output: {"api_key": "[REDACTED]"}',
+      'hunter2',
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain(hidden);
+    expect(output).not.toContain('hunter3');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('the previous output stands unless covering only removes text after slots and settles', () => {
+  const nest = (inner: string, levels: number): string => `${'['.repeat(levels)}${inner}${']'.repeat(levels)}`;
+  for (const [value, expected, hidden] of [
+    // The value's closer left after its head closes the object: the next step's structured pass redacts it.
+    [
+      '{"db.password":"hunter2","token":{"type":"bearer","value":"x"}',
+      '{"db.password":"[REDACTED]","token":"[REDACTED]","value":"x"}',
+      'hunter2',
+    ],
+    [
+      '[{"auth token":"hunter2","secret":[{"a":1},2]',
+      '[{"auth token":"[REDACTED]","secret":"[REDACTED]"},2]',
+      'hunter2',
+    ],
+    [
+      String.raw`{"k":"a \"password\": hunter2","token":{"a":1,"x":1}`,
+      String.raw`{"k":"a \"password\": \"[REDACTED]\"","token":"[REDACTED]","x":1}`,
+      'hunter2',
+    ],
+    // An empty key does not change that: event JSON is not held to the Memory domain's limits.
+    [
+      '{"":1,"db.password":"hunter2","token":{"a":1,"x":1}',
+      '{"":1,"db.password":"[REDACTED]","token":"[REDACTED]","x":1}',
+      'hunter2',
+    ],
+    // The same closer makes JSON nested past the bound, which fails closed.
+    [nest('{"db.password":"hunter2","token":{"a":1,"x":1}', 256), DISTILLATION_TOO_DEEP_MARKER, 'hunter2'],
+    // A later pass of the URL rule eats the stray quote, so the text becomes JSON only with the closer.
+    [
+      '{"db.password":"hunter2","u":"http://a:x"http://b:p@@","token":{"type":"bearer","value":"x"}',
+      '{"db.password":"[REDACTED]","u":"[REDACTED]","token":"[REDACTED]","value":"x"}',
+      'hunter2',
+    ],
+    // The URL rule runs from inside the value to a later "@" and hides what lies between.
+    [
+      '"token":{"a":1,"url":"https://h:8443"},"mirror":"https://bob:pw@MARK@y"',
+      '"token": "[REDACTED]","url":"[REDACTED]y"',
+      'MARK',
+    ],
+    ['"token":{a http://u:x}http://v:p@MARK@', '"token": "[REDACTED]" [REDACTED]', 'MARK'],
+    [
+      `{"cmd":"curl 'token': [1, 'https://h:8443']","email":"bob@example.com"}`,
+      `{"cmd":"curl 'token': "[REDACTED]"", '[REDACTED]example.com"}`,
+      '"email":"bob@',
+    ],
+    // The closer makes JSON whose structured pass hides a value that also shows elsewhere, or has no words.
+    [
+      '{"db.password":"hunter2","user":"hunter2","token":{"type":"bearer","value":"x"}',
+      '{"db.password":"[REDACTED]","user":"hunter2","token":"[REDACTED]","value":"x"}',
+      '"db.password":"hunter2"',
+    ],
+    [
+      '{"spring.datasource.password":"password","token":{"type":"bearer","value":"x"}',
+      '{"spring.datasource.password":"[REDACTED]","token":"[REDACTED]","value":"x"}',
+      '"spring.datasource.password":"password"',
+    ],
+    [
+      '{"db.user":"postgres","db.password":"postgres","token":{"type":"bearer","value":"x"}',
+      '{"db.user":"postgres","db.password":"[REDACTED]","token":"[REDACTED]","value":"x"}',
+      '"db.password":"postgres"',
+    ],
+    [
+      '{"db.password":"%$#!","token":{"type":"bearer","value":"x"}',
+      '{"db.password":"[REDACTED]","token":"[REDACTED]","value":"x"}',
+      '%$#!',
+    ],
+    [
+      '[{"auth token":"admin-admin","user":"admin","secret":[{"a":1},2]',
+      '[{"auth token":"[REDACTED]","user":"admin","secret":"[REDACTED]"},2]',
+      'admin-admin',
+    ],
+    // Covered, a later pass makes JSON nested past the bound and the text fails closed: no slot is left.
+    [
+      nest('{"password":{"a": x y},"u":"http://a:x"http://b:hunter2@@"}', 256),
+      nest('{"password": "[REDACTED]" x y},"u":"[REDACTED]"}', 256),
+      'hunter2',
+    ],
+    // Within the bound, and with an empty key, the covered output settles and stands.
+    [
+      '{"password":{"a": x y},"u":"http://a:x"http://b:hunter2@@","":1}',
+      '{"password": "[REDACTED]","u":"[REDACTED]","":1}',
+      'hunter2',
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain(hidden);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+  // Covered whole, these texts become JSON whose escaped URL chain unwinds one level per step past the
+  // step limit; the previous output is raw text that settles.
+  const chain = (levels: number, host: string, user: string): string =>
+    `${String.raw`http:\/\/${host}:`.repeat(levels)}${user}${'@'.repeat(levels)}`;
+  for (const [value, expected] of [
+    [`{"token":{"a": x y},"u":"${chain(7, 'a', 'p')}"}`, `{"token": "[REDACTED]" x y},"u":"${chain(7, 'a', 'p')}"}`],
+    [
+      `{"u":"http://a:x"http://b:p@@","v":"${chain(7, 'c', 'q')}","token":{"a":1,"b":2}}`,
+      `{"u":"[REDACTED]","v":"${chain(7, 'c', 'q')}","token": "[REDACTED]","b":2}}`,
+    ],
+    [
+      `{"u":"http://a:x"http://b:p@@","v":"${chain(6, 'c', 'q')}","token":{"a":1,"b":2}}`,
+      `{"u":"[REDACTED]","v":"${chain(6, 'c', 'q')}","token": "[REDACTED]","b":2}}`,
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toBe('[REDACTED]');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('covering keeps every other slot and the text between covered values', () => {
+  for (const [value, expected, secret] of [
+    // An unrelated slot before the covered value.
+    [
+      'Output: {"password": "hunter1", "token": ["a", "hunter2"]}',
+      'Output: {"password": "[REDACTED]", "token": "[REDACTED]"}',
+      'hunter2',
+    ],
+    // Two covered values with text between them.
+    [
+      'Output: {"token": ["a", "hunter2"]} then {"secret": {"v": "hunter3"}} done',
+      'Output: {"token": "[REDACTED]"} then {"secret": "[REDACTED]"} done',
+      'hunter3',
+    ],
+    // Covered values inside a serialized JSON string.
+    [
+      JSON.stringify({ cmd: 'echo {"token": ["a", "hunter2"]} && echo {"secret": {"v": "hunter3"}}' }),
+      String.raw`{"cmd":"echo {\"token\": \"[REDACTED]\"} && echo {\"secret\": \"[REDACTED]\"}"}`,
+      'hunter3',
+    ],
+  ] as const) {
+    const output = redactDistillationText(value);
+    expect(output).toBe(expected);
+    expect(output).not.toContain('hunter2');
+    expect(output).not.toContain(secret);
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});
+
+test('nested values have their own budget and never change tail absorption', () => {
+  // The 1500-slot tail text from the rescan budget test, behind a nested value that is masked whole and
+  // one whose unterminated string scans to the end: either way the slots absorb exactly the same tails.
+  const slots = '"token":x]y '.repeat(1500);
+  const plain = redactDistillationText(`out: "token": x ${slots}`);
+  expect(plain.split('"token": "[REDACTED]"]y ').length - 1).toBeGreaterThan(0);
+  expect(redactDistillationText(`out: "token": [a, b] ${slots}`)).toBe(plain);
+  expect(redactDistillationText(`out: "token": [' ${slots}`)).toBe(redactDistillationText(`out: "token": x' ${slots}`));
+  // Many nested values in one text: the first are masked whole; past the allowance the rest keep the
+  // extent they had before.
+  for (const [value, last] of [
+    [`out: ${'"token": [\' '.repeat(20_000)}`, '"token": "[REDACTED]" '],
+    [`out: ${'"token": ["a", "hunter2"] '.repeat(5000)}`, '"token": "[REDACTED]", "hunter2"] '],
+  ] as const) {
+    const started = performance.now();
+    const output = redactDistillationText(value);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+    expect(output.startsWith('out: "token": "[REDACTED]" "token": "[REDACTED]" ')).toBe(true);
+    expect(output.endsWith(last)).toBe(true);
+    expect(output).not.toContain(': [');
+    expect(redactDistillationText(output)).toBe(output);
+  }
+});

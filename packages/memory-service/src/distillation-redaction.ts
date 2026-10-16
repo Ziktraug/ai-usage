@@ -30,53 +30,160 @@ const bareTail = String.raw`(?:[}\]]+[^\s,;}\]"'{\[]+)*`;
 const quotedSecret = new RegExp(`${secretKey}(?:(${quotedValue})|(${bareHead})(${bareTail}))`, 'giu');
 const redactString = (value: string): string => String(redactMemoryValue(value, 'normal').value);
 const placeholders = new Set(['"[REDACTED]"', "'[REDACTED]'"]);
+// One slot match as masked on its own: `text` replaces whole[start, end) and hides the value up to
+// `hidden` (a kept placeholder or a verbatim tail leaves the rest visible). `opener` is where a bare
+// value opening a bracket starts, -1 otherwise; `head` is where its head ends.
+interface SlotMatch {
+  readonly end: number;
+  readonly head: number;
+  readonly hidden: number;
+  readonly opener: number;
+  readonly slot: string;
+  readonly start: number;
+  readonly text: string;
+}
+// Whether a match from index `from` on starts before `end` and runs past it.
+const straddles = (matches: readonly SlotMatch[], from: number, end: number): boolean => {
+  for (let index = from; index < matches.length; index += 1) {
+    const match = matches[index];
+    if (match === undefined || match.start >= end) {
+      return false;
+    }
+    if (match.end > end) {
+      return true;
+    }
+  }
+  return false;
+};
+// More of a nested value than its brackets and separators.
+const valueText = /[^\s,:;{}[\]]/u;
 // A closing bracket continues a bare value unless the shared rules match text starting there; then the
 // tail stays verbatim and they mask it. With keepFilled, an exact placeholder is a filled slot and stays.
 // One rescan budget per phase bounds those checks across every string of the text; past it the value
 // ends at the bracket as before.
-const maskSlots = (keepFilled: boolean, budget: number): Mask => {
+// A bare value opening a bracket is a nested object or array: when its brackets balance (brackets in
+// quoted strings do not count) and the extent above leaves more than brackets and separators of it
+// visible, the slot covers it whole. It keeps that extent when covering would cut a later match, hide a
+// PEM marker (as for tails) or hide text a shared-rule match starts in. Nested values draw on their own
+// allowance of the same size, so every tail decision is the one made without them; past it they keep the
+// extent above. Without an allowance the mask is the one without nested values.
+const maskSlots = (keepFilled: boolean, budget: number, nestedBudget = budget): Mask => {
   let remaining = budget;
-  return (value) =>
-    value.replace(
-      quotedSecret,
-      (
-        match: string,
-        quote: string,
-        key: string,
-        quoted: string | undefined,
-        head: string | undefined,
-        tail: string | undefined,
-        offset: number,
-        whole: string,
-      ) => {
-        const slot = `${quote}${key}${quote}: "[REDACTED]"`;
-        if (head === undefined || tail === undefined) {
-          return keepFilled && quoted !== undefined && placeholders.has(quoted) ? match : slot;
+  let allowance = nestedBudget;
+  const decide = (found: RegExpExecArray, whole: string): SlotMatch => {
+    const [match, quote = '', key = '', quoted, head, tail] = found;
+    const offset = found.index;
+    const end = offset + match.length;
+    const headEnd = end - (tail?.length ?? 0);
+    const opener = head?.startsWith('{') || head?.startsWith('[') ? headEnd - head.length : -1;
+    const slot = `${quote}${key}${quote}: "[REDACTED]"`;
+    const replace = (text: string, hidden: number): SlotMatch => ({
+      end,
+      head: headEnd,
+      hidden,
+      opener,
+      slot,
+      start: offset,
+      text,
+    });
+    if (head === undefined || tail === undefined) {
+      return replace(keepFilled && quoted !== undefined && placeholders.has(quoted) ? match : slot, end);
+    }
+    if (tail === '') {
+      return replace(keepFilled && head === '[REDACTED' && whole[offset + match.length] === ']' ? match : slot, end);
+    }
+    const tailStart = offset + match.length - tail.length;
+    const rest = whole.slice(tailStart);
+    let overlap = true;
+    // memory-redaction-v1's PEM rule is the only shared rule whose match spans whitespace, so it is
+    // the only one that can begin before a slot and end inside its tail (the other rules' runs stop
+    // at the space the slot replacement inserts): a tail holding a PEM marker stays outside.
+    if (!tail.includes('-----') && rest.length <= remaining) {
+      remaining -= rest.length;
+      const masked = redactString(rest);
+      overlap = false;
+      for (let index = 0; index < tail.length && !overlap; index += 1) {
+        overlap = masked[index] !== rest[index];
+      }
+    }
+    const bare = overlap ? head : `${head}${tail}`;
+    if (keepFilled && bare === '[REDACTED' && whole[tailStart - head.length + bare.length] === ']') {
+      return replace(match, tailStart);
+    }
+    return overlap ? replace(`${slot}${tail}`, tailStart) : replace(slot, end);
+  };
+  // The end of the bracketed value opening at `start`, or -1 when its brackets do not balance within the
+  // allowance. In a quoted string a backslash skips the next character. Charges what it reads.
+  const balancedEnd = (whole: string, start: number): number => {
+    const limit = Math.min(whole.length, start + allowance);
+    const closers: string[] = [];
+    let quote = '';
+    let index = start;
+    while (index < limit) {
+      const char = whole[index];
+      index += 1;
+      if (quote !== '') {
+        if (char === '\\') {
+          index += 1;
+        } else if (char === quote) {
+          quote = '';
         }
-        if (tail === '') {
-          return keepFilled && head === '[REDACTED' && whole[offset + match.length] === ']' ? match : slot;
+      } else if (char === '"' || char === "'") {
+        quote = char;
+      } else if (char === '{' || char === '[') {
+        closers.push(char === '{' ? '}' : ']');
+      } else if (char === '}' || char === ']') {
+        if (closers.pop() !== char) {
+          break;
         }
-        const tailStart = offset + match.length - tail.length;
-        const rest = whole.slice(tailStart);
-        let overlap = true;
-        // memory-redaction-v1's PEM rule is the only shared rule whose match spans whitespace, so it is
-        // the only one that can begin before a slot and end inside its tail (the other rules' runs stop
-        // at the space the slot replacement inserts): a tail holding a PEM marker stays outside.
-        if (!tail.includes('-----') && rest.length <= remaining) {
-          remaining -= rest.length;
-          const masked = redactString(rest);
-          overlap = false;
-          for (let index = 0; index < tail.length && !overlap; index += 1) {
-            overlap = masked[index] !== rest[index];
-          }
+        if (closers.length === 0) {
+          allowance -= index - start;
+          return index;
         }
-        const bare = overlap ? head : `${head}${tail}`;
-        if (keepFilled && bare === '[REDACTED' && whole[tailStart - head.length + bare.length] === ']') {
-          return match;
-        }
-        return overlap ? `${slot}${tail}` : slot;
-      },
-    );
+      }
+    }
+    allowance -= Math.min(index, limit) - start;
+    return -1;
+  };
+  // The end of the nested value `match` opens when its slot covers it whole, otherwise -1.
+  const nestedEnd = (whole: string, matches: readonly SlotMatch[], index: number, match: SlotMatch): number => {
+    const end = balancedEnd(whole, match.opener);
+    if (
+      end === -1 ||
+      end <= match.hidden ||
+      !valueText.test(whole.slice(match.hidden, end)) ||
+      straddles(matches, index + 1, end) ||
+      whole.slice(match.head, end).includes('-----')
+    ) {
+      return -1;
+    }
+    const rest = whole.slice(match.head);
+    if (rest.length > allowance) {
+      return -1;
+    }
+    allowance -= rest.length;
+    const masked = redactString(rest);
+    for (let offset = 0; offset < end - match.head; offset += 1) {
+      if (masked[offset] !== rest[offset]) {
+        return -1;
+      }
+    }
+    return end;
+  };
+  return (value) => {
+    const matches = Array.from(value.matchAll(quotedSecret), (found) => decide(found, value));
+    let output = '';
+    let copied = 0;
+    for (const [index, match] of matches.entries()) {
+      // A match inside a nested value that an earlier slot covers is part of that slot.
+      if (match.start >= copied) {
+        const end = match.opener === -1 ? -1 : nestedEnd(value, matches, index, match);
+        output += value.slice(copied, match.start) + (end === -1 ? match.text : match.slot);
+        copied = end === -1 ? match.end : end;
+      }
+    }
+    return output + value.slice(copied);
+  };
 };
 const redactText = (value: string, mask: Mask): string => redactString(mask(value));
 // A key the shared rules judge sensitive keeps its text, as in redactMemoryValue itself: its value is
@@ -268,8 +375,55 @@ const RESCAN_BUDGET = 2 ** 20;
 // Each step settles one layer (an absorbed tail, collapsed keys, one nesting level of a credential);
 // text that has not converged after this many steps is replaced outright.
 const MAX_STEPS = 8;
-const step = (text: string): string =>
-  isRedacted(text, maskSlots(true, RESCAN_BUDGET)) ? text : redact(text, maskSlots(false, RESCAN_BUDGET));
+const step = (text: string, nestedBudget: number): string =>
+  isRedacted(text, maskSlots(true, RESCAN_BUDGET, nestedBudget))
+    ? text
+    : redact(text, maskSlots(false, RESCAN_BUDGET, nestedBudget));
+// The text the steps settle on, or null when it is still changing after MAX_STEPS steps.
+const converge = (value: string, nestedBudget: number): string | null => {
+  let text = value;
+  for (let count = 0; count < MAX_STEPS; count += 1) {
+    const next = step(text, nestedBudget);
+    if (next === text) {
+      return text;
+    }
+    text = next;
+  }
+  return null;
+};
+// The closing quote of a placeholder, raw or inside a serialized JSON string.
+const placeholderEnd = /\[REDACTED\]\\?"/gu;
+/**
+ * Covering only ever removes text right after a slot. Cut the covered output after every placeholder:
+ * the first piece must start the output without covering, each later one must follow in it, the last
+ * must end it, and none may overlap (the earliest occurrence of each is the one that leaves the most
+ * room). Then every character of the covered output appears verbatim, in order and in the same
+ * surroundings, in the output without covering; only text after a placeholder may be gone. Anything else
+ * (a later step that turned one text into JSON and not the other, a second pass of a shared rule) could
+ * show text the output without covering hides, so that output stands.
+ */
+const removesOnlyAfterSlots = (covered: string, plain: string): boolean => {
+  let from = 0;
+  let at = 0;
+  for (const match of covered.matchAll(placeholderEnd)) {
+    const end = match.index + match[0].length;
+    const piece = covered.slice(from, end);
+    if (from === 0 && !plain.startsWith(piece)) {
+      return false;
+    }
+    const found = plain.indexOf(piece, at);
+    if (found === -1) {
+      return false;
+    }
+    at = found + piece.length;
+    from = end;
+  }
+  if (from === 0) {
+    return covered === plain;
+  }
+  const last = covered.slice(from);
+  return plain.endsWith(last) && plain.length - last.length >= at;
+};
 
 /**
  * Redacts JSON payloads, nested command strings, and JSON embedded in tool envelopes.
@@ -278,18 +432,24 @@ const step = (text: string): string =>
  * anything else gets the raw-text rules. Members dropped by duplicate keys are never returned
  * unredacted; a duplicate-key document whose every member is already clean stays as it is. JSON
  * nested past DISTILLATION_JSON_MAX_DEPTH becomes DISTILLATION_TOO_DEEP_MARKER instead of throwing.
+ * Nested object and array values after a secret key are covered whole, unless the output then differs
+ * from the one without covering by more than text removed after slots, or does not settle; then the
+ * output without covering stands.
  * The output is a fixed point: `prepare` rejects event text that redaction would change, and evidence
- * quotes must stay substrings. Inputs whose first output is already stable are unaffected; text still
- * changing after MAX_STEPS steps becomes the placeholder.
+ * quotes must stay substrings. A covered output is a fixed point of the covering steps, so it comes
+ * back unchanged. An output without covering is a fixed point of the steps without it, and holds no
+ * value covering could apply to: their check rewrites every bracket value after a secret key except a
+ * filled `[REDACTED]`, which covering declines, so the covering steps leave it unchanged too. Inputs
+ * whose first output is already stable are unaffected; text still changing after MAX_STEPS steps
+ * without covering becomes the placeholder.
  */
 export const redactDistillationText = (value: string): string => {
-  let text = value;
-  for (let count = 0; count < MAX_STEPS; count += 1) {
-    const next = step(text);
-    if (next === text) {
-      return text;
-    }
-    text = next;
+  const covered = converge(value, RESCAN_BUDGET);
+  // Covering only ever changes text: when the covering check finds nothing to cover it decides exactly as
+  // the check without covering, so that check leaves the text alone too.
+  if (covered === value) {
+    return value;
   }
-  return '[REDACTED]';
+  const plain = converge(value, 0) ?? '[REDACTED]';
+  return covered !== null && (covered === plain || removesOnlyAfterSlots(covered, plain)) ? covered : plain;
 };

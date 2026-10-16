@@ -218,7 +218,12 @@ fix changes get a new identity: preparing them again creates a new job, and
 evidence for their earlier analyses reports `changed`. Events holding JSON with
 duplicate keys that needs redaction are among them: such JSON is now redacted
 from the members the parser keeps, while clean duplicate-key JSON stays
-byte-identical. Evidence reload rebuilds
+byte-identical. So is text outside parsed JSON (tool envelopes, JSON string
+contents) whose secret-keyed value is a nested object or array that kept
+content visible past its first token: when its brackets balance and the
+covered output differs from the previous one only by text removed right after
+`[REDACTED]` slots, the whole value is now masked; otherwise the previous output
+stands. Evidence reload rebuilds
 packets with the current rules and version, so a version bump would report
 every published analysis as `changed`. Packets stored before a fix keep their
 text; re-redaction cannot recover a fragment the earlier rules left outside a
