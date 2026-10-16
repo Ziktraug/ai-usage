@@ -212,6 +212,31 @@ schema code against operator stores. There is no downgrade path. Existing
 version-1 analyses remain readable alongside progressive extractor outputs;
 mutation compatibility checks do not discard historical accounts.
 
+Redaction rule fixes keep packet `redactionVersion` 1. Packet digests and job
+identity already follow the redacted event text, so only Sessions whose text a
+fix changes get a new identity: preparing them again creates a new job, and
+evidence for their earlier analyses reports `changed`. Events holding JSON with
+duplicate keys that needs redaction are among them: such JSON is now redacted
+from the members the parser keeps, while clean duplicate-key JSON stays
+byte-identical. Evidence reload rebuilds
+packets with the current rules and version, so a version bump would report
+every published analysis as `changed`. Packets stored before a fix keep their
+text; re-redaction cannot recover a fragment the earlier rules left outside a
+`[REDACTED]` slot.
+
+Event text is not Memory content, so the Memory domain's JSON limits (empty or
+over-long keys, more than 10,000 nodes, nesting deeper than 32, non-finite
+numbers) do not apply to it. Tool output holding such JSON is redacted like any
+other JSON; redaction no longer throws on it, which failed preparation for the
+whole Session, and submitted quotes of it are accepted. The one bound is
+nesting: a text that is JSON nested deeper than 256 levels, counting members a
+duplicate key hides, or that masking turns into such JSON, is replaced whole by
+the explicit marker
+`[REDACTED: JSON nested deeper than 256 levels]`, because the redaction walks
+recurse once per level. This fix also keeps `redactionVersion` 1, for the
+reason above: Sessions that failed preparation had no packets, and only text
+the fix changes gets a new identity.
+
 Development tests use disposable homes, SQLite stores and localhost services.
 They cover discovery, immutable preview preparation, interruption/restart,
 long-session windows, exact evidence, bounded recall, library pagination and

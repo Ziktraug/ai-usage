@@ -339,3 +339,36 @@ test('actual reader and runtime redact wrapped secret JSON before packet persist
     database.includes(Buffer.from('synthetic-hidden-secret')) || wal.includes(Buffer.from('synthetic-hidden-secret')),
   ).toBe(false);
 }, 30_000);
+
+test('actual reader and runtime prepare and redact tool JSON outside the Memory domain limits', async () => {
+  const f = await fixture('malicious-data');
+  const raw = await readFile(f.sourceFile, 'utf8');
+  const records: Record<string, unknown>[] = raw
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const output = records.find((entry) => entry.id === 'malicious-document')!;
+  const payload = distillationObject(output.payload);
+  // An empty key and a non-finite number are valid JSON the Memory domain rejects.
+  payload.output = '{"":{"password":"synthetic-domain-secret"},"n":1e400}';
+  await writeFile(f.sourceFile, `${records.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+  const prepared = distillationObject(
+    await f.client.distillation({
+      kind: 'prepare',
+      projectId: f.projectId,
+      selections: [f.selection],
+      providerProcessingAuthorized: true,
+      producerSessionId: null,
+      revisionKey: null,
+    }),
+  );
+  const jobs = prepared.jobs as { id: string }[];
+  const lease = await f.client.distillation({ kind: 'claim', projectId: f.projectId, jobId: jobs[0]!.id });
+  expect(JSON.stringify(lease)).not.toContain('synthetic-domain-secret');
+  expect(JSON.stringify(lease)).toContain(JSON.stringify('{"":{"password":"[REDACTED]"},"n":null}').slice(1, -1));
+  const database = await readFile(f.memoryDatabasePath);
+  const wal = await readFile(path.join(f.stateDirectory, 'memory.sqlite-wal'));
+  expect(
+    database.includes(Buffer.from('synthetic-domain-secret')) || wal.includes(Buffer.from('synthetic-domain-secret')),
+  ).toBe(false);
+}, 30_000);

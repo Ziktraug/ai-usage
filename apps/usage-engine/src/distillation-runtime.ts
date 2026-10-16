@@ -3,7 +3,10 @@ import {
   prepareCodexDistillationWindow,
   reloadCodexDistillationEvidence,
 } from '@ai-usage/local-machine/distillation-evidence';
-import { redactDistillationText } from '@ai-usage/memory-service/distillation-redaction';
+import {
+  DISTILLATION_REDACTION_VERSION,
+  redactDistillationText,
+} from '@ai-usage/memory-service/distillation-redaction';
 import type { DistillationSourceGrant } from '@ai-usage/memory-service/distillation-repository';
 import type { LocalIdentityKernel } from '@ai-usage/memory-sqlite/identity';
 import { isDistillationDiscoveryRequest } from '@ai-usage/platform-core/distillation-discovery';
@@ -177,7 +180,12 @@ export const createDistillationRuntime = (options: DistillationRuntimeOptions): 
                     sourceSessionId: grant.nativeSessionId,
                   },
                 },
-                { homePath: options.homeDirectory, redactText: redactDistillationText, redactionVersion: 1, signal },
+                {
+                  homePath: options.homeDirectory,
+                  redactText: redactDistillationText,
+                  redactionVersion: DISTILLATION_REDACTION_VERSION,
+                  signal,
+                },
               );
               if (result.status !== 'available') {
                 resolved.view.eligible = false;
@@ -240,7 +248,12 @@ export const createDistillationRuntime = (options: DistillationRuntimeOptions): 
                 sourceSessionId: grant.nativeSessionId,
               },
             },
-            { homePath: options.homeDirectory, redactText: redactDistillationText, redactionVersion: 1, signal },
+            {
+              homePath: options.homeDirectory,
+              redactText: redactDistillationText,
+              redactionVersion: DISTILLATION_REDACTION_VERSION,
+              signal,
+            },
             {
               version: packet.source.version,
               index: packet.window.index + 1,
@@ -348,7 +361,12 @@ export const createDistillationRuntime = (options: DistillationRuntimeOptions): 
             sourceDigest: analysis.source.version.digest,
             eventIds,
           },
-          { homePath: options.homeDirectory, redactText: redactDistillationText, redactionVersion: 1, signal },
+          {
+            homePath: options.homeDirectory,
+            redactText: redactDistillationText,
+            redactionVersion: DISTILLATION_REDACTION_VERSION,
+            signal,
+          },
         );
         if (evidence.status !== 'available') {
           let status = 'unavailable';

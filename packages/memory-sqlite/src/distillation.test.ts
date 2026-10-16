@@ -876,6 +876,113 @@ describe('local-only session distillation persistence', () => {
     });
   });
 
+  test('accepts verbatim quotes from already-redacted packet events on the legacy and progressive paths', async () => {
+    const f = await fixture();
+    const quote = '"risk_level":"low","user_authorization":"[REDACTED]","outcome":"allow"';
+    const packet = structuredClone(f.packet);
+    packet.events = [
+      ...packet.events,
+      {
+        ...packet.events[1]!,
+        id: 'assessor-one',
+        line: 3,
+        callId: 'call-two',
+        text: `{${quote},"rationale":"Synthetic read-only command."}`,
+      },
+    ];
+    packet.coverage = { ...packet.coverage, lines: 3, includedEvents: 3 };
+    packet.packetDigest = digest(distillationEvidenceDigestInput(packet));
+    const value = content('The approval assessor allowed the read-only command.');
+    value.summary = { ...value.summary, basis: 'observed', evidence: [{ eventId: 'assessor-one', quote }] };
+    const persistedQuote = (analysisId: string) =>
+      f.read((db) => {
+        const row = db.query('SELECT analysis_json FROM session_analyses WHERE id=?').get(analysisId) as {
+          analysis_json: string;
+        };
+        return (JSON.parse(row.analysis_json) as { content: SessionAnalysisContent }).content.summary.evidence[0]
+          ?.quote;
+      });
+
+    const legacyJob = await f.kernel.distillation.prepare({
+      ...f.input,
+      packet,
+      grant: grantFor(packet),
+      revisionKey: 'assessor-legacy',
+    });
+    const legacyLease = await f.kernel.distillation.claim(f.projectId, legacyJob.id);
+    const legacy = await f.kernel.distillation.submit({
+      projectId: f.projectId,
+      jobId: legacyJob.id,
+      leaseId: legacyLease.leaseId,
+      packetDigest: packet.packetDigest,
+      content: value,
+    });
+    expect(legacy.content.summary.evidence).toEqual([{ eventId: 'assessor-one', quote }]);
+    expect(persistedQuote(legacy.id)).toBe(quote);
+
+    const windowed = structuredClone(packet);
+    windowed.window = { index: 0, startLine: 1, nextLine: null, overlapEventIds: [] };
+    windowed.packetDigest = digest(distillationEvidenceDigestInput(windowed));
+    const progressiveJob = await f.kernel.distillation.prepare({
+      ...f.input,
+      packet: windowed,
+      grant: grantFor(windowed),
+      revisionKey: 'assessor-progressive',
+    });
+    const progressiveLease = await f.kernel.distillation.claim(f.projectId, progressiveJob.id);
+    expect(progressiveLease.job.progress).toMatchObject({ stage: 'consolidation' });
+    const progressive = await f.kernel.distillation.submit({
+      extractorVersion: progressiveLease.extractorVersion,
+      projectId: f.projectId,
+      jobId: progressiveJob.id,
+      leaseId: progressiveLease.leaseId,
+      packetDigest: windowed.packetDigest,
+      snapshotDigest: windowed.source.version.digest,
+      segmentIndex: 0,
+      content: value,
+    });
+    expect(progressive.extractorVersion).toBe('session-distillation-progressive-v1');
+    expect(progressive.content.summary.evidence).toEqual([{ eventId: 'assessor-one', quote }]);
+    expect(persistedQuote(progressive.id)).toBe(quote);
+  });
+
+  test('prepares event JSON outside the Memory domain limits and accepts quotes of it', async () => {
+    const f = await fixture();
+    // An empty key, a non-finite number and nesting past 32 are valid JSON the Memory domain rejects.
+    const quote = '{"":1}';
+    const packet = structuredClone(f.packet);
+    packet.events = [
+      ...packet.events,
+      {
+        ...packet.events[1]!,
+        id: 'outside-domain',
+        line: 3,
+        callId: 'call-two',
+        text: `[${quote},{"n":1e400},${'['.repeat(40)}"deep"${']'.repeat(40)}]`,
+      },
+    ];
+    packet.coverage = { ...packet.coverage, lines: 3, includedEvents: 3 };
+    packet.packetDigest = digest(distillationEvidenceDigestInput(packet));
+    const value = content('The tool returned JSON with an empty key.');
+    value.summary = { ...value.summary, basis: 'observed', evidence: [{ eventId: 'outside-domain', quote }] };
+
+    const job = await f.kernel.distillation.prepare({
+      ...f.input,
+      packet,
+      grant: grantFor(packet),
+      revisionKey: 'outside-domain',
+    });
+    const lease = await f.kernel.distillation.claim(f.projectId, job.id);
+    const analysis = await f.kernel.distillation.submit({
+      projectId: f.projectId,
+      jobId: job.id,
+      leaseId: lease.leaseId,
+      packetDigest: packet.packetDigest,
+      content: value,
+    });
+    expect(analysis.content.summary.evidence).toEqual([{ eventId: 'outside-domain', quote }]);
+  });
+
   test('preserves the old analysis when regeneration fails and creates explicit immutable revisions', async () => {
     const f = await fixture();
     const first = await f.publish(null, content('Obsoleteword investigation.'));

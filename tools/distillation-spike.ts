@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { prepareCodexDistillationEvidence } from '@ai-usage/local-machine/distillation-evidence';
-import { redactDistillationText } from '@ai-usage/memory-service/distillation-redaction';
+import {
+  DISTILLATION_REDACTION_VERSION,
+  redactDistillationText,
+} from '@ai-usage/memory-service/distillation-redaction';
 import { parseDistillationEvidencePacket } from '@ai-usage/platform-core/distillation-evidence';
 import { parseSessionAnalysisContent, validateAnalysisEvidence } from '@ai-usage/platform-core/session-distillation';
 
@@ -37,7 +40,11 @@ export const prepareSyntheticDistillationSpike = async (outputDirectory: string)
             sourceSessionId: entry.sessionId,
           },
         },
-        { homePath: syntheticHome, redactText: redactDistillationText, redactionVersion: 1 },
+        {
+          homePath: syntheticHome,
+          redactText: redactDistillationText,
+          redactionVersion: DISTILLATION_REDACTION_VERSION,
+        },
       );
       if (result.status !== 'available') {
         throw new Error(`Synthetic case ${entry.id}: ${result.reason}`);
