@@ -54,6 +54,21 @@ export interface ProjectGroupingWarning {
 export const projectSourceId = (source: ProjectSourceIdentityInput) =>
   [source.machineId, source.sourcePath || source.project].join('|');
 
+/**
+ * Inverse of `projectSourceId` for the machine-prefixed form: the remainder
+ * after `${machineId}|`, or null when the id belongs to another machine or
+ * carries nothing after the separator. Whether the remainder is a path or a
+ * bare project name is the caller's concern.
+ */
+export const projectSourcePathFromId = (id: string, machineId: string): string | null => {
+  const prefix = `${machineId}|`;
+  if (!id.startsWith(prefix)) {
+    return null;
+  }
+  const remainder = id.slice(prefix.length);
+  return remainder.length > 0 ? remainder : null;
+};
+
 export const projectSourceSelectorFor = (source: ProjectSourceMatchInput): ProjectSourceSelector => ({
   machineId: source.machineId,
   ...(source.sourcePath ? { sourcePath: source.sourcePath } : { project: source.project }),

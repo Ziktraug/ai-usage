@@ -7,6 +7,7 @@ import {
   parseProjectGroupConfigs,
   projectLabelWithMachine,
   projectSourceId,
+  projectSourcePathFromId,
   projectSourceSelectorFor,
   projectSourceSelectorsEqual,
   uniqueProjectSourceSelectors,
@@ -33,6 +34,19 @@ describe('project groups', () => {
       'machine-b|/work/exalibur',
     );
     expect(projectSourceId({ machineId: 'machine-a', project: 'exalibur' })).toBe('machine-a|exalibur');
+  });
+
+  test('decodes the machine-prefixed path of a project source id only for that machine', () => {
+    const id = projectSourceId({ machineId: 'machine-a', project: 'exalibur', sourcePath: '/work/exalibur' });
+    expect(projectSourcePathFromId(id, 'machine-a')).toBe('/work/exalibur');
+    expect(projectSourcePathFromId('machine-a|/work/with|pipe', 'machine-a')).toBe('/work/with|pipe');
+    expect(projectSourcePathFromId(id, 'machine-b')).toBeNull();
+    expect(projectSourcePathFromId('machine-a|', 'machine-a')).toBeNull();
+    expect(projectSourcePathFromId('machine-a', 'machine-a')).toBeNull();
+    // Machine ids that prefix each other never decode across the boundary.
+    expect(projectSourcePathFromId('machine-ab|/work/exalibur', 'machine-a')).toBeNull();
+    expect(projectSourcePathFromId('machine-a|/work/exalibur', 'machine-ab')).toBeNull();
+    expect(projectSourcePathFromId('machine-a|/work/exalibur', 'machine')).toBeNull();
   });
 
   test('matches selectors conjunctively without machine labels', () => {

@@ -26,13 +26,22 @@ unmapped paths, imported IDs and basename matches do not grant access. The
 
 Mappings come from the engine's local Checkout observation (ADR 0044): after
 each publication it records one Checkout per local absolute path of this
-machine, binds it to the Project of its `origin` Repository (created on first
-sight, shared by every worktree of that remote) or to a local Project named
-after the directory, and acknowledges the `machineId|path` mapping. Only an
-ambiguous remote waits in the `/projects` review; `mapping-required` therefore
-means the path has not been published yet, is missing on disk, or awaits that
-review. A directory inside several acknowledged Checkouts (a repository under
-`~/Projects` under `~`, each with its own sessions) belongs to the nearest one.
+machine, plus one for the parent repository of every linked worktree (the
+published rows carry the parent's id), binds each to the Project of its
+`origin` Repository (created on first sight) or to a local Project named after
+the directory, and acknowledges the published `machineId|path` ids against the
+parent and the worktree's own path against the worktree. A worktree follows
+its parent's Repository Project, so `--checkout` inside a worktree selects the
+same Project as the parent. A parent without an `origin` remote is a local
+Project that its worktrees do not follow: each worktree becomes its own local
+Project, and `--checkout` inside it finds no sessions, because they are
+published under the parent; select the parent's Project instead. Only an
+ambiguous remote waits in the `/projects`
+review; `mapping-required` therefore means the path has not been published
+yet, is missing on disk, or awaits that review, and a worktree's sessions wait
+while their parent does. A directory inside several acknowledged Checkouts (a
+repository under `~/Projects` under `~`, each with its own sessions) belongs
+to the nearest one.
 The engine logs `usage-engine checkouts=observed …` counts on stderr.
 
 The skill itself lives in `skills/session-distillation` and is projected into

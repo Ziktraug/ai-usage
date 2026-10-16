@@ -699,6 +699,12 @@ export interface ServedLocalProjectSource {
   readonly machineId: string;
   readonly machineLabel: string;
   readonly project: string;
+  /**
+   * The published rows' `projectSourceId` (first row of the group), which a
+   * linked worktree inherits from its parent repository; null when the rows
+   * carry none. `sourcePath` stays the physical working-tree path.
+   */
+  readonly projectSourceId: string | null;
   readonly sessions: number;
   readonly sourcePath: string;
 }

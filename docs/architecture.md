@@ -278,11 +278,13 @@ or broaden the usage control-plane protocol.
 Beside the Memory service, the same process runs local Checkout observation
 (ADR 0044): once at startup and after every `report-published` runtime event
 it reads the current publication's local Project sources for this machine,
-records one Device-local Checkout per absolute path in `memory.sqlite`, reads
-the working tree's `origin` remote through the bounded `.git/config` reader,
+records one Device-local Checkout per absolute path in `memory.sqlite` and one
+per canonical parent of a linked worktree (the id the rows carry), reads the
+working tree's `origin` remote through the bounded `.git/config` reader,
 resolves it with the pure `project-registry` resolver, binds the Checkout to a
-Repository Project or a local Project, and acknowledges the Project-source
-mapping that distillation discovery requires. Only an ambiguous remote waits
+Repository Project or a local Project (a worktree follows its parent's
+Repository Project), and acknowledges the published Project-source ids that
+distillation discovery requires. Only an ambiguous remote waits
 for the `/projects` review, and a successful review action triggers one more
 observation before the reply. Observation failures are reported with a closed
 vocabulary and never affect engine readiness.

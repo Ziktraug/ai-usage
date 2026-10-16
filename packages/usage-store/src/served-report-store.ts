@@ -596,13 +596,14 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
         const project = rowValue.rawProject?.trim() || rowValue.project;
         const key = JSON.stringify([machineId, sourcePath, project]);
         const existing = sources.get(key);
-        const source =
+        const source: ServedLocalProjectSource =
           existing === undefined
             ? {
                 label: rowValue.project,
                 machineId,
                 machineLabel: rowValue.source?.machineLabel?.trim() ?? '',
                 project,
+                projectSourceId: rowValue.projectSourceId?.trim() || null,
                 sessions: 1,
                 sourcePath,
               }

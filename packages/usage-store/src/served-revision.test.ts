@@ -72,8 +72,9 @@ const createStore = async (): Promise<string> => {
 const row = (
   name: string,
   tokenTotal: number,
-  options: { readonly project?: string; readonly sourcePath?: string } = {},
+  options: { readonly project?: string; readonly projectSourceId?: string; readonly sourcePath?: string } = {},
 ): SerializedRow => ({
+  ...(options.projectSourceId === undefined ? {} : { projectSourceId: options.projectSourceId }),
   activeDate: '2026-07-01T10:01:00.000Z',
   calls: 1,
   costActual: tokenTotal / 100,
@@ -193,11 +194,33 @@ test('projects only local observed project paths from the current durable revisi
     row('local-a', 1, { project: 'Local Project', sourcePath: '/private/local-project' }),
     row('local-b', 2, { project: 'Local Project', sourcePath: '/private/local-project' }),
     row('portable', 3, { project: 'Imported Project', sourcePath: '/private/imported-project' }),
+    // A linked worktree publishes its parent repository's id while keeping its
+    // own physical path; the first row of a group decides the published id.
+    row('worktree-a', 4, {
+      project: 'Worktree Project',
+      projectSourceId: ' served-machine|/private/local-project ',
+      sourcePath: '/private/local-project/.claude/worktrees/feature',
+    }),
+    row('worktree-b', 5, {
+      project: 'Worktree Project',
+      projectSourceId: 'served-machine|/private/elsewhere',
+      sourcePath: '/private/local-project/.claude/worktrees/feature',
+    }),
+    row('blank-id', 6, { project: 'Blank Id', projectSourceId: '  ', sourcePath: '/private/blank-id' }),
   ];
   await Effect.runPromise(
     publishServedReportRevision(
       publication(dbPath, 'revision-a', rows, {
-        capture: { sourceAuthorities: ['local-observed', 'local-observed', 'portable-opaque'] },
+        capture: {
+          sourceAuthorities: [
+            'local-observed',
+            'local-observed',
+            'portable-opaque',
+            'local-observed',
+            'local-observed',
+            'local-observed',
+          ],
+        },
       }),
     ),
   );
@@ -210,8 +233,27 @@ test('projects only local observed project paths from the current durable revisi
         machineId: 'served-machine',
         machineLabel: 'Served Machine',
         project: 'Local Project',
+        projectSourceId: null,
         sessions: 2,
         sourcePath: '/private/local-project',
+      },
+      {
+        label: 'Worktree Project',
+        machineId: 'served-machine',
+        machineLabel: 'Served Machine',
+        project: 'Worktree Project',
+        projectSourceId: 'served-machine|/private/local-project',
+        sessions: 2,
+        sourcePath: '/private/local-project/.claude/worktrees/feature',
+      },
+      {
+        label: 'Blank Id',
+        machineId: 'served-machine',
+        machineLabel: 'Served Machine',
+        project: 'Blank Id',
+        projectSourceId: null,
+        sessions: 1,
+        sourcePath: '/private/blank-id',
       },
     ],
   });

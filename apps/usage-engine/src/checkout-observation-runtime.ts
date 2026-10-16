@@ -3,10 +3,12 @@ import path from 'node:path';
 import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import type { CheckoutObservationResult, LocalIdentityKernel } from '@ai-usage/memory-sqlite/identity';
 import {
+  type Checkout,
   type CheckoutId,
   createProjectId,
   createRepositoryAliasId,
   createRepositoryId,
+  type DeviceId,
   type Instant,
   instantNow,
   type ProjectId,
@@ -18,7 +20,7 @@ import {
   type RepositoryResolutionCandidate,
   resolveObservedRepository,
 } from '@ai-usage/project-registry/resolution';
-import { projectSourceId } from '@ai-usage/report-core/project-group';
+import { projectSourceId, projectSourcePathFromId } from '@ai-usage/report-core/project-group';
 import type { SessionVcsRepository } from '@ai-usage/report-core/session-vcs';
 import type { UsageEngineRuntime } from '@ai-usage/usage-engine-runtime';
 import {
@@ -44,12 +46,21 @@ const runStoreQuery = <Value>(
  * Repositories, and acknowledges the Project-source mapping that session
  * distillation discovery requires.
  *
+ * The projection publishes a linked worktree under its parent repository's
+ * project source id while keeping the physical path, so each run observes the
+ * canonical paths first (the parent even when no session ran there) and then
+ * the worktrees, which follow their canonical Checkout's Repository Project.
+ *
  * Policy (ADR 0044): a Checkout whose `origin` remote resolves or creates one
  * Repository binds to that Repository's Project without review; a Checkout
  * without a remote becomes a local Project named after its directory; only an
  * ambiguous remote waits in the `/projects` resolution review. A path that is
  * missing on disk is recorded as `missing` and never resolved until it is seen
- * again. Reviewed decisions are never reopened unless the remote changes.
+ * again. An unbound, unreviewed Checkout is resolved again when its observed
+ * remote changes; a bound or reviewed one keeps its decision, except that a
+ * remote-less worktree bound to its own local Project is relinked to its
+ * canonical Checkout's Repository Project (the repair for stores written
+ * before canonical observation existed).
  */
 
 export interface CheckoutObservationSummary {
@@ -102,22 +113,70 @@ const repositoryDisplayName = (candidate: RepositoryResolutionCandidate): string
   );
 };
 
-/** Only the checkout that distillation discovery can use: this Device, an absolute path, first source per path. */
-const localSourcesByPath = (
-  sources: readonly ServedLocalProjectSource[],
+/** A path the engine can open as a Checkout: absolute and NUL-free. */
+const usableLocalPath = (value: string): boolean => path.isAbsolute(value) && !value.includes('\0');
+
+interface CanonicalCheckoutPlan {
+  /** Published ids, verbatim, that decode to this path; distillation discovery matches them exactly. */
+  readonly mappingIds: Set<string>;
+  readonly source: ServedLocalProjectSource;
+}
+
+interface WorktreeCheckoutPlan {
+  readonly canonicalPath: string;
+  readonly source: ServedLocalProjectSource;
+}
+
+interface CheckoutObservationPlan {
+  readonly canonical: ReadonlyMap<string, CanonicalCheckoutPlan>;
+  readonly worktrees: ReadonlyMap<string, WorktreeCheckoutPlan>;
+}
+
+/** The published id and the canonical path it decodes to, when the projection published a usable one. */
+const publishedCanonicalSource = (
+  source: ServedLocalProjectSource,
   machineId: string,
-): ReadonlyMap<string, ServedLocalProjectSource> => {
-  const byPath = new Map<string, ServedLocalProjectSource>();
+): { readonly canonicalPath: string; readonly mappingId: string } | null => {
+  if (source.projectSourceId === null) {
+    return null;
+  }
+  const publishedPath = projectSourcePathFromId(source.projectSourceId, machineId);
+  if (publishedPath === null || !usableLocalPath(publishedPath)) {
+    return null;
+  }
+  return { canonicalPath: path.resolve(publishedPath), mappingId: source.projectSourceId };
+};
+
+/**
+ * Groups this Device's published sources by canonical path, in stable source
+ * order. A worktree is any physical path whose published id decodes to a
+ * different path; a source without a usable published id is its own canonical
+ * path under today's `machineId|path` id. `path.resolve` collapses trailing
+ * separators so `/a/b/` and `/a/b` share one Checkout.
+ */
+const planCheckouts = (sources: readonly ServedLocalProjectSource[], machineId: string): CheckoutObservationPlan => {
+  const canonical = new Map<string, CanonicalCheckoutPlan>();
+  const worktrees = new Map<string, WorktreeCheckoutPlan>();
   for (const source of sources) {
-    if (source.machineId !== machineId || !path.isAbsolute(source.sourcePath) || source.sourcePath.includes('\0')) {
+    if (source.machineId !== machineId || !usableLocalPath(source.sourcePath)) {
       continue;
     }
-    const localPath = path.normalize(source.sourcePath);
-    if (!byPath.has(localPath)) {
-      byPath.set(localPath, source);
+    const localPath = path.resolve(source.sourcePath);
+    const published = publishedCanonicalSource(source, machineId);
+    const canonicalPath = published?.canonicalPath ?? localPath;
+    const mappingId =
+      published?.mappingId ?? projectSourceId({ machineId, project: source.project, sourcePath: localPath });
+    const entry = canonical.get(canonicalPath);
+    if (entry === undefined) {
+      canonical.set(canonicalPath, { mappingIds: new Set([mappingId]), source });
+    } else {
+      entry.mappingIds.add(mappingId);
+    }
+    if (localPath !== canonicalPath && !worktrees.has(localPath)) {
+      worktrees.set(localPath, { canonicalPath, source });
     }
   }
-  return byPath;
+  return { canonical, worktrees };
 };
 
 const needsResolution = (observed: CheckoutObservationResult): boolean =>
@@ -126,12 +185,59 @@ const needsResolution = (observed: CheckoutObservationResult): boolean =>
   observed.resolutionReviewedAt === null &&
   (observed.outcome !== 'unchanged' || observed.resolutionStatus === 'unassigned');
 
+/** What a Checkout is bound to after this run touched it. */
+interface CheckoutBinding {
+  readonly projectId: ProjectId;
+  readonly repositoryId: RepositoryId | null;
+}
+
+interface RepositoryBinding extends CheckoutBinding {
+  readonly repositoryId: RepositoryId;
+}
+
+const checkoutBinding = (checkout: Checkout): CheckoutBinding | null =>
+  checkout.projectId === null ? null : { projectId: checkout.projectId, repositoryId: checkout.repositoryId };
+
+/** A worktree only follows a canonical Checkout that is bound to a Repository Project through its own Repository. */
+const repositoryBinding = (binding: CheckoutBinding | null | undefined): RepositoryBinding | null =>
+  binding === undefined || binding === null || binding.repositoryId === null
+    ? null
+    : { projectId: binding.projectId, repositoryId: binding.repositoryId };
+
+/**
+ * The repair for stores written before canonical observation: a worktree the
+ * earlier runtime auto-bound to its own remote-less local Project moves to its
+ * canonical Checkout's Repository Project. A Checkout with an observed remote
+ * or a Repository is never touched. Operator review only ever happens for a
+ * remote-bearing ambiguous Checkout, so this rule cannot undo a decision while
+ * that remote is still observed; bindings carry no provenance, so a reviewed
+ * Checkout whose remote later reads as absent is indistinguishable from an
+ * automatic one. The superseded local Project is left in place, unmapped.
+ */
+const needsRepair = (checkout: Checkout, canonical: RepositoryBinding): boolean =>
+  checkout.projectId !== null &&
+  checkout.projectId !== canonical.projectId &&
+  checkout.status === 'available' &&
+  checkout.repositoryId === null &&
+  checkout.observedRemote === null;
+
+type MutableCheckoutObservationSummary = {
+  -readonly [Key in keyof CheckoutObservationSummary]: CheckoutObservationSummary[Key];
+};
+
 interface ResolutionContext {
   readonly candidates: () => Promise<readonly RepositoryResolutionCandidate[]>;
   readonly invalidate: () => void;
   readonly kernel: LocalIdentityKernel;
   readonly now: Instant;
   readonly spaceId: SpaceId;
+}
+
+interface RunContext extends ResolutionContext {
+  readonly deviceId: DeviceId;
+  readonly readRepository: (localPath: string) => SessionVcsRepository | null;
+  readonly readStatus: (localPath: string) => Promise<'available' | 'missing'>;
+  readonly summary: MutableCheckoutObservationSummary;
 }
 
 const bindRepositoryProject = async (
@@ -200,7 +306,7 @@ const createCandidateRepository = async (
   return repositoryId;
 };
 
-type ResolutionOutcome = { kind: 'bound'; projectId: ProjectId } | { kind: 'ambiguous' } | { kind: 'invalid' };
+type ResolutionOutcome = ({ kind: 'bound' } & CheckoutBinding) | { kind: 'ambiguous' } | { kind: 'invalid' };
 
 const resolveCheckout = async (
   context: ResolutionContext,
@@ -237,16 +343,105 @@ const resolveCheckout = async (
       if (result.kind !== 'project-created') {
         throw new Error('Local Project creation returned an unexpected result');
       }
-      return { kind: 'bound', projectId: result.projectId };
+      return { kind: 'bound', projectId: result.projectId, repositoryId: null };
     }
     case 'candidate': {
       const repositoryId = await createCandidateRepository(context, resolution);
-      return { kind: 'bound', projectId: await bindRepositoryProject(context, checkout.id, repositoryId) };
+      return {
+        kind: 'bound',
+        projectId: await bindRepositoryProject(context, checkout.id, repositoryId),
+        repositoryId,
+      };
     }
     case 'resolved':
-      return { kind: 'bound', projectId: await bindRepositoryProject(context, checkout.id, resolution.repositoryId) };
+      return {
+        kind: 'bound',
+        projectId: await bindRepositoryProject(context, checkout.id, resolution.repositoryId),
+        repositoryId: resolution.repositoryId,
+      };
     default:
       return resolution satisfies never;
+  }
+};
+
+interface ObservedCheckout {
+  readonly observed: CheckoutObservationResult;
+  /** The remote as read from the working tree; the stored one is already an alias key. */
+  readonly observedRemote: string | null;
+}
+
+const observeCheckoutPath = async (run: RunContext, localPath: string): Promise<ObservedCheckout> => {
+  const status = await run.readStatus(localPath);
+  const repository = status === 'available' ? run.readRepository(localPath) : null;
+  const observedRemote = repository === null ? null : `https://${repository.host}/${repository.ownerPath}`;
+  const observed = await run.kernel.observeCheckout(run.spaceId, {
+    deviceId: run.deviceId,
+    lastObservedAt: run.now,
+    localPath,
+    observedRemote,
+    status,
+  });
+  run.summary.observed += 1;
+  if (observed.outcome === 'created') {
+    run.summary.created += 1;
+  }
+  if (status === 'missing') {
+    run.summary.missing += 1;
+  }
+  return { observed, observedRemote };
+};
+
+/** Resolves a Checkout on its own remote; null when it stays unbound (ambiguous or invalid). */
+const resolveOwnCheckout = async (
+  run: RunContext,
+  { observed, observedRemote }: ObservedCheckout,
+  source: ServedLocalProjectSource,
+): Promise<CheckoutBinding | null> => {
+  const outcome = await resolveCheckout(run, observed, observedRemote, source);
+  switch (outcome.kind) {
+    case 'bound':
+      run.summary.resolved += 1;
+      return outcome;
+    case 'ambiguous':
+      run.summary.ambiguous += 1;
+      return null;
+    case 'invalid':
+      run.summary.invalid += 1;
+      return null;
+    default:
+      return outcome satisfies never;
+  }
+};
+
+const linkCheckout = async (
+  run: RunContext,
+  checkoutId: CheckoutId,
+  binding: RepositoryBinding,
+): Promise<CheckoutBinding> => {
+  await run.kernel.applyResolutionAction({
+    checkoutId,
+    kind: 'link',
+    projectId: binding.projectId,
+    repositoryId: binding.repositoryId,
+    spaceId: run.spaceId,
+  });
+  run.summary.resolved += 1;
+  return binding;
+};
+
+const acknowledgeMapping = async (
+  run: RunContext,
+  sourceId: string,
+  binding: CheckoutBinding,
+  checkoutId: CheckoutId,
+): Promise<void> => {
+  const mapping = await run.kernel.findProjectSourceMapping(run.spaceId, sourceId);
+  if (mapping === null || mapping.projectId !== binding.projectId || mapping.checkoutId !== checkoutId) {
+    await run.kernel.acknowledgeProjectSourceMapping(
+      { acknowledgedAt: run.now, checkoutId, projectId: binding.projectId, projectSourceId: sourceId },
+      run.spaceId,
+    );
+    run.summary.mapped += 1;
   }
 };
 
@@ -254,8 +449,6 @@ export const observeLocalCheckouts = async (
   options: ObserveLocalCheckoutsOptions,
   signal?: AbortSignal,
 ): Promise<CheckoutObservationDiagnostic> => {
-  const readStatus = options.readStatus ?? directoryStatus;
-  const readRepository = options.readRepository ?? readLocalGitRepository;
   const sources = await runStoreQuery(queryCurrentServedLocalProjectSources({ dbPath: options.databasePath }), signal);
   if (Either.isLeft(sources)) {
     if (sources.left.reason === 'revision-unavailable') {
@@ -275,73 +468,79 @@ export const observeLocalCheckouts = async (
   const spaceId = bootstrap.space.id;
   const now = instantNow(options.clock);
   let candidates: Promise<readonly RepositoryResolutionCandidate[]> | undefined;
-  const context: ResolutionContext = {
+  const run: RunContext = {
     candidates: () => {
       candidates ??= options.kernel.listRepositoryCandidates(spaceId);
       return candidates;
     },
+    deviceId: bootstrap.device.id,
     invalidate: () => {
       candidates = undefined;
     },
     kernel: options.kernel,
     now,
+    readRepository: options.readRepository ?? readLocalGitRepository,
+    readStatus: options.readStatus ?? directoryStatus,
     spaceId,
+    summary: {
+      ambiguous: 0,
+      created: 0,
+      invalid: 0,
+      mapped: 0,
+      missing: 0,
+      observed: 0,
+      resolved: 0,
+      revision: published.revision,
+    },
   };
-  const summary = {
-    ambiguous: 0,
-    created: 0,
-    invalid: 0,
-    mapped: 0,
-    missing: 0,
-    observed: 0,
-    resolved: 0,
-    revision: published.revision,
-  };
-  for (const [localPath, source] of localSourcesByPath(published.sources, machine.id)) {
+  const plan = planCheckouts(published.sources, machine.id);
+  const canonicalBindings = new Map<string, CheckoutBinding | null>();
+  for (const [localPath, canonical] of plan.canonical) {
     signal?.throwIfAborted();
-    const status = await readStatus(localPath);
-    const repository = status === 'available' ? readRepository(localPath) : null;
-    const observedRemote = repository === null ? null : `https://${repository.host}/${repository.ownerPath}`;
-    const observed = await options.kernel.observeCheckout(spaceId, {
-      deviceId: bootstrap.device.id,
-      lastObservedAt: now,
-      localPath,
-      observedRemote,
-      status,
-    });
-    summary.observed += 1;
-    if (observed.outcome === 'created') {
-      summary.created += 1;
-    }
-    if (status === 'missing') {
-      summary.missing += 1;
-    }
-    let projectId = observed.checkout.projectId;
-    if (needsResolution(observed)) {
-      const outcome = await resolveCheckout(context, observed, observedRemote, source);
-      if (outcome.kind === 'bound') {
-        projectId = outcome.projectId;
-        summary.resolved += 1;
-      } else if (outcome.kind === 'ambiguous') {
-        summary.ambiguous += 1;
-      } else {
-        summary.invalid += 1;
-      }
-    }
-    if (projectId === null) {
+    const observation = await observeCheckoutPath(run, localPath);
+    const { observed } = observation;
+    const binding = needsResolution(observed)
+      ? await resolveOwnCheckout(run, observation, canonical.source)
+      : checkoutBinding(observed.checkout);
+    canonicalBindings.set(localPath, binding);
+    if (binding === null) {
       continue;
     }
-    const sourceId = projectSourceId({ machineId: machine.id, project: source.project, sourcePath: localPath });
-    const mapping = await options.kernel.findProjectSourceMapping(spaceId, sourceId);
-    if (mapping === null || mapping.projectId !== projectId || mapping.checkoutId !== observed.checkout.id) {
-      await options.kernel.acknowledgeProjectSourceMapping(
-        { acknowledgedAt: now, checkoutId: observed.checkout.id, projectId, projectSourceId: sourceId },
-        spaceId,
-      );
-      summary.mapped += 1;
+    for (const mappingId of canonical.mappingIds) {
+      await acknowledgeMapping(run, mappingId, binding, observed.checkout.id);
     }
   }
-  return { code: 'observed', summary };
+  for (const [localPath, worktree] of plan.worktrees) {
+    if (plan.canonical.has(localPath)) {
+      continue;
+    }
+    signal?.throwIfAborted();
+    const observation = await observeCheckoutPath(run, localPath);
+    const { observed } = observation;
+    const canonical = repositoryBinding(canonicalBindings.get(worktree.canonicalPath));
+    let binding = checkoutBinding(observed.checkout);
+    if (needsResolution(observed)) {
+      binding =
+        canonical === null
+          ? await resolveOwnCheckout(run, observation, worktree.source)
+          : await linkCheckout(run, observed.checkout.id, canonical);
+    } else if (canonical !== null && needsRepair(observed.checkout, canonical)) {
+      binding = await linkCheckout(run, observed.checkout.id, canonical);
+    }
+    if (binding === null) {
+      continue;
+    }
+    // No published row carries the worktree's own id (the projection publishes
+    // the canonical one); this mapping exists so a `--checkout` selector inside
+    // the worktree resolves to this Checkout and therefore to the Project.
+    await acknowledgeMapping(
+      run,
+      projectSourceId({ machineId: machine.id, project: worktree.source.project, sourcePath: localPath }),
+      binding,
+      observed.checkout.id,
+    );
+  }
+  return { code: 'observed', summary: run.summary };
 };
 
 export interface LocalCheckoutObservationRuntime {
@@ -402,10 +601,14 @@ export const startLocalCheckoutObservation = (
       running = run;
       return run;
     }
-    queued ??= running.then(() => {
+    // The continuation runs whether the in-flight run settled or rejected (a
+    // throwing diagnostic sink); otherwise `queued` would stay a rejected
+    // promise and every later call would reuse it without running anything.
+    const next = (): Promise<void> => {
       queued = undefined;
       return runNow();
-    });
+    };
+    queued ??= running.then(next, next);
     return queued;
   };
 

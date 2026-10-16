@@ -398,6 +398,7 @@ describe('SQLite usage read model', () => {
           machineId: 'machine-a',
           machineLabel: 'Machine A',
           project: 'ai-usage',
+          projectSourceId: null,
           sessions: 1,
           sourcePath: '/private/ai-usage',
         },

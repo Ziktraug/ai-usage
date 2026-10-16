@@ -258,6 +258,7 @@ description: Helps with adapter tests
         machineId: 'machine-local',
         machineLabel: 'Local machine',
         project: `project-${index}`,
+        projectSourceId: null,
         sessions: 1,
         sourcePath: `/private/${'x'.repeat(900)}/${index}`,
       }));
