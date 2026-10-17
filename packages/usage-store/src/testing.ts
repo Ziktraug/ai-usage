@@ -16,6 +16,7 @@ export {
   setLocalProjectionReadFaultInjectorForTesting,
   setServedReportPublicationFaultInjectorForTesting,
   setServedReportReadFaultInjectorForTesting,
+  USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   updateUsageMachineLabel,
   usageStorePath,
 } from './index';

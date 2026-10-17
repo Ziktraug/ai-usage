@@ -85,6 +85,8 @@ export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
 
 export const USAGE_STORE_SCHEMA_VERSION = 4;
+// The web stale window is 30 days; per-minute heartbeats forced a full served-revision rewrite every cycle.
+export const USAGE_ROW_FRESHNESS_HEARTBEAT_MS = 60 * 60 * 1000;
 const USAGE_STORE_READER_BUSY_TIMEOUT_MS = 1000;
 
 export interface ImportResult {
@@ -2338,12 +2340,17 @@ const classifyMergeRows = (
     }
     const machineLabel = row.source.machineLabel || row.source.machineId;
     const repairFleetMetadata = existing?.fleet_metadata_valid === 0;
+    const lastSeenAt = Date.parse(existing?.last_seen_at ?? '');
+    const heartbeatDue =
+      observedAt !== undefined &&
+      (Number.isNaN(lastSeenAt) || Date.parse(observedAt) - lastSeenAt >= USAGE_ROW_FRESHNESS_HEARTBEAT_MS);
     const fleetProjectionChanged =
       !existing ||
       observedAt === undefined ||
       repairFleetMetadata ||
       existing.active_date !== row.activeDate ||
-      existing.last_seen_at !== observedAt ||
+      heartbeatDue ||
+      (classification !== 'unchanged' && existing.last_seen_at !== observedAt) ||
       existing.machine_label !== machineLabel ||
       existing.origin_machine_id !== row.source.machineId ||
       existing.source_authority !== incomingAuthority ||
@@ -2358,7 +2365,10 @@ const classifyMergeRows = (
       active_date: row.activeDate,
       content_hash: row.contentHash,
       fleet_metadata_valid: 1,
-      last_seen_at: observedAt ?? existing?.last_seen_at ?? '',
+      last_seen_at:
+        (classification !== 'unchanged' || fleetProjectionChanged ? observedAt : undefined) ??
+        existing?.last_seen_at ??
+        '',
       machine_label: machineLabel,
       origin_machine_id: row.source.machineId,
       row_key: row.rowKey,
@@ -2391,17 +2401,21 @@ const writeClassifiedMergeRows = (
   const statements = prepareImportStatements(db);
   const enrichmentStatements = prepareEnrichmentStatements(db);
   let enrichmentProjectionChanged = false;
-  for (const [index, { classification, repairFleetMetadata, row }] of classifiedRows.entries()) {
+  for (const [
+    index,
+    { classification, fleetProjectionChanged, repairFleetMetadata, row },
+  ] of classifiedRows.entries()) {
     if (classification === 'inserted') {
       insertMergeRow(statements.insert, row, now, authority);
       statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
     } else if (classification === 'unchanged') {
       if (repairFleetMetadata) {
         updateMergeRow(statements.update, row, now, authority);
-      } else {
+        statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
+      } else if (fleetProjectionChanged) {
         touchMergeRow(statements.touch, row.rowKey, now);
+        statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
       }
-      statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
     } else {
       updateMergeRow(statements.update, row, now, authority);
       statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
