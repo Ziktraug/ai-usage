@@ -31,6 +31,26 @@ const makeHome = async (): Promise<string> => {
 const run = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, home: string) =>
   Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
 
+// Rewrites a version 15 cache so each transcript entry carries the rows an older
+// cache version would have held for that unchanged file.
+const withLegacyRows = (
+  cache: { files: Record<string, { rows: unknown[] }> },
+  legacyRows: { source?: { sourceSessionId?: string | null } }[],
+  version: number,
+) => ({
+  ...cache,
+  files: Object.fromEntries(
+    Object.entries(cache.files).map(([filePath, entry]) => [
+      filePath,
+      {
+        ...entry,
+        rows: legacyRows.filter((row) => row.source?.sourceSessionId === path.basename(filePath, '.jsonl')),
+      },
+    ]),
+  ),
+  version,
+});
+
 describe('readClaudeSessionAnalysis', () => {
   test('recollects previously unpriced Sonnet 5.5 rows from an older cost cache', async () => {
     const home = await makeHome();
@@ -47,24 +67,31 @@ describe('readClaudeSessionAnalysis', () => {
     const cachePath = path.join(home, '.config', 'ai-usage', 'claude-cache.json');
     const cache: {
       version: number;
-      rows: {
-        costApprox: number;
-        costKnown: boolean;
-        modelSegments?: { costApprox: number; costKnown: boolean }[];
-      }[];
+      files: Record<
+        string,
+        {
+          rows: {
+            costApprox: number;
+            costKnown: boolean;
+            modelSegments?: { costApprox: number; costKnown: boolean }[];
+          }[];
+        }
+      >;
     } = await Bun.file(cachePath).json();
     cache.version = 11;
-    for (const row of cache.rows) {
-      row.costApprox = 0;
-      row.costKnown = false;
-      for (const segment of row.modelSegments ?? []) {
-        segment.costApprox = 0;
-        segment.costKnown = false;
+    for (const entry of Object.values(cache.files)) {
+      for (const row of entry.rows) {
+        row.costApprox = 0;
+        row.costKnown = false;
+        for (const segment of row.modelSegments ?? []) {
+          segment.costApprox = 0;
+          segment.costKnown = false;
+        }
       }
     }
     await Bun.write(cachePath, JSON.stringify(cache));
 
-    // No transcript changes: a fingerprint cache hit must not retain the old zero cost.
+    // No transcript changes: a per-file cache hit must not retain the old zero cost.
     const row = (await run(collectClaude, home)).find(({ source }) => source?.sourceSessionId === fixture.ids.claude);
     expect(row?.model).toBe('claude-sonnet-5-5');
     expect(row?.costKnown).toBe(true);
@@ -122,12 +149,12 @@ describe('readClaudeSessionAnalysis', () => {
 
     const cachePath = path.join(home, '.config', 'ai-usage', 'claude-cache.json');
     const cache = await Bun.file(cachePath).json();
-    // Preserve the current fingerprint but restore the pre-append rows, which
-    // stand in for the undercounted output a version 12 cache holds for these
-    // unchanged files.
-    await Bun.write(cachePath, JSON.stringify({ ...cache, rows: legacyRows, version: 12 }));
+    // Preserve the current per-file fingerprints but restore the pre-append
+    // rows, which stand in for the undercounted output a version 12 cache holds
+    // for these unchanged files.
+    await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 12)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(14);
+    expect((await Bun.file(cachePath).json()).version).toBe(15);
     expect(await run(collectClaude, home)).toEqual(freshRows);
   });
 
@@ -159,12 +186,12 @@ describe('readClaudeSessionAnalysis', () => {
 
     const cachePath = path.join(home, '.config', 'ai-usage', 'claude-cache.json');
     const cache = await Bun.file(cachePath).json();
-    // Preserve the current fingerprint but restore the pre-append rows, which
-    // stand in for the missing tool a version 13 cache holds for these
-    // unchanged files.
-    await Bun.write(cachePath, JSON.stringify({ ...cache, rows: legacyRows, version: 13 }));
+    // Preserve the current per-file fingerprints but restore the pre-append
+    // rows, which stand in for the missing tool a version 13 cache holds for
+    // these unchanged files.
+    await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 13)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(14);
+    expect((await Bun.file(cachePath).json()).version).toBe(15);
   });
 
   test('surfaces a typed failure for a no-follow unsafe transcript', async () => {
