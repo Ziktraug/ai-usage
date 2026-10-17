@@ -1,10 +1,207 @@
 import { describe, expect, test } from 'bun:test';
 import { parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
+import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import { normalizeSessionVcsRepository } from '@ai-usage/report-core/session-vcs';
 
 const event = (value: Record<string, unknown>): Record<string, unknown> => value;
 
 describe('parseClaudeSessionFacts', () => {
+  test('counts the final streamed output once across report, models, phases, and turns', async () => {
+    const jsonl = await Bun.file(new URL('./test-fixtures/claude-streamed-usage.jsonl', import.meta.url)).text();
+    const facts = parseClaudeSessionFacts({
+      records: jsonl
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+      repository: null,
+      sourceSessionId: 'streamed-usage',
+    });
+    const tokens = { cacheRead: 5, cacheWrite: 6, input: 16, output: 13, total: 40 };
+    expect(facts?.report.tokens).toEqual({ cr: 5, cw: 6, in: 16, out: 13 });
+    expect(facts?.projection).toMatchObject({ calls: 2, tokens, tools: 0, turns: 1 });
+    expect(facts?.report.rejectedMetricRecords).toBe(0);
+    expect(facts?.report.modelSegments).toEqual([
+      expect.objectContaining({ model: 'claude-sonnet-4-6', tokIn: 10, tokOut: 9, tokCr: 3, tokCw: 5 }),
+      expect.objectContaining({ model: 'claude-opus-4-1', tokIn: 6, tokOut: 4, tokCr: 2, tokCw: 1 }),
+    ]);
+    expect(facts?.projection.modelSegments).toEqual([
+      { model: 'claude-opus-4-1', tokens: { cacheRead: 2, cacheWrite: 1, input: 6, output: 4, total: 13 } },
+      { model: 'claude-sonnet-4-6', tokens: { cacheRead: 3, cacheWrite: 5, input: 10, output: 9, total: 27 } },
+    ]);
+    expect(facts?.detailFacts.phases.map((phase) => phase.tokens.output)).toEqual([9, 4]);
+    expect(facts?.detailFacts.turns).toHaveLength(1);
+    expect(facts?.detailFacts.turns[0]).toMatchObject({ calls: 2, tokens });
+    expect(facts?.detailFacts.turns[0]?.cost).toBeCloseTo(
+      approxCost(priceFor('claude-sonnet-4-6').rates, { cr: 3, cw: 5, in: 10, out: 9 }) +
+        approxCost(priceFor('claude-opus-4-1').rates, { cr: 2, cw: 1, in: 6, out: 4 }),
+      12,
+    );
+  });
+
+  test.each([
+    { outputs: [2, 9, 4], output: 9, rejected: 0 },
+    { outputs: [-1, 2, 9], output: 9, rejected: 1 },
+    { outputs: [2, -1, 9], output: 9, rejected: 1 },
+    { outputs: [2, 9, Number.MAX_SAFE_INTEGER], output: 9, rejected: 1 },
+  ])('retains valid streamed maxima and rejects invalid metrics: $outputs', ({ outputs, output, rejected }) => {
+    const facts = parseClaudeSessionFacts({
+      records: outputs.map((outputTokens, index) => ({
+        type: 'assistant',
+        timestamp: `2026-07-01T08:00:0${index}.000Z`,
+        message: { id: 'message', usage: { input_tokens: 10, output_tokens: outputTokens } },
+      })),
+      repository: null,
+      sourceSessionId: 'streamed-usage',
+    });
+    expect(facts?.report.tokens).toEqual({ cr: 0, cw: 0, in: 10, out: output });
+    expect(facts?.report.calls).toBe(1);
+    expect(facts?.report.rejectedMetricRecords).toBe(rejected);
+  });
+
+  test('preserves first input/cache fields and rejects an unsafe merged total', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [
+        { input_tokens: 10, cache_read_input_tokens: 3, cache_creation_input_tokens: 5, output_tokens: 2 },
+        { input_tokens: 100, cache_read_input_tokens: 30, cache_creation_input_tokens: 50, output_tokens: 9 },
+        { output_tokens: Number.MAX_SAFE_INTEGER },
+      ].map((usage, index) => ({
+        type: 'assistant',
+        timestamp: `2026-07-01T08:00:0${index}.000Z`,
+        message: { id: 'message', usage },
+      })),
+      repository: null,
+      sourceSessionId: 'streamed-usage',
+    });
+    expect(facts?.projection.tokens).toEqual({ cacheRead: 3, cacheWrite: 5, input: 10, output: 9, total: 27 });
+    expect(facts?.report.rejectedMetricRecords).toBe(1);
+  });
+
+  const streamedBlock = (
+    uuid: string,
+    parentUuid: string,
+    second: number,
+    content: unknown[],
+    usage: Record<string, unknown> | undefined = { input_tokens: 10, output_tokens: 2 },
+  ): Record<string, unknown> =>
+    event({
+      type: 'assistant',
+      timestamp: `2026-07-01T08:00:${String(second).padStart(2, '0')}.000Z`,
+      uuid,
+      parentUuid,
+      requestId: 'request-1',
+      message: { id: 'message-1', model: 'claude-sonnet-4-6', content, ...(usage ? { usage } : {}) },
+    });
+  const streamedPrompt = event({
+    type: 'user',
+    timestamp: '2026-07-01T08:00:00.000Z',
+    uuid: 'user-1',
+    message: { role: 'user', content: 'Synthetic prompt' },
+  });
+
+  test('counts a tool_use streamed in a later content-block record of the same message', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [
+        streamedPrompt,
+        streamedBlock('assistant-1', 'user-1', 1, [{ type: 'thinking', thinking: 'Synthetic thought' }]),
+        streamedBlock('assistant-1-tool', 'assistant-1', 2, [
+          { type: 'tool_use', id: 'toolu-read', name: 'Read', input: {} },
+        ]),
+      ],
+      repository: null,
+      sourceSessionId: 'streamed-tools',
+    });
+    expect(facts?.report).toMatchObject({ calls: 1, tools: 1 });
+    expect(facts?.projection).toMatchObject({ calls: 1, tools: 1, turns: 1 });
+    expect(facts?.detailFacts.turns).toEqual([expect.objectContaining({ calls: 1, tools: 1 })]);
+  });
+
+  test('adds later streamed tool uses once, whether replayed, id-less, or carried by invalid usage', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [
+        streamedPrompt,
+        streamedBlock('assistant-1', 'user-1', 1, [{ type: 'text', text: 'Synthetic answer' }]),
+        streamedBlock('assistant-1-tool', 'assistant-1', 2, [
+          { type: 'tool_use', id: 'toolu-read', name: 'Read', input: {} },
+        ]),
+        // A replayed record repeats an id already counted.
+        streamedBlock('assistant-1-replay', 'assistant-1-tool', 3, [
+          { type: 'tool_use', id: 'toolu-read', name: 'Read', input: {} },
+        ]),
+        // An id-less block in a later record cannot be told apart from a replay.
+        streamedBlock('assistant-1-anonymous', 'assistant-1-replay', 4, [{ type: 'tool_use', name: 'Read' }]),
+        // The tool use is real even when this record's usage is rejected or absent.
+        streamedBlock(
+          'assistant-1-invalid',
+          'assistant-1-anonymous',
+          5,
+          [{ type: 'tool_use', id: 'toolu-grep', name: 'Grep', input: {} }],
+          { input_tokens: 10, output_tokens: -1 },
+        ),
+        streamedBlock(
+          'assistant-1-unmetered',
+          'assistant-1-invalid',
+          6,
+          [{ type: 'tool_use', id: 'toolu-glob', name: 'Glob', input: {} }],
+          undefined,
+        ),
+      ],
+      repository: null,
+      sourceSessionId: 'streamed-tools',
+    });
+    expect(facts?.projection).toMatchObject({ calls: 1, tools: 3, turns: 1 });
+    expect(facts?.projection.tokens).toEqual({ cacheRead: 0, cacheWrite: 0, input: 10, output: 2, total: 12 });
+    expect(facts?.report.rejectedMetricRecords).toBe(1);
+    expect(facts?.detailFacts.turns).toEqual([expect.objectContaining({ calls: 1, tools: 3 })]);
+  });
+
+  test('anchors a later streamed launch and its result to the round that counts the tool', () => {
+    const facts = parseClaudeSessionFacts({
+      isAgentFile: false,
+      records: [
+        streamedPrompt,
+        streamedBlock('assistant-1', 'user-1', 1, [{ type: 'thinking', thinking: 'Synthetic thought' }]),
+        // Its parent chain is broken, so only the shared message identity ties
+        // this record to the round of the first observation.
+        streamedBlock('assistant-1-tool', 'missing-parent', 2, [
+          { type: 'tool_use', id: 'toolu-spawn', name: 'Task', input: { description: 'Synthetic launch' } },
+        ]),
+        event({
+          type: 'user',
+          timestamp: '2026-07-01T08:00:30.000Z',
+          uuid: 'result-1',
+          parentUuid: 'assistant-1-tool',
+          toolUseResult: { agentId: 'synthetic-agent' },
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'toolu-spawn', content: 'launched' }],
+          },
+        }),
+        event({
+          type: 'system',
+          subtype: 'turn_duration',
+          timestamp: '2026-07-01T08:00:31.000Z',
+          parentUuid: 'result-1',
+          durationMs: 31_000,
+        }),
+      ],
+      repository: null,
+      sourceSessionId: 'streamed-launch',
+    });
+    expect(facts?.detailFacts.turns).toEqual([
+      expect.objectContaining({
+        durationMs: 31_000,
+        endAt: '2026-07-01T08:00:31.000Z',
+        index: 0,
+        timingStatus: 'recorded',
+        tools: 1,
+      }),
+    ]);
+    expect(facts?.detailFacts.interactions).toEqual([
+      expect.objectContaining({ toolUseId: 'toolu-spawn', turnIndex: 0 }),
+    ]);
+    expect(facts?.detailFacts.children).toEqual([expect.objectContaining({ spawnTurnIndex: 0 })]);
+  });
+
   test('owns prompt graph, duplicate usage, model attribution, timing, tools, and VCS facts', () => {
     const repository = normalizeSessionVcsRepository('git@github.com:fixture/project.git', 'local-derived');
     const facts = parseClaudeSessionFacts({

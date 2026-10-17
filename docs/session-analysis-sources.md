@@ -272,7 +272,22 @@ immutable revision. It derives:
 - direct human prompts from eligible user events, excluding tool results,
   metadata, and synthetic messages;
 - usage-bearing assistant responses by stable message/request identity, so
-  duplicated JSONL observations do not duplicate tokens or tools;
+  duplicated JSONL observations do not duplicate tokens or tools. Content-block
+  records repeat message-level input/cache counts while output can grow during
+  streaming: retain input/cache from the first valid usage and the maximum valid
+  output for that identity, never the sum of its observations. Repeated or
+  out-of-order snapshots cannot reduce output. Invalid metrics and unsafe merged
+  totals are rejected and counted without losing earlier valid usage;
+- tool uses across every content-block record of one identity: a `tool_use`
+  block usually arrives in a later record than the thinking or text that opened
+  the message, so it counts toward the first valid observation's call and round
+  even when that later record's usage is absent or rejected. Tool-use ids are
+  counted once, so a replayed record adds nothing; an id-less block counts only
+  in the first observation, because a later one cannot be told apart from a
+  replay. Spawn and message tool calls, the tool results that answer them, and
+  recorded turn durations below them join the same round. Tool uses in a
+  record whose usage is rejected before any valid observation of its identity
+  are not counted;
 - ordered recorded model phases, token buckets, tools, prompt association,
   root/agent lineage, branch spans, and recorded pull requests;
 - recorded `system.turn_duration` intervals where present, kept separate from

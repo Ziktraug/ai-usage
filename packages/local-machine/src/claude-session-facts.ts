@@ -165,14 +165,14 @@ interface ClaudePromptFacts {
 }
 
 interface ClaudeAssistantFacts {
-  assistantEvents: ReadonlyMap<string, ClaudeEvent>;
   assistants: ClaudeAssistant[];
+  /** Every attributable assistant record, streamed later blocks included, keyed to its round. */
   assistantTurnKey: ReadonlyMap<string, string>;
   budgetExhaustions: number;
   cycles: number;
   partial: boolean;
   rejectedMetricRecords: number;
-  /** Prompt key of any attributable event, for records the usage pass skipped (streamed duplicates). */
+  /** Prompt key of any attributable event, for records outside every counted message. */
   resolveTurnKey: (event: ClaudeEvent) => string | null;
   unattributed: number;
 }
@@ -581,6 +581,77 @@ const collectClaudePrompts = (events: readonly ClaudeEvent[], graph: ClaudeGraph
   return { bodiesOmitted, identitiesOmitted, partial, promptEvents, promptIdsByRecordedId, prompts, promptsTruncated };
 };
 
+/**
+ * Counts the tool_use blocks of one record that no earlier record counted.
+ * With `requireId`, id-less blocks are dropped because they cannot be
+ * deduplicated.
+ */
+const countNewToolUses = (
+  content: unknown,
+  seenToolUses: Set<string>,
+  { requireId }: { requireId: boolean },
+): number => {
+  let tools = 0;
+  for (const block of Array.isArray(content) ? content : []) {
+    if (blockType(block) !== 'tool_use') {
+      continue;
+    }
+    const toolUseId = isRecord(block) && typeof block.id === 'string' && block.id.length > 0 ? block.id : null;
+    if (toolUseId === null) {
+      if (requireId) {
+        continue;
+      }
+    } else if (seenToolUses.has(toolUseId)) {
+      continue;
+    } else {
+      seenToolUses.add(toolUseId);
+    }
+    tools += 1;
+  }
+  return tools;
+};
+
+/**
+ * Content blocks repeat message-level usage while output grows during
+ * streaming. Keeps the first input/cache counts and the largest output;
+ * summing the observations would count the same request more than once.
+ * Returns false when the observation is rejected, leaving `tokens` unchanged.
+ */
+const mergeStreamedUsage = (tokens: SessionDetailTokenCounts, usage: unknown): boolean => {
+  const observed = parseUsage(usage);
+  if (!observed) {
+    return false;
+  }
+  const output = Math.max(tokens.output, observed.output);
+  const total = tokens.input + tokens.cacheRead + tokens.cacheWrite + output;
+  if (!Number.isSafeInteger(total)) {
+    return false;
+  }
+  tokens.output = output;
+  tokens.total = total;
+  return true;
+};
+
+/**
+ * A later content-block record of a streamed message joins the round of its
+ * first observation, so the tool calls and tool results that hang off it are
+ * attributed to the round that counts the tool.
+ */
+const anchorStreamedRecord = (
+  current: ClaudeEvent,
+  first: ClaudeAssistant,
+  graph: ClaudeGraphIndex,
+  assistantTurnKey: Map<string, string>,
+): void => {
+  if (!current.uuid || graph.conflictingUuids.has(current.uuid) || assistantTurnKey.has(current.uuid)) {
+    return;
+  }
+  const key = first.uuid ? assistantTurnKey.get(first.uuid) : undefined;
+  if (key !== undefined) {
+    assistantTurnKey.set(current.uuid, key);
+  }
+};
+
 const collectClaudeAssistants = (
   events: readonly ClaudeEvent[],
   graph: ClaudeGraphIndex,
@@ -589,9 +660,8 @@ const collectClaudeAssistants = (
   const promptIds = new Set(promptFacts.promptEvents.keys());
   const resolver = createPromptResolver(graph, promptIds);
   const assistants: ClaudeAssistant[] = [];
-  const assistantEvents = new Map<string, ClaudeEvent>();
   const assistantTurnKey = new Map<string, string>();
-  const seenUsage = new Set<string>();
+  const assistantsByMessage = new Map<string, ClaudeAssistant>();
   const seenToolUses = new Set<string>();
   let partial = false;
   let rejectedMetricRecords = 0;
@@ -602,13 +672,27 @@ const collectClaudeAssistants = (
       continue;
     }
     const message = isRecord(record.message) ? record.message : null;
-    if (!message?.usage) {
+    if (!message) {
       continue;
     }
     const messageId = typeof message.id === 'string' ? message.id : null;
     const requestId = typeof record.requestId === 'string' ? record.requestId : '';
     const deduplicationKey = messageId ? `${messageId}:${requestId}` : null;
-    if (deduplicationKey && seenUsage.has(deduplicationKey)) {
+    const first = deduplicationKey ? assistantsByMessage.get(deduplicationKey) : undefined;
+    if (first) {
+      // A streamed message is written as one record per content block, and a
+      // tool_use block usually follows the thinking or text that opened it.
+      // Its tool uses belong to the first observation whatever this record's
+      // usage says. Only identified tool uses count: an id-less block in a
+      // later record cannot be told apart from a replay.
+      first.tools += countNewToolUses(message.content, seenToolUses, { requireId: true });
+      anchorStreamedRecord(current, first, graph, assistantTurnKey);
+      if (message.usage && !mergeStreamedUsage(first.tokens, message.usage)) {
+        rejectedMetricRecords += 1;
+      }
+      continue;
+    }
+    if (!message.usage) {
       continue;
     }
     const tokens = parseUsage(message.usage);
@@ -616,29 +700,16 @@ const collectClaudeAssistants = (
       rejectedMetricRecords += 1;
       continue;
     }
-    if (deduplicationKey) {
-      seenUsage.add(deduplicationKey);
-    }
     const model = typeof message.model === 'string' && message.model.length > 0 ? message.model : 'unknown';
     // A tool use carries an id; a record that repeats one already counted
     // (a streamed duplicate the usage key did not catch) must not count twice.
-    let tools = 0;
-    for (const block of Array.isArray(message.content) ? message.content : []) {
-      if (blockType(block) !== 'tool_use') {
-        continue;
-      }
-      const toolUseId = isRecord(block) && typeof block.id === 'string' && block.id.length > 0 ? block.id : null;
-      if (toolUseId !== null) {
-        if (seenToolUses.has(toolUseId)) {
-          continue;
-        }
-        seenToolUses.add(toolUseId);
-      }
-      tools += 1;
+    const tools = countNewToolUses(message.content, seenToolUses, { requireId: false });
+    const assistant: ClaudeAssistant = { at: current.at, model, tokens, tools, uuid: current.uuid };
+    if (deduplicationKey) {
+      assistantsByMessage.set(deduplicationKey, assistant);
     }
-    assistants.push({ at: current.at, model, tokens, tools, uuid: current.uuid });
+    assistants.push(assistant);
     if (current.uuid && !graph.conflictingUuids.has(current.uuid)) {
-      assistantEvents.set(current.uuid, current);
       const key = promptKeyFor(current, graph, resolver.resolve, promptFacts.promptIdsByRecordedId);
       if (key === null) {
         unattributed += 1;
@@ -650,7 +721,6 @@ const collectClaudeAssistants = (
     }
   }
   return {
-    assistantEvents,
     assistants,
     assistantTurnKey,
     budgetExhaustions: resolver.budgetExhaustions(),
@@ -757,13 +827,14 @@ const extendClaudeTurnBounds = (
 const applyClaudeTurnDurations = (
   events: readonly ClaudeEvent[],
   graph: ClaudeGraphIndex,
-  assistantEvents: ReadonlyMap<string, ClaudeEvent>,
   assistantTurnKey: ReadonlyMap<string, string>,
   turnsByKey: ReadonlyMap<string, MutableTurn>,
   sessionStart: Date,
   sessionEnd: Date,
 ): boolean => {
-  const assistantIds = new Set(assistantEvents.keys());
+  // Streamed later blocks are anchored too, so a duration recorded below one
+  // whose own parent chain is broken still reaches its round.
+  const assistantIds = new Set(assistantTurnKey.keys());
   const resolver = createPromptResolver(graph, assistantIds);
   let partial = false;
   for (const current of events) {
@@ -876,8 +947,9 @@ const collectClaudeToolCalls = (
       continue;
     }
     // A streamed message is written as several records sharing one message id;
-    // the usage pass keeps the first, so a later record carrying the tool_use
-    // block resolves its round through ancestry instead.
+    // the assistant pass anchors a later record carrying the tool_use block to
+    // the round of the first valid observation, which counts the tool. Only a
+    // record outside any counted message resolves its round through ancestry.
     const attributable = current.uuid && !graph.conflictingUuids.has(current.uuid);
     const turnKey =
       attributable && current.uuid ? (assistantTurnKey.get(current.uuid) ?? resolveTurnKey(current)) : null;
@@ -1391,7 +1463,6 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
   const timingPartial = applyClaudeTurnDurations(
     events,
     graph,
-    assistantFacts.assistantEvents,
     assistantFacts.assistantTurnKey,
     mutableTurns.turnsByKey,
     start,

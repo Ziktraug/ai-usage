@@ -59,7 +59,11 @@ interface ClaudeCache {
 // entry was written when a pasted-image record could still abort the transcript,
 // so it under-reports both the rows and the loss.
 // Rows include calculated costs; invalidate them when newly priced models land.
-const CLAUDE_CACHE_VERSION = 12;
+// Bumped to 13 to retain the maximum streamed output per message/request.
+// Version 12 cached only the first valid usage and can undercount output.
+// Bumped to 14 to count tool uses streamed in later content-block records of a
+// message. Version 13 ignored them and can undercount tools.
+const CLAUDE_CACHE_VERSION = 14;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {

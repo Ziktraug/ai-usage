@@ -95,6 +95,78 @@ describe('readClaudeSessionAnalysis', () => {
     expect(await run(readClaudeSessionAnalysis('missing-session'), home)).toBeNull();
   });
 
+  test('reparses version 12 caches and retains final streamed output on warm reads', async () => {
+    const home = await makeHome();
+    const fixture = await seedHarnessHome(home, { harnesses: ['claude'] });
+    const legacyRows = await run(collectClaude, home);
+    await appendFile(
+      fixture.paths.claudeRootTranscript,
+      `${JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-07-01T08:01:01.000Z',
+        uuid: 'claude-assistant-final-output',
+        parentUuid: 'claude-user-1',
+        requestId: 'claude-request-1',
+        message: {
+          id: 'claude-message-1',
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 30, cache_creation_input_tokens: 10 },
+        },
+      })}\n`,
+    );
+    const freshRows = await run(collectClaude, home);
+    const rootRow = freshRows.find(({ source }) => source?.sourceSessionId === fixture.ids.claude);
+    expect(rootRow).toMatchObject({ calls: 2, tokIn: 140, tokCr: 35, tokCw: 12, tokOut: 65 });
+    const analysis = await run(readClaudeSessionAnalysis(fixture.ids.claude), home);
+    expect(analysis?.projection.tokens).toEqual({ input: 140, cacheRead: 35, cacheWrite: 12, output: 65, total: 252 });
+
+    const cachePath = path.join(home, '.config', 'ai-usage', 'claude-cache.json');
+    const cache = await Bun.file(cachePath).json();
+    // Preserve the current fingerprint but restore the pre-append rows, which
+    // stand in for the undercounted output a version 12 cache holds for these
+    // unchanged files.
+    await Bun.write(cachePath, JSON.stringify({ ...cache, rows: legacyRows, version: 12 }));
+    expect(await run(collectClaude, home)).toEqual(freshRows);
+    expect((await Bun.file(cachePath).json()).version).toBe(14);
+    expect(await run(collectClaude, home)).toEqual(freshRows);
+  });
+
+  test('reparses version 13 caches and counts a tool use streamed in a later record', async () => {
+    const home = await makeHome();
+    const fixture = await seedHarnessHome(home, { harnesses: ['claude'] });
+    const legacyRows = await run(collectClaude, home);
+    await appendFile(
+      fixture.paths.claudeRootTranscript,
+      `${JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-07-01T08:01:01.000Z',
+        uuid: 'claude-assistant-streamed-tool',
+        parentUuid: 'claude-assistant-1',
+        requestId: 'claude-request-1',
+        message: {
+          id: 'claude-message-1',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', id: 'toolu-streamed', name: 'Grep', input: {} }],
+          usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 30, cache_creation_input_tokens: 10 },
+        },
+      })}\n`,
+    );
+    const freshRows = await run(collectClaude, home);
+    const rootRow = freshRows.find(({ source }) => source?.sourceSessionId === fixture.ids.claude);
+    expect(rootRow).toMatchObject({ calls: 2, tools: 2 });
+    const analysis = await run(readClaudeSessionAnalysis(fixture.ids.claude), home);
+    expect(analysis?.projection).toMatchObject({ calls: 2, tools: 2 });
+
+    const cachePath = path.join(home, '.config', 'ai-usage', 'claude-cache.json');
+    const cache = await Bun.file(cachePath).json();
+    // Preserve the current fingerprint but restore the pre-append rows, which
+    // stand in for the missing tool a version 13 cache holds for these
+    // unchanged files.
+    await Bun.write(cachePath, JSON.stringify({ ...cache, rows: legacyRows, version: 13 }));
+    expect(await run(collectClaude, home)).toEqual(freshRows);
+    expect((await Bun.file(cachePath).json()).version).toBe(14);
+  });
+
   test('surfaces a typed failure for a no-follow unsafe transcript', async () => {
     const home = await makeHome();
     const fixture = await seedHarnessHome(home, { harnesses: ['claude'] });
