@@ -82,6 +82,18 @@ const sourceView = (snapshot: SourceControlView, sourceId: CollectionSourceId) =
   return source;
 };
 
+const waitForSleeps = (deadline: number, count: number): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 1000; attempt++) {
+      const sleeps = Array.from(yield* TestClock.sleeps());
+      if (sleeps.filter((scheduledAt) => scheduledAt === deadline).length === count) {
+        return;
+      }
+      yield* Effect.promise(() => hostScheduler.yield());
+    }
+    return yield* Effect.die(new Error(`Timed out waiting for ${count} sleeps at ${deadline}`));
+  });
+
 const makePolicyStore = (
   initial: SourcePolicyOverrides = {},
 ): Effect.Effect<{ policies: Ref.Ref<SourcePolicyOverrides>; store: SourcePolicyStore }> =>
@@ -859,6 +871,371 @@ describe('source control plane', () => {
       previousPublishedGeneration: 0,
       requestTarget: 2,
     });
+  });
+
+  test('settles staggered source cadence into one publication covering both completions', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const claudeRuns = yield* Ref.make(0);
+        const codexRuns = yield* Ref.make(0);
+        const writerGate = createUsageEngineWriterGate();
+        const settleYielded = yield* Deferred.make<void>();
+        const releaseSettleYield = yield* Deferred.make<void>();
+        const control = yield* createSourceControl({
+          initialPublicationOrder: 'externally-published',
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'claude.sessions',
+              fakeSource('claude.sessions', () =>
+                Effect.gen(function* () {
+                  const run = yield* Ref.updateAndGet(claudeRuns, (count) => count + 1);
+                  yield* Ref.update(events, (current) => [...current, `claude:${run}`]);
+                  return { ...successResult(), servedProjectionChanged: run > 1 };
+                }),
+              ),
+            ],
+            [
+              'codex.sessions',
+              fakeSource('codex.sessions', () =>
+                Effect.gen(function* () {
+                  const run = yield* Ref.updateAndGet(codexRuns, (count) => count + 1);
+                  if (run === 1) {
+                    yield* Effect.sleep(Duration.seconds(1));
+                  }
+                  yield* Ref.update(events, (current) => [...current, `codex:${run}`]);
+                  return { ...successResult(), servedProjectionChanged: run > 1 };
+                }),
+              ),
+            ],
+          ]),
+          writerGate,
+        });
+        yield* waitForSleeps(1000, 1);
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* waitFor(control, (view) => sourceView(view, 'codex.sessions').nextDueAt !== undefined);
+        yield* TestClock.adjust(Duration.seconds(59));
+        yield* waitForSleeps(61_000, 2);
+
+        const waiting = yield* control.getSnapshot;
+        expect(waiting.publication).toMatchObject({
+          dirtyGeneration: 1,
+          pendingDemand: true,
+          queued: true,
+          requestedGeneration: 1,
+          running: false,
+        });
+        expect(yield* Ref.get(publication.calls)).toBe(0);
+        expect(boundaryEvents(capture.events(), 'publication')).toHaveLength(0);
+
+        // TestClock resumes equal-deadline sleeps individually. Hold the writer
+        // between takes until it has also resumed the source's cadence timer.
+        yield* Effect.forkScoped(
+          writerGate.withEffect(
+            Deferred.succeed(settleYielded, undefined).pipe(Effect.andThen(Deferred.await(releaseSettleYield))),
+          ),
+        );
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Deferred.await(settleYielded);
+        yield* waitFor(control, (view) => sourceView(view, 'codex.sessions').lifecycle === 'queued');
+        yield* Deferred.succeed(releaseSettleYield, undefined);
+        const settled = yield* waitFor(
+          control,
+          (view) => view.publication.revision === 'revision-1' && !view.publication.pendingDemand,
+        );
+        expect(settled.publication).toMatchObject({
+          acknowledgedRequestGeneration: 2,
+          dirtyGeneration: 2,
+          publishedGeneration: 2,
+          requestedGeneration: 2,
+        });
+        expect(settled.queueDepth).toBe(0);
+        expect(yield* Ref.get(events)).toEqual(['claude:1', 'codex:1', 'claude:2', 'codex:2', 'publish:1']);
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+
+    const publications = boundaryEvents(capture.events(), 'publication');
+    expect(publications).toHaveLength(1);
+    expect(publications[0]?.annotations).toMatchObject({ dataTarget: 2, queueDelayMs: 1000, requestTarget: 2 });
+    const periodicRuns = boundaryEvents(capture.events(), 'source.run').filter(
+      (event) => event.annotations.trigger === 'cadence',
+    );
+    expect(periodicRuns.map((event) => event.annotations.publicationDataGeneration)).toEqual([1, 2]);
+    const orderedBoundaries = capture
+      .events()
+      .filter((event) => event.boundary === 'publication' || event.annotations.trigger === 'cadence');
+    expect(orderedBoundaries.map((event) => event.boundary)).toEqual(['source.run', 'source.run', 'publication']);
+  });
+
+  test('does not defer an explicit publication request behind a queued source', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const releaseClaude = yield* Deferred.make<void>();
+        const releaseCodex = yield* Deferred.make<void>();
+        const control = yield* createSourceControl({
+          initialDetection: 'deferred',
+          initialPublicationOrder: 'externally-published',
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'claude.sessions',
+              fakeSource('claude.sessions', () =>
+                Ref.update(events, (current) => [...current, 'claude']).pipe(
+                  Effect.andThen(Deferred.await(releaseClaude)),
+                  Effect.as(successResult()),
+                ),
+              ),
+            ],
+            [
+              'codex.sessions',
+              fakeSource('codex.sessions', () =>
+                Ref.update(events, (current) => [...current, 'codex']).pipe(
+                  Effect.andThen(Deferred.await(releaseCodex)),
+                  Effect.as(successResult()),
+                ),
+              ),
+            ],
+          ]),
+        });
+        yield* control.detectSource('claude.sessions');
+        yield* waitFor(control, (view) => sourceView(view, 'claude.sessions').lifecycle === 'running');
+        expect(yield* control.requestPublication).toBe(true);
+        yield* control.detectSource('codex.sessions');
+        expect(sourceView(yield* control.getSnapshot, 'codex.sessions').lifecycle).toBe('queued');
+        yield* Deferred.succeed(releaseClaude, undefined);
+        yield* waitFor(
+          control,
+          (view) =>
+            view.publication.revision === 'revision-1' && sourceView(view, 'codex.sessions').lifecycle === 'running',
+        );
+
+        expect(yield* Ref.get(events)).toEqual(['claude', 'publish:1', 'codex']);
+        yield* Deferred.succeed(releaseCodex, undefined);
+        yield* waitFor(control, (view) => sourceView(view, 'codex.sessions').lastOutcome === 'success');
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+    const publications = boundaryEvents(capture.events(), 'publication');
+    expect(publications).toHaveLength(1);
+    expect(publications[0]?.annotations).toMatchObject({ dataTarget: 0, queueDelayMs: 0, requestTarget: 1 });
+  });
+
+  test('serves an explicit request that joined a queued source-wake publication before the next source', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const releaseCodex = yield* Deferred.make<void>();
+        const releaseClaude = yield* Deferred.make<void>();
+        const control = yield* createSourceControl({
+          initialDetection: 'deferred',
+          initialPublicationOrder: 'externally-published',
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'codex.sessions',
+              fakeSource('codex.sessions', () =>
+                Ref.update(events, (current) => [...current, 'codex']).pipe(
+                  Effect.andThen(Deferred.await(releaseCodex)),
+                  Effect.as({ ...successResult(), servedProjectionChanged: true }),
+                ),
+              ),
+            ],
+            [
+              'claude.sessions',
+              fakeSource('claude.sessions', () =>
+                Ref.update(events, (current) => [...current, 'claude']).pipe(
+                  Effect.andThen(Deferred.await(releaseClaude)),
+                  Effect.as(successResult()),
+                ),
+              ),
+            ],
+            [
+              'opencode.sessions',
+              fakeSource('opencode.sessions', () =>
+                Ref.update(events, (current) => [...current, 'opencode']).pipe(Effect.as(successResult())),
+              ),
+            ],
+          ]),
+        });
+        // Codex runs first; Claude queues behind it. When Codex finishes with a
+        // served change, the source-wake publication lands behind Claude.
+        yield* control.detectSource('codex.sessions');
+        yield* waitFor(control, (view) => sourceView(view, 'codex.sessions').lifecycle === 'running');
+        yield* control.detectSource('claude.sessions');
+        expect(sourceView(yield* control.getSnapshot, 'claude.sessions').lifecycle).toBe('queued');
+        yield* Deferred.succeed(releaseCodex, undefined);
+        yield* waitFor(
+          control,
+          (view) => sourceView(view, 'claude.sessions').lifecycle === 'running' && view.publication.queued,
+        );
+        // An explicit request joins the queued source-wake job, and a third
+        // source queues behind that job.
+        expect(yield* control.requestPublication).toBe(true);
+        yield* control.detectSource('opencode.sessions');
+        expect(sourceView(yield* control.getSnapshot, 'opencode.sessions').lifecycle).toBe('queued');
+        yield* Deferred.succeed(releaseClaude, undefined);
+        yield* waitFor(
+          control,
+          (view) => view.publication.revision === 'revision-1' && !view.publication.pendingDemand,
+        );
+        yield* waitFor(control, (view) => sourceView(view, 'opencode.sessions').lastOutcome === 'success');
+
+        // Without the explicit marker the publication would settle behind the
+        // queued OpenCode run.
+        expect(yield* Ref.get(events)).toEqual(['codex', 'claude', 'publish:1', 'opencode']);
+        expect((yield* control.getSnapshot).publication).toMatchObject({
+          acknowledgedRequestGeneration: 2,
+          requestedGeneration: 2,
+        });
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+    const publications = boundaryEvents(capture.events(), 'publication');
+    expect(publications).toHaveLength(1);
+    expect(publications[0]?.annotations).toMatchObject({ dataTarget: 1, requestTarget: 2 });
+  });
+
+  test('publishes after two deferrals even when another source remains queued', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const sourceIds = [
+          'claude.sessions',
+          'codex.sessions',
+          'claude.sessions',
+          'codex.sessions',
+          'claude.sessions',
+        ] as const;
+        const runs = yield* Effect.forEach(sourceIds, (sourceId) =>
+          Effect.gen(function* () {
+            return { release: yield* Deferred.make<void>(), sourceId, started: yield* Deferred.make<void>() };
+          }),
+        );
+        const runCount = yield* Ref.make(0);
+        const sources = new Map<CollectionSourceId, ScheduledSource>();
+        for (const sourceId of ['claude.sessions', 'codex.sessions'] as const) {
+          sources.set(
+            sourceId,
+            fakeSource(sourceId, () =>
+              Effect.gen(function* () {
+                const runIndex = yield* Ref.updateAndGet(runCount, (count) => count + 1);
+                const run = runs[runIndex - 1]!;
+                expect(run.sourceId).toBe(sourceId);
+                yield* Ref.update(events, (current) => [...current, `run:${runIndex}`]);
+                yield* Deferred.succeed(run.started, undefined);
+                yield* Deferred.await(run.release);
+                return { ...successResult(), servedProjectionChanged: runIndex === 1 };
+              }),
+            ),
+          );
+        }
+        const control = yield* createSourceControl({
+          initialPublicationOrder: 'externally-published',
+          policyStore: store,
+          publication: publication.port,
+          sources,
+        });
+        yield* Deferred.await(runs[0]!.started);
+        yield* Deferred.succeed(runs[0]!.release, undefined);
+
+        // The blocked run puts the next source behind the pending publication.
+        // Each release presents another queued source when publication is taken.
+        for (let runIndex = 1; runIndex <= 3; runIndex++) {
+          const run = runs[runIndex]!;
+          yield* Deferred.await(run.started);
+          expect(yield* Ref.get(publication.calls)).toBe(0);
+          expect(yield* control.runNow(runs[runIndex + 1]!.sourceId)).toBe(true);
+          const waiting = yield* control.getSnapshot;
+          expect(waiting.publication.queued).toBe(true);
+          expect(waiting.queueDepth).toBe(2);
+          yield* Deferred.succeed(run.release, undefined);
+        }
+
+        yield* Deferred.await(runs[4]!.started);
+        expect(yield* Ref.get(events)).toEqual(['run:1', 'run:2', 'run:3', 'run:4', 'publish:1', 'run:5']);
+        expect(yield* Ref.get(publication.calls)).toBe(1);
+        expect((yield* control.getSnapshot).publication.pendingDemand).toBe(false);
+        yield* Deferred.succeed(runs[4]!.release, undefined);
+        yield* waitFor(control, (view) => view.runningCount === 0);
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+    const publications = boundaryEvents(capture.events(), 'publication');
+    expect(publications).toHaveLength(1);
+    expect(publications[0]?.annotations).toMatchObject({ dataTarget: 1, requestTarget: 1 });
+  });
+
+  test('preserves pending demand when scope shutdown interrupts a publication settle sleep', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.gen(function* () {
+      const events = yield* Ref.make<string[]>([]);
+      const { store } = yield* makePolicyStore();
+      const publication = yield* makePublication(events);
+      const control = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createSourceControl({
+            initialPublicationOrder: 'externally-published',
+            policyStore: store,
+            publication: publication.port,
+            sources: new Map([
+              [
+                'claude.sessions',
+                fakeSource('claude.sessions', () =>
+                  Effect.succeed({ ...successResult(), servedProjectionChanged: true }),
+                ),
+              ],
+              [
+                'codex.sessions',
+                fakeSource(
+                  'codex.sessions',
+                  () => Effect.succeed(successResult()),
+                  Effect.succeed(detected),
+                  Duration.seconds(3),
+                ),
+              ],
+            ]),
+          });
+          yield* waitForSleeps(3000, 2);
+          return service;
+        }),
+      );
+
+      expect((yield* control.getSnapshot).publication).toMatchObject({
+        acknowledgedRequestGeneration: 0,
+        dirtyGeneration: 1,
+        pendingDemand: true,
+        publishedGeneration: 0,
+        queued: true,
+        requestedGeneration: 1,
+        running: false,
+      });
+      expect(yield* Ref.get(publication.calls)).toBe(0);
+    });
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+    expect(boundaryEvents(capture.events(), 'publication')).toHaveLength(0);
   });
 
   test('records publication demand arriving during a running attempt and coalesces a successor', async () => {
