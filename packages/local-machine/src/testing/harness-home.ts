@@ -377,7 +377,13 @@ const codexSessionEvents = (
     {
       timestamp: new Date(startMs + 40_000).toISOString(),
       type: 'event_msg',
-      payload: { type: 'token_count', info: { total_token_usage: codexUsage(80, 30, 20) } },
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: codexUsage(80, 30, 20),
+          ...(options.child ? { last_token_usage: codexUsage(80, 30, 20) } : {}),
+        },
+      },
     },
     {
       timestamp: new Date(startMs + 50_000).toISOString(),

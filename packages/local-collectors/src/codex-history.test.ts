@@ -317,6 +317,12 @@ Preserve the existing aggregation semantics.`,
                 cached_input_tokens: 1,
                 output_tokens: 4,
               },
+              last_token_usage: {
+                total_tokens: 9,
+                input_tokens: 5,
+                cached_input_tokens: 1,
+                output_tokens: 4,
+              },
             },
           },
         },
@@ -3019,5 +3025,415 @@ Preserve the existing aggregation semantics.`,
     });
     expect(busyDetail).not.toBeNull();
     expect(parseSessionDetail(busyDetail)).toEqual(busyDetail as SessionDetail);
+  });
+});
+
+describe('Codex child token ownership', () => {
+  const birth = '2026-01-01T00:10:00.000Z';
+  const written = '2026-01-01T00:10:05.000Z';
+  const start = 1_767_226_200;
+  const event = (type: string, payload: Record<string, unknown>, timestamp = written) => ({
+    timestamp,
+    type,
+    payload,
+  });
+  const task = (turn: string, startedAt: number | undefined = start) =>
+    event('event_msg', { type: 'task_started', turn_id: turn, started_at: startedAt });
+  const context = (turn: string) => event('turn_context', { turn_id: turn, model: 'gpt-5.6-sol' });
+  const counts = (total: number) => ({
+    input_tokens: total * 0.8,
+    cached_input_tokens: total * 0.6,
+    output_tokens: total * 0.2,
+    total_tokens: total,
+  });
+  const tokens = (total: number, last?: number) =>
+    event('event_msg', {
+      type: 'token_count',
+      info: { total_token_usage: counts(total), ...(last === undefined ? {} : { last_token_usage: counts(last) }) },
+    });
+  const complete = (turn: string, startedAt?: number, completedAt = start + 60) =>
+    event('event_msg', { type: 'task_complete', turn_id: turn, started_at: startedAt, completed_at: completedAt });
+  const read = (events: unknown[], metadata: Record<string, unknown> = {}) => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/ownership-child.jsonl',
+      jsonl(
+        event('session_meta', {
+          id: 'ownership-child',
+          timestamp: birth,
+          cwd: '/work/ownership',
+          source: { subagent: { thread_spawn: { parent_thread_id: 'ownership-parent' } } },
+          ...metadata,
+        }),
+        ...events,
+      ),
+    );
+    const session = runWithStorage(readCodexUsageSessions, storage)[0];
+    const analysis = runWithStorage(readCodexSessionAnalysis('ownership-child'), storage);
+    if (!(session && analysis)) {
+      throw new Error('Expected the child session and its analysis');
+    }
+    const { projectPath: _projectPath, source: _source, ...row } = sessionToUsageRow(session);
+    return {
+      session,
+      detail: analysis.detail,
+      projection: analysis.projection,
+      reportProjection: sessionProjectionFactsForSerializedRow(serializeUsageRow(row)),
+      total: session.tokens.in + session.tokens.cr + session.tokens.out,
+    };
+  };
+
+  test.each(['subagent', 'classifier'])('uses the declared birth of a delayed %s', (origin) => {
+    const { session, total, detail } = read(
+      [task('own'), context('own'), tokens(100, 100), tokens(250, 150), complete('own')],
+      origin === 'classifier' ? { source: { subagent: { other: 'guardian' } } } : {},
+    );
+    expect(total).toBe(250);
+    expect(session.partial).toBe(false);
+    expect(detail.turns.map((turn) => turn.tokens.total)).toEqual([250]);
+  });
+
+  test('never falls back to the largest inherited cumulative counter', () => {
+    const { session, total } = read([
+      task('parent-turn', start - 120),
+      context('parent-turn'),
+      tokens(1000, 100),
+      complete('parent-turn', start - 120, start - 60),
+    ]);
+    expect(total).toBe(0);
+    // Counters seen without any child-owned generation are unproven, not zero usage.
+    expect(session.partial).toBe(true);
+  });
+
+  test('does not move the child birth backwards when copied records retain parent timestamps', () => {
+    const parentTime = '2026-01-01T00:00:00.000Z';
+    const { total } = read([
+      event('session_meta', { id: 'ownership-parent', timestamp: parentTime }, parentTime),
+      event('event_msg', { type: 'task_started', turn_id: 'parent-turn', started_at: start - 600 }, parentTime),
+      context('parent-turn'),
+      tokens(1000, 1000),
+      tokens(1100, 100),
+      complete('parent-turn', start - 600, start - 60),
+      task('own'),
+      context('own'),
+      tokens(1200, 100),
+      complete('own'),
+    ]);
+    expect(total).toBe(100);
+  });
+
+  test('recovers an unanchored classifier generation from its recorded completion start', () => {
+    const { total, detail, projection, reportProjection } = read(
+      [
+        tokens(1000),
+        task('rollout-2'),
+        context('first'),
+        tokens(1100, 100),
+        complete('first', start + 10),
+        complete('rollout-2'),
+        task('second', start + 61),
+        context('second'),
+        tokens(1250, 150),
+        complete('second', start + 61, start + 90),
+      ],
+      { source: { subagent: { other: 'guardian' } }, subagent_history_start_ordinal: 12 },
+    );
+    expect(total).toBe(250);
+    expect(detail.phases.reduce((sum, phase) => sum + phase.tokens.total, 0)).toBe(250);
+    expect(projection).toEqual(reportProjection);
+  });
+
+  test('keeps a recovered generation in the detail when the next native turn changes model', () => {
+    const { total, detail, projection, reportProjection } = read(
+      [
+        tokens(1000),
+        task('rollout-2'),
+        context('first'),
+        tokens(1100, 100),
+        complete('first', start + 10),
+        complete('rollout-2'),
+        task('second', start + 61),
+        event('turn_context', { turn_id: 'second', model: 'gpt-5.6-terra' }),
+        tokens(1200, 100),
+        complete('second', start + 61, start + 90),
+      ],
+      { source: { subagent: { other: 'guardian' } }, subagent_history_start_ordinal: 12 },
+    );
+    expect(total).toBe(200);
+    expect(detail.phases.map((phase) => [phase.model, phase.tokens.total])).toEqual([
+      ['gpt-5.6-sol', 100],
+      ['gpt-5.6-terra', 100],
+    ]);
+    expect(detail.phases[0]?.startAt).toBe(new Date((start + 10) * 1000).toISOString());
+    expect(projection).toEqual(reportProjection);
+  });
+
+  test('keeps an inherited task context out of a pending unanchored generation', () => {
+    const { total } = read([
+      task('parent-turn', start - 600),
+      context('first'),
+      tokens(1000),
+      context('parent-turn'),
+      tokens(1100, 100),
+      complete('first', start + 10),
+      complete('parent-turn', start - 600, start - 60),
+    ]);
+    expect(total).toBe(0);
+  });
+
+  test('attributes a turn context without a turn id to the open owned task', () => {
+    const { session, total } = read([
+      task('own'),
+      event('turn_context', { model: 'gpt-5.6-sol' }),
+      tokens(100, 100),
+      tokens(250, 150),
+      complete('own'),
+    ]);
+    expect(total).toBe(250);
+    expect(session.partial).toBe(false);
+  });
+  test('recovers a paginated child context preceding its synthetic task wrapper', () => {
+    const { total } = read(
+      [
+        context('first'),
+        tokens(1000),
+        task('rollout-4'),
+        tokens(1100, 100),
+        tokens(1250, 150),
+        complete('first', start + 10),
+        complete('rollout-4'),
+      ],
+      { forked_from_id: 'ownership-parent', subagent_history_start_ordinal: 8 },
+    );
+    expect(total).toBe(250);
+  });
+
+  test('keeps the synthetic wrapper of a copied parent context out of child usage', () => {
+    const { total, session } = read(
+      [
+        context('parent-turn'),
+        tokens(1000),
+        task('rollout-4'),
+        tokens(1100, 100),
+        complete('parent-turn', undefined, start - 60),
+        complete('rollout-4'),
+        task('own'),
+        context('own'),
+        tokens(1200, 100),
+        complete('own'),
+      ],
+      { forked_from_id: 'ownership-parent' },
+    );
+    expect(total).toBe(100);
+    expect(session.partial).toBe(false);
+  });
+
+  test('counts an owned generation without requiring a turn context', () => {
+    const { session, total } = read([tokens(1000), task('own'), tokens(1100, 100), complete('own')]);
+    expect(total).toBe(100);
+    // The seed before the first native task may hold earlier child usage.
+    expect(session.partial).toBe(true);
+  });
+
+  test('reports token growth outside an attributable task instead of silently dropping it', () => {
+    const { total, session } = read([task('own'), context('own'), tokens(100, 100), complete('own'), tokens(250, 150)]);
+    expect(total).toBe(100);
+    expect(session.partial).toBe(true);
+  });
+
+  test('does not infer a zero baseline merely from the absence of a fork marker', () => {
+    const { total, session } = read([task('own'), context('own'), tokens(1000), tokens(1100, 100), complete('own')]);
+    expect(total).toBe(100);
+    expect(session.partial).toBe(true);
+  });
+
+  test('marks a first cumulative counter with missing earlier generations partial', () => {
+    const { total, session } = read([
+      task('own'),
+      context('own'),
+      tokens(1000, 100),
+      tokens(1150, 150),
+      complete('own'),
+    ]);
+    expect(total).toBe(250);
+    expect(session.partial).toBe(true);
+  });
+
+  test('marks an unresolved unanchored context partial instead of publishing its cumulative total', () => {
+    const { session, total } = read(
+      [
+        context('unplaced'),
+        tokens(1000),
+        task('rollout-4'),
+        tokens(1100, 100),
+        complete('unplaced'),
+        complete('rollout-4'),
+      ],
+      { forked_from_id: 'ownership-parent' },
+    );
+    expect(total).toBe(0);
+    expect(session.partial).toBe(true);
+  });
+
+  test('does not assume an initial inherited cumulative snapshot belongs to the child', () => {
+    const { session, total } = read([task('own'), context('own'), tokens(1000), tokens(1100, 100), complete('own')], {
+      forked_from_id: 'ownership-parent',
+    });
+    expect(total).toBe(100);
+    expect(session.partial).toBe(true);
+  });
+
+  test('counts the last generation after a reset once and reports the missing epoch', () => {
+    const { session, total } = read(
+      [
+        tokens(1000),
+        task('own'),
+        context('own'),
+        tokens(1100, 100),
+        tokens(300, 50),
+        tokens(300, 50),
+        tokens(400, 100),
+        complete('own'),
+      ],
+      { forked_from_id: 'ownership-parent' },
+    );
+    expect(total).toBe(250);
+    expect(session.partial).toBe(true);
+  });
+
+  test.each([
+    { resetLast: 40, partial: false, expected: 190 },
+    { resetLast: 30, partial: true, expected: 180 },
+  ])('only treats an owned reset as complete when its snapshot is the last generation: %j', ({
+    resetLast,
+    partial,
+    expected,
+  }) => {
+    const { session, total } = read([
+      task('own'),
+      context('own'),
+      tokens(100, 100),
+      tokens(40, resetLast),
+      tokens(40, resetLast),
+      tokens(90, 50),
+      complete('own'),
+    ]);
+    expect(total).toBe(expected);
+    expect(session.partial).toBe(partial);
+  });
+
+  test('rejects an inconsistent last usage as evidence of an owned generation', () => {
+    const { session, total } = read(
+      [
+        task('own'),
+        context('own'),
+        event('event_msg', {
+          type: 'token_count',
+          info: { total_token_usage: counts(1000), last_token_usage: { ...counts(0), total_tokens: 100 } },
+        }),
+        tokens(1100, 100),
+        complete('own'),
+      ],
+      { forked_from_id: 'ownership-parent' },
+    );
+    expect(total).toBe(100);
+    expect(session.partial).toBe(true);
+  });
+
+  test('keeps a paginated baseline before the first context out of classifier usage', () => {
+    const { total, session } = read(
+      [
+        task('own'),
+        event('event_msg', {
+          type: 'token_count',
+          info: { total_token_usage: counts(1000), last_token_usage: { ...counts(0), total_tokens: 100 } },
+        }),
+        context('own'),
+        tokens(1100, 100),
+        complete('own'),
+      ],
+      { source: { subagent: { other: 'guardian' } }, subagent_history_start_ordinal: 5 },
+    );
+    expect(total).toBe(100);
+    expect(session.partial).toBe(true);
+  });
+
+  test('uses recorded completion duration to locate an unanchored generation', () => {
+    const { total } = read(
+      [
+        context('first'),
+        tokens(1000),
+        task('rollout-4'),
+        tokens(1100, 100),
+        event('event_msg', { type: 'task_complete', turn_id: 'first', completed_at: start + 60, duration_ms: 50_000 }),
+      ],
+      { forked_from_id: 'ownership-parent' },
+    );
+    expect(total).toBe(100);
+  });
+
+  test('does not certify replay-time task starts without an original timestamp', () => {
+    const { total, session } = read(
+      [
+        event('event_msg', { type: 'task_started', turn_id: 'uncertain' }),
+        context('uncertain'),
+        tokens(1000, 100),
+        tokens(1100, 100),
+        complete('uncertain'),
+      ],
+      { forked_from_id: 'ownership-parent' },
+    );
+    expect(total).toBe(0);
+    expect(session.partial).toBe(true);
+  });
+
+  test('does not duplicate a reset generation on a quota-only or repeated snapshot', () => {
+    const { total } = read(
+      [
+        tokens(1000),
+        task('own'),
+        context('own'),
+        tokens(1100, 100),
+        event('event_msg', { type: 'token_count', info: null, rate_limits: {} }),
+        tokens(1100, 100),
+        tokens(50, 50),
+        tokens(50, 50),
+        tokens(150, 100),
+        complete('own'),
+      ],
+      { forked_from_id: 'ownership-parent' },
+    );
+    expect(total).toBe(250);
+  });
+
+  test('preserves child token ownership and partial status across cache reads', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-child-cache-'));
+    try {
+      const file = path.join(home, '.codex/sessions/2026/child.jsonl');
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(
+        file,
+        jsonl(
+          event('session_meta', {
+            id: 'cached-child',
+            timestamp: birth,
+            source: { subagent: { other: 'guardian' } },
+            subagent_history_start_ordinal: 7,
+          }),
+          tokens(1000),
+          task('rollout-2'),
+          context('first'),
+          tokens(1100, 100),
+          complete('first', start + 10),
+          complete('rollout-2'),
+        ),
+      );
+      const cold = await runWithRealStorage(collectCodexResult, home);
+      const warm = await runWithRealStorage(collectCodexResult, home);
+      expect(warm).toEqual(cold);
+      expect(warm.rows[0]).toMatchObject({ tokIn: 20, tokCr: 60, tokOut: 20, partial: true });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

@@ -153,7 +153,10 @@ interface SqliteDatabase {
 // `oversizedLines` count that older entries cannot report.
 // Version 24 distinguishes fully recovered counter resets from uncertain metrics
 // and records the latest anomaly date, including on unchanged cached sessions.
-const CODEX_SESSION_CACHE_VERSION = 24;
+// Bumped to 25 because child token ownership now uses the declared session birth
+// and native task evidence instead of retaining inherited cumulative snapshots.
+// An unchanged rollout must also recover lost generations and partial status.
+const CODEX_SESSION_CACHE_VERSION = 25;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child

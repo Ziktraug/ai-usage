@@ -153,6 +153,7 @@ const CODEX_DETAIL_DUPLICATE_PROMPT_WINDOW_MS = 1000;
 // predates the observed rollout can be replayed history; tolerate two seconds of
 // timestamp rounding around that boundary.
 const CODEX_REPLAYED_TASK_EVENT_LAG_MS = 2000;
+const CODEX_SYNTHETIC_TASK_ID = /^rollout-\d+$/u;
 
 const TRAILING_REPLACEMENT_CHARACTER = /\uFFFD$/u;
 
@@ -674,6 +675,17 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
   let currentEffort: string | null = null;
   let currentModel = 'codex';
   let hasContextualTokenSnapshot = false;
+  let childRollout = false;
+  let inheritedHistory = false;
+  let childBirth: Date | null = null;
+  let childTokenTurnId: string | null = null;
+  // Paginated rollouts may omit the first native task_started and wrap its
+  // context in a synthetic rollout-N task. Keep bounded token buckets until
+  // the matching completion supplies the original start, never the replay time.
+  let unanchoredTokens: {
+    turnId: string;
+    buckets: { model: string; effort: string | null; tokens: SessionDetailTokenCounts }[];
+  } | null = null;
   let legacyMaxTokens: CodexTokenSnapshot | null = null;
   let previousTokens: CodexTokenSnapshot | null = null;
   let promptBytes = 0;
@@ -709,7 +721,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
   };
 
-  const ensurePhase = (at: Date): CodexSessionPhase | null => {
+  const ensurePhase = (at: Date, start?: Date): CodexSessionPhase | null => {
     const last = session.phases.at(-1);
     if (last?.model === currentModel && last.effort === currentEffort) {
       if (at > last.end) {
@@ -723,7 +735,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     if (last && at > last.end) {
       last.end = at;
     }
-    const phaseStart = latestOpenTask()?.start ?? at;
+    const phaseStart = start ?? latestOpenTask()?.start ?? at;
     const phase = {
       effort: currentEffort,
       end: at < phaseStart ? phaseStart : at,
@@ -837,7 +849,12 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
   };
 
-  const recordTokenDelta = (delta: SessionDetailTokenCounts, at: Date, task: MutableCodexTask): void => {
+  const recordTokenDelta = (
+    delta: SessionDetailTokenCounts,
+    at: Date,
+    task: MutableCodexTask | null,
+    phaseStart?: Date,
+  ): void => {
     if (delta.input < 0 || delta.cacheRead < 0 || delta.output < 0 || delta.total < 0) {
       rejectMetric(at);
       return;
@@ -849,16 +866,129 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     session.tin += delta.input;
     session.tcr += delta.cacheRead;
     session.tout += delta.output;
-    const phase = ensurePhase(at);
+    const phase = ensurePhase(at, phaseStart);
     if (phase) {
       phase.tin += delta.input;
       phase.tcr += delta.cacheRead;
       phase.tout += delta.output;
     }
+    if (!task) {
+      return;
+    }
     addDetailTokens(task.tokens, delta);
     const bucket = task.modelTokens.get(currentModel) ?? emptyDetailTokens();
     addDetailTokens(bucket, delta);
     task.modelTokens.set(currentModel, bucket);
+  };
+
+  const finishUnanchoredTokens = (startedAt: Date | null, completedAt: Date | null): void => {
+    if (!unanchoredTokens) {
+      return;
+    }
+    const pending = unanchoredTokens;
+    unanchoredTokens = null;
+    const earliestEvidence = startedAt ?? completedAt;
+    const boundary = childBirth ? childBirth.getTime() - CODEX_REPLAYED_TASK_EVENT_LAG_MS : null;
+    if (boundary !== null && startedAt && startedAt.getTime() >= boundary) {
+      // Replayed lines carry the rewrite time, so the recovered generation spans
+      // its recorded turn instead and that turn joins the observed session span.
+      const end = completedAt && completedAt > startedAt ? completedAt : startedAt;
+      if (pending.buckets.length > 0) {
+        if (!taskObservedStart || startedAt < taskObservedStart) {
+          taskObservedStart = startedAt;
+        }
+        if (!taskObservedEnd || end > taskObservedEnd) {
+          taskObservedEnd = end;
+        }
+        observedTaskIntervals.push({ endMs: end.getTime(), startMs: startedAt.getTime() });
+      }
+      const savedModel = currentModel;
+      const savedEffort = currentEffort;
+      for (const bucket of pending.buckets) {
+        currentModel = bucket.model;
+        currentEffort = bucket.effort;
+        addModel(currentModel);
+        recordTokenDelta(bucket.tokens, end, null, startedAt);
+      }
+      currentModel = savedModel;
+      currentEffort = savedEffort;
+      // Tokens are attributable, but the corresponding task start was missing.
+      session.reportPartial = true;
+    } else if (!(boundary !== null && earliestEvidence && earliestEvidence.getTime() < boundary)) {
+      session.reportPartial = true;
+    }
+  };
+
+  const recordChildTokens = (snapshot: CodexTokenSnapshot, lastUsage: CodexTokenSnapshot | null, at: Date): void => {
+    const baseline = previousTokens;
+    previousTokens = snapshot;
+    const task = childTokenTurnId ? (openTasks.get(childTokenTurnId) ?? null) : null;
+    const ownedTask = task && !task.replayed ? task : null;
+    // A pending generation only collects usage while its own context is current.
+    const unanchored = unanchoredTokens?.turnId === childTokenTurnId ? unanchoredTokens : null;
+    if (!(ownedTask || unanchored)) {
+      // A paginated seed can contain earlier child usage as well as inherited
+      // usage. Without a native task boundary, neither attribution is proven.
+      if (!task && snapshot.total !== (baseline?.total ?? 0)) {
+        session.reportPartial = true;
+      }
+      return;
+    }
+    const zero = { cacheRead: 0, input: 0, output: 0, total: 0 };
+    const reset =
+      baseline &&
+      (snapshot.total < baseline.total ||
+        snapshot.input < baseline.input ||
+        snapshot.cacheRead < baseline.cacheRead ||
+        snapshot.output < baseline.output);
+    const validLast = lastUsage && lastUsage.total === lastUsage.input + lastUsage.output ? lastUsage : null;
+    let delta: SessionDetailTokenCounts;
+    if (reset || !baseline) {
+      // As for parent rollouts, a reset is fully recovered only when the new
+      // cumulative snapshot is exactly the last operation of an owned task.
+      const recovered =
+        ownedTask &&
+        validLast &&
+        snapshot.total === validLast.total &&
+        snapshot.input === validLast.input &&
+        snapshot.cacheRead === validLast.cacheRead &&
+        snapshot.output === validLast.output;
+      if (reset && !recovered) {
+        rejectMetric(at);
+        session.reportPartial = true;
+      }
+      if (validLast) {
+        if (!baseline && snapshot.total > validLast.total && ownedTask) {
+          session.reportPartial = true;
+        }
+        delta = detailDelta(validLast, zero);
+      } else {
+        if (ownedTask) {
+          session.reportPartial = true;
+        }
+        return;
+      }
+    } else {
+      delta = detailDelta(snapshot, baseline);
+    }
+    if (delta.input < 0 || delta.cacheRead < 0 || delta.output < 0) {
+      rejectMetric(at);
+      session.reportPartial = true;
+      return;
+    }
+    if (ownedTask) {
+      observeTask(ownedTask, at);
+      recordTokenDelta(delta, at, ownedTask);
+    } else if (unanchored && delta.total > 0) {
+      const bucket = unanchored.buckets.at(-1);
+      if (bucket?.model === currentModel && bucket.effort === currentEffort) {
+        addDetailTokens(bucket.tokens, delta);
+      } else if (unanchored.buckets.length < CODEX_DETAIL_MAX_PHASES) {
+        unanchored.buckets.push({ model: currentModel, effort: currentEffort, tokens: delta });
+      } else {
+        session.reportPartial = true;
+      }
+    }
   };
 
   const recordTokens = (payload: Record<string, unknown>, at: Date): void => {
@@ -873,6 +1003,9 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     const snapshot = tokenSnapshotFrom(isRecord(info?.total_token_usage) ? info.total_token_usage : null);
     if (!snapshot) {
       rejectMetric(at);
+      if (childRollout) {
+        session.reportPartial = true;
+      }
       return;
     }
     const lastUsage = tokenSnapshotFrom(isRecord(info?.last_token_usage) ? info.last_token_usage : null);
@@ -883,6 +1016,10 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     session.maxTotal = Math.max(session.maxTotal, snapshot.total);
     if (!legacyMaxTokens || snapshot.total > legacyMaxTokens.total) {
       legacyMaxTokens = snapshot;
+    }
+    if (childRollout) {
+      recordChildTokens(snapshot, lastUsage, at);
+      return;
     }
     const task = latestOpenTask();
     const contextualTask = task?.hasContext ? task : null;
@@ -1017,6 +1154,22 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     const sessionMetaId = event.type === 'session_meta' ? nonEmpty(payload.id) : null;
     if (sessionMetaId && !session.id) {
       session.id = sessionMetaId;
+      childRollout = Boolean(
+        codexSubagentFromSource(payload.source) ||
+          payload.thread_source === 'subagent' ||
+          nonEmpty(payload.parent_thread_id) ||
+          nonEmpty(payload.forked_from_id) ||
+          nonEmpty(payload.forked_from) ||
+          nonEmpty(payload.forked_from_thread_id),
+      );
+      inheritedHistory = Boolean(
+        nonEmpty(payload.forked_from_id) ||
+          nonEmpty(payload.forked_from) ||
+          nonEmpty(payload.forked_from_thread_id) ||
+          typeof payload.subagent_history_start_ordinal === 'number',
+      );
+      const declaredBirth = typeof payload.timestamp === 'string' ? new Date(payload.timestamp) : null;
+      childBirth = declaredBirth && Number.isFinite(declaredBirth.getTime()) ? declaredBirth : date;
       session.cwd = typeof payload.cwd === 'string' ? payload.cwd : session.cwd;
       const sessionVcs = codexVcsFromSessionMeta(payload, date);
       if (sessionVcs) {
@@ -1040,6 +1193,17 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     if (event.type === 'turn_context' && typeof payload.model === 'string') {
       const turnId = nonEmpty(payload.turn_id);
       const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
+      if (childRollout) {
+        childTokenTurnId = turnId ?? task?.turnId ?? null;
+        if (!task && turnId) {
+          if (unanchoredTokens?.turnId !== turnId) {
+            finishUnanchoredTokens(null, null);
+            unanchoredTokens = { turnId, buckets: [] };
+          }
+          currentModel = payload.model;
+          currentEffort = nonEmpty(payload.effort) ?? nonEmpty(payload.reasoning_effort);
+        }
+      }
       if (task && !task.replayed) {
         currentModel = payload.model;
         currentEffort = nonEmpty(payload.effort) ?? nonEmpty(payload.reasoning_effort);
@@ -1074,14 +1238,31 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       const turnId = nonEmpty(payload.turn_id) ?? `turn-${lines}`;
       const recordedTaskStart = unixDate(payload.started_at);
       const taskStart = recordedTaskStart ?? date;
+      const rolloutStart = childRollout ? childBirth : session.start;
       const recordedStartPredatesRollout = Boolean(
-        recordedTaskStart && session.start && recordedTaskStart < session.start,
+        recordedTaskStart && rolloutStart && recordedTaskStart < rolloutStart,
       );
-      const replayed = Boolean(
-        recordedTaskStart &&
-          recordedStartPredatesRollout &&
-          date.getTime() - recordedTaskStart.getTime() > CODEX_REPLAYED_TASK_EVENT_LAG_MS,
-      );
+      const syntheticChildTask = childRollout && CODEX_SYNTHETIC_TASK_ID.test(turnId);
+      if (childRollout && !syntheticChildTask) {
+        finishUnanchoredTokens(turnId === unanchoredTokens?.turnId ? recordedTaskStart : null, null);
+        childTokenTurnId = turnId;
+      }
+      const ambiguousChildTask = childRollout && inheritedHistory && !recordedTaskStart;
+      if (ambiguousChildTask) {
+        session.reportPartial = true;
+      }
+      const replayed =
+        syntheticChildTask ||
+        ambiguousChildTask ||
+        Boolean(
+          recordedTaskStart &&
+            recordedStartPredatesRollout &&
+            (childRollout && rolloutStart ? rolloutStart.getTime() : date.getTime()) - recordedTaskStart.getTime() >
+              CODEX_REPLAYED_TASK_EVENT_LAG_MS,
+        );
+      if (childRollout && replayed) {
+        inheritedHistory = true;
+      }
       const hasReplayLineage = session.parent !== null || session.threadSource === 'subagent';
       if (replayed && !hasReplayLineage) {
         session.durationPartial = true;
@@ -1114,6 +1295,17 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
     if (payload.type === 'task_complete' || payload.type === 'turn_aborted') {
       const turnId = nonEmpty(payload.turn_id);
+      if (childRollout && turnId === unanchoredTokens?.turnId) {
+        const completedAt = unixDate(payload.completed_at);
+        const duration = parseNonNegativeSafeInteger(payload.duration_ms);
+        const startedAt =
+          unixDate(payload.started_at) ??
+          (completedAt && duration.ok ? new Date(completedAt.getTime() - duration.value) : null);
+        finishUnanchoredTokens(startedAt, completedAt);
+      }
+      if (childRollout && turnId === childTokenTurnId) {
+        childTokenTurnId = null;
+      }
       const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
       const taskEnd = unixDate(payload.completed_at) ?? date;
       if (task && taskEnd >= task.start) {
@@ -1267,7 +1459,11 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
     finalized = true;
     materializeSkillObservations();
-    if (!hasContextualTokenSnapshot && legacyMaxTokens) {
+    finishUnanchoredTokens(null, null);
+    if (childRollout && session.hasTokenUsage && session.phases.length === 0) {
+      session.reportPartial = true;
+    }
+    if (!(childRollout || hasContextualTokenSnapshot) && legacyMaxTokens) {
       session.tin = legacyMaxTokens.input - legacyMaxTokens.cacheRead;
       session.tcr = legacyMaxTokens.cacheRead;
       session.tout = legacyMaxTokens.output;
