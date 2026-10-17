@@ -24,6 +24,8 @@ export interface HarnessPaths {
   };
   codex: {
     sessionsDir: string;
+    /** Threads archived from the Codex picker move here as a flat directory. */
+    archivedSessionsDir: string;
     sessionIndexFile: string;
   };
   cursor: {
@@ -78,6 +80,7 @@ const pathSet = (storage: LocalHistoryStorage) => {
     },
     codex: {
       sessionsDir: join('.codex', 'sessions'),
+      archivedSessionsDir: join('.codex', 'archived_sessions'),
       sessionIndexFile: join('.codex', 'session_index.jsonl'),
     },
     opencode: {

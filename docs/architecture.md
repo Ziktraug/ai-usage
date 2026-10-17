@@ -663,6 +663,10 @@ detail readers are read-only and bypass collector caches.
 
 Local history access enforces explicit byte/file/depth budgets, no-follow
 regular-file checks, strict UTF-8 decoding, and WAL-coherent SQLite reads.
+Codex rollouts that Codex compressed in place (`.jsonl.zst`) and rollouts
+under `archived_sessions` go through the same bounded line reader: budgets
+apply to the decompressed bytes, a plain rollout wins over its archive, and a
+corrupt archive is a per-file failure, not a source failure (ADR 0047).
 Usage-bearing runtime values are finite and non-negative before aggregation.
 ai-usage-owned private state is owner-only; harness-owned files are never
 chmodded or otherwise normalized by a reader.

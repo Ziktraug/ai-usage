@@ -1,12 +1,12 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readCodexSessionAnalysis } from '@ai-usage/local-machine/codex-session-analysis';
 import { setCodexSkillObservationCeilingForTesting } from '@ai-usage/local-machine/codex-skill-observation';
 import { LocalHistoryError } from '@ai-usage/local-machine/errors';
-import { createCodexSessionParser } from '@ai-usage/local-machine/internal/codex-history';
+import { createCodexSessionParser, resolveCodexRolloutFiles } from '@ai-usage/local-machine/internal/codex-history';
 import {
   createLocalHistoryStorage,
   type LocalHistoryDirEntry,
@@ -22,7 +22,12 @@ import {
   sessionProjectionFactsForSerializedRow,
 } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
-import { findLatestCodexProviderStatus, findLatestCodexQuotaSnapshot, readCodexUsageSessions } from './codex-history';
+import {
+  findLatestCodexProviderStatus,
+  findLatestCodexQuotaSnapshot,
+  readCodexUsageSessions,
+  readCodexUsageSessionsResult,
+} from './codex-history';
 import { sessionToUsageRow } from './collected-session';
 import { collectCodex, collectCodexResult } from './collectors/codex';
 
@@ -3432,6 +3437,289 @@ describe('Codex child token ownership', () => {
       const warm = await runWithRealStorage(collectCodexResult, home);
       expect(warm).toEqual(cold);
       expect(warm.rows[0]).toMatchObject({ tokIn: 20, tokCr: 60, tokOut: 20, partial: true });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Codex compresses finished rollouts in place (`.jsonl` → `.jsonl.zst`) and
+ * moves archived threads to the flat `archived_sessions` directory. Both forms
+ * are rollouts of the same shape and must produce the same rows.
+ */
+describe('Codex compressed rollouts', () => {
+  const rolloutEvents = (id: string, turns: number): unknown[] => {
+    const events: unknown[] = [
+      { timestamp: '2026-09-01T08:00:00.000Z', type: 'session_meta', payload: { id, cwd: '/work/archive' } },
+    ];
+    for (let turn = 1; turn <= turns; turn++) {
+      const minute = String(turn * 2).padStart(2, '0');
+      events.push(
+        { timestamp: `2026-09-01T08:${minute}:00.000Z`, payload: { type: 'task_started', turn_id: `turn-${turn}` } },
+        {
+          timestamp: `2026-09-01T08:${minute}:00.100Z`,
+          type: 'turn_context',
+          payload: { effort: 'high', model: 'gpt-5.6-sol', turn_id: `turn-${turn}` },
+        },
+        {
+          timestamp: `2026-09-01T08:${minute}:30.000Z`,
+          type: 'event_msg',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 42 * turn,
+                input_tokens: 30 * turn,
+                cached_input_tokens: 10 * turn,
+                output_tokens: 12 * turn,
+              },
+            },
+          },
+        },
+        {
+          timestamp: `2026-09-01T08:${minute}:59.000Z`,
+          payload: { type: 'task_complete', turn_id: `turn-${turn}`, duration_ms: 59_000 },
+        },
+      );
+    }
+    return events;
+  };
+  const archive = (...events: unknown[]) => Bun.zstdCompressSync(jsonl(...events));
+  const rowFor = (result: { rows: ReturnType<typeof sessionToUsageRow>[] }, sourceSessionId: string) => {
+    const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === sourceSessionId);
+    if (!row) {
+      throw new Error(`Expected a row for ${sourceSessionId}`);
+    }
+    return row;
+  };
+  const idFreeFacts = (row: ReturnType<typeof sessionToUsageRow>) => {
+    const { name: _name, source: _source, ...facts } = row;
+    return facts;
+  };
+
+  test('keeps one file per rollout stem, plain over archive and active over archived', () => {
+    const sessionsDir = '/home/test/.codex/sessions';
+    const resolved = resolveCodexRolloutFiles(
+      [
+        '/home/test/.codex/archived_sessions/rollout-a.jsonl.zst',
+        '/home/test/.codex/sessions/2026/09/01/rollout-a.jsonl.zst',
+        '/home/test/.codex/sessions/2026/09/01/rollout-b.jsonl.zst',
+        '/home/test/.codex/sessions/2026/09/01/rollout-b.jsonl',
+        '/home/test/.codex/archived_sessions/rollout-c.jsonl',
+        '/home/test/.codex/sessions/2026/09/01/rollout-c.jsonl.zst',
+        '/home/test/.codex/archived_sessions/rollout-d.jsonl.zst',
+        '/home/test/.codex/sessions/2026/09/02/rollout-e.jsonl',
+        '/home/test/.codex/sessions/2026/09/01/rollout-e.jsonl',
+      ],
+      sessionsDir,
+    );
+    expect(resolved).toEqual([
+      '/home/test/.codex/archived_sessions/rollout-c.jsonl',
+      '/home/test/.codex/archived_sessions/rollout-d.jsonl.zst',
+      '/home/test/.codex/sessions/2026/09/01/rollout-a.jsonl.zst',
+      '/home/test/.codex/sessions/2026/09/01/rollout-b.jsonl',
+      '/home/test/.codex/sessions/2026/09/01/rollout-e.jsonl',
+    ]);
+  });
+
+  test('discovers plain, compressed and archived rollouts and reads the plain form of a stem present in both', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText('.codex/sessions/2026/09/01/rollout-plain.jsonl', jsonl(...rolloutEvents('plain-thread', 1)));
+    storage.writeBytes(
+      '.codex/sessions/2026/09/01/rollout-compressed.jsonl.zst',
+      archive(...rolloutEvents('compressed-thread', 1)),
+    );
+    storage.writeBytes(
+      '.codex/archived_sessions/rollout-archived.jsonl.zst',
+      archive(...rolloutEvents('archived-thread', 1)),
+    );
+    // The plain file carries one more turn than its archive: Codex writes the
+    // archive first and removes the source last, so the plain file is the
+    // writer's authoritative form.
+    storage.writeText('.codex/sessions/2026/09/01/rollout-both.jsonl', jsonl(...rolloutEvents('both-thread', 2)));
+    storage.writeBytes(
+      '.codex/sessions/2026/09/01/rollout-both.jsonl.zst',
+      archive(...rolloutEvents('both-thread', 1)),
+    );
+
+    const result = runWithStorage(collectCodexResult, storage);
+    expect(result.warnings).toEqual([]);
+    expect(result.rows.map((row) => row.source?.sourceSessionId).sort()).toEqual([
+      'archived-thread',
+      'both-thread',
+      'compressed-thread',
+      'plain-thread',
+    ]);
+    expect(rowFor(result, 'both-thread')).toMatchObject({ turns: 2, tokOut: 24 });
+    expect(rowFor(result, 'archived-thread')).toMatchObject({ turns: 1, tokOut: 12 });
+    expect(idFreeFacts(rowFor(result, 'compressed-thread'))).toEqual(idFreeFacts(rowFor(result, 'plain-thread')));
+  });
+
+  test('skips a corrupt archive when looking for the latest quota snapshot', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/09/01/rollout-2026-09-01-quota.jsonl',
+      jsonl(...rolloutEvents('quota-thread', 1), {
+        timestamp: '2026-09-01T08:05:00.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: { total_tokens: 42, input_tokens: 30, cached_input_tokens: 10, output_tokens: 12 },
+          },
+          rate_limits: { plan_type: 'pro', primary: { used_percent: 37, window_minutes: 300 } },
+        },
+      }),
+    );
+    // Sorts after the plain rollout, so the newest-first search reads it first
+    // and must step over it to reach the snapshot.
+    storage.writeBytes('.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
+
+    const quota = runWithStorage(findLatestCodexQuotaSnapshot(), storage);
+    expect(quota?.planType).toBe('pro');
+    expect(quota?.primary?.usedPercent).toBe(37);
+    expect(quota?.primary?.windowMinutes).toBe(300);
+    expect(runWithStorage(findLatestCodexProviderStatus(), storage)).toMatchObject({ key: 'codex', state: 'ok' });
+
+    const corruptOnly = new TestMemoryStorage();
+    corruptOnly.writeBytes('.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
+    expect(runWithStorage(findLatestCodexQuotaSnapshot(), corruptOnly)).toBeNull();
+    expect(runWithStorage(findLatestCodexProviderStatus(), corruptOnly)).toBeNull();
+  });
+
+  test('reads the session detail of a rollout that exists only as an archive', () => {
+    const events = rolloutEvents('detail-thread', 2);
+    const compressedStorage = new TestMemoryStorage();
+    compressedStorage.writeBytes(
+      '.codex/sessions/2026/09/01/rollout-2026-09-01T08-00-00-detail-thread.jsonl.zst',
+      archive(...events),
+    );
+    const plainStorage = new TestMemoryStorage();
+    plainStorage.writeText(
+      '.codex/sessions/2026/09/01/rollout-2026-09-01T08-00-00-detail-thread.jsonl',
+      jsonl(...events),
+    );
+
+    const compressedDetail = requireSessionDetail(
+      runWithStorage(readCodexDetailForTest('detail-thread'), compressedStorage),
+    );
+    const plainDetail = requireSessionDetail(runWithStorage(readCodexDetailForTest('detail-thread'), plainStorage));
+    expect(compressedDetail.turns).toHaveLength(2);
+    // `observedAt` is the generation time of each read, not a fact about the rollout.
+    const { observedAt: _compressedObservedAt, ...compressedFacts } = compressedDetail;
+    const { observedAt: _plainObservedAt, ...plainFacts } = plainDetail;
+    expect(compressedFacts).toEqual(plainFacts);
+  });
+
+  test('skips a corrupt archive with a warning and keeps collecting the rollouts beside it', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText('.codex/sessions/2026/09/01/rollout-valid.jsonl', jsonl(...rolloutEvents('valid-thread', 1)));
+    storage.writeBytes('.codex/sessions/2026/09/01/rollout-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
+
+    const result = runWithStorage(collectCodexResult, storage);
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['valid-thread']);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({
+      harness: 'codex',
+      operation: 'unreadableHistoryFile',
+      path: path.join(storage.home, '.codex/sessions/2026/09/01/rollout-corrupt.jsonl.zst'),
+      rejectedRecords: 1,
+    });
+    expect(result.warnings[0]?.message).toContain('Skipped 1 codex history file(s)');
+    expect(result.warnings[0]?.message).toContain('readLines.decompress');
+    // The skipped rollout is missing evidence for both skill tiers, so neither
+    // bound may be persisted as complete.
+    expect(result.observationCompleteness).toEqual({
+      exposure: { rejected: 1, truncated: false },
+      invocation: { rejected: 1, truncated: false },
+    });
+  });
+
+  test('aggregates several unreadable rollouts into one warning that keeps the typed list', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText('.codex/sessions/2026/09/01/rollout-valid.jsonl', jsonl(...rolloutEvents('valid-thread', 1)));
+    storage.writeBytes('.codex/sessions/2026/09/01/rollout-corrupt-a.jsonl.zst', Buffer.alloc(48, 0xff));
+    storage.writeBytes('.codex/sessions/2026/09/01/rollout-corrupt-b.jsonl.zst', Buffer.alloc(48, 0xff));
+
+    const result = runWithStorage(collectCodexResult, storage);
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['valid-thread']);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({
+      harness: 'codex',
+      operation: 'unreadableHistoryFile',
+      path: path.join(storage.home, '.codex/sessions/2026/09/01/rollout-corrupt-a.jsonl.zst'),
+      rejectedRecords: 2,
+    });
+    expect(result.warnings[0]?.message).toContain('Skipped 2 codex history file(s)');
+    expect(result.observationCompleteness).toEqual({
+      exposure: { rejected: 2, truncated: false },
+      invocation: { rejected: 2, truncated: false },
+    });
+
+    const sessions = runWithStorage(readCodexUsageSessionsResult, storage);
+    expect(sessions.readFailures).toHaveLength(2);
+    expect(sessions.readFailures.map((failure) => failure.operation)).toEqual([
+      'readLines.decompress',
+      'readLines.decompress',
+    ]);
+    expect(sessions.readFailures.map((failure) => path.basename(failure.path ?? ''))).toEqual([
+      'rollout-corrupt-a.jsonl.zst',
+      'rollout-corrupt-b.jsonl.zst',
+    ]);
+  });
+
+  test('serves an unchanged archive from the cache and reports a changed one that no longer decompresses', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-archive-cache-'));
+    try {
+      const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026', '09', '01');
+      mkdirSync(sessionsDirectory, { recursive: true });
+      const archivePath = path.join(sessionsDirectory, 'rollout-cached.jsonl.zst');
+      const compressed = archive(...rolloutEvents('cached-archive-thread', 2));
+      const originalMtime = new Date('2026-09-01T09:00:00.000Z');
+      writeFileSync(archivePath, compressed);
+      utimesSync(archivePath, originalMtime, originalMtime);
+
+      const first = await runWithRealStorage(collectCodexResult, home);
+      expect(first.warnings).toEqual([]);
+      expect(first.rows.map((row) => row.source?.sourceSessionId)).toEqual(['cached-archive-thread']);
+      expect(first.rows[0]).toMatchObject({ turns: 2, tokOut: 24 });
+
+      // Same size and mtime, different bytes: the cache key still matches, so
+      // the garbage is served from the cache and never decompressed.
+      writeFileSync(archivePath, Buffer.alloc(compressed.length, 0));
+      utimesSync(archivePath, originalMtime, originalMtime);
+      const second = await runWithRealStorage(collectCodexResult, home);
+      expect(second.rows).toEqual(first.rows);
+      expect(second.warnings).toEqual([]);
+
+      const bumpedMtime = new Date('2026-09-01T10:00:00.000Z');
+      utimesSync(archivePath, bumpedMtime, bumpedMtime);
+      const third = await runWithRealStorage(collectCodexResult, home);
+      expect(third.rows).toEqual([]);
+      expect(third.warnings).toHaveLength(1);
+      expect(third.warnings[0]).toMatchObject({
+        harness: 'codex',
+        operation: 'unreadableHistoryFile',
+        path: archivePath,
+        rejectedRecords: 1,
+      });
+      expect(third.warnings[0]?.path?.endsWith('rollout-cached.jsonl.zst')).toBe(true);
+      expect(third.warnings[0]?.message).toContain('readLines.decompress');
+      expect(third.observationCompleteness).toEqual({
+        exposure: { rejected: 1, truncated: false },
+        invocation: { rejected: 1, truncated: false },
+      });
+
+      const db = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
+      try {
+        const row = db
+          .query('SELECT count(*) as count FROM codex_session_cache WHERE file_path = ?')
+          .get(archivePath) as { count: number };
+        expect(row.count).toBe(0);
+      } finally {
+        db.close();
+      }
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

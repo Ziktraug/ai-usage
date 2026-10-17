@@ -1,4 +1,8 @@
-import type { LocalHistoryWarning } from '@ai-usage/local-machine/errors';
+import {
+  formatLocalHistoryError,
+  type LocalHistoryError,
+  type LocalHistoryWarning,
+} from '@ai-usage/local-machine/errors';
 
 export * from '@ai-usage/local-machine/metric-validation';
 
@@ -53,6 +57,30 @@ export const oversizedHistoryLineWarning = (harness: string, oversizedLines: num
         rejectedRecords: oversizedLines,
       }
     : null;
+
+/**
+ * History files the reader could not open or decompress, so the sessions they
+ * hold are missing from this pass. One warning carries the count because the
+ * engine's sanitizer keeps only the operation code and `rejectedRecords`: one
+ * warning per file would collapse into identical codes cut at its cap. The
+ * first failure names its path for local diagnosis.
+ */
+export const unreadableHistoryFileWarning = (
+  harness: string,
+  failures: readonly LocalHistoryError[],
+): LocalHistoryWarning | null => {
+  const first = failures[0];
+  if (!first) {
+    return null;
+  }
+  return {
+    harness,
+    operation: 'unreadableHistoryFile',
+    message: `Skipped ${failures.length} ${harness} history file(s) that could not be read; their sessions are missing from this pass. First: ${formatLocalHistoryError(first)}`,
+    rejectedRecords: failures.length,
+    ...(first.path ? { path: first.path } : {}),
+  };
+};
 
 /**
  * A bounded read that hit its bound. The standing rule is that partial data is

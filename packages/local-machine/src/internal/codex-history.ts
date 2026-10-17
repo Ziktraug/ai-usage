@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type {
   LocalSessionAnalysis,
@@ -169,10 +170,55 @@ export const hasCodexHistory: Effect.Effect<boolean, LocalHistoryError, LocalHis
   },
 );
 
+export const codexArchivedSessionsDir = (storage: LocalHistoryStorageService) =>
+  resolvePaths(storage).codex.archivedSessionsDir;
+
+const CODEX_ROLLOUT_SUFFIX = '.jsonl';
+const CODEX_ARCHIVE_SUFFIX = '.zst';
+
+/** Codex compresses finished rollouts in place: `<stem>.jsonl` becomes `<stem>.jsonl.zst`. */
+export const isCodexRolloutFileName = (fileName: string): boolean =>
+  fileName.endsWith(CODEX_ROLLOUT_SUFFIX) || fileName.endsWith(`${CODEX_ROLLOUT_SUFFIX}${CODEX_ARCHIVE_SUFFIX}`);
+
+/** The rollout name without its `.jsonl` or `.jsonl.zst` suffix. */
+export const codexRolloutStem = (fileName: string): string => {
+  const plain = fileName.endsWith(CODEX_ARCHIVE_SUFFIX) ? fileName.slice(0, -CODEX_ARCHIVE_SUFFIX.length) : fileName;
+  return plain.endsWith(CODEX_ROLLOUT_SUFFIX) ? plain.slice(0, -CODEX_ROLLOUT_SUFFIX.length) : plain;
+};
+
+/**
+ * Keep exactly one file per rollout stem. Codex compresses a rollout by
+ * writing `<stem>.jsonl.zst` beside `<stem>.jsonl` and removing the source
+ * last, skipping any rollout that changes meanwhile, so a plain file is the
+ * writer's authoritative form: identical to its archive with the removal
+ * pending, or newer when it was rehydrated for a resume, while the archive
+ * beside a plain file may still be mid-write. Archiving a thread moves its
+ * file into the flat `archived_sessions` directory, so the copy under the
+ * active sessions directory is the live one. Remaining ties fall to path
+ * order, and the kept paths are returned sorted.
+ */
+export const resolveCodexRolloutFiles = (files: readonly string[], sessionsDir: string): string[] => {
+  const activePrefix = sessionsDir.endsWith(path.sep) ? sessionsDir : `${sessionsDir}${path.sep}`;
+  const rank = (filePath: string): number =>
+    (filePath.endsWith(CODEX_ARCHIVE_SUFFIX) ? 2 : 0) + (filePath.startsWith(activePrefix) ? 0 : 1);
+  const keptByStem = new Map<string, string>();
+  for (const filePath of [...files].sort()) {
+    const stem = codexRolloutStem(path.basename(filePath));
+    const kept = keptByStem.get(stem);
+    if (kept === undefined || rank(filePath) < rank(kept)) {
+      keptByStem.set(stem, filePath);
+    }
+  }
+  return [...keptByStem.values()].sort();
+};
+
 export const listCodexSessionFiles: Effect.Effect<string[], LocalHistoryError, LocalHistoryStorageService> = Effect.gen(
   function* () {
     const storage = yield* LocalHistoryStorage;
-    return yield* walkFiles(storage, codexSessionsDir(storage), (fileName) => fileName.endsWith('.jsonl'));
+    const sessionsDir = codexSessionsDir(storage);
+    const active = yield* walkFiles(storage, sessionsDir, isCodexRolloutFileName);
+    const archived = yield* walkFiles(storage, codexArchivedSessionsDir(storage), isCodexRolloutFileName);
+    return resolveCodexRolloutFiles([...active, ...archived], sessionsDir);
   },
 );
 

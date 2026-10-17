@@ -13,9 +13,11 @@ import {
   codexChildLinksFromEdges,
   codexChildLinksWithoutDatabase,
   codexParentsFromEdges,
+  codexRolloutStem,
   codexStateDbCandidates,
   codexThreadMetadataFromRow,
   createCodexSessionParser,
+  isCodexRolloutFileName,
   isCodexUsageOwnedByRoot,
   listCodexSessionFiles,
   mergeMetadata,
@@ -109,10 +111,10 @@ const indexCodexRolloutFiles = (files: readonly string[]): ReadonlyMap<string, r
   const filesBySessionId = new Map<string, string[]>();
   for (const filePath of files) {
     const fileName = path.basename(filePath);
-    if (!fileName.endsWith('.jsonl')) {
+    if (!isCodexRolloutFileName(fileName)) {
       continue;
     }
-    const stem = fileName.slice(0, -'.jsonl'.length);
+    const stem = codexRolloutStem(fileName);
     const candidates = [stem];
     for (let separator = stem.indexOf('-'); separator >= 0; separator = stem.indexOf('-', separator + 1)) {
       candidates.push(stem.slice(separator + 1));
