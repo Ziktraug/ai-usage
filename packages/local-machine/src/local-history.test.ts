@@ -401,13 +401,26 @@ const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 
 /**
  * Every way source can reach a Bun zstd decompressor (sync or async): member
- * access, bracket access, and a destructuring pattern taken from `Bun`.
+ * access, bracket access, a destructuring pattern taken from `Bun`, and a
+ * named import from the `bun` module.
  */
 const BUN_ZSTD_DECOMPRESSOR_PATTERNS = [
   /\bBun\s*\.\s*zstdDecompress(?:Sync)?\b/,
   /\bBun\s*\[\s*['"`]zstdDecompress(?:Sync)?['"`]\s*\]/,
   /\{[^}]*\bzstdDecompress(?:Sync)?\b[^}]*\}\s*=\s*Bun\b/,
+  /\bimport\s*\{[^}]*\bzstdDecompress(?:Sync)?\b[^}]*\}\s*from\s*['"]bun['"]/,
 ];
+
+const DOLLAR_SIGN = /\$/g;
+
+/** A namespace or default import of the `bun` module, capturing its local name. */
+const BUN_MODULE_BINDINGS = /\bimport\s+(?:\*\s+as\s+)?([A-Za-z_$][\w$]*)\s+from\s*['"]bun['"]/g;
+
+const reachesBunZstdDecompressor = (source: string): boolean =>
+  BUN_ZSTD_DECOMPRESSOR_PATTERNS.some((pattern) => pattern.test(source)) ||
+  [...source.matchAll(BUN_MODULE_BINDINGS)].some(([, binding]) =>
+    new RegExp(`\\b${binding?.replace(DOLLAR_SIGN, '\\$')}\\s*\\.\\s*zstdDecompress(?:Sync)?\\b`).test(source),
+  );
 
 /** One Raw block carrying `payload`, flagged as the frame's last block. */
 const rawLastBlock = (payload: Buffer): Buffer => {
@@ -762,7 +775,7 @@ test('no local-machine or local-collectors source reaches a Bun zstd decompresso
   const offenders = sourceFiles
     .filter((filePath) => {
       const source = fs.readFileSync(filePath, 'utf8');
-      return BUN_ZSTD_DECOMPRESSOR_PATTERNS.some((pattern) => pattern.test(source));
+      return reachesBunZstdDecompressor(source);
     })
     .map((filePath) => path.relative(path.resolve(import.meta.dir, '../..'), filePath));
   expect(offenders).toEqual([]);
