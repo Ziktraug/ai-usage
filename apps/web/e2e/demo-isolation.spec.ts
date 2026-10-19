@@ -63,7 +63,9 @@ test('isolates the synthetic demo from every local data and control capability',
 
   await page.goto('/');
   await waitForHydratedReport(page);
-  await expect(page.getByText('Demo data', { exact: true })).toBeVisible();
+  // The workspace header names the demo where live mode shows collection status; the report header keeps its badge.
+  await expect(page.getByRole('banner').getByText('Demo data', { exact: true })).toBeVisible();
+  await expect(page.getByRole('main').getByText('Demo data', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Usage overview' })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
@@ -102,7 +104,7 @@ test('isolates the synthetic demo from every local data and control capability',
   for (const pathname of ['/skills', '/sources', '/sync']) {
     await page.goto(pathname);
     await expect(page).toHaveURL('http://127.0.0.1:4176/');
-    await expect(page.getByText('Demo data', { exact: true })).toBeVisible();
+    await expect(page.getByRole('banner').getByText('Demo data', { exact: true })).toBeVisible();
   }
   expect(businessRequests).toEqual([]);
 });

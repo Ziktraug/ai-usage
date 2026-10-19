@@ -621,7 +621,7 @@ test('keeps the collection source pill independent of the report filter', async 
   await openHydratedReport(page);
   const summary = page.locator('[data-source-summary]');
   const status = summary.locator('[data-source-summary-status]');
-  await expect(status).toHaveText('Sources ready');
+  await expect(status).toHaveText('Up to date');
   const generation = await summary.getAttribute('data-source-summary-generation');
   expect(generation).not.toBeNull();
   expect(generation).not.toBe('');
@@ -640,14 +640,14 @@ test('keeps the collection source pill independent of the report filter', async 
   await expect(page).toHaveURL(QUERY_URL_PATTERN);
   await waitForFocusedReportSettled(page);
 
-  await expect(status).toHaveText('Sources ready');
+  await expect(status).toHaveText('Up to date');
   expect(await summary.getAttribute('data-source-summary-generation')).toBe(generation);
 
   await page.getByRole('button', { name: 'Query: ai-usage ×' }).click();
   await expect(page).not.toHaveURL(QUERY_URL_PATTERN);
   await waitForFocusedReportSettled(page);
 
-  await expect(status).toHaveText('Sources ready');
+  await expect(status).toHaveText('Up to date');
   expect(await summary.getAttribute('data-source-summary-generation')).toBe(generation);
 });
 
