@@ -1,10 +1,12 @@
 import path from 'node:path';
 import { LocalHistoryError } from '@ai-usage/local-machine/errors';
-import type {
-  LocalHistoryDatabase,
-  LocalHistoryDirEntry,
-  LocalHistorySqlParameter,
-  LocalHistoryStorage,
+import {
+  decompressHistoryArchive,
+  HistoryArchiveError,
+  type LocalHistoryDatabase,
+  type LocalHistoryDirEntry,
+  type LocalHistorySqlParameter,
+  type LocalHistoryStorage,
 } from '@ai-usage/local-machine/local-history';
 import { Effect } from 'effect';
 
@@ -132,28 +134,31 @@ export class TestMemoryStorage implements LocalHistoryStorage {
         new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Missing fixture file') }),
       );
     }
-    // Mirrors the real reader: a `.zst` path is a zstd archive of the text,
-    // the limits apply to the decompressed bytes, and a corrupt archive is its
-    // own typed failure rather than a plain read error. The double trusts
-    // `Bun.zstdDecompressSync` and does not walk the frame layout.
+    // Mirrors the real reader: a `.zst` path is a zstd archive of the text
+    // read through the reader's own frame walk, capped decompression and
+    // length check, so a fixture fails exactly as a file would: the limits
+    // apply to the compressed and the declared bytes, a malformed, truncated
+    // or corrupt archive is its own typed failure, and a budget breach is a
+    // plain read error.
     let bytes: string | Uint8Array = stored;
     if (filePath.endsWith('.zst')) {
-      const archive = typeof stored === 'string' ? Buffer.from(stored, 'utf8') : stored;
-      // `Bun.zstdDecompressSync` of empty input returns an empty buffer, but
-      // the real reader refuses a zero-byte archive as damage.
-      if (archive.byteLength === 0) {
+      const archive = typeof stored === 'string' ? Buffer.from(stored, 'utf8') : Buffer.from(stored);
+      const maxBytes = limits.maxBytes ?? Number.POSITIVE_INFINITY;
+      if (archive.byteLength > maxBytes) {
         return Effect.fail(
-          new LocalHistoryError({
-            operation: 'readLines.decompress',
-            path: filePath,
-            cause: new Error('Missing zstd frame magic number'),
-          }),
+          new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Fixture exceeds limit') }),
         );
       }
       try {
-        bytes = Bun.zstdDecompressSync(archive);
+        bytes = decompressHistoryArchive(archive, filePath, maxBytes);
       } catch (cause) {
-        return Effect.fail(new LocalHistoryError({ operation: 'readLines.decompress', path: filePath, cause }));
+        return Effect.fail(
+          new LocalHistoryError({
+            operation: cause instanceof HistoryArchiveError ? 'readLines.decompress' : 'readLines',
+            path: filePath,
+            cause,
+          }),
+        );
       }
     }
     return Effect.try({

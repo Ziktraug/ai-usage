@@ -3,6 +3,7 @@ import { expect, spyOn, test } from 'bun:test';
 import fs, { type BigIntStats, type PathLike, type StatOptions, type Stats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 import {
   createLocalHistoryStorage,
   readConfigFileText,
@@ -398,6 +399,16 @@ test('keys in-memory SQLite fixtures by SQL and positional parameters', async ()
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 
+/**
+ * Every way source can reach a Bun zstd decompressor (sync or async): member
+ * access, bracket access, and a destructuring pattern taken from `Bun`.
+ */
+const BUN_ZSTD_DECOMPRESSOR_PATTERNS = [
+  /\bBun\s*\.\s*zstdDecompress(?:Sync)?\b/,
+  /\bBun\s*\[\s*['"`]zstdDecompress(?:Sync)?['"`]\s*\]/,
+  /\{[^}]*\bzstdDecompress(?:Sync)?\b[^}]*\}\s*=\s*Bun\b/,
+];
+
 /** One Raw block carrying `payload`, flagged as the frame's last block. */
 const rawLastBlock = (payload: Buffer): Buffer => {
   const header = Buffer.alloc(3);
@@ -456,6 +467,18 @@ test('reads a zstd archive of history lines exactly like its plain form', async 
       lines: 0,
       oversizedLines: 0,
     });
+    // A well-formed archive of empty input (the 9-byte frame declaring 0
+    // bytes) is an empty history, read through the decompressor's smallest
+    // output cap: the option refuses 0, so the declaration is capped at 1.
+    const emptyFramePath = path.join(root, 'empty-frame.jsonl.zst');
+    const emptyFrame = Bun.zstdCompressSync('');
+    expect(emptyFrame.length).toBe(9);
+    fs.writeFileSync(emptyFramePath, emptyFrame);
+    const emptyFrameVisited: string[] = [];
+    await expect(
+      Effect.runPromise(storage.readLines(emptyFramePath, (line) => emptyFrameVisited.push(line))),
+    ).resolves.toEqual({ bytes: 0, lines: 0, oversizedLines: 0 });
+    expect(emptyFrameVisited).toEqual([]);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
@@ -525,9 +548,10 @@ test('rejects corrupt and truncated archives as decompression failures with the 
     fs.writeFileSync(garbageBlockPath, garbageBlockBytes);
     const storage = createLocalHistoryStorage(root);
 
+    // The same call the reader makes: `node:zlib` capped at the declared size.
     let decompressorMessage: string | undefined;
     try {
-      Bun.zstdDecompressSync(garbageBlockBytes);
+      zstdDecompressSync(garbageBlockBytes, { maxOutputLength: 16 });
     } catch (cause) {
       decompressorMessage = cause instanceof Error ? cause.message : undefined;
     }
@@ -608,7 +632,7 @@ test('refuses a frame that omits its content size even though the decompressor a
     // Frame_Header_Descriptor 0x00 declares no content size and no single
     // segment, so one Window_Descriptor byte follows it.
     const undeclared = Buffer.concat([ZSTD_MAGIC, Buffer.from([0x00, 0x80]), rawLastBlock(Buffer.from(text))]);
-    expect(Bun.zstdDecompressSync(undeclared).toString()).toBe(text);
+    expect(zstdDecompressSync(undeclared).toString()).toBe(text);
     const undeclaredPath = path.join(root, 'undeclared.jsonl.zst');
     fs.writeFileSync(undeclaredPath, undeclared);
     // Frame_Header_Descriptor 0x20: single segment with a 1-byte content size
@@ -670,6 +694,80 @@ test('refuses a declared content size over the bound before decompressing anythi
   }
 });
 
+test('refuses a frame whose blocks would emit more than it declares without decoding them', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-overrun-'));
+  try {
+    // An intact layout that lies: a 1-byte content size of 7 followed by
+    // 2,000 RLE blocks of 128 KiB each (an 8 KB archive that would expand to
+    // 256 MiB). The frame walk accepts it, so only the decompressor's output
+    // cap can refuse it, and it must do so before the blocks are decoded.
+    const RLE_BLOCK_BYTES = 128 * 1024;
+    const rleBlock = (last: boolean): Buffer => {
+      const header = Buffer.alloc(3);
+      // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size above the type and last-block bits.
+      header.writeUIntLE((RLE_BLOCK_BYTES << 3) | (1 << 1) | (last ? 1 : 0), 0, 3);
+      return Buffer.concat([header, Buffer.from([0x41])]);
+    };
+    const blocks = Array.from({ length: 2000 }, (_, index) => rleBlock(index === 1999));
+    const overrun = Buffer.concat([ZSTD_MAGIC, Buffer.from([0x20, 7]), ...blocks]);
+    const overrunPath = path.join(root, 'overrun.jsonl.zst');
+    fs.writeFileSync(overrunPath, overrun);
+    const storage = createLocalHistoryStorage(root);
+
+    const visited: string[] = [];
+    const result = await Effect.runPromise(
+      Effect.either(storage.readLines(overrunPath, (line) => visited.push(line), { maxBytes: 1024 * 1024 })),
+    );
+    expect(result._tag).toBe('Left');
+    if (result._tag === 'Left') {
+      expect(result.left).toMatchObject({ operation: 'readLines.decompress', path: overrunPath });
+      const archiveError = result.left.cause as Error;
+      expect(archiveError.message).toBe(`History archive could not be decompressed: ${overrunPath}`);
+      // The decompressor's output cap refused the frame (either of its two
+      // error codes for an overrun), not the declared-size check that runs
+      // on a completed output afterwards.
+      const cause = archiveError.cause as Error & { code?: string };
+      expect(['ZSTD_error_dstSize_tooSmall', 'ERR_BUFFER_TOO_LARGE']).toContain(cause.code ?? '');
+      expect(cause.message).not.toContain('does not match its declared size');
+    }
+    expect(visited).toEqual([]);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+/**
+ * Bun's own zstd decompressors corrupt the heap on the pinned Bun 1.3.13 (the
+ * engine's runtime): intermittent mimalloc segfaults in later allocations,
+ * measured 2026-10-19. Every archive goes through `node:zlib` instead; Bun's
+ * compressor is not implicated and stays available to fixtures.
+ */
+test('no local-machine or local-collectors source reaches a Bun zstd decompressor', () => {
+  const sourceRoots = [import.meta.dir, path.resolve(import.meta.dir, '../../local-collectors/src')];
+  const sourceFiles: string[] = [];
+  const walk = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        walk(entryPath);
+      } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
+        sourceFiles.push(entryPath);
+      }
+    }
+  };
+  for (const sourceRoot of sourceRoots) {
+    walk(sourceRoot);
+  }
+  expect(sourceFiles.length).toBeGreaterThan(0);
+  const offenders = sourceFiles
+    .filter((filePath) => {
+      const source = fs.readFileSync(filePath, 'utf8');
+      return BUN_ZSTD_DECOMPRESSOR_PATTERNS.some((pattern) => pattern.test(source));
+    })
+    .map((filePath) => path.relative(path.resolve(import.meta.dir, '../..'), filePath));
+  expect(offenders).toEqual([]);
+});
+
 test('TestMemoryStorage reads byte fixtures and zstd archives through readLines', async () => {
   const storage = new TestMemoryStorage();
   const content = 'first\r\nsecond\nlast\n';
@@ -696,20 +794,65 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
     expect(corrupt.left).toMatchObject({ operation: 'readLines.decompress', path: corruptPath });
   }
 
-  // A zero-byte archive is refused like the real reader refuses it.
+  // The double reads through the reader's frame walk, so a zero-byte archive
+  // and a truncated frame are refused exactly as the real reader refuses
+  // them, and the well-formed 9-byte frame of empty input is an empty history.
   storage.writeBytes('.codex/sessions/empty.jsonl.zst', new Uint8Array(0));
   const emptyPath = path.join(storage.home, '.codex/sessions/empty.jsonl.zst');
   const empty = Effect.runSync(Effect.either(storage.readLines(emptyPath, () => undefined)));
   expect(empty._tag).toBe('Left');
   if (empty._tag === 'Left') {
     expect(empty.left).toMatchObject({ operation: 'readLines.decompress', path: emptyPath });
+    expect(String((empty.left.cause as Error).cause)).toContain('Missing zstd frame magic number');
   }
+  const fullArchive = Bun.zstdCompressSync(content);
+  storage.writeBytes('.codex/sessions/truncated.jsonl.zst', fullArchive.subarray(0, fullArchive.length - 8));
+  const truncatedPath = path.join(storage.home, '.codex/sessions/truncated.jsonl.zst');
+  const truncatedVisited: string[] = [];
+  const truncated = Effect.runSync(
+    Effect.either(storage.readLines(truncatedPath, (line) => truncatedVisited.push(line))),
+  );
+  expect(truncated._tag).toBe('Left');
+  if (truncated._tag === 'Left') {
+    expect(truncated.left).toMatchObject({ operation: 'readLines.decompress', path: truncatedPath });
+    expect(String((truncated.left.cause as Error).cause)).toContain('Truncated zstd frame');
+  }
+  expect(truncatedVisited).toEqual([]);
+  storage.writeBytes('.codex/sessions/empty-frame.jsonl.zst', Bun.zstdCompressSync(''));
+  const emptyFrameVisited: string[] = [];
+  const emptyFrame = Effect.runSync(
+    storage.readLines(path.join(storage.home, '.codex/sessions/empty-frame.jsonl.zst'), (line) =>
+      emptyFrameVisited.push(line),
+    ),
+  );
+  // The double splits text, so empty content is one empty segment where the
+  // real reader emits no line; the decompressed byte count is what the
+  // shared archive path pins here.
+  expect(emptyFrame).toMatchObject({ bytes: 0, oversizedLines: 0 });
+  expect(emptyFrameVisited.filter((line) => line !== '')).toEqual([]);
 
-  const bounded = Effect.runSync(Effect.either(storage.readLines(archivePath, () => undefined, { maxBytes: 4 })));
-  expect(bounded._tag).toBe('Left');
-  if (bounded._tag === 'Left') {
-    expect(bounded.left).toMatchObject({ operation: 'readLines', path: archivePath });
+  // Under the compressed size the archive itself is refused; between the
+  // compressed and the declared size (a compressible fixture) the declaration
+  // is refused before decompression. Both are plain read errors.
+  const compressibleText = `${'y'.repeat(100_000)}\n`;
+  const compressible = Bun.zstdCompressSync(compressibleText);
+  expect(compressible.length).toBeLessThan(1024);
+  storage.writeBytes('.codex/sessions/compressible.jsonl.zst', compressible);
+  const compressiblePath = path.join(storage.home, '.codex/sessions/compressible.jsonl.zst');
+  for (const [boundedPath, maxBytes] of [
+    [archivePath, 4],
+    [compressiblePath, 1024],
+  ] as const) {
+    const bounded = Effect.runSync(Effect.either(storage.readLines(boundedPath, () => undefined, { maxBytes })));
+    expect(bounded._tag).toBe('Left');
+    if (bounded._tag === 'Left') {
+      expect(bounded.left).toMatchObject({ operation: 'readLines', path: boundedPath });
+      expect(String(bounded.left.cause)).toContain('exceeds');
+    }
   }
+  expect(
+    Effect.runSync(storage.readLines(compressiblePath, () => undefined, { maxBytes: compressibleText.length })),
+  ).toMatchObject({ bytes: compressibleText.length, oversizedLines: 0 });
 
   // Byte fixtures are decoded, never decompressed, by the text reader.
   storage.writeBytes('.codex/sessions/raw.jsonl', new TextEncoder().encode('raw text'));

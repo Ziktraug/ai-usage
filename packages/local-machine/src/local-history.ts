@@ -1,6 +1,7 @@
 import fs, { type BigIntStats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 
 import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -548,6 +549,45 @@ const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: numb
 };
 
 /**
+ * Decompress the bytes of a history archive: exactly one zstd frame that
+ * declares its content size (walked before anything is decoded, the declared
+ * size refused above `maxBytes`), decompressed with its output capped at that
+ * declaration, and refused unless the output has exactly the declared length.
+ * Pure over its input so the test double reads fixtures through the same
+ * path. A zero-byte archive is refused with the rest: zstd of empty input is
+ * a 9-byte frame, and Codex removes the plain source only after writing the
+ * archive, so an empty one is damage rather than an empty history.
+ *
+ * `node:zlib`, not Bun's own `zstdDecompressSync`: on the pinned Bun 1.3.13
+ * the Bun decompressor corrupts the heap (intermittent mimalloc segfaults in later
+ * allocations, measured 2026-10-19), and the engine runs on that Bun.
+ * Truncation safety comes from the frame walk and the length check, not from
+ * the decompressor. `maxOutputLength` caps what a frame can emit at its
+ * declaration (the option refuses 0, so an empty declaration is capped at one
+ * byte and the length check refuses that byte); a frame whose blocks would
+ * exceed it fails inside the decompressor.
+ */
+export const decompressHistoryArchive = (compressed: Buffer, filePath: string, maxBytes: number): Buffer => {
+  const layout = zstdSingleFrameLayout(compressed, filePath, maxBytes);
+  if (layout.frameEnd !== compressed.length) {
+    throw new HistoryArchiveError(filePath, new Error(`History archive is not a single zstd frame: ${filePath}`));
+  }
+  let decompressed: Buffer;
+  try {
+    decompressed = zstdDecompressSync(compressed, { maxOutputLength: Math.max(1, layout.declaredContentSize) });
+  } catch (cause) {
+    throw new HistoryArchiveError(filePath, cause);
+  }
+  if (decompressed.length !== layout.declaredContentSize) {
+    throw new HistoryArchiveError(
+      filePath,
+      new Error(`History archive content does not match its declared size: ${filePath}`),
+    );
+  }
+  return decompressed;
+};
+
+/**
  * Read a zstd archive of newline-delimited text with the same hardening as the
  * plain reader. A readable archive is exactly one zstd frame that declares its
  * content size, which every Codex archive does. `maxBytes` bounds the
@@ -577,25 +617,7 @@ export const visitCompressedFileLines = (
       throw new Error(`History input changed while it was opened: ${filePath}`);
     }
     const compressed = readDescriptorBounded(descriptor, filePath, maxBytes);
-    // A zero-byte archive is refused with the rest: zstd of empty input is a
-    // 9-byte frame, and Codex removes the plain source only after writing the
-    // archive, so an empty one is damage rather than an empty history.
-    const layout = zstdSingleFrameLayout(compressed, filePath, maxBytes);
-    if (layout.frameEnd !== compressed.length) {
-      throw new HistoryArchiveError(filePath, new Error(`History archive is not a single zstd frame: ${filePath}`));
-    }
-    let decompressed: Buffer;
-    try {
-      decompressed = Bun.zstdDecompressSync(compressed);
-    } catch (cause) {
-      throw new HistoryArchiveError(filePath, cause);
-    }
-    if (decompressed.length !== layout.declaredContentSize) {
-      throw new HistoryArchiveError(
-        filePath,
-        new Error(`History archive content does not match its declared size: ${filePath}`),
-      );
-    }
+    const decompressed = decompressHistoryArchive(compressed, filePath, maxBytes);
     const decoder = new TextDecoder('utf-8', { fatal: true });
     const emitter = createBoundedLineEmitter(visit, maxLineBytes);
     for (let offset = 0; offset < decompressed.length; offset += READ_CHUNK_BYTES) {

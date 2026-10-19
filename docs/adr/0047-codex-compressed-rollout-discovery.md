@@ -34,15 +34,28 @@ mid-write.
    the archive must be exactly one zstd frame that declares its content size
    (header parsed and block headers walked to the end of the frame; no second
    frame, no trailing bytes), and that declared size is refused above the
-   budget; only then does one-shot `Bun.zstdDecompressSync` run, and its
-   output must have exactly the declared length. Every Codex archive audited
-   (4,869 of 4,869) is such a frame. An archive that omits its size, carries
-   more than one frame, is corrupt or truncated fails with a
-   `LocalHistoryError` whose operation is `readLines.decompress`. `readText` and `readTextRange` never
-   decompress. `Bun.zstdDecompressSync` is the only decompressor that rejects
-   a truncated archive on both the pinned Bun 1.3.13 and Bun 1.4; the
-   `DecompressionStream('zstd')` and `node:zlib` streams accept a truncated
-   archive silently on 1.3.13, which is a silent fallback.
+   budget; only then does one-shot `node:zlib` `zstdDecompressSync` run with
+   `maxOutputLength` set to the declared size, and its output must have
+   exactly the declared length. Every Codex archive audited (4,869 of 4,869)
+   is such a frame. An archive that omits its size, carries more than one
+   frame, is corrupt or truncated fails with a `LocalHistoryError` whose
+   operation is `readLines.decompress`. `readText` and `readTextRange` never
+   decompress. `Bun.zstdDecompressSync` is not used: on the pinned Bun 1.3.13
+   it corrupts the heap (measured 2026-10-19: the local-machine suite
+   segfaulted in mimalloc in 11–20 of 40 runs under parallel load with it,
+   0 of 40 with `node:zlib`, and the engine runs on that Bun). One-shot
+   `node:zlib` `zstdDecompressSync` alone accepts a truncated frame (on Bun
+   1.3.13 it returned without throwing), so truncation safety comes from the
+   frame walk and the length check, not from the decompressor.
+   `maxOutputLength` refuses a frame whose blocks would emit more than it
+   declares; the reader test pins only that typed refusal. A separate probe
+   on Bun 1.3.13 and 1.4.2 (a 7-byte declaration over 2,000 RLE blocks of
+   128 KiB, 256 MiB if decoded) threw `ZSTD_error_dstSize_tooSmall` with no
+   measurable RSS growth. The walk, the capped decompression and the length
+   check are one exported function (`decompressHistoryArchive`) that the
+   in-memory test double also uses, so fixtures fail exactly as files do.
+   The streaming decompressors (`DecompressionStream('zstd')`, `node:zlib`
+   streams) are not used.
 2. **Discovery.** Codex discovery walks `~/.codex/sessions` and
    `~/.codex/archived_sessions`, accepts `.jsonl` and `.jsonl.zst`, and keeps
    one file per rollout stem: a plain file wins over its archive (the plain
