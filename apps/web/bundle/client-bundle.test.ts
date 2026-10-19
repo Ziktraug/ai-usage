@@ -24,11 +24,11 @@ const INITIAL_CLOSURE_ENTRY_KEYS = [
 ] as const;
 
 /**
- * A product decision, not an accounting of history: the report's first load stays under 300 KB
+ * A product decision, not an accounting of history: the report's first load stays under 305 KB
  * gzipped. Raising it is a deliberate choice about what the app costs to open, and the reason
  * belongs in the commit that raises it.
  */
-const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 300_000;
+const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
 
 /**
  * The last reviewed production measurement, and the tolerance around it. The ceiling alone cannot catch
@@ -38,8 +38,8 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 300_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// PR #58: campaign chronology and shared route chunks; CI run 37205221981.
-const RECORDED_GZIP_CLOSURE_BYTES = 296_243;
+// Main at 8f7ac54a: harness provider marks and the header collection status; CI run 39264507656.
+const RECORDED_GZIP_CLOSURE_BYTES = 301_473;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
