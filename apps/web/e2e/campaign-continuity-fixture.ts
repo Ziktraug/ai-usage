@@ -18,6 +18,14 @@ interface ContinuitySession {
   readonly title: string;
 }
 
+const SESSION_TOKEN_USAGE = {
+  input_tokens: 100,
+  cached_input_tokens: 25,
+  output_tokens: 20,
+  reasoning_output_tokens: 0,
+  total_tokens: 120,
+};
+
 const writeSession = async (directory: string, session: ContinuitySession): Promise<void> => {
   const instant = (offset: number): string => new Date(session.start + offset).toISOString();
   const events = [
@@ -38,15 +46,9 @@ const writeSession = async (directory: string, session: ContinuitySession): Prom
       type: 'event_msg',
       payload: {
         type: 'token_count',
-        info: {
-          total_token_usage: {
-            input_tokens: 100,
-            cached_input_tokens: 25,
-            output_tokens: 20,
-            reasoning_output_tokens: 0,
-            total_tokens: 120,
-          },
-        },
+        // Codex records the last operation beside the running total. A child rollout's first counter
+        // is attributed to the child only through that last operation (it may otherwise be inherited).
+        info: { total_token_usage: SESSION_TOKEN_USAGE, last_token_usage: SESSION_TOKEN_USAGE },
       },
     },
     {
