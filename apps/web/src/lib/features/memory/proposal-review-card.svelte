@@ -80,7 +80,7 @@
   });
   const textarea = css({ minH: '92px', py: '8px', resize: 'vertical' });
   const codeArea = css({ minH: '130px', fontFamily: 'mono', fontSize: '12px' });
-  const button = css({
+  const buttonStyle = css.raw({
     minH: '38px',
     px: '12px',
     border: '1px solid token(colors.lineStrong)',
@@ -93,13 +93,15 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     _disabled: { cursor: 'not-allowed', opacity: 0.55 },
   });
-  const primaryButton = css({
+  // Variants merge into one class list: two atoms for one property would be settled by stylesheet order.
+  const button = css(buttonStyle);
+  const primaryButton = css(buttonStyle, {
     bg: 'accent',
     borderColor: 'accent',
     color: 'accentContrast',
-    _hover: { bg: 'accentStrong' },
+    _hover: { bg: 'accent' },
   });
-  const dangerButton = css({ color: 'danger' });
+  const dangerButton = css(buttonStyle, { color: 'danger' });
   const messageClass = css({ color: 'muted', fontSize: '12px' });
   const details = css({ color: 'muted', fontSize: '12px' });
   const pre = css({ overflowX: 'auto', mt: '8px', p: '10px', borderRadius: 'sm', bg: 'surfaceMuted', color: 'ink' });
@@ -277,9 +279,7 @@
           <option disabled={proposal.projectId === null} value="project">Assigned Project</option>
         </select>
       </label>
-      <button class={`${button} ${primaryButton}`} disabled={pending} onclick={accept} type="button">
-        Accept proposal
-      </button>
+      <button class={primaryButton} disabled={pending} onclick={accept} type="button">Accept proposal</button>
       <button class={button} disabled={pending} onclick={() => { editing = !editing; }} type="button">
         {editing ? 'Keep original' : 'Edit before accepting'}
       </button>
@@ -327,9 +327,7 @@
         <span class={detailLabel}>Rejection reason</span>
         <input class={input} disabled={pending} maxlength="4096" bind:value={rejectionReason}>
       </label>
-      <button class={`${button} ${dangerButton}`} disabled={pending} onclick={reject} type="button">
-        Reject proposal
-      </button>
+      <button class={dangerButton} disabled={pending} onclick={reject} type="button">Reject proposal</button>
     </div>
     {#if message}
       <p aria-live="polite" class={messageClass}>{message}</p>
