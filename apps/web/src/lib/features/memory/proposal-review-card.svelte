@@ -69,7 +69,7 @@
   const actionRow = css({ display: 'flex', flexWrap: 'wrap', alignItems: 'end', gap: '8px' });
   const formGrid = css({ display: 'grid', gap: '10px' });
   const field = css({ display: 'grid', flex: '1 1 220px', gap: '4px' });
-  const input = css({
+  const inputStyle = css.raw({
     minH: '38px',
     px: '10px',
     border: '1px solid token(colors.lineStrong)',
@@ -78,8 +78,10 @@
     color: 'ink',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const textarea = css({ minH: '92px', py: '8px', resize: 'vertical' });
-  const codeArea = css({ minH: '130px', fontFamily: 'mono', fontSize: '12px' });
+  const input = css(inputStyle);
+  const textareaStyle = css.raw(inputStyle, { minH: '92px', py: '8px', resize: 'vertical' });
+  const textarea = css(textareaStyle);
+  const codeArea = css(textareaStyle, { minH: '130px', fontFamily: 'mono', fontSize: '12px' });
   const buttonStyle = css.raw({
     minH: '38px',
     px: '12px',
@@ -293,16 +295,11 @@
         </label>
         <label class={field}>
           <span class={detailLabel}>Summary</span>
-          <textarea
-            class={`${input} ${textarea}`}
-            disabled={pending}
-            maxlength="16384"
-            bind:value={summaryText}
-          ></textarea>
+          <textarea class={textarea} disabled={pending} maxlength="16384" bind:value={summaryText}></textarea>
         </label>
         <label class={field}>
           <span class={detailLabel}>Guidance, one item per line</span>
-          <textarea class={`${input} ${textarea}`} disabled={pending} bind:value={guidance}></textarea>
+          <textarea class={textarea} disabled={pending} bind:value={guidance}></textarea>
         </label>
         <label class={field}>
           <span class={detailLabel}>Sensitivity</span>
@@ -313,11 +310,7 @@
         </label>
         <label class={field}>
           <span class={detailLabel}>Structured content (JSON)</span>
-          <textarea
-            class={`${input} ${textarea} ${codeArea}`}
-            disabled={pending}
-            bind:value={structuredContent}
-          ></textarea>
+          <textarea class={codeArea} disabled={pending} bind:value={structuredContent}></textarea>
         </label>
       </div>
     {/if}

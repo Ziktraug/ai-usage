@@ -4,7 +4,7 @@ import type { MemoryProposalReviewSnapshot } from '@ai-usage/web-contract/memory
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import { conflictingButtonAtoms } from '../../foundation/presentation/atomic-class-conflicts';
+import { conflictingAtoms } from '../../foundation/presentation/atomic-class-conflicts';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../query/client';
 import { memoryProposalReviewsKey } from '../../query/options/memory';
 import { loadMemoryPageData } from './memory-load';
@@ -101,10 +101,10 @@ describe('Memory proposal review surface', () => {
     expect(body).toContain('Edit before accepting');
     expect(body).toContain('Reject proposal');
     expect(body).not.toContain('proposedByPrincipal');
-    expect(conflictingButtonAtoms(body)).toEqual([]);
+    expect(conflictingAtoms(body)).toEqual([]);
     const knowledge = render(fixture, { props: { data, address: '/memory?view=knowledge' } }).body;
     expect(knowledge).toContain('Search accepted Memory');
-    expect(conflictingButtonAtoms(knowledge)).toEqual([]);
+    expect(conflictingAtoms(knowledge)).toEqual([]);
     const initialLibrary = render(fixture, { props: { data, address: '/memory' } }).body;
     expect(initialLibrary).toContain('Reading recognized Projects');
     expect(initialLibrary).not.toContain('No recognized Projects');
