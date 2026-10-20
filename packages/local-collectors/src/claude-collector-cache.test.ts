@@ -137,6 +137,30 @@ describe('Claude per-file collector cache', () => {
     expect({ ino: after.ino, mtimeMs: after.mtimeMs }).toEqual({ ino: before.ino, mtimeMs: before.mtimeMs });
   });
 
+  test('re-parses cached transcripts whose project origin repository changed', async () => {
+    const { alpha, beta, directory, home, reads, run } = await fixture();
+    const project = path.join(home, 'project');
+    const gitConfig = path.join(project, '.git', 'config');
+    await mkdir(path.dirname(gitConfig), { recursive: true });
+    const origin = (url: string) => writeFile(gitConfig, `[remote "origin"]\n\turl = ${url}\n`);
+    await origin('https://github.com/acme/before.git');
+    const inProject = path.join(directory, 'in-project.jsonl');
+    await writeFile(inProject, jsonl({ ...assistant('in-project'), cwd: project }));
+    const repositoryOf = (result: Awaited<ReturnType<typeof run>>) =>
+      result.rows.find((row) => row.source?.sourceSessionId === 'in-project')?.source?.vcs?.repository?.ownerPath;
+
+    expect(repositoryOf(await run())).toBe('acme/before');
+    reads.clear();
+    expect(repositoryOf(await run())).toBe('acme/before');
+    expect(reads.size).toBe(0);
+
+    await origin('https://github.com/acme/after.git');
+    const moved = await run();
+    expect(repositoryOf(moved)).toBe('acme/after');
+    expect(reads).toEqual(new Map([[inProject, 1]]));
+    expect(reads.has(alpha) || reads.has(beta)).toBe(false);
+  });
+
   test('yields to the host between parsed files without yielding for cache hits', async () => {
     const { alpha, run, storage } = await fixture();
     let parsedFiles = 0;

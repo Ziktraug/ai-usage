@@ -7,6 +7,7 @@ import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { LocalHistoryStorage, walkFiles } from '@ai-usage/local-machine/local-history';
 import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
+import type { SessionVcsRepository } from '@ai-usage/report-core/session-vcs';
 import {
   MAX_SKILL_OBSERVATIONS_PER_SESSION,
   type SkillObservation,
@@ -49,6 +50,12 @@ interface ClaudeFileResult {
   rejectedMetricRecords: number;
   /** Cached so a warm re-scan reports the same partial-data state as a cold one. */
   rejectedObservations: number;
+  /**
+   * The project's origin repository is outside the transcript's size+mtime key:
+   * a hit re-resolves it for this project path and re-parses when it changed.
+   */
+  repositoryKey: string | null;
+  repositorySourcePath: string | null;
   rows: CollectorRow[];
 }
 interface ClaudeCacheEntry extends FileFingerprint, ClaudeFileResult {}
@@ -70,7 +77,8 @@ interface ClaudeCache {
 // Bumped to 14 to count tool uses streamed in later content-block records of a
 // message. Version 13 ignored them and can undercount tools.
 // Bumped to 15 for per-transcript stat-keyed entries, including partial-data
-// counters, with the pricing provider shared by the entire cache.
+// counters and the resolved origin repository, with the pricing provider shared
+// by the entire cache.
 const CLAUDE_CACHE_VERSION = 15;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
@@ -113,6 +121,7 @@ const reviveClaudeCacheEntry = (value: unknown, provider: ClaudeProvider): Claud
   const oversizedLines = parseNonNegativeSafeInteger(value.oversizedLines);
   const rejectedMetricRecords = parseNonNegativeSafeInteger(value.rejectedMetricRecords);
   const rejectedObservations = parseNonNegativeSafeInteger(value.rejectedObservations);
+  const { repositoryKey, repositorySourcePath } = value;
   if (
     !(
       size.ok &&
@@ -126,7 +135,9 @@ const reviveClaudeCacheEntry = (value: unknown, provider: ClaudeProvider): Claud
       revived.rows.length <= 1 &&
       revived.rows.every((row) => row.provider === provider) &&
       observations.valid &&
-      typeof value.observationsTruncated === 'boolean'
+      typeof value.observationsTruncated === 'boolean' &&
+      (repositoryKey === null || typeof repositoryKey === 'string') &&
+      (repositorySourcePath === null || typeof repositorySourcePath === 'string')
     )
   ) {
     return null;
@@ -139,7 +150,28 @@ const reviveClaudeCacheEntry = (value: unknown, provider: ClaudeProvider): Claud
     oversizedLines: oversizedLines.value,
     rejectedMetricRecords: rejectedMetricRecords.value,
     rejectedObservations: rejectedObservations.value,
+    repositoryKey,
+    repositorySourcePath,
     rows: revived.rows,
+  };
+};
+
+type ClaudeRepositoryResolver = (sourcePath: string | null) => SessionVcsRepository | null;
+
+const repositoryCacheKey = (repository: SessionVcsRepository | null): string | null =>
+  repository ? JSON.stringify([repository.host, repository.ownerPath, repository.provenance, repository.webUrl]) : null;
+
+/** Memoised per scan: transcripts of one project share a single `.git/config` read. */
+const createClaudeRepositoryResolver = (): ClaudeRepositoryResolver => {
+  const resolved = new Map<string, SessionVcsRepository | null>();
+  return (sourcePath) => {
+    if (sourcePath === null) {
+      return null;
+    }
+    if (!resolved.has(sourcePath)) {
+      resolved.set(sourcePath, readLocalGitRepository(sourcePath));
+    }
+    return resolved.get(sourcePath) ?? null;
   };
 };
 
@@ -326,6 +358,7 @@ const parseClaudeFile = (
   storage: LocalHistoryStorage,
   filePath: string,
   provider: ClaudeProvider,
+  resolveRepository: ClaudeRepositoryResolver,
 ): Effect.Effect<{ lines: number; result: ClaudeFileResult }, LocalHistoryError> =>
   Effect.gen(function* () {
     const sourceSessionId = path.basename(filePath, '.jsonl');
@@ -357,13 +390,17 @@ const parseClaudeFile = (
       oversizedLines: transcriptRead.oversizedLines,
       rejectedMetricRecords: 0,
       rejectedObservations: rejectedObservations + extraction.rejected,
+      repositoryKey: null,
+      repositorySourcePath: null,
       rows: [],
     };
     const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
     if (!initialFacts) {
       return { lines, result };
     }
-    const repository = readLocalGitRepository(initialFacts.source.sourcePath);
+    const repository = resolveRepository(initialFacts.source.sourcePath);
+    result.repositoryKey = repositoryCacheKey(repository);
+    result.repositorySourcePath = initialFacts.source.sourcePath;
     const facts = repository
       ? (parseClaudeSessionFacts({ isAgentFile, records, repository, sourceSessionId }) ?? initialFacts)
       : initialFacts;
@@ -444,12 +481,19 @@ export const collectClaudeResult = Effect.gen(function* () {
       let lines = 0;
       let parsed = 0;
       let hits = 0;
+      const resolveRepository = createClaudeRepositoryResolver();
       for (const filePath of files) {
         const fingerprint = fileFingerprint(filePath);
         const cached =
           fingerprint && cache?.provider === provider ? reviveClaudeCacheEntry(cache.files[filePath], provider) : null;
         let result: ClaudeFileResult;
-        if (cached && fingerprint && cached.size === fingerprint.size && cached.mtimeMs === fingerprint.mtimeMs) {
+        if (
+          cached &&
+          fingerprint &&
+          cached.size === fingerprint.size &&
+          cached.mtimeMs === fingerprint.mtimeMs &&
+          cached.repositoryKey === repositoryCacheKey(resolveRepository(cached.repositorySourcePath))
+        ) {
           result = cached;
           nextFiles[filePath] = cached;
           hits++;
@@ -457,7 +501,7 @@ export const collectClaudeResult = Effect.gen(function* () {
           if (parsed > 0) {
             yield* Effect.promise(() => scheduler.yield());
           }
-          const collected = yield* parseClaudeFile(storage, filePath, provider);
+          const collected = yield* parseClaudeFile(storage, filePath, provider, resolveRepository);
           parsed++;
           lines += collected.lines;
           result = collected.result;
