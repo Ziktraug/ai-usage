@@ -53,10 +53,10 @@ test('renders measured, partially measured, and zero Analysis values distinctly'
       .locator(`[data-harness-total="${harness}"] [data-price-bar] > div`)
       .first()
       .evaluate((element) => getComputedStyle(element).backgroundColor);
-  expect(await harnessFillColor('Codex')).toBe('rgb(14, 117, 105)');
-  expect(await harnessFillColor('OpenCode')).toBe('rgb(32, 97, 180)');
-  expect(await harnessFillColor('Claude')).toBe('rgb(140, 62, 116)');
-  expect(await harnessFillColor('Cursor')).toBe('rgb(106, 71, 200)');
+  expect(await harnessFillColor('Codex')).toBe('rgb(26, 98, 184)');
+  expect(await harnessFillColor('OpenCode')).toBe('rgb(176, 58, 120)');
+  expect(await harnessFillColor('Claude')).toBe('rgb(168, 74, 44)');
+  expect(await harnessFillColor('Cursor')).toBe('rgb(10, 82, 76)');
 
   const harnessShares = await harnessBreakdown
     .locator('[data-price-state] > :last-child > :last-child')

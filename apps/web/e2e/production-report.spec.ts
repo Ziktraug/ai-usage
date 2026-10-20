@@ -724,18 +724,19 @@ test('provides one accessible responsive source-control surface', async ({ page 
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
 
-  const filters = page.getByRole('button', { exact: true, name: 'Filters' });
-  await expect(filters).toHaveAttribute('aria-expanded', 'false');
-  await filters.focus();
-  await expect(filters).toBeFocused();
-  await filters.press('Enter');
-  await expect(filters).toHaveAttribute('aria-expanded', 'true');
-
-  const sourceSummary = page.getByRole('region', { name: 'Collection source status' }).locator('a[href="/sources"]');
-  await expect(sourceSummary).toBeVisible();
-  await sourceSummary.focus();
-  await expect(page.getByText('Collection sources', { exact: true })).toBeVisible();
-  await sourceSummary.press('Enter');
+  // Collection status lives in the workspace header on every width, not in the mobile Filters panel.
+  await expect(page.locator('[data-dashboard-filter-stack] [data-source-summary]')).toHaveCount(0);
+  const collectionStatus = page.getByRole('banner').getByRole('button', { name: 'Collection status' });
+  await expect(collectionStatus).toBeVisible();
+  await collectionStatus.focus();
+  await expect(collectionStatus).toBeFocused();
+  await collectionStatus.press('Enter');
+  const details = page.getByRole('dialog', { name: 'Collection details' });
+  await expect(details).toBeVisible();
+  await page.keyboard.press('Tab');
+  const viewSources = details.getByRole('link', { name: 'View sources' });
+  await expect(viewSources).toBeFocused();
+  await viewSources.press('Enter');
 
   await expect(page).toHaveURL(SOURCES_URL_PATTERN);
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
@@ -870,7 +871,7 @@ test('hydrates and automatically pages Sessions through the production revision 
   const rootSessionRow = page.locator('tr[data-index]').filter({ hasText: 'Implement fixture root' });
   await expect(rootSessionRow).toHaveCount(1);
   await rootSessionRow.click({ force: true });
-  const rootDrawer = page.getByRole('dialog');
+  const rootDrawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(rootDrawer).toBeVisible();
   const rootHeader = rootDrawer.locator('[data-session-drawer-header]');
   const rootPosition = rootHeader.locator('[data-session-drawer-position]');
@@ -950,7 +951,7 @@ test('hydrates and automatically pages Sessions through the production revision 
     element.scrollTop = 0;
   });
   await page.locator('tr[data-index="0"]').locator('td').last().click();
-  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Session details' })).toBeVisible();
   const nextSession = page.getByRole('button', { name: 'Next session' });
   await expect(nextSession).toBeEnabled();
   await nextSession.click();
@@ -1023,7 +1024,7 @@ test('opens Claude chronology and recorded source control from the production re
     )
     .toBe(true);
 
-  const claudeDrawer = page.getByRole('dialog');
+  const claudeDrawer = page.getByRole('dialog', { name: 'Session details' });
   await claudeDrawer.getByRole('tab', { name: 'Summary' }).click();
   const claudeSourceControl = claudeDrawer.getByRole('region', { name: 'Session source control' });
   await expect(claudeSourceControl).toContainText('fixture/main → fixture/topic');

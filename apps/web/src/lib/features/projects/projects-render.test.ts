@@ -4,6 +4,7 @@ import type { ProjectResolutionReviewSnapshot } from '@ai-usage/web-contract/pro
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
+import { conflictingAtoms } from '../../foundation/presentation/atomic-class-conflicts';
 import { loadProjectsPageData } from './projects-load';
 
 interface SvelteServerModule {
@@ -90,5 +91,6 @@ describe('Projects resolution review surface', () => {
     expect(body).toContain('Leave unassigned');
     expect(body).toContain('>Link</button>');
     expect(body).not.toContain('/private/');
+    expect(conflictingAtoms(body)).toEqual([]);
   });
 });
