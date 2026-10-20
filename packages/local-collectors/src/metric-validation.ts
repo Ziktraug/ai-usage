@@ -83,6 +83,36 @@ export const unreadableHistoryFileWarning = (
 };
 
 /**
+ * A secondary history directory whose walk failed, so the sessions under it
+ * are missing from this pass while the rest of the source was collected. Its
+ * file count is unknown, so no `rejectedRecords` is claimed.
+ */
+export const unlistedHistoryDirectoryWarning = (
+  harness: string,
+  failure: LocalHistoryError,
+  description: string,
+): LocalHistoryWarning => ({
+  harness,
+  operation: 'unlistedHistoryDirectory',
+  message: `Could not list ${description}; the ${harness} sessions there are missing from this pass: ${formatLocalHistoryError(failure)}`,
+  ...(failure.path ? { path: failure.path } : {}),
+});
+
+/**
+ * Child sessions held back from a pass because whether their usage belongs to
+ * their root depends on an ancestor whose history was not read.
+ */
+export const deferredUsageOwnershipWarning = (harness: string, sessions: number): LocalHistoryWarning | null =>
+  sessions > 0
+    ? {
+        harness,
+        operation: 'deferredUsageOwnership',
+        message: `Held back ${sessions} ${harness} child session(s) whose usage ownership depends on a parent history file that could not be read; they are decided again on the next pass.`,
+        rejectedRecords: sessions,
+      }
+    : null;
+
+/**
  * A bounded read that hit its bound. The standing rule is that partial data is
  * presented faithfully, so a truncated observation set has to say so rather
  * than silently reporting a smaller count as if it were complete.

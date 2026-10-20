@@ -13,14 +13,15 @@ import {
   codexChildLinksFromEdges,
   codexChildLinksWithoutDatabase,
   codexParentsFromEdges,
-  codexRolloutStem,
+  codexRolloutSessionIdCandidates,
   codexStateDbCandidates,
   codexThreadMetadataFromRow,
   createCodexSessionParser,
   isCodexRolloutFileName,
   isCodexUsageOwnedByRoot,
-  listCodexSessionFiles,
+  listCodexRolloutFiles,
   mergeMetadata,
+  readCodexRolloutWithFallback,
   THREAD_METADATA_SQL,
 } from './internal/codex-history';
 import {
@@ -114,12 +115,7 @@ const indexCodexRolloutFiles = (files: readonly string[]): ReadonlyMap<string, r
     if (!isCodexRolloutFileName(fileName)) {
       continue;
     }
-    const stem = codexRolloutStem(fileName);
-    const candidates = [stem];
-    for (let separator = stem.indexOf('-'); separator >= 0; separator = stem.indexOf('-', separator + 1)) {
-      candidates.push(stem.slice(separator + 1));
-    }
-    for (const [index, candidate] of candidates.entries()) {
+    for (const [index, candidate] of codexRolloutSessionIdCandidates(fileName).entries()) {
       if (!SAFE_CODEX_SESSION_ID.test(candidate)) {
         continue;
       }
@@ -146,18 +142,23 @@ export const readCodexSessionAnalysis = (
       return null;
     }
     const storage = yield* LocalHistoryStorage;
-    const files = yield* listCodexSessionFiles;
+    const { archivedWalkFailure, files } = yield* listCodexRolloutFiles;
     const filesBySessionId = indexCodexRolloutFiles(files);
     const readIndexedSession = (sessionId: string, captureDetail: boolean, maximumBytes: number) =>
       Effect.gen(function* () {
         let bytes = 0;
         for (const filePath of filesBySessionId.get(sessionId) ?? []) {
-          const parser = createCodexSessionParser(captureDetail);
-          const read = yield* storage.readLines(filePath, parser.visit, {
-            maxBytes: Math.max(0, maximumBytes - bytes),
-            maxLineBytes: CODEX_DETAIL_MAX_LINE_BYTES,
+          const read = yield* readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
+            const parser = createCodexSessionParser(captureDetail);
+            return storage
+              .readLines(candidatePath, parser.visit, {
+                maxBytes: Math.max(0, maximumBytes - bytes),
+                maxLineBytes: CODEX_DETAIL_MAX_LINE_BYTES,
+              })
+              .pipe(Effect.map((result) => ({ bytes: result.bytes, parser })));
           });
-          bytes += read.bytes;
+          bytes += read.value.bytes;
+          const parser = read.value.parser;
           const session = parser.finish().session;
           if (session.id === sessionId) {
             return { bytes, parser, session } as const;
@@ -167,6 +168,11 @@ export const readCodexSessionAnalysis = (
       });
     const targetRead = yield* readIndexedSession(sourceSessionId, true, CODEX_DETAIL_MAX_TOTAL_BYTES);
     if (!(targetRead.parser && targetRead.session)) {
+      // Not found is only an answer when every rollout was listed; with the
+      // archived directory unlisted, the session may be there.
+      if (archivedWalkFailure) {
+        return yield* Effect.fail(archivedWalkFailure);
+      }
       return null;
     }
     const parser = targetRead.parser;
@@ -189,6 +195,9 @@ export const readCodexSessionAnalysis = (
           }
           seen.add(currentAncestorId);
           if (!filesBySessionId.has(currentAncestorId)) {
+            // An ancestor absent from a partial listing may be an archived
+            // rollout, so the root's totals are unknown rather than absent.
+            lineageBudgetTruncated ||= archivedWalkFailure !== null;
             break;
           }
           const ancestorRead = yield* readIndexedSession(currentAncestorId, false, remainingBytes).pipe(

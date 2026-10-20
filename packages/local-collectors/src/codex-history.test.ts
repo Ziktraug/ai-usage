@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readCodexSessionAnalysis } from '@ai-usage/local-machine/codex-session-analysis';
@@ -105,8 +105,11 @@ class CountingCodexDatabaseStorage extends TestMemoryStorage {
 }
 
 const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
+// `runPromise`, not `runSync`: the Codex scan sleeps 0 ms after each slice of
+// read-and-parse work, which `runSync` cannot run, so a slow runner would fail
+// a synchronous test with an AsyncFiberException.
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
-  Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+  Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 const runWithRealStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, home: string) =>
   Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
 
@@ -117,7 +120,7 @@ const requireSessionDetail = (detail: SessionDetail | null): SessionDetail => {
   return detail;
 };
 
-test('preserves VCS from the first identity-owning Codex session_meta only', () => {
+test('preserves VCS from the first identity-owning Codex session_meta only', async () => {
   const storage = new TestMemoryStorage();
   storage.writeText(
     '.codex/sessions/2026/codex-vcs.jsonl',
@@ -164,7 +167,7 @@ test('preserves VCS from the first identity-owning Codex session_meta only', () 
     ),
   );
 
-  const [session] = runWithStorage(readCodexUsageSessions, storage);
+  const [session] = await runWithStorage(readCodexUsageSessions, storage);
   expect(session?.source.vcs).toMatchObject({
     branches: [{ name: 'recorded/main', provenance: 'harness-recorded' }],
     headCommit: { hash: '0123456789abcdef0123456789abcdef01234567', provenance: 'harness-recorded' },
@@ -231,7 +234,7 @@ describe('Codex local history', () => {
     expect(closed).toBe(true);
   });
 
-  test('parses sessions, child sessions, names, and quota snapshots through fixture storage', () => {
+  test('parses sessions, child sessions, names, and quota snapshots through fixture storage', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/session_index.jsonl', jsonl({ id: 'parent-thread', thread_name: 'Fixture thread' }));
     storage.writeText(
@@ -334,7 +337,7 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    const sessions = await runWithStorage(readCodexUsageSessions, storage);
     expect(sessions).toHaveLength(2);
     expect(sessions[0]?.name).toBe('Build the report.');
     expect(sessions[0]?.origin).toBeUndefined();
@@ -368,12 +371,12 @@ Preserve the existing aggregation semantics.`,
     expect(sessions[1]?.subagent).toBe(true);
     expect(sessions[1]?.usageUnavailable).toBe(false);
 
-    const quota = runWithStorage(findLatestCodexQuotaSnapshot(), storage);
+    const quota = await runWithStorage(findLatestCodexQuotaSnapshot(), storage);
     expect(quota?.planType).toBe('pro');
     expect(quota?.primary?.usedPercent).toBe(50);
     expect(quota?.primary?.windowMinutes).toBe(300);
 
-    const status = runWithStorage(
+    const status = await runWithStorage(
       findLatestCodexProviderStatus({ machineId: 'machine-1', machineLabel: 'Test Machine' }),
       storage,
     );
@@ -388,7 +391,7 @@ Preserve the existing aggregation semantics.`,
     });
     expect(status?.windows[0]).toMatchObject({ id: 'primary', label: '5h', usedPercent: 50, limitSeconds: 18_000 });
 
-    const rows = runWithStorage(collectCodex, storage);
+    const rows = await runWithStorage(collectCodex, storage);
     expect(rows).toHaveLength(2);
     expect(rows[0]?.name).toBe('Build the report.');
     expect(rows[0]?.origin).toBeUndefined();
@@ -420,7 +423,7 @@ Preserve the existing aggregation semantics.`,
     expect(rows[1]?.usageUnavailable).toBe(false);
   });
 
-  test('classifies every declared Codex origin shape and resolves classifier parents', () => {
+  test('classifies every declared Codex origin shape and resolves classifier parents', async () => {
     const storage = new TestMemoryStorage();
     const classifierParentId = '11111111-2222-4333-8444-555555555555';
     const guardianPrompt = `The following is the Codex agent history.\nReviewed Codex session id: ${classifierParentId}`;
@@ -494,7 +497,7 @@ Preserve the existing aggregation semantics.`,
       },
     );
 
-    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    const sessions = await runWithStorage(readCodexUsageSessions, storage);
     const sessionsById = new Map(sessions.map((session) => [session.source.sourceSessionId, session]));
 
     expect(sessionsById.get(classifierParentId)?.origin).toBe('human');
@@ -519,7 +522,7 @@ Preserve the existing aggregation semantics.`,
     }
 
     const collectedById = new Map(
-      runWithStorage(collectCodex, storage).map((row) => [row.source?.sourceSessionId, row]),
+      (await runWithStorage(collectCodex, storage)).map((row) => [row.source?.sourceSessionId, row]),
     );
     expect(collectedById.get('guardian-classifier')?.origin).toBe('classifier');
     expect(collectedById.get('guardian-classifier')?.source?.rootSourceSessionId).toBe(classifierParentId);
@@ -527,7 +530,7 @@ Preserve the existing aggregation semantics.`,
     expect(collectedById.get('review-classifier')?.source?.rootSourceSessionId).toBe(classifierParentId);
   });
 
-  test('preserves full classifier parent identities when their eight-character prefixes collide', () => {
+  test('preserves full classifier parent identities when their eight-character prefixes collide', async () => {
     const storage = new TestMemoryStorage();
     const parentIds = ['019f9e7d-1111-4111-8111-111111111111', '019f9e7d-2222-4222-8222-222222222222'] as const;
     const classifierIds = ['guardian-first', 'guardian-second'] as const;
@@ -573,7 +576,7 @@ Preserve the existing aggregation semantics.`,
       );
     }
 
-    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    const sessions = await runWithStorage(readCodexUsageSessions, storage);
     const sessionsById = new Map(sessions.map((session) => [session.source.sourceSessionId, session]));
     expect(parentIds.map((parentId) => sessionsById.get(parentId)?.name)).toEqual(
       parentIds.map((parentId) => `codex ${parentId}`),
@@ -589,7 +592,7 @@ Preserve the existing aggregation semantics.`,
     }
   });
 
-  test('attributes a shared cumulative token stream only to the campaign root', () => {
+  test('attributes a shared cumulative token stream only to the campaign root', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/shared-parent.jsonl',
@@ -740,7 +743,7 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    const sessions = await runWithStorage(readCodexUsageSessions, storage);
     const parent = sessions.find((session) => session.source.sourceSessionId === 'shared-parent');
     const children = sessions.filter((session) => session.source.parentSourceSessionId === 'shared-parent');
 
@@ -755,7 +758,7 @@ Preserve the existing aggregation semantics.`,
     expect(children.every((session) => session.usageUnavailable)).toBe(true);
 
     for (const child of children) {
-      const analysis = runWithStorage(readCodexSessionAnalysis(child.source.sourceSessionId ?? ''), storage);
+      const analysis = await runWithStorage(readCodexSessionAnalysis(child.source.sourceSessionId ?? ''), storage);
       const reportRow = sessionToUsageRow(child);
       const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
       const reportProjection = sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput));
@@ -1049,7 +1052,7 @@ Preserve the existing aggregation semantics.`,
     }
   });
 
-  test('uses the same bounded lineage semantics for report rows and local analysis', () => {
+  test('uses the same bounded lineage semantics for report rows and local analysis', async () => {
     const storage = new TestMemoryStorage();
     const lineageDepth = 33;
     for (let index = 0; index <= lineageDepth; index += 1) {
@@ -1099,10 +1102,10 @@ Preserve the existing aggregation semantics.`,
     }
 
     const sourceSessionId = `bounded-lineage-${lineageDepth}`;
-    const session = runWithStorage(readCodexUsageSessions, storage).find(
+    const session = (await runWithStorage(readCodexUsageSessions, storage)).find(
       (candidate) => candidate.source.sourceSessionId === sourceSessionId,
     );
-    const analysis = runWithStorage(readCodexSessionAnalysis(sourceSessionId), storage);
+    const analysis = await runWithStorage(readCodexSessionAnalysis(sourceSessionId), storage);
 
     expect(session).toBeDefined();
     expect(analysis).not.toBeNull();
@@ -1119,7 +1122,7 @@ Preserve the existing aggregation semantics.`,
     });
   });
 
-  test('makes lineage-budget truncation incomparable instead of reporting false drift', () => {
+  test('makes lineage-budget truncation incomparable instead of reporting false drift', async () => {
     const storage = new SimulatedBudgetCodexStorage();
     const rootPath = '.codex/sessions/2026/budget-root.jsonl';
     const childPath = '.codex/sessions/2026/budget-child.jsonl';
@@ -1184,10 +1187,10 @@ Preserve the existing aggregation semantics.`,
     storage.setSimulatedBytes(childPath, 100 * 1024 * 1024);
     storage.setSimulatedBytes(rootPath, 64 * 1024 * 1024);
 
-    const session = runWithStorage(readCodexUsageSessions, storage).find(
+    const session = (await runWithStorage(readCodexUsageSessions, storage)).find(
       (candidate) => candidate.source.sourceSessionId === 'budget-child',
     );
-    const analysis = runWithStorage(readCodexSessionAnalysis('budget-child'), storage);
+    const analysis = await runWithStorage(readCodexSessionAnalysis('budget-child'), storage);
 
     expect(session).toBeDefined();
     expect(analysis).not.toBeNull();
@@ -1207,7 +1210,7 @@ Preserve the existing aggregation semantics.`,
     });
   });
 
-  test('reads state metadata for a detail lineage through one database lease', () => {
+  test('reads state metadata for a detail lineage through one database lease', async () => {
     const storage = new CountingCodexDatabaseStorage();
     const sessionIds = ['single-lease-root', 'single-lease-parent', 'single-lease-child'];
     for (const [index, sessionId] of sessionIds.entries()) {
@@ -1252,13 +1255,13 @@ Preserve the existing aggregation semantics.`,
       );
     }
 
-    const analysis = runWithStorage(readCodexSessionAnalysis('single-lease-child'), storage);
+    const analysis = await runWithStorage(readCodexSessionAnalysis('single-lease-child'), storage);
 
     expect(analysis).not.toBeNull();
     expect(storage.databaseOpens).toBe(1);
   });
 
-  test('collects sessions whose aggregate metadata exceeds the former 2 GiB ceiling', () => {
+  test('collects sessions whose aggregate metadata exceeds the former 2 GiB ceiling', async () => {
     const storage = new LargeAggregateCodexStorage();
     const sessionIds = ['large-one', 'large-two', 'large-three', 'large-four'];
     for (const [index, sessionId] of sessionIds.entries()) {
@@ -1294,14 +1297,14 @@ Preserve the existing aggregation semantics.`,
       );
     }
 
-    const rows = runWithStorage(collectCodex, storage);
+    const rows = await runWithStorage(collectCodex, storage);
 
     expect(rows).toHaveLength(4);
     expect(rows.map((row) => row.source?.sourceSessionId).sort()).toEqual(sessionIds.sort());
     expect(rows.every((row) => row.tokIn === 8 && row.tokCr === 2 && row.tokOut === 5)).toBe(true);
   });
 
-  test('keeps the last valid Codex snapshot and reports malformed metrics once', () => {
+  test('keeps the last valid Codex snapshot and reports malformed metrics once', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/metrics.jsonl',
@@ -1342,7 +1345,7 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const result = runWithStorage(collectCodexResult, storage);
+    const result = await runWithStorage(collectCodexResult, storage);
 
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]?.tokIn).toBe(10);
@@ -1361,7 +1364,7 @@ Preserve the existing aggregation semantics.`,
     expect(JSON.stringify(result.warnings)).not.toContain('private-invalid-value');
   });
 
-  test('accepts rate-limit-only Codex snapshots without a malformed metric warning', () => {
+  test('accepts rate-limit-only Codex snapshots without a malformed metric warning', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/quota-only.jsonl',
@@ -1386,7 +1389,7 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const result = runWithStorage(collectCodexResult, storage);
+    const result = await runWithStorage(collectCodexResult, storage);
 
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]?.provider).toBe('Codex sub');
@@ -1394,7 +1397,7 @@ Preserve the existing aggregation semantics.`,
     expect(result.warnings).toEqual([]);
   });
 
-  test('prefers exact rollout names and continues through suffix collisions', () => {
+  test('prefers exact rollout names and continues through suffix collisions', async () => {
     const rollout = (sourceSessionId: string) =>
       jsonl(
         {
@@ -1420,7 +1423,7 @@ Preserve the existing aggregation semantics.`,
     exactStorage.writeText('.codex/sessions/2026/z-target.jsonl', rollout('z-target'));
     exactStorage.writeText('.codex/sessions/2026/target.jsonl', rollout('target'));
 
-    const exactAnalysis = runWithStorage(readCodexSessionAnalysis('target'), exactStorage);
+    const exactAnalysis = await runWithStorage(readCodexSessionAnalysis('target'), exactStorage);
 
     expect(exactAnalysis?.detail.sourceSessionId).toBe('target');
 
@@ -1428,12 +1431,12 @@ Preserve the existing aggregation semantics.`,
     fallbackStorage.writeText('.codex/sessions/2026/z-target.jsonl', rollout('z-target'));
     fallbackStorage.writeText('.codex/sessions/2026/a-target.jsonl', rollout('target'));
 
-    const fallbackAnalysis = runWithStorage(readCodexSessionAnalysis('target'), fallbackStorage);
+    const fallbackAnalysis = await runWithStorage(readCodexSessionAnalysis('target'), fallbackStorage);
 
     expect(fallbackAnalysis?.detail.sourceSessionId).toBe('target');
   });
 
-  test('reconstructs active turns, model phases, costs, and bounded deduplicated prompts', () => {
+  test('reconstructs active turns, model phases, costs, and bounded deduplicated prompts', async () => {
     const storage = new TestMemoryStorage();
     const oversizedPrompt = `Second prompt ${'x'.repeat(40 * 1024)}`;
     storage.writeText(
@@ -1590,9 +1593,9 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const sessions = runWithStorage(readCodexUsageSessions, storage);
-    const detail = runWithStorage(readCodexDetailForTest('trace-thread'), storage);
-    const analysis = runWithStorage(readCodexSessionAnalysis('trace-thread'), storage);
+    const sessions = await runWithStorage(readCodexUsageSessions, storage);
+    const detail = await runWithStorage(readCodexDetailForTest('trace-thread'), storage);
+    const analysis = await runWithStorage(readCodexSessionAnalysis('trace-thread'), storage);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.model).toBe('gpt-5.6-sol');
@@ -1646,10 +1649,10 @@ Preserve the existing aggregation semantics.`,
     const reportRow = sessionToUsageRow(sessions[0]!);
     const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
     expect(analysis?.projection).toEqual(sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput)));
-    expect(runWithStorage(readCodexDetailForTest('../../private'), storage)).toBeNull();
+    expect(await runWithStorage(readCodexDetailForTest('../../private'), storage)).toBeNull();
   });
 
-  test('marks a token-bearing segment with unknown model pricing as a lower bound', () => {
+  test('marks a token-bearing segment with unknown model pricing as a lower bound', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/unknown-model-thread.jsonl',
@@ -1689,7 +1692,7 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const [session] = runWithStorage(readCodexUsageSessions, storage);
+    const [session] = await runWithStorage(readCodexUsageSessions, storage);
 
     expect(session?.costApprox).toBe(0);
     expect(session?.costKnown).toBe(false);
@@ -1706,7 +1709,7 @@ Preserve the existing aggregation semantics.`,
     ]);
   });
 
-  test('attributes cumulative tokens to the only model observed in zero-token phases', () => {
+  test('attributes cumulative tokens to the only model observed in zero-token phases', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/single-model-cumulative-thread.jsonl',
@@ -1746,8 +1749,8 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const [session] = runWithStorage(readCodexUsageSessions, storage);
-    const [row] = runWithStorage(collectCodex, storage);
+    const [session] = await runWithStorage(readCodexUsageSessions, storage);
+    const [row] = await runWithStorage(collectCodex, storage);
 
     expect(session?.modelSegments).toMatchObject([
       {
@@ -1772,7 +1775,7 @@ Preserve the existing aggregation semantics.`,
     expect(row?.costApprox).toBeCloseTo(0.000_191, 10);
   });
 
-  test('keeps cumulative tokens unsegmented when zero-token phases observe multiple models', () => {
+  test('keeps cumulative tokens unsegmented when zero-token phases observe multiple models', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/unattributed-cumulative-thread.jsonl',
@@ -1825,8 +1828,8 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const [session] = runWithStorage(readCodexUsageSessions, storage);
-    const [row] = runWithStorage(collectCodex, storage);
+    const [session] = await runWithStorage(readCodexUsageSessions, storage);
+    const [row] = await runWithStorage(collectCodex, storage);
 
     expect(session?.tokens).toEqual({ cr: 2, cw: 0, in: 8, out: 5 });
     expect(session?.modelSegments).toEqual([
@@ -1850,7 +1853,7 @@ Preserve the existing aggregation semantics.`,
     });
   });
 
-  test('emits contract-valid active duration when completed turns overlap', () => {
+  test('emits contract-valid active duration when completed turns overlap', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/overlap-thread.jsonl',
@@ -1889,8 +1892,8 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexDetailForTest('overlap-thread'), storage);
+    const session = (await runWithStorage(readCodexUsageSessions, storage))[0];
+    const detail = await runWithStorage(readCodexDetailForTest('overlap-thread'), storage);
 
     const validDetail = requireSessionDetail(detail);
     expect(parseSessionDetail(validDetail)).toEqual(validDetail);
@@ -1899,7 +1902,7 @@ Preserve the existing aggregation semantics.`,
     expect(validDetail.turns.map((turn) => turn.durationMs)).toEqual([10_000, 10_000]);
   });
 
-  test('reconciles a recorded task duration with its turn interval while retaining the observed session end', () => {
+  test('reconciles a recorded task duration with its turn interval while retaining the observed session end', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/recorded-duration-thread.jsonl',
@@ -1925,8 +1928,10 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = requireSessionDetail(runWithStorage(readCodexDetailForTest('recorded-duration-thread'), storage));
+    const session = (await runWithStorage(readCodexUsageSessions, storage))[0];
+    const detail = requireSessionDetail(
+      await runWithStorage(readCodexDetailForTest('recorded-duration-thread'), storage),
+    );
 
     expect(parseSessionDetail(detail)).toEqual(detail);
     expect(session?.durationMs).toBe(2000);
@@ -1947,7 +1952,7 @@ Preserve the existing aggregation semantics.`,
     });
   });
 
-  test('bounds a recorded task duration to the observed completion', () => {
+  test('bounds a recorded task duration to the observed completion', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/bounded-duration-thread.jsonl',
@@ -1973,8 +1978,10 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = requireSessionDetail(runWithStorage(readCodexDetailForTest('bounded-duration-thread'), storage));
+    const session = (await runWithStorage(readCodexUsageSessions, storage))[0];
+    const detail = requireSessionDetail(
+      await runWithStorage(readCodexDetailForTest('bounded-duration-thread'), storage),
+    );
 
     expect(parseSessionDetail(detail)).toEqual(detail);
     expect(session?.durationMs).toBe(10_000);
@@ -1986,7 +1993,7 @@ Preserve the existing aggregation semantics.`,
     });
   });
 
-  test('treats an aborted turn as a recorded terminal event', () => {
+  test('treats an aborted turn as a recorded terminal event', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/aborted-turn-thread.jsonl',
@@ -2023,9 +2030,9 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const analysis = runWithStorage(readCodexSessionAnalysis('aborted-turn-thread'), storage);
+    const analysis = await runWithStorage(readCodexSessionAnalysis('aborted-turn-thread'), storage);
     const detail = requireSessionDetail(analysis?.detail ?? null);
-    const session = runWithStorage(readCodexUsageSessions, storage).find(
+    const session = (await runWithStorage(readCodexUsageSessions, storage)).find(
       ({ source }) => source.sourceSessionId === 'aborted-turn-thread',
     );
 
@@ -2041,7 +2048,7 @@ Preserve the existing aggregation semantics.`,
     });
   });
 
-  test('keeps contextual open turns visible and marks their coverage as partial', () => {
+  test('keeps contextual open turns visible and marks their coverage as partial', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/open-thread.jsonl',
@@ -2123,9 +2130,9 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexDetailForTest('open-thread'), storage);
-    const row = runWithStorage(collectCodex, storage)[0];
+    const session = (await runWithStorage(readCodexUsageSessions, storage))[0];
+    const detail = await runWithStorage(readCodexDetailForTest('open-thread'), storage);
+    const row = (await runWithStorage(collectCodex, storage))[0];
 
     const validDetail = requireSessionDetail(detail);
     expect(parseSessionDetail(validDetail)).toEqual(validDetail);
@@ -2143,7 +2150,7 @@ Preserve the existing aggregation semantics.`,
     ]);
   });
 
-  test('keeps a delayed task that starts inside the observed rollout', () => {
+  test('keeps a delayed task that starts inside the observed rollout', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/delayed-thread.jsonl',
@@ -2183,8 +2190,8 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexDetailForTest('delayed-thread'), storage);
+    const session = (await runWithStorage(readCodexUsageSessions, storage))[0];
+    const detail = await runWithStorage(readCodexDetailForTest('delayed-thread'), storage);
 
     const validDetail = requireSessionDetail(detail);
     expect(parseSessionDetail(validDetail)).toEqual(validDetail);
@@ -2194,7 +2201,7 @@ Preserve the existing aggregation semantics.`,
     expect(validDetail.turns.map((turn) => turn.tokens.total)).toEqual([20]);
   });
 
-  test('marks an unparented pre-rollout replay candidate as partial without double counting it', () => {
+  test('marks an unparented pre-rollout replay candidate as partial without double counting it', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/ambiguous-replay-thread.jsonl',
@@ -2281,8 +2288,8 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexDetailForTest('ambiguous-replay-thread'), storage);
+    const session = (await runWithStorage(readCodexUsageSessions, storage))[0];
+    const detail = await runWithStorage(readCodexDetailForTest('ambiguous-replay-thread'), storage);
 
     const validDetail = requireSessionDetail(detail);
     expect(parseSessionDetail(validDetail)).toEqual(validDetail);
@@ -2294,7 +2301,7 @@ Preserve the existing aggregation semantics.`,
     expect(validDetail.turns.map((turn) => [turn.model, turn.tokens.total])).toEqual([['gpt-5.6-sol', 50]]);
   });
 
-  test('uses replayed token snapshots as a baseline without attributing replayed tasks', () => {
+  test('uses replayed token snapshots as a baseline without attributing replayed tasks', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/rollout-2026-01-01T00-00-00-replay-parent.jsonl',
@@ -2447,8 +2454,8 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const sessions = runWithStorage(readCodexUsageSessions, storage);
-    const detail = runWithStorage(readCodexDetailForTest('replay-child'), storage);
+    const sessions = await runWithStorage(readCodexUsageSessions, storage);
+    const detail = await runWithStorage(readCodexDetailForTest('replay-child'), storage);
     const child = sessions.find((session) => session.source.sourceSessionId === 'replay-child');
 
     expect(sessions).toHaveLength(2);
@@ -2511,7 +2518,7 @@ Preserve the existing aggregation semantics.`,
     }
   });
 
-  test('resets cumulative token baselines without producing negative deltas', () => {
+  test('resets cumulative token baselines without producing negative deltas', async () => {
     const storage = new TestMemoryStorage();
     const tokenEvent = (timestamp: string, total: unknown, input: unknown, cached: unknown, output: unknown) => ({
       timestamp,
@@ -2561,8 +2568,8 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const result = runWithStorage(collectCodexResult, storage);
-    const detail = runWithStorage(readCodexDetailForTest('nonmono-thread'), storage);
+    const result = await runWithStorage(collectCodexResult, storage);
+    const detail = await runWithStorage(readCodexDetailForTest('nonmono-thread'), storage);
 
     expect(result.rows[0]?.tokIn).toBe(20);
     expect(result.rows[0]?.tokCr).toBe(9);
@@ -2822,7 +2829,7 @@ Preserve the existing aggregation semantics.`,
     }
   });
 
-  test('aggregates exposure and invocation producer losses independently across sessions', () => {
+  test('aggregates exposure and invocation producer losses independently across sessions', async () => {
     const storage = new TestMemoryStorage();
     const malformedSkillName = 'x'.repeat(513);
     storage.writeText(
@@ -2871,7 +2878,7 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const result = runWithStorage(collectCodexResult, storage);
+    const result = await runWithStorage(collectCodexResult, storage);
 
     expect(result.observationCompleteness).toEqual({
       exposure: { rejected: 1, truncated: false },
@@ -2888,7 +2895,7 @@ Preserve the existing aggregation semantics.`,
    * rollout in one pass, that single record took the whole Codex source down —
    * every session on the machine stopped being collected.
    */
-  test('drops an oversized record, still collects its session, and reports the loss', () => {
+  test('drops an oversized record, still collects its session, and reports the loss', async () => {
     const storage = new NarrowLineBudgetCodexStorage();
     storage.writeText(
       '.codex/sessions/2026/oversized.jsonl',
@@ -2933,7 +2940,7 @@ Preserve the existing aggregation semantics.`,
       ),
     );
 
-    const result = runWithStorage(collectCodexResult, storage);
+    const result = await runWithStorage(collectCodexResult, storage);
 
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]?.model).toBe('gpt-6-astra');
@@ -2945,7 +2952,7 @@ Preserve the existing aggregation semantics.`,
     });
   });
 
-  test('prices a task that switched models like its phases and reports turns past the budget', () => {
+  test('prices a task that switched models like its phases and reports turns past the budget', async () => {
     const storage = new TestMemoryStorage();
     const tokenCount = (timestamp: string, total: number, input: number, output: number) => ({
       timestamp,
@@ -2987,7 +2994,7 @@ Preserve the existing aggregation semantics.`,
         { timestamp: '2026-01-01T00:04:00.000Z', payload: { type: 'task_complete', turn_id: 'turn-1' } },
       ),
     );
-    const detail = runWithStorage(readCodexDetailForTest('switch-thread'), storage);
+    const detail = await runWithStorage(readCodexDetailForTest('switch-thread'), storage);
     expect(detail?.turns).toHaveLength(1);
     const phaseCost = detail?.phases.reduce((total, phase) => total + (phase.cost ?? 0), 0) ?? Number.NaN;
     expect(detail?.turns[0]?.costKind).toBe('approximate');
@@ -3020,7 +3027,7 @@ Preserve the existing aggregation semantics.`,
       );
     }
     busy.writeText('.codex/sessions/2026/rollout-2026-01-01T00-00-00-busy-thread.jsonl', jsonl(...events));
-    const busyDetail = runWithStorage(readCodexDetailForTest('busy-thread'), busy);
+    const busyDetail = await runWithStorage(readCodexDetailForTest('busy-thread'), busy);
     expect(busyDetail?.turns).toHaveLength(1024);
     expect(busyDetail?.coverage.grouping).toEqual({ omittedCount: 1, reasons: ['turn-budget'], status: 'partial' });
     expect(busyDetail?.coverage.promptBodies).toEqual({
@@ -3058,7 +3065,7 @@ describe('Codex child token ownership', () => {
     });
   const complete = (turn: string, startedAt?: number, completedAt = start + 60) =>
     event('event_msg', { type: 'task_complete', turn_id: turn, started_at: startedAt, completed_at: completedAt });
-  const read = (events: unknown[], metadata: Record<string, unknown> = {}) => {
+  const read = async (events: unknown[], metadata: Record<string, unknown> = {}) => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/ownership-child.jsonl',
@@ -3073,8 +3080,8 @@ describe('Codex child token ownership', () => {
         ...events,
       ),
     );
-    const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const analysis = runWithStorage(readCodexSessionAnalysis('ownership-child'), storage);
+    const session = (await runWithStorage(readCodexUsageSessions, storage))[0];
+    const analysis = await runWithStorage(readCodexSessionAnalysis('ownership-child'), storage);
     if (!(session && analysis)) {
       throw new Error('Expected the child session and its analysis');
     }
@@ -3088,8 +3095,8 @@ describe('Codex child token ownership', () => {
     };
   };
 
-  test.each(['subagent', 'classifier'])('uses the declared birth of a delayed %s', (origin) => {
-    const { session, total, detail } = read(
+  test.each(['subagent', 'classifier'])('uses the declared birth of a delayed %s', async (origin) => {
+    const { session, total, detail } = await read(
       [task('own'), context('own'), tokens(100, 100), tokens(250, 150), complete('own')],
       origin === 'classifier' ? { source: { subagent: { other: 'guardian' } } } : {},
     );
@@ -3098,8 +3105,8 @@ describe('Codex child token ownership', () => {
     expect(detail.turns.map((turn) => turn.tokens.total)).toEqual([250]);
   });
 
-  test('never falls back to the largest inherited cumulative counter', () => {
-    const { session, total } = read([
+  test('never falls back to the largest inherited cumulative counter', async () => {
+    const { session, total } = await read([
       task('parent-turn', start - 120),
       context('parent-turn'),
       tokens(1000, 100),
@@ -3110,9 +3117,9 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(true);
   });
 
-  test('does not move the child birth backwards when copied records retain parent timestamps', () => {
+  test('does not move the child birth backwards when copied records retain parent timestamps', async () => {
     const parentTime = '2026-01-01T00:00:00.000Z';
-    const { total } = read([
+    const { total } = await read([
       event('session_meta', { id: 'ownership-parent', timestamp: parentTime }, parentTime),
       event('event_msg', { type: 'task_started', turn_id: 'parent-turn', started_at: start - 600 }, parentTime),
       context('parent-turn'),
@@ -3127,8 +3134,8 @@ describe('Codex child token ownership', () => {
     expect(total).toBe(100);
   });
 
-  test('recovers an unanchored classifier generation from its recorded completion start', () => {
-    const { total, detail, projection, reportProjection } = read(
+  test('recovers an unanchored classifier generation from its recorded completion start', async () => {
+    const { total, detail, projection, reportProjection } = await read(
       [
         tokens(1000),
         task('rollout-2'),
@@ -3148,8 +3155,8 @@ describe('Codex child token ownership', () => {
     expect(projection).toEqual(reportProjection);
   });
 
-  test('keeps a recovered generation in the detail when the next native turn changes model', () => {
-    const { total, detail, projection, reportProjection } = read(
+  test('keeps a recovered generation in the detail when the next native turn changes model', async () => {
+    const { total, detail, projection, reportProjection } = await read(
       [
         tokens(1000),
         task('rollout-2'),
@@ -3173,8 +3180,8 @@ describe('Codex child token ownership', () => {
     expect(projection).toEqual(reportProjection);
   });
 
-  test('keeps an inherited task context out of a pending unanchored generation', () => {
-    const { total } = read([
+  test('keeps an inherited task context out of a pending unanchored generation', async () => {
+    const { total } = await read([
       task('parent-turn', start - 600),
       context('first'),
       tokens(1000),
@@ -3186,8 +3193,8 @@ describe('Codex child token ownership', () => {
     expect(total).toBe(0);
   });
 
-  test('attributes a turn context without a turn id to the open owned task', () => {
-    const { session, total } = read([
+  test('attributes a turn context without a turn id to the open owned task', async () => {
+    const { session, total } = await read([
       task('own'),
       event('turn_context', { model: 'gpt-5.6-sol' }),
       tokens(100, 100),
@@ -3197,8 +3204,8 @@ describe('Codex child token ownership', () => {
     expect(total).toBe(250);
     expect(session.partial).toBe(false);
   });
-  test('recovers a paginated child context preceding its synthetic task wrapper', () => {
-    const { total } = read(
+  test('recovers a paginated child context preceding its synthetic task wrapper', async () => {
+    const { total } = await read(
       [
         context('first'),
         tokens(1000),
@@ -3213,8 +3220,8 @@ describe('Codex child token ownership', () => {
     expect(total).toBe(250);
   });
 
-  test('keeps the synthetic wrapper of a copied parent context out of child usage', () => {
-    const { total, session } = read(
+  test('keeps the synthetic wrapper of a copied parent context out of child usage', async () => {
+    const { total, session } = await read(
       [
         context('parent-turn'),
         tokens(1000),
@@ -3233,27 +3240,39 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(false);
   });
 
-  test('counts an owned generation without requiring a turn context', () => {
-    const { session, total } = read([tokens(1000), task('own'), tokens(1100, 100), complete('own')]);
+  test('counts an owned generation without requiring a turn context', async () => {
+    const { session, total } = await read([tokens(1000), task('own'), tokens(1100, 100), complete('own')]);
     expect(total).toBe(100);
     // The seed before the first native task may hold earlier child usage.
     expect(session.partial).toBe(true);
   });
 
-  test('reports token growth outside an attributable task instead of silently dropping it', () => {
-    const { total, session } = read([task('own'), context('own'), tokens(100, 100), complete('own'), tokens(250, 150)]);
+  test('reports token growth outside an attributable task instead of silently dropping it', async () => {
+    const { total, session } = await read([
+      task('own'),
+      context('own'),
+      tokens(100, 100),
+      complete('own'),
+      tokens(250, 150),
+    ]);
     expect(total).toBe(100);
     expect(session.partial).toBe(true);
   });
 
-  test('does not infer a zero baseline merely from the absence of a fork marker', () => {
-    const { total, session } = read([task('own'), context('own'), tokens(1000), tokens(1100, 100), complete('own')]);
+  test('does not infer a zero baseline merely from the absence of a fork marker', async () => {
+    const { total, session } = await read([
+      task('own'),
+      context('own'),
+      tokens(1000),
+      tokens(1100, 100),
+      complete('own'),
+    ]);
     expect(total).toBe(100);
     expect(session.partial).toBe(true);
   });
 
-  test('marks a first cumulative counter with missing earlier generations partial', () => {
-    const { total, session } = read([
+  test('marks a first cumulative counter with missing earlier generations partial', async () => {
+    const { total, session } = await read([
       task('own'),
       context('own'),
       tokens(1000, 100),
@@ -3264,8 +3283,8 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(true);
   });
 
-  test('marks an unresolved unanchored context partial instead of publishing its cumulative total', () => {
-    const { session, total } = read(
+  test('marks an unresolved unanchored context partial instead of publishing its cumulative total', async () => {
+    const { session, total } = await read(
       [
         context('unplaced'),
         tokens(1000),
@@ -3280,16 +3299,19 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(true);
   });
 
-  test('does not assume an initial inherited cumulative snapshot belongs to the child', () => {
-    const { session, total } = read([task('own'), context('own'), tokens(1000), tokens(1100, 100), complete('own')], {
-      forked_from_id: 'ownership-parent',
-    });
+  test('does not assume an initial inherited cumulative snapshot belongs to the child', async () => {
+    const { session, total } = await read(
+      [task('own'), context('own'), tokens(1000), tokens(1100, 100), complete('own')],
+      {
+        forked_from_id: 'ownership-parent',
+      },
+    );
     expect(total).toBe(100);
     expect(session.partial).toBe(true);
   });
 
-  test('counts the last generation after a reset once and reports the missing epoch', () => {
-    const { session, total } = read(
+  test('counts the last generation after a reset once and reports the missing epoch', async () => {
+    const { session, total } = await read(
       [
         tokens(1000),
         task('own'),
@@ -3309,12 +3331,12 @@ describe('Codex child token ownership', () => {
   test.each([
     { resetLast: 40, partial: false, expected: 190 },
     { resetLast: 30, partial: true, expected: 180 },
-  ])('only treats an owned reset as complete when its snapshot is the last generation: %j', ({
+  ])('only treats an owned reset as complete when its snapshot is the last generation: %j', async ({
     resetLast,
     partial,
     expected,
   }) => {
-    const { session, total } = read([
+    const { session, total } = await read([
       task('own'),
       context('own'),
       tokens(100, 100),
@@ -3327,8 +3349,8 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(partial);
   });
 
-  test('rejects an inconsistent last usage as evidence of an owned generation', () => {
-    const { session, total } = read(
+  test('rejects an inconsistent last usage as evidence of an owned generation', async () => {
+    const { session, total } = await read(
       [
         task('own'),
         context('own'),
@@ -3345,8 +3367,8 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(true);
   });
 
-  test('keeps a paginated baseline before the first context out of classifier usage', () => {
-    const { total, session } = read(
+  test('keeps a paginated baseline before the first context out of classifier usage', async () => {
+    const { total, session } = await read(
       [
         task('own'),
         event('event_msg', {
@@ -3363,8 +3385,8 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(true);
   });
 
-  test('uses recorded completion duration to locate an unanchored generation', () => {
-    const { total } = read(
+  test('uses recorded completion duration to locate an unanchored generation', async () => {
+    const { total } = await read(
       [
         context('first'),
         tokens(1000),
@@ -3377,8 +3399,8 @@ describe('Codex child token ownership', () => {
     expect(total).toBe(100);
   });
 
-  test('does not certify replay-time task starts without an original timestamp', () => {
-    const { total, session } = read(
+  test('does not certify replay-time task starts without an original timestamp', async () => {
+    const { total, session } = await read(
       [
         event('event_msg', { type: 'task_started', turn_id: 'uncertain' }),
         context('uncertain'),
@@ -3392,8 +3414,8 @@ describe('Codex child token ownership', () => {
     expect(session.partial).toBe(true);
   });
 
-  test('does not duplicate a reset generation on a quota-only or repeated snapshot', () => {
-    const { total } = read(
+  test('does not duplicate a reset generation on a quota-only or repeated snapshot', async () => {
+    const { total } = await read(
       [
         tokens(1000),
         task('own'),
@@ -3523,7 +3545,7 @@ describe('Codex compressed rollouts', () => {
     ]);
   });
 
-  test('discovers plain, compressed and archived rollouts and reads the plain form of a stem present in both', () => {
+  test('discovers plain, compressed and archived rollouts and reads the plain form of a stem present in both', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/sessions/2026/09/01/rollout-plain.jsonl', jsonl(...rolloutEvents('plain-thread', 1)));
     storage.writeBytes(
@@ -3543,7 +3565,7 @@ describe('Codex compressed rollouts', () => {
       archive(...rolloutEvents('both-thread', 1)),
     );
 
-    const result = runWithStorage(collectCodexResult, storage);
+    const result = await runWithStorage(collectCodexResult, storage);
     expect(result.warnings).toEqual([]);
     expect(result.rows.map((row) => row.source?.sourceSessionId).sort()).toEqual([
       'archived-thread',
@@ -3556,7 +3578,7 @@ describe('Codex compressed rollouts', () => {
     expect(idFreeFacts(rowFor(result, 'compressed-thread'))).toEqual(idFreeFacts(rowFor(result, 'plain-thread')));
   });
 
-  test('skips a corrupt archive when looking for the latest quota snapshot', () => {
+  test('skips a corrupt archive when looking for the latest quota snapshot and fails when nothing else is read', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.codex/sessions/2026/09/01/rollout-2026-09-01-quota.jsonl',
@@ -3576,19 +3598,67 @@ describe('Codex compressed rollouts', () => {
     // and must step over it to reach the snapshot.
     storage.writeBytes('.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
 
-    const quota = runWithStorage(findLatestCodexQuotaSnapshot(), storage);
+    const quota = await runWithStorage(findLatestCodexQuotaSnapshot(), storage);
     expect(quota?.planType).toBe('pro');
     expect(quota?.primary?.usedPercent).toBe(37);
     expect(quota?.primary?.windowMinutes).toBe(300);
-    expect(runWithStorage(findLatestCodexProviderStatus(), storage)).toMatchObject({ key: 'codex', state: 'ok' });
+    expect(await runWithStorage(findLatestCodexProviderStatus(), storage)).toMatchObject({ key: 'codex', state: 'ok' });
 
+    // With nothing else read, "no snapshot" would claim an absence the reader
+    // could not observe, so the skipped archive's failure is the answer.
     const corruptOnly = new TestMemoryStorage();
     corruptOnly.writeBytes('.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
-    expect(runWithStorage(findLatestCodexQuotaSnapshot(), corruptOnly)).toBeNull();
-    expect(runWithStorage(findLatestCodexProviderStatus(), corruptOnly)).toBeNull();
+    const quotaRead = await runWithStorage(Effect.either(findLatestCodexQuotaSnapshot()), corruptOnly);
+    const statusRead = await runWithStorage(Effect.either(findLatestCodexProviderStatus()), corruptOnly);
+    for (const read of [quotaRead, statusRead]) {
+      expect(read._tag).toBe('Left');
+      if (read._tag === 'Left') {
+        expect(read.left).toMatchObject({
+          operation: 'readLines.decompress',
+          path: path.join(corruptOnly.home, '.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst'),
+        });
+      }
+    }
+
+    const empty = new TestMemoryStorage();
+    empty.writeText('.codex/sessions/2026/09/01/rollout-2026-09-01-plain.jsonl', jsonl(...rolloutEvents('plain', 1)));
+    expect(await runWithStorage(findLatestCodexQuotaSnapshot(), empty)).toBeNull();
   });
 
-  test('reads the session detail of a rollout that exists only as an archive', () => {
+  test('fails the latest quota snapshot on a read failure other than a corrupt or vanished rollout', async () => {
+    class DeniedRolloutStorage extends TestMemoryStorage {
+      override readLines(
+        filePath: string,
+        visit: (line: string) => void,
+        limits: { maxBytes?: number; maxLineBytes?: number } = {},
+      ) {
+        return filePath.endsWith('denied.jsonl')
+          ? Effect.fail(
+              new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Permission denied') }),
+            )
+          : super.readLines(filePath, visit, limits);
+      }
+    }
+    const storage = new DeniedRolloutStorage();
+    storage.writeText(
+      '.codex/sessions/2026/09/01/rollout-2026-09-01-quota.jsonl',
+      jsonl({
+        timestamp: '2026-09-01T08:05:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'token_count', rate_limits: { plan_type: 'pro', primary: { used_percent: 37 } } },
+      }),
+    );
+    storage.writeText('.codex/sessions/2026/09/02/rollout-2026-09-02-denied.jsonl', jsonl(...rolloutEvents('d', 1)));
+
+    const read = await runWithStorage(Effect.either(findLatestCodexQuotaSnapshot()), storage);
+    expect(read._tag).toBe('Left');
+    if (read._tag === 'Left') {
+      expect(read.left).toMatchObject({ operation: 'readLines' });
+      expect(read.left.path?.endsWith('rollout-2026-09-02-denied.jsonl')).toBe(true);
+    }
+  });
+
+  test('reads the session detail of a rollout that exists only as an archive', async () => {
     const events = rolloutEvents('detail-thread', 2);
     const compressedStorage = new TestMemoryStorage();
     compressedStorage.writeBytes(
@@ -3602,9 +3672,11 @@ describe('Codex compressed rollouts', () => {
     );
 
     const compressedDetail = requireSessionDetail(
-      runWithStorage(readCodexDetailForTest('detail-thread'), compressedStorage),
+      await runWithStorage(readCodexDetailForTest('detail-thread'), compressedStorage),
     );
-    const plainDetail = requireSessionDetail(runWithStorage(readCodexDetailForTest('detail-thread'), plainStorage));
+    const plainDetail = requireSessionDetail(
+      await runWithStorage(readCodexDetailForTest('detail-thread'), plainStorage),
+    );
     expect(compressedDetail.turns).toHaveLength(2);
     // `observedAt` is the generation time of each read, not a fact about the rollout.
     const { observedAt: _compressedObservedAt, ...compressedFacts } = compressedDetail;
@@ -3612,12 +3684,12 @@ describe('Codex compressed rollouts', () => {
     expect(compressedFacts).toEqual(plainFacts);
   });
 
-  test('skips a corrupt archive with a warning and keeps collecting the rollouts beside it', () => {
+  test('skips a corrupt archive with a warning and keeps collecting the rollouts beside it', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/sessions/2026/09/01/rollout-valid.jsonl', jsonl(...rolloutEvents('valid-thread', 1)));
     storage.writeBytes('.codex/sessions/2026/09/01/rollout-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
 
-    const result = runWithStorage(collectCodexResult, storage);
+    const result = await runWithStorage(collectCodexResult, storage);
     expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['valid-thread']);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toMatchObject({
@@ -3636,13 +3708,13 @@ describe('Codex compressed rollouts', () => {
     });
   });
 
-  test('aggregates several unreadable rollouts into one warning that keeps the typed list', () => {
+  test('aggregates several unreadable rollouts into one warning that keeps the typed list', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/sessions/2026/09/01/rollout-valid.jsonl', jsonl(...rolloutEvents('valid-thread', 1)));
     storage.writeBytes('.codex/sessions/2026/09/01/rollout-corrupt-a.jsonl.zst', Buffer.alloc(48, 0xff));
     storage.writeBytes('.codex/sessions/2026/09/01/rollout-corrupt-b.jsonl.zst', Buffer.alloc(48, 0xff));
 
-    const result = runWithStorage(collectCodexResult, storage);
+    const result = await runWithStorage(collectCodexResult, storage);
     expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['valid-thread']);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toMatchObject({
@@ -3657,7 +3729,7 @@ describe('Codex compressed rollouts', () => {
       invocation: { rejected: 2, truncated: false },
     });
 
-    const sessions = runWithStorage(readCodexUsageSessionsResult, storage);
+    const sessions = await runWithStorage(readCodexUsageSessionsResult, storage);
     expect(sessions.readFailures).toHaveLength(2);
     expect(sessions.readFailures.map((failure) => failure.operation)).toEqual([
       'readLines.decompress',
@@ -3720,6 +3792,224 @@ describe('Codex compressed rollouts', () => {
       } finally {
         db.close();
       }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * Codex compresses or archives a rollout and removes the listed file while
+   * the scan is reading it: the first read of a registered path visits every
+   * line, then `move` runs and the read fails as the file is gone.
+   */
+  class MovingRolloutStorage extends TestMemoryStorage {
+    private readonly moves = new Map<string, () => void>();
+
+    moveOnRead(relativePath: string, move: () => void): void {
+      this.moves.set(path.join(this.home, relativePath), move);
+    }
+
+    override readLines(
+      filePath: string,
+      visit: (line: string) => void,
+      limits: { maxBytes?: number; maxLineBytes?: number } = {},
+    ) {
+      const move = this.moves.get(filePath);
+      if (!move) {
+        return super.readLines(filePath, visit, limits);
+      }
+      this.moves.delete(filePath);
+      const read = super.readLines(filePath, visit, limits);
+      return read.pipe(
+        Effect.flatMap(() => {
+          move();
+          return super.readLines(filePath, visit, limits);
+        }),
+      );
+    }
+  }
+
+  test('follows a rollout compressed or archived after the listing to its new form, counted once', async () => {
+    const storage = new MovingRolloutStorage();
+    const day = '.codex/sessions/2026/09/01';
+    storage.writeText(`${day}/rollout-compressed-race.jsonl`, jsonl(...rolloutEvents('compressed-race', 2)));
+    // Codex writes the archive first and removes the plain file last, so the
+    // sibling exists when the listing prefers the plain file.
+    storage.writeBytes(`${day}/rollout-compressed-race.jsonl.zst`, archive(...rolloutEvents('compressed-race', 2)));
+    storage.moveOnRead(`${day}/rollout-compressed-race.jsonl`, () =>
+      storage.remove(`${day}/rollout-compressed-race.jsonl`),
+    );
+    storage.writeText(`${day}/rollout-archived-race.jsonl`, jsonl(...rolloutEvents('archived-race', 1)));
+    storage.moveOnRead(`${day}/rollout-archived-race.jsonl`, () => {
+      storage.remove(`${day}/rollout-archived-race.jsonl`);
+      storage.writeBytes(
+        '.codex/archived_sessions/rollout-archived-race.jsonl.zst',
+        archive(...rolloutEvents('archived-race', 1)),
+      );
+    });
+
+    const result = await runWithStorage(collectCodexResult, storage);
+    expect(result.warnings).toEqual([]);
+    expect(result.observationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
+    // The failed attempt had visited every line; a fresh parser per attempt
+    // keeps them from being counted twice.
+    expect(rowFor(result, 'compressed-race')).toMatchObject({ turns: 2, tokOut: 24 });
+    expect(rowFor(result, 'archived-race')).toMatchObject({ turns: 1, tokOut: 12 });
+  });
+
+  test('counts a rollout that vanished in every form as unreadable', async () => {
+    const storage = new MovingRolloutStorage();
+    storage.writeText('.codex/sessions/2026/09/01/rollout-kept.jsonl', jsonl(...rolloutEvents('kept', 1)));
+    storage.writeText('.codex/sessions/2026/09/01/rollout-gone.jsonl', jsonl(...rolloutEvents('gone', 1)));
+    storage.moveOnRead('.codex/sessions/2026/09/01/rollout-gone.jsonl', () =>
+      storage.remove('.codex/sessions/2026/09/01/rollout-gone.jsonl'),
+    );
+
+    const result = await runWithStorage(readCodexUsageSessionsResult, storage);
+    expect(result.sessions.map((session) => session.source.sourceSessionId)).toEqual(['kept']);
+    expect(result.readFailures).toHaveLength(1);
+    expect(result.readFailures[0]).toMatchObject({
+      operation: 'readLines',
+      path: path.join(storage.home, '.codex/sessions/2026/09/01/rollout-gone.jsonl'),
+    });
+  });
+
+  test('holds back a root-owned child while its root rollout is unreadable instead of flipping its ownership', async () => {
+    const usage = (total: number) => ({
+      type: 'token_count',
+      info: {
+        last_token_usage: { total_tokens: 10, input_tokens: 8, cached_input_tokens: 6, output_tokens: 2 },
+        total_token_usage: {
+          total_tokens: total,
+          input_tokens: (total * 8) / 10,
+          cached_input_tokens: (total * 6) / 10,
+          output_tokens: (total * 2) / 10,
+        },
+      },
+    });
+    const rootEvents = [
+      { timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'own-root', cwd: '/work/own' } },
+      { timestamp: '2026-01-01T00:01:00.000Z', payload: usage(10) },
+      { timestamp: '2026-01-01T00:10:00.000Z', payload: usage(100) },
+    ];
+    const childEvents = (id: string, parent: string) => [
+      {
+        timestamp: '2026-01-01T00:02:00.000Z',
+        type: 'session_meta',
+        payload: { id, cwd: '/work/own', source: { subagent: { thread_spawn: { parent_thread_id: parent } } } },
+      },
+      {
+        timestamp: '2026-01-01T00:02:00.000Z',
+        type: 'session_meta',
+        payload: { id: parent, cwd: '/work/own', source: 'vscode' },
+      },
+      { timestamp: '2026-01-01T00:03:00.000Z', payload: usage(50) },
+    ];
+    const day = '.codex/sessions/2026/01/01';
+    const rootPath = `${day}/rollout-2026-01-01T00-00-00-own-root.jsonl.zst`;
+    const childPath = `${day}/rollout-2026-01-01T00-02-00-own-child.jsonl`;
+    const orphanPath = `${day}/rollout-2026-01-01T00-02-00-orphan-child.jsonl`;
+
+    const readable = new TestMemoryStorage();
+    readable.writeBytes(rootPath, archive(...rootEvents));
+    readable.writeText(childPath, jsonl(...childEvents('own-child', 'own-root')));
+    const baseline = await runWithStorage(collectCodexResult, readable);
+    expect(baseline.warnings).toEqual([]);
+    expect(rowFor(baseline, 'own-child')).toMatchObject({ usageUnavailable: true, tokOut: 0 });
+
+    const unreadable = new TestMemoryStorage();
+    unreadable.writeBytes(rootPath, Buffer.alloc(48, 0xff));
+    unreadable.writeText(childPath, jsonl(...childEvents('own-child', 'own-root')));
+    // A child whose parent never had a rollout here is decided as before.
+    unreadable.writeText(orphanPath, jsonl(...childEvents('orphan-child', 'never-recorded-root')));
+    const result = await runWithStorage(collectCodexResult, unreadable);
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['orphan-child']);
+    expect(result.warnings.map((warning) => warning.operation)).toEqual([
+      'unreadableHistoryFile',
+      'deferredUsageOwnership',
+    ]);
+    expect(result.warnings[1]).toMatchObject({ harness: 'codex', rejectedRecords: 1 });
+
+    const sessions = await runWithStorage(readCodexUsageSessionsResult, unreadable);
+    expect(sessions.ownershipDeferredSessions).toBe(1);
+  });
+
+  test('collects the active rollouts with a warning when the archived directory cannot be listed', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-archived-walk-'));
+    try {
+      const activeDirectory = path.join(home, '.codex', 'sessions', '2026', '09', '01');
+      const archivedDirectory = path.join(home, '.codex', 'archived_sessions');
+      const movedDirectory = path.join(home, 'archived-elsewhere');
+      mkdirSync(activeDirectory, { recursive: true });
+      mkdirSync(archivedDirectory, { recursive: true });
+      writeFileSync(
+        path.join(activeDirectory, 'rollout-2026-09-01T08-00-00-active-thread.jsonl'),
+        jsonl(...rolloutEvents('active-thread', 1)),
+      );
+      const archivedPath = path.join(archivedDirectory, 'rollout-2026-09-01T08-00-00-archived-thread.jsonl.zst');
+      writeFileSync(archivedPath, archive(...rolloutEvents('archived-thread', 1)));
+      const cachedPaths = () => {
+        const db = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
+        try {
+          return (
+            db.query('SELECT file_path FROM codex_session_cache ORDER BY file_path').all() as { file_path: string }[]
+          ).map((row) => row.file_path);
+        } finally {
+          db.close();
+        }
+      };
+
+      const listed = await runWithRealStorage(collectCodexResult, home);
+      expect(listed.warnings).toEqual([]);
+      expect(listed.rows.map((row) => row.source?.sourceSessionId).sort()).toEqual([
+        'active-thread',
+        'archived-thread',
+      ]);
+      expect(cachedPaths()).toContain(archivedPath);
+
+      // A symlinked root and a regular file in its place both fail the walk;
+      // neither takes the source down.
+      renameSync(archivedDirectory, movedDirectory);
+      symlinkSync(movedDirectory, archivedDirectory);
+      for (const replace of [
+        () => undefined,
+        () => rmSync(archivedDirectory) ?? writeFileSync(archivedDirectory, ''),
+      ]) {
+        replace();
+        const unlisted = await runWithRealStorage(collectCodexResult, home);
+        expect(unlisted.rows.map((row) => row.source?.sourceSessionId)).toEqual(['active-thread']);
+        expect(unlisted.warnings).toHaveLength(1);
+        expect(unlisted.warnings[0]).toMatchObject({
+          harness: 'codex',
+          operation: 'unlistedHistoryDirectory',
+          path: archivedDirectory,
+        });
+        expect(unlisted.warnings[0]?.rejectedRecords).toBeUndefined();
+        expect(unlisted.observationCompleteness).toEqual({
+          exposure: { rejected: 1, truncated: false },
+          invocation: { rejected: 1, truncated: false },
+        });
+        // Unseen is not gone: the archived entry stays cached for the next pass.
+        expect(cachedPaths()).toContain(archivedPath);
+      }
+
+      const activeDetail = await runWithRealStorage(readCodexDetailForTest('active-thread'), home);
+      expect(activeDetail?.turns).toHaveLength(1);
+      // An id missing from a partial listing is not "no such session".
+      const archivedDetail = await runWithRealStorage(Effect.either(readCodexDetailForTest('archived-thread')), home);
+      expect(archivedDetail._tag).toBe('Left');
+      if (archivedDetail._tag === 'Left') {
+        expect(archivedDetail.left).toMatchObject({ operation: 'readDir', path: archivedDirectory });
+      }
+
+      rmSync(archivedDirectory);
+      renameSync(movedDirectory, archivedDirectory);
+      const restored = await runWithRealStorage(collectCodexResult, home);
+      expect(restored.warnings).toEqual([]);
+      expect(restored.rows).toEqual(listed.rows);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

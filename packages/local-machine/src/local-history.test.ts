@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { zstdDecompressSync } from 'node:zlib';
 import {
+  HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES,
+  HISTORY_JSONL_MAX_BYTES,
+} from '@ai-usage/local-machine/history-budgets';
+import {
   createLocalHistoryStorage,
   readConfigFileText,
   readRegularFileText,
@@ -701,6 +705,42 @@ test('refuses a declared content size over the bound before decompressing anythi
     expect(unbounded._tag).toBe('Left');
     if (unbounded._tag === 'Left') {
       expect(unbounded.left).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
+    }
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('refuses an archive declaring more than the archive budget even under the plain-file budget', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-budget-'));
+  try {
+    // A single-segment frame header declaring one byte over the archive
+    // budget (Frame_Content_Size_Flag 2, four size bytes), nothing after it:
+    // the plain-file budget admits the declaration, so only the archive budget,
+    // checked before any block is walked or decoded, can refuse it.
+    const header = Buffer.alloc(9);
+    ZSTD_MAGIC.copy(header, 0);
+    header.writeUInt8(0xa0, 4);
+    header.writeUInt32LE(HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES + 1, 5);
+    const archivePath = path.join(root, 'declares-too-much.jsonl.zst');
+    fs.writeFileSync(archivePath, header);
+    expect(HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES).toBeLessThan(HISTORY_JSONL_MAX_BYTES);
+
+    const real = await Effect.runPromise(
+      Effect.either(createLocalHistoryStorage(root).readLines(archivePath, () => undefined)),
+    );
+    expect(real._tag).toBe('Left');
+    if (real._tag === 'Left') {
+      expect(real.left).toMatchObject({ operation: 'readLines', path: archivePath });
+      expect(String(real.left.cause)).toContain(`${HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES}-byte limit`);
+    }
+
+    const memory = new TestMemoryStorage(root);
+    memory.writeBytes('declares-too-much.jsonl.zst', header);
+    const fixture = await Effect.runPromise(Effect.either(memory.readLines(archivePath, () => undefined)));
+    expect(fixture._tag).toBe('Left');
+    if (fixture._tag === 'Left') {
+      expect(fixture.left).toMatchObject({ operation: 'readLines', path: archivePath });
     }
   } finally {
     fs.rmSync(root, { force: true, recursive: true });

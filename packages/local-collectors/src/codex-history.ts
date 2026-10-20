@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LocalHistoryError } from '@ai-usage/local-machine/errors';
+import { isMissingHistoryFileError, type LocalHistoryError } from '@ai-usage/local-machine/errors';
 import {
   CODEX_DETAIL_MAX_PHASES,
   type CodexSession,
@@ -9,17 +9,21 @@ import {
   type CodexThreadMetadata,
   type CodexThreadMetadataRow,
   type CodexThreadSpawnEdgeRow,
+  codexArchivedSessionsDir,
   codexModelSegments,
   codexParentsFromEdges,
+  codexRolloutSessionIdCandidates,
   codexStateDbCandidates,
   codexThreadMetadataFromRow,
   createCodexSessionParser,
   isCodexUsageOwnedByRoot,
+  isCodexUsageOwnershipUndecided,
   isRecord,
+  listCodexRolloutFiles,
   codexSessionsDir as localCodexSessionsDir,
   mergeMetadata,
   nonEmpty,
-  listCodexSessionFiles as rawCodexSessionFiles,
+  readCodexRolloutWithFallback,
   THREAD_METADATA_SQL,
 } from '@ai-usage/local-machine/internal/codex-history';
 import {
@@ -52,8 +56,8 @@ export {
 
 const listCodexSessionFilesForCollection = withPerfSpan(
   'aiUsage.collect.codex.listSessionFiles',
-  rawCodexSessionFiles,
-  (files) => ({ files: files.length }),
+  listCodexRolloutFiles,
+  (list) => ({ archivedWalkFailed: list.archivedWalkFailure !== null, files: list.files.length }),
 );
 
 const isCodexSubagentKind = (value: unknown): value is CodexSubagentKind =>
@@ -88,6 +92,8 @@ interface RawCodexRateLimitSnapshot {
 }
 
 interface CodexSessionReadResult {
+  /** Why `archived_sessions` was not listed this pass, when its walk failed. */
+  archivedWalkFailure: LocalHistoryError | null;
   bytes: number;
   cacheHits: number;
   cacheMisses: number;
@@ -495,6 +501,9 @@ const writeCodexSessionCache = (
   db: SqliteDatabase,
   files: string[],
   parsed: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[],
+  // Entries under a directory this pass could not list are kept: their files
+  // are unseen, not gone, so the next pass that lists them hits the cache.
+  unlistedDirectory: string | null,
 ) => {
   const now = new Date().toISOString();
   const upsert = db.query(`
@@ -508,8 +517,12 @@ const writeCodexSessionCache = (
       updated_at = excluded.updated_at
   `);
   const deleteStale = db.query(
-    'DELETE FROM codex_session_cache WHERE version != ? OR file_path NOT IN (SELECT value FROM json_each(?))',
+    `DELETE FROM codex_session_cache
+     WHERE version != ?
+        OR (file_path NOT IN (SELECT value FROM json_each(?))
+            AND (? IS NULL OR substr(file_path, 1, length(?)) != ?))`,
   );
+  const unlistedPrefix = unlistedDirectory === null ? null : `${unlistedDirectory}${path.sep}`;
 
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -523,7 +536,7 @@ const writeCodexSessionCache = (
         now,
       );
     }
-    deleteStale.run(CODEX_SESSION_CACHE_VERSION, JSON.stringify(files));
+    deleteStale.run(CODEX_SESSION_CACHE_VERSION, JSON.stringify(files), unlistedPrefix, unlistedPrefix, unlistedPrefix);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -580,7 +593,13 @@ const readCodexSessions = (
       let unreadableFiles = 0;
       const readFailures: LocalHistoryError[] = [];
       const unreadablePaths = new Set<string>();
-      const files = yield* listCodexSessionFilesForCollection;
+      const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
+      if (archivedWalkFailure) {
+        // The archived rollouts are missing from this pass, so like an
+        // unreadable file each skill tier weakens by one source.
+        observationCompleteness.exposure.rejected += 1;
+        observationCompleteness.invocation.rejected += 1;
+      }
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
       const mergeObservationCompleteness = (value: SkillObservationCollectionCompleteness): void => {
         observationCompleteness.exposure.rejected += value.exposure.rejected;
@@ -623,8 +642,16 @@ const readCodexSessions = (
 
               cacheMisses++;
               const readStartedAt = Date.now();
-              const parser = createCodexSessionParser();
-              const read = yield* Effect.either(storage.readLines(filePath, parser.visit));
+              // Codex may compress or archive the rollout after it was listed;
+              // the read follows it to its next form with a fresh parser.
+              const read = yield* Effect.either(
+                readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
+                  const parser = createCodexSessionParser();
+                  return storage
+                    .readLines(candidatePath, parser.visit)
+                    .pipe(Effect.map((result) => ({ parser, result })));
+                }),
+              );
               readMs += Date.now() - readStartedAt;
               if (Either.isLeft(read)) {
                 // A rollout that cannot be read (a corrupt or truncated
@@ -640,7 +667,7 @@ const readCodexSessions = (
                 observationCompleteness.exposure.rejected += 1;
                 observationCompleteness.invocation.rejected += 1;
               } else {
-                const readResult = read.right;
+                const { parser, result: readResult } = read.right.value;
                 bytes += readResult.bytes;
 
                 const parsed = parser.finish();
@@ -656,7 +683,9 @@ const readCodexSessions = (
                 skippedLines += parsed.skippedLines;
                 const session = parsed.session;
                 mergeObservationCompleteness(session.skillObservationCompleteness);
-                if (stat) {
+                // A rollout read under another path is cached under that path
+                // by the next pass, which lists it there.
+                if (stat && read.right.path === filePath) {
                   parsedForCache.push({ filePath, session: cloneCodexSession(session), stat });
                 }
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
@@ -678,7 +707,13 @@ const readCodexSessions = (
               const retainedFiles =
                 unreadablePaths.size === 0 ? files : files.filter((filePath) => !unreadablePaths.has(filePath));
               yield* Effect.try({
-                try: () => writeCodexSessionCache(sessionCache.db, retainedFiles, parsedForCache),
+                try: () =>
+                  writeCodexSessionCache(
+                    sessionCache.db,
+                    retainedFiles,
+                    parsedForCache,
+                    archivedWalkFailure ? codexArchivedSessionsDir(storage) : null,
+                  ),
                 catch: (error) => error,
               }).pipe(Effect.ignore);
               cacheWriteMs = Date.now() - cacheWriteStartedAt;
@@ -695,6 +730,7 @@ const readCodexSessions = (
 
       sessions.sort((a, b) => (a.start?.getTime() ?? 0) - (b.start?.getTime() ?? 0));
       return {
+        archivedWalkFailure,
         bytes,
         cacheHits,
         cacheMisses,
@@ -736,6 +772,12 @@ const readCodexSessions = (
   );
 
 export interface CodexUsageSessionsResult {
+  /**
+   * Why `archived_sessions` was not listed this pass. Its rollouts are missing
+   * from the pass and retried on the next; the collector surfaces it as a
+   * `codex` warning.
+   */
+  archivedWalkFailure: LocalHistoryError | null;
   metricWarningContext: { affectedSessions: number; lastObservedAt?: string };
   observationCompleteness: SkillObservationCollectionCompleteness;
   /**
@@ -746,6 +788,13 @@ export interface CodexUsageSessionsResult {
   observations: SkillObservation[];
   /** Records dropped by the reader for exceeding the per-line byte bound. */
   oversizedLines: number;
+  /**
+   * Child sessions left out of this pass because whether their root owns their
+   * usage depends on an ancestor whose rollout was not read. Importing them
+   * would overwrite a root-owned row with a session that owns its usage; they
+   * are re-decided on the next pass that reads the ancestor.
+   */
+  ownershipDeferredSessions: number;
   /**
    * Rollouts whose read failed (for example an archive that no longer
    * decompresses). Each is skipped for this pass and retried on the next; the
@@ -766,6 +815,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
   Effect.gen(function* () {
     const metadata = yield* readCodexThreadMetadata;
     const {
+      archivedWalkFailure,
       observationCompleteness,
       oversizedLines,
       readFailures,
@@ -788,8 +838,23 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       }
     }
 
+    // Session ids the unread rollouts may hold, from their file names. With
+    // the archived directory unlisted, any missing ancestor may be there.
+    const unreadableSessionIds = new Set(
+      readFailures.flatMap((failure) =>
+        failure.path ? codexRolloutSessionIdCandidates(path.basename(failure.path)) : [],
+      ),
+    );
+    const isUnreadableSession = (sessionId: string): boolean =>
+      archivedWalkFailure !== null || unreadableSessionIds.has(sessionId);
+
     const usageSessions: CodexCollectedSession[] = [];
+    let ownershipDeferredSessions = 0;
     for (const session of sessions) {
+      if (isCodexUsageOwnershipUndecided(session, byId, isUnreadableSession)) {
+        ownershipDeferredSessions++;
+        continue;
+      }
       const kids = (session.id && children.get(session.id)) || [];
       const tokens = {
         in: session.tin,
@@ -869,9 +934,11 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         affectedSessions: rejectedSessions.length,
         ...(lastObservedAt ? { lastObservedAt } : {}),
       },
+      archivedWalkFailure,
       observationCompleteness,
       observations,
       oversizedLines,
+      ownershipDeferredSessions,
       readFailures,
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
@@ -879,7 +946,9 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     };
   }),
   (result) => ({
+    archivedWalkFailed: result.archivedWalkFailure !== null,
     observations: result.observations.length,
+    ownershipDeferredSessions: result.ownershipDeferredSessions,
     oversizedLines: result.oversizedLines,
     rejectedMetricRecords: result.rejectedMetricRecords,
     rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
@@ -900,37 +969,45 @@ const findLatestRawCodexRateLimits = (
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     let latest: RawCodexRateLimitSnapshot | null = null;
-    const files = (yield* listCodexSessionFilesForCollection).sort();
+    const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
+    const skippedFailures: LocalHistoryError[] = archivedWalkFailure ? [archivedWalkFailure] : [];
 
-    for (const filePath of files.slice(-recentFileLimit).reverse()) {
+    for (const filePath of [...files].sort().slice(-recentFileLimit).reverse()) {
       let candidate: RawCodexRateLimitSnapshot | null = null;
       const read = yield* Effect.either(
-        storage.readLines(filePath, (line) => {
-          if (!line.includes('rate_limits')) {
-            return;
-          }
-          const event = safeJSON(line);
-          const payload = isRecord(event?.payload) ? event.payload : null;
-          const rateLimits = isRecord(payload?.rate_limits) ? payload.rate_limits : null;
-          if (!rateLimits) {
-            return;
-          }
-          if (typeof event?.timestamp !== 'string' && typeof event?.timestamp !== 'number') {
-            return;
-          }
-          const ts = new Date(event.timestamp);
-          if (!Number.isFinite(ts.getTime())) {
-            return;
-          }
-          if (!candidate || ts > candidate.ts) {
-            candidate = { ts, rateLimits };
-          }
+        readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
+          candidate = null;
+          return storage.readLines(candidatePath, (line) => {
+            if (!line.includes('rate_limits')) {
+              return;
+            }
+            const event = safeJSON(line);
+            const payload = isRecord(event?.payload) ? event.payload : null;
+            const rateLimits = isRecord(payload?.rate_limits) ? payload.rate_limits : null;
+            if (!rateLimits) {
+              return;
+            }
+            if (typeof event?.timestamp !== 'string' && typeof event?.timestamp !== 'number') {
+              return;
+            }
+            const ts = new Date(event.timestamp);
+            if (!Number.isFinite(ts.getTime())) {
+              return;
+            }
+            if (!candidate || ts > candidate.ts) {
+              candidate = { ts, rateLimits };
+            }
+          });
         }),
       );
-      // A rollout this reader cannot open or decompress is skipped for the
-      // next (older) one. The result carries no warning channel; the sessions
-      // collector already reports the same file through `unreadableHistoryFile`.
       if (Either.isLeft(read)) {
+        // An archive that does not decompress, or a rollout gone in every
+        // form, is skipped for the next (older) one; the sessions collector
+        // reports the same file. Any other failure is the reader's to report.
+        if (!(read.left.operation === 'readLines.decompress' || isMissingHistoryFileError(read.left))) {
+          return yield* Effect.fail(read.left);
+        }
+        skippedFailures.push(read.left);
         continue;
       }
       if (candidate) {
@@ -939,6 +1016,12 @@ const findLatestRawCodexRateLimits = (
       }
     }
 
+    // No reading found is only "no quota" when nothing was skipped; otherwise
+    // the reading may sit in what could not be read.
+    const [firstSkipped] = skippedFailures;
+    if (!latest && firstSkipped) {
+      return yield* Effect.fail(firstSkipped);
+    }
     return latest;
   });
 

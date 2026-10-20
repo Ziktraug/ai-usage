@@ -6,6 +6,7 @@ import { zstdDecompressSync } from 'node:zlib';
 import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
 import {
+  HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES,
   HISTORY_FILE_MAX_BYTES,
   HISTORY_JSONL_MAX_BYTES,
   HISTORY_LINE_MAX_BYTES,
@@ -551,7 +552,9 @@ const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: numb
 /**
  * Decompress the bytes of a history archive: exactly one zstd frame that
  * declares its content size (walked before anything is decoded, the declared
- * size refused above `maxBytes`), decompressed with its output capped at that
+ * size refused above `maxBytes` and above
+ * `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`, because the whole output is held
+ * in memory at once), decompressed with its output capped at that
  * declaration, and refused unless the output has exactly the declared length.
  * Pure over its input so the test double reads fixtures through the same
  * path. A zero-byte archive is refused with the rest: zstd of empty input is
@@ -568,7 +571,11 @@ const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: numb
  * exceed it fails inside the decompressor.
  */
 export const decompressHistoryArchive = (compressed: Buffer, filePath: string, maxBytes: number): Buffer => {
-  const layout = zstdSingleFrameLayout(compressed, filePath, maxBytes);
+  const layout = zstdSingleFrameLayout(
+    compressed,
+    filePath,
+    Math.min(maxBytes, HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES),
+  );
   if (layout.frameEnd !== compressed.length) {
     throw new HistoryArchiveError(filePath, new Error(`History archive is not a single zstd frame: ${filePath}`));
   }
@@ -588,12 +595,15 @@ export const decompressHistoryArchive = (compressed: Buffer, filePath: string, m
 };
 
 /**
- * Read a zstd archive of newline-delimited text with the same hardening as the
- * plain reader. A readable archive is exactly one zstd frame that declares its
- * content size, which every Codex archive does. `maxBytes` bounds the
- * compressed file and the declared size (refused before any decompression),
- * and the decompressed length must equal the declaration, so the bound holds
- * for every archive; `bytes` reports the decompressed count so byte budgets
+ * Read a zstd archive of newline-delimited text with the same file hardening
+ * and per-line bound as the plain reader. A readable archive is exactly one
+ * zstd frame that declares its content size, which every Codex archive does.
+ * `maxBytes` bounds the compressed file; the declared size is refused above
+ * the smaller of `maxBytes` and `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`
+ * before any decompression, and the decompressed length must equal the
+ * declaration, so the bound holds for every archive. Unlike the plain reader,
+ * which streams, the archive is decompressed whole, so peak memory follows
+ * that declared size. `bytes` reports the decompressed count so byte budgets
  * follow what the parser saw.
  */
 export const visitCompressedFileLines = (

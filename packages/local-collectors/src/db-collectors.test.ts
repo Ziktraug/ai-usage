@@ -10,6 +10,8 @@ import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from '.
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+const runAsyncWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
+  Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
@@ -110,7 +112,7 @@ describe('DB-backed Harness collectors', () => {
     }
   });
 
-  test('reports one failing harness while keeping successful harness rows', () => {
+  test('reports one failing harness while keeping successful harness rows', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/session_index.jsonl', jsonl({ id: 'codex-thread', thread_name: 'Fixture thread' }));
     storage.writeText(
@@ -152,8 +154,9 @@ describe('DB-backed Harness collectors', () => {
     ]);
 
     const selection = { harness: null, includeCursor: false, keepSource: true } as const;
-    const result = runWithStorage(collectSelectedHarnessResults(selection), storage);
-    const flatRows = runWithStorage(collectSelectedHarnessRows(selection), storage);
+    // The Codex scan can sleep between slices of work, which `runSync` cannot run.
+    const result = await runAsyncWithStorage(collectSelectedHarnessResults(selection), storage);
+    const flatRows = await runAsyncWithStorage(collectSelectedHarnessRows(selection), storage);
     const opencode = result.harnesses.find((harness) => harness.harness === 'opencode');
 
     expect(result.rows).toHaveLength(1);

@@ -27,14 +27,19 @@ mid-write.
 ## Decision
 
 1. **Reader.** `LocalHistoryStorage.readLines` reads a path ending in `.zst`
-   as a zstd archive of newline-delimited text through the same hardened,
-   bounded path as a plain file: regular non-symlink file, `O_NOFOLLOW`,
-   descriptor identity checks, compressed bytes bounded by the caller's byte
-   budget, and the same per-line byte bound. Before anything is decompressed
-   the archive must be exactly one zstd frame that declares its content size
-   (header parsed and block headers walked to the end of the frame; no second
-   frame, no trailing bytes), and that declared size is refused above the
-   budget; only then does one-shot `node:zlib` `zstdDecompressSync` run with
+   as a zstd archive of newline-delimited text with the same file hardening
+   and per-line byte bound as a plain file: regular non-symlink file,
+   `O_NOFOLLOW`, descriptor identity checks, compressed bytes bounded by the
+   caller's byte budget. Unlike a plain file, whose lines stream past a
+   constant buffer, an archive is decompressed whole, so its memory follows
+   the size it declares rather than the per-line bound. Before anything is
+   decompressed the archive must be exactly one zstd frame that declares its
+   content size (header parsed and block headers walked to the end of the
+   frame; no second frame, no trailing bytes), and that declared size is
+   refused above the smaller of the caller's budget and a dedicated archive
+   budget, `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES` (256 MiB; the plain-file
+   budget is 1 GiB, and a frame declaring 1 GiB compresses to a few KiB);
+   only then does one-shot `node:zlib` `zstdDecompressSync` run with
    `maxOutputLength` set to the declared size, and its output must have
    exactly the declared length. Every Codex archive audited (4,869 of 4,869)
    is such a frame. An archive that omits its size, carries more than one
@@ -63,7 +68,28 @@ mid-write.
    newer when rehydrated for a resume; the archive may be mid-write), and the
    active directory wins over the archived directory (archiving moves the
    file). The session detail index and the collector use that same list.
-3. **Per-file failure.** A rollout that cannot be read, plain or compressed,
+   `archived_sessions` is secondary: when its walk fails (a symlink, not a
+   directory, unreadable, removed mid-walk, over a scan budget), the list
+   holds the active rollouts only and carries that typed failure; the
+   collector reports it as one `codex` warning (operation
+   `unlistedHistoryDirectory`, no record count since the number of files is
+   unknown), weakens both skill tiers by one source, and keeps the cache
+   entries under that directory, which are unseen rather than gone. A session
+   detail whose id is not in such a partial list fails with that error instead
+   of answering "not found", and an ancestor missing from it makes the usage
+   ownership `unknown`. The active `sessions` walk failing still fails the
+   source. Distillation evidence keeps the strict list, which fails on either
+   walk.
+3. **Moved rollouts.** Codex compresses or archives a rollout and removes the
+   listed file independently of a scan, so a read that fails with `ENOENT`
+   (before or after its lines were visited) is retried, with fresh parser
+   state, on the rollout's next forms: for a plain file its sibling `.zst`,
+   then `archived_sessions/<stem>.jsonl` and `.jsonl.zst`. Only a rollout gone
+   in every form, or a failure other than `ENOENT`, is a per-file failure. A
+   rollout read under another path is not cached this pass; the next pass
+   lists and caches it under that path. The collector, the session detail and
+   the latest-quota reader read through this fallback.
+4. **Per-file failure.** A rollout that cannot be read, plain or compressed,
    is a per-file failure: the collector keeps the typed error per file in its
    result, reports one `codex` warning with the count of skipped rollouts
    (operation `unreadableHistoryFile`, `rejectedRecords` = count, the first
@@ -71,15 +97,30 @@ mid-write.
    observation tiers of that pass as having rejected a source so no absence
    claim rests on the missing rollout, writes no cache entry for the file,
    keeps collecting the other rollouts, and retries it on the next scan.
-   Walk-level failures stay source-level failures, as before.
-4. **Cache.** The per-file session cache keeps its schema and version. An
+   Walk-level failures of the active directory stay source-level failures, as
+   before. A child session whose usage the root would own (prior token usage
+   observed, no tokens of its own) and whose lineage stops at an ancestor the
+   pass could not read (a session id named by an unreadable rollout's file
+   name, or any missing ancestor while `archived_sessions` is unlisted) is held
+   back from the pass instead of being decided as owning its usage: importing
+   it would overwrite a root-owned row with tokens and
+   `usageUnavailable: false`. The collector counts these in one `codex`
+   warning (operation `deferredUsageOwnership`, `rejectedRecords` = count);
+   they are decided again on the next pass that reads the ancestor. The
+   latest-quota reader steps over an archive that does not decompress and a
+   rollout gone in every form to the next older rollout; any other read
+   failure fails it, and when it finds no reading after skipping anything it
+   fails with the first skipped failure rather than answering "no quota".
+5. **Cache.** The per-file session cache keeps its schema and version. An
    entry is keyed by the path actually read and that file's size and mtime, so
    an unchanged archive is decompressed once and never again; a rollout that
    changes form (plain to archive) is parsed once under its new path.
-5. **Event loop.** After parsed files, the Codex scan sleeps 0 ms whenever
+6. **Event loop.** After parsed files, the Codex scan sleeps 0 ms whenever
    50 ms of synchronous read-and-parse work have accumulated since the last
    yield, so a cold pass over thousands of archives yields regularly to the
-   engine's control plane while small fixtures stay synchronous.
+   engine's control plane. A scan can therefore suspend, so tests run it with
+   `Effect.runPromise`; `Effect.runSync` would fail with an
+   `AsyncFiberException` whenever a slow runner crossed the slice.
 
 No configuration flag is added.
 
@@ -97,7 +138,15 @@ No configuration flag is added.
   decompressed buffers, 145 MB for the largest audited rollout). The engine
   process peaked at 2.6–3.3 GB RSS during the cold archive pass, below the
   6.6 GB it reached reading the same rollouts as plain files, and returned to
-  about 260 MB afterwards.
+  about 260 MB afterwards. The archive budget bounds what one archive can
+  cost: measured 2026-10-20 on Bun 1.3.13, a standalone read of an archive
+  declaring 256 MiB peaked at 1.3–2.0 GB RSS (the decompressor holds about
+  twice its output, then decoding adds collectable strings); under the 1 GiB
+  plain-file budget alone, an 82 KB archive declaring 1 GB took 14 s and
+  3.16 GB RSS on the reader before this budget. A
+  genuine rollout over 256 MiB decompressed is reported as unreadable rather
+  than read; the largest audited one is under 145 MB compressed plus
+  decompressed.
 - A corrupt archive no longer takes the whole Codex source down; the pass
   reports how many rollouts it skipped, and the skill-observation producer of
   that pass is recorded as partial.
@@ -127,8 +176,12 @@ rehydrated plain file after a resume.
 ## Evidence
 
 - `packages/local-machine/src/local-history.ts` (`visitCompressedFileLines`,
-  `readLines`), `packages/local-machine/src/internal/codex-history.ts`
-  (`listCodexSessionFiles`), `packages/local-collectors/src/codex-history.ts`
-  (per-file failures, cache keys, time-sliced yield).
+  `readLines`), `packages/local-machine/src/history-budgets.ts`
+  (`HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`),
+  `packages/local-machine/src/internal/codex-history.ts`
+  (`listCodexRolloutFiles`, `listCodexSessionFiles`,
+  `readCodexRolloutWithFallback`, `isCodexUsageOwnershipUndecided`),
+  `packages/local-collectors/src/codex-history.ts` (per-file failures, cache
+  keys, deferred ownership, latest-quota failures, time-sliced yield).
 - Read-only audit of the real `~/.codex` on 2026-10-17 and decompressor
   strictness probes: `.agent-memory/codex-zst-discovery-2026-10-17/`.

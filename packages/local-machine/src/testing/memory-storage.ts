@@ -57,6 +57,11 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     this.files.set(path.join(this.home, relativePath), content);
   }
 
+  /** Remove a fixture, as a harness does when it compresses or moves a file after a scan listed it. */
+  remove(relativePath: string) {
+    this.files.delete(path.join(this.home, relativePath));
+  }
+
   /** A binary fixture, such as a zstd archive of newline-delimited text. */
   writeBytes(relativePath: string, bytes: Uint8Array) {
     this.files.set(path.join(this.home, relativePath), bytes);
@@ -131,7 +136,13 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     const stored = this.files.get(filePath);
     if (stored == null) {
       return Effect.fail(
-        new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Missing fixture file') }),
+        // Coded like the real reader's failure, so a vanished file is told
+        // apart from an unreadable one.
+        new LocalHistoryError({
+          operation: 'readLines',
+          path: filePath,
+          cause: Object.assign(new Error(`Missing fixture file: ${filePath}`), { code: 'ENOENT' }),
+        }),
       );
     }
     // Mirrors the real reader: a `.zst` path is a zstd archive of the text
