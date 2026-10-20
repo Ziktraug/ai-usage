@@ -24,14 +24,18 @@ is already visible per source in the engine's source-control status.
 
 ## Decision
 
-A row's freshness heartbeat is recorded when its stored `last_seen_at` is at
-least `USAGE_ROW_FRESHNESS_HEARTBEAT_MS` (one hour) older than the import's
-observation time, or invalid. Inside that window an unchanged row is not
-written at all and does not count as a fleet projection change. Content
-changes, machine label changes, active-date changes and fleet-metadata repair
-still propagate immediately, and freshness never moves backwards. The constant
-lives in `packages/usage-store/src/index.ts` beside the import path that
-enforces it.
+An unchanged row's freshness heartbeat is recorded when the import's
+observation time falls in a later clock-hour bucket
+(`floor(t / USAGE_ROW_FRESHNESS_HEARTBEAT_MS)`, one hour) than its stored
+`last_seen_at`, or when that value is invalid. Buckets rather than per-row age
+keep rows that went idle at different minutes on one shared heartbeat, so a
+machine produces at most one freshness-only fleet change per hour instead of
+one per row. Inside the bucket an unchanged row is not written at all and does
+not count as a fleet projection change. Content changes, machine label changes,
+active-date changes and fleet-metadata repair still propagate immediately. On
+the unchanged (heartbeat) path freshness never moves backwards: an observation
+in an earlier bucket than the stored value records nothing. The constant lives
+in `packages/usage-store/src/index.ts` beside the import path that enforces it.
 
 ## Consequences
 
@@ -39,7 +43,8 @@ enforces it.
   untouched, requests no publication and writes no revision. Active cycles
   publish only when usage content changed.
 - The served `machineFreshness.machines[].lastSeenAt` lags real collection by
-  up to one hour, three orders of magnitude inside the 30-day stale window.
+  at most one hour plus one collection cycle, three orders of magnitude inside
+  the 30-day stale window.
 - Tests that pinned a per-minute heartbeat now step by one hour.
 
 ## Rejected alternative
