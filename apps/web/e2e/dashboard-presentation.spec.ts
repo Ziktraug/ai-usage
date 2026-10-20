@@ -741,8 +741,9 @@ for (const width of [1280, 1080]) {
       page.getByRole('button', { name: 'Filter by harness' }),
       page.getByRole('button', { name: 'Filter by origin' }),
       page.getByRole('button', { name: 'Filter by machine' }),
-      page.getByRole('region', { name: 'Collection source status' }),
     ];
+    // Collection status moved to the workspace header; it is no longer one of this row's controls.
+    await expect(toolbar.locator('[data-source-summary]')).toHaveCount(0);
     const boxes = await Promise.all(controls.map((control) => control.boundingBox()));
     const tops = boxes.flatMap((box) => (box === null ? [] : [Math.round(box.y)]));
 

@@ -27,6 +27,12 @@ test('reviews provenance and edits a generated Memory proposal before accepting 
 
   await page.getByRole('link', { name: 'Pending review', exact: true }).click();
   await page.getByRole('button', { name: 'Edit before accepting' }).click();
+  // The textareas keep their own minimum heights, not the single-line input's 38px.
+  const minHeight = (label: string): Promise<number> =>
+    page.getByLabel(label).evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
+  expect(await minHeight('Summary')).toBe(92);
+  expect(await minHeight('Guidance, one item per line')).toBe(92);
+  expect(await minHeight('Structured content (JSON)')).toBe(130);
   await page.getByLabel('Title').fill('Keep reviewed Memory offline-first');
   await page.getByLabel('Sensitivity').selectOption('sensitive');
   await page.getByLabel('Structured content (JSON)').fill('{"authority":"sqlite","reviewed":true}');

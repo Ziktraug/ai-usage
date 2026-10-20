@@ -60,7 +60,7 @@
     color: 'ink',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const button = css({
+  const buttonStyle = css.raw({
     minH: '40px',
     px: '14px',
     border: '1px solid token(colors.accent)',
@@ -69,11 +69,12 @@
     color: 'accentContrast',
     cursor: 'pointer',
     fontWeight: 750,
-    _hover: { bg: 'accentStrong' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     _disabled: { cursor: 'not-allowed', opacity: 0.55 },
   });
-  const secondaryButton = css({
+  // Variants merge into one class list: two atoms for one property would be settled by stylesheet order.
+  const button = css(buttonStyle);
+  const secondaryButton = css(buttonStyle, {
     bg: 'surfaceMuted',
     borderColor: 'lineStrong',
     color: 'ink',
@@ -181,7 +182,7 @@
       <div class={resultHeader}>
         <p class={status}>{page.total} result{page.total === 1 ? '' : 's'} · {page.rankingVersion}</p>
         {#if page.nextCursor}
-          <button class={`${button} ${secondaryButton}`} onclick={nextPage} type="button">Next results</button>
+          <button class={secondaryButton} onclick={nextPage} type="button">Next results</button>
         {/if}
       </div>
       {#if page.items.length === 0}
