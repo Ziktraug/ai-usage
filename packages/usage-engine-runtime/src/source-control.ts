@@ -25,6 +25,7 @@ import {
   Duration,
   Effect,
   Exit,
+  FiberHandle,
   FiberMap,
   Layer,
   Option,
@@ -138,6 +139,7 @@ interface SourceControlRuntime {
   readonly autonomousCollection: { open: boolean };
   readonly beforeInitialCollection: Effect.Effect<void>;
   readonly options: SourceControlOptions;
+  readonly publicationSettle: FiberHandle.FiberHandle;
   readonly queue: Queue.Queue<ControlPlaneJob>;
   readonly sourceIds: readonly CollectionSourceId[];
   readonly sourceTimeout: Duration.Duration;
@@ -188,10 +190,12 @@ const createSourceControlRuntime = (
     const queue = yield* Queue.bounded<ControlPlaneJob>(sourceControlBounds.maxQueueDepth);
     yield* Effect.addFinalizer(() => Queue.shutdown(queue));
     const timers = yield* FiberMap.make<CollectionSourceId>();
+    const publicationSettle = yield* FiberHandle.make();
     return {
       autonomousCollection: { open: options.autonomousCollection ?? true },
       beforeInitialCollection,
       options,
+      publicationSettle,
       queue,
       sourceIds,
       sourceTimeout,
@@ -551,8 +555,20 @@ const processPublicationJob = (
       PUBLICATION_SETTLE_MIN_WAIT_MS,
     );
     if (settle.defer) {
-      yield* Effect.sleep(settle.waitMs);
-      yield* runtime.queue.offer({ ...job, deferrals: job.deferrals + 1 });
+      // The wait runs off the worker so the writer stays free for the burst
+      // and for commands; an explicit request joining this job ends it early.
+      const explicitRequestJoined = runtime.stateRef.changes.pipe(
+        Stream.filter((current) => current.publication.explicitRequestPending),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      yield* FiberHandle.run(
+        runtime.publicationSettle,
+        Effect.race(Effect.sleep(settle.waitMs), explicitRequestJoined).pipe(
+          Effect.andThen(runtime.queue.offer({ ...job, deferrals: job.deferrals + 1 })),
+          Effect.asVoid,
+        ),
+      );
       return;
     }
     const decision = yield* modifyControlState(runtime, startPublicationJobTransition);

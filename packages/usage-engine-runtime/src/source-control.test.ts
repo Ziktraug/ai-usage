@@ -1238,6 +1238,62 @@ describe('source control plane', () => {
     expect(boundaryEvents(capture.events(), 'publication')).toHaveLength(0);
   });
 
+  test('frees the writer during a publication settle and ends it when an explicit request joins', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const writerGate = createUsageEngineWriterGate();
+        const control = yield* createSourceControl({
+          initialPublicationOrder: 'externally-published',
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'claude.sessions',
+              fakeSource('claude.sessions', () =>
+                Ref.update(events, (current) => [...current, 'claude']).pipe(
+                  Effect.as({ ...successResult(), servedProjectionChanged: true }),
+                ),
+              ),
+            ],
+            [
+              'codex.sessions',
+              fakeSource(
+                'codex.sessions',
+                () => Ref.update(events, (current) => [...current, 'codex']).pipe(Effect.as(successResult())),
+                Effect.succeed(detected),
+                Duration.seconds(3),
+              ),
+            ],
+          ]),
+          writerGate,
+        });
+        // The Codex cadence timer and the publication settle both wait 3 s.
+        yield* waitForSleeps(3000, 2);
+        expect((yield* control.getSnapshot).publication).toMatchObject({ queued: true, running: false });
+
+        // A writer command is not held behind the settle window.
+        yield* writerGate.withEffect(Ref.update(events, (current) => [...current, 'writer-command']));
+
+        expect(yield* control.requestPublication).toBe(true);
+        const published = yield* waitFor(
+          control,
+          (view) => view.publication.revision === 'revision-1' && !view.publication.pendingDemand,
+        );
+        expect(published.publication).toMatchObject({ acknowledgedRequestGeneration: 2, requestedGeneration: 2 });
+        expect(yield* Ref.get(events)).toEqual(['claude', 'codex', 'writer-command', 'publish:1']);
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+    const publications = boundaryEvents(capture.events(), 'publication');
+    expect(publications).toHaveLength(1);
+    expect(publications[0]?.annotations).toMatchObject({ queueDelayMs: 0 });
+  });
+
   test('records publication demand arriving during a running attempt and coalesces a successor', async () => {
     const capture = withCaptureSink();
     const program = Effect.scoped(
