@@ -1834,6 +1834,40 @@ describe('usage-store public boundary', () => {
     }
   });
 
+  test('aligns heartbeats of rows going idle at different minutes to one fleet change per clock hour', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-aligned-heartbeat-'));
+    const dbPath = usageStorePath(home);
+    const sessionIds = ['a', 'b', 'c', 'd', 'e', 'f'].map((suffix) => `aligned-heartbeat-${suffix}`);
+    const importAt = (importedAt: Date, changedIndex?: number) =>
+      Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          importedAt,
+          machine: machineA,
+          rows: sessionIds.map((sourceSessionId, index) =>
+            makeRow({ sourceSessionId, ...(index === changedIndex ? { tokOut: 999 } : {}) }),
+          ),
+        }),
+      );
+    const minute = 60 * 1000;
+    const start = Date.parse('2026-07-20T10:00:00.000Z');
+    await importAt(new Date(start));
+    // Each row last changes at a different minute (10:05, 10:10, ... 10:25), staggering last_seen_at.
+    for (const index of [1, 2, 3, 4, 5]) {
+      await importAt(new Date(start + index * 5 * minute), index);
+    }
+
+    const fleetChangedAt: string[] = [];
+    for (let at = start + 26 * minute; at <= start + 150 * minute; at += minute) {
+      const result = await importAt(new Date(at), 5);
+      if (result.fleetChanged) {
+        fleetChangedAt.push(new Date(at).toISOString());
+      }
+    }
+
+    expect(fleetChangedAt).toEqual(['2026-07-20T11:00:00.000Z', '2026-07-20T12:00:00.000Z']);
+  });
+
   test.each([
     'local-observed',
     'portable-opaque',

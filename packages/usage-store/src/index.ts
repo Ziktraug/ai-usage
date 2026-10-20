@@ -2341,9 +2341,13 @@ const classifyMergeRows = (
     const machineLabel = row.source.machineLabel || row.source.machineId;
     const repairFleetMetadata = existing?.fleet_metadata_valid === 0;
     const lastSeenAt = Date.parse(existing?.last_seen_at ?? '');
+    // Due per clock-hour bucket, not per row age: rows going idle at different minutes then share one
+    // heartbeat (one fleet publication) per hour instead of each firing its own.
     const heartbeatDue =
       observedAt !== undefined &&
-      (Number.isNaN(lastSeenAt) || Date.parse(observedAt) - lastSeenAt >= USAGE_ROW_FRESHNESS_HEARTBEAT_MS);
+      (Number.isNaN(lastSeenAt) ||
+        Math.floor(Date.parse(observedAt) / USAGE_ROW_FRESHNESS_HEARTBEAT_MS) >
+          Math.floor(lastSeenAt / USAGE_ROW_FRESHNESS_HEARTBEAT_MS));
     const fleetProjectionChanged =
       !existing ||
       observedAt === undefined ||
