@@ -77,7 +77,10 @@ describe('Svelte compound controls', () => {
         }
         const page = await browser.newPage();
         page.setDefaultTimeout(BROWSER_PROOF_ACTION_TIMEOUT_MS);
-        await page.goto(`http://127.0.0.1:${address.port}/${fixtureUrlPath}/`);
+        // The first load is setup (Vite transforms the fixture on demand), not an interaction.
+        await page.goto(`http://127.0.0.1:${address.port}/${fixtureUrlPath}/`, {
+          timeout: BROWSER_PROOF_SETUP_BUDGET_MS,
+        });
 
         const segmentedFixture = page.getByTestId('segmented-control-fixture');
         const week = page.getByRole('radio', { name: 'Week' });

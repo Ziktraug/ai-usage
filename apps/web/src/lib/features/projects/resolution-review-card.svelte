@@ -59,7 +59,7 @@
     color: 'ink',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const button = css({
+  const buttonStyle = css.raw({
     minH: '38px',
     px: '12px',
     border: '1px solid token(colors.lineStrong)',
@@ -72,11 +72,13 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     _disabled: { cursor: 'not-allowed', opacity: 0.55 },
   });
-  const primaryButton = css({
+  // Variants merge into one class list: two atoms for one property would be settled by stylesheet order.
+  const button = css(buttonStyle);
+  const primaryButton = css(buttonStyle, {
     bg: 'accent',
     borderColor: 'accent',
     color: 'accentContrast',
-    _hover: { bg: 'accentStrong' },
+    _hover: { bg: 'accent' },
   });
   const messageClass = css({ color: 'muted', fontSize: '12px' });
 
@@ -151,7 +153,7 @@
             <li class={candidate}>
               <span class={detailValue}>{match.canonicalLabel}</span>
               <button
-                class={`${button} ${primaryButton}`}
+                class={primaryButton}
                 disabled={pending}
                 onclick={async () => await apply({
                   checkoutId: review.checkoutId,
