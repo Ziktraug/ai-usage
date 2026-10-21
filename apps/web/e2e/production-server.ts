@@ -10,6 +10,7 @@ import {
 import { CONTINUITY_HOME_RECORD_ENV, seedCampaignContinuity } from './campaign-continuity-fixture';
 import { CLOCK_EPOCH_ENVIRONMENT_KEY } from './production-clock';
 import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
+import { seedWorkAttemptFixture, workAttemptFixtureEnabled } from './work-attempt-fixture';
 
 const DEFAULT_CODEX_SESSION_COUNT = 205;
 const DEFAULT_LISTENER_PORT = '4175';
@@ -88,7 +89,7 @@ try {
   await chmod(fakeCodexPath, 0o700);
   const codexSessionCount = scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT;
   const defaultProfile = !(scaleFixture || campaignContinuityFixture);
-  await seedHarnessHome(temporaryHome, {
+  const seeded = await seedHarnessHome(temporaryHome, {
     codexSessionCount: campaignContinuityFixture ? 2 : codexSessionCount,
     harnesses: defaultProfile ? ['claude', 'codex'] : ['codex'],
     // The Claude Desktop session registry (24 roots, 17 children) joins the default profile only:
@@ -111,6 +112,19 @@ try {
     `${JSON.stringify({ id: 'production-e2e-machine', label: 'Production fixture machine' })}\n`,
     { mode: 0o600 },
   );
+  if (defaultProfile && workAttemptFixtureEnabled()) {
+    // Opt-in only (ADR 0053): a fake `claude`, a declared route and review target, and one fresh
+    // quota reading, so the Work view can launch and follow one read-only review in the browser.
+    await seedWorkAttemptFixture({
+      databasePath,
+      epoch: new Date(PRODUCTION_FIXTURE_EPOCH),
+      fixtureBinDirectory,
+      home: temporaryHome,
+      machineId: 'production-e2e-machine',
+      machineLabel: 'Production fixture machine',
+      repository: seeded.paths.repository,
+    });
+  }
   const child = Bun.spawn(['bun', '--no-env-file', 'run', 'start'], {
     cwd: rootDirectory,
     env: {
