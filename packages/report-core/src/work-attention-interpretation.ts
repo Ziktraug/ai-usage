@@ -57,6 +57,7 @@ const PULL_REQUEST_VOCABULARY =
 const SATISFYING_PULL_REQUEST_STATES = new Set(['OPEN', 'MERGED']);
 
 const { maxInterpretations } = WORK_ATTENTION_BOUNDS;
+const MAX_LISTED_PULL_REQUESTS = 3;
 
 const instantOf = (value: CanonicalInstant | Date | string): CanonicalInstant | null =>
   value instanceof Date ? normalizeIsoTimestamp(value.getTime()) : normalizeIsoTimestamp(value);
@@ -103,12 +104,15 @@ export const interpretWorkRoot = (input: InterpretWorkRootInput): WorkRootInterp
       ? satisfyingDeclaredPullRequests(input.facts, declaration.at)
       : [];
     if (satisfying.length > 0) {
+      // The text names a few pull requests; the evidence carries them all.
+      const labels = satisfying
+        .slice(0, MAX_LISTED_PULL_REQUESTS)
+        .map((fact) => (fact.kind === 'declared-pull-request' ? pullRequestLabel(fact) : fact.id));
+      const more = satisfying.length - labels.length;
       interpretations.push({
         evidence: satisfying.map((fact) => fact.id),
         kind: 'request-satisfied-elsewhere',
-        text: `Asked to act on a pull request; the same family of sessions later declared ${satisfying
-          .map((fact) => (fact.kind === 'declared-pull-request' ? pullRequestLabel(fact) : fact.id))
-          .join(', ')}.`,
+        text: `Asked to act on a pull request; the same family of sessions later declared ${labels.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`,
         uncertainty:
           'The link rests on a pull request declared by the same family of sessions, not on proof that it is the same work.',
       });

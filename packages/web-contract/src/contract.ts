@@ -6,6 +6,7 @@ import { reportContract } from './report';
 import { sessionContract } from './session';
 import { skillsContract } from './skills';
 import { syncContract } from './sync';
+import { workContract } from './work';
 
 export const webContract = {
   ...reportContract,
@@ -15,6 +16,7 @@ export const webContract = {
   session: sessionContract,
   skills: skillsContract,
   sync: syncContract,
+  work: workContract,
 } as const;
 
 export type WebContract = typeof webContract;

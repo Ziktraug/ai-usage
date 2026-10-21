@@ -6,6 +6,7 @@
   "dependencies": {
     "@ai-usage/design-system": "workspace:*",
     "@ai-usage/effect-runtime": "workspace:*",
+    "@ai-usage/local-collectors": "workspace:*",
     "@ai-usage/local-machine": "workspace:*",
     "@ai-usage/memory-service": "workspace:*",
     "@ai-usage/platform-core": "workspace:*",

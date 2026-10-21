@@ -407,6 +407,13 @@ const createSyncDependencies = (request: Request): WebRpcRouterDependencies['syn
     }),
 });
 
+const createWorkDependencies = (): WebRpcRouterDependencies['work'] => ({
+  readAttention: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attention.server');
+      return await server.readWorkAttentionForServer(input, abortOptions(signal));
+    }),
+});
 export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpcRouterDependencies> => {
   const fixtureVariant = e2eSkillsFixtureVariantForHeaders(request.headers);
   return Promise.resolve({
@@ -420,5 +427,6 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
       selectCapability: async (options) => await selectSkillsCapability(options, fixtureVariant),
     },
     sync: createSyncDependencies(request),
+    work: createWorkDependencies(),
   });
 };

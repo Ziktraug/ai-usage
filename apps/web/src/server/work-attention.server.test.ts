@@ -1,0 +1,119 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL } from '@ai-usage/local-machine/testing/claude-desktop-sessions';
+import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
+import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
+import { importClaudeDesktopSessions, initializeUsageStore } from '@ai-usage/usage-store/writer';
+import { parseWorkAttentionOutput } from '@ai-usage/web-contract/work';
+import { Effect } from 'effect';
+import { readWorkAttentionForServer } from './work-attention.server';
+import {
+  readE2EWorkAttention,
+  WORK_ATTENTION_E2E_MACHINE_ID,
+  WORK_ATTENTION_E2E_NOW,
+} from './work-attention-e2e-fixture.server';
+
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
+});
+
+const MACHINE = 'machine-web-work';
+const NOW = new Date('2026-10-20T12:00:00.000Z');
+
+const seededStore = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), 'web-work-attention-'));
+  temporaryRoots.push(root);
+  const home = join(root, 'home');
+  const dbPath = join(root, 'usage-store.sqlite');
+  await Effect.runPromise(initializeUsageStore({ dbPath }));
+  await seedHarnessHome(home, { claudeDesktopEpoch: NOW, claudeDesktopSessions: 'minimal', harnesses: ['claude'] });
+  const collection = await Effect.runPromise(
+    collectClaudeDesktopSessions({ machineId: MACHINE, now: () => NOW }).pipe(
+      Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
+    ),
+  );
+  await Effect.runPromise(
+    importClaudeDesktopSessions({
+      collectedAt: NOW,
+      completeness: collection.completeness,
+      dbPath,
+      machineId: MACHINE,
+      observations: collection.observations,
+    }),
+  );
+  return dbPath;
+};
+
+describe('work attention server', () => {
+  test('reads the live store through the read model and returns the contract envelope', async () => {
+    const dbPath = await seededStore();
+    const result = await readWorkAttentionForServer(
+      { limit: 10, machineId: MACHINE },
+      { dbPath, mode: 'live', now: () => NOW },
+    );
+    expect(parseWorkAttentionOutput(result)).toEqual(JSON.parse(JSON.stringify(result)));
+    if (!result.ok) {
+      throw new Error(result.error.message);
+    }
+    expect(result.data.totalRoots).toBe(3);
+    expect(result.data.roots.map((root) => root.attention)).toEqual(['human-request', 'none', 'none']);
+    expect(result.data.roots[0]?.declared?.needsAction).toBe(
+      'Confirm whether the fixture should keep checkout 3 or delete it.',
+    );
+    expect(result.data.roots[0]?.children.count).toBe(2);
+    expect(result.data.coverage.desktopSessions).toMatchObject({ filesSeen: 5, unsupported: 1 });
+    expect(JSON.stringify(result)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
+    // A null machine filter means no filter, not the empty machine.
+    const unfiltered = await readWorkAttentionForServer({ machineId: null }, { dbPath, mode: 'live', now: () => NOW });
+    expect(unfiltered.ok && unfiltered.data.totalRoots).toBe(3);
+  });
+
+  test('refuses demo mode and reports store failures without a path', async () => {
+    expect(await readWorkAttentionForServer({}, { mode: 'demo' })).toEqual({
+      error: { message: 'Work attention is unavailable in demo mode.', tag: 'ForbiddenDemo' },
+      ok: false,
+    });
+
+    const root = await mkdtemp(join(tmpdir(), 'web-work-attention-broken-'));
+    temporaryRoots.push(root);
+    const missing = await readWorkAttentionForServer({}, { dbPath: join(root, 'absent.sqlite'), mode: 'live' });
+    expect(missing.ok).toBe(false);
+    expect(!missing.ok && missing.error.tag).toBe('Unavailable');
+    expect(JSON.stringify(missing)).not.toContain(root);
+
+    const corruptPath = join(root, 'corrupt.sqlite');
+    await writeFile(corruptPath, 'not a database at all, but long enough to be opened as one');
+    const corrupt = await readWorkAttentionForServer({}, { dbPath: corruptPath, mode: 'live' });
+    expect(corrupt.ok).toBe(false);
+    expect(!corrupt.ok && ['IncompatibleStore', 'Unavailable'].includes(corrupt.error.tag)).toBe(true);
+    expect(JSON.stringify(corrupt)).not.toContain(root);
+  });
+
+  test('serves the representative fixture once per process in e2e mode', async () => {
+    const first = await readWorkAttentionForServer({ machineId: WORK_ATTENTION_E2E_MACHINE_ID }, { mode: 'e2e' });
+    expect(parseWorkAttentionOutput(first)).toEqual(JSON.parse(JSON.stringify(first)));
+    if (!first.ok) {
+      throw new Error(first.error.message);
+    }
+    expect(first.data.generatedAt).toBe(canonicalInstantFromDate(WORK_ATTENTION_E2E_NOW));
+    expect(first.data.totalRoots).toBeGreaterThanOrEqual(20);
+    expect(first.data.roots.some((root) => root.attention === 'human-request')).toBe(true);
+    expect(first.data.roots.some((root) => root.attention === 'optional-lead')).toBe(true);
+    expect(
+      first.data.roots.some((root) => root.interpretations.some(({ kind }) => kind === 'request-satisfied-elsewhere')),
+    ).toBe(true);
+    expect(first.data.coverage.desktopSessions.unsupported).toBe(1);
+    expect(JSON.stringify(first)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
+
+    const second = await readE2EWorkAttention({ limit: 5 });
+    expect(second.ok && second.data.roots).toHaveLength(5);
+    expect(second.ok && second.data.truncated).toBe(true);
+    expect(second.ok && second.data.totalRoots).toBe(first.data.totalRoots);
+  });
+});
