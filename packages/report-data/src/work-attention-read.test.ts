@@ -355,10 +355,11 @@ describe('queryWorkAttention', () => {
       'declared-pull-request',
     ]);
     expect(a?.facts[3]).toMatchObject({ declaredBy: 'child', kind: 'declared-pull-request', number: 117 });
+    // A worktree session is labelled by its origin project, with the worktree named apart.
     expect(a?.project).toEqual({
       branch: 'fixture/worktree',
       checkoutPath: '/home/fixture/work/project/.claude/worktrees/wt-1',
-      label: 'wt-1',
+      label: 'project',
       worktreeName: 'wt-1',
     });
     expect(a?.session).toBeNull();

@@ -632,8 +632,9 @@ const buildRoot = (
     project: {
       branch: root.branch,
       checkoutPath,
-      // Without a served row the label is the checkout's directory name; `session: null` says so.
-      label: session?.projectLabel ?? path.basename(root.cwd),
+      // Without a served row the label is the project directory's name: the origin checkout for a
+      // worktree session, else the cwd. The worktree stays in `worktreeName`; `session: null` says so.
+      label: session?.projectLabel ?? path.basename(root.originCwd ?? root.cwd),
       worktreeName: root.worktreePath === null ? null : path.basename(root.worktreePath),
     },
     reconsidered,
