@@ -1,3 +1,4 @@
+import { REVIEW_ATTEMPT_BOUNDS } from '@ai-usage/report-core/work-attempts';
 import { EXECUTOR_BOUNDS } from '@ai-usage/report-core/work-executors';
 import { type ContractRouterClient, oc } from '@orpc/contract';
 import {
@@ -91,6 +92,15 @@ export const workRoutingContextSchema = pipe(
         skipped: pipe(custom<number>((value) => Number.isSafeInteger(value) && Number(value) >= 0)),
         truncated: custom<boolean>((value) => typeof value === 'boolean'),
       }),
+    ),
+    /** `routing.reviewTargets[<i>].<field>: <reason>` for each rejected checkout entry (ADR 0053). */
+    reviewTargetErrors: optional(pipe(array(issueTextSchema), maxLength(REVIEW_ATTEMPT_BOUNDS.maxReviewTargets + 1))),
+    /** Checkouts a launched review may run in; a session outside all of them cannot be reviewed. */
+    reviewTargets: optional(
+      pipe(
+        array(strictObject({ checkoutPath: pathSchema, label: nullable(textSchema) })),
+        maxLength(REVIEW_ATTEMPT_BOUNDS.maxReviewTargets),
+      ),
     ),
   }),
 );

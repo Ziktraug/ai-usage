@@ -69,7 +69,27 @@ describe('Work routing context server read', () => {
       generatedAt: '2026-10-21T21:05:00.000Z',
       machineId: 'machine-a',
       observationRead: { skipped: 1, truncated: false },
+      reviewTargetErrors: [],
+      reviewTargets: [],
     });
+  });
+
+  test('carries the declared review targets and their located issues', async () => {
+    const context = await getWorkRoutingContextForServer({
+      now: () => new Date('2026-10-21T21:05:00.000Z'),
+      readDeclarations: () =>
+        Promise.resolve({
+          configPath: '/home/operator/.config/ai-usage/config.json',
+          declarations: [],
+          issues: [],
+          machineId: 'machine-a',
+          reviewTargetIssues: [{ path: 'routing.reviewTargets[1].checkoutPath', reason: 'must be an absolute path' }],
+          reviewTargets: [{ checkoutPath: '/home/operator/src/ai-usage', label: 'main' }],
+        }),
+      readObservations: () => Promise.resolve({ observations: [], skipped: 0, truncated: false }),
+    });
+    expect(context.reviewTargets).toEqual([{ checkoutPath: '/home/operator/src/ai-usage', label: 'main' }]);
+    expect(context.reviewTargetErrors).toEqual(['routing.reviewTargets[1].checkoutPath: must be an absolute path']);
   });
 
   test('propagates read failures and cancellation instead of serving a partial context', async () => {

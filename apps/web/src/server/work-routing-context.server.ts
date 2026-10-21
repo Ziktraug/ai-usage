@@ -1,4 +1,5 @@
 import { readLocalRoutingDeclarations } from '@ai-usage/local-machine/routing-config';
+import type { ReviewTargetDeclaration } from '@ai-usage/report-core/work-attempts';
 import type { ExecutorDeclaration, ExecutorObservation } from '@ai-usage/report-core/work-executors';
 import { queryLatestExecutorObservations, usageStoreErrorReasonFrom } from '@ai-usage/usage-store/reader';
 import { parseWorkRoutingContext, type WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
@@ -17,6 +18,9 @@ export interface WorkRoutingContextReaders {
     readonly declarations: readonly ExecutorDeclaration[];
     readonly issues: readonly { readonly path: string; readonly reason: string }[];
     readonly machineId: string | null;
+    /** `routing.reviewTargets[]` issues (ADR 0053); absent readers mean none were read. */
+    readonly reviewTargetIssues?: readonly { readonly path: string; readonly reason: string }[];
+    readonly reviewTargets?: readonly ReviewTargetDeclaration[];
   }>;
   readonly readObservations: (machineId: string | null) => Promise<{
     readonly observations: readonly ExecutorObservation[];
@@ -69,6 +73,8 @@ export const getWorkRoutingContextForServer = async (
     generatedAt: (readers.now ?? (() => new Date()))().toISOString(),
     machineId: declared.machineId,
     observationRead: { skipped: observed.skipped, truncated: observed.truncated },
+    reviewTargetErrors: (declared.reviewTargetIssues ?? []).map((issue) => `${issue.path}: ${issue.reason}`),
+    reviewTargets: declared.reviewTargets ?? [],
   });
 };
 

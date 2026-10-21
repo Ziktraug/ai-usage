@@ -8,6 +8,7 @@ import { sessionContract } from './session';
 import { skillsContract } from './skills';
 import { syncContract } from './sync';
 import { workContract } from './work';
+import { workAttemptsContract } from './work-attempts';
 import { workRoutingContract } from './work-routing';
 
 test('composes every RPC leaf under one root contract', () => {
@@ -20,6 +21,7 @@ test('composes every RPC leaf under one root contract', () => {
     skills: skillsContract,
     sync: syncContract,
     work: workContract,
+    workAttempts: workAttemptsContract,
     workRouting: workRoutingContract,
   });
 });
