@@ -9,6 +9,7 @@ import {
   HISTORY_JSONL_MAX_BYTES,
 } from '@ai-usage/local-machine/history-budgets';
 import {
+  createBoundedLineEmitter,
   createLocalHistoryStorage,
   readConfigFileText,
   readRegularFileText,
@@ -174,6 +175,77 @@ test('counts each oversized record separately when they are adjacent', async () 
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
+});
+
+const emitPieces = (pieces: readonly string[], maxLineBytes: number) => {
+  const visited: string[] = [];
+  const emitter = createBoundedLineEmitter((line) => visited.push(line), maxLineBytes);
+  for (const piece of pieces) {
+    emitter.push(piece);
+  }
+  emitter.finish();
+  return { lines: emitter.lines, oversizedLines: emitter.oversizedLines, visited };
+};
+
+/**
+ * Codex rollouts carry single records of several megabytes, each spread over
+ * hundreds of read chunks. Re-scanning the whole buffered record on every
+ * chunk made a cold pass quadratic in record length and drove its memory peak
+ * to several gigabytes of discarded copies.
+ */
+test('assembles a record spread over thousands of pushes in linear work', () => {
+  const piece = 'x'.repeat(4096);
+  const pieceCount = 2048;
+  const visited: string[] = [];
+  const emitter = createBoundedLineEmitter((line) => visited.push(line), 32 * 1024 * 1024);
+  const startedAt = performance.now();
+  for (let index = 0; index < pieceCount; index++) {
+    emitter.push(piece);
+  }
+  emitter.push('\n');
+  emitter.finish();
+  const elapsedMs = performance.now() - startedAt;
+  expect(visited.map((line) => line.length)).toEqual([piece.length * pieceCount]);
+  expect(elapsedMs).toBeLessThan(1000);
+}, 30_000);
+
+test('joins records across pushes, including a carriage return split from its newline', () => {
+  expect(emitPieces(['ab', 'cd\r', '\nef\n', '', '\n', 'gh'], 1024)).toEqual({
+    lines: 4,
+    oversizedLines: 0,
+    visited: ['abcd', 'ef', '', 'gh'],
+  });
+});
+
+test('bounds a record by its UTF-8 bytes whether it arrives whole or split', () => {
+  // 'é' is 2 bytes, '—' 3 and '😀' 4: nine bytes in all.
+  const atBound = 'é—😀';
+  const overBound = `a${atBound}`;
+  expect(emitPieces([`${atBound}\n`], 9)).toEqual({ lines: 1, oversizedLines: 0, visited: [atBound] });
+  expect(emitPieces(['é', '—😀', '\n'], 9)).toEqual({ lines: 1, oversizedLines: 0, visited: [atBound] });
+  expect(emitPieces([`${overBound}\nnext\n`], 9)).toEqual({ lines: 1, oversizedLines: 1, visited: ['next'] });
+  expect(emitPieces(['aé', '—😀', '\nnext\n'], 9)).toEqual({ lines: 1, oversizedLines: 1, visited: ['next'] });
+});
+
+test('discards a record once its unterminated bytes pass the bound and resumes after its newline', () => {
+  expect(emitPieces(['ok\nlong', 'erthan8', 'bytes', '\nnext\n'], 8)).toEqual({
+    lines: 2,
+    oversizedLines: 1,
+    visited: ['ok', 'next'],
+  });
+  // One push closes a discarded record and starts another over the bound.
+  expect(emitPieces(['x'.repeat(10), `x\n${'y'.repeat(10)}`], 8)).toEqual({
+    lines: 0,
+    oversizedLines: 2,
+    visited: [],
+  });
+});
+
+test('closes the trailing record at finish', () => {
+  expect(emitPieces(['a\nb'], 8)).toEqual({ lines: 2, oversizedLines: 0, visited: ['a', 'b'] });
+  expect(emitPieces(['a\n\r'], 8)).toEqual({ lines: 2, oversizedLines: 0, visited: ['a', ''] });
+  expect(emitPieces(['a\n', 'x'.repeat(20)], 8)).toEqual({ lines: 1, oversizedLines: 1, visited: ['a'] });
+  expect(emitPieces([], 8)).toEqual({ lines: 0, oversizedLines: 0, visited: [] });
 });
 
 test('bounds iterative history traversal and ignores symlink entries', async () => {
