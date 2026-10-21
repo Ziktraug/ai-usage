@@ -140,6 +140,19 @@ export interface ClaudeDesktopSessionObservation {
   readonly writtenBranches: readonly string[];
 }
 
+/**
+ * What one sweep of the Desktop registry saw. Persisted beside the rows so a read can say how
+ * complete they are: `truncated` means files were left unread (bound reached, directory unreadable),
+ * `unsupported` counts files kept as identity-only rows, `rejected` counts files that yielded none.
+ */
+export interface ClaudeDesktopCollectionCompleteness {
+  readonly filesParsed: number;
+  readonly filesSeen: number;
+  readonly rejected: number;
+  readonly truncated: boolean;
+  readonly unsupported: number;
+}
+
 const text = (value: unknown, maxLength: number): string | null =>
   typeof value === 'string' && value.length <= maxLength ? value : null;
 const requiredText = (value: unknown, maxLength: number): string | null => {

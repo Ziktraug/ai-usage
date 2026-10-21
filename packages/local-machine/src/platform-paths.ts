@@ -21,6 +21,8 @@ export interface HarnessPaths {
     historyFile: string;
     configFile: string;
     settingsFile: string;
+    /** Claude Desktop's per-session registry: `<account>/<org>/local_<uuid>.json` under this directory. */
+    desktopSessionsDir: string;
   };
   codex: {
     sessionsDir: string;
@@ -46,6 +48,7 @@ export interface HarnessPathCandidates {
     projectsDir: string[];
     historyFile: string[];
     configFile: string[];
+    desktopSessionsDir: string[];
   };
   codex: {
     sessionsDir: string[];
@@ -71,12 +74,18 @@ const pathSet = (storage: LocalHistoryStorage) => {
 
   const join = (...segments: string[]) => path.join(home, ...segments);
 
+  // Claude Code keeps one home layout on every platform; only the Desktop app follows the OS.
+  const claudeCode = {
+    projectsDir: join('.claude', 'projects'),
+    historyFile: join('.claude', 'history.jsonl'),
+    configFile: join('.claude.json'),
+    settingsFile: join('.claude', 'settings.json'),
+  };
+
   const macos: HarnessPaths = {
     claude: {
-      projectsDir: join('.claude', 'projects'),
-      historyFile: join('.claude', 'history.jsonl'),
-      configFile: join('.claude.json'),
-      settingsFile: join('.claude', 'settings.json'),
+      ...claudeCode,
+      desktopSessionsDir: join('Library', 'Application Support', 'Claude', 'claude-code-sessions'),
     },
     codex: {
       sessionsDir: join('.codex', 'sessions'),
@@ -97,7 +106,10 @@ const pathSet = (storage: LocalHistoryStorage) => {
   };
 
   const linux: HarnessPaths = {
-    claude: macos.claude,
+    claude: {
+      ...claudeCode,
+      desktopSessionsDir: join('.config', 'Claude', 'claude-code-sessions'),
+    },
     codex: macos.codex,
     opencode: {
       liveDb: join('.local', 'share', 'opencode', 'opencode.db'),
@@ -113,7 +125,11 @@ const pathSet = (storage: LocalHistoryStorage) => {
   };
 
   const windows: HarnessPaths = {
-    claude: macos.claude,
+    claude: {
+      ...claudeCode,
+      // Not verified on a Windows profile; the Roaming location follows the other Electron apps above.
+      desktopSessionsDir: join('AppData', 'Roaming', 'Claude', 'claude-code-sessions'),
+    },
     codex: macos.codex,
     opencode: {
       liveDb: join('AppData', 'Local', 'opencode', 'opencode.db'),
@@ -144,6 +160,7 @@ export const resolvePathCandidates = (storage: LocalHistoryStorage): HarnessPath
       projectsDir: unique(ordered.map((paths) => paths.claude.projectsDir)),
       historyFile: unique(ordered.map((paths) => paths.claude.historyFile)),
       configFile: unique(ordered.map((paths) => paths.claude.configFile)),
+      desktopSessionsDir: unique(ordered.map((paths) => paths.claude.desktopSessionsDir)),
     },
     codex: {
       sessionsDir: unique(ordered.map((paths) => paths.codex.sessionsDir)),

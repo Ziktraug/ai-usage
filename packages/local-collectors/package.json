@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./claude-desktop-sessions": "./src/claude-desktop-sessions.ts",
     "./codex-history": "./src/codex-history.ts",
     "./collectors": "./src/collectors/index.ts",
     "./datasets": "./src/datasets.ts",
