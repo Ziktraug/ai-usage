@@ -117,3 +117,8 @@ Verified at `170ae9bc`: `bun run typecheck` 58/58, `bun run lint`, `bun run chec
 Worker evidence at `03f8067f` (before lot I): production specs 17/17, default-config specs 50/50,
 campaign-map production scale 5/5. The production and e2e specs are being re-run on `170ae9bc`
 because observed pull-request facts now move roots into "Waiting on others".
+
+Gate at `170ae9bc` (run after the merges above): `bun run verify` PASS in 266 s (check, lint,
+typecheck, tests, build); `bun test packages/usage-store` 249 pass, 0 fail. The earlier single
+failure of `aligns heartbeats of rows going idle…` (5.5 s under parallel gates) did not recur and
+passes alone in 3 s: timing-sensitive under CPU contention, not a regression of this slice.
