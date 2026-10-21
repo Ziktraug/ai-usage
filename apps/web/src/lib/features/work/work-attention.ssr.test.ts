@@ -91,9 +91,11 @@ const rowsIn = (body: string, section: string): number => {
 describe('Work resume surface server rendering from the synthetic dataset', () => {
   test('renders the four sections, the coverage line and compact rows without any acquisition', () => {
     const body = html(EMPTY_WORK_ATTENTION_SEARCH);
-    for (const heading of ['Needs you', 'Waiting on others', 'Leads', 'Recent, nothing pending']) {
+    for (const heading of ['Needs you', 'Waiting on others', 'Leads', 'Recent · no pending declaration read']) {
       expect(body).toContain(heading);
     }
+    expect(body).toContain('Nothing pending was read here; that is not proof that nothing is pending.');
+    expect(body).not.toContain('nothing pending</h2>');
     expect(body).toContain('39 of 41 files parsed');
     expect(body).toContain('2 unsupported');
     expect(body).toContain('4 older roots without pending declarations hidden (30-day window)');
@@ -103,7 +105,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(occurrences(body, 'Declared by the session; current state unobserved.')).toBe(3);
     expect(rowsIn(body, 'human-request')).toBe(6);
     expect(rowsIn(body, 'none')).toBe(10);
-    expect(body).toContain('Show all 12 in Recent, nothing pending');
+    expect(body).toContain('Show all 12 in Recent · no pending declaration read');
     expect(body).toContain('possibly answered · PR #61');
     expect(body).toContain('Confirm whether the Codex quota window should be dated by its last confirmation');
     expect(body).toContain('blocked · <time datetime="2026-06-11T09:00:00.000Z"');
@@ -111,10 +113,18 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('28 d ago');
     // The eleventh and later recent rows are folded behind the explicit control.
     expect(body).not.toContain('40 d ago');
-    expect(body).toContain('auto title');
+    // The automatic-title marker is detail-only; rows carry the title alone.
+    expect(body).not.toContain('auto title');
+    expect(body).not.toContain('title: automatic');
     expect(body).toContain('archived');
     expect(body).toContain('PR #71 checks pending');
+    expect(body).toContain('· observed 40 min ago');
     expect(body).toContain('checkout dirty (3 modified)');
+  });
+  test('the detail names an automatic title once, where the row does not', () => {
+    const body = html(EMPTY_WORK_ATTENTION_SEARCH, 'desk-enquete-retention');
+    expect(occurrences(body, 'title: automatic')).toBe(1);
+    expect(body).not.toContain('auto title');
   });
   test('applies the address filters on the server and reports the narrowed count', () => {
     const body = html({ ...EMPTY_WORK_ATTENTION_SEARCH, query: 'mobile navigation' });

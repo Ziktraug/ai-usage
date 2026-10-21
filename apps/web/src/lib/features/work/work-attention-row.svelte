@@ -68,9 +68,6 @@
     <span class={workRowTop}>
       <HarnessBadge name={workHarnessLabel(root.key.harness)} />
       <span class={workRowTitle}>{root.title}</span>
-      {#if root.titleSource === 'auto'}
-        <span class={workMarker}>auto title</span>
-      {/if}
       {#if root.archived}
         <span class={workMarker}>archived</span>
       {/if}
@@ -96,7 +93,7 @@
             {chip.label}
             {#if chip.instant}
               <time datetime={chip.instant} title={formatExactInstant(chip.instant)}>
-                · {formatRelativeAge(chip.instant, reference)}
+                · {chip.instantLabel ? `${chip.instantLabel} ` : ''}{formatRelativeAge(chip.instant, reference)}
               </time>
             {/if}
           </span>

@@ -84,6 +84,20 @@ describe('Work attention grouping and ordering', () => {
   test('the recent section is the only one that collapses, beyond ten rows', () => {
     expect(WORK_ATTENTION_SECTIONS.map((section) => section.collapseBeyond)).toEqual([null, null, null, 10]);
   });
+  test('the recent section claims only what was read, never that nothing is pending', () => {
+    expect(WORK_ATTENTION_SECTIONS[3]).toEqual({
+      collapseBeyond: 10,
+      kind: 'none',
+      note: 'Completed, undeclared or unsupported outcomes. Nothing pending was read here; that is not proof that nothing is pending.',
+      title: 'Recent · no pending declaration read',
+    });
+    expect(WORK_ATTENTION_SECTIONS.map((section) => section.title)).toEqual([
+      'Needs you',
+      'Waiting on others',
+      'Leads',
+      'Recent · no pending declaration read',
+    ]);
+  });
 });
 
 describe('Work attention search and filters', () => {
@@ -189,16 +203,60 @@ describe('Work attention dates and fact chips', () => {
     expect(formatRelativeAge(WORK_DEMO_TIME, WORK_DEMO_TIME)).toBe('just now');
     expect(formatRelativeAge(null, WORK_DEMO_TIME)).toBe('undated');
   });
-  test('chips merge a declared and an observed pull request into one dated line', () => {
-    const chips = workRootFactChips(rootNamed('Fix mobile navigation label overlap'));
+  test('chips merge a declared and an observed pull request into one line dated by the observation', () => {
+    const mobile = rootNamed('Fix mobile navigation label overlap');
+    const chips = workRootFactChips(mobile);
     expect(chips.map((chip) => chip.label)).toEqual(['PR #71 checks pending', 'children 1']);
+    const observed = mobile.facts.find((fact) => fact.kind === 'pull-request');
+    expect(chips[0]).toMatchObject({ instant: observed?.provenance.observedAt, instantLabel: 'observed' });
     const dirty = workRootFactChips(rootNamed('Recover Claude history'));
     expect(dirty.map((chip) => chip.label)).toEqual(['checkout dirty (3 modified)', 'children 2 · 1 blocked']);
     expect(dirty.map((chip) => chip.tone)).toEqual(['warn', 'warn']);
+    expect(dirty[0]?.instantLabel).toBe('observed');
     const failed = workRootFactChips(rootNamed('Platform runtime review follow-ups'));
     expect(failed.map((chip) => chip.label)).toEqual(['PR #53 read failed (unauthenticated)']);
     const leads = workRootFactChips(rootNamed('Overview composition pass'));
     expect(leads.map((chip) => chip.label)).toEqual(['proposals 2 open / 1 resolved']);
+  });
+  test('a declared-only pull request chip is dated by the session file that listed it', () => {
+    const mobile = rootNamed('Fix mobile navigation label overlap');
+    const declaredOnly = { ...mobile, facts: mobile.facts.filter((fact) => fact.kind !== 'pull-request') };
+    const [chip] = workRootFactChips(declaredOnly);
+    const declared = declaredOnly.facts.find((fact) => fact.kind === 'declared-pull-request');
+    expect(chip).toMatchObject({
+      instant: declared?.provenance.observedAt,
+      instantLabel: 'listed',
+      label: 'PR #71 open (declared)',
+      tone: 'neutral',
+    });
+  });
+  test('a blocked declaration without a question carries a chip saying so', () => {
+    const base = rootNamed('Recover Claude history');
+    const silent = {
+      ...base,
+      attention: 'none' as const,
+      declared: { ...base.declared!, needsAction: '   ' },
+      facts: [],
+      interpretations: [],
+      reconsidered: false,
+    };
+    expect(workRootFactChips(silent)).toEqual([
+      {
+        id: `${workRootId(silent)}:blocked-no-question`,
+        instant: null,
+        instantLabel: null,
+        label: 'blocked · no question recorded',
+        tone: 'warn',
+      },
+      {
+        id: `${workRootId(silent)}:children`,
+        instant: null,
+        instantLabel: null,
+        label: 'children 2 · 1 blocked',
+        tone: 'warn',
+      },
+    ]);
+    expect(workRootFactChips(base).some((chip) => chip.label.startsWith('blocked ·'))).toBe(false);
   });
   test('facts group by their source in first-seen order', () => {
     const groups = groupWorkFactsBySource(rootNamed('Fix mobile navigation label overlap').facts);

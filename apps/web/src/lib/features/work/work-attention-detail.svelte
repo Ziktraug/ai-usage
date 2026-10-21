@@ -110,7 +110,7 @@
       <div class={workRowTop}>
         <HarnessBadge name={workHarnessLabel(root.key.harness)} />
         {#if root.titleSource === 'auto'}
-          <span class={workMarker}>auto title</span>
+          <span class={workMarker}>title: automatic</span>
         {/if}
         {#if root.archived}
           <span class={workMarker}>archived</span>

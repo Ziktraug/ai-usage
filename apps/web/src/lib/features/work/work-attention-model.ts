@@ -196,8 +196,8 @@ export const WORK_ATTENTION_SECTIONS: readonly WorkAttentionSection[] = [
   {
     collapseBeyond: 10,
     kind: 'none',
-    note: 'Completed or unobserved outcomes with nothing declared as pending.',
-    title: 'Recent, nothing pending',
+    note: 'Completed, undeclared or unsupported outcomes. Nothing pending was read here; that is not proof that nothing is pending.',
+    title: 'Recent · no pending declaration read',
   },
 ];
 
@@ -330,7 +330,10 @@ export type WorkFactChipTone = 'neutral' | 'ok' | 'warn';
 
 export interface WorkFactChip {
   readonly id: string;
+  /** The instant the chip is dated by: when the fact was listed or observed, never the pull request's own dates. */
   readonly instant: string | null;
+  /** What `instant` is ("listed", "observed"); rendered before the relative age. */
+  readonly instantLabel: string | null;
   readonly label: string;
   readonly tone: WorkFactChipTone;
 }
@@ -347,9 +350,11 @@ const pullRequestChips = (root: WorkRoot): readonly WorkFactChip[] => {
   for (const fact of pullRequestFacts(root)) {
     if (fact.kind === 'declared-pull-request') {
       if (!byNumber.has(fact.number)) {
+        // Dated by the session file that listed it, not by the pull request.
         byNumber.set(fact.number, {
           id: fact.id,
           instant: fact.provenance.observedAt,
+          instantLabel: 'listed',
           label: `PR #${fact.number} ${fact.state.toLowerCase()} (declared)`,
           tone: 'neutral',
         });
@@ -360,6 +365,7 @@ const pullRequestChips = (root: WorkRoot): readonly WorkFactChip[] => {
       byNumber.set(fact.number, {
         id: fact.id,
         instant: fact.provenance.observedAt,
+        instantLabel: 'observed',
         label: `PR #${fact.number} read failed (${fact.outcome})`,
         tone: 'warn',
       });
@@ -368,7 +374,8 @@ const pullRequestChips = (root: WorkRoot): readonly WorkFactChip[] => {
     const detail = fact.state === 'OPEN' ? openPullRequestDetail(fact) : fact.state.toLowerCase();
     byNumber.set(fact.number, {
       id: fact.id,
-      instant: fact.updatedAt ?? fact.provenance.observedAt,
+      instant: fact.provenance.observedAt,
+      instantLabel: 'observed',
       label: `PR #${fact.number} ${detail}`,
       tone: fact.state === 'MERGED' ? 'ok' : 'neutral',
     });
@@ -397,8 +404,19 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
     chips.push({
       id: `${workRootId(root)}:reconsidered`,
       instant: null,
+      instantLabel: null,
       label: number === null ? 'possibly answered' : `possibly answered · PR #${number}`,
       tone: 'neutral',
+    });
+  }
+  if (root.declared?.status === 'blocked' && (root.declared.needsAction?.trim() ?? '') === '') {
+    // Blocked without a relayable question: nothing to ask, but not nothing pending.
+    chips.push({
+      id: `${workRootId(root)}:blocked-no-question`,
+      instant: null,
+      instantLabel: null,
+      label: 'blocked · no question recorded',
+      tone: 'warn',
     });
   }
   chips.push(...pullRequestChips(root));
@@ -407,6 +425,7 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
       chips.push({
         id: fact.id,
         instant: fact.provenance.observedAt,
+        instantLabel: 'observed',
         label: `checkout dirty (${fact.modifiedCount ?? '?'} modified)`,
         tone: 'warn',
       });
@@ -420,6 +439,7 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
     chips.push({
       id: `${workRootId(root)}:proposals`,
       instant: null,
+      instantLabel: null,
       label: `proposals ${open} open / ${proposals.length - open} resolved`,
       tone: 'neutral',
     });
@@ -428,6 +448,7 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
     chips.push({
       id: `${workRootId(root)}:children`,
       instant: null,
+      instantLabel: null,
       label:
         root.children.blocked > 0
           ? `children ${root.children.count} · ${root.children.blocked} blocked`
