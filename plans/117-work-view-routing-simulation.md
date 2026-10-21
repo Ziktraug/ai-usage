@@ -1,9 +1,10 @@
 # 117 — Work view and read-only review routing simulation
 
-Status: PARTIAL — mobile geometry passes at 375/390px and in the icon rail;
-fix batch 3 corrects 320px label padding, with browser rerun and visual refresh pending.
+Status: DONE for this loop's slice — Work view, routing simulation and distillation
+depublication integrated and verified outside the sandbox at `3e83e93d`. Routing is
+simulation only; the distillation residual deletion lot remains (see L3).
 Base: `1db32b86`, 2026-10-21.
-Assembled checkpoint: `17a8a78b` (fix batch 2 committed by supervisor).
+Assembled checkpoint: `3e83e93d` (all worker blocks and visual references committed by supervisor).
 Branch: `feat/work-view-routing-simulation`.
 Authorization: implementation and isolated verification; supervisor owns local commits.
 No real-store migration, harness execution, external publication or account changes.
@@ -13,10 +14,10 @@ No real-store migration, harness execution, external publication or account chan
 | Lot | Status | Evidence / remaining work |
 | --- | --- | --- |
 | L0 | DONE | Clean base, current reader/collector audit, baseline checks and L3 scope in local journal |
-| L1 | PARTIAL | Work and navigation browser paths pass except 320px label containment; narrow padding correction awaits rerun |
+| L1 | DONE | Work list, sources/limits, related sessions, detail links; mobile bar Work/Overview/Sessions/Analysis/Manage (Campaigns under Manage); navigation-layout E2E passes at 320/375/390px and the 768–1279px rail |
 | L2 | DONE | Pure routing tests and both preference choices pass in the supervisor's demo walkthrough; no executor |
-| L3 | DONE | `0e914ce3`, `97deefce`, `b63d6f2f`; retained Memory/detail and accessibility suites pass outside the sandbox |
-| Validation | PARTIAL | Earlier full gates passed; latest targeted E2E 45/46 and demo 3/3; 320px padding fix and narrow visual refresh pending |
+| L3 | DONE (depublication) | `0e914ce3`, `97deefce`, `b63d6f2f`; user entry points, commands, routes and runtime removed; internal residual deletion lot listed in `docs/session-distillation.md` and ADR 0049 |
+| Validation | DONE | Supervisor gate at `3e83e93d`, see "Final supervisor validation" below |
 | Documentation | DONE | This plan, README row, local audit/journal, pending commits and result handoff |
 
 ## Scope and decisions
@@ -220,3 +221,29 @@ Navigation/ownership unit tests pass 15/15 (71 assertions), check/lint pass on
 1501 files, and independent review finds no defect. Browser confirmation remains
 outside the sandbox: `bun run --cwd apps/web test:e2e e2e/navigation-layout.spec.ts --workers=1 --retries=0`.
 The supervisor retains ownership of the narrow PNG refresh; no reference is edited here.
+
+## Final supervisor validation (`3e83e93d`, outside the sandbox)
+
+- `bun run verify` (check, lint, typecheck, all package tests, build): PASS.
+- `bun run test:web-bundle`: 4/4. `nix develop -c bun run test:web-production`: PASS
+  (the production server requires Bun 1.3.13; the system Bun 1.4.2 refuses it).
+- `bun run test:e2e`: 243/243, including Work, navigation layout, accessibility (axe),
+  Memory, session detail and visual regression. `bun run test:e2e-demo`: 3/3.
+- Visual references regenerated with the local Chrome after inspection (`2bdabfe8`,
+  `3e83e93d`): the navigation gains Work and the drawer drops the distillation-only
+  Analysis tab; base `1db32b86` matched the previous references with the same Chrome.
+- Browser walkthrough of `bun run demo` → `/work`: list, sources and limits, related
+  sessions under their declared parent, simulation choosing Claude Code then Codex by
+  preference with reasons and "No execution was started", existing session drawer from
+  "Open session detail", no console errors.
+- Independent read-only reviews: round 1 on `b63d6f2f` (one P2, unknown parent not
+  signalled — fixed), round 2 on the fix delta (one P2, colliding mobile labels — fixed
+  and guarded by `e2e/navigation-layout.spec.ts`).
+- `bun run test:e2e-memory` fails with "Isolated runtime did not announce readiness
+  within 20 seconds" on this branch and identically on base `1db32b86`: pre-existing.
+- Pre-existing, not introduced here: client-side navigation keeps the previous page's
+  `<title>` (Campaigns → Overview shows the same).
+
+Not verified: the real-store Work view (no real store was opened, migrated or copied),
+live Mac collection, live multi-subscription routing (only demo/test candidates are
+qualified), and the optional bounded Codex review execution (not started).
