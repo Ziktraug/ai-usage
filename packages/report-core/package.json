@@ -43,6 +43,7 @@
     "./time-zone": "./src/time-zone.ts",
     "./types": "./src/types.ts",
     "./usage-row": "./src/usage-row.ts",
+    "./work-attention": "./src/work-attention.ts",
     "./work-routing": "./src/work-routing.ts"
   },
   "scripts": {
