@@ -238,7 +238,7 @@ describe('DB-backed Harness collectors', () => {
     expect(unavailable?.endDate?.toISOString()).toBe('2026-04-24T08:33:07.361Z');
   });
 
-  test('collects Claude title provenance and agent parent lineage from transcript files', () => {
+  test('collects Claude title provenance and agent parent lineage from transcript files', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
       '.claude/projects/-work-ai-usage/parent-session.jsonl',
@@ -289,7 +289,7 @@ describe('DB-backed Harness collectors', () => {
       }),
     );
 
-    const rows = runWithStorage(collectClaude, storage);
+    const rows = await Effect.runPromise(collectClaude.pipe(Effect.provideService(LocalHistoryStorage, storage)));
     const parent = rows.find((row) => row.source?.sourceSessionId === 'parent-session');
     const child = rows.find((row) => row.source?.sourceSessionId === 'agent-child');
 

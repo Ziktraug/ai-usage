@@ -25,6 +25,7 @@ import {
   Duration,
   Effect,
   Exit,
+  FiberHandle,
   FiberMap,
   Layer,
   Option,
@@ -44,6 +45,7 @@ import {
   initialSourceControlState,
   outcomeAfterRun,
   type PublicationJob,
+  publicationSettleDecision,
   requestPublicationTransition,
   type SourceExecutionCompletion,
   type SourceFinishDecision,
@@ -123,6 +125,9 @@ type ControlPlaneJob = PublicationJob | SourceJob;
 
 const DEFAULT_WORKER_COUNT = 1;
 const DEFAULT_SOURCE_TIMEOUT = Duration.minutes(10);
+const PUBLICATION_SETTLE_MS = 5000;
+const PUBLICATION_MAX_DEFERRALS = 2;
+const PUBLICATION_SETTLE_MIN_WAIT_MS = 250;
 const yieldToHost = Effect.promise(() => hostScheduler.yield());
 
 interface ValidatedSourceControlOptions {
@@ -134,6 +139,7 @@ interface SourceControlRuntime {
   readonly autonomousCollection: { open: boolean };
   readonly beforeInitialCollection: Effect.Effect<void>;
   readonly options: SourceControlOptions;
+  readonly publicationSettle: FiberHandle.FiberHandle;
   readonly queue: Queue.Queue<ControlPlaneJob>;
   readonly sourceIds: readonly CollectionSourceId[];
   readonly sourceTimeout: Duration.Duration;
@@ -145,7 +151,7 @@ interface SourceControlScheduler {
   readonly detectAll: Effect.Effect<void>;
   readonly detectSource: (sourceId: CollectionSourceId) => Effect.Effect<boolean>;
   readonly enqueueSource: (sourceId: CollectionSourceId, trigger: SourceJobTrigger) => Effect.Effect<boolean>;
-  readonly ensurePublicationQueued: Effect.Effect<boolean>;
+  readonly ensurePublicationQueued: (reason: PublicationJob['reason']) => Effect.Effect<boolean>;
   readonly requestPublication: Effect.Effect<boolean>;
   readonly scheduleCadence: (sourceId: CollectionSourceId) => Effect.Effect<void>;
   readonly scheduleCadenceAt: (sourceId: CollectionSourceId, dueAt: number) => Effect.Effect<void>;
@@ -184,10 +190,12 @@ const createSourceControlRuntime = (
     const queue = yield* Queue.bounded<ControlPlaneJob>(sourceControlBounds.maxQueueDepth);
     yield* Effect.addFinalizer(() => Queue.shutdown(queue));
     const timers = yield* FiberMap.make<CollectionSourceId>();
+    const publicationSettle = yield* FiberHandle.make();
     return {
       autonomousCollection: { open: options.autonomousCollection ?? true },
       beforeInitialCollection,
       options,
+      publicationSettle,
       queue,
       sourceIds,
       sourceTimeout,
@@ -224,19 +232,20 @@ const createSourceControlScheduler = (runtime: SourceControlRuntime): SourceCont
       return true;
     });
 
-  const ensurePublicationQueued: Effect.Effect<boolean> = Effect.gen(function* () {
-    const job = yield* modifyControlState(runtime, admitPublicationJob);
-    if (!job) {
-      return false;
-    }
-    yield* runtime.queue.offer(job);
-    return true;
-  });
+  const ensurePublicationQueued = (reason: PublicationJob['reason']): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      const job = yield* modifyControlState(runtime, (state, queuedAt) => admitPublicationJob(state, queuedAt, reason));
+      if (!job) {
+        return false;
+      }
+      yield* runtime.queue.offer(job);
+      return true;
+    });
 
   const requestPublication: Effect.Effect<boolean> = Effect.gen(function* () {
     const decision = yield* modifyControlState(runtime, requestPublicationTransition);
     if (decision.shouldQueue) {
-      yield* ensurePublicationQueued;
+      yield* ensurePublicationQueued('request');
     }
     return true;
   });
@@ -422,7 +431,7 @@ const runSourceJobBody = (
       yield* scheduler.enqueueSource('rtk.savings', 'dependency');
     }
     if (completed.needsPublicationWake) {
-      yield* scheduler.ensurePublicationQueued;
+      yield* scheduler.ensurePublicationQueued('source-wake');
     }
     if (completed.enabled && completed.detected) {
       yield* scheduler.scheduleCadence(job.sourceId);
@@ -522,7 +531,7 @@ const runPublicationJobBody = (
       ),
     );
     if (remainsPending) {
-      yield* scheduler.ensurePublicationQueued;
+      yield* scheduler.ensurePublicationQueued('request');
     }
     return result;
   });
@@ -533,6 +542,35 @@ const processPublicationJob = (
   job: PublicationJob,
 ): Effect.Effect<void, never, WideEventResourceService | WideEventSink> =>
   Effect.gen(function* () {
+    // A source-woken publication lets the rest of the burst land first: wait,
+    // bounded, while another source is queued or due, then re-queue behind it.
+    const now = yield* Clock.currentTimeMillis;
+    const state = yield* SubscriptionRef.get(runtime.stateRef);
+    const settle = publicationSettleDecision(
+      state,
+      job,
+      now,
+      PUBLICATION_SETTLE_MS,
+      PUBLICATION_MAX_DEFERRALS,
+      PUBLICATION_SETTLE_MIN_WAIT_MS,
+    );
+    if (settle.defer) {
+      // The wait runs off the worker so the writer stays free for the burst
+      // and for commands; an explicit request joining this job ends it early.
+      const explicitRequestJoined = runtime.stateRef.changes.pipe(
+        Stream.filter((current) => current.publication.explicitRequestPending),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      yield* FiberHandle.run(
+        runtime.publicationSettle,
+        Effect.race(Effect.sleep(settle.waitMs), explicitRequestJoined).pipe(
+          Effect.andThen(runtime.queue.offer({ ...job, deferrals: job.deferrals + 1 })),
+          Effect.asVoid,
+        ),
+      );
+      return;
+    }
     const decision = yield* modifyControlState(runtime, startPublicationJobTransition);
     if (!decision.ready) {
       return;

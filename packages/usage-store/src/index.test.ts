@@ -47,6 +47,7 @@ import {
   queryUsageMachineFleet,
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
+  USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   USAGE_STORE_SCHEMA_VERSION,
   UsageStoreError,
   updateUsageMachineLabel,
@@ -1747,7 +1748,7 @@ describe('usage-store public boundary', () => {
     const heartbeat = await Effect.runPromise(
       importLocalRows({
         dbPath,
-        importedAt: new Date('2026-07-20T10:01:00.000Z'),
+        importedAt: new Date('2026-07-20T11:00:00.000Z'),
         machine: machineA,
         rows: [row],
       }),
@@ -1755,7 +1756,302 @@ describe('usage-store public boundary', () => {
 
     expect(heartbeat).toMatchObject({ fleetChanged: true, unchanged: 1 });
     expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
-      machines: [{ id: machineA.id, lastSeenAt: '2026-07-20T10:01:00.000Z' }],
+      machines: [{ id: machineA.id, lastSeenAt: '2026-07-20T11:00:00.000Z' }],
+    });
+  });
+
+  test.each([
+    'local-observed',
+    'portable-opaque',
+  ] as const)('records unchanged %s row freshness only when the hourly heartbeat is due', async (authority) => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-hourly-heartbeat-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'hourly-heartbeat' });
+    const firstObservedAt = new Date('2026-07-20T10:00:00.000Z');
+    const importAt = (importedAt: Date) =>
+      Effect.runPromise(
+        authority === 'local-observed'
+          ? importLocalRows({ dbPath, importedAt, machine: machineA, rows: [row] })
+          : importPeerMergeBundle({
+              bundle: makeBundle(machineA, [row]),
+              dbPath,
+              importedAt,
+              localMachineId: machineB.id,
+            }),
+      );
+    await importAt(firstObservedAt);
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    try {
+      const generations = db.query(`
+          SELECT key, value FROM usage_store_metadata
+          WHERE key IN ('generation', 'machine_fleet_generation') ORDER BY key
+        `);
+      const initialGenerations = generations.all();
+      expect(initialGenerations).toEqual([
+        { key: 'generation', value: 1 },
+        { key: 'machine_fleet_generation', value: 1 },
+      ]);
+      db.exec(`
+          CREATE TRIGGER reject_idle_usage_row_write
+          BEFORE UPDATE ON usage_rows
+          BEGIN
+            SELECT RAISE(ABORT, 'idle usage row written');
+          END;
+          CREATE TRIGGER reject_idle_fleet_order_rebuild
+          BEFORE DELETE ON usage_machine_fleet_order
+          BEGIN
+            SELECT RAISE(ABORT, 'idle fleet order rebuilt');
+          END;
+        `);
+
+      const idleImport = await importAt(new Date('2026-07-20T10:59:00.000Z'));
+
+      expect(idleImport).toMatchObject({ fleetChanged: false, unchanged: 1 });
+      expect(db.query('SELECT last_seen_at FROM usage_rows').get()).toEqual({
+        last_seen_at: firstObservedAt.toISOString(),
+      });
+      expect(generations.all()).toEqual(initialGenerations);
+      db.exec('DROP TRIGGER reject_idle_usage_row_write');
+
+      expect(USAGE_ROW_FRESHNESS_HEARTBEAT_MS).toBe(60 * 60 * 1000);
+      const heartbeatAt = new Date(firstObservedAt.getTime() + USAGE_ROW_FRESHNESS_HEARTBEAT_MS);
+      const heartbeat = await importAt(heartbeatAt);
+
+      expect(heartbeat).toMatchObject({ fleetChanged: true, unchanged: 1 });
+      expect(db.query('SELECT last_seen_at FROM usage_rows').get()).toEqual({
+        last_seen_at: '2026-07-20T11:00:00.000Z',
+      });
+      expect(generations.all()).toEqual([
+        { key: 'generation', value: 1 },
+        { key: 'machine_fleet_generation', value: 2 },
+      ]);
+      expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
+        machines: [{ id: machineA.id, lastSeenAt: heartbeatAt.toISOString() }],
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('aligns heartbeats of rows going idle at different minutes to one fleet change per clock hour', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-aligned-heartbeat-'));
+    const dbPath = usageStorePath(home);
+    const sessionIds = ['a', 'b', 'c', 'd', 'e', 'f'].map((suffix) => `aligned-heartbeat-${suffix}`);
+    const importAt = (importedAt: Date, changedIndex?: number) =>
+      Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          importedAt,
+          machine: machineA,
+          rows: sessionIds.map((sourceSessionId, index) =>
+            makeRow({ sourceSessionId, ...(index === changedIndex ? { tokOut: 999 } : {}) }),
+          ),
+        }),
+      );
+    const minute = 60 * 1000;
+    const start = Date.parse('2026-07-20T10:00:00.000Z');
+    await importAt(new Date(start));
+    // Each row last changes at a different minute (10:05, 10:10, ... 10:25), staggering last_seen_at.
+    for (const index of [1, 2, 3, 4, 5]) {
+      await importAt(new Date(start + index * 5 * minute), index);
+    }
+
+    const fleetChangedAt: string[] = [];
+    for (let at = start + 26 * minute; at <= start + 150 * minute; at += minute) {
+      const result = await importAt(new Date(at), 5);
+      if (result.fleetChanged) {
+        fleetChangedAt.push(new Date(at).toISOString());
+      }
+    }
+
+    expect(fleetChangedAt).toEqual(['2026-07-20T11:00:00.000Z', '2026-07-20T12:00:00.000Z']);
+  });
+
+  test.each([
+    'local-observed',
+    'portable-opaque',
+  ] as const)('keeps fleet freshness and label order current for %s semantic updates within the heartbeat window', async (authority) => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-heartbeat-semantic-update-'));
+    const dbPath = usageStorePath(home);
+    const originalMachine = { ...machineA, label: 'Original Machine A' };
+    const renamedMachine = { ...machineA, label: 'Renamed Machine A' };
+    const firstRow = makeRow({ sourceSessionId: 'heartbeat-semantic-first' });
+    const importAt = (row: UsageRowWithOptionalSource, machine: UsageMachine, observedAt: string) => {
+      const importedAt = new Date(observedAt);
+      return Effect.runPromise(
+        authority === 'local-observed'
+          ? importLocalRows({ dbPath, importedAt, machine, rows: [row] })
+          : importPeerMergeBundle({
+              bundle: makeBundle(machine, [row]),
+              dbPath,
+              importedAt,
+              localMachineId: machineB.id,
+            }),
+      );
+    };
+    await importAt(firstRow, originalMachine, '2026-07-20T10:00:00.000Z');
+    await importAt(
+      makeRow({ sourceSessionId: 'heartbeat-semantic-second' }),
+      renamedMachine,
+      '2026-07-20T10:01:00.000Z',
+    );
+    expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
+      machines: [{ id: machineA.id, label: renamedMachine.label, lastSeenAt: '2026-07-20T10:01:00.000Z' }],
+      omittedMachines: 0,
+    });
+
+    const updated = await importAt(
+      makeRow({ sourceSessionId: 'heartbeat-semantic-first', tokOut: 21 }),
+      originalMachine,
+      '2026-07-20T10:02:00.000Z',
+    );
+
+    expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
+      machines: [{ id: machineA.id, label: originalMachine.label, lastSeenAt: '2026-07-20T10:02:00.000Z' }],
+      omittedMachines: 0,
+      skipped: 0,
+    });
+    expect(updated).toMatchObject({ fleetChanged: true, updated: 1 });
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 3,
+      usageStoreGeneration: 3,
+    });
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      expect(
+        db.query('SELECT origin_machine_id, machine_label, sort_rank FROM usage_machine_fleet_order').get(),
+      ).toEqual({
+        machine_label: originalMachine.label,
+        origin_machine_id: machineA.id,
+        sort_rank: 0,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('updates a machine label within the freshness heartbeat window', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-heartbeat-label-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'heartbeat-label' });
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-07-20T10:00:00.000Z'),
+        machine: machineA,
+        rows: [row],
+      }),
+    );
+
+    const renamed = await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-07-20T10:01:00.000Z'),
+        machine: { ...machineA, label: 'Renamed Machine A' },
+        rows: [row],
+      }),
+    );
+
+    expect(renamed).toMatchObject({ fleetChanged: true, updated: 1 });
+    expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
+      machines: [{ id: machineA.id, label: 'Renamed Machine A' }],
+    });
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 2,
+      usageStoreGeneration: 2,
+    });
+  });
+
+  test.each([
+    'invalidated metadata',
+    'invalid timestamp',
+  ])('repairs %s within the freshness heartbeat window', async (damage) => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-heartbeat-repair-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'heartbeat-repair' });
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-07-20T10:00:00.000Z'),
+        machine: machineA,
+        rows: [row],
+      }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    try {
+      if (damage === 'invalid timestamp') {
+        db.query("UPDATE usage_rows SET last_seen_at = 'not-a-timestamp'").run();
+        db.query('UPDATE usage_rows SET fleet_metadata_valid = 1, machine_label = ?').run(machineA.label);
+      } else {
+        db.query("UPDATE usage_rows SET fleet_metadata_valid = 0, machine_label = ''").run();
+      }
+
+      const repaired = await Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          importedAt: new Date('2026-07-20T10:01:00.000Z'),
+          machine: machineA,
+          rows: [row],
+        }),
+      );
+
+      expect(repaired).toMatchObject({ fleetChanged: true, unchanged: 1 });
+      expect(db.query('SELECT fleet_metadata_valid, machine_label, last_seen_at FROM usage_rows').get()).toEqual({
+        fleet_metadata_valid: 1,
+        last_seen_at: '2026-07-20T10:01:00.000Z',
+        machine_label: machineA.label,
+      });
+      expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
+        machines: [{ id: machineA.id, label: machineA.label, lastSeenAt: '2026-07-20T10:01:00.000Z' }],
+        skipped: 0,
+      });
+      expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+        machineFleetGeneration: 2,
+        usageStoreGeneration: 1,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('does not move unchanged row freshness backwards for an earlier observation', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-heartbeat-backwards-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'heartbeat-backwards' });
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-07-20T10:00:00.000Z'),
+        machine: machineA,
+        rows: [row],
+      }),
+    );
+
+    const earlier = await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-07-20T09:00:00.000Z'),
+        machine: machineA,
+        rows: [row],
+      }),
+    );
+
+    expect(earlier).toMatchObject({ fleetChanged: false, unchanged: 1 });
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      expect(db.query('SELECT last_seen_at FROM usage_rows').get()).toEqual({
+        last_seen_at: '2026-07-20T10:00:00.000Z',
+      });
+    } finally {
+      db.close();
+    }
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 1,
+      usageStoreGeneration: 1,
     });
   });
 
@@ -1763,8 +2059,8 @@ describe('usage-store public boundary', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-generation-'));
     const dbPath = usageStorePath(home);
     const firstObservedAt = new Date('2026-07-20T10:00:00.000Z');
-    const secondObservedAt = new Date('2026-07-20T10:01:00.000Z');
-    const thirdObservedAt = new Date('2026-07-20T10:02:00.000Z');
+    const secondObservedAt = new Date('2026-07-20T11:00:00.000Z');
+    const thirdObservedAt = new Date('2026-07-20T12:00:00.000Z');
 
     await Effect.runPromise(initializeUsageStore({ dbPath }));
     expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({

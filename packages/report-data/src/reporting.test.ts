@@ -16,6 +16,7 @@ import {
   importPeerMergeBundle,
   importProviderQuotaBatch,
   initializeUsageStore,
+  USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
@@ -385,7 +386,20 @@ describe('stored reporting', () => {
       expect(storeChanged.machineFleetGeneration).toBe(configChanged.machineFleetGeneration + 1);
       expect(storeChanged.usageStoreGeneration).toBe(configChanged.usageStoreGeneration + 1);
 
+      // Re-importing the same bundle inside the freshness heartbeat window is a
+      // no-op for both generations (ADR 0046).
       await Effect.runPromise(importPeerMergeBundle({ bundle: peerBundle, dbPath, localMachineId: testMachine.id }));
+      expect(await readFingerprint(renamedConfig)).toEqual(storeChanged);
+
+      // One heartbeat later the fleet freshness moves without a semantic change.
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          bundle: peerBundle,
+          dbPath,
+          importedAt: new Date(Date.now() + USAGE_ROW_FRESHNESS_HEARTBEAT_MS + 60_000),
+          localMachineId: testMachine.id,
+        }),
+      );
       const fleetOnlyChanged = await readFingerprint(renamedConfig);
       expect(fleetOnlyChanged.machineFleetGeneration).toBe(storeChanged.machineFleetGeneration + 1);
       expect(fleetOnlyChanged.usageStoreGeneration).toBe(storeChanged.usageStoreGeneration);

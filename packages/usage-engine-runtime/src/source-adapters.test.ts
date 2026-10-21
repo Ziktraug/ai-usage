@@ -270,7 +270,8 @@ describe('scheduled source adapters', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-source-claude-'));
     try {
       writeClaudeSession(home);
-      const registry = await createRegistry(home);
+      let now = new Date('2026-07-16T10:00:00.000Z');
+      const registry = await createRegistry(home, { now: () => now });
       const source = registry.get('claude.sessions');
       if (!source) {
         throw new Error('Claude source is missing');
@@ -278,6 +279,8 @@ describe('scheduled source adapters', () => {
       const progress: unknown[] = [];
       const first = await Effect.runPromise(source.run(progressContext(progress)));
       const second = await Effect.runPromise(source.run(progressContext([])));
+      now = new Date('2026-07-16T11:00:00.000Z');
+      const third = await Effect.runPromise(source.run(progressContext([])));
       const stored = await Effect.runPromise(
         queryReportRows({
           dbPath: usageStorePath(home),
@@ -287,7 +290,8 @@ describe('scheduled source adapters', () => {
       );
 
       expect(first).toMatchObject({ changed: true, inputCount: 1, outputCount: 1, servedProjectionChanged: true });
-      expect(second).toMatchObject({ changed: false, inputCount: 1, outputCount: 1, servedProjectionChanged: true });
+      expect(second).toMatchObject({ changed: false, inputCount: 1, outputCount: 1, servedProjectionChanged: false });
+      expect(third).toMatchObject({ changed: false, inputCount: 1, outputCount: 1, servedProjectionChanged: true });
       expect(progress).toEqual([
         { phase: 'reading' },
         { completed: 1, phase: 'normalizing', total: 1 },

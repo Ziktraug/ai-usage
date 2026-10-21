@@ -366,6 +366,7 @@ const createSessionSource = (input: {
       yield* abortIfRequested(context.signal);
       const imported = yield* importLocalRows({
         dbPath: input.dbPath,
+        importedAt: input.now(),
         machine: input.machine,
         rows,
       }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
