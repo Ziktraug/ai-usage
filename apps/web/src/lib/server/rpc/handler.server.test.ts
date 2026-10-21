@@ -30,7 +30,6 @@ const dependencies = (): WebRpcRouterDependencies => ({
   report: unavailableServices<WebRpcRouterDependencies['report']>(),
   replication: unavailableServices<WebRpcRouterDependencies['replication']>(),
   session: unavailableServices<WebRpcRouterDependencies['session']>(),
-  sessionDistillation: unavailableServices<WebRpcRouterDependencies['sessionDistillation']>(),
   skills: {
     preflight: () => ({ allowed: false, tag: 'ForbiddenDemo' }),
     selectCapability: () => unavailableServices<SkillsCapability>(),
@@ -97,8 +96,8 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(48);
-    expect(dependencyAcquisitions).toBe(48);
+    expect(observed).toHaveLength(40);
+    expect(dependencyAcquisitions).toBe(40);
   });
   test('serves opaque project identity through the real Skills RPC routes only in an injected extended context', async () => {
     const capability = await createE2ESkillsCapability('extended');
@@ -173,6 +172,43 @@ describe('Web RPC HTTP convergence', () => {
       statuses.push((await handler(request)).status);
     }
     expect(statuses).toEqual([404, 404, 405, 400, 403, 414, 413]);
+    expect(dependencyAcquisitions).toBe(0);
+  });
+
+  test('rejects withdrawn account and promotion routes before dependency acquisition', async () => {
+    let dependencyAcquisitions = 0;
+    const handler = createWebRpcHttpHandler({
+      createDependencies: () => {
+        dependencyAcquisitions += 1;
+        return Promise.resolve(dependencies());
+      },
+    });
+    for (const path of [
+      '/sessionDistillation/history',
+      '/sessionDistillation/projects',
+      '/sessionDistillation/discover',
+      '/sessionDistillation/browse',
+      '/sessionDistillation/evidence',
+      '/sessionDistillation/get',
+      '/sessionDistillation/status',
+      '/session-distillation/history',
+      '/session-distillation/projects',
+      '/session-distillation/discover',
+      '/session-distillation/browse',
+      '/session-distillation/evidence',
+      '/session-distillation/get',
+      '/session-distillation/status',
+      '/memory/promote',
+    ]) {
+      const response = await trustedHandlerFetch(handler)(
+        new Request(`http://127.0.0.1:3000/rpc${path}`, {
+          method: 'POST',
+          body: '{}',
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+      expect(response.status).toBe(404);
+    }
     expect(dependencyAcquisitions).toBe(0);
   });
 

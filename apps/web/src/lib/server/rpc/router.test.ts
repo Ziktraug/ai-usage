@@ -9,7 +9,6 @@ test('composes every router leaf under one root router', () => {
     report: {},
     replication: {},
     session: {},
-    sessionDistillation: {},
     skills: {},
     sync: {},
   } as unknown as WebRpcRouterDependencies);
@@ -24,7 +23,6 @@ test('composes every router leaf under one root router', () => {
     'report',
     'runtime',
     'session',
-    'sessionDistillation',
     'skills',
     'sync',
   ]);

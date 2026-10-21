@@ -1,13 +1,16 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
-import type { MemoryProposalReviewSnapshot } from '@ai-usage/web-contract/memory';
+import type { MemoryKnowledgePage, MemoryProposalReviewSnapshot } from '@ai-usage/web-contract/memory';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { conflictingAtoms } from '../../foundation/presentation/atomic-class-conflicts';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../query/client';
 import { memoryProposalReviewsKey } from '../../query/options/memory';
+import { memoryKnowledgeOptions } from '../../query/options/memory-workspace';
 import { loadMemoryPageData } from './memory-load';
+
+const retiredAnalysisLink = /href="[^"]*analysis=/u;
 
 interface SvelteServerModule {
   readonly render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -105,9 +108,13 @@ describe('Memory proposal review surface', () => {
     const knowledge = render(fixture, { props: { data, address: '/memory?view=knowledge' } }).body;
     expect(knowledge).toContain('Search accepted Memory');
     expect(conflictingAtoms(knowledge)).toEqual([]);
-    const initialLibrary = render(fixture, { props: { data, address: '/memory' } }).body;
-    expect(initialLibrary).toContain('Reading recognized Projects');
-    expect(initialLibrary).not.toContain('No recognized Projects');
+    const initial = render(fixture, { props: { data, address: '/memory' } }).body;
+    expect(initial).toContain('Search accepted Memory');
+    expect(initial).not.toContain('Analysed sessions');
+    expect(initial).not.toContain('Preview sessions');
+    const invalidProject = render(fixture, { props: { data, address: '/memory?project=invalid' } }).body;
+    expect(invalidProject).toContain('Enter a valid Project ID');
+    expect(invalidProject).not.toContain('Search accepted Memory');
   });
   test('marks the addressed proposal and refuses a malformed address before any read', () => {
     const proposalId = snapshot.proposals[0]!.proposalId;
@@ -130,5 +137,59 @@ describe('Memory proposal review surface', () => {
     expect(malformed).toContain('This Memory proposal is not pending review or is not accessible.');
     expect(malformed).toContain('Open the review queue');
     expect(malformed).not.toContain('Keep Memory local');
+  });
+  test('keeps historical provenance as text in proposals and accepted knowledge without retired links', () => {
+    const locator = '/memory?view=analyses&analysis=saved&element=summary';
+    const client = createWebQueryClient();
+    client.setQueryData(memoryProposalReviewsKey(), {
+      ...snapshot,
+      proposals: snapshot.proposals.map((proposal) => ({
+        ...proposal,
+        structuredContent: { publicationPolicy: 'local-only', sourceLocator: locator },
+        observationSources: proposal.observationSources.map((source) => ({
+          ...source,
+          sourceKind: 'session',
+          sourceLocator: locator,
+        })),
+      })),
+    });
+    const knowledge: MemoryKnowledgePage = {
+      nextCursor: null,
+      items: [
+        {
+          id: '0198f179-4837-7000-8000-000000000004',
+          revisionId: '0198f179-4837-7000-8000-000000000005',
+          revisionNumber: 1,
+          projectId: null,
+          createdAt: '2026-08-29T08:30:00.000Z',
+          title: 'Accepted local lesson',
+          summary: 'Keep authority local.',
+          guidance: ['Read retained evidence.'],
+          kind: 'lesson',
+          trust: 'explicit',
+          sensitivity: 'normal',
+          contentOmitted: false,
+          provenance: { sourceLocator: locator, sourceKind: 'session', analysisRevision: 1 },
+        },
+      ],
+    };
+    client.setQueryData(
+      memoryKnowledgeOptions(undefined, { projectId: null, kind: null, cursor: null, pageSize: 20 }, true).queryKey,
+      knowledge,
+    );
+    const data = { queryState: dehydrateWebQueryClient(client) };
+    client.clear();
+    const proposal = render(fixture, { props: { data, address: '/memory?view=review' } }).body;
+    const accepted = render(fixture, { props: { data, address: '/memory' } }).body;
+    expect(proposal).toContain('analysis=saved');
+    expect(proposal).toContain('Accept proposal');
+    expect(proposal).toContain('Local only · remains local after acceptance');
+    expect(accepted).toContain('Accepted local lesson');
+    expect(accepted).toContain('Retained provenance');
+    expect(accepted).toContain('analysis=saved');
+    for (const body of [proposal, accepted]) {
+      expect(body).not.toMatch(retiredAnalysisLink);
+      expect(body).not.toContain('Read source analysis and evidence');
+    }
   });
 });

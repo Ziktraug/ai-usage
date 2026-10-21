@@ -8,7 +8,6 @@ import type { ReportRpcServices } from './report';
 import { createReportRpcRouter } from './report';
 import type { SessionRpcDependencies } from './session';
 import { createSessionRpcRouter } from './session';
-import { createSessionDistillationRpcRouter, type SessionDistillationRpcDependencies } from './session-distillation';
 import type { SelectSkillsCapability, SkillsRequestPreflight } from './skills';
 import { createSkillsRouter } from './skills';
 import type { SyncRpcDependencies } from './sync';
@@ -20,7 +19,6 @@ export interface WebRpcRouterDependencies {
   readonly replication: ReplicationRpcDependencies;
   readonly report: ReportRpcServices;
   readonly session: SessionRpcDependencies;
-  readonly sessionDistillation: SessionDistillationRpcDependencies;
   readonly skills: {
     readonly preflight: SkillsRequestPreflight;
     readonly selectCapability: SelectSkillsCapability;
@@ -34,7 +32,6 @@ export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
   projects: createProjectsRpcRouter(dependencies.projects),
   replication: createReplicationRpcRouter(dependencies.replication),
   session: createSessionRpcRouter(dependencies.session),
-  sessionDistillation: createSessionDistillationRpcRouter(dependencies.sessionDistillation),
   skills: createSkillsRouter(dependencies.skills.selectCapability, dependencies.skills.preflight),
   sync: createSyncRpcRouter(dependencies.sync),
 });

@@ -42,7 +42,8 @@
     "./test-fixtures/local-time-row": "./src/local-time-row.test-fixture.ts",
     "./time-zone": "./src/time-zone.ts",
     "./types": "./src/types.ts",
-    "./usage-row": "./src/usage-row.ts"
+    "./usage-row": "./src/usage-row.ts",
+    "./work-routing": "./src/work-routing.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

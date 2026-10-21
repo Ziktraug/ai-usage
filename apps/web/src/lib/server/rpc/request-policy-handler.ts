@@ -17,12 +17,7 @@ const textEncoder = new TextEncoder();
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
 export const rpcPathByOperation = {
   getMemoryKnowledge: '/memory/getKnowledge',
-  getSessionDistillationHistory: '/sessionDistillation/history',
   listMemoryKnowledge: '/memory/knowledge',
-  promoteMemoryAnalysis: '/memory/promote',
-  getSessionDistillationProjects: '/sessionDistillation/projects',
-  getSessionDistillationDiscover: '/sessionDistillation/discover',
-  getSessionDistillationBrowse: '/sessionDistillation/browse',
   applyMemoryProposalReviewAction: '/memory/applyProposalReviewAction',
   applyProjectResolutionAction: '/projects/applyResolutionAction',
   createManagedSkillTargetDirectory: '/skills/createTargetDirectory',
@@ -43,9 +38,6 @@ export const rpcPathByOperation = {
   getReportRevisionManifest: '/report/revisionManifest',
   getReportSessionCampaignChildren: '/session/campaignChildren',
   getReportSessionDetail: '/session/detail',
-  getSessionDistillationStatus: '/sessionDistillation/status',
-  getSessionDistillationAnalysis: '/sessionDistillation/get',
-  getSessionDistillationEvidence: '/sessionDistillation/evidence',
   getReportSessionLookup: '/session/lookup',
   getReportSessionNeighbors: '/session/neighbors',
   getReportSessionPage: '/session/page',

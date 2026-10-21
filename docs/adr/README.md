@@ -63,13 +63,14 @@ publication settle window therefore takes 0048.
 | [0039](0039-continuous-campaign-exploration.md) | Preserve context during continuous campaign exploration | 2026-10-04 | Accepted; amends 0004 and 0012; amended by 0041 |
 | [0040](0040-rounds-are-derived-once-from-native-turns.md) | Rounds are derived once from native turns; child links carry their evidence | 2026-09-09 | Accepted; applies 0017 and 0018 to session detail |
 | [0041](0041-exact-detail-selection-with-continuous-exploration.md) | Resolve exact detail identity independently from bounded scroll restoration | 2026-10-04 | Accepted; amends 0039 |
-| [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Accepted; extends 0024, 0026, 0038, 0040, 0041 |
-| [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Accepted; amends 0042 |
+| [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Accepted; feature superseded by 0049; preservation obligations remain |
+| [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Accepted; feature superseded by 0049; publication restrictions remain |
 | [0044](0044-local-checkout-observation.md) | Observe local Checkouts and bind them to Projects without review | 2026-10-07 | Accepted; amends 0024, 0042 |
 | [0045](0045-desktop-quota-feed-through-the-cli.md) | Desktop consumers read quota through the CLI JSON feed | 2026-10-12 | Accepted; extends 0009 |
 | [0046](0046-hourly-fleet-freshness-heartbeat.md) | Row freshness heartbeats are recorded at hour granularity | 2026-10-17 | Accepted; extends 0009 |
 | [0047](0047-codex-compressed-rollout-discovery.md) | Discover Codex rollouts in their compressed and archived forms | 2026-10-17 | Accepted; extends 0009, 0016 |
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
+| [0049](0049-retire-session-distillation.md) | Retire Session distillation while preserving Memory and stored evidence | 2026-10-21 | Accepted; supersedes feature clauses of 0042 and 0043; preserves 0044 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

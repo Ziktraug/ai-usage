@@ -1,15 +1,4 @@
-import {
-  type DistillationRequest,
-  distillationBounds,
-  parseDistillationRequest,
-} from '@ai-usage/platform-core/session-distillation';
 import type { CheckoutResolutionAction, CheckoutResolutionActionResult } from '@ai-usage/project-registry/review';
-import {
-  type AnalysisPromotionRequest,
-  type AnalysisPromotionResult,
-  parseAnalysisPromotionRequest,
-  parseAnalysisPromotionResult,
-} from './analysis-promotion';
 import type { MemoryProjectContext } from './application';
 import { type MemoryItemsBrowsePage, parseMemoryItemsBrowsePage } from './browse';
 import {
@@ -49,10 +38,6 @@ export interface MemoryServiceClient {
     action: CheckoutResolutionAction,
     options?: MemoryServiceRequestOptions,
   ) => Promise<CheckoutResolutionActionResult>;
-  readonly distillation: (
-    input: DistillationRequest | DistillationDiscoveryRequest,
-    options?: MemoryServiceRequestOptions,
-  ) => Promise<unknown>;
   readonly getMemoryItem: (
     input: MemoryItemReadRequest,
     options?: MemoryServiceRequestOptions,
@@ -70,10 +55,6 @@ export interface MemoryServiceClient {
     options?: MemoryServiceRequestOptions,
   ) => Promise<MemoryProposalReviewSnapshot>;
   readonly listResolutionReviews: (options?: MemoryServiceRequestOptions) => Promise<MemoryResolutionReviewSnapshot>;
-  readonly promoteAnalysis: (
-    input: AnalysisPromotionRequest,
-    options?: MemoryServiceRequestOptions,
-  ) => Promise<AnalysisPromotionResult>;
   readonly searchMemory: (
     input: MemorySearchReadRequest,
     options?: MemoryServiceRequestOptions,
@@ -223,25 +204,6 @@ export const createMemoryServiceClient = ({
         parseMemoryItemsBrowsePage,
         options,
       ),
-    promoteAnalysis: async (input, options) =>
-      await request(
-        '/v1/memory-proposals/from-analysis',
-        'POST',
-        parseAnalysisPromotionRequest(input),
-        parseAnalysisPromotionResult,
-        options,
-      ),
-    distillation: async (input, options) =>
-      await request(
-        '/v1/session-distillation',
-        'POST',
-        isDistillationDiscoveryRequest(input)
-          ? parseDistillationDiscoveryRequest(input)
-          : parseDistillationRequest(input),
-        (value) => value,
-        options,
-        distillationBounds.operationMs,
-      ),
     applyResolutionAction: async (action, options) =>
       await request('/v1/repository-resolutions/actions', 'POST', action, parseCheckoutResolutionActionResult, options),
     listResolutionReviews: async (options) =>
@@ -280,9 +242,3 @@ export const createMemoryServiceClient = ({
   };
   return Object.freeze(client);
 };
-
-import {
-  type DistillationDiscoveryRequest,
-  isDistillationDiscoveryRequest,
-  parseDistillationDiscoveryRequest,
-} from '@ai-usage/platform-core/distillation-discovery';

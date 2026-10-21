@@ -91,17 +91,22 @@ A session launched from another session, such as a Claude sub-agent, a Codex spa
 _Avoid_: subagent run, agent instance, worker
 
 **Session analysis**:
-A generated, immutable account of one Session snapshot: sourced objectives,
-attempts, observations, decisions and outcomes, with explicit coverage limits.
-Its revision is independent from a usage report revision. It remains a local
-interpretation in a separate searchable corpus, not accepted Memory or a
-Campaign-wide account. Schema and reference validation do not prove truth.
-_Avoid_: Memory item, accepted guidance, transcript, productivity score
+On-demand inspection of a Session through its native harness history: rounds,
+metrics, tool activity and timeline with the reader's explicit coverage limits.
+This remains available after retirement of generated Session accounts.
+_Avoid_: generated account, accepted guidance, productivity score
 
-**Work episode**:
-An interpreted unit of work within a Session analysis, with an objective,
-significant attempts, a qualified outcome and evidence references. It is not
-the harness-derived Round, an observed Campaign or a durable Work thread.
+**Historical Session account**:
+An immutable generated interpretation retained from the retired Session
+distillation feature. Existing content, source references and promotion
+provenance remain stored; the account library and generation flow are withdrawn
+under ADR 0049. Historical interpretations do not become accepted Memory.
+_Avoid_: native Session analysis, accepted guidance, current library
+
+**Work episode (historical)**:
+An interpreted unit within a historical Session account, retaining its objective,
+attempts, qualified outcome and evidence references. It is not the
+harness-derived Round, an observed Campaign or a durable Work thread.
 _Avoid_: Round, task, Work thread, execution grouping
 
 **Campaign**:

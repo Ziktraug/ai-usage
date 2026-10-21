@@ -1,6 +1,6 @@
 # ADR 0042: Keep generated session accounts local and distinct from accepted Memory
 
-- **Status**: Accepted
+- **Status**: Accepted; superseded in part by [ADR 0049](0049-retire-session-distillation.md) for the retired feature; data-preservation and publication restrictions remain.
 - **Date**: 2026-10-04
 - **Extends**: 0024, 0026, 0038, 0040, 0041
 

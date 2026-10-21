@@ -109,14 +109,13 @@
   const pre = css({ overflowX: 'auto', mt: '8px', p: '10px', borderRadius: 'sm', bg: 'surfaceMuted', color: 'ink' });
 
   const headingId = $derived(`memory-proposal-${proposal.proposalId}`);
-  const localAnalysis = $derived(
+  const localOnly = $derived(
     typeof proposal.structuredContent === 'object' &&
       proposal.structuredContent !== null &&
       !Array.isArray(proposal.structuredContent) &&
       'publicationPolicy' in proposal.structuredContent &&
       proposal.structuredContent.publicationPolicy === 'local-only',
   );
-  const sourceLink = (locator: string | null): string | null => (locator?.startsWith('/memory?') ? locator : null);
   let pending = $state(false);
   let message = $state('');
   let editing = $state(false);
@@ -214,7 +213,7 @@
       <span class={badge}>{proposal.trustCandidate}</span>
       <span class={badge}>{proposal.sensitivity}</span>
       <span class={badge}>proposed by {proposal.proposedByKind}</span>
-      {#if localAnalysis}
+      {#if localOnly}
         <span class={badge}>Local only · remains local after acceptance</span>
       {/if}
     </div>
@@ -243,11 +242,7 @@
               <strong>{observation.sourceKind}</strong>
               <time datetime={observation.observedAt}>{observation.observedAt}</time>
             </div>
-            {#if sourceLink(observation.sourceLocator)}
-              <a href={sourceLink(observation.sourceLocator)}>Read source analysis and evidence</a>
-            {:else}
-              <span class={detailValue}>{observation.sourceLocator ?? 'No source locator'}</span>
-            {/if}
+            <span class={detailValue}>{observation.sourceLocator ?? 'No source locator'}</span>
             <span class={detailLabel}>{observation.sensitivity} evidence</span>
           </li>
         {/each}

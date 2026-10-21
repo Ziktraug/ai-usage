@@ -6,7 +6,6 @@ import {
 } from '@ai-usage/report-core/harness-metadata';
 import type { ReportOptions, SortKey } from '@ai-usage/report-core/report-data';
 import { Effect } from 'effect';
-import { type AnalysesCommand, parseAnalysesCommand } from './analyses';
 import { CliArgumentError } from './errors';
 
 export type OutputFormat = 'table' | 'json' | 'csv' | 'payload';
@@ -80,7 +79,6 @@ export interface QuotaArgs {
 }
 
 export type CliCommand =
-  | { _tag: 'Analyses'; args: AnalysesCommand }
   | { _tag: 'Help' }
   | ({ _tag: 'Quota' } & QuotaArgs)
   | { _tag: 'Report'; args: Args }
@@ -159,7 +157,6 @@ export const helpText =
   '  merge                  merge usage snapshots into a report\n' +
   '  machine                show or update this machine identity\n' +
   '  memory search <query>  search accepted local Memory\n' +
-  '  analyses --help        distill and search local generated session accounts\n' +
   '  replication status     show outbound publication state\n' +
   '  projects list          summarize detected projects\n' +
   '  cursor import <csv>    copy a Cursor usage export into local ignored storage\n' +
@@ -565,16 +562,10 @@ const parseSetupArgs = (argv: string[]): Effect.Effect<SetupArgs, CliArgumentErr
 export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
   Effect.gen(function* () {
     const rest = [...argv];
-    if (rest[0] !== 'analyses' && (rest.includes('-h') || rest.includes('--help'))) {
+    if (rest.includes('-h') || rest.includes('--help')) {
       return { _tag: 'Help' };
     }
     const command = rest[0];
-    if (command === 'analyses') {
-      return yield* Effect.try({
-        try: () => ({ _tag: 'Analyses' as const, args: parseAnalysesCommand(rest.slice(1)) }),
-        catch: (error) => cliArgumentError(error instanceof Error ? error.message : 'Invalid analyses command'),
-      });
-    }
     if (command === 'quota') {
       rest.shift();
       return { _tag: 'Quota', ...(yield* parseQuotaArgs(rest)) };
