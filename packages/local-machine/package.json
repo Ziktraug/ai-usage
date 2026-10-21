@@ -28,6 +28,7 @@
     "./source-policy-config": "./src/source-policy-config.ts",
     "./text": "./src/text.ts",
     "./test-fixtures/skill-observation-transcripts": "./src/test-fixtures/skill-observation-transcripts.ts",
+    "./testing/claude-desktop-sessions": "./src/testing/claude-desktop-sessions-fixture.ts",
     "./testing/harness-home": "./src/testing/harness-home.ts",
     "./testing/memory-storage": "./src/testing/memory-storage.ts"
   },

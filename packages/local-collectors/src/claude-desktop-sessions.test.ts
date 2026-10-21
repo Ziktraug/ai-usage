@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import {
+  CLAUDE_DESKTOP_FIXTURE_MISSING_PARENT_ID,
+  CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL,
+} from '@ai-usage/local-machine/testing/claude-desktop-sessions';
+import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import { WORK_ATTENTION_BOUNDS } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
@@ -450,5 +455,35 @@ describe('collectClaudeDesktopSessions', () => {
     );
     expect(failure._tag).toBe('LocalHistoryError');
     expect(failure.operation).toBe('claudeDesktopSessions.bounds');
+  });
+
+  test('collects the representative seeded registry with its roots, children and unsupported file', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'claude-desktop-sessions-seeded-'));
+    temporaryHomes.push(home);
+    const fixture = await seedHarnessHome(home, { claudeDesktopSessions: 'representative', harnesses: ['claude'] });
+    if (fixture.claudeDesktop === null) {
+      throw new Error('expected a seeded Desktop registry');
+    }
+    const collection = await collect(home);
+
+    expect(collection.completeness).toEqual({
+      filesParsed: fixture.claudeDesktop.rootCount + fixture.claudeDesktop.childCount - 1,
+      filesSeen: fixture.claudeDesktop.rootCount + fixture.claudeDesktop.childCount,
+      rejected: 0,
+      truncated: false,
+      unsupported: 1,
+    });
+    expect(collection.warnings).toEqual([]);
+    const byId = new Map(collection.observations.map((observation) => [observation.desktopSessionId, observation]));
+    expect(byId.get(fixture.claudeDesktop.ids.blockedRoot)?.cliSessionId).toBe(fixture.ids.claude);
+    expect(byId.get(fixture.claudeDesktop.ids.blockedRoot)?.turnSummary?.needsAction).not.toBeNull();
+    expect(byId.get(fixture.claudeDesktop.ids.unsupported)?.format).toBe('unsupported');
+    expect(byId.get(fixture.claudeDesktop.ids.satisfiedChild ?? '')?.declaredPullRequests[0]?.state).toBe('OPEN');
+    expect(byId.get(fixture.claudeDesktop.ids.orphanChild ?? '')?.spawnedFrom?.sessionId).toBe(
+      CLAUDE_DESKTOP_FIXTURE_MISSING_PARENT_ID,
+    );
+    const children = collection.observations.filter((observation) => observation.spawnedFrom !== null);
+    expect(children.length).toBeGreaterThanOrEqual(15);
+    expect(JSON.stringify(collection)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
   });
 });
