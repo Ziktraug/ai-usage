@@ -1,3 +1,11 @@
+export type {
+  ClaudeDesktopCollectionState,
+  QueryClaudeDesktopCollectionStateInput,
+  QueryClaudeDesktopCollectionStateResult,
+  QueryClaudeDesktopSessionsInput,
+  QueryClaudeDesktopSessionsResult,
+} from './claude-desktop-session-store';
+export { MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type { FocusedReportQueryResult } from './focused-report-query-sqlite';
@@ -45,6 +53,8 @@ export type {
 } from './index';
 export {
   MAX_USAGE_MACHINE_FLEET_MACHINES,
+  queryClaudeDesktopCollectionState,
+  queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,

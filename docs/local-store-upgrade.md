@@ -44,6 +44,18 @@ open a version-8 store. Publication policy is independent from sensitivity;
 knowledge explicitly promoted from a local analysis stays excluded from both
 live replication and later backfill.
 
+## Additive tables under usage version 4 (2026-10-21)
+
+The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
+and `claude_desktop_collection_state` to the usage store without changing
+`user_version`, following the `skill_observations` precedent: the engine
+creates them on the next open when they are absent, moves no existing row, and
+does not advance the store generation. They hold one bounded row per Claude
+Desktop session registry file (`local_<uuid>.json`), never a proposal's prompt,
+and they stay outside the served report revision, the replication outbox and
+the merge bundle. A binary from before this change reopens the upgraded store
+unchanged and ignores the two tables.
+
 Migrations are forward-only and run inside one transaction per store, so an
 interrupted upgrade leaves the previous version in place. Code refuses a store
 that is newer than it supports: the usage store fails with

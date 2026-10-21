@@ -8,6 +8,7 @@ import { completeSkillObservationCollection } from '@ai-usage/report-core/skill-
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
+  queryClaudeDesktopSessions,
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
   querySkillObservations,
@@ -17,6 +18,7 @@ import {
 } from './reader';
 import { SERVED_REPORT_PROJECTION_SCHEMA_VERSION } from './served-revision';
 import {
+  importClaudeDesktopSessions,
   importLocalRows,
   importProviderQuotaBatch,
   importSkillObservations,
@@ -38,6 +40,8 @@ interface SchemaObject {
 }
 
 const durableTables = [
+  'claude_desktop_collection_state',
+  'claude_desktop_sessions',
   'provider_quota_observations',
   'served_report_revisions',
   'skill_observation_collection_state',
@@ -423,6 +427,122 @@ describe('usage-store forward migration', () => {
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
     expect(read.skipped).toBe(0);
     expect(read.observations.map(({ observation }) => observation.skillName)).toEqual(['write-a-skill']);
+  });
+
+  test('adds the Claude Desktop session family to a populated store already on the current version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-claude-desktop-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const machine = { id: 'desktop-legacy-machine', label: 'Desktop legacy machine' };
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine,
+        rows: [
+          {
+            ...normalizeUsageRow({
+              calls: 1,
+              cost: actualCost(null),
+              date: new Date('2026-10-01T08:00:00.000Z'),
+              durationMs: 1000,
+              endDate: new Date('2026-10-01T08:01:00.000Z'),
+              harness: 'Claude Code',
+              model: 'claude-sonnet-4-6',
+              name: 'Desktop legacy session',
+              project: 'ai-usage',
+              provider: 'Claude sub',
+              tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+            }),
+            source: {
+              harnessKey: 'claude',
+              sourcePath: '/home/alex/Projects/ai-usage',
+              sourceSessionId: 'desktop-legacy-session',
+            },
+          },
+        ],
+      }),
+    );
+
+    // A store written before this family existed carries the current user_version (4), so
+    // absence of the tables is the only available signal, exactly as for skill observations.
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    const countsBefore = readCounts(beforeMigration);
+    const metadataBefore = readMetadata(beforeMigration);
+    beforeMigration.exec('DROP TABLE claude_desktop_sessions;');
+    beforeMigration.exec('DROP TABLE claude_desktop_collection_state;');
+    expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    beforeMigration.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(readCounts(migrated)).toEqual(countsBefore);
+    // Adding the family moves no durable data and advances no generation.
+    expect(readMetadata(migrated)).toEqual(metadataBefore);
+    const indexes = migrated
+      .query(
+        "SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'claude_desktop_sessions' ORDER BY name",
+      )
+      .all() as { name: string }[];
+    migrated.close(true);
+    expect(indexes.map(({ name }) => name)).toEqual([
+      'idx_claude_desktop_sessions_activity',
+      'idx_claude_desktop_sessions_cli',
+      'idx_claude_desktop_sessions_identity',
+    ]);
+
+    const imported = await Effect.runPromise(
+      importClaudeDesktopSessions({
+        completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+        dbPath,
+        machineId: machine.id,
+        observations: [
+          {
+            accountDirectory: 'account',
+            archived: false,
+            branch: null,
+            cliSessionId: 'desktop-legacy-session',
+            completedTurns: null,
+            createdAt: '2026-10-01T08:00:00.000Z',
+            cwd: '/home/alex/Projects/ai-usage',
+            declaredPullRequests: [],
+            desktopSessionId: 'local_legacy',
+            effort: null,
+            fileModifiedAt: '2026-10-01T08:01:00.000Z',
+            filePath: '.config/Claude/claude-code-sessions/account/org/local_legacy.json',
+            format: 'claude-desktop-session-v1',
+            lastActivityAt: '2026-10-01T08:01:00.000Z',
+            lastTurnReport: null,
+            machineId: machine.id,
+            model: null,
+            observedAt: '2026-10-01T08:02:00.000Z',
+            openSuggestions: [],
+            organizationDirectory: 'org',
+            originCwd: null,
+            priorCliSessionIds: [],
+            resolvedSuggestions: {},
+            sideSessionNotes: [],
+            sourceBranch: null,
+            spawnedFrom: null,
+            title: 'Fixture: legacy',
+            titleSource: 'auto',
+            turnSummary: null,
+            unsupportedReason: null,
+            worktreePath: null,
+            wrapUpDescription: null,
+            writtenBranches: [],
+          },
+        ],
+      }),
+    );
+    expect(imported).toEqual({ inserted: 1, skipped: 0, unchanged: 0, updated: 0 });
+    const read = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath, machineId: machine.id }));
+    expect(read.skipped).toBe(0);
+    expect(read.observations.map(({ desktopSessionId }) => desktopSessionId)).toEqual(['local_legacy']);
   });
 
   test('migrates a populated schema-3 store to schema 4 by adding the replication outbox and refuses a newer schema', async () => {
