@@ -74,7 +74,7 @@ describe('Work bounded stored metadata and Query hydration', () => {
       },
       'live',
     );
-    expect(paths).toEqual(['/rpc/report/revisionBootstrap', '/rpc/session/page']);
+    expect([...paths].sort()).toEqual(['/rpc/report/revisionBootstrap', '/rpc/session/page', '/rpc/work/attention']);
     expect(data.initialFailure?.kind).toBe(tag === 'RevisionExpired' ? 'revision-expired' : 'session-unavailable');
     expect(data.initialFailure?.message.length).toBeGreaterThan(0);
     expect(data.queryState.dehydratedState.queries.some((query) => query.queryKey.includes('report-bootstrap'))).toBe(
@@ -225,6 +225,9 @@ describe('Work bounded stored metadata and Query hydration', () => {
           if (pathname === '/rpc/report/revisionBootstrap') {
             return Response.json(serializer.serialize(bootstrap));
           }
+          if (pathname === '/rpc/work/attention') {
+            return Response.json({ data: JSON.parse(JSON.stringify(syntheticWorkAttentionDataset())), ok: true });
+          }
           if (pathname !== '/rpc/session/page') {
             throw new Error(`Unexpected acquisition: ${pathname}`);
           }
@@ -240,7 +243,7 @@ describe('Work bounded stored metadata and Query hydration', () => {
       },
       'live',
     );
-    expect(paths).toEqual(['/rpc/report/revisionBootstrap', '/rpc/session/page']);
+    expect([...paths].sort()).toEqual(['/rpc/report/revisionBootstrap', '/rpc/session/page', '/rpc/work/attention']);
     const queryClient = createHydratedWebQueryClient(data.queryState);
     let reads = 0;
     const forbidden = (): Promise<never> => {
@@ -338,9 +341,9 @@ describe('Work bounded stored metadata and Query hydration', () => {
       },
       'live',
     );
-    // The attention procedure is not part of this checkout's contract: the seam answers a typed
-    // unavailability instead of requesting a route that does not exist.
-    expect(paths).toEqual(['/rpc/report/revisionBootstrap', '/rpc/session/page']);
+    // The attention transport failed: the client answers a typed unavailability whose wording never
+    // carries the transport detail, and nothing is dehydrated for that identity.
+    expect([...paths].sort()).toEqual(['/rpc/report/revisionBootstrap', '/rpc/session/page', '/rpc/work/attention']);
     expect(data.attentionFailure).toEqual({
       kind: 'attention-unavailable',
       message: 'Declared outcomes could not be read from the local store.',

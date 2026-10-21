@@ -612,5 +612,5 @@ export const unavailableWorkAttentionClient = (message: string): WorkAttentionCl
  * answer before integration is a typed unavailability rather than a request to a route that does
  * not exist. Replace the body with `createWorkAttentionClient(rpc)` once the contract carries it.
  */
-export const resolveWorkAttentionClient = (_rpc: WebContractClient): WorkAttentionClient =>
-  unavailableWorkAttentionClient('The Work attention procedure is not available in this build.');
+export const resolveWorkAttentionClient = (rpc: WebContractClient): WorkAttentionClient =>
+  createWorkAttentionClient(rpc);

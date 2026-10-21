@@ -114,13 +114,23 @@ describe('Work attention client narrowing', () => {
     const client = createWorkAttentionClient(rpcAnswering(() => Promise.resolve({ data: serialized(), ok: true })));
     await expect(client.attention({}, { signal: controller.signal })).rejects.toBeDefined();
   });
-  test('the integration seam answers unavailability without reaching any transport', async () => {
-    const rpc = new Proxy({}, { get: () => () => Promise.reject(new Error('must not be called')) });
-    const result = await resolveWorkAttentionClient(rpc as never).attention({});
-    expect(result).toEqual({
-      error: { message: 'The Work attention procedure is not available in this build.', tag: 'Unavailable' },
-      ok: false,
-    });
+  test('the integration seam reads work.attention through the contract client', async () => {
+    const calls: unknown[] = [];
+    const rpc = {
+      work: {
+        attention: (input: unknown) => {
+          calls.push(input);
+          return Promise.resolve({ data: serialized(), ok: true });
+        },
+      },
+    };
+    const result = await resolveWorkAttentionClient(rpc as never).attention({ limit: 20 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ limit: 20 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.roots.length).toBe(dataset.roots.length);
+    }
   });
 });
 
