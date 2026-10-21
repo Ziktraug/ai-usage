@@ -1043,8 +1043,16 @@ export const syntheticWorkAttentionDataset = (): WorkAttentionDataset => {
   return {
     coverage: {
       checkouts: { failed: 0, lastRunAt: OBSERVED_AT, observed: 6 },
-      desktopSessions: { collectedAt: COLLECTED_AT, filesParsed: 39, filesSeen: 41, truncated: false, unsupported: 2 },
+      desktopSessions: {
+        collectedAt: COLLECTED_AT,
+        filesParsed: 39,
+        filesSeen: 41,
+        refusedRows: 0,
+        truncated: false,
+        unsupported: 2,
+      },
       pullRequests: { disabled: false, failed: 1, lastRunAt: OBSERVED_AT, observed: 7 },
+      sessions: { joined: 22, revision: 'synthetic-work-v1', unmatched: 3 },
     },
     generatedAt: DEMO_INSTANT,
     machineId: null,

@@ -1,3 +1,11 @@
+export type {
+  ClaudeDesktopCollectionState,
+  QueryClaudeDesktopCollectionStateInput,
+  QueryClaudeDesktopCollectionStateResult,
+  QueryClaudeDesktopSessionsInput,
+  QueryClaudeDesktopSessionsResult,
+} from './claude-desktop-session-store';
+export { MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type {
@@ -60,6 +68,8 @@ export type {
 } from './index';
 export {
   MAX_USAGE_MACHINE_FLEET_MACHINES,
+  queryClaudeDesktopCollectionState,
+  queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
@@ -82,6 +92,7 @@ export {
   queryServedReportRevisionSupport,
   queryServedRevisionData,
   queryServedSessionPullRequestLinks,
+  querySessionRowsBySourceSessionIds,
   querySkillObservations,
   queryStoredReportCapture,
   queryUsageLocalMachine,
@@ -108,3 +119,9 @@ export {
   buildSessionQuerySqlOrder,
   executeMaterializedSessionQuery,
 } from './session-query-sqlite';
+export type {
+  QuerySessionRowsBySourceSessionIdsInput,
+  QuerySessionRowsBySourceSessionIdsResult,
+  ServedSessionRowIdentity,
+} from './work-session-join';
+export { MAX_WORK_SESSION_JOIN_IDS } from './work-session-join';

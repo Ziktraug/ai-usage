@@ -460,7 +460,13 @@ const parseSession = (value: unknown): WorkRoot['session'] | undefined => {
 
 const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
   if (
-    !(isRecord(value) && isRecord(value.checkouts) && isRecord(value.desktopSessions) && isRecord(value.pullRequests))
+    !(
+      isRecord(value) &&
+      isRecord(value.checkouts) &&
+      isRecord(value.desktopSessions) &&
+      isRecord(value.pullRequests) &&
+      isRecord(value.sessions)
+    )
   ) {
     return;
   }
@@ -473,6 +479,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     collectedAt: optionalInstant(value.desktopSessions.collectedAt),
     filesParsed: count(value.desktopSessions.filesParsed),
     filesSeen: count(value.desktopSessions.filesSeen),
+    refusedRows: count(value.desktopSessions.refusedRows),
     truncated: typeof value.desktopSessions.truncated === 'boolean' ? value.desktopSessions.truncated : undefined,
     unsupported: count(value.desktopSessions.unsupported),
   };
@@ -482,11 +489,23 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     lastRunAt: optionalInstant(value.pullRequests.lastRunAt),
     observed: count(value.pullRequests.observed),
   };
+  const revisionValue = value.sessions.revision;
+  const sessions = {
+    joined: count(value.sessions.joined),
+    revision:
+      revisionValue === null
+        ? null
+        : typeof revisionValue === 'string' && revisionValue.length > 0 && revisionValue.length <= 512
+          ? revisionValue
+          : undefined,
+    unmatched: count(value.sessions.unmatched),
+  };
   if (
     !(
       defined(Object.values(checkouts)) &&
       defined(Object.values(desktopSessions)) &&
-      defined(Object.values(pullRequests))
+      defined(Object.values(pullRequests)) &&
+      defined(Object.values(sessions))
     )
   ) {
     return;
@@ -495,6 +514,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     checkouts: checkouts as WorkAttentionCoverage['checkouts'],
     desktopSessions: desktopSessions as WorkAttentionCoverage['desktopSessions'],
     pullRequests: pullRequests as WorkAttentionCoverage['pullRequests'],
+    sessions: sessions as WorkAttentionCoverage['sessions'],
   };
 };
 

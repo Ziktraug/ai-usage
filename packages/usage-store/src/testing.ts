@@ -1,5 +1,6 @@
 export {
   createUsageStore,
+  importClaudeDesktopSessions,
   importLocalRows,
   importNormalizedDatasetItems,
   importPeerMergeBundle,
@@ -7,6 +8,7 @@ export {
   importSkillObservations,
   initializeUsageStore,
   publishServedReportRevision,
+  queryClaudeDesktopSessions,
   queryCurrentServedReportRevision,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,

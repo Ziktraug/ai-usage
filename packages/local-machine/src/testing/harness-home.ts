@@ -1,6 +1,11 @@
 import { Database } from 'bun:sqlite';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import {
+  type ClaudeDesktopSessionsFixtureVariant,
+  type SeededClaudeDesktopSessions,
+  seedClaudeDesktopSessions,
+} from './claude-desktop-sessions-fixture';
 
 export type HarnessFixtureKey = 'claude' | 'codex' | 'cursor' | 'opencode';
 
@@ -10,6 +15,8 @@ export const HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL = 'javascript:PRIVATE_DANGER
 export const HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL = 'PRIVATE_PROVIDER_STDERR_SENTINEL_027';
 
 export interface SeededHarnessHome {
+  /** The Claude Desktop session registry, when `claudeDesktopSessions` was requested. */
+  claudeDesktop: SeededClaudeDesktopSessions | null;
   ids: {
     claude: string;
     codexChild: string;
@@ -29,6 +36,18 @@ export interface SeededHarnessHome {
 }
 
 export interface SeedHarnessHomeOptions {
+  /**
+   * Fixed reference instant for the Desktop registry ages (1 hour to 40 days before it).
+   * Defaults to a constant so a seeded home collects identically on every run.
+   */
+  claudeDesktopEpoch?: Date;
+  /**
+   * Seed a Claude Desktop session registry beside the Claude transcripts. Opt-in: the existing
+   * golden counters of this fixture do not change unless asked. `minimal` writes one blocked root
+   * with two children, one completed root with a declared pull request, and one unsupported file;
+   * `representative` writes 20+ roots and 15+ children across two account/org pairs.
+   */
+  claudeDesktopSessions?: ClaudeDesktopSessionsFixtureVariant;
   codexSessionCount?: number;
   harnesses?: readonly HarnessFixtureKey[];
   /**
@@ -792,7 +811,17 @@ export const seedHarnessHome = async (
   if (seededHarnesses.includes('cursor')) {
     await writeCursorFixture(paths.cursorDatabase);
   }
-  return { ids: { ...FIXTURE_IDS }, paths, seededHarnesses };
+  const claudeDesktop =
+    options.claudeDesktopSessions === undefined
+      ? null
+      : await seedClaudeDesktopSessions({
+          cliSessionIdWithTranscript: FIXTURE_IDS.claude,
+          ...(options.claudeDesktopEpoch === undefined ? {} : { epoch: options.claudeDesktopEpoch }),
+          home,
+          repository: paths.repository,
+          variant: options.claudeDesktopSessions,
+        });
+  return { claudeDesktop, ids: { ...FIXTURE_IDS }, paths, seededHarnesses };
 };
 
 export const appendCodexRootUsage = async (fixture: SeededHarnessHome): Promise<void> => {

@@ -63,6 +63,7 @@ import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import type { CheckoutStatusObservation, PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
+import { claudeDesktopSessionSchemaSql, createClaudeDesktopSessionStore } from './claude-desktop-session-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import { createExecutorObservationStore } from './executor-observation-store';
 import {
@@ -83,6 +84,7 @@ import {
 } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
 import { createWorkFactStore, WORK_FACT_TABLES, type WorkFactSourceId, workFactSchemaSql } from './work-fact-store';
+import { createWorkSessionJoinStore } from './work-session-join';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -1421,6 +1423,13 @@ const migrate = (db: SqliteDatabase): boolean => {
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
   schemaChanged ||= workFactTablesMissing;
+  // Same precedent for the Claude Desktop session family (ADR 0050): additive tables under the
+  // current user_version, so presence is the only signal.
+  const claudeDesktopSessionsMissing =
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_sessions'").get() === null ||
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_collection_state'").get() ===
+      null;
+  schemaChanged ||= claudeDesktopSessionsMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1745,6 +1754,7 @@ const migrate = (db: SqliteDatabase): boolean => {
         db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
       }
     }
+    db.exec(claudeDesktopSessionSchemaSql);
     db.exec(replicationOutboxSchemaSql);
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
@@ -4351,6 +4361,13 @@ export const {
   withUsageStoreWriter,
 });
 export { WORK_FACT_SOURCE_IDS, type WorkFactSourceId } from './work-fact-store';
+export const { importClaudeDesktopSessions, queryClaudeDesktopCollectionState, queryClaudeDesktopSessions } =
+  createClaudeDesktopSessionStore({
+    usageStoreError,
+    usageStoreReadError,
+    withUsageStoreReader,
+    withUsageStoreWriter,
+  });
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,
@@ -4388,4 +4405,10 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   updateUsageMachineLabel: (input) => updateUsageMachineLabel({ ...input, dbPath: input.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
+});
+
+export const { querySessionRowsBySourceSessionIds } = createWorkSessionJoinStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
 });

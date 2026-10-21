@@ -11,6 +11,7 @@ test('composes every router leaf under one root router', () => {
     session: {},
     skills: {},
     sync: {},
+    work: {},
     workRouting: {},
   } as unknown as WebRpcRouterDependencies);
 
@@ -26,6 +27,7 @@ test('composes every router leaf under one root router', () => {
     'session',
     'skills',
     'sync',
+    'work',
     'workRouting',
   ]);
 });

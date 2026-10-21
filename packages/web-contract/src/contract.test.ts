@@ -7,6 +7,7 @@ import { reportContract } from './report';
 import { sessionContract } from './session';
 import { skillsContract } from './skills';
 import { syncContract } from './sync';
+import { workContract } from './work';
 import { workRoutingContract } from './work-routing';
 
 test('composes every RPC leaf under one root contract', () => {
@@ -18,6 +19,7 @@ test('composes every RPC leaf under one root contract', () => {
     session: sessionContract,
     skills: skillsContract,
     sync: syncContract,
+    work: workContract,
     workRouting: workRoutingContract,
   });
 });

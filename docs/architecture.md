@@ -999,6 +999,9 @@ admission, cadence, dependencies, or publication ordering here.
   default-enabled producers that read known checkouts and explicitly linked
   pull requests for the Work view; their facts stay outside the served
   revision and never mark the report dirty.
+  `claude.desktop-sessions` is a ninth, default-enabled enrichment that reads
+  the Claude Desktop session registry into its own tables outside the served
+  revision (ADR 0050); its runs never wake a publication.
 - Sparse source-policy overrides are read only from user-home config. Repository
   config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, outcome, and progress are independent.

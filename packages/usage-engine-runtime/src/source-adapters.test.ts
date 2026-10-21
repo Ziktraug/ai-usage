@@ -12,6 +12,7 @@ import { collectionSourceIds } from '@ai-usage/report-core/source-control';
 import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
   initializeUsageStore,
+  queryClaudeDesktopSessions,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
@@ -121,6 +122,53 @@ const writeClaudeSkillSession = (home: string, skillNames: readonly string[] = [
   writeFileSync(
     path.join(directory, 'skill-session-1.jsonl'),
     `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+  );
+};
+
+/** Two Claude Desktop registry files: one complete blocked root, one of an unknown shape. */
+const writeClaudeDesktopRegistry = (home: string): void => {
+  const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+  mkdirSync(directory, { recursive: true });
+  const base = {
+    cliSessionId: 'cli-desktop-root',
+    createdAt: Date.UTC(2026, 9, 20, 9),
+    cwd: '/home/fixture/work/project',
+    isArchived: false,
+    lastActivityAt: Date.UTC(2026, 9, 20, 11),
+    title: 'Fixture: desktop root',
+    titleSource: 'auto',
+  };
+  writeFileSync(
+    path.join(directory, 'local_desktop-root.json'),
+    JSON.stringify({
+      ...base,
+      backgroundTaskSuggestions: [
+        {
+          createdAt: Date.UTC(2026, 9, 20, 10),
+          id: 'task_1',
+          prompt: 'PRIVATE_DESKTOP_PROMPT_SENTINEL',
+          title: 'Fixture proposal',
+          tldr: 'tldr',
+        },
+      ],
+      postTurnSummary: {
+        needs_action: 'Decide whether to open the pull request.',
+        status_category: 'blocked',
+        status_detail: 'Waiting on a decision.',
+        summarizes_uuid: 'uuid-1',
+      },
+      sessionId: 'local_desktop-root',
+    }),
+  );
+  writeFileSync(
+    path.join(directory, 'local_desktop-unknown.json'),
+    JSON.stringify({
+      ...base,
+      cliSessionId: 'cli-desktop-unknown',
+      lastActivityAt: Date.UTC(2026, 9, 20, 10),
+      postTurnSummary: { status_category: 'waiting_for_person', status_detail: 'x' },
+      sessionId: 'local_desktop-unknown',
+    }),
   );
 };
 
@@ -696,6 +744,51 @@ describe('scheduled source adapters', () => {
       expect(dataset.skills.map(({ skillName }) => skillName)).toEqual(['improve']);
       expect(dataset.lowerBound).toBe(true);
       expect(dataset.invocationLowerBound).toBe(true);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('imports the Claude Desktop registry into its own tables without waking a publication', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan117-engine-source-desktop-'));
+    try {
+      const absent = await createRegistry(home, { codexLiveAvailable: () => false });
+      expect(
+        (await Effect.runPromise(absent.get('claude.desktop-sessions')?.detect ?? Effect.die('missing'))).availability,
+      ).toBe('not-detected');
+
+      writeClaudeDesktopRegistry(home);
+      const registry = await createRegistry(home, {
+        codexLiveAvailable: () => false,
+        now: () => new Date('2026-10-20T12:00:00.000Z'),
+      });
+      const source = registry.get('claude.desktop-sessions');
+      expect(Duration.toMillis(source?.cadence ?? Duration.zero)).toBe(60_000);
+      expect((await Effect.runPromise(source?.detect ?? Effect.die('missing'))).availability).toBe('detected');
+
+      const progress: unknown[] = [];
+      const first = await Effect.runPromise(source?.run(progressContext(progress)) ?? Effect.die('missing source'));
+      const stored = await Effect.runPromise(
+        queryClaudeDesktopSessions({ dbPath: usageStorePath(home), machineId: machine.id }),
+      );
+
+      // The family is outside the served revision: a full import is not a report change.
+      expect(first).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
+      expect(progress.map((update) => (update as { phase: string }).phase)).toEqual([
+        'reading',
+        'normalizing',
+        'importing',
+      ]);
+      expect(stored.skipped).toBe(0);
+      expect(stored.observations.map(({ desktopSessionId, format }) => [desktopSessionId, format])).toEqual([
+        ['local_desktop-root', 'claude-desktop-session-v1'],
+        ['local_desktop-unknown', 'unsupported'],
+      ]);
+      expect(stored.observations[0]?.turnSummary?.needsAction).toBe('Decide whether to open the pull request.');
+      expect(JSON.stringify(stored)).not.toContain('PRIVATE_DESKTOP_PROMPT_SENTINEL');
+
+      const second = await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      expect(second).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

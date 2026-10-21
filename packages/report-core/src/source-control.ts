@@ -15,6 +15,7 @@ export const collectionSourceIds = [
   'executors.capabilities',
   'checkouts.status',
   'github.pull-requests',
+  'claude.desktop-sessions',
 ] as const;
 
 export type CollectionSourceId = (typeof collectionSourceIds)[number];
@@ -147,6 +148,18 @@ export const collectionSourceDefinitions = [
     id: 'github.pull-requests',
     kind: 'producer',
     label: 'GitHub pull requests',
+  },
+  {
+    cadenceMs: oneMinuteMs,
+    defaultEnabled: true,
+    // Claude Desktop's per-session registry: declared turn outcomes, proposals and declared pull
+    // requests (ADR 0050). An auxiliary fact family like the Cursor attribution dataset, hence the
+    // same kind; it carries no `harnessKey` because it produces no Session rows and must not join
+    // the session harness roster.
+    group: 'enrichments',
+    id: 'claude.desktop-sessions',
+    kind: 'dataset-producer',
+    label: 'Claude Desktop sessions',
   },
 ] as const satisfies readonly CollectionSourceDefinition[];
 

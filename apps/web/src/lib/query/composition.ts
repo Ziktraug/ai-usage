@@ -48,7 +48,9 @@ export interface WebQueryOwnership {
     | 'skill-observations'
     | 'skills'
     | 'sources'
-    | 'sync';
+    | 'sync'
+    | 'work-attention'
+    | 'work-routing';
   readonly policy: WebQueryPolicyName;
   readonly publication: PublicationQueryEffect;
   readonly rendering: 'browser-only' | 'ssr-awaited';
