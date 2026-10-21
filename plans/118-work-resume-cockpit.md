@@ -93,3 +93,27 @@ report-core / report-data / web-contract / usage-engine-runtime / usage-store st
 web rpc + work suites 275 pass. Still unverified on the integrated branch: the live `work.attention`
 path end to end in a browser (client seam not yet wired), the production e2e runtime with the Desktop
 fixture, the full `verify` gate.
+
+### 2026-10-22 02:10 — lots I and E2E integrated (`ec94962b`, `170ae9bc`)
+
+Lot I (`4e2ecfd9`…`ba3f41ed`): the `checkouts.status` and `github.pull-requests` sources now read
+the checkouts and declared pull requests of Desktop sessions active in the last 14 days (served
+sources and injected seams kept); `queryWorkAttention` attaches observed pull-request facts to the
+root families that declared them (exact host/repository/number, same machine) and checkout facts by
+exact path, keeps a failed read beside the last successful one, names shared checkouts, truncates by
+priority with a visible notice, and fills `coverage.pullRequests` / `coverage.checkouts` from the
+producers' run states; `request-satisfied-elsewhere` may now rest on a GitHub observation of a PR
+the family declared; one implementation of `external-review-pending` (lot B's) remains.
+Lot E2E (`f74ee208`…`03f8067f`): the production e2e fixture seeds the representative Desktop
+registry; `work-production.spec.ts` proves the chain in a browser on `bun run start` (native files →
+engine source → store → read model → `POST /rpc/work/attention` → UI: 21 roots, declared question,
+folded children, detail, routing panel, `/sources` row, axe, 390 px); `work-e2e-fixture.spec.ts`
+proves the e2e-mode path through the real `assembleWorkAttention`. It also found and fixed a blocking
+defect: `work.attention` and `workRouting.context` were missing from the RPC request-policy
+allow-list, so the procedures answered 404 before any handler (`fe0dd794`); without the production
+spec, `/work` would never have read a declaration in a browser.
+Verified at `170ae9bc`: `bun run typecheck` 58/58, `bun run lint`, `bun run check` clean,
+`bun run --cwd apps/web test` 1519 pass, report-core/report-data/usage-engine-runtime 698 pass.
+Worker evidence at `03f8067f` (before lot I): production specs 17/17, default-config specs 50/50,
+campaign-map production scale 5/5. The production and e2e specs are being re-run on `170ae9bc`
+because observed pull-request facts now move roots into "Waiting on others".
