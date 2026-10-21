@@ -3,6 +3,7 @@ import type { CampaignLabelOverride } from './campaign-label';
 import type { ProjectGroupConfig } from './project-group';
 import type { SourcePolicyOverrides } from './source-control';
 import type { UsageRowWithOptionalSource } from './types';
+import type { RoutingConfig } from './work-executors';
 
 export interface ProjectAliasEntry {
   match: string[];
@@ -21,6 +22,8 @@ export interface AiUsageConfig {
   };
   projectAliases?: ProjectAliasEntry[];
   projectGroups?: ProjectGroupConfig[];
+  /** Home-only review routing declarations (`routing.executors[]`); entries are parsed by `parseExecutorDeclarations`. */
+  routing?: RoutingConfig;
   skills?: unknown;
   sourcePolicies?: SourcePolicyOverrides;
 }

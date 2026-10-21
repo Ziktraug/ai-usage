@@ -572,6 +572,46 @@ describe('machine config', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test('reads a routing section whose entries are validated later and rejects a malformed section', async () => {
+    const home = await mkdtemp('ai-usage-routing-home-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+      // One entry is wrong on purpose: the section still reads, and the entry is reported by the
+      // routing parser instead of making the whole configuration unreadable.
+      const routing = { executors: [{ harness: 'claude-code', authorization: 'maybe' }] };
+      writeFileSync(aiUsageConfigPath(storage), JSON.stringify({ routing }));
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.routing).toEqual(routing);
+
+      writeFileSync(aiUsageConfigPath(storage), JSON.stringify({ routing: { executors: 'all' } }));
+      await expect(
+        Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      ).rejects.toThrow('Invalid ai-usage config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects routing declarations in repository configuration', async () => {
+    const home = await mkdtemp('ai-usage-routing-home-only-');
+    const repo = await mkdtemp('ai-usage-routing-repo-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeFileSync(path.join(repo, 'ai-usage.config.ts'), 'export default { routing: { executors: [] } };\n');
+
+      const error = await Effect.runPromise(
+        readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage), Effect.flip),
+      );
+      expect(formatLocalHistoryError(error)).toContain('routing may only be configured in the user home config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });
 
 const mkdtemp = async (prefix: string) => {
