@@ -40,7 +40,8 @@ export interface BoundedRunResult {
 
 export type BoundedRun = (spec: BoundedRunSpec) => Promise<BoundedRunResult>;
 
-export { BoundedProcessError, type BoundedProcessFailureKind };
+/** The seam's failure vocabulary is the shared runner's own. */
+export { BoundedProcessError, type BoundedProcessFailureKind } from '@ai-usage/local-machine/bounded-process';
 
 /** The default runner: the shared bounded process, so the probes inherit its environment allow-list. */
 export const runBoundedProcess: BoundedRun = async (spec) => {
