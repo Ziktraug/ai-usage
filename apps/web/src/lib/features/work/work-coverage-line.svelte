@@ -8,6 +8,7 @@
   const desktop = $derived(coverage.desktopSessions);
   const pulls = $derived(coverage.pullRequests);
   const checkouts = $derived(coverage.checkouts);
+  const jira = $derived(coverage.jira);
   const hidden = $derived(coverage.window.excludedRoots);
 </script>
 
@@ -50,6 +51,22 @@
       observed{checkouts.failed > 0 ? `, ${checkouts.failed} failed` : ''}
       <time datetime={checkouts.lastRunAt} title={formatExactInstant(checkouts.lastRunAt)}
         >{formatRelativeAge(checkouts.lastRunAt, reference)}</time
+      >
+    {:else}
+      not observed
+    {/if}
+  </span>
+  <span data-work-jira-coverage>
+    Jira:
+    {#if jira.disabled && jira.reason}
+      {jira.reason}
+    {:else if jira.disabled}
+      observation disabled
+    {:else if jira.lastRunAt}
+      {jira.observed}
+      observed{jira.failed > 0 ? `, ${jira.failed} failed` : ''}
+      <time datetime={jira.lastRunAt} title={formatExactInstant(jira.lastRunAt)}
+        >{formatRelativeAge(jira.lastRunAt, reference)}</time
       >
     {:else}
       not observed

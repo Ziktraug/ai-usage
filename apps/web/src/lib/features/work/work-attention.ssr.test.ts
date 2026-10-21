@@ -82,6 +82,8 @@ const html = (search: WorkAttentionSearch, selectedId: string | null = null): st
   }).body.replaceAll(/\s+/g, ' ');
 };
 const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
+/** The rendered text without Svelte's hydration markers, for assertions that span a template boundary. */
+const withoutMarkers = (body: string): string => body.replaceAll(/<!--[^>]*-->/g, '');
 const rowsIn = (body: string, section: string): number => {
   const start = body.indexOf(`data-work-section="${section}"`);
   const end = body.indexOf('</section>', start);
@@ -99,6 +101,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('39 of 41 files parsed');
     expect(body).toContain('2 unsupported');
     expect(body).toContain('4 older roots without pending declarations hidden (30-day window)');
+    expect(withoutMarkers(body)).toContain('Jira: 1 observed');
     expect(body).toContain(`ranking covers ${dataset.roots.length} of ${dataset.totalRoots} roots`);
     expect(body).not.toContain('Known waits');
     expect(body).not.toContain('Simulate review assignment');
@@ -130,6 +133,35 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain("Jira XLB-2090 In Progress, 2 comments, 2 new replies since the family's last activity");
     expect(body).toContain('2 comments arrived on XLB-2090 after this session family');
     expect(body).toContain('You may have read them in Jira; this view cannot tell.');
+  });
+  test('the coverage line says why Jira was not observed, or that it was not', () => {
+    const withJira = (jira: typeof dataset.coverage.jira): string =>
+      withoutMarkers(
+        render(fixture, {
+          props: {
+            board: {
+              dataset: { ...dataset, coverage: { ...dataset.coverage, jira } },
+              onFocusRow: noop,
+              onSearch: noop,
+              onSelect: noop,
+              search: EMPTY_WORK_ATTENTION_SEARCH,
+              selectedId: null,
+            },
+          },
+        }).body.replaceAll(/\s+/g, ' '),
+      );
+    expect(
+      withJira({ disabled: true, failed: 0, lastRunAt: null, observed: 0, reason: 'acli not installed' }),
+    ).toContain('Jira: acli not installed');
+    expect(withJira({ disabled: true, failed: 0, lastRunAt: null, observed: 0, reason: null })).toContain(
+      'Jira: observation disabled',
+    );
+    expect(withJira({ disabled: false, failed: 0, lastRunAt: null, observed: 0, reason: null })).toContain(
+      'Jira: not observed',
+    );
+    expect(
+      withJira({ disabled: false, failed: 2, lastRunAt: dataset.coverage.jira.lastRunAt, observed: 3, reason: null }),
+    ).toContain('Jira: 3 observed, 2 failed');
   });
   test('the detail names an automatic title once, where the row does not', () => {
     const body = html(EMPTY_WORK_ATTENTION_SEARCH, 'desk-enquete-retention');
