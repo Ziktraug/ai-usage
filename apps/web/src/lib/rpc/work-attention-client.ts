@@ -458,6 +458,13 @@ const parseSession = (value: unknown): WorkRoot['session'] | undefined => {
   return campaignKey === undefined || rowId === undefined ? undefined : { campaignKey, rowId };
 };
 
+const nullableRevision = (value: unknown): string | null | undefined => {
+  if (value === null) {
+    return null;
+  }
+  return typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : undefined;
+};
+
 const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
   if (
     !(
@@ -489,15 +496,9 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     lastRunAt: optionalInstant(value.pullRequests.lastRunAt),
     observed: count(value.pullRequests.observed),
   };
-  const revisionValue = value.sessions.revision;
   const sessions = {
     joined: count(value.sessions.joined),
-    revision:
-      revisionValue === null
-        ? null
-        : typeof revisionValue === 'string' && revisionValue.length > 0 && revisionValue.length <= 512
-          ? revisionValue
-          : undefined,
+    revision: nullableRevision(value.sessions.revision),
     unmatched: count(value.sessions.unmatched),
   };
   if (
