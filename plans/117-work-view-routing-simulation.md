@@ -1,9 +1,9 @@
 # 117 — Work view and read-only review routing simulation
 
-Status: PARTIAL — assembled with L3; fix batch 1 implemented and locally verified;
-outside-sandbox integrated and browser reruns pending.
+Status: PARTIAL — assembled gates passed outside the sandbox; fix batch 2 corrects
+mobile navigation geometry, with browser verification and visual refresh pending.
 Base: `1db32b86`, 2026-10-21.
-Assembled checkpoint: `b63d6f2f` (original delivery and L3 committed by supervisor).
+Assembled checkpoint: `2bdabfe8` (L3, fix batch 1 and visual references committed by supervisor).
 Branch: `feat/work-view-routing-simulation`.
 Authorization: implementation and isolated verification; supervisor owns local commits.
 No real-store migration, harness execution, external publication or account changes.
@@ -13,10 +13,10 @@ No real-store migration, harness execution, external publication or account chan
 | Lot | Status | Evidence / remaining work |
 | --- | --- | --- |
 | L0 | DONE | Clean base, current reader/collector audit, baseline checks and L3 scope in local journal |
-| L1 | PARTIAL | Query ownership and missing-parent render regressions pass; early native disclosure preserved; browser rerun pending |
-| L2 | PARTIAL | Pure routing tests and desktop simulation browser path pass; assembled rerun pending; no executor |
-| L3 | INTEGRATED | `0e914ce3`, `97deefce`, `b63d6f2f`; retained Memory/detail browser suites pass at checkpoint; axe expectation corrected, rerun pending |
-| Validation | PARTIAL | Fix-batch targeted tests, check/lint and direct type checks pass; independent review clean; full gate/browser rerun pending |
+| L1 | PARTIAL | Work browser flow and fix-batch-1 regressions pass; mobile navigation geometry correction awaits browser verification |
+| L2 | DONE | Pure routing tests and both preference choices pass in the supervisor's demo walkthrough; no executor |
+| L3 | DONE | `0e914ce3`, `97deefce`, `b63d6f2f`; retained Memory/detail and accessibility suites pass outside the sandbox |
+| Validation | PARTIAL | Assembled verify, full E2E, demo, bundle and production gates pass at checkpoint; navigation correction needs new browser and visual checks |
 | Documentation | DONE | This plan, README row, local audit/journal, pending commits and result handoff |
 
 ## Scope and decisions
@@ -26,6 +26,8 @@ TanStack Query policies. Session roots are observed execution groupings, not inf
 business topics. Shared checkout, branch, title or time never merges distinct work.
 Native evidence, its observation date and incomplete coverage remain separate from
 interpretations. Details and children load on demand; no render recollects history.
+
+Mobile navigation keeps Work, Overview, Sessions and Analysis primary; Campaigns joins the existing Manage overflow, including in demo while business destinations remain hidden.
 
 The one collection enrichment uses Claude's explicit spawn declarations to resolve a
 missing child parent. Messages to an existing agent do not prove parentage. Ambiguous
@@ -90,7 +92,7 @@ Direct Node 24.21.0 Svelte check reports zero errors/warnings; E2E TypeScript pa
 Three assembled test runs pass: foundation/routing/collector/contracts (176 tests,
 713 assertions), Session projections/disposable SQLite/Query (92 tests, 637 assertions),
 Work/navigation/Query after review fixes (46 tests, 250 assertions; overlaps Query
-coverage in the preceding run). Exact commands and logs are in `RESULT.md` locally.
+coverage in the preceding run). Exact commands and logs are in `RESULT-initial-loop.md` locally.
 Affected package checks for report-core, local-collectors and CLI pass separately.
 The browser command fails preparation before running tests; Playwright lists 29 tests
 across the Work/accessibility files. A separate Node loopback probe confirms `EPERM`.
@@ -118,7 +120,7 @@ that the integrator executed a browser. Build/bundle validation remains pending.
 | 2: local changes without validation claim | Synthetic projection and demo copy; no live VCS outcome collection added |
 | 3: unanswered/dismissed proposal | Synthetic projection; neither state grants authority or invents a reason |
 | 4: distinct work on one checkout | Existing exact Session identities; 70-root pagination fixture; qualified PR evidence rejects another host/repository |
-| 5: child/review and missing parent | Native-format synthetic JSONL collector/cache and projection coverage; five actual Svelte-render cases expose unavailable parent evidence. Native pre-hydration disclosure regression authored, browser rerun pending |
+| 5: child/review and missing parent | Native-format synthetic JSONL collector/cache and projection coverage; five actual Svelte-render cases expose unavailable parent evidence. Native pre-hydration disclosure browser regression passes outside the sandbox |
 | 6: ineligible routes and missing quota | Pure routing tests with two candidates: forbidden preference/override, stale/missing quota, all forbidden, API billing, duplicates and reset crossing |
 | 7: simulation does not execute | Pure module with no I/O; live/demo separation and SSR transport isolation tests. Desktop no-POST browser assertion passes outside sandbox |
 | 8: bounded reads and reporting | One 25-root page, lazy children, hydration/retained revision and disposable SQLite/query tests. L3 integrated; retained Memory/detail browser suites pass outside sandbox |
@@ -161,13 +163,47 @@ passes. Independent different-model review reports no actionable findings, with 
 Work/Query tests and 8 Memory tests passing. Full typecheck/build and runtime E2E are
 not run (sandbox) for this diff. The earlier outside 58-task typecheck is checkpoint
 evidence, not validation of this fix batch. Exact commands and test-reference audit
-are in the local `RESULT.md` and `fix-batch-1-*.md` handoffs.
+are in the local `RESULT-fix-batch-1.md` and `fix-batch-1-*.md` handoffs.
 
-Supervisor handoff: commit the explicit ordered blocks in `PENDING-COMMITS.md`, run
-`bun run verify` in the supported environment, then from `apps/web` run
-`bun run test:e2e e2e/work.spec.ts e2e/accessibility.spec.ts e2e/memory.spec.ts --workers=1 --retries=0`
-and `bun run test:e2e-memory --workers=1 --retries=0`. Check desktop/mobile
-navigation, keyboard details/source disclosure, retained errors and both routing
-choices using `bun run demo`. The bundle budget is unchanged and remains a required
-build check. L3 is already integrated in this mission branch; rerun the assembled
-gate after the fix batch. The supervisor owns commits; no publication was performed.
+The supervisor subsequently committed fix batch 1 as `06bf8d86`, `75246dd0` and
+`c18aaedb`, then refreshed four visual references in `2bdabfe8`. Outside the sandbox,
+`bun run verify` passes at `c18aaedb`; after the visual refresh full `test:e2e`
+passes 236/236, `test:e2e-demo` passes 2/2, and `test:web-bundle` and
+`test:web-production` pass under `nix develop`. The demo Work walkthrough passes
+list, source limits, related sessions, both routing preferences and detail opening.
+These results are supervisor-provided checkpoint evidence, not checks executed by
+the integrator or proof of the following navigation correction.
+
+Fix batch 2 addresses a confirmed visual regression missed by those gates: six mobile
+slots join adjacent labels at 390px. The accepted narrow reference is not evidence of
+legibility. Campaigns moves to the existing overflow, keeping five primary slots;
+the 56px icon rail also needs 44px navigation targets in the 768–1279px band.
+Browser geometry assertions must check text containment and adjacent rectangles at
+320/375/390px, in addition to document overflow. PNG updates and browser execution
+remain the supervisor's responsibility; the integrator does not change references.
+
+Local fix-batch-2 checks pass: 15 navigation/ownership tests (71 assertions),
+`bun run check` and `bun run lint` (1501 files), direct Node Svelte check (zero
+errors/warnings) and E2E TypeScript. Playwright discovery lists 43 tests across
+navigation-layout/accessibility/svelte-shell and three demo tests; none ran here.
+The new regressions measure rendered text against its target and label container,
+adjacent label/target intersections, 44px targets, rail focus/hover labels, and
+Campaigns overflow navigation with preserved filters and demo isolation.
+The rail keeps its 56px width and existing tooltips; smaller noninteractive spacing
+compensates for taller targets when the live quota panel is visible. Its fit with
+quotas at 844px high is derived from declared dimensions, not browser proof; the
+normal E2E fixture has no quota panel. Wide desktop sizing remains unchanged.
+Independent adversarial review confirmed that height risk and verified the 38px
+spacing correction; no confirmed defect remains. Its separate navigation/ownership
+run passes 21 tests (84 assertions). The initial 900px overflow concern was withdrawn
+after correcting its arithmetic; actual painted geometry remains browser-pending.
+
+Supervisor handoff from repo root, with system Chrome configured:
+`bun run --cwd apps/web test:e2e e2e/navigation-layout.spec.ts e2e/accessibility.spec.ts e2e/svelte-shell.spec.ts e2e/work.spec.ts --workers=1 --retries=0`,
+then `bun run --cwd apps/web test:e2e-demo --workers=1 --retries=0`.
+Regenerate and inspect affected narrow references outside the sandbox using
+`bun run --cwd apps/web test:e2e e2e/visual-regression.spec.ts --grep 'initial narrow dark Overview|mobile light session drawer' --update-snapshots --workers=1 --retries=0`,
+then run `bun run --cwd apps/web test:e2e e2e/visual-regression.spec.ts --workers=1 --retries=0`.
+Check the 768–1279px rail with a visible quota panel at 844px high as well. Commit
+the explicit new blocks in the local ledger; the supervisor owns git writes and
+visual acceptance. No PNG, budget, store or routing-policy change belongs to this batch.
