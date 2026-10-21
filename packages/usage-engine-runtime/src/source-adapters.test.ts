@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
-import type { BoundedProcessOptions, BoundedProcessRunner } from '@ai-usage/local-machine/bounded-process';
+import {
+  BoundedProcessError,
+  type BoundedProcessOptions,
+  type BoundedProcessRunner,
+} from '@ai-usage/local-machine/bounded-process';
 import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
@@ -22,6 +26,7 @@ import {
 } from '@ai-usage/usage-store/testing';
 import {
   queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryWorkFactRunStates,
 } from '@ai-usage/usage-store/writer';
@@ -30,6 +35,7 @@ import { stageCursorUsageExport } from './input-file';
 import { createScheduledSourceRegistry, prepareSkillObservationImport, type SourceRunContext } from './source-adapters';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
+const SECRET_LIKE_VARIABLE = /TOKEN|SECRET/i;
 
 afterEach(() => {
   setClaudeSkillObservationCeilingForTesting(null);
@@ -1191,3 +1197,261 @@ const writeClaudeDesktopWorkRegistry = (
     writeFileSync(path.join(directory, `${entry.sessionId}.json`), JSON.stringify(entry));
   }
 };
+
+/** A runner that answers the assumed `acli jira workitem view <KEY> --json` without spawning anything. */
+const fakeJiraRunner =
+  (calls: BoundedProcessOptions[]): BoundedProcessRunner =>
+  (options) => {
+    calls.push(options);
+    if (options.command === 'acli' && options.args.slice(0, 3).join(' ') === 'jira workitem view') {
+      return Effect.succeed({
+        durationMs: 1,
+        exitCode: 0,
+        stdout: JSON.stringify({
+          fields: {
+            comment: {
+              comments: [
+                { author: { displayName: 'Sam' }, body: 'Reply.', created: '2026-10-21T20:00:00.000Z', id: '1' },
+              ],
+              total: 1,
+            },
+            status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } },
+            summary: `Issue ${options.args[3] ?? ''}`,
+            updated: '2026-10-21T20:00:00.000Z',
+          },
+          key: options.args[3],
+        }),
+      });
+    }
+    return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: '' });
+  };
+
+/**
+ * Three Desktop registry files for the Jira source: a root whose declared pull request branch and
+ * own branch carry XLB-2090 and whose written branches add XLB-2091 and the XLB-0 placeholder, its
+ * more recent child writing XLB-2091 again and XLB-2092, and a session last active twenty days ago
+ * on XLB-1999, which the fourteen-day window leaves out. Titles carry a key that must never link.
+ */
+const writeClaudeDesktopJiraRegistry = (home: string, now: Date): void => {
+  const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+  mkdirSync(directory, { recursive: true });
+  const hour = 3_600_000;
+  const document = (spec: {
+    readonly branch?: string;
+    readonly hoursAgo: number;
+    readonly id: string;
+    readonly pullRequestBranch?: string;
+    readonly spawnedFrom?: string;
+    readonly writtenBranches?: readonly string[];
+  }) => {
+    const lastActivityAt = now.getTime() - spec.hoursAgo * hour;
+    return {
+      cliSessionId: `cli-${spec.id}`,
+      createdAt: lastActivityAt - hour,
+      cwd: path.join(home, 'projects', 'example'),
+      isArchived: false,
+      lastActivityAt,
+      postTurnSummary: {
+        needs_action: '',
+        status_category: 'completed',
+        status_detail: 'Done.',
+        summarizes_uuid: `uuid-${spec.id}`,
+      },
+      prs:
+        spec.pullRequestBranch === undefined
+          ? []
+          : [
+              {
+                autoFix: false,
+                baseRef: 'main',
+                branch: spec.pullRequestBranch,
+                host: 'github.com',
+                own: true,
+                prNumber: 66,
+                provider: 'github',
+                repo: 'fixture/project',
+                state: 'OPEN',
+                url: 'https://github.com/fixture/project/pull/66',
+              },
+            ],
+      sessionId: `local_${spec.id}`,
+      title: `XLB-7777 ${spec.id}`,
+      titleSource: 'auto',
+      ...(spec.branch === undefined ? {} : { branch: spec.branch }),
+      ...(spec.writtenBranches === undefined ? {} : { writtenBranches: spec.writtenBranches }),
+      ...(spec.spawnedFrom === undefined
+        ? {}
+        : { spawnedFrom: { sessionId: spec.spawnedFrom, taskId: 'task_1', title: 'spawn' } }),
+    };
+  };
+  const documents = [
+    document({
+      branch: 'feat/XLB-2090/collector',
+      hoursAgo: 1,
+      id: 'desktop-jira-root',
+      pullRequestBranch: 'feat/XLB-2090/collector',
+      writtenBranches: ['fix/XLB-2091/nav', 'chore/XLB-0/agent-setup'],
+    }),
+    document({
+      hoursAgo: 0.5,
+      id: 'desktop-jira-child',
+      spawnedFrom: 'local_desktop-jira-root',
+      writtenBranches: ['XLB-2091', 'hotfix/XLB-2092/urgent'],
+    }),
+    document({ hoursAgo: 20 * 24, id: 'desktop-jira-old', writtenBranches: ['feat/XLB-1999/old'] }),
+  ];
+  for (const entry of documents) {
+    writeFileSync(path.join(directory, `${entry.sessionId}.json`), JSON.stringify(entry));
+  }
+};
+
+describe('jira issue source', () => {
+  test('registers the source at the pull request cadence and detects it by the acli executable', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-detection-'));
+    try {
+      const absent = await createRegistry(home, { acliAvailable: () => false });
+      expect(Duration.toMillis(absent.get('jira.issues')?.cadence ?? Duration.zero)).toBe(600_000);
+      expect(await Effect.runPromise(absent.get('jira.issues')?.detect ?? Effect.die('missing'))).toEqual({
+        availability: 'not-detected',
+        reason: {
+          code: 'input-missing',
+          message: 'The Atlassian CLI (acli) was not found on PATH, so Jira issues cannot be observed.',
+        },
+      });
+      expect(
+        await Effect.runPromise(absent.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing')),
+      ).toMatchObject({ unavailable: expect.anything() });
+      const present = await createRegistry(home, { acliAvailable: () => true });
+      expect((await Effect.runPromise(present.get('jira.issues')?.detect ?? Effect.die('missing'))).availability).toBe(
+        'detected',
+      );
+      writeHomeConfig(home, { jira: { enabled: 'yes' } });
+      const misconfigured = await createRegistry(home, { acliAvailable: () => true });
+      expect(
+        (await Effect.runPromise(misconfigured.get('jira.issues')?.detect ?? Effect.die('missing'))).availability,
+      ).toBe('misconfigured');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('observes the keys active Desktop sessions wrote in branch names, never titles, and records the run', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-desktop-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      writeClaudeDesktopJiraRegistry(home, now);
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        now: () => now,
+        workFactProcessRunner: fakeJiraRunner(calls),
+      });
+      expect(
+        await Effect.runPromise(
+          registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+        ),
+      ).toMatchObject({ inputCount: 3, outputCount: 3 });
+      const result = await Effect.runPromise(
+        registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      // Child (30 min ago) before root (1 h ago); each key once; the placeholder, the title's key
+      // and the twenty-day-old session's key are never read.
+      expect(calls.map(({ command, args }) => [command, ...args])).toEqual([
+        ['acli', 'jira', 'workitem', 'view', 'XLB-2091', '--json'],
+        ['acli', 'jira', 'workitem', 'view', 'XLB-2092', '--json'],
+        ['acli', 'jira', 'workitem', 'view', 'XLB-2090', '--json'],
+      ]);
+      expect(calls.every(({ env }) => !Object.keys(env ?? {}).some((name) => SECRET_LIKE_VARIABLE.test(name)))).toBe(
+        true,
+      );
+      const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => latest.key).sort()).toEqual(['XLB-2090', 'XLB-2091', 'XLB-2092']);
+      expect(stored.items.every(({ latest }) => latest.outcome === 'observed' && latest.comments.length === 1)).toBe(
+        true,
+      );
+      const serialized = JSON.stringify(stored);
+      expect(serialized).not.toContain('XLB-1999');
+      expect(serialized).not.toContain('XLB-7777');
+      expect(serialized).not.toContain('XLB-0"');
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs).toContainEqual({
+        disabled: false,
+        failed: 0,
+        machineId: machine.id,
+        message: null,
+        observed: 3,
+        ranAt: canonicalInstantFromDate(now),
+        sourceId: 'jira.issues',
+      });
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('records a disabled run without calling acli when jira.enabled is false', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-disabled-'));
+    try {
+      writeHomeConfig(home, { jira: { enabled: false, site: 'example.atlassian.net' } });
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        workFactProcessRunner: fakeJiraRunner(calls),
+      });
+      const result = await Effect.runPromise(
+        registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toMatchObject({ unavailable: { code: 'policy-disabled' } });
+      expect(calls).toEqual([]);
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs).toContainEqual(
+        expect.objectContaining({
+          disabled: true,
+          message: 'jira.enabled is false in the local config.',
+          sourceId: 'jira.issues',
+        }),
+      );
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('an acli that disappeared after detection records the run as disabled with the reason', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-vanished-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      writeClaudeDesktopJiraRegistry(home, now);
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        now: () => now,
+        workFactProcessRunner: (options) => {
+          calls.push(options);
+          return Effect.fail(new BoundedProcessError({ kind: 'unavailable', message: 'Bounded process unavailable' }));
+        },
+      });
+      await Effect.runPromise(
+        registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      const result = await Effect.runPromise(
+        registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      expect(calls).toHaveLength(1);
+      const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => latest.outcome)).toEqual(['disabled', 'disabled', 'disabled']);
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs).toContainEqual(
+        expect.objectContaining({
+          disabled: true,
+          failed: 0,
+          message: 'acli not installed',
+          observed: 0,
+          sourceId: 'jira.issues',
+        }),
+      );
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+});

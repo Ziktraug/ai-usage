@@ -6,6 +6,9 @@ import {
   CLAUDE_DESKTOP_SUGGESTION_RESOLUTIONS,
   CLAUDE_DESKTOP_TITLE_SOURCES,
   CLAUDE_DESKTOP_TURN_STATUSES,
+  JIRA_ISSUE_KEY_PATTERN,
+  JIRA_ISSUE_OBSERVATION_OUTCOMES,
+  JIRA_STATUS_CATEGORIES,
   PULL_REQUEST_CHECK_ROLLUPS,
   PULL_REQUEST_OBSERVATION_OUTCOMES,
   PULL_REQUEST_STATES,
@@ -267,6 +270,42 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
         untrackedCount,
       };
     }
+    case 'jira-issue': {
+      const commentCount = optionalCount(value.commentCount);
+      const key = requiredText(value.key, maxShortText);
+      const newCommentsSince = optionalCount(value.newCommentsSince);
+      const newestCommentAt = optionalInstant(value.newestCommentAt);
+      const outcome = oneOf(JIRA_ISSUE_OBSERVATION_OUTCOMES, value.outcome);
+      const status = optionalText(value.status, maxShortText);
+      const statusCategory = optionalOneOf(JIRA_STATUS_CATEGORIES, value.statusCategory);
+      const updatedAt = optionalInstant(value.updatedAt);
+      if (
+        commentCount === undefined ||
+        key === undefined ||
+        !JIRA_ISSUE_KEY_PATTERN.test(key) ||
+        newCommentsSince === undefined ||
+        newestCommentAt === undefined ||
+        outcome === undefined ||
+        status === undefined ||
+        statusCategory === undefined ||
+        updatedAt === undefined ||
+        value.url !== null
+      ) {
+        return;
+      }
+      return {
+        commentCount,
+        key,
+        kind: 'jira-issue',
+        newCommentsSince,
+        newestCommentAt,
+        outcome,
+        status,
+        statusCategory,
+        updatedAt,
+        url: null,
+      };
+    }
     case 'proposal': {
       const createdAt = optionalInstant(value.createdAt);
       const resolution = oneOf(['open', ...CLAUDE_DESKTOP_SUGGESTION_RESOLUTIONS] as const, value.resolution);
@@ -471,12 +510,20 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
       isRecord(value) &&
       isRecord(value.checkouts) &&
       isRecord(value.desktopSessions) &&
+      isRecord(value.jira) &&
       isRecord(value.pullRequests) &&
       isRecord(value.sessions)
     )
   ) {
     return;
   }
+  const jira = {
+    disabled: typeof value.jira.disabled === 'boolean' ? value.jira.disabled : undefined,
+    failed: count(value.jira.failed),
+    lastRunAt: optionalInstant(value.jira.lastRunAt),
+    observed: count(value.jira.observed),
+    reason: optionalText(value.jira.reason, maxDetailText),
+  };
   const checkouts = {
     failed: count(value.checkouts.failed),
     lastRunAt: optionalInstant(value.checkouts.lastRunAt),
@@ -505,6 +552,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     !(
       defined(Object.values(checkouts)) &&
       defined(Object.values(desktopSessions)) &&
+      defined(Object.values(jira)) &&
       defined(Object.values(pullRequests)) &&
       defined(Object.values(sessions))
     )
@@ -514,6 +562,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
   return {
     checkouts: checkouts as WorkAttentionCoverage['checkouts'],
     desktopSessions: desktopSessions as WorkAttentionCoverage['desktopSessions'],
+    jira: jira as WorkAttentionCoverage['jira'],
     pullRequests: pullRequests as WorkAttentionCoverage['pullRequests'],
     sessions: sessions as WorkAttentionCoverage['sessions'],
   };

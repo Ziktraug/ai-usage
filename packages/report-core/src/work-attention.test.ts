@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   parseCheckoutStatusObservation,
   parseClaudeDesktopSessionObservation,
+  parseJiraIssueObservation,
   parsePullRequestObservation,
   WORK_ATTENTION_BOUNDS,
 } from './work-attention';
@@ -144,6 +145,74 @@ describe('parsePullRequestObservation', () => {
     expect(parsePullRequestObservation({ ...observed, state: 'open' })).toBeNull();
     expect(parsePullRequestObservation({ ...observed, number: 0 })).toBeNull();
     expect(parsePullRequestObservation({ ...observed, outcome: 'ok' })).toBeNull();
+  });
+});
+
+describe('parseJiraIssueObservation', () => {
+  const observed = {
+    assigneeLabel: 'Alex',
+    commentCount: 3,
+    comments: [
+      { authorLabel: 'Sam', createdAt: '2026-10-21T18:00:00.000Z', excerpt: 'Looks fine, one question.', id: '1' },
+    ],
+    key: 'XLB-2090',
+    machineId: 'machine-a',
+    observedAt: '2026-10-21T19:05:00.000Z',
+    outcome: 'observed',
+    outcomeMessage: null,
+    parentKey: 'XLB-2000',
+    sprint: 'Sprint 42',
+    status: 'In Progress',
+    statusCategory: 'in-progress',
+    summary: 'Promo badge',
+    updatedAt: '2026-10-21T18:00:00.000Z',
+  };
+  test('accepts an observed issue and a failed read with null Jira fields', () => {
+    expect(parseJiraIssueObservation(observed)).toEqual(observed as never);
+    const failed = parseJiraIssueObservation({
+      ...observed,
+      assigneeLabel: null,
+      commentCount: null,
+      comments: [],
+      outcome: 'unauthenticated',
+      outcomeMessage: 'Jira rejected the credentials (HTTP 401)',
+      parentKey: null,
+      sprint: null,
+      status: null,
+      statusCategory: null,
+      summary: null,
+      updatedAt: null,
+    });
+    expect(failed?.outcome).toBe('unauthenticated');
+    expect(failed?.status).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, comments: undefined, parentKey: undefined })).toMatchObject({
+      comments: [],
+      parentKey: null,
+    });
+  });
+  test('rejects a malformed key, an unknown category, an address as a person, and over-bound comments', () => {
+    expect(parseJiraIssueObservation({ ...observed, key: 'xlb-2090' })).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, key: '2090' })).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, statusCategory: 'open' })).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, outcome: 'ok' })).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, parentKey: 'parent' })).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, assigneeLabel: 'alex@example.com' })).toBeNull();
+    expect(
+      parseJiraIssueObservation({
+        ...observed,
+        comments: [{ ...observed.comments[0], authorLabel: 'sam@example.com' }],
+      }),
+    ).toBeNull();
+    expect(
+      parseJiraIssueObservation({ ...observed, comments: [{ ...observed.comments[0], excerpt: 'x'.repeat(281) }] }),
+    ).toBeNull();
+    expect(
+      parseJiraIssueObservation({
+        ...observed,
+        comments: Array.from({ length: 11 }, (_value, index) => ({ ...observed.comments[0], id: String(index) })),
+      }),
+    ).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, commentCount: -1 })).toBeNull();
   });
 });
 

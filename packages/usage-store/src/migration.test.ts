@@ -46,6 +46,7 @@ const durableTables = [
   'executor_observations',
   'claude_desktop_collection_state',
   'claude_desktop_sessions',
+  'jira_issue_observations',
   'provider_quota_observations',
   'pull_request_observations',
   'served_report_revisions',

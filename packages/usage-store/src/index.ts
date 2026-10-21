@@ -61,7 +61,11 @@ import type {
 import type { SkillObservationRefusalCounts } from '@ai-usage/report-core/skill-observation-evidence';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
-import type { CheckoutStatusObservation, PullRequestObservation } from '@ai-usage/report-core/work-attention';
+import type {
+  CheckoutStatusObservation,
+  JiraIssueObservation,
+  PullRequestObservation,
+} from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
 import { claudeDesktopSessionSchemaSql, createClaudeDesktopSessionStore } from './claude-desktop-session-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
@@ -756,6 +760,12 @@ export interface ImportCheckoutStatusObservationsInput {
   readonly observations: readonly unknown[];
 }
 
+export interface ImportJiraIssueObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parseJiraIssueObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
 export interface WorkFactImportResult {
   readonly inserted: number;
   /** Rows removed by the per-identity retention after this batch. */
@@ -808,6 +818,25 @@ export interface LatestPullRequestObservations {
   readonly items: readonly {
     readonly latest: PullRequestObservation;
     readonly latestObserved: PullRequestObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
+export interface QueryLatestJiraIssueObservationsInput {
+  readonly dbPath: string;
+  /** Issue keys as Jira writes them (`XLB-2090`); no filter means every stored key. */
+  readonly keys?: readonly string[];
+  /** Distinct issues returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly machineId?: string;
+}
+
+/** Per issue: the latest observation of any outcome, and the latest successful one when it differs. */
+export interface LatestJiraIssueObservations {
+  readonly items: readonly {
+    readonly latest: JiraIssueObservation;
+    readonly latestObserved: JiraIssueObservation | null;
   }[];
   readonly skipped: number;
   readonly truncated: boolean;
@@ -4349,8 +4378,10 @@ export const { importExecutorObservations, queryLatestExecutorObservations } = c
 });
 export const {
   importCheckoutStatusObservations,
+  importJiraIssueObservations,
   importPullRequestObservations,
   queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryWorkFactRunStates,
   recordWorkFactRun,

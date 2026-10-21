@@ -9,6 +9,7 @@
     "./claude-desktop-sessions": "./src/claude-desktop-sessions.ts",
     "./codex-history": "./src/codex-history.ts",
     "./github-pull-requests": "./src/github-pull-requests.ts",
+    "./jira-issues": "./src/jira-issues.ts",
     "./collectors": "./src/collectors/index.ts",
     "./datasets": "./src/datasets.ts",
     "./executor-observations": "./src/executor-observations.ts",

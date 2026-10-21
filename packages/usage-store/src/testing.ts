@@ -2,6 +2,7 @@ export {
   createUsageStore,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importJiraIssueObservations,
   importLocalRows,
   importNormalizedDatasetItems,
   importPeerMergeBundle,

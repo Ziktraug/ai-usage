@@ -146,3 +146,37 @@ describe('parseWorkAttentionDataset', () => {
     expect(parseWorkAttentionDataset({ ...oversized, roots })).toBeUndefined();
   });
 });
+
+describe('parseWorkAttentionDataset: Jira facts and coverage', () => {
+  const withJira = () => {
+    const value = serialized() as { coverage: Record<string, unknown>; roots: Record<string, unknown>[] };
+    const root = value.roots.find((candidate) =>
+      (candidate.facts as { kind: string }[]).some((fact) => fact.kind === 'jira-issue'),
+    );
+    if (root === undefined) {
+      throw new Error('the synthetic dataset must carry a Jira fact');
+    }
+    return { root, value };
+  };
+  test('narrows the Jira fact and the jira coverage of the synthetic dataset', () => {
+    const parsed = parseWorkAttentionDataset(withJira().value);
+    expect(parsed?.coverage.jira).toEqual(dataset.coverage.jira);
+    expect(parsed?.roots.flatMap((root) => root.facts).some((fact) => fact.kind === 'jira-issue')).toBe(true);
+  });
+  test('refuses a Jira fact with a non-null url, a malformed key or an unknown category, and a coverage without jira', () => {
+    const corrupt = (patch: Record<string, unknown>) => {
+      const { root, value } = withJira();
+      const facts = (root.facts as Record<string, unknown>[]).map((fact) =>
+        fact.kind === 'jira-issue' ? { ...fact, ...patch } : fact,
+      );
+      return parseWorkAttentionDataset({ ...value, roots: value.roots.map((r) => (r === root ? { ...r, facts } : r)) });
+    };
+    expect(corrupt({ url: 'https://example.atlassian.net/browse/XLB-2090' })).toBeUndefined();
+    expect(corrupt({ key: 'xlb-2090' })).toBeUndefined();
+    expect(corrupt({ statusCategory: 'open' })).toBeUndefined();
+    expect(corrupt({ outcome: 'ok' })).toBeUndefined();
+    const { value } = withJira();
+    const { jira: _jira, ...coverage } = value.coverage;
+    expect(parseWorkAttentionDataset({ ...value, coverage })).toBeUndefined();
+  });
+});

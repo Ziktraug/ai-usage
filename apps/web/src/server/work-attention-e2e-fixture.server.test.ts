@@ -8,6 +8,9 @@ import type { WorkRoot } from '@ai-usage/report-core/work-attention';
 import { parseWorkAttentionOutput } from '@ai-usage/web-contract/work';
 import {
   readE2EWorkAttention,
+  WORK_ATTENTION_E2E_JIRA_REPLY_KEY,
+  WORK_ATTENTION_E2E_JIRA_TODO_KEY,
+  WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY,
   WORK_ATTENTION_E2E_MACHINE_ID,
   WORK_ATTENTION_E2E_NOW,
   WORK_ATTENTION_E2E_REPOSITORY,
@@ -53,7 +56,7 @@ describe('work attention e2e fixture', () => {
     // satisfied by the observation, not by the declaration.
     const merged = byId.get(ids.mergedBeforeRoot);
     expect(merged?.attention).toBe('none');
-    expect(kindsOf(merged)).toEqual(['request-satisfied-elsewhere', 'pull-request-merged']);
+    expect(kindsOf(merged)).toEqual(['request-satisfied-elsewhere', 'pull-request-merged', 'jira-status-differs']);
     expect(merged?.interpretations[0]?.uncertainty).toContain('observed on GitHub');
     expect(merged?.interpretations[1]?.text).toContain('merge does not prove deployment');
 
@@ -91,6 +94,68 @@ describe('work attention e2e fixture', () => {
       .map((root) => root.desktopSessionId)
       .sort();
     expect(withPullRequests).toEqual([ids.completedRoot, ids.mergedBeforeRoot, ids.satisfiedRoot].sort());
+  });
+
+  test('confronts three explicitly linked Jira tickets: a reply arrived, a status that differs, a refused read', async () => {
+    const result = await readFixture();
+    const byId = new Map(result.data.roots.map((root) => [root.desktopSessionId, root]));
+    const jiraFactsOf = (root: WorkRoot | undefined) =>
+      (root?.facts ?? []).flatMap((fact) => (fact.kind === 'jira-issue' ? [fact] : []));
+
+    // A reply six hours ago on the ticket the review-ready root wrote in a branch; the family
+    // was last active eleven hours ago: a request for the operator, without claiming it is unread.
+    const reviewReady = byId.get(ids.reviewReadyRoot);
+    expect(reviewReady?.attention).toBe('human-request');
+    expect(kindsOf(reviewReady)).toEqual(['review-ready', 'jira-reply-arrived']);
+    expect(jiraFactsOf(reviewReady)).toMatchObject([
+      {
+        key: WORK_ATTENTION_E2E_JIRA_REPLY_KEY,
+        newCommentsSince: 1,
+        newestCommentAt: hoursBefore(6),
+        outcome: 'observed',
+      },
+    ]);
+    expect(reviewReady?.interpretations[1]?.text).toBe(
+      `1 comment arrived on ${WORK_ATTENTION_E2E_JIRA_REPLY_KEY} after this session family's last activity (${hoursBefore(11)}); no resumption observed.`,
+    );
+    expect(reviewReady?.interpretations[1]?.uncertainty).toContain(
+      'You may have read them in Jira; this view cannot tell.',
+    );
+
+    // The ticket named in the merged child's pull request branch is still To Do: a difference, not an error.
+    const merged = byId.get(ids.mergedBeforeRoot);
+    expect(jiraFactsOf(merged)).toMatchObject([{ key: WORK_ATTENTION_E2E_JIRA_TODO_KEY, statusCategory: 'todo' }]);
+    expect(merged?.interpretations[2]?.text).toContain(`${WORK_ATTENTION_E2E_JIRA_TODO_KEY} is still To Do`);
+    expect(merged?.interpretations[2]?.text).toContain('fixture/ai-usage#90 is MERGED');
+    expect(merged?.interpretations[2]?.text).toContain('a different status is not automatically an error');
+
+    // Jira refused the read half an hour ago; the day-old success stays as the last known state.
+    const proposal = byId.get(ids.proposalRoot);
+    expect(proposal?.attention).toBe('optional-lead');
+    expect(jiraFactsOf(proposal).map((fact) => [fact.outcome, fact.status, fact.provenance.observedAt])).toEqual([
+      ['observed', 'In Progress', hoursBefore(26)],
+      ['unauthenticated', null, hoursBefore(0.5)],
+    ]);
+    const gaps = proposal?.interpretations.filter(({ kind }) => kind === 'coverage-gap') ?? [];
+    expect(gaps).toHaveLength(2);
+    expect(gaps[0]?.text).toContain(
+      `${WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY} was In Progress when last observed at ${hoursBefore(26)}`,
+    );
+    expect(gaps[1]?.uncertainty).toContain('sign in to Jira (acli jira auth login)');
+
+    // No other root carries a Jira fact, and no fact carries a browse address.
+    const withJira = [...byId.values()]
+      .filter((root) => jiraFactsOf(root).length > 0)
+      .map((root) => root.desktopSessionId);
+    expect(withJira.sort()).toEqual([ids.mergedBeforeRoot, ids.proposalRoot, ids.reviewReadyRoot].sort());
+    expect(result.data.roots.flatMap(jiraFactsOf).every((fact) => fact.url === null)).toBe(true);
+    expect(result.data.coverage.jira).toEqual({
+      disabled: false,
+      failed: 1,
+      lastRunAt: hoursBefore(0.5),
+      observed: 2,
+      reason: null,
+    });
   });
 
   test('reports the producers’ runs in coverage and keeps the registry’s private text out', async () => {

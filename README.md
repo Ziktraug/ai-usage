@@ -320,6 +320,42 @@ An invalid entry is reported on the Work view with its config path and reason
 and does not hide the other entries. Declarations are read, never written, by
 the app.
 
+### 8. Show Jira replies on explicitly linked tickets (optional)
+
+When the Atlassian CLI (`acli`) is installed and signed in, the engine reads,
+every 10 minutes, the Jira tickets your Claude Desktop sessions linked
+**explicitly**: a key written as a whole segment of a branch name
+(`feat/XLB-2090/slug`, `fix/XLB-2091/nav`, `XLB-2092`) in the session's
+written branches, its own branch, or the branch of a pull request it declared.
+Keys in titles, prompts or paths never link; `XLB-0` is ignored as the
+"no ticket" placeholder. The Work view then shows the ticket's dated status
+and, when comments arrived after the session family's last activity, "N new
+replies" as a request for you, without claiming you have not read them
+elsewhere. Only `acli jira workitem view` is ever run; nothing is written to
+Jira. The engine never reads or stores a Jira token: `acli`'s own sign-in
+answers, and a signed-out CLI is reported as `unauthenticated` with the last
+successful read kept beside it.
+
+```json
+{
+  "jira": {
+    "enabled": true,
+    "site": "example.atlassian.net"
+  }
+}
+```
+
+- `enabled` (optional, default on when `acli` is found): `false` records the
+  source as disabled instead of reading.
+- `site` (optional): the Jira site your keys belong to, kept for your record;
+  this version does not pass it to the CLI.
+
+The section lives in the home config only (`~/.config/ai-usage/config.json`);
+repository config cannot enable provider communication. The `acli` command
+shape is taken from the Atlassian CLI documentation and was not exercised on
+the machine this feature was built on (ADR 0054); an unexpected response is
+recorded as `invalid`, never as a fact.
+
 ## Output formats
 
 The default output is a terminal table with an analytics summary. The same report can be emitted in other formats:
