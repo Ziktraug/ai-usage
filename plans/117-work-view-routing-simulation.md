@@ -1,10 +1,10 @@
 # 117 — Work view and read-only review routing simulation
 
-Status: DONE for this loop's slice — Work view, routing simulation and distillation
-depublication integrated and verified outside the sandbox at `3e83e93d`. Routing is
-simulation only; the distillation residual deletion lot remains (see L3).
+Status: PARTIAL — the slice passed its supervisor gate at `3e83e93d`; PR #66's
+production Memory runtime check exposes retired URL leakage, corrected in fix batch 4
+with browser confirmation pending. Routing remains simulation only; see L3 residuals.
 Base: `1db32b86`, 2026-10-21.
-Assembled checkpoint: `3e83e93d` (all worker blocks and visual references committed by supervisor).
+Assembled checkpoint: `16a85cdc` (supervisor Memory fixture identity/navigation fixes included).
 Branch: `feat/work-view-routing-simulation`.
 Authorization: implementation and isolated verification; supervisor owns local commits.
 No real-store migration, harness execution, external publication or account changes.
@@ -16,8 +16,8 @@ No real-store migration, harness execution, external publication or account chan
 | L0 | DONE | Clean base, current reader/collector audit, baseline checks and L3 scope in local journal |
 | L1 | DONE | Work list, sources/limits, related sessions, detail links; mobile bar Work/Overview/Sessions/Analysis/Manage (Campaigns under Manage); navigation-layout E2E passes at 320/375/390px and the 768–1279px rail |
 | L2 | DONE | Pure routing tests and both preference choices pass in the supervisor's demo walkthrough; no executor |
-| L3 | DONE (depublication) | `0e914ce3`, `97deefce`, `b63d6f2f`; user entry points, commands, routes and runtime removed; internal residual deletion lot listed in `docs/session-distillation.md` and ADR 0049 |
-| Validation | DONE | Supervisor gate at `3e83e93d`, see "Final supervisor validation" below |
+| L3 | PARTIAL (follow-up) | Depublication integrated; retired Memory URL cleanup awaits runtime verification. Internal residual deletion lot remains in `docs/session-distillation.md` and ADR 0049 |
+| Validation | PARTIAL | Prior supervisor gate retained below; production Memory runtime 1/2 at `16a85cdc`; URL repair awaiting rerun, nonproduction restart unresolved |
 | Documentation | DONE | This plan, README row, local audit/journal, pending commits and result handoff |
 
 ## Scope and decisions
@@ -247,3 +247,48 @@ The supervisor retains ownership of the narrow PNG refresh; no reference is edit
 Not verified: the real-store Work view (no real store was opened, migrated or copied),
 live Mac collection, live multi-subscription routing (only demo/test candidates are
 qualified), and the optional bounded Codex review execution (not started).
+
+## PR #66 follow-up — fix batch 4
+
+Supervisor commit `16a85cdc` publishes the fixture's local machine identity after its
+empty import and waits for Knowledge navigation before reloading. Those changes fix
+the initial fixture crash and premature reload. Under CI's Bun 1.3.13 environment,
+`AI_USAGE_MEMORY_BROWSER_PRODUCTION=1 bun run test:e2e-memory` then reports one pass
+and one failure twice: a retired Memory address renders Knowledge while seven shell
+links still contain `analysis=`. The earlier readiness failure classification above
+belongs to its checkpoint, not this newly exposed depublication regression.
+
+Memory now canonicalizes its owned URL parameters with a 307 redirect before either
+document or client-data Memory loading. Retired analysis selectors are removed,
+unknown views become Knowledge, and review cursors/proposals are removed outside
+Review. Project scope, valid Review addressing and unrelated report filters remain;
+the shared report/Campaign navigation codecs are unchanged. The runtime E2E retains
+the no-retired-link assertion and adds canonical-address and Back/Forward checks.
+Unit tests exercise the actual route load, including redirect before Memory RPC and
+the existing hydration/deferred paths for valid URLs. The retired-URL test sweep found
+one browser visit, URL normalization coverage, retained textual provenance and negative
+endpoint assertions; no additional retired Session URL visit was found.
+
+Local checks pass: 44 Memory/route/navigation/ownership/dashboard tests (230
+assertions), `bun run check` and `bun run lint` (1502 files), direct Node Svelte
+check (zero errors/warnings), and E2E TypeScript. The route regression first failed
+on both document and data requests; it now passes without changing acquisition
+policies. A test fetch-double typing error found by Svelte check was corrected.
+Independent review passes 15 overlapping Memory tests (85 assertions), with no
+confirmed defect remaining. Actual browser/history and production outcomes remain
+unverified in this sandbox.
+
+The nonproduction SIGHUP restart timeout is not fixed: this fixture starts no control
+or SSE server, service disposal already calls Bun `stop(true)`, and kernel close is
+synchronous. Code inspection gives no clear small repair. Timestamp signal receipt
+and each restart await outside the sandbox to locate the stall before changing the
+lifecycle. No fixture or shared production shutdown behavior is changed in this batch.
+
+Supervisor reruns from repo root after rebuilding the production artifact with Bun
+1.3.13: `nix develop -c bun run build`, then
+`nix develop -c env AI_USAGE_MEMORY_BROWSER_PRODUCTION=1 bun run test:e2e-memory --workers=1 --retries=0`.
+Filter preservation: `nix develop -c bun run --cwd apps/web test:e2e e2e/navigation-layout.spec.ts --workers=1 --retries=0`.
+Secondary diagnostic: `nix develop -c bun run test:e2e-memory --workers=1 --retries=0`.
+All browser/socket commands remain unrun in the integrator sandbox; the supervisor
+owns PR publication and git writes. Local evidence is recorded in `RESULT.md` and
+`fix-batch-4-*.md` under the ignored work-loop journal directory.
