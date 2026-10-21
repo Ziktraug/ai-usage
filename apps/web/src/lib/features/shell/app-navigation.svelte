@@ -28,6 +28,7 @@
     reportDestinationUrl,
     shellManagementDestinations,
     shouldPreserveReportScroll,
+    workDestination,
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
   import { useShellNavigationOwner } from './navigation-owner-context';
@@ -145,7 +146,7 @@
     bottom: 0,
     zIndex: 50,
     display: { base: 'grid', md: 'none' },
-    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
     minH: '64px',
     px: '8px',
     pb: 'max(6px, env(safe-area-inset-bottom))',
@@ -153,7 +154,7 @@
     bg: 'surface',
     _print: { display: 'none' },
   });
-  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
+  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' });
   const mobileLink = css({
     display: 'grid',
     placeItems: 'center',
@@ -437,6 +438,15 @@
   <div class={productName}>
     <span aria-hidden="true" class={productMark}><ProductMark /></span><span class={productWordmark}>ai-usage</span>
   </div>
+  <nav aria-label="Work space" class={navigationGroup}>
+    <NavigationLink
+      active={page.url.pathname === workDestination.href}
+      class={linkClass(page.url.pathname === workDestination.href)}
+      href={workDestination.href}
+      icon={workDestination.icon}
+      label={workDestination.label}
+    />
+  </nav>
   <nav aria-label="Report views" class={navigationGroup}>
     <div class={navigationGroupLabel}>Report</div>
     {#each reportTabs as destination (destination.tab)}
@@ -483,6 +493,12 @@
   data-app-navigation="mobile"
   data-hydrated={navigationHydrated ? 'true' : 'false'}
 >
+  <NavigationLink
+    active={page.url.pathname === workDestination.href}
+    class={linkClass(page.url.pathname === workDestination.href, true)}
+    href={workDestination.href}
+    label={workDestination.label}
+  />
   {#each reportTabs as destination (destination.tab)}
     <NavigationLink
       active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}

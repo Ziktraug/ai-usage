@@ -9,9 +9,15 @@ import {
   reportDestinationHeading,
   reportDestinationUrl,
   shouldPreserveReportScroll,
+  workDestination,
 } from './navigation';
 
 describe('Svelte application shell navigation', () => {
+  test('publishes Work without changing report or management identities', () => {
+    expect(workDestination).toEqual({ href: '/work', icon: 'work', label: 'Work' });
+    expect(isManagementPath('/work')).toBe(false);
+    expect(shouldPreserveReportScroll(new URL('http://localhost/work'), new URL('http://localhost/'))).toBe(false);
+  });
   test('reuses the frozen dashboard codec and preserves unrelated URL state', () => {
     const current = new URL('http://127.0.0.1/?tab=sessions&machine=%5B%22m1%22%5D&foreign=kept#anchor');
     const breakdown = reportDestinationUrl(current, 'breakdown');

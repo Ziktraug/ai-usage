@@ -16,6 +16,7 @@ const RGB_COMPONENT_PATTERN = /[\d.]+/g;
 const ALL_FILTER_PATTERN = /^All —/;
 const MAX_PROJECT_EXPANSIONS = 12;
 const NAVIGATION_DESTINATIONS = [
+  'Work',
   'Overview',
   'Sessions',
   'Analysis',
@@ -26,6 +27,7 @@ const NAVIGATION_DESTINATIONS = [
   'Sources',
 ] as const;
 const routes = [
+  { heading: 'Work', path: '/work' },
   { heading: 'Usage overview', path: '/' },
   { heading: 'Memory', path: '/memory' },
   { heading: 'Projects', path: '/projects' },
@@ -182,7 +184,7 @@ for (const route of routes) {
     const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
     await expect(mobileNavigation).toBeVisible();
     await expect(desktopNavigation).toHaveCount(0);
-    for (const label of ['Overview', 'Sessions', 'Analysis']) {
+    for (const label of ['Work', 'Overview', 'Sessions', 'Analysis']) {
       await expect(mobileNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });

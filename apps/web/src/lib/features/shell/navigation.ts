@@ -23,7 +23,10 @@ export type ShellIconName =
   | 'sessions'
   | 'skills'
   | 'sources'
-  | 'sync';
+  | 'sync'
+  | 'work';
+
+export const workDestination = { href: '/work', icon: 'work', label: 'Work' } as const;
 
 export interface ShellDestination {
   readonly href: string;
