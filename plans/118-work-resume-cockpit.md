@@ -76,3 +76,20 @@ Integration: thirteen append conflicts between R and B resolved keeping both sid
 order `executors.capabilities`, `checkouts.status`, `github.pull-requests`). Verified at `60418a91`:
 `bun run typecheck` 58/58, `bun run lint` clean, source-control / migration / machine-config /
 source-adapters / package-boundary tests 115 pass. Broad test gates recorded below when complete.
+
+### 2026-10-22 01:05 — lot A integrated (`d060ae35`)
+
+Lot A (`b0eb57c0`…`5b0e425f`, ADR 0050): Claude Desktop session registry collector
+(`claude.desktop-sessions`, 60 s, runs never wake a publication), additive tables
+`claude_desktop_sessions` / `claude_desktop_collection_state`, bounded Session join on the
+current served revision, pure `interpretWorkRoot`, `queryWorkAttention` in report-data, the
+`work.attention` procedure, the representative native fixture (24 roots, 17 children) and the chain
+integration test. Worker evidence: package suites green, isolated read-only smoke over the real
+registry (70 files parsed, 0 unsupported, 16 blocked / 28 completed / 9 review_ready, 46 roots / 24
+children folded). Integration: twenty append conflicts resolved; two files whose functions and tests
+git had interleaved (`source-adapters.ts`, `migration.test.ts`) were rebuilt from the integrated
+version plus A's blocks. Verified at `d060ae35`: `bun run typecheck` 58/58, `bun run lint` clean,
+report-core / report-data / web-contract / usage-engine-runtime / usage-store store suites 782 pass,
+web rpc + work suites 275 pass. Still unverified on the integrated branch: the live `work.attention`
+path end to end in a browser (client seam not yet wired), the production e2e runtime with the Desktop
+fixture, the full `verify` gate.
