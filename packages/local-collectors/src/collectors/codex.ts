@@ -9,10 +9,13 @@ import { Effect } from 'effect';
 import { hasCodexHistory, readCodexUsageSessionsResult } from '../codex-history';
 import { sessionToUsageRow } from '../collected-session';
 import {
+  deferredUsageOwnershipWarning,
   metricValidationWarning,
   oversizedHistoryLineWarning,
   skillObservationTruncationWarning,
   skillObservationValidationWarning,
+  unlistedHistoryDirectoryWarning,
+  unreadableHistoryFileWarning,
 } from '../metric-validation';
 
 export interface CodexCollectionResult {
@@ -44,11 +47,27 @@ export const collectCodexResult = Effect.gen(function* () {
   const truncationWarning = observationsTruncated
     ? skillObservationTruncationWarning('codex', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;
+  // Rollouts the reader could not open or decompress: their sessions are
+  // missing from this pass, which has to be stated rather than inferred from
+  // an absent row. `readFailures` stays on the result as the typed list.
+  const unreadableWarning = unreadableHistoryFileWarning('codex', result.readFailures);
+  const unlistedWarning = result.archivedWalkFailure
+    ? unlistedHistoryDirectoryWarning('codex', result.archivedWalkFailure, 'the Codex archived sessions directory')
+    : null;
+  const deferredWarning = deferredUsageOwnershipWarning('codex', result.ownershipDeferredSessions);
   return {
     observationCompleteness: result.observationCompleteness,
     observations: result.observations,
     rows: result.sessions.map(sessionToUsageRow),
-    warnings: [warning, observationWarning, oversizedWarning, truncationWarning].filter((value) => value !== null),
+    warnings: [
+      warning,
+      observationWarning,
+      oversizedWarning,
+      truncationWarning,
+      unreadableWarning,
+      unlistedWarning,
+      deferredWarning,
+    ].filter((value) => value !== null),
   };
 });
 

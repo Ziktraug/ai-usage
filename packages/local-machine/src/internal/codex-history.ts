@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type {
   LocalSessionAnalysis,
@@ -26,7 +27,7 @@ import {
 } from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
-import { Effect } from 'effect';
+import { Effect, Either } from 'effect';
 import {
   CODEX_AVAILABLE_SKILLS_HEADING,
   type CodexSkillCatalogueEntry,
@@ -36,7 +37,7 @@ import {
   extractCodexSkillCatalogue,
   matchCodexSkillDocuments,
 } from '../codex-skill-observation';
-import type { LocalHistoryError } from '../errors';
+import { isMissingHistoryFileError, type LocalHistoryError } from '../errors';
 import {
   historyPath,
   LocalHistoryStorage,
@@ -169,12 +170,145 @@ export const hasCodexHistory: Effect.Effect<boolean, LocalHistoryError, LocalHis
   },
 );
 
-export const listCodexSessionFiles: Effect.Effect<string[], LocalHistoryError, LocalHistoryStorageService> = Effect.gen(
-  function* () {
+export const codexArchivedSessionsDir = (storage: LocalHistoryStorageService) =>
+  resolvePaths(storage).codex.archivedSessionsDir;
+
+const CODEX_ROLLOUT_SUFFIX = '.jsonl';
+const CODEX_ARCHIVE_SUFFIX = '.zst';
+
+/** Codex compresses finished rollouts in place: `<stem>.jsonl` becomes `<stem>.jsonl.zst`. */
+export const isCodexRolloutFileName = (fileName: string): boolean =>
+  fileName.endsWith(CODEX_ROLLOUT_SUFFIX) || fileName.endsWith(`${CODEX_ROLLOUT_SUFFIX}${CODEX_ARCHIVE_SUFFIX}`);
+
+/** The rollout name without its `.jsonl` or `.jsonl.zst` suffix. */
+export const codexRolloutStem = (fileName: string): string => {
+  const plain = fileName.endsWith(CODEX_ARCHIVE_SUFFIX) ? fileName.slice(0, -CODEX_ARCHIVE_SUFFIX.length) : fileName;
+  return plain.endsWith(CODEX_ROLLOUT_SUFFIX) ? plain.slice(0, -CODEX_ROLLOUT_SUFFIX.length) : plain;
+};
+
+/**
+ * Keep exactly one file per rollout stem. Codex compresses a rollout by
+ * writing `<stem>.jsonl.zst` beside `<stem>.jsonl` and removing the source
+ * last, skipping any rollout that changes meanwhile, so a plain file is the
+ * writer's authoritative form: identical to its archive with the removal
+ * pending, or newer when it was rehydrated for a resume, while the archive
+ * beside a plain file may still be mid-write. Archiving a thread moves its
+ * file into the flat `archived_sessions` directory, so the copy under the
+ * active sessions directory is the live one. Remaining ties fall to path
+ * order, and the kept paths are returned sorted.
+ */
+export const resolveCodexRolloutFiles = (files: readonly string[], sessionsDir: string): string[] => {
+  const activePrefix = sessionsDir.endsWith(path.sep) ? sessionsDir : `${sessionsDir}${path.sep}`;
+  const rank = (filePath: string): number =>
+    (filePath.endsWith(CODEX_ARCHIVE_SUFFIX) ? 2 : 0) + (filePath.startsWith(activePrefix) ? 0 : 1);
+  const keptByStem = new Map<string, string>();
+  for (const filePath of [...files].sort()) {
+    const stem = codexRolloutStem(path.basename(filePath));
+    const kept = keptByStem.get(stem);
+    if (kept === undefined || rank(filePath) < rank(kept)) {
+      keptByStem.set(stem, filePath);
+    }
+  }
+  return [...keptByStem.values()].sort();
+};
+
+export interface CodexRolloutFileList {
+  /**
+   * Why `archived_sessions` contributed no files: its walk failed (a symlink,
+   * not a directory, unreadable, removed mid-walk, or over a scan budget).
+   * The archived directory is secondary, so this costs its rollouts rather than
+   * the source; a failed walk of the active directory still fails the list.
+   */
+  readonly archivedWalkFailure: LocalHistoryError | null;
+  /** One file per rollout stem, as `resolveCodexRolloutFiles` keeps them. */
+  readonly files: string[];
+}
+
+export const listCodexRolloutFiles: Effect.Effect<CodexRolloutFileList, LocalHistoryError, LocalHistoryStorageService> =
+  Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
-    return yield* walkFiles(storage, codexSessionsDir(storage), (fileName) => fileName.endsWith('.jsonl'));
-  },
-);
+    const sessionsDir = codexSessionsDir(storage);
+    const active = yield* walkFiles(storage, sessionsDir, isCodexRolloutFileName);
+    const archived = yield* Effect.either(
+      walkFiles(storage, codexArchivedSessionsDir(storage), isCodexRolloutFileName),
+    );
+    return Either.isRight(archived)
+      ? { files: resolveCodexRolloutFiles([...active, ...archived.right], sessionsDir), archivedWalkFailure: null }
+      : { files: resolveCodexRolloutFiles(active, sessionsDir), archivedWalkFailure: archived.left };
+  });
+
+/** The rollout list for readers without a warning channel: a failed archived walk fails it. */
+export const listCodexSessionFiles: Effect.Effect<string[], LocalHistoryError, LocalHistoryStorageService> =
+  listCodexRolloutFiles.pipe(
+    Effect.flatMap(({ archivedWalkFailure, files }) =>
+      archivedWalkFailure ? Effect.fail(archivedWalkFailure) : Effect.succeed(files),
+    ),
+  );
+
+/**
+ * Where a listed rollout can have gone before it was read: Codex compresses a
+ * plain rollout to `<path>.zst` and then removes the plain file, and archiving
+ * a thread moves its file, plain or compressed, into `archived_sessions`.
+ */
+export const codexRolloutFallbackPaths = (filePath: string, archivedSessionsDir: string): string[] => {
+  const fileName = path.basename(filePath);
+  const plainName = `${codexRolloutStem(fileName)}${CODEX_ROLLOUT_SUFFIX}`;
+  const fallbacks = fileName.endsWith(CODEX_ARCHIVE_SUFFIX) ? [] : [`${filePath}${CODEX_ARCHIVE_SUFFIX}`];
+  if (path.dirname(filePath) !== archivedSessionsDir) {
+    fallbacks.push(
+      path.join(archivedSessionsDir, plainName),
+      path.join(archivedSessionsDir, `${plainName}${CODEX_ARCHIVE_SUFFIX}`),
+    );
+  }
+  return fallbacks;
+};
+
+/**
+ * Read a listed rollout, following it to its next form when it vanished
+ * between the listing and the read (`ENOENT`, including after its lines were
+ * visited). `read` runs once per attempt and must start fresh state each time,
+ * since an attempt that failed may already have visited lines. Any other
+ * failure, or the rollout missing in every form, fails with the first error.
+ */
+export const readCodexRolloutWithFallback = <A>(
+  storage: LocalHistoryStorageService,
+  filePath: string,
+  read: (candidatePath: string) => Effect.Effect<A, LocalHistoryError>,
+): Effect.Effect<{ readonly path: string; readonly value: A }, LocalHistoryError> =>
+  Effect.gen(function* () {
+    const fallbacks = codexRolloutFallbackPaths(filePath, codexArchivedSessionsDir(storage));
+    const first = yield* Effect.either(read(filePath));
+    if (Either.isRight(first)) {
+      return { path: filePath, value: first.right };
+    }
+    if (!isMissingHistoryFileError(first.left)) {
+      return yield* Effect.fail(first.left);
+    }
+    for (const candidatePath of fallbacks) {
+      const attempt = yield* Effect.either(read(candidatePath));
+      if (Either.isRight(attempt)) {
+        return { path: candidatePath, value: attempt.right };
+      }
+      if (!isMissingHistoryFileError(attempt.left)) {
+        return yield* Effect.fail(attempt.left);
+      }
+    }
+    return yield* Effect.fail(first.left);
+  });
+
+/**
+ * Session ids a rollout file name can carry: the whole stem, then every suffix
+ * after a `-` (`rollout-<timestamp>-<id>` names the id last), most specific
+ * first.
+ */
+export const codexRolloutSessionIdCandidates = (fileName: string): string[] => {
+  const stem = codexRolloutStem(fileName);
+  const candidates = [stem];
+  for (let separator = stem.indexOf('-'); separator >= 0; separator = stem.indexOf('-', separator + 1)) {
+    candidates.push(stem.slice(separator + 1));
+  }
+  return candidates;
+};
 
 export const codexStateDbCandidates = (storage: LocalHistoryStorageService) => [
   historyPath(storage, '.codex', 'state_5.sqlite'),
@@ -1874,6 +2008,40 @@ export const isCodexUsageOwnedByRoot = (
   const rootId = resolveCodexRootId(session, sessionsById);
   const root = rootId ? sessionsById.get(rootId) : undefined;
   return Boolean(rootId && root && root.id !== session.id && root.hasTokenUsage && root.maxTotal >= session.maxTotal);
+};
+
+/**
+ * Whether `isCodexUsageOwnedByRoot` cannot be decided this pass: the session
+ * meets every condition of a child whose totals the root owns, but its lineage
+ * stops at an ancestor that is missing because its rollout could not be read,
+ * so the root's totals are unknown. Deciding anyway would flip a root-owned
+ * child into a session that owns its usage until the ancestor is readable.
+ */
+export const isCodexUsageOwnershipUndecided = (
+  session: CodexSession,
+  sessionsById: ReadonlyMap<string, CodexSession>,
+  isUnreadableSession: (sessionId: string) => boolean,
+): boolean => {
+  if (!(session.id && session.parent && session.observedPriorTokenUsage)) {
+    return false;
+  }
+  if (session.phases.some((phase) => phaseTokenTotal(phase) > 0)) {
+    return false;
+  }
+  const seen = new Set<string>([session.id]);
+  let current = session;
+  for (let depth = 0; current.parent && depth < CODEX_LINEAGE_MAX_DEPTH; depth++) {
+    if (seen.has(current.parent)) {
+      return false;
+    }
+    const parent = sessionsById.get(current.parent);
+    if (!parent) {
+      return isUnreadableSession(current.parent);
+    }
+    seen.add(current.parent);
+    current = parent;
+  }
+  return false;
 };
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -1,4 +1,8 @@
-import type { LocalHistoryWarning } from '@ai-usage/local-machine/errors';
+import {
+  formatLocalHistoryError,
+  type LocalHistoryError,
+  type LocalHistoryWarning,
+} from '@ai-usage/local-machine/errors';
 
 export * from '@ai-usage/local-machine/metric-validation';
 
@@ -51,6 +55,60 @@ export const oversizedHistoryLineWarning = (harness: string, oversizedLines: num
         operation: 'oversizedHistoryLine',
         message: `Dropped ${oversizedLines} oversized ${harness} history record(s); the affected sessions are lower bounds.`,
         rejectedRecords: oversizedLines,
+      }
+    : null;
+
+/**
+ * History files the reader could not open or decompress, so the sessions they
+ * hold are missing from this pass. One warning carries the count because the
+ * engine's sanitizer keeps only the operation code and `rejectedRecords`: one
+ * warning per file would collapse into identical codes cut at its cap. The
+ * first failure names its path for local diagnosis.
+ */
+export const unreadableHistoryFileWarning = (
+  harness: string,
+  failures: readonly LocalHistoryError[],
+): LocalHistoryWarning | null => {
+  const first = failures[0];
+  if (!first) {
+    return null;
+  }
+  return {
+    harness,
+    operation: 'unreadableHistoryFile',
+    message: `Skipped ${failures.length} ${harness} history file(s) that could not be read; their sessions are missing from this pass. First: ${formatLocalHistoryError(first)}`,
+    rejectedRecords: failures.length,
+    ...(first.path ? { path: first.path } : {}),
+  };
+};
+
+/**
+ * A secondary history directory whose walk failed, so the sessions under it
+ * are missing from this pass while the rest of the source was collected. Its
+ * file count is unknown, so no `rejectedRecords` is claimed.
+ */
+export const unlistedHistoryDirectoryWarning = (
+  harness: string,
+  failure: LocalHistoryError,
+  description: string,
+): LocalHistoryWarning => ({
+  harness,
+  operation: 'unlistedHistoryDirectory',
+  message: `Could not list ${description}; the ${harness} sessions there are missing from this pass: ${formatLocalHistoryError(failure)}`,
+  ...(failure.path ? { path: failure.path } : {}),
+});
+
+/**
+ * Child sessions held back from a pass because whether their usage belongs to
+ * their root depends on an ancestor whose history was not read.
+ */
+export const deferredUsageOwnershipWarning = (harness: string, sessions: number): LocalHistoryWarning | null =>
+  sessions > 0
+    ? {
+        harness,
+        operation: 'deferredUsageOwnership',
+        message: `Held back ${sessions} ${harness} child session(s) whose usage ownership depends on a parent history file that could not be read; they are decided again on the next pass.`,
+        rejectedRecords: sessions,
       }
     : null;
 

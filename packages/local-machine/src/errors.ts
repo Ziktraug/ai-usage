@@ -20,6 +20,16 @@ export interface LocalHistoryWarning {
   readonly sql?: string;
 }
 
+/**
+ * The read failed because the path no longer exists (`ENOENT`): the file was
+ * listed and then removed or moved, as Codex does when it compresses or
+ * archives a rollout, rather than being unreadable where it stands.
+ */
+export const isMissingHistoryFileError = (error: LocalHistoryError): boolean => {
+  const { cause } = error;
+  return typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === 'ENOENT';
+};
+
 const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 export const formatLocalHistoryError = (error: LocalHistoryError) => {

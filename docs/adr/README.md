@@ -68,6 +68,7 @@ publication settle window therefore takes 0048.
 | [0044](0044-local-checkout-observation.md) | Observe local Checkouts and bind them to Projects without review | 2026-10-07 | Accepted; amends 0024, 0042 |
 | [0045](0045-desktop-quota-feed-through-the-cli.md) | Desktop consumers read quota through the CLI JSON feed | 2026-10-12 | Accepted; extends 0009 |
 | [0046](0046-hourly-fleet-freshness-heartbeat.md) | Row freshness heartbeats are recorded at hour granularity | 2026-10-17 | Accepted; extends 0009 |
+| [0047](0047-codex-compressed-rollout-discovery.md) | Discover Codex rollouts in their compressed and archived forms | 2026-10-17 | Accepted; extends 0009, 0016 |
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions

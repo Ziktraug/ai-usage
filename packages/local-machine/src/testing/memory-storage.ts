@@ -1,10 +1,12 @@
 import path from 'node:path';
 import { LocalHistoryError } from '@ai-usage/local-machine/errors';
-import type {
-  LocalHistoryDatabase,
-  LocalHistoryDirEntry,
-  LocalHistorySqlParameter,
-  LocalHistoryStorage,
+import {
+  decompressHistoryArchive,
+  HistoryArchiveError,
+  type LocalHistoryDatabase,
+  type LocalHistoryDirEntry,
+  type LocalHistorySqlParameter,
+  type LocalHistoryStorage,
 } from '@ai-usage/local-machine/local-history';
 import { Effect } from 'effect';
 
@@ -35,9 +37,15 @@ interface TestDatabaseRowsMatcher extends TestSqlMatcher {
   rows: Record<string, unknown>[];
 }
 
+const fixtureByteLength = (content: string | Uint8Array): number =>
+  typeof content === 'string' ? Buffer.byteLength(content, 'utf8') : content.byteLength;
+
+const decodeFixture = (content: string | Uint8Array): string =>
+  typeof content === 'string' ? content : new TextDecoder('utf-8', { fatal: true }).decode(content);
+
 export class TestMemoryStorage implements LocalHistoryStorage {
   readonly home: string;
-  private readonly files = new Map<string, string>();
+  private readonly files = new Map<string, string | Uint8Array>();
   private readonly databases = new Map<string, Map<string, Record<string, unknown>[]>>();
   private readonly databaseRowsMatchers = new Map<string, TestDatabaseRowsMatcher[]>();
 
@@ -47,6 +55,16 @@ export class TestMemoryStorage implements LocalHistoryStorage {
 
   writeText(relativePath: string, content: string) {
     this.files.set(path.join(this.home, relativePath), content);
+  }
+
+  /** Remove a fixture, as a harness does when it compresses or moves a file after a scan listed it. */
+  remove(relativePath: string) {
+    this.files.delete(path.join(this.home, relativePath));
+  }
+
+  /** A binary fixture, such as a zstd archive of newline-delimited text. */
+  writeBytes(relativePath: string, bytes: Uint8Array) {
+    this.files.set(path.join(this.home, relativePath), bytes);
   }
 
   writeDatabaseRows(
@@ -91,12 +109,17 @@ export class TestMemoryStorage implements LocalHistoryStorage {
         }),
       );
     }
-    if (Buffer.byteLength(content, 'utf8') > maxBytes) {
+    if (fixtureByteLength(content) > maxBytes) {
       return Effect.fail(
         new LocalHistoryError({ operation: 'readText', path: filePath, cause: new Error('Fixture exceeds limit') }),
       );
     }
-    return Effect.succeed(content);
+    // Like the real reader, the text read never decompresses: a byte fixture
+    // is decoded as it is stored.
+    return Effect.try({
+      try: () => decodeFixture(content),
+      catch: (cause) => new LocalHistoryError({ operation: 'readText', path: filePath, cause }),
+    });
   }
 
   readConfigText(filePath: string, maxBytes?: number) {
@@ -110,17 +133,51 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     visit: (line: string) => void,
     limits: { maxBytes?: number; maxLineBytes?: number } = {},
   ) {
-    const content = this.files.get(filePath);
-    if (content == null) {
+    const stored = this.files.get(filePath);
+    if (stored == null) {
       return Effect.fail(
-        new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Missing fixture file') }),
+        // Coded like the real reader's failure, so a vanished file is told
+        // apart from an unreadable one.
+        new LocalHistoryError({
+          operation: 'readLines',
+          path: filePath,
+          cause: Object.assign(new Error(`Missing fixture file: ${filePath}`), { code: 'ENOENT' }),
+        }),
       );
+    }
+    // Mirrors the real reader: a `.zst` path is a zstd archive of the text
+    // read through the reader's own frame walk, capped decompression and
+    // length check, so a fixture fails exactly as a file would: the limits
+    // apply to the compressed and the declared bytes, a malformed, truncated
+    // or corrupt archive is its own typed failure, and a budget breach is a
+    // plain read error.
+    let bytes: string | Uint8Array = stored;
+    if (filePath.endsWith('.zst')) {
+      const archive = typeof stored === 'string' ? Buffer.from(stored, 'utf8') : Buffer.from(stored);
+      const maxBytes = limits.maxBytes ?? Number.POSITIVE_INFINITY;
+      if (archive.byteLength > maxBytes) {
+        return Effect.fail(
+          new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Fixture exceeds limit') }),
+        );
+      }
+      try {
+        bytes = decompressHistoryArchive(archive, filePath, maxBytes);
+      } catch (cause) {
+        return Effect.fail(
+          new LocalHistoryError({
+            operation: cause instanceof HistoryArchiveError ? 'readLines.decompress' : 'readLines',
+            path: filePath,
+            cause,
+          }),
+        );
+      }
     }
     return Effect.try({
       try: () => {
-        if (Buffer.byteLength(content, 'utf8') > (limits.maxBytes ?? Number.POSITIVE_INFINITY)) {
+        if (fixtureByteLength(bytes) > (limits.maxBytes ?? Number.POSITIVE_INFINITY)) {
           throw new Error('Fixture exceeds limit');
         }
+        const content = decodeFixture(bytes);
         let lines = 0;
         let oversizedLines = 0;
         for (const line of content.split(LINE_SEPARATOR)) {
@@ -159,7 +216,7 @@ export class TestMemoryStorage implements LocalHistoryStorage {
           name,
           isDirectory,
           isRegularFile: !isDirectory,
-          size: isDirectory ? 0 : Buffer.byteLength(this.files.get(path.join(dirPath, name)) ?? '', 'utf8'),
+          size: isDirectory ? 0 : fixtureByteLength(this.files.get(path.join(dirPath, name)) ?? ''),
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     );

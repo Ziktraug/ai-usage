@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LocalHistoryError } from '@ai-usage/local-machine/errors';
+import { isMissingHistoryFileError, type LocalHistoryError } from '@ai-usage/local-machine/errors';
 import {
   CODEX_DETAIL_MAX_PHASES,
   type CodexSession,
@@ -9,17 +9,21 @@ import {
   type CodexThreadMetadata,
   type CodexThreadMetadataRow,
   type CodexThreadSpawnEdgeRow,
+  codexArchivedSessionsDir,
   codexModelSegments,
   codexParentsFromEdges,
+  codexRolloutSessionIdCandidates,
   codexStateDbCandidates,
   codexThreadMetadataFromRow,
   createCodexSessionParser,
   isCodexUsageOwnedByRoot,
+  isCodexUsageOwnershipUndecided,
   isRecord,
+  listCodexRolloutFiles,
   codexSessionsDir as localCodexSessionsDir,
   mergeMetadata,
   nonEmpty,
-  listCodexSessionFiles as rawCodexSessionFiles,
+  readCodexRolloutWithFallback,
   THREAD_METADATA_SQL,
 } from '@ai-usage/local-machine/internal/codex-history';
 import {
@@ -38,7 +42,7 @@ import {
 } from '@ai-usage/report-core/skill-observation';
 import type { SessionOrigin } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
-import { Effect } from 'effect';
+import { Effect, Either } from 'effect';
 import type { CollectedSession } from './collected-session';
 import { reviveSkillObservationsResult } from './collector-cache';
 import { parseNonNegativeSafeInteger } from './metric-validation';
@@ -52,8 +56,8 @@ export {
 
 const listCodexSessionFilesForCollection = withPerfSpan(
   'aiUsage.collect.codex.listSessionFiles',
-  rawCodexSessionFiles,
-  (files) => ({ files: files.length }),
+  listCodexRolloutFiles,
+  (list) => ({ archivedWalkFailed: list.archivedWalkFailure !== null, files: list.files.length }),
 );
 
 const isCodexSubagentKind = (value: unknown): value is CodexSubagentKind =>
@@ -88,6 +92,8 @@ interface RawCodexRateLimitSnapshot {
 }
 
 interface CodexSessionReadResult {
+  /** Why `archived_sessions` was not listed this pass, when its walk failed. */
+  archivedWalkFailure: LocalHistoryError | null;
   bytes: number;
   cacheHits: number;
   cacheMisses: number;
@@ -99,11 +105,14 @@ interface CodexSessionReadResult {
   oversizedLines: number;
   parsedLines: number;
   parseMs: number;
+  /** One entry per rollout whose read failed; the file was skipped, not cached. */
+  readFailures: LocalHistoryError[];
   readMs: number;
   rejectedMetricRecords: number;
   rejectedSkillObservationRecords: number;
   sessions: CodexSession[];
   skippedLines: number;
+  unreadableFiles: number;
 }
 
 interface CodexSessionFileStat {
@@ -157,6 +166,15 @@ interface SqliteDatabase {
 // and native task evidence instead of retaining inherited cumulative snapshots.
 // An unchanged rollout must also recover lost generations and partial status.
 const CODEX_SESSION_CACHE_VERSION = 25;
+
+// `Effect.yieldNow()` re-schedules within the Effect runtime but never reaches
+// the macrotask queue, so a cold pass over thousands of rollouts (each one a
+// synchronous decompression and parse) would still starve timers and I/O
+// callbacks; `Effect.sleep(0)` does reach it. The slice counts accumulated
+// read-and-parse time, not wall-clock since the last sleep, so cache hits, GC
+// pauses and a loaded runner cannot push a small `Effect.runSync` fixture over
+// it, while a cold pass still yields regularly.
+const CODEX_PARSE_YIELD_SLICE_MS = 50;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child
@@ -483,6 +501,9 @@ const writeCodexSessionCache = (
   db: SqliteDatabase,
   files: string[],
   parsed: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[],
+  // Entries under a directory this pass could not list are kept: their files
+  // are unseen, not gone, so the next pass that lists them hits the cache.
+  unlistedDirectory: string | null,
 ) => {
   const now = new Date().toISOString();
   const upsert = db.query(`
@@ -496,8 +517,12 @@ const writeCodexSessionCache = (
       updated_at = excluded.updated_at
   `);
   const deleteStale = db.query(
-    'DELETE FROM codex_session_cache WHERE version != ? OR file_path NOT IN (SELECT value FROM json_each(?))',
+    `DELETE FROM codex_session_cache
+     WHERE version != ?
+        OR (file_path NOT IN (SELECT value FROM json_each(?))
+            AND (? IS NULL OR substr(file_path, 1, length(?)) != ?))`,
   );
+  const unlistedPrefix = unlistedDirectory === null ? null : `${unlistedDirectory}${path.sep}`;
 
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -511,7 +536,7 @@ const writeCodexSessionCache = (
         now,
       );
     }
-    deleteStale.run(CODEX_SESSION_CACHE_VERSION, JSON.stringify(files));
+    deleteStale.run(CODEX_SESSION_CACHE_VERSION, JSON.stringify(files), unlistedPrefix, unlistedPrefix, unlistedPrefix);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -565,7 +590,16 @@ const readCodexSessions = (
       let rejectedSkillObservationRecords = 0;
       let skippedLines = 0;
       let oversizedLines = 0;
-      const files = yield* listCodexSessionFilesForCollection;
+      let unreadableFiles = 0;
+      const readFailures: LocalHistoryError[] = [];
+      const unreadablePaths = new Set<string>();
+      const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
+      if (archivedWalkFailure) {
+        // The archived rollouts are missing from this pass, so like an
+        // unreadable file each skill tier weakens by one source.
+        observationCompleteness.exposure.rejected += 1;
+        observationCompleteness.invocation.rejected += 1;
+      }
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
       const mergeObservationCompleteness = (value: SkillObservationCollectionCompleteness): void => {
         observationCompleteness.exposure.rejected += value.exposure.rejected;
@@ -588,6 +622,7 @@ const readCodexSessions = (
         }),
         (sessionCache) =>
           Effect.gen(function* () {
+            let sliceWorkMs = 0;
             for (const filePath of files) {
               const stat = sessionCache ? codexFileStat(filePath) : null;
               const cached = stat ? sessionCache?.entries.get(filePath) : null;
@@ -607,37 +642,78 @@ const readCodexSessions = (
 
               cacheMisses++;
               const readStartedAt = Date.now();
-              const parser = createCodexSessionParser();
-              const readResult = yield* storage.readLines(filePath, parser.visit);
+              // Codex may compress or archive the rollout after it was listed;
+              // the read follows it to its next form with a fresh parser.
+              const read = yield* Effect.either(
+                readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
+                  const parser = createCodexSessionParser();
+                  return storage
+                    .readLines(candidatePath, parser.visit)
+                    .pipe(Effect.map((result) => ({ parser, result })));
+                }),
+              );
               readMs += Date.now() - readStartedAt;
-              bytes += readResult.bytes;
+              if (Either.isLeft(read)) {
+                // A rollout that cannot be read (a corrupt or truncated
+                // archive, a file that vanished mid-scan) costs itself, not
+                // the collection source: it is reported, left out of the
+                // cache so the next scan retries it, and the scan goes on.
+                unreadableFiles++;
+                readFailures.push(read.left);
+                unreadablePaths.add(filePath);
+                // The rollout is missing evidence for both skill tiers, so each
+                // bound weakens by one source; persisting them as complete
+                // would assert an absence this pass could not observe.
+                observationCompleteness.exposure.rejected += 1;
+                observationCompleteness.invocation.rejected += 1;
+              } else {
+                const { parser, result: readResult } = read.right.value;
+                bytes += readResult.bytes;
 
-              const parsed = parser.finish();
-              // The reader dropped these before the parser could see them, so
-              // the count is attached here rather than produced by `finish`.
-              parsed.session.oversizedLines = readResult.oversizedLines;
-              oversizedLines += readResult.oversizedLines;
-              lines += parsed.lines;
-              parseMs += parsed.parseMs;
-              parsedLines += parsed.parsedLines;
-              rejectedMetricRecords += parsed.rejectedMetricRecords;
-              rejectedSkillObservationRecords += parsed.session.rejectedSkillObservationRecords;
-              skippedLines += parsed.skippedLines;
-              const session = parsed.session;
-              mergeObservationCompleteness(session.skillObservationCompleteness);
-              if (stat) {
-                parsedForCache.push({ filePath, session: cloneCodexSession(session), stat });
+                const parsed = parser.finish();
+                // The reader dropped these before the parser could see them, so
+                // the count is attached here rather than produced by `finish`.
+                parsed.session.oversizedLines = readResult.oversizedLines;
+                oversizedLines += readResult.oversizedLines;
+                lines += parsed.lines;
+                parseMs += parsed.parseMs;
+                parsedLines += parsed.parsedLines;
+                rejectedMetricRecords += parsed.rejectedMetricRecords;
+                rejectedSkillObservationRecords += parsed.session.rejectedSkillObservationRecords;
+                skippedLines += parsed.skippedLines;
+                const session = parsed.session;
+                mergeObservationCompleteness(session.skillObservationCompleteness);
+                // A rollout read under another path is cached under that path
+                // by the next pass, which lists it there.
+                if (stat && read.right.path === filePath) {
+                  parsedForCache.push({ filePath, session: cloneCodexSession(session), stat });
+                }
+                mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
+                if (session.id || session.start) {
+                  sessions.push(session);
+                }
               }
-              mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
-              if (session.id || session.start) {
-                sessions.push(session);
+              sliceWorkMs += Date.now() - readStartedAt;
+              if (sliceWorkMs >= CODEX_PARSE_YIELD_SLICE_MS) {
+                yield* Effect.sleep(0);
+                sliceWorkMs = 0;
               }
             }
 
             if (sessionCache) {
               const cacheWriteStartedAt = Date.now();
+              // A file that failed to read keeps no entry, not even one from an
+              // earlier scan, so a stale parse can never stand in for it.
+              const retainedFiles =
+                unreadablePaths.size === 0 ? files : files.filter((filePath) => !unreadablePaths.has(filePath));
               yield* Effect.try({
-                try: () => writeCodexSessionCache(sessionCache.db, files, parsedForCache),
+                try: () =>
+                  writeCodexSessionCache(
+                    sessionCache.db,
+                    retainedFiles,
+                    parsedForCache,
+                    archivedWalkFailure ? codexArchivedSessionsDir(storage) : null,
+                  ),
                 catch: (error) => error,
               }).pipe(Effect.ignore);
               cacheWriteMs = Date.now() - cacheWriteStartedAt;
@@ -654,6 +730,7 @@ const readCodexSessions = (
 
       sessions.sort((a, b) => (a.start?.getTime() ?? 0) - (b.start?.getTime() ?? 0));
       return {
+        archivedWalkFailure,
         bytes,
         cacheHits,
         cacheMisses,
@@ -665,11 +742,13 @@ const readCodexSessions = (
         oversizedLines,
         parseMs,
         parsedLines,
+        readFailures,
         readMs,
         rejectedMetricRecords,
         rejectedSkillObservationRecords,
         sessions,
         skippedLines,
+        unreadableFiles,
       };
     }),
     (result) => ({
@@ -688,10 +767,17 @@ const readCodexSessions = (
       rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
       sessions: result.sessions.length,
       skippedLines: result.skippedLines,
+      unreadableFiles: result.unreadableFiles,
     }),
   );
 
 export interface CodexUsageSessionsResult {
+  /**
+   * Why `archived_sessions` was not listed this pass. Its rollouts are missing
+   * from the pass and retried on the next; the collector surfaces it as a
+   * `codex` warning.
+   */
+  archivedWalkFailure: LocalHistoryError | null;
   metricWarningContext: { affectedSessions: number; lastObservedAt?: string };
   observationCompleteness: SkillObservationCollectionCompleteness;
   /**
@@ -702,6 +788,19 @@ export interface CodexUsageSessionsResult {
   observations: SkillObservation[];
   /** Records dropped by the reader for exceeding the per-line byte bound. */
   oversizedLines: number;
+  /**
+   * Child sessions left out of this pass because whether their root owns their
+   * usage depends on an ancestor whose rollout was not read. Importing them
+   * would overwrite a root-owned row with a session that owns its usage; they
+   * are re-decided on the next pass that reads the ancestor.
+   */
+  ownershipDeferredSessions: number;
+  /**
+   * Rollouts whose read failed (for example an archive that no longer
+   * decompresses). Each is skipped for this pass and retried on the next; the
+   * collector surfaces every one as a `codex` warning.
+   */
+  readFailures: readonly LocalHistoryError[];
   rejectedMetricRecords: number;
   rejectedSkillObservationRecords: number;
   sessions: CodexCollectedSession[];
@@ -716,8 +815,10 @@ export const readCodexUsageSessionsResult: Effect.Effect<
   Effect.gen(function* () {
     const metadata = yield* readCodexThreadMetadata;
     const {
+      archivedWalkFailure,
       observationCompleteness,
       oversizedLines,
+      readFailures,
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
       sessions,
@@ -737,8 +838,23 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       }
     }
 
+    // Session ids the unread rollouts may hold, from their file names. With
+    // the archived directory unlisted, any missing ancestor may be there.
+    const unreadableSessionIds = new Set(
+      readFailures.flatMap((failure) =>
+        failure.path ? codexRolloutSessionIdCandidates(path.basename(failure.path)) : [],
+      ),
+    );
+    const isUnreadableSession = (sessionId: string): boolean =>
+      archivedWalkFailure !== null || unreadableSessionIds.has(sessionId);
+
     const usageSessions: CodexCollectedSession[] = [];
+    let ownershipDeferredSessions = 0;
     for (const session of sessions) {
+      if (isCodexUsageOwnershipUndecided(session, byId, isUnreadableSession)) {
+        ownershipDeferredSessions++;
+        continue;
+      }
       const kids = (session.id && children.get(session.id)) || [];
       const tokens = {
         in: session.tin,
@@ -818,20 +934,26 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         affectedSessions: rejectedSessions.length,
         ...(lastObservedAt ? { lastObservedAt } : {}),
       },
+      archivedWalkFailure,
       observationCompleteness,
       observations,
       oversizedLines,
+      ownershipDeferredSessions,
+      readFailures,
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
       sessions: usageSessions,
     };
   }),
   (result) => ({
+    archivedWalkFailed: result.archivedWalkFailure !== null,
     observations: result.observations.length,
+    ownershipDeferredSessions: result.ownershipDeferredSessions,
     oversizedLines: result.oversizedLines,
     rejectedMetricRecords: result.rejectedMetricRecords,
     rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
     sessions: result.sessions.length,
+    unreadableFiles: result.readFailures.length,
   }),
 );
 
@@ -847,35 +969,59 @@ const findLatestRawCodexRateLimits = (
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     let latest: RawCodexRateLimitSnapshot | null = null;
-    const files = (yield* listCodexSessionFilesForCollection).sort();
+    const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
+    const skippedFailures: LocalHistoryError[] = archivedWalkFailure ? [archivedWalkFailure] : [];
 
-    for (const filePath of files.slice(-recentFileLimit).reverse()) {
-      yield* storage.readLines(filePath, (line) => {
-        if (!line.includes('rate_limits')) {
-          return;
+    for (const filePath of [...files].sort().slice(-recentFileLimit).reverse()) {
+      let candidate: RawCodexRateLimitSnapshot | null = null;
+      const read = yield* Effect.either(
+        readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
+          candidate = null;
+          return storage.readLines(candidatePath, (line) => {
+            if (!line.includes('rate_limits')) {
+              return;
+            }
+            const event = safeJSON(line);
+            const payload = isRecord(event?.payload) ? event.payload : null;
+            const rateLimits = isRecord(payload?.rate_limits) ? payload.rate_limits : null;
+            if (!rateLimits) {
+              return;
+            }
+            if (typeof event?.timestamp !== 'string' && typeof event?.timestamp !== 'number') {
+              return;
+            }
+            const ts = new Date(event.timestamp);
+            if (!Number.isFinite(ts.getTime())) {
+              return;
+            }
+            if (!candidate || ts > candidate.ts) {
+              candidate = { ts, rateLimits };
+            }
+          });
+        }),
+      );
+      if (Either.isLeft(read)) {
+        // An archive that does not decompress, or a rollout gone in every
+        // form, is skipped for the next (older) one; the sessions collector
+        // reports the same file. Any other failure is the reader's to report.
+        if (!(read.left.operation === 'readLines.decompress' || isMissingHistoryFileError(read.left))) {
+          return yield* Effect.fail(read.left);
         }
-        const event = safeJSON(line);
-        const payload = isRecord(event?.payload) ? event.payload : null;
-        const rateLimits = isRecord(payload?.rate_limits) ? payload.rate_limits : null;
-        if (!rateLimits) {
-          return;
-        }
-        if (typeof event?.timestamp !== 'string' && typeof event?.timestamp !== 'number') {
-          return;
-        }
-        const ts = new Date(event.timestamp);
-        if (!Number.isFinite(ts.getTime())) {
-          return;
-        }
-        if (!latest || ts > latest.ts) {
-          latest = { ts, rateLimits };
-        }
-      });
-      if (latest) {
+        skippedFailures.push(read.left);
+        continue;
+      }
+      if (candidate) {
+        latest = candidate;
         break;
       }
     }
 
+    // No reading found is only "no quota" when nothing was skipped; otherwise
+    // the reading may sit in what could not be read.
+    const [firstSkipped] = skippedFailures;
+    if (!latest && firstSkipped) {
+      return yield* Effect.fail(firstSkipped);
+    }
     return latest;
   });
 
