@@ -73,6 +73,7 @@ export {
   queryServedReportRevisionSlices,
   queryServedReportRevisionSupport,
   queryServedRevisionData,
+  querySessionRowsBySourceSessionIds,
   querySkillObservations,
   queryStoredReportCapture,
   queryUsageLocalMachine,
@@ -98,3 +99,9 @@ export {
   buildSessionQuerySqlOrder,
   executeMaterializedSessionQuery,
 } from './session-query-sqlite';
+export type {
+  QuerySessionRowsBySourceSessionIdsInput,
+  QuerySessionRowsBySourceSessionIdsResult,
+  ServedSessionRowIdentity,
+} from './work-session-join';
+export { MAX_WORK_SESSION_JOIN_IDS } from './work-session-join';

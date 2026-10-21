@@ -81,6 +81,7 @@ import {
   servedReportSchemaSql,
 } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
+import { createWorkSessionJoinStore } from './work-session-join';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -4242,4 +4243,10 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   updateUsageMachineLabel: (input) => updateUsageMachineLabel({ ...input, dbPath: input.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
+});
+
+export const { querySessionRowsBySourceSessionIds } = createWorkSessionJoinStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
 });

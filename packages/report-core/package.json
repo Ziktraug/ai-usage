@@ -44,6 +44,7 @@
     "./types": "./src/types.ts",
     "./usage-row": "./src/usage-row.ts",
     "./work-attention": "./src/work-attention.ts",
+    "./work-attention-interpretation": "./src/work-attention-interpretation.ts",
     "./work-routing": "./src/work-routing.ts"
   },
   "scripts": {

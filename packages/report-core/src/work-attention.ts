@@ -826,6 +826,12 @@ export interface WorkRoot {
   readonly interpretations: readonly WorkInterpretation[];
   readonly key: WorkSessionKey;
   readonly project: WorkRootProject;
+  /**
+   * The served Session row this root joins to, when the current revision carries one for
+   * `key`; the Work view opens session detail through it. `null` also means `project.label`
+   * was derived from the Desktop `cwd` rather than read from the report.
+   */
+  readonly session: { readonly campaignKey: string | null; readonly rowId: string } | null;
   readonly title: string;
   readonly titleSource: ClaudeDesktopTitleSource;
 }
@@ -840,6 +846,8 @@ export interface WorkAttentionCoverage {
     readonly collectedAt: CanonicalInstant | null;
     readonly filesParsed: number;
     readonly filesSeen: number;
+    /** Persisted rows the read refused on re-validation; they exist but could not be shown. */
+    readonly refusedRows: number;
     readonly truncated: boolean;
     readonly unsupported: number;
   };
@@ -848,6 +856,13 @@ export interface WorkAttentionCoverage {
     readonly failed: number;
     readonly lastRunAt: CanonicalInstant | null;
     readonly observed: number;
+  };
+  /** The join to collected Sessions: which served revision answered, and how many roots it covered. */
+  readonly sessions: {
+    readonly joined: number;
+    /** `null` when no served revision was published; then no root can say whether its transcript was collected. */
+    readonly revision: string | null;
+    readonly unmatched: number;
   };
 }
 
