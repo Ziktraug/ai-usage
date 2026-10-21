@@ -7,6 +7,7 @@ export {
   importSkillObservations,
   initializeUsageStore,
   publishServedReportRevision,
+  queryClaudeDesktopSessions,
   queryCurrentServedReportRevision,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
+import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
 import {
   collectClaudeRetentionWarnings,
   type HarnessAdapter,
@@ -38,6 +39,7 @@ import {
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import {
+  importClaudeDesktopSessions,
   importLocalRows,
   importNormalizedDatasetItems,
   importSkillObservations,
@@ -511,6 +513,68 @@ const createCursorAttributionSource = (input: {
     }),
 });
 
+/**
+ * Claude Desktop's session registry (ADR 0050). The rows land in their own tables, outside the
+ * served revision, so `changed` is always `false` here: in `finishSourceJobTransition` a changed
+ * run marks the served projection dirty and wakes a publication, and nothing this source writes
+ * is read by that projection. A publication per Desktop turn would re-assemble the report for no
+ * reader. `servedProjectionChanged` is likewise left unset. Consumers of this family poll the
+ * table on their own cadence (the Work view's collection-SWR policy).
+ */
+const createClaudeDesktopSessionSource = (input: {
+  dbPath: string;
+  detect: Effect.Effect<SourceDetectionResult>;
+  machine: UsageMachine;
+  now: () => Date;
+  storage: LocalHistoryStorageService;
+}): ScheduledSource => ({
+  cadence: Duration.millis(getCollectionSourceDefinition('claude.desktop-sessions').cadenceMs),
+  detect: input.detect,
+  id: 'claude.desktop-sessions',
+  run: (context) =>
+    Effect.gen(function* () {
+      yield* reportProgress(context, { phase: 'reading' });
+      const availability = yield* input.detect;
+      if (availability.availability !== 'detected') {
+        return sourceUnavailableResult();
+      }
+      const collection = yield* collectClaudeDesktopSessions({ machineId: input.machine.id, now: input.now }).pipe(
+        Effect.provideService(LocalHistoryStorage, input.storage),
+        Effect.mapError((cause) => sourceFailure('claude.desktop-sessions', cause)),
+      );
+      yield* reportProgress(context, {
+        completed: collection.observations.length,
+        phase: 'normalizing',
+        total: collection.observations.length,
+      });
+      yield* abortIfRequested(context.signal);
+      yield* reportProgress(context, {
+        completed: 0,
+        phase: 'importing',
+        total: collection.observations.length,
+      });
+      const imported = yield* importClaudeDesktopSessions({
+        collectedAt: input.now(),
+        completeness: collection.completeness,
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        observations: collection.observations,
+      }).pipe(Effect.mapError((cause) => sourceFailure('claude.desktop-sessions', cause)));
+      // A candidate the store refused is a collector defect; it surfaces as a warning count rather
+      // than disappearing between the sweep and the table.
+      const storeWarnings: SanitizableSourceWarning[] =
+        imported.skipped > 0
+          ? [{ operation: 'claudeDesktopSessions.storeRefused', rejectedRecords: imported.skipped }]
+          : [];
+      return {
+        changed: false,
+        inputCount: collection.completeness.filesSeen,
+        outputCount: imported.inserted + imported.updated + imported.unchanged,
+        warnings: sanitizeSourceWarnings('Claude Desktop sessions', [...collection.warnings, ...storeWarnings]),
+      };
+    }),
+});
+
 const createProviderQuotaSource = (input: {
   dbPath: string;
   detect: Effect.Effect<SourceDetectionResult>;
@@ -583,6 +647,7 @@ export const createScheduledSourceRegistry = (
     const candidates = resolvePathCandidates(storage);
     const detections = {
       claude: detectPathCandidates(storage, [...candidates.claude.projectsDir, ...candidates.claude.historyFile]),
+      claudeDesktop: detectPathCandidates(storage, candidates.claude.desktopSessionsDir),
       codex: detectPathCandidates(storage, [...candidates.codex.sessionsDir, ...candidates.codex.sessionIndexFile]),
       cursor: detectConfiguredCursorInputs(storage, options.configCwd),
       cursorAttribution: detectPathCandidates(storage, candidates.cursor.aiTrackingDb),
@@ -689,6 +754,13 @@ export const createScheduledSourceRegistry = (
         dbPath,
         detect: detections.cursorAttribution,
         machine,
+        storage,
+      }),
+      createClaudeDesktopSessionSource({
+        dbPath,
+        detect: detections.claudeDesktop,
+        machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
     ];

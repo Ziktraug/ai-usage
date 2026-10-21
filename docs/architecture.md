@@ -992,6 +992,9 @@ admission, cadence, dependencies, or publication ordering here.
   `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`,
   and `cursor.commit-attribution`. `claude.usage-limits` is an eighth,
   default-enabled experimental source whose upstream API may change.
+  `claude.desktop-sessions` is a ninth, default-enabled enrichment that reads
+  the Claude Desktop session registry into its own tables outside the served
+  revision (ADR 0050); its runs never wake a publication.
 - Sparse source-policy overrides are read only from user-home config. Repository
   config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, outcome, and progress are independent.
