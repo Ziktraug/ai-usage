@@ -802,6 +802,12 @@ export interface WorkRootDeclaration {
   readonly status: ClaudeDesktopTurnStatus;
 }
 
+/** The served Session this root joins to once its transcript is collected; `null` until then. */
+export interface WorkRootSession {
+  readonly campaignKey: string | null;
+  readonly rowId: string;
+}
+
 export interface WorkRoot {
   readonly age: WorkRootAge;
   readonly archived: boolean;
@@ -813,6 +819,7 @@ export interface WorkRoot {
   readonly interpretations: readonly WorkInterpretation[];
   readonly key: WorkSessionKey;
   readonly project: WorkRootProject;
+  readonly session: WorkRootSession | null;
   readonly title: string;
   readonly titleSource: ClaudeDesktopTitleSource;
 }
