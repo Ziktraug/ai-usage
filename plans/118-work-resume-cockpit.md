@@ -141,3 +141,15 @@ absence that was not observed; worktree sessions took the worktree name as proje
 (executor probe outside the shared bounded runner, declared-PR chip dated by file mtime, missing
 export/replication exclusion tests for two families, stale comment, repeated "auto title" marker,
 merged PRs re-observed). A fix lot addresses them before the next gate.
+
+### 2026-10-22 03:20 — lot J integrated (`ab5d61ff`)
+
+Lot J (`b4be56a5`, ADR 0054): Jira issue facts for explicitly linked keys only (keys written in
+branches: `writtenBranches`, Desktop `branch`/`sourceBranch`, declared PR branches; never titles
+or bare numbers; `<PROJ>-0` ignored), read through the operator's Atlassian CLI session
+(`acli jira workitem view <KEY> --json`, a documented assumption: the CLI is not installed on this
+machine, so nothing live was exercised), additive `jira_issue_observations` table, `jira.issues`
+source (10 min, not detected without `acli`), `jira-reply-arrived` (a reply after the family's last
+activity → needs you, "you may have read them in Jira; this view cannot tell") and
+`jira-status-differs` interpretations, coverage.jira, row chip and detail facts. Verified at
+`ab5d61ff`: `bun run typecheck` 58/58, lint and check clean, package suites 1258 pass, web 1524 pass.
