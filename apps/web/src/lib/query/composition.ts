@@ -118,6 +118,24 @@ export const webQueryOwnership = [
     rendering: 'ssr-awaited',
   },
   {
+    // Declared outcomes, pull-request and checkout facts are written by the engine's collection
+    // sources, so the family lives on the collection cadence. Its identity carries the request's
+    // limit and machine, and publication invalidation is exact-key only, so the cycle does not sweep
+    // it: interval and focus revalidation of the collection-swr policy are its freshness path.
+    family: 'work-attention',
+    policy: 'collection-swr',
+    publication: 'none',
+    rendering: 'ssr-awaited',
+  },
+  {
+    // Routing declarations are read from the home config and executor observations from the store;
+    // the panel reads them in the browser when a root is selected.
+    family: 'work-routing',
+    policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
+  {
     family: 'memory',
     policy: 'bounded-control-plane',
     publication: 'none',
