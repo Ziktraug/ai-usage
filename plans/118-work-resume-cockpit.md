@@ -45,3 +45,15 @@ explicitly declared information.
 
 To be appended per integrated milestone: commit, commands, raw results, what was proven on
 synthetic native fixtures, what was tried on isolated real data, what remains unverified.
+
+### 2026-10-21 23:35 — lot C integrated (`9aece9ba`)
+
+Merged `feat/work-resume-cockpit-c-ui` (`937553e6` joins roots to their served Session,
+`b37d920c` recomposes `/work`). Verified on the integration branch:
+`TZ=UTC bun run --cwd apps/web test` → 1498 pass, 0 fail (241 files). Worker-side evidence at
+`b37d920c`: `work.spec.ts` 6/6 on the synthetic dataset (desktop arrival, search, detail, back
+keeps filters and focus, keyboard, 390 px drawer, 768/1279 px), accessibility + navigation +
+shell e2e 43/43, bundle budget 4/4, svelte-check 0 errors. Not verified: the live
+`work.attention` path (contract lands with lot A; `resolveWorkAttentionClient` returns a typed
+unavailable client until then), visual-regression suite (no `/work` snapshot exists),
+`test:e2e-demo`, `test:web-production`.
