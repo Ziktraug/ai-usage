@@ -1,9 +1,9 @@
 # 117 — Work view and read-only review routing simulation
 
-Status: PARTIAL — assembled gates passed outside the sandbox; fix batch 2 corrects
-mobile navigation geometry, with browser verification and visual refresh pending.
+Status: PARTIAL — mobile geometry passes at 375/390px and in the icon rail;
+fix batch 3 corrects 320px label padding, with browser rerun and visual refresh pending.
 Base: `1db32b86`, 2026-10-21.
-Assembled checkpoint: `2bdabfe8` (L3, fix batch 1 and visual references committed by supervisor).
+Assembled checkpoint: `17a8a78b` (fix batch 2 committed by supervisor).
 Branch: `feat/work-view-routing-simulation`.
 Authorization: implementation and isolated verification; supervisor owns local commits.
 No real-store migration, harness execution, external publication or account changes.
@@ -13,10 +13,10 @@ No real-store migration, harness execution, external publication or account chan
 | Lot | Status | Evidence / remaining work |
 | --- | --- | --- |
 | L0 | DONE | Clean base, current reader/collector audit, baseline checks and L3 scope in local journal |
-| L1 | PARTIAL | Work browser flow and fix-batch-1 regressions pass; mobile navigation geometry correction awaits browser verification |
+| L1 | PARTIAL | Work and navigation browser paths pass except 320px label containment; narrow padding correction awaits rerun |
 | L2 | DONE | Pure routing tests and both preference choices pass in the supervisor's demo walkthrough; no executor |
 | L3 | DONE | `0e914ce3`, `97deefce`, `b63d6f2f`; retained Memory/detail and accessibility suites pass outside the sandbox |
-| Validation | PARTIAL | Assembled verify, full E2E, demo, bundle and production gates pass at checkpoint; navigation correction needs new browser and visual checks |
+| Validation | PARTIAL | Earlier full gates passed; latest targeted E2E 45/46 and demo 3/3; 320px padding fix and narrow visual refresh pending |
 | Documentation | DONE | This plan, README row, local audit/journal, pending commits and result handoff |
 
 ## Scope and decisions
@@ -207,3 +207,16 @@ then run `bun run --cwd apps/web test:e2e e2e/visual-regression.spec.ts --worker
 Check the 768–1279px rail with a visible quota panel at 844px high as well. Commit
 the explicit new blocks in the local ledger; the supervisor owns git writes and
 visual acceptance. No PNG, budget, store or routing-policy change belongs to this batch.
+
+Fix batch 3 follows supervisor results on `17a8a78b`: targeted navigation-layout,
+accessibility, svelte-shell and Work E2E has 45 passes and one failure, exclusively
+Overview text containment at 320px. Mobile 375/390px and rail 768/1024/1279px pass;
+demo passes 3/3, while visuals have three passes and the expected narrow Overview
+reference mismatch. The supervisor inspected the 390px labels as legible.
+The correction uses the existing 359px narrow-media convention to remove link
+inline padding only below 360px, restoring 4px of text room without reducing the
+11px type or 44px minimum targets. The geometry assertion is unchanged.
+Navigation/ownership unit tests pass 15/15 (71 assertions), check/lint pass on
+1501 files, and independent review finds no defect. Browser confirmation remains
+outside the sandbox: `bun run --cwd apps/web test:e2e e2e/navigation-layout.spec.ts --workers=1 --retries=0`.
+The supervisor retains ownership of the narrow PNG refresh; no reference is edited here.

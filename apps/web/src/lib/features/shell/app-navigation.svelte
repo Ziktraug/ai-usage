@@ -164,6 +164,7 @@
     minW: '44px',
     minH: '52px',
     px: '2px',
+    '@media screen and (max-width: 359px)': { px: 0 },
     border: 0,
     bg: 'transparent',
     fontFamily: 'sans',
