@@ -1,15 +1,27 @@
 import { isCanonicalInstant } from './canonical-instant';
 import {
+  LIVE_PROVIDER_STATUS_MAX_AGE_MS,
   type ProviderLimitWindow,
   type ProviderStatus,
   parseProviderStatusDataset,
   providerStatusWithFeedFreshness,
 } from './provider-status';
+import {
+  EXECUTOR_CAPABILITIES_CADENCE_MS,
+  type ExecutorDeclaration,
+  type ExecutorDeclaredTarget,
+  type ExecutorHarness,
+  type ExecutorObservation,
+  executorDeclarationKey,
+  executorHarnessFamily,
+} from './work-executors';
 
 export interface ReviewTarget {
   readonly harness: string;
   readonly kind: 'session';
   readonly machineId: string;
+  /** The project the session is shown under; lets a declared `project` target admit it. Not part of identity. */
+  readonly projectLabel?: string | null;
   readonly sourceSessionId: string;
 }
 
@@ -19,6 +31,23 @@ export interface ReviewRequest {
   readonly requiredCapabilities: readonly 'read-only-review'[];
   readonly target: ReviewTarget;
 }
+
+/** Where each qualification field came from. A declaration is dated; an observation is fresh or stale. */
+export type CandidateProvenance = 'observed-now' | 'declared' | 'unknown' | 'stale';
+
+export const CANDIDATE_PROVENANCE_FIELDS = [
+  'accountScope',
+  'authorization',
+  'subscription',
+  'availability',
+  'capabilities',
+  'quality',
+  'quota',
+  'model',
+  'effort',
+] as const;
+export type CandidateProvenanceField = (typeof CANDIDATE_PROVENANCE_FIELDS)[number];
+export type CandidateProvenanceMap = Readonly<Record<CandidateProvenanceField, CandidateProvenance>>;
 
 export interface ReviewCandidate {
   readonly accountScope: string | null;
@@ -33,6 +62,9 @@ export interface ReviewCandidate {
   readonly machineId: string | null;
   readonly machineLabel: string | null;
   readonly model: string | null;
+  readonly provenance: CandidateProvenanceMap;
+  /** Precise, realizable steps that would supply the data this candidate lacks. Empty when nothing is missing. */
+  readonly qualificationActions: readonly string[];
   readonly quality: 'review-capable' | 'unknown';
   readonly quota: ProviderStatus | null;
   readonly subscription: 'verified' | 'unverified' | 'api';
@@ -66,10 +98,45 @@ export interface ReviewRoutingResult {
   readonly referenceTime: string;
 }
 
+export interface QualificationFreshness {
+  /** An executor observation older than this is `stale`; defaults to twice the source cadence. */
+  readonly executorMs: number;
+  /** A quota observation older than this is `stale`; defaults to the quota feed's own rule (15 minutes). */
+  readonly quotaMs: number;
+}
+
+export const DEFAULT_QUALIFICATION_FRESHNESS: QualificationFreshness = {
+  executorMs: 2 * EXECUTOR_CAPABILITIES_CADENCE_MS,
+  quotaMs: LIVE_PROVIDER_STATUS_MAX_AGE_MS,
+};
+
+export interface QualifyReviewCandidatesInput {
+  readonly declarations: readonly ExecutorDeclaration[];
+  readonly executorObservations: readonly ExecutorObservation[];
+  readonly freshness?: Partial<QualificationFreshness>;
+  readonly now: string;
+  readonly providers: readonly ProviderStatus[];
+  /** The session under review; `null` when none is selected, which leaves every authorization unbound. */
+  readonly target: ReviewTarget | null;
+}
+
+export type RecommendationKind = 'real' | 'conditional' | 'none';
+
+export interface ReviewRecommendation {
+  readonly candidateId: string | null;
+  readonly kind: RecommendationKind;
+  /** For `conditional`: the one named observation whose absence or staleness blocks the candidate. */
+  readonly missing: string | null;
+}
+
 export const MAX_REVIEW_ROUTING_CANDIDATES = 128;
 const MAX_NEAR_RESET_MINUTES = 7 * 24 * 60;
 const MAX_QUOTA_WINDOWS = 64;
 const MAX_ID_LENGTH = 512;
+const MODEL_WINDOW_ID_PREFIX = 'model:';
+const QUOTA_REFRESH_ACTION = 'Refresh quota observations (ai-usage quota --json or wait for the 5-minute source)';
+const EXECUTOR_REFRESH_ACTION =
+  'Refresh executor observations: run executors.capabilities from /sources (15-minute cadence)';
 
 const compareText = (left: string, right: string): number => {
   if (left === right) {
@@ -100,8 +167,36 @@ const quotaIdentity = (quota: ProviderStatus): string => {
   return JSON.stringify([quota.machineId ?? null, family, account]);
 };
 
-/** Observations provide candidates to inspect, never permission or execution qualification. */
-export const observedReviewCandidates = (providers: readonly ProviderStatus[]): ReviewCandidate[] => {
+const harnessCommand = (harness: ExecutorHarness): string => (harness === 'claude-code' ? 'claude' : 'codex');
+const harnessName = (harness: ExecutorHarness): string => (harness === 'claude-code' ? 'Claude Code' : 'Codex');
+
+const windowModelNames = (window: ProviderLimitWindow): string[] =>
+  [
+    window.group,
+    window.id.startsWith(MODEL_WINDOW_ID_PREFIX) ? window.id.slice(MODEL_WINDOW_ID_PREFIX.length) : window.id,
+    window.id.split(':')[0] ?? window.id,
+    window.label.split(' · ')[0] ?? window.label,
+  ]
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+    .map((name) => name.trim().toLowerCase());
+
+/** Whether a model-scoped window names the candidate's declared model, as the provider spells it. */
+const windowNamesModel = (window: ProviderLimitWindow, model: string): boolean =>
+  windowModelNames(window).includes(model.trim().toLowerCase());
+
+// ---------------------------------------------------------------------------------------------
+// Qualification: merge declarations, executor observations and quota without inventing anything
+// ---------------------------------------------------------------------------------------------
+
+interface QuotaStream {
+  readonly account: string | null;
+  readonly family: string;
+  readonly key: string;
+  readonly machineId: string | null;
+  readonly providers: readonly ProviderStatus[];
+}
+
+const quotaStreams = (providers: readonly ProviderStatus[]): QuotaStream[] => {
   const groups = new Map<string, ProviderStatus[]>();
   for (const provider of providers) {
     const { family } = providerScope(provider);
@@ -121,29 +216,395 @@ export const observedReviewCandidates = (providers: readonly ProviderStatus[]): 
         throw new Error('Observed candidate group is empty');
       }
       const { family, account } = providerScope(provider);
-      const ambiguous = group.length > 1;
-      return {
-        id: `observed:${key}`,
-        machineId: provider.machineId ?? null,
-        machineLabel: ambiguous ? null : (provider.machineLabel ?? null),
-        accountScope: account,
-        harness: family === 'claude' ? 'claude-code' : 'codex',
-        model: null,
-        effort: null,
-        authorization: 'unknown',
-        authorizedTarget: null,
-        subscription: 'unverified',
-        availability: 'unknown',
-        capabilities: [],
-        quality: 'unknown',
-        quota: ambiguous ? null : provider,
-        evidence: {
-          source: ambiguous ? 'Ambiguous stored quota observations for this scope' : `Stored ${provider.source} quota`,
-          observedAt: ambiguous ? null : provider.generatedAt,
-        },
-      };
+      return { account, family, key, machineId: provider.machineId ?? null, providers: group };
     });
 };
+
+const latestExecutorObservations = (observations: readonly ExecutorObservation[]): Map<string, ExecutorObservation> => {
+  const latest = new Map<string, ExecutorObservation>();
+  for (const observation of observations) {
+    const key = JSON.stringify([observation.machineId, observation.harness]);
+    const current = latest.get(key);
+    if (!current || compareText(observation.observedAt, current.observedAt) > 0) {
+      latest.set(key, observation);
+    }
+  }
+  return latest;
+};
+
+const quotaProvenance = (quota: ProviderStatus, now: number, quotaMs: number): CandidateProvenance => {
+  const observedAt = timestamp(quota.generatedAt);
+  if (observedAt === null) {
+    return 'unknown';
+  }
+  return quota.state === 'stale' || now - observedAt > quotaMs ? 'stale' : 'observed-now';
+};
+
+interface AvailabilityAssessment {
+  readonly actions: readonly string[];
+  readonly availability: ReviewCandidate['availability'];
+  readonly provenance: CandidateProvenance;
+}
+
+const assessAvailability = (
+  observation: ExecutorObservation | undefined,
+  harness: ExecutorHarness,
+  machineId: string,
+  now: number,
+  executorMs: number,
+): AvailabilityAssessment => {
+  if (!observation) {
+    return {
+      actions: [`${EXECUTOR_REFRESH_ACTION}: no observation of ${harnessCommand(harness)} on machine ${machineId}`],
+      availability: 'unknown',
+      provenance: 'unknown',
+    };
+  }
+  const observedAt = timestamp(observation.observedAt);
+  if (observedAt === null || now - observedAt > executorMs) {
+    return {
+      actions: [`${EXECUTOR_REFRESH_ACTION}; ${harnessCommand(harness)} was last observed ${observation.observedAt}`],
+      availability: 'unknown',
+      provenance: 'stale',
+    };
+  }
+  if (observation.binaryPath === null || observation.outcome === 'unavailable') {
+    return {
+      actions: [`Install the ${harnessName(harness)} CLI (${harnessCommand(harness)}) on machine ${machineId}`],
+      availability: 'unavailable',
+      provenance: 'observed-now',
+    };
+  }
+  if (observation.authState === 'logged-out') {
+    return {
+      actions: [
+        harness === 'claude-code'
+          ? 'Sign in the Claude Code CLI (claude auth login)'
+          : 'Sign in the Codex CLI (codex login)',
+      ],
+      availability: 'unavailable',
+      provenance: 'observed-now',
+    };
+  }
+  if (observation.authState === 'logged-in') {
+    return { actions: [], availability: 'available', provenance: 'observed-now' };
+  }
+  return {
+    actions: [
+      `Check \`${harnessCommand(harness)} ${harness === 'claude-code' ? 'auth status' : 'login status'}\` on machine ${machineId}: the collector could not read the sign-in state (${observation.authEvidence})`,
+    ],
+    availability: 'unknown',
+    provenance: 'unknown',
+  };
+};
+
+const targetAdmitted = (targets: readonly ExecutorDeclaredTarget[], target: ReviewTarget): boolean =>
+  targets.some(
+    (declared) =>
+      declared.kind === 'any-local-session' ||
+      (declared.kind === 'project' &&
+        typeof target.projectLabel === 'string' &&
+        declared.projectLabel === target.projectLabel),
+  );
+
+const quotaActions = (
+  quota: ProviderStatus | null,
+  provenance: CandidateProvenance,
+  now: number,
+  model: string | null,
+): string[] => {
+  if (quota === null) {
+    return [QUOTA_REFRESH_ACTION];
+  }
+  const actions: string[] = [];
+  if (provenance === 'stale') {
+    actions.push(`${QUOTA_REFRESH_ACTION}; last observed ${quota.generatedAt}`);
+  }
+  for (const window of quota.windows) {
+    // Another model's window is not this review's capacity; an undeclared model is handled by
+    // `modelActions`, so neither yields a wait-for-reset action here.
+    if (window.scope === 'model' && (model === null || !windowNamesModel(window, model))) {
+      continue;
+    }
+    const reset = timestamp(window.resetsAt);
+    if (reset !== null && reset <= now) {
+      actions.push(`Quota window ${window.label} crossed its reset: a new observation is required`);
+    } else if (window.blocked || (window.usedPercent !== null && window.usedPercent >= 100)) {
+      actions.push(
+        `Quota window ${window.label} is exhausted; wait for its reset${window.resetsAt ? ` at ${window.resetsAt}` : ''}`,
+      );
+    }
+  }
+  return actions;
+};
+
+const modelActions = (quota: ProviderStatus | null, model: string | null, scope: string): string[] => {
+  if (quota === null || model !== null) {
+    return [];
+  }
+  const modelWindows = quota.windows.filter((window) => window.scope === 'model').map((window) => window.id);
+  return modelWindows.length === 0
+    ? []
+    : [
+        `Declare routing.executors[].model for ${scope}: the quota reports model-scoped windows (${modelWindows.join(', ')}) that cannot be attributed without it`,
+      ];
+};
+
+const declareAction = (family: string, account: string | null): string =>
+  `Add routing.executors[] for ${family}:${account ?? '<accountScope>'} with authorization 'allowed', targets [{kind:'any-local-session'}], subscription 'verified', declaredAt`;
+
+interface QuotaBinding {
+  readonly actions: readonly string[];
+  readonly stream: QuotaStream | null;
+}
+
+const bindQuotaStream = (
+  declaration: ExecutorDeclaration,
+  streams: readonly QuotaStream[],
+  peerDeclarations: number,
+): QuotaBinding => {
+  const family = executorHarnessFamily(declaration.harness);
+  const candidates = streams.filter((stream) => stream.machineId === declaration.machineId && stream.family === family);
+  const exact = candidates.find((stream) => stream.account === declaration.accountScope);
+  if (exact) {
+    return { actions: [], stream: exact };
+  }
+  const bare = candidates.filter((stream) => stream.account === null);
+  const scoped = candidates.filter((stream) => stream.account !== null);
+  if (bare.length === 1 && scoped.length === 0 && peerDeclarations === 1) {
+    // The stored key carries no account suffix (the live collectors record none), so the one
+    // declaration for this family on this machine binds its single quota stream.
+    return { actions: [], stream: bare[0] ?? null };
+  }
+  if (bare.length === 1 && peerDeclarations > 1) {
+    return {
+      actions: [
+        `Quota attribution is ambiguous: ${peerDeclarations} routing.executors[] entries for ${family} on machine ${declaration.machineId} share one quota stream without an account suffix; keep one entry`,
+      ],
+      stream: null,
+    };
+  }
+  if (scoped.length > 0) {
+    return {
+      actions: [
+        `Quota streams for ${family} on machine ${declaration.machineId} are account-scoped (${scoped
+          .map((stream) => stream.account)
+          .join(', ')}); set routing.executors[].accountScope to one of them`,
+      ],
+      stream: null,
+    };
+  }
+  return { actions: [], stream: null };
+};
+
+const streamQuota = (stream: QuotaStream | null): ProviderStatus | null =>
+  stream !== null && stream.providers.length === 1 ? (stream.providers[0] ?? null) : null;
+
+const declaredCandidate = (
+  declaration: ExecutorDeclaration,
+  binding: QuotaBinding,
+  observation: ExecutorObservation | undefined,
+  input: QualifyReviewCandidatesInput,
+  freshness: QualificationFreshness,
+): ReviewCandidate => {
+  const now = Date.parse(input.now);
+  const scope = `${executorHarnessFamily(declaration.harness)}:${declaration.accountScope}`;
+  const quota = streamQuota(binding.stream);
+  const quotaOrigin = quota === null ? 'unknown' : quotaProvenance(quota, now, freshness.quotaMs);
+  const availability = assessAvailability(
+    observation,
+    declaration.harness,
+    declaration.machineId,
+    now,
+    freshness.executorMs,
+  );
+  const target = input.target;
+  const admitted = target !== null && targetAdmitted(declaration.targets, target);
+  const actions: string[] = [];
+  if (target === null) {
+    actions.push('Select a session with a machine and native identity to bind the authorization to a target');
+  } else if (!admitted) {
+    actions.push(
+      `Declared targets do not admit this session (project '${target.projectLabel ?? 'unknown'}'): add {kind:'project', projectLabel:'${target.projectLabel ?? '<project>'}'} or {kind:'any-local-session'} to routing.executors[] for ${scope}`,
+    );
+  }
+  if (declaration.subscription === 'api') {
+    actions.push(
+      `Declared subscription 'api' for ${scope} is outside the subscription-only policy; declare 'verified' only if the account is on a subscription`,
+    );
+  }
+  if (!declaration.capabilities.includes('read-only-review')) {
+    actions.push(`Add 'read-only-review' to routing.executors[].capabilities for ${scope}`);
+  }
+  if (binding.stream !== null && quota === null) {
+    actions.push(
+      `Quota observations for ${scope} on machine ${declaration.machineId} are ambiguous (several stored readings for one scope); ${QUOTA_REFRESH_ACTION}`,
+    );
+  }
+  actions.push(...binding.actions, ...availability.actions);
+  if (quota !== null) {
+    actions.push(...quotaActions(quota, quotaOrigin, now, declaration.model));
+  } else if (binding.stream === null && binding.actions.length === 0) {
+    // No stream for this family and machine at all; a binding problem already names its own fix.
+    actions.push(QUOTA_REFRESH_ACTION);
+  }
+  actions.push(...modelActions(quota, declaration.model, scope));
+  if (Date.parse(declaration.declaredAt) > now) {
+    actions.push(`declaredAt ${declaration.declaredAt} for ${scope} is in the future; correct it`);
+  }
+  return {
+    id: `declared:${executorDeclarationKey(declaration)}`,
+    machineId: declaration.machineId,
+    machineLabel: quota?.machineLabel ?? null,
+    accountScope: declaration.accountScope,
+    harness: declaration.harness,
+    model: declaration.model,
+    effort: declaration.effort,
+    authorization: declaration.authorization,
+    authorizedTarget: admitted ? target : null,
+    subscription: declaration.subscription,
+    availability: availability.availability,
+    capabilities: declaration.capabilities,
+    quality: declaration.quality,
+    quota,
+    provenance: {
+      accountScope: 'declared',
+      authorization: 'declared',
+      subscription: 'declared',
+      availability: availability.provenance,
+      capabilities: 'declared',
+      quality: 'declared',
+      quota: quotaOrigin,
+      model: declaration.model === null ? 'unknown' : 'declared',
+      effort: declaration.effort === null ? 'unknown' : 'declared',
+    },
+    qualificationActions: [...new Set(actions)],
+    evidence: {
+      source: `Declared in routing.executors[] (declaredAt ${declaration.declaredAt}); executor ${
+        observation ? `observed ${observation.observedAt}` : 'not observed'
+      }; quota ${quota ? `stored ${quota.source} observation ${quota.generatedAt}` : 'not observed'}`,
+      observedAt: declaration.declaredAt,
+    },
+  };
+};
+
+const observedOnlyCandidate = (
+  stream: QuotaStream,
+  observation: ExecutorObservation | undefined,
+  input: QualifyReviewCandidatesInput,
+  freshness: QualificationFreshness,
+): ReviewCandidate => {
+  const now = Date.parse(input.now);
+  const provider = stream.providers[0];
+  if (!provider) {
+    throw new Error('Observed candidate group is empty');
+  }
+  const harness: ExecutorHarness = stream.family === 'claude' ? 'claude-code' : 'codex';
+  const ambiguous = stream.providers.length > 1;
+  const quota = ambiguous ? null : provider;
+  const availability =
+    stream.machineId === null
+      ? ({ actions: [], availability: 'unknown', provenance: 'unknown' } as const)
+      : assessAvailability(observation, harness, stream.machineId, now, freshness.executorMs);
+  const quotaOrigin = quota === null ? 'unknown' : quotaProvenance(quota, now, freshness.quotaMs);
+  return {
+    id: `observed:${stream.key}`,
+    machineId: stream.machineId,
+    machineLabel: ambiguous ? null : (provider.machineLabel ?? null),
+    accountScope: stream.account,
+    harness,
+    model: null,
+    effort: null,
+    authorization: 'unknown',
+    authorizedTarget: null,
+    subscription: 'unverified',
+    availability: availability.availability,
+    capabilities: [],
+    quality: 'unknown',
+    quota,
+    provenance: {
+      accountScope: stream.account === null ? 'unknown' : 'observed-now',
+      authorization: 'unknown',
+      subscription: 'unknown',
+      availability: availability.provenance,
+      capabilities: 'unknown',
+      quality: 'unknown',
+      quota: quotaOrigin,
+      model: 'unknown',
+      effort: 'unknown',
+    },
+    qualificationActions: [
+      ...new Set([
+        declareAction(stream.family, stream.account),
+        ...availability.actions,
+        ...(ambiguous ? [`Ambiguous stored quota observations for this scope; ${QUOTA_REFRESH_ACTION}`] : []),
+        ...quotaActions(quota, quotaOrigin, now, null).filter(() => !ambiguous),
+      ]),
+    ],
+    evidence: {
+      source: ambiguous ? 'Ambiguous stored quota observations for this scope' : `Stored ${provider.source} quota`,
+      observedAt: ambiguous ? null : provider.generatedAt,
+    },
+  };
+};
+
+/**
+ * One candidate per (machine, family, account) seen in quota and per declaration without a quota
+ * stream. Authorization, subscription, capabilities and quality come only from a declaration;
+ * availability only from an executor observation; quota only from provider status. Nothing is
+ * inferred across those sources, and the output is deterministic for identical inputs.
+ */
+export const qualifyReviewCandidates = (input: QualifyReviewCandidatesInput): ReviewCandidate[] => {
+  if (timestamp(input.now) === null) {
+    throw new RangeError('Qualification requires a canonical ISO reference time');
+  }
+  const freshness: QualificationFreshness = { ...DEFAULT_QUALIFICATION_FRESHNESS, ...input.freshness };
+  const streams = quotaStreams(input.providers);
+  const observations = latestExecutorObservations(input.executorObservations);
+  const declarations = [...input.declarations].sort((left, right) =>
+    compareText(executorDeclarationKey(left), executorDeclarationKey(right)),
+  );
+  const peers = new Map<string, number>();
+  for (const declaration of declarations) {
+    const key = JSON.stringify([declaration.machineId, declaration.harness]);
+    peers.set(key, (peers.get(key) ?? 0) + 1);
+  }
+  const bound = new Set<string>();
+  const candidates: ReviewCandidate[] = [];
+  for (const declaration of declarations) {
+    const binding = bindQuotaStream(
+      declaration,
+      streams,
+      peers.get(JSON.stringify([declaration.machineId, declaration.harness])) ?? 1,
+    );
+    if (binding.stream) {
+      bound.add(binding.stream.key);
+    }
+    const observation = observations.get(JSON.stringify([declaration.machineId, declaration.harness]));
+    candidates.push(declaredCandidate(declaration, binding, observation, input, freshness));
+  }
+  for (const stream of streams) {
+    if (bound.has(stream.key)) {
+      continue;
+    }
+    const harness: ExecutorHarness = stream.family === 'claude' ? 'claude-code' : 'codex';
+    const observation =
+      stream.machineId === null ? undefined : observations.get(JSON.stringify([stream.machineId, harness]));
+    candidates.push(observedOnlyCandidate(stream, observation, input, freshness));
+  }
+  return candidates.sort((left, right) => compareText(left.id, right.id));
+};
+
+/** Observations provide candidates to inspect, never permission or execution qualification. */
+export const observedReviewCandidates = (
+  providers: readonly ProviderStatus[],
+  now: string = new Date().toISOString(),
+): ReviewCandidate[] =>
+  qualifyReviewCandidates({ declarations: [], executorObservations: [], now, providers, target: null });
+
+// ---------------------------------------------------------------------------------------------
+// Simulation: constraints first, then preferences; nothing here grants permission or capacity
+// ---------------------------------------------------------------------------------------------
 
 const inputErrors = ({ candidates, policy, referenceTime, request }: ReviewRoutingInput): string[] => {
   const errors: string[] = [];
@@ -201,6 +662,14 @@ const checkWindow = (
   result: EvaluationBuilder,
 ): void => {
   const label = `Quota window ${window.label}`;
+  if (window.scope === 'unknown' || (window.scope === 'model' && !candidate.model)) {
+    requireEvidence(result, false, `${label} applicability to this model`);
+  } else if (window.scope === 'model' && candidate.model && !windowNamesModel(window, candidate.model)) {
+    // Another model's window on the same account: one resource, but not this review's capacity.
+    // It is neither counted nor summed with the windows that do apply.
+    result.missing.push(`${label} applies to another model than ${candidate.model}; not counted.`);
+    return;
+  }
   const used = window.usedPercent ?? (window.remainingPercent === null ? null : 100 - window.remainingPercent);
   requireEvidence(result, used !== null, `${label} capacity`);
   if (window.blocked || (used !== null && used >= 100)) {
@@ -218,11 +687,21 @@ const checkWindow = (
   if (reset !== null && reset <= now) {
     result.excluded.push(`${label} has crossed its observed reset; a new observation is required.`);
   }
-  if (
-    window.scope === 'unknown' ||
-    (window.scope === 'model' && (!candidate.model || window.group !== candidate.model))
-  ) {
-    requireEvidence(result, false, `${label} applicability to this model`);
+};
+
+const checkQuotaAccount = (candidate: ReviewCandidate, account: string | null, result: EvaluationBuilder): void => {
+  if (account === null) {
+    // A stored key without an account suffix is bound only by a declaration that names the account
+    // for this family and machine; an observed-only candidate has no account to attribute it to.
+    if (!(candidate.provenance.accountScope === 'declared' && validId(candidate.accountScope))) {
+      requireEvidence(result, false, 'Known account scope for quota attribution');
+    }
+    return;
+  }
+  if (!validId(candidate.accountScope)) {
+    requireEvidence(result, false, 'Known account scope for quota attribution');
+  } else if (account !== candidate.accountScope) {
+    result.excluded.push('Quota account scope does not match the candidate account.');
   }
 };
 
@@ -252,11 +731,7 @@ const checkQuota = (candidate: ReviewCandidate, referenceTime: string, result: E
   if (!quota.machineId || quota.machineId !== candidate.machineId) {
     result.excluded.push('Quota machine does not match the candidate machine.');
   }
-  if (!(validId(candidate.accountScope) && validId(scope.account))) {
-    requireEvidence(result, false, 'Known account scope for quota attribution');
-  } else if (scope.account !== candidate.accountScope) {
-    result.excluded.push('Quota account scope does not match the candidate account.');
-  }
+  checkQuotaAccount(candidate, scope.account, result);
   if (quota.source !== 'live-api' && quota.source !== 'local-history') {
     result.excluded.push('Quota source is not an observed provider or session-log reading.');
   }
@@ -420,3 +895,90 @@ export const simulateWorkReviewRouting = (input: ReviewRoutingInput): ReviewRout
   }
   return { chosenCandidateId: chosen?.id ?? null, evaluations, reasons, referenceTime: input.referenceTime };
 };
+
+// ---------------------------------------------------------------------------------------------
+// Recommendation: is the simulated choice backed by current facts, or conditional on one of them
+// ---------------------------------------------------------------------------------------------
+
+const REQUIRED_PROVENANCE_FIELDS = [
+  'accountScope',
+  'authorization',
+  'subscription',
+  'availability',
+  'capabilities',
+  'quality',
+  'quota',
+] as const satisfies readonly CandidateProvenanceField[];
+
+const MISSING_OBSERVATION_LABELS: Readonly<Record<(typeof REQUIRED_PROVENANCE_FIELDS)[number], string>> = {
+  accountScope: 'account scope',
+  authorization: 'authorization declaration',
+  availability: 'executor availability observation',
+  capabilities: 'capability declaration',
+  quality: 'quality declaration',
+  quota: 'quota observation',
+  subscription: 'subscription declaration',
+};
+
+const EXCLUSION_FIELD_PATTERNS: Readonly<Record<(typeof REQUIRED_PROVENANCE_FIELDS)[number], RegExp>> = {
+  accountScope: /account scope/iu,
+  authorization: /authorization|forbidden/iu,
+  availability: /availab/iu,
+  capabilities: /capability/iu,
+  quality: /quality/iu,
+  quota: /quota/iu,
+  subscription: /subscription|billing/iu,
+};
+
+const unsettledFields = (candidate: ReviewCandidate) =>
+  REQUIRED_PROVENANCE_FIELDS.filter((field) => {
+    const provenance = candidate.provenance[field];
+    return provenance === 'unknown' || provenance === 'stale';
+  });
+
+/**
+ * `real` when the chosen candidate rests on declared and currently observed facts only;
+ * `conditional` when no candidate is eligible but one would be with exactly one named observation
+ * that is missing or stale (a conditional simulation never permits a launch); otherwise `none`.
+ */
+export const assessReviewRecommendation = (
+  result: ReviewRoutingResult,
+  candidates: readonly ReviewCandidate[],
+): ReviewRecommendation => {
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate] as const));
+  if (result.chosenCandidateId !== null) {
+    const chosen = byId.get(result.chosenCandidateId);
+    const unsettled = chosen ? unsettledFields(chosen) : [];
+    if (chosen && unsettled.length === 0) {
+      return { candidateId: chosen.id, kind: 'real', missing: null };
+    }
+    const first = unsettled[0];
+    return {
+      candidateId: result.chosenCandidateId,
+      kind: 'conditional',
+      missing: first === undefined ? 'candidate detail' : MISSING_OBSERVATION_LABELS[first],
+    };
+  }
+  const evaluations = [...result.evaluations].sort((left, right) => compareText(left.candidateId, right.candidateId));
+  for (const evaluation of evaluations) {
+    const candidate = byId.get(evaluation.candidateId);
+    if (!candidate || evaluation.exclusionReasons.length === 0) {
+      continue;
+    }
+    const unsettled = unsettledFields(candidate);
+    const field = unsettled[0];
+    if (unsettled.length !== 1 || field === undefined) {
+      continue;
+    }
+    const pattern = EXCLUSION_FIELD_PATTERNS[field];
+    if (evaluation.exclusionReasons.every((reason) => pattern.test(reason))) {
+      return { candidateId: candidate.id, kind: 'conditional', missing: MISSING_OBSERVATION_LABELS[field] };
+    }
+  }
+  return { candidateId: null, kind: 'none', missing: null };
+};
+
+export const recommendationKind = (
+  result: ReviewRoutingResult,
+  candidates: readonly ReviewCandidate[],
+): RecommendationKind => assessReviewRecommendation(result, candidates).kind;

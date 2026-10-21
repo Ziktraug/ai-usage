@@ -4,6 +4,7 @@ import {
   collectionSourceDefinitions,
   collectionSourceIds,
   enabledSessionHarnessKeys,
+  getCollectionSourceDefinition,
   isCollectionSourceId,
   isSourcePolicyOverrides,
   parseReportPublishedEvent,
@@ -65,11 +66,13 @@ describe('collection source contracts', () => {
         .filter(({ group }) => group === 'provider-usage')
         .every(({ cadenceMs }) => cadenceMs === 300_000),
     ).toBe(true);
+    // Executor capabilities spawn harness CLIs for metadata, so they poll every fifteen minutes.
     expect(
       collectionSourceDefinitions
-        .filter(({ group }) => group !== 'provider-usage')
+        .filter(({ group, id }) => group !== 'provider-usage' && id !== 'executors.capabilities')
         .every(({ cadenceMs }) => cadenceMs === 60_000),
     ).toBe(true);
+    expect(getCollectionSourceDefinition('executors.capabilities').cadenceMs).toBe(900_000);
   });
 
   test('enables every source by default', () => {

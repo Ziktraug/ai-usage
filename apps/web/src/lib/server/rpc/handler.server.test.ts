@@ -35,6 +35,7 @@ const dependencies = (): WebRpcRouterDependencies => ({
     selectCapability: () => unavailableServices<SkillsCapability>(),
   },
   sync: unavailableServices<WebRpcRouterDependencies['sync']>(),
+  workRouting: unavailableServices<WebRpcRouterDependencies['workRouting']>(),
 });
 
 const trustedHandlerFetch = (handler: (request: Request) => Promise<Response>) => async (request: Request) => {

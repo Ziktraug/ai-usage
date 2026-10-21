@@ -992,6 +992,9 @@ admission, cadence, dependencies, or publication ordering here.
   `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`,
   and `cursor.commit-attribution`. `claude.usage-limits` is an eighth,
   default-enabled experimental source whose upstream API may change.
+  `executors.capabilities` is a ninth, default-enabled source that runs
+  harness CLI metadata commands every fifteen minutes and never changes the
+  served report.
 - Sparse source-policy overrides are read only from user-home config. Repository
   config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, outcome, and progress are independent.

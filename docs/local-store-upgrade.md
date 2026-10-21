@@ -58,6 +58,17 @@ PR #53 also raised the engine control-plane protocol from 2 to 3. A Web or
 CLI process from the previous revision fails closed against the new engine,
 so the whole supervised stack restarts together.
 
+### Additive tables under usage version 4 (2026-10-21, executor observations)
+
+The `executors.capabilities` source adds one table, `executor_observations`
+(machine, harness, observed time, binary path, version, sign-in state, bounded
+evidence, outcome), created `IF NOT EXISTS` on the next engine start without
+changing `user_version`. Absence of the table is the migration signal, exactly
+as for the skill-observation tables. Rows are retained ten per machine and
+harness, never advance the store generation, and never enter a served revision,
+a snapshot, or replication. An older binary ignores the table; after a restore
+from a pre-table backup the source simply recreates it on its next run.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

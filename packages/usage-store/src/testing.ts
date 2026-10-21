@@ -8,6 +8,7 @@ export {
   initializeUsageStore,
   publishServedReportRevision,
   queryCurrentServedReportRevision,
+  queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,

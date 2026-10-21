@@ -22,6 +22,7 @@
     "./opencode-session-facts": "./src/opencode-session-facts.ts",
     "./platform-paths": "./src/platform-paths.ts",
     "./private-storage": "./src/private-storage.ts",
+    "./routing-config": "./src/routing-config.ts",
     "./session-label": "./src/session-label.ts",
     "./session-detail": "./src/session-detail.ts",
     "./skills-config": "./src/skills-config.ts",

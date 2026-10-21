@@ -605,6 +605,7 @@ describe('Svelte Skills workspace SSR', () => {
             selectCapability: () => capability,
           },
           sync: unavailableServices<WebRpcRouterDependencies['sync']>(),
+          workRouting: unavailableServices<WebRpcRouterDependencies['workRouting']>(),
         });
       },
     });

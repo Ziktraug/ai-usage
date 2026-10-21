@@ -2,28 +2,74 @@
   import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import {
-    observedReviewCandidates,
+    assessReviewRecommendation,
+    CANDIDATE_PROVENANCE_FIELDS,
+    type CandidateProvenanceField,
+    qualifyReviewCandidates,
+    type ReviewCandidate,
     type ReviewRoutingPolicy,
     type ReviewTarget,
     simulateWorkReviewRouting,
   } from '@ai-usage/report-core/work-routing';
+  import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
+  import { createQuery } from '@tanstack/svelte-query';
+  import { untrack } from 'svelte';
+  import { browser } from '$app/environment';
   import type { RuntimeMode } from '../../../runtime-mode';
+  import { workRoutingContextQueryOptions } from '../../query/options/work-routing';
+  import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
+  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
+  import { createWorkRoutingClient } from '../../rpc/work-routing-client';
   import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
   import { projectWorkEvidence } from './work-evidence';
   import { workButton, workHeading, workInput, workMuted, workPanel, workRow, workStack } from './work-styles';
   import { WORK_DEMO_TIME } from './work-synthetic';
 
   let {
+    context,
     mode,
     providers,
     quotaUnavailable,
     target,
   }: {
+    /**
+     * The declared executors and executor observations. Omit it and the component reads the
+     * context itself in live mode; pass `null` to state that it is unavailable.
+     */
+    context?: WorkRoutingContext | null;
     mode: RuntimeMode;
     providers: readonly ProviderStatus[];
     quotaUnavailable: boolean;
     target: SessionPresentationRow;
   } = $props();
+  const rpc = useOptionalWebQueryRpcContext()?.rpc;
+  const routingClient = untrack(() =>
+    browser && rpc
+      ? createWorkRoutingClient(rpc.workRouting)
+      : ssrUnavailableClient<ReturnType<typeof createWorkRoutingClient>>('Work routing context'),
+  );
+  const contextQuery = createQuery(() =>
+    workRoutingContextQueryOptions(routingClient, {
+      browser,
+      enabled: mode === 'live' && context === undefined,
+    }),
+  );
+  const resolvedContext = $derived.by<WorkRoutingContext | null>(() => {
+    if (context !== undefined) {
+      return context;
+    }
+    return contextQuery.data?.ok ? contextQuery.data.data : null;
+  });
+  const contextError = $derived.by<{ readonly message: string; readonly tag: string } | null>(() => {
+    if (context !== undefined) {
+      return null;
+    }
+    if (contextQuery.data && !contextQuery.data.ok) {
+      return contextQuery.data.error;
+    }
+    // A transport failure carries no safe detail for the page; the tag is enough to act on.
+    return contextQuery.error ? { message: 'The request did not complete.', tag: 'Unavailable' } : null;
+  });
   const reviewTarget = $derived<ReviewTarget | null>(
     target.source?.machineId && target.source.sourceSessionId
       ? {
@@ -31,27 +77,50 @@
           machineId: target.source.machineId,
           harness: target.source.harnessKey,
           sourceSessionId: target.source.sourceSessionId,
+          projectLabel: target.projectLabel ?? null,
         }
       : null,
   );
-  const candidates = $derived.by(() => {
-    if (mode === 'live') {
-      return observedReviewCandidates(providers);
+  // One reference time per qualification: provenance (observed-now / stale) is judged against it,
+  // and the simulation reuses it so both agree. Refreshed whenever the inputs change.
+  let referenceTime = $state(untrack(() => mode) === 'live' ? new Date().toISOString() : WORK_DEMO_TIME);
+  const candidates = $derived.by<readonly ReviewCandidate[]>(() => {
+    if (mode !== 'live') {
+      return reviewTarget ? demoReviewCandidates(reviewTarget) : [];
     }
-    return reviewTarget ? demoReviewCandidates(reviewTarget) : [];
+    if (!resolvedContext) {
+      return [];
+    }
+    return qualifyReviewCandidates({
+      declarations: resolvedContext.declarations,
+      executorObservations: resolvedContext.executorObservations,
+      now: referenceTime,
+      providers,
+      target: reviewTarget,
+    });
   });
   let preferred = $state<ReviewRoutingPolicy['preferredHarness']>('claude-code');
   let nearReset = $state(false);
   let result = $state<ReturnType<typeof simulateWorkReviewRouting> | null>(null);
   const chosen = $derived(candidates.find((candidate) => candidate.id === result?.chosenCandidateId));
+  const recommendation = $derived(result ? assessReviewRecommendation(result, candidates) : null);
+  const alternatives = $derived(
+    result ? result.evaluations.filter((evaluation) => evaluation.candidateId !== result?.chosenCandidateId) : [],
+  );
   const resetResult = (_input: unknown): void => {
     result = null;
+    if (mode === 'live') {
+      referenceTime = new Date().toISOString();
+    }
   };
-  $effect(() => resetResult({ preferred, nearReset, target: target.rowId, candidates }));
+  $effect(() => resetResult({ preferred, nearReset, target: target.rowId, resolvedContext, providers }));
   const simulate = (event: SubmitEvent): void => {
     event.preventDefault();
     if (!reviewTarget) {
       return;
+    }
+    if (mode === 'live') {
+      referenceTime = new Date().toISOString();
     }
     const policy: ReviewRoutingPolicy = {
       preferredHarness: preferred,
@@ -68,8 +137,64 @@
       },
       candidates,
       policy,
-      referenceTime: mode === 'live' ? new Date().toISOString() : WORK_DEMO_TIME,
+      referenceTime,
     });
+  };
+  const harnessLabel = (harness: ReviewCandidate['harness']): string =>
+    harness === 'claude-code' ? 'Claude Code' : 'Codex';
+  const candidateById = (id: string): ReviewCandidate | undefined =>
+    candidates.find((candidate) => candidate.id === id);
+  const provenanceLabel = (candidate: ReviewCandidate, field: CandidateProvenanceField): string => {
+    const origin = candidate.provenance[field];
+    if (origin === 'declared') {
+      return `declared ${candidate.evidence.observedAt ?? ''}`.trim();
+    }
+    if (origin === 'stale') {
+      const at =
+        field === 'quota'
+          ? candidate.quota?.generatedAt
+          : resolvedContext?.executorObservations.find(
+              (observation) =>
+                observation.machineId === candidate.machineId && observation.harness === candidate.harness,
+            )?.observedAt;
+      return `stale${at ? ` ${at}` : ''}`;
+    }
+    return origin;
+  };
+  const fieldValue = (candidate: ReviewCandidate, field: CandidateProvenanceField): string => {
+    switch (field) {
+      case 'accountScope':
+        return candidate.accountScope ?? 'unknown';
+      case 'authorization':
+        return candidate.authorization;
+      case 'subscription':
+        return `${candidate.subscription}${candidate.quota?.plan ? ` (plan observed: ${candidate.quota.plan})` : ''}`;
+      case 'availability':
+        return candidate.availability;
+      case 'capabilities':
+        return candidate.capabilities.length > 0 ? candidate.capabilities.join(', ') : 'none';
+      case 'quality':
+        return candidate.quality;
+      case 'quota':
+        return candidate.quota ? `${candidate.quota.state} at ${candidate.quota.generatedAt}` : 'unavailable';
+      case 'model':
+        return candidate.model ?? 'unknown';
+      case 'effort':
+        return candidate.effort ?? 'unknown';
+      default:
+        return 'unknown';
+    }
+  };
+  const fieldLabel: Record<CandidateProvenanceField, string> = {
+    accountScope: 'Account',
+    authorization: 'Authorization',
+    subscription: 'Subscription',
+    availability: 'Availability',
+    capabilities: 'Capabilities',
+    quality: 'Quality',
+    quota: 'Quota',
+    model: 'Model',
+    effort: 'Effort',
   };
 </script>
 
@@ -80,9 +205,41 @@
   </p>
   {#if mode === 'live'}
     <p class={workMuted}>
-      History and quota do not prove authorization, an available harness or subscription access. Real candidates remain
-      unqualified until those facts are observed. Account identity stays unknown when the source omits it.
+      Authorization, subscription and capabilities come only from your declarations in
+      {resolvedContext?.configPath ?? '~/.config/ai-usage/config.json'}
+      (routing.executors). Availability comes from the engine's executor observations; quota from the stored usage-limit
+      observations. Each field names its provenance; nothing is inferred across them.
     </p>
+    {#if context === undefined && contextQuery.isPending}
+      <p class={workMuted} role="status">Reading routing declarations and executor observations…</p>
+    {:else if !resolvedContext}
+      <p class={workMuted} role="status">
+        Routing context unavailable{contextError ? ` (${contextError.tag}: ${contextError.message})` : ''}. No candidate
+        can be qualified: declarations and executor observations are unknown.
+      </p>
+    {:else}
+      {#if resolvedContext.declarations.length === 0}
+        <p class={workMuted}>
+          No executor is declared. Add a routing.executors[] entry to the home config to authorize a harness; quota and
+          executor observations alone never qualify a candidate.
+        </p>
+      {/if}
+      {#if resolvedContext.declarationErrors.length > 0}
+        <div class={workPanel}>
+          <h3 class={workHeading}>Declaration entries not read ({resolvedContext.declarationErrors.length})</h3>
+          <ul>
+            {#each resolvedContext.declarationErrors as issue}
+              <li class={workMuted}>{issue}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+      {#if resolvedContext.observationRead && (resolvedContext.observationRead.skipped > 0 || resolvedContext.observationRead.truncated)}
+        <p class={workMuted}>
+          Executor observations partially read: {resolvedContext.observationRead.skipped} refused on re-validation{resolvedContext.observationRead.truncated ? '; read bound reached' : ''}.
+        </p>
+      {/if}
+    {/if}
     {#if quotaUnavailable}
       <p class={workMuted}>Current quota observations are unavailable. No eligible capacity is assumed.</p>
     {/if}
@@ -118,9 +275,28 @@
   {#if result}
     <section aria-label="Routing result" aria-live="polite" class={workStack}>
       <h3 class={workHeading}>
-        {chosen ? `Chosen: ${chosen.harness === 'claude-code' ? 'Claude Code' : 'Codex'}` : 'No eligible candidate'}
+        {chosen ? `Chosen: ${harnessLabel(chosen.harness)}` : 'No eligible candidate'}
       </h3>
+      {#if recommendation}
+        <p class={workMuted}>
+          {#if recommendation.kind === 'real'}
+            Real recommendation: every required field is declared or observed now.
+          {:else if recommendation.kind === 'conditional'}
+            Conditional (missing: {recommendation.missing}). A conditional simulation never permits a launch.
+          {:else}
+            No eligible candidate.
+          {/if}
+        </p>
+      {/if}
       <p class={workMuted}>Simulation reference time: {result.referenceTime}. No execution was started.</p>
+      {#if chosen}
+        <p class={workMuted}>
+          Recommended executor: {harnessLabel(chosen.harness)} · account {chosen.accountScope ?? 'unknown'} · machine
+          {chosen.machineLabel ?? chosen.machineId ?? 'unknown'}
+          · model {chosen.model ?? 'unknown'} · effort
+          {chosen.effort ?? 'unknown'}.
+        </p>
+      {/if}
       <ul>
         {#each result.reasons as reason}
           <li class={workMuted}>{reason}</li>
@@ -128,15 +304,19 @@
       </ul>
       {#if candidates.length === 0}
         <p class={workMuted}>
-          No supported machine/provider scope was observed. Candidate, account, authorization and subscription data are
-          missing.
+          No candidate could be qualified. Declarations, quota scopes or executor observations are missing.
         </p>
       {/if}
-      {#each result.evaluations as evaluation (evaluation.candidateId)}
+      {#if alternatives.length > 0}
+        <h4 class={workHeading}>{chosen ? 'Alternatives excluded' : 'Candidates excluded'}</h4>
+      {/if}
+      {#each alternatives as evaluation (evaluation.candidateId)}
+        {@const alternative = candidateById(evaluation.candidateId)}
         <div class={workPanel}>
-          <h4 class={workHeading}>
-            {evaluation.candidateId}: {evaluation.eligible ? 'Eligible for simulation' : 'Excluded'}
-          </h4>
+          <h5 class={workHeading}>
+            {alternative ? `${harnessLabel(alternative.harness)} · ${alternative.accountScope ?? 'account unknown'}` : evaluation.candidateId}:
+            {evaluation.eligible ? 'Eligible, not preferred' : 'Excluded'}
+          </h5>
           <ul>
             {#each evaluation.exclusionReasons as reason}
               <li class={workMuted}>{reason}</li>
@@ -154,26 +334,29 @@
     {#each candidates as candidate (candidate.id)}
       <div class={workPanel}>
         <h3 class={workHeading}>
-          {candidate.harness}
+          {harnessLabel(candidate.harness)}
+          · {candidate.accountScope ?? 'account unknown'}
           · {candidate.machineLabel ?? candidate.machineId ?? 'Machine unknown'}
         </h3>
         <p class={workMuted}>
-          Account: {candidate.accountScope ?? 'unknown'}. Model: {candidate.model ?? 'unknown'}. Effort:
-          {candidate.effort ?? 'unknown'}.
+          {`${candidate.evidence.source} · ${candidate.evidence.observedAt ?? 'at an unknown time'}.`}
         </p>
-        <p class={workMuted}>
-          {candidate.evidence.source}
-          · observed {candidate.evidence.observedAt ?? 'at an unknown time'}.
-        </p>
-        <p class={workMuted}>
-          Authorization: {candidate.authorization}; subscription: {candidate.subscription}; availability:
-          {candidate.availability}; declared quality: {candidate.quality}.
-        </p>
+        <ul>
+          {#each CANDIDATE_PROVENANCE_FIELDS as field (field)}
+            <li class={workMuted}>
+              {fieldLabel[field]}: {fieldValue(candidate, field)} · {provenanceLabel(candidate, field)}
+            </li>
+          {/each}
+        </ul>
+        {#if candidate.qualificationActions.length > 0}
+          <p class={workMuted}>To qualify this candidate:</p>
+          <ul>
+            {#each candidate.qualificationActions as action}
+              <li class={workMuted}>{action}</li>
+            {/each}
+          </ul>
+        {/if}
         {#if candidate.quota}
-          <p class={workMuted}>
-            Quota state at collection: {candidate.quota.state}. Observed: {candidate.quota.generatedAt}. Offer:
-            {candidate.quota.plan ?? 'unknown'}.
-          </p>
           <ul>
             {#each candidate.quota.windows as window (window.id)}
               <li class={workMuted}>

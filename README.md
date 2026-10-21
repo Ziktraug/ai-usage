@@ -122,9 +122,10 @@ bun run cli -- --stored
 ```
 
 The dedicated usage engine runs collection independently from browser
-visibility. Its eight collection sources are Claude, Codex, OpenCode, and
-Cursor sessions; Codex and experimental Claude usage limits; RTK savings; and
-Cursor commit attribution.
+visibility. Its nine collection sources are Claude, Codex, OpenCode, and
+Cursor sessions; Codex and experimental Claude usage limits; RTK savings;
+Cursor commit attribution; and executor capabilities (which harness CLIs this
+machine can run, for the Work view's review routing).
 Each source has separate policy, detection, lifecycle, outcome, and cadence
 state on `/sources`. Sparse policy overrides live only in
 `~/.config/ai-usage/config.json`; repository config cannot enable background
@@ -253,6 +254,70 @@ See all project folders across machines to decide which ones to alias:
 ```sh
 bun run cli -- projects list --paths ./mac-usage.json --local
 ```
+
+### 7. Declare which local harness may run a read-only review
+
+The Work view simulates assigning a read-only review of a session to a local
+harness (Claude Code or Codex). History and quota never prove that a harness is
+*allowed* to act, so authorization is declared once, by you, in the home config
+(`~/.config/ai-usage/config.json`, section `routing`; repository config cannot
+declare it). The engine observes the rest on a 15-minute cadence
+(`executors.capabilities` on `/sources`): whether the binary is present, its
+version, and the sign-in state that `claude auth status` / `codex login status`
+report. Quota comes from the existing usage-limit sources. Each field of a
+candidate shows where it came from (`declared <date>`, `observed-now`,
+`stale <date>`, `unknown`) and the simulation never starts anything.
+
+```json
+{
+  "routing": {
+    "executors": [
+      {
+        "harness": "claude-code",
+        "accountScope": "personal",
+        "authorization": "allowed",
+        "targets": [{ "kind": "any-local-session" }],
+        "subscription": "verified",
+        "capabilities": ["read-only-review"],
+        "quality": "review-capable",
+        "model": "Opus",
+        "effort": "high",
+        "declaredAt": "2026-10-21T22:00:00+02:00"
+      }
+    ]
+  }
+}
+```
+
+- `harness`: `claude-code` or `codex`.
+- `accountScope`: the account this route bills against. When the stored quota
+  key carries an account suffix (`claude:<accountScope>` on `/sources` or in
+  `ai-usage quota --stored --json`), use that suffix; when the key is bare
+  (`claude`, the usual case today), any stable name you choose binds the
+  declaration to that machine's single quota stream for the family.
+- `machineId` (optional): defaults to this machine
+  (`~/.config/ai-usage/machine.json`). Set it only to declare a route on another
+  machine's behalf.
+- `authorization`: `allowed` or `forbidden`. A quota never grants it.
+- `targets`: `{ "kind": "any-local-session" }` or
+  `{ "kind": "project", "projectLabel": "<project as shown in the report>" }`;
+  one entry is required.
+- `subscription`: `verified` (you confirmed the account is on a subscription)
+  or `api` (metered API billing, excluded by the subscription-only policy).
+  Nothing verifies billing for you: the observed plan is shown beside your
+  declaration, never used to infer it.
+- `capabilities` (`read-only-review`), `quality` (`review-capable`): the only
+  values the current simulation understands.
+- `model`, `effort` (optional): the model and effort the review would run with.
+  Declare `model` when the provider reports model-scoped quota windows (ids
+  `model:<name>` in the quota feed), otherwise those windows cannot be
+  attributed and the candidate stays excluded.
+- `declaredAt`: required RFC 3339 date-time; the declaration is a dated
+  statement, not a current observation.
+
+An invalid entry is reported on the Work view with its config path and reason
+and does not hide the other entries. Declarations are read, never written, by
+the app.
 
 ## Output formats
 
