@@ -87,9 +87,17 @@ try {
   );
   await chmod(fakeCodexPath, 0o700);
   const codexSessionCount = scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT;
+  const defaultProfile = !(scaleFixture || campaignContinuityFixture);
   await seedHarnessHome(temporaryHome, {
     codexSessionCount: campaignContinuityFixture ? 2 : codexSessionCount,
-    harnesses: scaleFixture || campaignContinuityFixture ? ['codex'] : ['claude', 'codex'],
+    harnesses: defaultProfile ? ['claude', 'codex'] : ['codex'],
+    // The Claude Desktop session registry (24 roots, 17 children) joins the default profile only:
+    // its ages are relative to the pinned clock so the Work view reads "1 h ago" on every run and
+    // the 30-day window keeps the same roots, and the scale and continuity profiles keep the
+    // golden counters they assert on. It produces no Session rows.
+    ...(defaultProfile
+      ? { claudeDesktopEpoch: new Date(PRODUCTION_FIXTURE_EPOCH), claudeDesktopSessions: 'representative' as const }
+      : {}),
   });
   if (campaignContinuityFixture) {
     await seedCampaignContinuity(temporaryHome);
