@@ -54,6 +54,12 @@ describe('usage engine control contracts', () => {
       },
       { command: 'set-machine-label', label: 'Workstation' },
       { campaignKey: 'machine-a:codex:root-a', command: 'set-campaign-label-override', label: 'Launch' },
+      {
+        action: 'read-only-review',
+        candidateId: 'declared:["machine-a","claude-code","personal"]',
+        command: 'start-review-attempt',
+        target: { desktopSessionId: 'local_one', harness: 'claude', sourceSessionId: 'session-a' },
+      },
       { command: 'collect-fresh-quota' },
       { command: 'import-cursor', input: { handoffId: 'handoff-1', kind: 'inbox-handoff' } },
       {

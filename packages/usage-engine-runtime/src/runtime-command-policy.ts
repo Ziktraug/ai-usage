@@ -7,7 +7,8 @@ export type UsageEngineCommandOutputKind =
   | 'merge-preview'
   | 'none'
   | 'publication'
-  | 'replication-status';
+  | 'replication-status'
+  | 'review-attempt';
 
 interface UsageEngineCommandPolicy {
   readonly interruptible: boolean;
@@ -31,4 +32,6 @@ export const usageEngineCommandPolicies = {
   'set-campaign-label-override': { interruptible: false, outputKind: 'none' },
   'set-machine-label': { interruptible: false, outputKind: 'machine' },
   'set-source-enabled': { interruptible: false, outputKind: 'none' },
+  // The command returns once the attempt is recorded and spawned; aborting it never kills the review.
+  'start-review-attempt': { interruptible: false, outputKind: 'review-attempt' },
 } as const satisfies Record<UsageEngineCommandName, UsageEngineCommandPolicy>;

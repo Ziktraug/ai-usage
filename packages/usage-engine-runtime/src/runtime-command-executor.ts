@@ -12,6 +12,7 @@ import {
   type UsageEngineMergePreviewOutput,
   type UsageEnginePublicationOutput,
   type UsageEngineReplicationStatusOutput,
+  type UsageEngineReviewAttemptOutput,
   usageEngineReportSourceIdsFor,
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineRuntimeDependencies } from './runtime';
@@ -24,6 +25,7 @@ export type UsageEngineCommandOutput =
   | UsageEngineMergePreviewOutput
   | UsageEnginePublicationOutput
   | UsageEngineReplicationStatusOutput
+  | UsageEngineReviewAttemptOutput
   | undefined;
 
 interface RuntimeCommandExecutorState {
@@ -127,6 +129,12 @@ export const createRuntimeCommandExecutor = (
       case 'set-campaign-label-override':
         await dependencies.mutation.setCampaignLabelOverride(command, signal);
         return;
+      case 'start-review-attempt': {
+        if (!dependencies.reviewAttempts) {
+          throw new Error('Review attempts are not available in this engine composition.');
+        }
+        return await dependencies.reviewAttempts.start(command, signal);
+      }
       case 'collect-fresh-quota':
         return await collectSources([...providerUsageSourceIds]);
       case 'import-cursor': {
