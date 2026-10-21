@@ -3,6 +3,7 @@ import {
   EXECUTOR_BOUNDS,
   type ExecutorDeclaration,
   type ExecutorObservation,
+  executorAuthMethodIndicatesApiKey,
   executorDeclarationKey,
   executorHarnessFamily,
   executorHarnessForFamily,
@@ -148,6 +149,7 @@ describe('executor declarations', () => {
 describe('executor observations', () => {
   const observation: ExecutorObservation = {
     authEvidence: 'codex login status exit 0 (output mentions "Logged in")',
+    authMethod: null,
     authState: 'logged-in',
     binaryPath: '/usr/bin/codex',
     harness: 'codex',
@@ -174,11 +176,30 @@ describe('executor observations', () => {
     ).not.toBeNull();
   });
 
+  test('reads the sign-in method when present, absent as null, and names the API-key methods', () => {
+    const { authMethod: _absent, ...withoutMethod } = observation;
+    expect(parseExecutorObservation(withoutMethod)).toEqual(observation);
+    expect(parseExecutorObservation({ ...observation, authMethod: 'claude.ai' })?.authMethod).toBe('claude.ai');
+    expect(
+      parseExecutorObservation({ ...observation, authMethod: 'm'.repeat(EXECUTOR_BOUNDS.maxAuthMethod) }),
+    ).not.toBeNull();
+    for (const method of ['api-key', 'apiKey', 'console', 'ANTHROPIC_API_KEY', 'api']) {
+      expect(executorAuthMethodIndicatesApiKey(method)).toBe(true);
+    }
+    for (const method of ['claude.ai', 'chatgpt', 'oauth', null]) {
+      expect(executorAuthMethodIndicatesApiKey(method)).toBe(false);
+    }
+  });
+
   test.each([
     { harness: 'cursor' },
     { authState: 'maybe' },
     { outcome: 'ok' },
     { authEvidence: '' },
+    { authMethod: '' },
+    { authMethod: 'm'.repeat(EXECUTOR_BOUNDS.maxAuthMethod + 1) },
+    { authMethod: 'line\nbreak' },
+    { authMethod: 7 },
     { authEvidence: 'x'.repeat(EXECUTOR_BOUNDS.maxText + 1) },
     { authEvidence: 'line\nbreak' },
     { version: '' },

@@ -64,6 +64,7 @@ export const executorDeclarationSchema = strictObject({
 
 export const executorObservationSchema = strictObject({
   authEvidence: textSchema,
+  authMethod: nullable(pipe(string(), minLength(1), maxLength(EXECUTOR_BOUNDS.maxAuthMethod))),
   authState: picklist(['logged-in', 'logged-out', 'unknown']),
   binaryPath: nullable(pathSchema),
   harness: executorHarnessSchema,

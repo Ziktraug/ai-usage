@@ -332,6 +332,7 @@ describe('scheduled source adapters', () => {
       expect(stored.observations).toEqual([
         {
           authEvidence: 'claude auth status exit 0 loggedIn=true',
+          authMethod: null,
           authState: 'logged-in',
           binaryPath: '/usr/bin/claude',
           harness: 'claude-code',
@@ -342,6 +343,7 @@ describe('scheduled source adapters', () => {
         },
         {
           authEvidence: 'codex binary not found on PATH',
+          authMethod: null,
           authState: 'unknown',
           binaryPath: null,
           harness: 'codex',

@@ -35,6 +35,7 @@ describe('Work routing context server read', () => {
           observations: [
             {
               authEvidence: 'codex login status exit 1',
+              authMethod: null,
               authState: 'logged-out',
               binaryPath: '/usr/bin/codex',
               harness: 'codex',
@@ -57,6 +58,7 @@ describe('Work routing context server read', () => {
       executorObservations: [
         {
           authEvidence: 'codex login status exit 1',
+          authMethod: null,
           authState: 'logged-out',
           binaryPath: '/usr/bin/codex',
           harness: 'codex',

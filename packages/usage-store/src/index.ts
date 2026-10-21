@@ -1717,12 +1717,20 @@ const migrate = (db: SqliteDatabase): boolean => {
       version TEXT,
       auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
       auth_evidence TEXT NOT NULL,
+      auth_method TEXT,
       outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
     );
     CREATE INDEX IF NOT EXISTS idx_executor_observations_latest
       ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
     db.exec(workFactSchemaSql);
+    // Additive under the same user_version: a store that created executor_observations before the
+    // sign-in method was recorded gains the nullable column; older rows read as "no method".
+    const executorColumns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
+    if (!executorColumns.some((column) => column.name === 'auth_method')) {
+      schemaChanged = true;
+      db.exec('ALTER TABLE executor_observations ADD COLUMN auth_method TEXT');
+    }
     if (skillObservationCollectionStateMissing) {
       // Stores written by the first implementation have observation/session
       // rows but no durable producer bound. The lost answer cannot be

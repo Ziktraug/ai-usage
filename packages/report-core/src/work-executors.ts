@@ -33,6 +33,8 @@ export const EXECUTOR_OBSERVATION_OUTCOMES = ['observed', 'unavailable', 'timeou
 export type ExecutorObservationOutcome = (typeof EXECUTOR_OBSERVATION_OUTCOMES)[number];
 
 export const EXECUTOR_BOUNDS = {
+  /** `authMethod`: the sign-in method word a CLI reports ("claude.ai", "console", "api-key"). */
+  maxAuthMethod: 64,
   /** Entries accepted from `routing.executors[]`; later entries are reported, not read. */
   maxDeclarations: 64,
   /** Latest observations a reader returns (one per machine and harness is the realistic ceiling). */
@@ -116,6 +118,11 @@ export interface ParseExecutorDeclarationsOptions {
 export interface ExecutorObservation {
   /** How the sign-in state was established, bounded and credential-free (for example "codex login status exit 0"). */
   readonly authEvidence: string;
+  /**
+   * The sign-in method as the CLI names it ("claude.ai", "console", "api-key"), or `null` when it
+   * named none. An API-key method contradicts a declared subscription; see `work-routing.ts`.
+   */
+  readonly authMethod: string | null;
   readonly authState: ExecutorAuthState;
   readonly binaryPath: string | null;
   readonly harness: ExecutorHarness;
@@ -140,6 +147,7 @@ const DECLARATION_KEYS: ReadonlySet<string> = new Set([
 ]);
 const OBSERVATION_KEYS: ReadonlySet<string> = new Set([
   'authEvidence',
+  'authMethod',
   'authState',
   'binaryPath',
   'harness',
@@ -419,12 +427,28 @@ export const parseExecutorDeclarations = (
   return { declarations, issues };
 };
 
+const API_KEY_AUTH_METHODS: ReadonlySet<string> = new Set(['api-key', 'apikey', 'console']);
+
+/**
+ * Whether a sign-in method word means the CLI bills an API key rather than a subscription: the
+ * known words, or any method naming the API. `null` (no method reported) means nothing.
+ */
+export const executorAuthMethodIndicatesApiKey = (authMethod: string | null): boolean => {
+  if (authMethod === null) {
+    return false;
+  }
+  const method = authMethod.trim().toLowerCase();
+  return API_KEY_AUTH_METHODS.has(method) || method.includes('api');
+};
+
 /** Strict re-validation of one stored or collected executor observation. */
 export const parseExecutorObservation = (value: unknown): ExecutorObservation | null => {
   if (!isRecord(value) || hasOnlyKeys(value, OBSERVATION_KEYS).length > 0) {
     return null;
   }
   const observedAt = normalizeIsoTimestamp(value.observedAt);
+  // Rows and collectors from before the field carry no `authMethod`; absent reads as null.
+  const authMethod = value.authMethod === undefined ? null : value.authMethod;
   if (
     !(isExecutorHarness(value.harness) && isBoundedText(value.machineId, EXECUTOR_BOUNDS.maxScope)) ||
     typeof value.observedAt !== 'string' ||
@@ -432,6 +456,7 @@ export const parseExecutorObservation = (value: unknown): ExecutorObservation | 
     !isOneOf(EXECUTOR_AUTH_STATES, value.authState) ||
     !isOneOf(EXECUTOR_OBSERVATION_OUTCOMES, value.outcome) ||
     !isBoundedText(value.authEvidence, EXECUTOR_BOUNDS.maxText) ||
+    !(authMethod === null || isBoundedText(authMethod, EXECUTOR_BOUNDS.maxAuthMethod)) ||
     !(value.binaryPath === null || isBoundedText(value.binaryPath, EXECUTOR_BOUNDS.maxPath)) ||
     !(value.version === null || isBoundedText(value.version, EXECUTOR_BOUNDS.maxText))
   ) {
@@ -439,6 +464,7 @@ export const parseExecutorObservation = (value: unknown): ExecutorObservation | 
   }
   return {
     authEvidence: value.authEvidence,
+    authMethod,
     authState: value.authState,
     binaryPath: value.binaryPath,
     harness: value.harness,

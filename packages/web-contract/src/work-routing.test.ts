@@ -22,6 +22,7 @@ const context: WorkRoutingContext = {
   executorObservations: [
     {
       authEvidence: 'claude auth status exit 0 loggedIn=true authMethod=claude.ai',
+      authMethod: 'claude.ai',
       authState: 'logged-in',
       binaryPath: '/usr/bin/claude',
       harness: 'claude-code',
@@ -57,6 +58,7 @@ describe('Work routing Web contract', () => {
     { declarations: [{ ...context.declarations[0], token: 'sk-never' }] },
     { executorObservations: [{ ...context.executorObservations[0], stdout: 'raw output' }] },
     { executorObservations: [{ ...context.executorObservations[0], authEvidence: 'x'.repeat(257) }] },
+    { executorObservations: [{ ...context.executorObservations[0], authMethod: 'm'.repeat(65) }] },
     { executorObservations: [{ ...context.executorObservations[0], harness: 'cursor' }] },
     { declarationErrors: [''] },
     { unexpected: true },

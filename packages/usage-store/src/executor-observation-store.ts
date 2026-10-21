@@ -78,6 +78,7 @@ interface ExecutorObservationStoreDependencies {
 
 interface ExecutorObservationRecord {
   auth_evidence: string;
+  auth_method: string | null;
   auth_state: string;
   binary_path: string | null;
   harness: string;
@@ -92,6 +93,7 @@ const MAX_IMPORT_BATCH = 256;
 const observationFromRecord = (record: ExecutorObservationRecord): ExecutorObservation | null =>
   parseExecutorObservation({
     authEvidence: record.auth_evidence,
+    authMethod: record.auth_method,
     authState: record.auth_state,
     binaryPath: record.binary_path,
     harness: record.harness,
@@ -127,8 +129,8 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
           try {
             const insert = db.query(`
               INSERT INTO executor_observations (
-                machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, outcome
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method, outcome
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             const prune = db.query(`
               DELETE FROM executor_observations
@@ -155,6 +157,7 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
                 observation.version,
                 observation.authState,
                 observation.authEvidence,
+                observation.authMethod,
                 observation.outcome,
               );
               inserted++;
@@ -189,7 +192,7 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
           const limit = EXECUTOR_BOUNDS.maxObservations;
           const rows = db
             .query(`
-              SELECT machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, outcome
+              SELECT machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method, outcome
               FROM (
                 SELECT *, ROW_NUMBER() OVER (
                   PARTITION BY machine_id, harness ORDER BY observed_at DESC, id DESC

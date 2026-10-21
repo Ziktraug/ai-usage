@@ -376,6 +376,7 @@ describe('qualifyReviewCandidates', () => {
   });
   const observation = (overrides: Partial<ExecutorObservation> = {}): ExecutorObservation => ({
     authEvidence: 'claude auth status exit 0 loggedIn=true',
+    authMethod: null,
     authState: 'logged-in',
     binaryPath: '/usr/bin/claude',
     harness: 'claude-code',
@@ -741,6 +742,41 @@ describe('qualifyReviewCandidates', () => {
     expect(forced.result.chosenCandidateId).toBeNull();
     expect(forced.result.reasons.join(' ')).toContain('cannot bypass constraints');
     expect(forced.recommendation.kind).toBe('none');
+  });
+
+  test('a fresh API-key sign-in contradicts a declared verified subscription and excludes the candidate', () => {
+    for (const authMethod of ['api-key', 'console', 'apiKey']) {
+      const contradicted = only(qualify({ executorObservations: [observation({ authMethod })] }));
+      expect(contradicted.subscription).toBe('api');
+      expect(contradicted.provenance.subscription).toBe('observed-now');
+      expect(contradicted.availability).toBe('available');
+      expect(contradicted.qualificationActions).toEqual([
+        `subscription: declared verified, but the CLI reports API-key authentication (authMethod ${authMethod} observed 2026-10-21T11:50:00.000Z); sign claude in with the subscription account or declare 'api'`,
+      ]);
+      const { recommendation, result } = run([contradicted]);
+      expect(result.chosenCandidateId).toBeNull();
+      expect(excluded(result, contradicted.id)).toContain('API billing observed from the CLI sign-in');
+      expect(recommendation.kind).toBe('none');
+    }
+    // A subscription sign-in, no named method, or a stale API-key observation leaves the declaration as written.
+    for (const observed of [
+      observation({ authMethod: 'claude.ai' }),
+      observation(),
+      observation({ authMethod: 'api-key', observedAt: '2026-10-21T10:00:00.000Z' }),
+    ]) {
+      const kept = only(qualify({ executorObservations: [observed] }));
+      expect(kept.subscription).toBe('verified');
+      expect(kept.provenance.subscription).toBe('declared');
+    }
+    // A declaration that already says 'api' keeps its own, declared, reason.
+    const declaredApi = only(
+      qualify({
+        declarations: [declaration({ subscription: 'api' })],
+        executorObservations: [observation({ authMethod: 'api-key' })],
+      }),
+    );
+    expect(declaredApi.provenance.subscription).toBe('declared');
+    expect(excluded(run([declaredApi]).result, declaredApi.id)).toContain('API billing is outside');
   });
 
   test("a declaration for another machine cannot review this machine's session", () => {

@@ -110,6 +110,7 @@ const context: WorkRoutingContext = {
   executorObservations: [
     {
       authEvidence: 'claude auth status exit 0 loggedIn=true',
+      authMethod: 'claude.ai',
       authState: 'logged-in',
       binaryPath: '/usr/bin/claude',
       harness: 'claude-code',

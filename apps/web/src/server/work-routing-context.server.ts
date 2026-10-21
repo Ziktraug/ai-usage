@@ -95,6 +95,7 @@ export const e2eWorkRoutingContext = (): WorkRoutingContext =>
     executorObservations: [
       {
         authEvidence: 'claude auth status exit 0 loggedIn=true',
+        authMethod: 'claude.ai',
         authState: 'logged-in',
         binaryPath: '/fixture/bin/claude',
         harness: 'claude-code',

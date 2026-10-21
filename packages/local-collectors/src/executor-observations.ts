@@ -1,4 +1,9 @@
 import {
+  BoundedProcessError,
+  type BoundedProcessFailureKind,
+  executeBoundedProcess,
+} from '@ai-usage/local-machine/bounded-process';
+import {
   EXECUTOR_BOUNDS,
   EXECUTOR_HARNESSES,
   type ExecutorAuthState,
@@ -10,14 +15,15 @@ import {
 
 /**
  * Observes the review executors a machine could run: is the harness CLI on the PATH, which version,
- * and does its own non-interactive status command say it is signed in. Metadata only: nothing here
- * opens a session, generates text, or reads a credential file. Evidence strings are built from exit
- * codes and a classification word, never from raw output, so an email or token on stdout can never
- * reach the store.
+ * does its own non-interactive status command say it is signed in, and through which method.
+ * Metadata only: nothing here opens a session, generates text, or reads a credential file. Evidence
+ * strings are built from exit codes and a classification word, never from raw output, so an email
+ * or token on stdout can never reach the store.
  *
- * Process execution is injected. The default `runBoundedProcess` is a minimal Bun.spawn runner
- * (no shell, stderr discarded, timeout then kill); the integrator replaces it with the shared
- * bounded runner when that lands.
+ * Process execution goes through the repository's one bounded runner
+ * (`@ai-usage/local-machine/bounded-process`): no shell, an allow-listed environment (PATH, HOME,
+ * locale and XDG variables only), a deadline and an output ceiling, stderr drained and discarded.
+ * The runner is injectable for tests; the seam speaks the runner's own typed failures.
  */
 export interface BoundedRunSpec {
   readonly args: readonly string[];
@@ -34,63 +40,18 @@ export interface BoundedRunResult {
 
 export type BoundedRun = (spec: BoundedRunSpec) => Promise<BoundedRunResult>;
 
-export type BoundedProcessFailureKind = 'output-limit' | 'spawn-failed' | 'timeout';
+export { BoundedProcessError, type BoundedProcessFailureKind };
 
-export class BoundedProcessError extends Error {
-  readonly kind: BoundedProcessFailureKind;
-
-  constructor(kind: BoundedProcessFailureKind, command: string) {
-    super(`${command}: ${kind}`);
-    this.name = 'BoundedProcessError';
-    this.kind = kind;
-  }
-}
-
+/** The default runner: the shared bounded process, so the probes inherit its environment allow-list. */
 export const runBoundedProcess: BoundedRun = async (spec) => {
-  let child: ReturnType<typeof Bun.spawn>;
-  try {
-    child = Bun.spawn([spec.command, ...spec.args], {
-      env: { ...process.env, ...spec.env },
-      stderr: 'ignore',
-      stdin: 'ignore',
-      stdout: 'pipe',
-    });
-  } catch {
-    throw new BoundedProcessError('spawn-failed', spec.command);
-  }
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill('SIGKILL');
-  }, spec.timeoutMs);
-  try {
-    const stdout = child.stdout;
-    if (!(stdout instanceof ReadableStream)) {
-      throw new BoundedProcessError('spawn-failed', spec.command);
-    }
-    const chunks: Uint8Array[] = [];
-    let bytes = 0;
-    let overflow = false;
-    for await (const chunk of stdout) {
-      bytes += chunk.byteLength;
-      if (bytes > spec.maximumOutputBytes) {
-        overflow = true;
-        child.kill('SIGKILL');
-        break;
-      }
-      chunks.push(chunk);
-    }
-    const exitCode = await child.exited;
-    if (timedOut) {
-      throw new BoundedProcessError('timeout', spec.command);
-    }
-    if (overflow) {
-      throw new BoundedProcessError('output-limit', spec.command);
-    }
-    return { exitCode, stdout: new TextDecoder().decode(Buffer.concat(chunks, bytes)) };
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await executeBoundedProcess({
+    args: spec.args,
+    command: spec.command,
+    maximumOutputBytes: spec.maximumOutputBytes,
+    timeoutMs: spec.timeoutMs,
+    ...(spec.env === undefined ? {} : { env: spec.env }),
+  });
+  return { exitCode: result.exitCode, stdout: result.stdout };
 };
 
 export interface ObserveExecutorsInput {
@@ -107,6 +68,9 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const MAXIMUM_OUTPUT_BYTES = 64 * 1024;
 const VERSION_PATTERN = /\d+\.\d+(?:\.\d+)?/u;
 const CODEX_LOGGED_IN_PATTERN = /logged in/iu;
+const CODEX_API_KEY_PATTERN = /api key/iu;
+const CODEX_CHATGPT_PATTERN = /chatgpt/iu;
+const PRINTABLE_ASCII_PATTERN = /^[\x20-\x7e]+$/u;
 
 const EXECUTOR_COMMANDS: Readonly<Record<ExecutorHarness, string>> = {
   'claude-code': 'claude',
@@ -114,12 +78,22 @@ const EXECUTOR_COMMANDS: Readonly<Record<ExecutorHarness, string>> = {
 };
 
 interface AuthProbe {
+  readonly authMethod: string | null;
   readonly authState: ExecutorAuthState;
   readonly evidence: string;
   readonly outcome: ExecutorObservationOutcome;
 }
 
 const bounded = (text: string): string => text.slice(0, EXECUTOR_BOUNDS.maxText);
+
+/** A sign-in method as the CLI names it, kept only when it is short printable ASCII. */
+const boundedAuthMethod = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const method = value.trim().slice(0, EXECUTOR_BOUNDS.maxAuthMethod);
+  return PRINTABLE_ASCII_PATTERN.test(method) ? method : null;
+};
 
 const versionFrom = (stdout: string): string | null => {
   const line = stdout
@@ -130,9 +104,23 @@ const versionFrom = (stdout: string): string | null => {
 };
 
 const failureKind = (error: unknown): BoundedProcessFailureKind =>
-  error instanceof BoundedProcessError ? error.kind : 'spawn-failed';
+  error instanceof BoundedProcessError ? error.kind : 'failed';
 
-/** `claude auth status` prints JSON by default; only its `loggedIn` boolean is read. */
+const outcomeOfFailure = (kind: BoundedProcessFailureKind): ExecutorObservationOutcome => {
+  if (kind === 'timed-out') {
+    return 'timeout';
+  }
+  return kind === 'unavailable' ? 'unavailable' : 'invalid';
+};
+
+const failedProbe = (command: string, kind: BoundedProcessFailureKind): AuthProbe => ({
+  authMethod: null,
+  authState: 'unknown',
+  evidence: `${command} ${kind}`,
+  outcome: outcomeOfFailure(kind),
+});
+
+/** `claude auth status` prints JSON by default; only its `loggedIn` boolean and `authMethod` word are read. */
 const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthProbe> => {
   let result: BoundedRunResult;
   try {
@@ -143,12 +131,7 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<Auth
       timeoutMs,
     });
   } catch (error) {
-    const kind = failureKind(error);
-    return {
-      authState: 'unknown',
-      evidence: `claude auth status ${kind}`,
-      outcome: kind === 'timeout' ? 'timeout' : 'invalid',
-    };
+    return failedProbe('claude auth status', failureKind(error));
   }
   let payload: unknown;
   try {
@@ -164,6 +147,7 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<Auth
     // Older CLIs have no `auth status`; they exit non-zero with usage text. That is "unknown",
     // never a reason to read the credentials file instead.
     return {
+      authMethod: null,
       authState: 'unknown',
       evidence:
         result.exitCode === 0
@@ -173,12 +157,13 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<Auth
     };
   }
   const authMethod =
-    typeof payload === 'object' && payload !== null && 'authMethod' in payload && typeof payload.authMethod === 'string'
-      ? ` authMethod=${bounded(payload.authMethod).slice(0, 32)}`
-      : '';
+    typeof payload === 'object' && payload !== null && 'authMethod' in payload
+      ? boundedAuthMethod(payload.authMethod)
+      : null;
   return {
+    authMethod,
     authState: loggedIn ? 'logged-in' : 'logged-out',
-    evidence: `claude auth status exit ${result.exitCode} loggedIn=${loggedIn}${authMethod}`,
+    evidence: `claude auth status exit ${result.exitCode} loggedIn=${loggedIn}${authMethod === null ? '' : ` authMethod=${authMethod}`}`,
     outcome: 'observed',
   };
 };
@@ -186,7 +171,7 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<Auth
 /**
  * `codex login status`: the exit code is the contract (0 signed in, non-zero not). The CLI writes
  * its "Logged in using …" line to stderr, which the bounded runner discards, so a stdout mention is
- * recorded as extra evidence when present but never required.
+ * recorded as extra evidence (and as the sign-in method) when present but never required.
  */
 const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthProbe> => {
   let result: BoundedRunResult;
@@ -198,18 +183,25 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthP
       timeoutMs,
     });
   } catch (error) {
-    const kind = failureKind(error);
-    return {
-      authState: 'unknown',
-      evidence: `codex login status ${kind}`,
-      outcome: kind === 'timeout' ? 'timeout' : 'invalid',
-    };
+    return failedProbe('codex login status', failureKind(error));
   }
   if (result.exitCode !== 0) {
-    return { authState: 'logged-out', evidence: `codex login status exit ${result.exitCode}`, outcome: 'observed' };
+    return {
+      authMethod: null,
+      authState: 'logged-out',
+      evidence: `codex login status exit ${result.exitCode}`,
+      outcome: 'observed',
+    };
   }
   const mentionsLoggedIn = CODEX_LOGGED_IN_PATTERN.test(result.stdout);
+  let authMethod: string | null = null;
+  if (CODEX_API_KEY_PATTERN.test(result.stdout)) {
+    authMethod = 'api-key';
+  } else if (CODEX_CHATGPT_PATTERN.test(result.stdout)) {
+    authMethod = 'chatgpt';
+  }
   return {
+    authMethod,
     authState: 'logged-in',
     evidence: mentionsLoggedIn
       ? 'codex login status exit 0 (output mentions "Logged in")'
@@ -218,6 +210,19 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthP
   };
 };
 
+type ObservationBase = Pick<ExecutorObservation, 'harness' | 'machineId' | 'observedAt'>;
+
+/** The executor cannot be run here: no binary on the PATH, or the bounded runner could not start it. */
+const unavailableObservation = (base: ObservationBase, evidence: string): ExecutorObservation => ({
+  ...base,
+  authEvidence: bounded(evidence),
+  authMethod: null,
+  authState: 'unknown',
+  binaryPath: null,
+  outcome: 'unavailable',
+  version: null,
+});
+
 const observeExecutor = async (
   harness: ExecutorHarness,
   input: Required<Pick<ObserveExecutorsInput, 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>>,
@@ -225,16 +230,9 @@ const observeExecutor = async (
   const command = EXECUTOR_COMMANDS[harness];
   const observedAt = input.now().toISOString();
   const binaryPath = input.which(command);
-  const base = { harness, machineId: input.machineId, observedAt };
+  const base: ObservationBase = { harness, machineId: input.machineId, observedAt };
   if (binaryPath === null) {
-    return {
-      ...base,
-      authEvidence: `${command} binary not found on PATH`,
-      authState: 'unknown',
-      binaryPath: null,
-      outcome: 'unavailable',
-      version: null,
-    };
+    return unavailableObservation(base, `${command} binary not found on PATH`);
   }
   let version: string | null = null;
   let versionOutcome: ExecutorObservationOutcome = 'observed';
@@ -253,18 +251,25 @@ const observeExecutor = async (
     }
   } catch (error) {
     const kind = failureKind(error);
-    versionOutcome = kind === 'timeout' ? 'timeout' : 'invalid';
+    if (kind === 'unavailable') {
+      return unavailableObservation(base, `${command} --version unavailable to the bounded runner`);
+    }
+    versionOutcome = outcomeOfFailure(kind);
     versionEvidence = `${command} --version ${kind}`;
   }
   const auth =
     harness === 'claude-code'
       ? await claudeAuthProbe(input.run, input.timeoutMs)
       : await codexAuthProbe(input.run, input.timeoutMs);
+  if (auth.outcome === 'unavailable') {
+    return unavailableObservation(base, `${auth.evidence} to the bounded runner`);
+  }
   const outcome: ExecutorObservationOutcome = versionOutcome === 'observed' ? auth.outcome : versionOutcome;
   const evidence = versionEvidence === '' ? auth.evidence : `${versionEvidence}; ${auth.evidence}`;
   return {
     ...base,
     authEvidence: bounded(evidence),
+    authMethod: auth.authMethod,
     authState: auth.authState,
     binaryPath: binaryPath.length <= EXECUTOR_BOUNDS.maxPath ? binaryPath : null,
     outcome,

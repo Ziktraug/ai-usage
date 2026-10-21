@@ -83,6 +83,11 @@ harness, never advance the store generation, and never enter a served revision,
 a snapshot, or replication. An older binary ignores the table; after a restore
 from a pre-table backup the source simply recreates it on its next run.
 
+2026-10-22: the table gained a nullable `auth_method` column (the sign-in
+method word the CLI reports, such as `claude.ai` or `api-key`). A store whose
+table predates it receives `ALTER TABLE … ADD COLUMN` on the next open, under
+the same `user_version`; existing rows read as "no method recorded".
+
 ### Additive tables under usage version 4 (2026-10-21, external and local facts)
 
 The Work view's external and local fact family (ADR 0051) adds three tables to

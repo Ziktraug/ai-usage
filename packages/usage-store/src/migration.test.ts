@@ -507,6 +507,73 @@ describe('usage-store forward migration', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
   });
 
+  test('adds the auth_method column to an executor_observations table written before it, without bumping user_version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-executor-auth-method-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    // The table as the first implementation created it, with one row from that time.
+    const before = new Database(dbPath, { create: false, readwrite: true });
+    before.exec(`
+      DROP TABLE executor_observations;
+      CREATE TABLE executor_observations (
+        id INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL,
+        harness TEXT NOT NULL CHECK (harness IN ('claude-code', 'codex')),
+        observed_at TEXT NOT NULL,
+        binary_path TEXT,
+        version TEXT,
+        auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
+        auth_evidence TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
+      );
+      INSERT INTO executor_observations (machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, outcome)
+      VALUES ('machine-a', 'codex', '2026-10-21T20:00:00.000Z', '/usr/bin/codex', 'codex-cli 0.163.0', 'logged-in', 'codex login status exit 0', 'observed');
+    `);
+    const columnsBefore = before.query('PRAGMA table_info(executor_observations)').all() as { name: string }[];
+    expect(columnsBefore.map(({ name }) => name)).not.toContain('auth_method');
+    before.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const columns = migrated.query('PRAGMA table_info(executor_observations)').all() as { name: string }[];
+    expect(columns.map(({ name }) => name)).toContain('auth_method');
+    migrated.close(true);
+
+    // The pre-column row reads as "no method"; a new row carries the method it observed.
+    const imported = await Effect.runPromise(
+      importExecutorObservations({
+        dbPath,
+        observations: [
+          {
+            authEvidence: 'claude auth status exit 0 loggedIn=true authMethod=api-key',
+            authMethod: 'api-key',
+            authState: 'logged-in',
+            binaryPath: '/usr/bin/claude',
+            harness: 'claude-code',
+            machineId: 'machine-a',
+            observedAt: '2026-10-21T21:00:00.000Z',
+            outcome: 'observed',
+            version: '2.1.303 (Claude Code)',
+          },
+        ],
+      }),
+    );
+    expect(imported).toEqual({ inserted: 1, pruned: 0, rejected: 0 });
+    const latest = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(latest.skipped).toBe(0);
+    expect(latest.observations.map(({ harness, authMethod }) => [harness, authMethod])).toEqual([
+      ['claude-code', 'api-key'],
+      ['codex', null],
+    ]);
+    // Re-opening is idempotent and the store generation never moved.
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
   test('adds the Claude Desktop session family to a populated store already on the current version', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-store-claude-desktop-migration-'));
     temporaryRoots.push(root);

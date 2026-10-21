@@ -12,6 +12,7 @@ import {
   type ExecutorDeclaredTarget,
   type ExecutorHarness,
   type ExecutorObservation,
+  executorAuthMethodIndicatesApiKey,
   executorDeclarationKey,
   executorHarnessFamily,
 } from './work-executors';
@@ -420,6 +421,15 @@ const declaredCandidate = (
   );
   const target = input.target;
   const admitted = target !== null && targetAdmitted(declaration.targets, target);
+  // A current sign-in through an API key contradicts a declared subscription: the CLI would bill
+  // the API whatever the declaration says. Only a fresh observation can say so; a stale or absent
+  // one leaves the declaration as written.
+  const apiKeyObserved =
+    observation !== undefined &&
+    availability.provenance === 'observed-now' &&
+    executorAuthMethodIndicatesApiKey(observation.authMethod);
+  const subscription: ReviewCandidate['subscription'] =
+    declaration.subscription === 'verified' && apiKeyObserved ? 'api' : declaration.subscription;
   const actions: string[] = [];
   if (target === null) {
     actions.push('Select a session with a machine and native identity to bind the authorization to a target');
@@ -431,6 +441,10 @@ const declaredCandidate = (
   if (declaration.subscription === 'api') {
     actions.push(
       `Declared subscription 'api' for ${scope} is outside the subscription-only policy; declare 'verified' only if the account is on a subscription`,
+    );
+  } else if (subscription === 'api' && observation !== undefined) {
+    actions.push(
+      `subscription: declared verified, but the CLI reports API-key authentication (authMethod ${observation.authMethod ?? 'unknown'} observed ${observation.observedAt}); sign ${harnessCommand(declaration.harness)} in with the subscription account or declare 'api'`,
     );
   }
   if (!declaration.capabilities.includes('read-only-review')) {
@@ -462,7 +476,7 @@ const declaredCandidate = (
     effort: declaration.effort,
     authorization: declaration.authorization,
     authorizedTarget: admitted ? target : null,
-    subscription: declaration.subscription,
+    subscription,
     availability: availability.availability,
     capabilities: declaration.capabilities,
     quality: declaration.quality,
@@ -470,7 +484,7 @@ const declaredCandidate = (
     provenance: {
       accountScope: 'declared',
       authorization: 'declared',
-      subscription: 'declared',
+      subscription: subscription === declaration.subscription ? 'declared' : 'observed-now',
       availability: availability.provenance,
       capabilities: 'declared',
       quality: 'declared',
@@ -777,7 +791,11 @@ const evaluateCandidate = (
     result.excluded.push('Authorization belongs to a different target.');
   }
   if (candidate.subscription === 'api') {
-    result.excluded.push('API billing is outside the subscription-only policy.');
+    result.excluded.push(
+      candidate.provenance.subscription === 'observed-now'
+        ? 'API billing observed from the CLI sign-in contradicts the declared subscription; outside the subscription-only policy.'
+        : 'API billing is outside the subscription-only policy.',
+    );
   } else {
     requireEvidence(result, candidate.subscription === 'verified', 'Verified subscription billing');
   }
