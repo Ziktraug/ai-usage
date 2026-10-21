@@ -623,10 +623,9 @@ export const unavailableWorkAttentionClient = (message: string): WorkAttentionCl
 });
 
 /**
- * Integration seam. `work.attention` is not part of this checkout's web contract yet, and the oRPC
- * proxy cannot be probed at runtime (every property resolves to a callable), so the only honest
- * answer before integration is a typed unavailability rather than a request to a route that does
- * not exist. Replace the body with `createWorkAttentionClient(rpc)` once the contract carries it.
+ * Integration seam: binds the generated contract client to the narrowing above. `work.attention`
+ * is part of the web contract; this stays one named function so the composition root and the
+ * tests construct the client the same way.
  */
 export const resolveWorkAttentionClient = (rpc: WebContractClient): WorkAttentionClient =>
   createWorkAttentionClient(rpc);
