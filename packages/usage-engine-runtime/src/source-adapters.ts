@@ -57,6 +57,8 @@ import {
   importNormalizedDatasetItems,
   importPullRequestObservations,
   importSkillObservations,
+  MAX_CLAUDE_DESKTOP_SESSION_READ,
+  queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
   queryServedSessionPullRequestLinks,
@@ -787,6 +789,78 @@ const servedInputsOrEmpty = <Value>(
 
 const pullRequestLinkKey = (link: PullRequestLink): string => JSON.stringify([link.host, link.repository, link.number]);
 
+/** Desktop sessions active within this window name the checkouts and pull requests to observe. */
+const DESKTOP_WORK_FACT_WINDOW_MS = 14 * 86_400_000;
+
+interface DesktopWorkFactInputs {
+  readonly links: readonly PullRequestLink[];
+  readonly paths: readonly string[];
+  readonly warnings: readonly { readonly code: string; readonly message: string }[];
+}
+
+const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = { links: [], paths: [], warnings: [] };
+
+/**
+ * What the Claude Desktop sessions active in the last fourteen days named: `worktreePath ?? cwd`
+ * as the checkout, `prs[]` as the pull requests, most recently active session first, each once.
+ * The Work read attaches facts only to these families, so they lead the served inputs under the
+ * per-run bounds. A store that does not exist yet means no candidates; a read that fails for any
+ * other reason also yields none and is said in a warning, so the run goes on with the served and
+ * injected inputs instead of failing because of a table it does not own.
+ */
+const desktopWorkFactInputs = (input: {
+  readonly dbPath: string;
+  readonly machineId: string;
+  readonly now: () => Date;
+}): Effect.Effect<DesktopWorkFactInputs> =>
+  queryClaudeDesktopSessions({
+    dbPath: input.dbPath,
+    limit: MAX_CLAUDE_DESKTOP_SESSION_READ,
+    machineId: input.machineId,
+    sinceLastActivityAt: new Date(input.now().getTime() - DESKTOP_WORK_FACT_WINDOW_MS).toISOString(),
+  }).pipe(
+    Effect.map(({ observations }): DesktopWorkFactInputs => {
+      const paths: string[] = [];
+      const links: PullRequestLink[] = [];
+      const seenLinks = new Set<string>();
+      for (const observation of observations) {
+        const checkoutPath = observation.worktreePath ?? observation.cwd;
+        if (!paths.includes(checkoutPath)) {
+          paths.push(checkoutPath);
+        }
+        for (const pullRequest of observation.declaredPullRequests) {
+          const link: PullRequestLink = {
+            host: pullRequest.host,
+            number: pullRequest.number,
+            repository: pullRequest.repository,
+          };
+          const key = pullRequestLinkKey(link);
+          if (!seenLinks.has(key)) {
+            seenLinks.add(key);
+            links.push(link);
+          }
+        }
+      }
+      return { links, paths, warnings: [] };
+    }),
+    Effect.catchAll((error) =>
+      Effect.succeed<DesktopWorkFactInputs>(
+        error.reason === 'store-missing'
+          ? NO_DESKTOP_WORK_FACT_INPUTS
+          : {
+              ...NO_DESKTOP_WORK_FACT_INPUTS,
+              warnings: [
+                {
+                  code: 'desktop-sessions-unread',
+                  message:
+                    'Claude Desktop sessions could not be read; only served and injected inputs were observed this run.',
+                },
+              ],
+            },
+      ),
+    ),
+  );
+
 /** The configured `gh` login for a link's owner, or null for the CLI's active account. */
 const accountFor = (github: AiUsageGitHubConfig | undefined, link: PullRequestLink): string | null => {
   const owner = link.repository.split('/')[0]?.toLowerCase() ?? '';
@@ -828,10 +902,21 @@ const createCheckoutStatusSource = (input: {
         queryCurrentServedLocalProjectSources({ dbPath: input.dbPath }).pipe(Effect.map(({ sources }) => sources)),
         [] as readonly ServedLocalProjectSource[],
       );
+      const desktop = yield* desktopWorkFactInputs({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        now: input.now,
+      });
       const injected = input.options.workFactInputs?.candidateCheckoutPaths
         ? yield* input.options.workFactInputs.candidateCheckoutPaths()
         : [];
-      const paths = candidateCheckoutPaths(served, input.machine.id, injected);
+      // Desktop checkouts first, then the served plan and the injected candidates, each path once.
+      const paths = [
+        ...new Set([
+          ...candidateCheckoutPaths([], input.machine.id, desktop.paths),
+          ...candidateCheckoutPaths(served, input.machine.id, injected),
+        ]),
+      ];
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: paths.length });
       const batch = yield* observeCheckoutStatus({
         machineId: input.machine.id,
@@ -863,7 +948,7 @@ const createCheckoutStatusSource = (input: {
         changed: false,
         inputCount: paths.length,
         outputCount: batch.observations.length,
-        warnings: message === null ? [] : [{ code: 'checkouts-truncated', message }],
+        warnings: [...desktop.warnings, ...(message === null ? [] : [{ code: 'checkouts-truncated', message }])],
       };
     }),
 });
@@ -916,11 +1001,17 @@ const createPullRequestSource = (input: {
         queryServedSessionPullRequestLinks({ dbPath: input.dbPath }).pipe(Effect.map(({ links }) => links)),
         [] as readonly PullRequestLink[],
       );
+      const desktop = yield* desktopWorkFactInputs({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        now: input.now,
+      });
       const injected = input.options.workFactInputs?.linkedPullRequests
         ? yield* input.options.workFactInputs.linkedPullRequests()
         : [];
+      // Desktop-declared pull requests first, then the served links and the injected ones, each once.
       const unique = new Map<string, PullRequestLink>();
-      for (const link of [...served, ...injected]) {
+      for (const link of [...desktop.links, ...served, ...injected]) {
         const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
         const key = pullRequestLinkKey(candidate);
         if (!unique.has(key)) {
@@ -974,7 +1065,7 @@ const createPullRequestSource = (input: {
         changed: false,
         inputCount: links.length,
         outputCount: observations.length,
-        warnings: message === null ? [] : [{ code: 'pull-requests-truncated', message }],
+        warnings: [...desktop.warnings, ...(message === null ? [] : [{ code: 'pull-requests-truncated', message }])],
       };
     }),
 });

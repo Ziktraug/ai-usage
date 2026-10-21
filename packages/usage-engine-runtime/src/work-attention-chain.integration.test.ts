@@ -7,8 +7,15 @@ import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-
 import { CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL } from '@ai-usage/local-machine/testing/claude-desktop-sessions';
 import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
+import type { CheckoutStatusObservation, PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { queryWorkAttention } from '@ai-usage/report-data/work-attention-read';
-import { importClaudeDesktopSessions, initializeUsageStore } from '@ai-usage/usage-store/writer';
+import {
+  importCheckoutStatusObservations,
+  importClaudeDesktopSessions,
+  importPullRequestObservations,
+  initializeUsageStore,
+  recordWorkFactRun,
+} from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 
 /**
@@ -36,6 +43,49 @@ const temporaryDirectory = async (prefix: string): Promise<string> => {
 
 const MACHINE = 'machine-work-chain';
 const EPOCH = new Date('2026-10-20T12:00:00.000Z');
+const hoursBefore = (hours: number) => canonicalInstantFromDate(new Date(EPOCH.getTime() - hours * 3_600_000));
+
+const pullRequestObservation = (
+  number: number,
+  overrides: Partial<PullRequestObservation> = {},
+): PullRequestObservation => ({
+  accountLabel: null,
+  baseRef: 'fixture-main',
+  checksRollup: 'pending',
+  draft: false,
+  headRef: `fixture/pr-${String(number)}`,
+  host: 'github.com',
+  machineId: MACHINE,
+  mergedAt: null,
+  number,
+  observedAt: hoursBefore(2),
+  outcome: 'observed',
+  outcomeMessage: null,
+  repository: 'fixture/ai-usage',
+  reviewDecision: null,
+  state: 'OPEN',
+  title: `Fixture pull request ${String(number)}`,
+  updatedAt: hoursBefore(3),
+  url: `https://github.com/fixture/ai-usage/pull/${String(number)}`,
+  ...overrides,
+});
+
+const checkoutObservation = (checkoutPath: string): CheckoutStatusObservation => ({
+  ahead: 1,
+  behind: 0,
+  branch: 'fixture/checkout-3',
+  checkoutPath,
+  dirty: true,
+  headSha: 'b'.repeat(40),
+  lastCommitAt: hoursBefore(5),
+  machineId: MACHINE,
+  modifiedCount: 2,
+  observedAt: hoursBefore(40 / 60),
+  outcome: 'observed',
+  stagedCount: 0,
+  untrackedCount: 1,
+  upstream: null,
+});
 
 describe('work attention chain', () => {
   test('carries the representative registry from files to the ranked dataset', async () => {
@@ -145,10 +195,132 @@ describe('work attention chain', () => {
       unsupported: 1,
     });
     expect(dataset.coverage.sessions).toEqual({ joined: 0, revision: null, unmatched: 0 });
-    expect(dataset.coverage.pullRequests.disabled).toBe(true);
+    // No fact producer has run: no external fact anywhere, no date, nothing disabled.
+    expect(dataset.coverage.pullRequests).toEqual({ disabled: false, failed: 0, lastRunAt: null, observed: 0 });
+    expect(dataset.coverage.checkouts).toEqual({ failed: 0, lastRunAt: null, observed: 0 });
+    expect(
+      dataset.roots
+        .flatMap((root) => root.facts)
+        .some(({ kind }) => kind === 'pull-request' || kind === 'checkout-status'),
+    ).toBe(false);
 
     // The brief of a proposal never reaches the dataset.
     expect(JSON.stringify(dataset)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
+
+    // The fact producers' tables, seeded as the engine's sources write them: GitHub showed #118
+    // awaiting review, #90 merged after the request that asked for it, #117 unreadable now but
+    // open when last read a day ago, #555 which no session declared; the worktree is dirty.
+    const worktree = join(fixture.paths.repository, '.claude', 'worktrees', 'checkout-3');
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          pullRequestObservation(118),
+          pullRequestObservation(90, {
+            checksRollup: 'success',
+            mergedAt: hoursBefore(2),
+            observedAt: hoursBefore(1),
+            reviewDecision: 'APPROVED',
+            state: 'MERGED',
+            updatedAt: hoursBefore(2),
+          }),
+          pullRequestObservation(117, { observedAt: hoursBefore(26), updatedAt: hoursBefore(27) }),
+          pullRequestObservation(117, {
+            baseRef: null,
+            checksRollup: null,
+            draft: null,
+            headRef: null,
+            observedAt: hoursBefore(0.5),
+            outcome: 'unauthenticated',
+            outcomeMessage: 'gh exited 4',
+            state: null,
+            title: null,
+            updatedAt: null,
+            url: null,
+          }),
+          pullRequestObservation(555),
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkoutObservation(worktree)] }),
+    );
+    for (const run of [
+      { failed: 1, observed: 3, ranAt: hoursBefore(0.5), sourceId: 'github.pull-requests' as const },
+      { failed: 0, observed: 1, ranAt: hoursBefore(40 / 60), sourceId: 'checkouts.status' as const },
+    ]) {
+      await Effect.runPromise(
+        recordWorkFactRun({ dbPath, disabled: false, machineId: MACHINE, message: null, ...run }),
+      );
+    }
+
+    const confronted = await Effect.runPromise(
+      queryWorkAttention({ dbPath, machineId: MACHINE, now: EPOCH, sinceDays: 60 }),
+    );
+    const confrontedById = new Map(confronted.roots.map((root) => [root.desktopSessionId, root]));
+    const kindsOf = (desktopSessionId: string | null) =>
+      confrontedById.get(desktopSessionId ?? '')?.interpretations.map(({ kind }) => kind);
+
+    // #118: declared by the completed root, now observed awaiting review: an external wait.
+    const completed = confrontedById.get(ids.completedRoot);
+    expect(completed?.attention).toBe('external-wait');
+    expect(kindsOf(ids.completedRoot)).toEqual(['external-review-pending']);
+    expect(completed?.facts.filter(({ kind }) => kind === 'pull-request')).toHaveLength(1);
+
+    // #90: the child declared it merged before the request, so the declaration did not satisfy
+    // it; GitHub then showed it merged two hours ago, after the request, and that does.
+    const merged = confrontedById.get(ids.mergedBeforeRoot ?? '');
+    expect(merged?.attention).toBe('none');
+    expect(kindsOf(ids.mergedBeforeRoot)).toEqual(['request-satisfied-elsewhere', 'pull-request-merged']);
+    expect(merged?.interpretations[0]?.uncertainty).toContain('observed on GitHub');
+    expect(merged?.interpretations[0]?.evidence).toEqual([
+      `${ids.mergedBeforeRoot}:gh:github.com/fixture/ai-usage#90@${hoursBefore(1)}`,
+    ]);
+
+    // #117: the failed read and the last successful one both reach the root; neither replaces
+    // the child's declaration that satisfied the request, and neither is presented as current.
+    const satisfiedWithFacts = confrontedById.get(ids.satisfiedRoot ?? '');
+    expect(satisfiedWithFacts?.attention).toBe('none');
+    expect(kindsOf(ids.satisfiedRoot)).toEqual(['request-satisfied-elsewhere', 'coverage-gap', 'coverage-gap']);
+    expect(
+      satisfiedWithFacts?.facts
+        .filter((fact) => fact.kind === 'pull-request')
+        .map((fact) => [fact.outcome, fact.provenance.observedAt]),
+    ).toEqual([
+      ['observed', hoursBefore(26)],
+      ['unauthenticated', hoursBefore(0.5)],
+    ]);
+    expect(satisfiedWithFacts?.interpretations[1]?.text).toContain('nothing fresher');
+    expect(satisfiedWithFacts?.interpretations[2]?.uncertainty).toContain('sign in gh');
+
+    // The dirty worktree reaches every root working in it, each told how many share it.
+    const blockedWithFacts = confrontedById.get(ids.blockedRoot);
+    expect(blockedWithFacts?.attention).toBe('human-request');
+    expect(kindsOf(ids.blockedRoot)).toEqual(['request-open', 'local-changes-unvalidated']);
+    expect(blockedWithFacts?.interpretations[1]?.text).toEndWith('Checkout shared by 4 roots.');
+    const sharing = confronted.roots.filter((root) =>
+      root.facts.some((fact) => fact.kind === 'checkout-status' && fact.checkoutPath === worktree),
+    );
+    expect(sharing).toHaveLength(4);
+    expect(sharing.every((root) => root.project.checkoutPath === worktree)).toBe(true);
+
+    // Nothing is attached by anything but a declaration: #555 reaches no root, and only the
+    // three families that declared #118, #90 and #117 carry pull request facts.
+    expect(JSON.stringify(confronted)).not.toContain('#555');
+    expect(
+      confronted.roots
+        .filter((root) => root.facts.some(({ kind }) => kind === 'pull-request'))
+        .map((root) => root.desktopSessionId)
+        .sort(),
+    ).toEqual([ids.completedRoot, ids.mergedBeforeRoot, ids.satisfiedRoot].sort());
+    expect(confronted.coverage.pullRequests).toEqual({
+      disabled: false,
+      failed: 1,
+      lastRunAt: hoursBefore(0.5),
+      observed: 3,
+    });
+    expect(confronted.coverage.checkouts).toEqual({ failed: 0, lastRunAt: hoursBefore(40 / 60), observed: 1 });
+    expect(confronted.totalRoots).toBe(dataset.totalRoots);
 
     // The default window leaves out the 40-day-old root; a short page still reports the total.
     const windowed = await Effect.runPromise(queryWorkAttention({ dbPath, limit: 5, machineId: MACHINE, now: EPOCH }));

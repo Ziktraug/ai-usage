@@ -2,7 +2,7 @@ export type {
   ClaudeDesktopSessionImportResult,
   ImportClaudeDesktopSessionsInput,
 } from './claude-desktop-session-store';
-export { MAX_CLAUDE_DESKTOP_SESSION_BATCH } from './claude-desktop-session-store';
+export { MAX_CLAUDE_DESKTOP_SESSION_BATCH, MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 export type {
@@ -109,6 +109,7 @@ export {
   listUsageReplicationOutboxHistory,
   previewPeerMergeBundle,
   publishServedReportRevision,
+  queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
   queryLatestCheckoutStatusObservations,

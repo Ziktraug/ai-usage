@@ -119,6 +119,7 @@ export {
   buildSessionQuerySqlOrder,
   executeMaterializedSessionQuery,
 } from './session-query-sqlite';
+export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
 export type {
   QuerySessionRowsBySourceSessionIdsInput,
   QuerySessionRowsBySourceSessionIdsResult,

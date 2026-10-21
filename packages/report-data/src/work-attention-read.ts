@@ -1,39 +1,65 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
+  type CheckoutStatusObservation,
   type ClaudeDesktopSessionObservation,
+  type PullRequestObservation,
   WORK_ATTENTION_BOUNDS,
   type WorkAttentionCoverage,
   type WorkAttentionDataset,
   type WorkAttentionKind,
   type WorkFact,
   type WorkFactProvenance,
+  type WorkInterpretation,
   type WorkRoot,
   type WorkRootChildren,
   type WorkRootDeclaration,
 } from '@ai-usage/report-core/work-attention';
+import {
+  checkoutStatusFact,
+  interpretExternalFacts,
+  pullRequestFact,
+} from '@ai-usage/report-core/work-attention-facts';
 import { interpretWorkRoot } from '@ai-usage/report-core/work-attention-interpretation';
 import {
   type ClaudeDesktopCollectionState,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
+  MAX_WORK_FACT_QUERY_LIMIT,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
+  queryLatestCheckoutStatusObservations,
+  queryLatestPullRequestObservations,
   querySessionRowsBySourceSessionIds,
+  queryWorkFactRunStates,
   type ServedSessionRowIdentity,
   UsageStoreError,
+  type WorkFactRunState,
 } from '@ai-usage/usage-store/reader';
 import { Effect } from 'effect';
 
 /**
- * The one bounded read of the Work attention dataset (ADR 0050), shared by the web procedure and
- * the chain test. It reads the Claude Desktop session family directly, folds children under their
- * roots, joins each root to the served Session row by `(machineId, 'claude', cliSessionId)`,
- * builds the facts, lets `interpretWorkRoot` name the attention, and ranks the roots.
+ * The one bounded read of the Work attention dataset (ADR 0050, ADR 0051), shared by the web
+ * procedure and the chain test. It reads the Claude Desktop session family directly, folds
+ * children under their roots, joins each root to the served Session row by
+ * `(machineId, 'claude', cliSessionId)`, attaches the external and local facts the family
+ * explicitly named, lets the two pure interpreters name the attention, and ranks the roots.
  *
- * It never names a served report revision for its own data: the Desktop family lives outside the
- * revision (the join is the only place a revision is consulted, and its absence is reported in
- * `coverage.sessions` rather than failing the read).
+ * Attachment is exact and declared, never inferred:
+ *
+ * - a `pull-request` observation joins a root when a member of its family (root or child)
+ *   declared that pull request (`host`, `repository`, `number`), on the same machine; a branch
+ *   name or a nearby date never links one;
+ * - a `checkout-status` observation joins a root when `worktreePath ?? cwd` of a family member
+ *   is that path, on the same machine; several roots may share one checkout and each then
+ *   receives the fact with the sharing named in its interpretation;
+ * - when the latest observation failed and an older successful one exists, both are attached:
+ *   the dated state stays the last known one and the failure stays visible.
+ *
+ * It never names a served report revision for its own data: the Desktop family and the fact
+ * tables live outside the revision (the Session join is the only place a revision is consulted,
+ * and its absence is reported in `coverage.sessions` rather than failing the read).
  */
 
 export const WORK_ATTENTION_DEFAULT_LIMIT = 100;
@@ -43,7 +69,7 @@ const MAX_JOINED_MACHINES = 16;
 const DAY_MS = 86_400_000;
 const WORK_HARNESS_KEY = 'claude';
 
-const { maxChildrenTitles, maxFacts, maxRoots } = WORK_ATTENTION_BOUNDS;
+const { maxChildrenTitles, maxFacts, maxInterpretations, maxRoots } = WORK_ATTENTION_BOUNDS;
 const MAX_SIDE_SESSION_NOTE_FACTS = 5;
 
 export interface QueryWorkAttentionInput {
@@ -63,6 +89,21 @@ interface RootGroup {
   readonly parentMissing: boolean;
   readonly root: ClaudeDesktopSessionObservation;
 }
+
+/** One identity's latest observation and, when that one failed, the latest successful one. */
+export interface LatestWorkObservation<Observation> {
+  readonly latest: Observation;
+  readonly latestObserved: Observation | null;
+}
+
+/** The external and local fact family as the store readers return it, in any order. */
+export interface WorkAttentionExternalFacts {
+  readonly checkouts: readonly LatestWorkObservation<CheckoutStatusObservation>[];
+  readonly pullRequests: readonly LatestWorkObservation<PullRequestObservation>[];
+  readonly runStates: readonly WorkFactRunState[];
+}
+
+export const NO_EXTERNAL_FACTS: WorkAttentionExternalFacts = { checkouts: [], pullRequests: [], runStates: [] };
 
 const ATTENTION_RANK: Record<WorkAttentionKind, number> = {
   'external-wait': 1,
@@ -104,7 +145,7 @@ const childrenOf = (children: readonly ClaudeDesktopSessionObservation[]): WorkR
   titles: children.slice(0, maxChildrenTitles).map((child) => child.title),
 });
 
-const pullRequestFacts = (observation: ClaudeDesktopSessionObservation): WorkFact[] =>
+const declaredPullRequestFacts = (observation: ClaudeDesktopSessionObservation): WorkFact[] =>
   observation.declaredPullRequests.map((pullRequest) => ({
     branch: pullRequest.branch,
     host: pullRequest.host,
@@ -117,12 +158,126 @@ const pullRequestFacts = (observation: ClaudeDesktopSessionObservation): WorkFac
     url: pullRequest.url,
   }));
 
+// ---------------------------------------------------------------------------------------------
+// External and local facts: exact attachment by declared link and by checkout path
+// ---------------------------------------------------------------------------------------------
+
+/** The identity the GitHub producer stores: host case-folded, repository as written. */
+const pullRequestKey = (machineId: string, host: string, repository: string, number: number): string =>
+  JSON.stringify([machineId, host.trim().toLowerCase(), repository.trim(), number]);
+
+const checkoutKey = (machineId: string, checkoutPath: string): string => JSON.stringify([machineId, checkoutPath]);
+
+const checkoutPathOf = (observation: ClaudeDesktopSessionObservation): string =>
+  observation.worktreePath ?? observation.cwd;
+
+/** The distinct checkouts a family worked in: the root's and every child's `worktreePath ?? cwd`. */
+const familyCheckoutPaths = (group: RootGroup): string[] => [
+  ...new Set([group.root, ...group.children].map(checkoutPathOf)),
+];
+
+/** The distinct pull requests a family declared, in family order, each once. */
+const familyPullRequestLinks = (
+  group: RootGroup,
+): { readonly host: string; readonly number: number; readonly repository: string }[] => {
+  const seen = new Set<string>();
+  const links: { readonly host: string; readonly number: number; readonly repository: string }[] = [];
+  for (const member of [group.root, ...group.children]) {
+    for (const pullRequest of member.declaredPullRequests) {
+      const key = pullRequestKey(member.machineId, pullRequest.host, pullRequest.repository, pullRequest.number);
+      if (!seen.has(key)) {
+        seen.add(key);
+        links.push({ host: pullRequest.host, number: pullRequest.number, repository: pullRequest.repository });
+      }
+    }
+  }
+  return links;
+};
+
+interface ExternalFactIndex {
+  readonly checkouts: ReadonlyMap<string, LatestWorkObservation<CheckoutStatusObservation>>;
+  readonly pullRequests: ReadonlyMap<string, LatestWorkObservation<PullRequestObservation>>;
+  /** Per machine, how many roots of the dataset have that checkout path in their family. */
+  readonly rootsPerCheckout: ReadonlyMap<string, ReadonlyMap<string, number>>;
+}
+
+const indexExternalFacts = (facts: WorkAttentionExternalFacts, groups: readonly RootGroup[]): ExternalFactIndex => {
+  const pullRequests = new Map<string, LatestWorkObservation<PullRequestObservation>>();
+  for (const item of facts.pullRequests) {
+    const { latest } = item;
+    pullRequests.set(pullRequestKey(latest.machineId, latest.host, latest.repository, latest.number), item);
+  }
+  const checkouts = new Map<string, LatestWorkObservation<CheckoutStatusObservation>>();
+  for (const item of facts.checkouts) {
+    checkouts.set(checkoutKey(item.latest.machineId, item.latest.checkoutPath), item);
+  }
+  const rootsPerCheckout = new Map<string, Map<string, number>>();
+  for (const group of groups) {
+    const perMachine = rootsPerCheckout.get(group.root.machineId) ?? new Map<string, number>();
+    for (const checkoutPath of familyCheckoutPaths(group)) {
+      perMachine.set(checkoutPath, (perMachine.get(checkoutPath) ?? 0) + 1);
+    }
+    rootsPerCheckout.set(group.root.machineId, perMachine);
+  }
+  return { checkouts, pullRequests, rootsPerCheckout };
+};
+
 /**
- * The facts a root carries, in the order they matter when the bound cuts: the declaration and
- * its reports first, then what the family declared about pull requests, then proposals, branches,
- * notes and spawn origin.
+ * The observations one identity contributes: the latest one, preceded by the latest successful
+ * one when the latest failed. The dated state is then still the last known one and the failure
+ * is visible beside it, as the store keeps them.
  */
-const factsOf = (group: RootGroup): WorkFact[] => {
+const observationsOf = <Observation extends { readonly outcome: string }>(
+  item: LatestWorkObservation<Observation>,
+): Observation[] =>
+  item.latest.outcome !== 'observed' && item.latestObserved !== null
+    ? [item.latestObserved, item.latest]
+    : [item.latest];
+
+/** Keeps fact ids within the identifier bound whatever the checkout path's length. */
+const pathDigest = (checkoutPath: string): string =>
+  createHash('sha256').update(checkoutPath).digest('hex').slice(0, 16);
+
+const externalFactsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
+  const { root } = group;
+  const facts: WorkFact[] = [];
+  for (const link of familyPullRequestLinks(group)) {
+    const item = index.pullRequests.get(pullRequestKey(root.machineId, link.host, link.repository, link.number));
+    if (item === undefined) {
+      continue;
+    }
+    for (const observation of observationsOf(item)) {
+      facts.push(
+        pullRequestFact(
+          observation,
+          `${root.desktopSessionId}:gh:${observation.host}/${observation.repository}#${observation.number}@${observation.observedAt}`,
+        ),
+      );
+    }
+  }
+  for (const checkoutPath of familyCheckoutPaths(group)) {
+    const item = index.checkouts.get(checkoutKey(root.machineId, checkoutPath));
+    if (item === undefined) {
+      continue;
+    }
+    for (const observation of observationsOf(item)) {
+      facts.push(
+        checkoutStatusFact(
+          observation,
+          `${root.desktopSessionId}:checkout:${pathDigest(observation.checkoutPath)}@${observation.observedAt}`,
+        ),
+      );
+    }
+  }
+  return facts;
+};
+
+/**
+ * The facts a root carries, in the order they read: the declaration and its reports first, then
+ * what the family declared about pull requests and what GitHub and the disk showed, then
+ * proposals, branches, notes and spawn origin.
+ */
+const factsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
   const { root } = group;
   const provenance = provenanceOf(root);
   const facts: WorkFact[] = [];
@@ -156,7 +311,11 @@ const factsOf = (group: RootGroup): WorkFact[] => {
       text: root.lastTurnReport,
     });
   }
-  facts.push(...pullRequestFacts(root), ...group.children.flatMap(pullRequestFacts));
+  facts.push(
+    ...declaredPullRequestFacts(root),
+    ...group.children.flatMap(declaredPullRequestFacts),
+    ...externalFactsOf(group, index),
+  );
   for (const suggestion of root.openSuggestions) {
     facts.push({
       createdAt: suggestion.createdAt,
@@ -206,7 +365,70 @@ const factsOf = (group: RootGroup): WorkFact[] => {
       title: root.spawnedFrom.title,
     });
   }
-  return facts.slice(0, maxFacts);
+  return facts;
+};
+
+/** When the bound cuts, the declaration survives first, then the external observations, then the rest. */
+const factPriority = (fact: WorkFact): number => {
+  if (fact.kind === 'declared-turn') {
+    return 0;
+  }
+  return fact.kind === 'pull-request' || fact.kind === 'checkout-status' ? 1 : 2;
+};
+
+const boundFacts = (facts: readonly WorkFact[]): { readonly cut: number; readonly facts: WorkFact[] } => {
+  if (facts.length <= maxFacts) {
+    return { cut: 0, facts: [...facts] };
+  }
+  const kept = new Set<WorkFact>();
+  for (const tier of [0, 1, 2]) {
+    for (const fact of facts) {
+      if (kept.size >= maxFacts) {
+        break;
+      }
+      if (factPriority(fact) === tier) {
+        kept.add(fact);
+      }
+    }
+  }
+  // The kept facts stay in reading order.
+  return { cut: facts.length - kept.size, facts: facts.filter((fact) => kept.has(fact)) };
+};
+
+const factsCutInterpretation = (cut: number): WorkInterpretation => ({
+  evidence: [],
+  kind: 'coverage-gap',
+  text: `${String(cut)} fact${cut === 1 ? '' : 's'} beyond the bound of ${String(maxFacts)} ${cut === 1 ? 'is' : 'are'} not listed; the declaration and the external observations were kept first.`,
+  uncertainty: 'The facts left out exist in the store; proposals, branches and notes are the first to be cut.',
+});
+
+/** Interpretations that name the declaration's own state; they lead the merged list. */
+const DECLARATION_INTERPRETATION_KINDS = new Set<WorkInterpretation['kind']>([
+  'request-open',
+  'request-satisfied-elsewhere',
+  'review-ready',
+]);
+
+/**
+ * The two interpreters meet here. Attention: a human request first; else an external wait when
+ * GitHub showed a pull request awaiting someone else; else what the declaration interpreter said
+ * (an optional lead, or nothing). The merged list leads with the declaration's own statement,
+ * then the external and local statements, then proposals, staleness and coverage gaps.
+ */
+const mergeInterpretations = (
+  declared: { readonly attention: WorkAttentionKind; readonly interpretations: readonly WorkInterpretation[] },
+  external: readonly WorkInterpretation[],
+  factsCut: number,
+): { readonly attention: WorkAttentionKind; readonly interpretations: WorkInterpretation[] } => {
+  const leading = declared.interpretations.filter(({ kind }) => DECLARATION_INTERPRETATION_KINDS.has(kind));
+  const trailing = declared.interpretations.filter(({ kind }) => !DECLARATION_INTERPRETATION_KINDS.has(kind));
+  const cut = factsCut > 0 ? [factsCutInterpretation(factsCut)] : [];
+  const interpretations = [...leading, ...cut, ...external, ...trailing].slice(0, maxInterpretations);
+  let attention: WorkAttentionKind = declared.attention;
+  if (attention !== 'human-request' && external.some(({ kind }) => kind === 'external-review-pending')) {
+    attention = 'external-wait';
+  }
+  return { attention, interpretations };
 };
 
 const sessionKey = (observation: Pick<ClaudeDesktopSessionObservation, 'desktopSessionId' | 'machineId'>): string =>
@@ -343,14 +565,15 @@ const joinSessions = (
 const buildRoot = (
   group: RootGroup,
   sessions: WorkAttentionSessionLookup,
+  index: ExternalFactIndex,
   now: Date,
   staleAfterMs: number | undefined,
 ): WorkRoot => {
   const { root } = group;
-  const facts = factsOf(group);
+  const { cut, facts } = boundFacts(factsOf(group, index));
   const declared = declarationOf(root);
   const session = sessions.find(root.machineId, root.cliSessionId) ?? null;
-  const { attention, interpretations } = interpretWorkRoot({
+  const declaredResult = interpretWorkRoot({
     coverage: {
       parentMissing: group.parentMissing,
       sessionJoined: sessions.revision === null ? null : session !== null,
@@ -361,7 +584,14 @@ const buildRoot = (
     now,
     ...(staleAfterMs === undefined ? {} : { staleAfterMs }),
   });
-  const checkoutPath = root.worktreePath ?? root.cwd;
+  const rootsPerCheckout = index.rootsPerCheckout.get(root.machineId);
+  const external = interpretExternalFacts({
+    facts,
+    now,
+    ...(rootsPerCheckout === undefined ? {} : { rootsPerCheckout }),
+  });
+  const { attention, interpretations } = mergeInterpretations(declaredResult, external, cut);
+  const checkoutPath = checkoutPathOf(root);
   return {
     age: {
       createdAt: root.createdAt,
@@ -410,8 +640,38 @@ const desktopCoverage = (
   return { collectedAt, ...totals, refusedRows };
 };
 
+/**
+ * What the two fact producers last did, from their run states. No run yet means no date and
+ * zero counts, not a disabled source: `disabled` is true only when the run itself said so.
+ */
+const factCoverage = (
+  runStates: readonly WorkFactRunState[],
+  machineId: string | undefined,
+): Pick<WorkAttentionCoverage, 'checkouts' | 'pullRequests'> => {
+  const runOf = (sourceId: WorkFactRunState['sourceId']): WorkFactRunState | null =>
+    runStates.find((run) => run.sourceId === sourceId && (machineId === undefined || run.machineId === machineId)) ??
+    null;
+  const checkouts = runOf('checkouts.status');
+  const pullRequests = runOf('github.pull-requests');
+  return {
+    checkouts: {
+      failed: checkouts?.failed ?? 0,
+      lastRunAt: checkouts?.ranAt ?? null,
+      observed: checkouts?.observed ?? 0,
+    },
+    pullRequests: {
+      disabled: pullRequests?.disabled ?? false,
+      failed: pullRequests?.failed ?? 0,
+      lastRunAt: pullRequests?.ranAt ?? null,
+      observed: pullRequests?.observed ?? 0,
+    },
+  };
+};
+
 export interface AssembleWorkAttentionInput {
   readonly collectionStates: readonly ClaudeDesktopCollectionState[];
+  /** The latest pull request and checkout observations and the producers' run states. */
+  readonly externalFacts: WorkAttentionExternalFacts;
   readonly limit?: number;
   readonly machineId?: string;
   readonly now?: Date;
@@ -442,10 +702,10 @@ const boundsProblem = (input: Pick<AssembleWorkAttentionInput, 'limit' | 'now' |
 };
 
 /**
- * The pure assembly: groups, joins, interprets, ranks and bounds, from observations already in
- * hand. `queryWorkAttention` feeds it from the store; the web e2e composition feeds it from the
- * seeded registry parsed in memory, so both cross the same code. Throws `RangeError` on bounds
- * outside the contract.
+ * The pure assembly: groups, joins, attaches, interprets, ranks and bounds, from observations
+ * already in hand. `queryWorkAttention` feeds it from the store; the web e2e composition feeds it
+ * from the seeded registry parsed in memory, so both cross the same code. Throws `RangeError` on
+ * bounds outside the contract.
  */
 export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAttentionDataset => {
   const problem = boundsProblem(input);
@@ -465,14 +725,16 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
       ? input.observations
       : input.observations.filter((observation) => observation.machineId === input.machineId);
   const groups = groupRoots(observations).filter((group) => latestActivity(group) >= since);
-  const roots = groups.map((group) => buildRoot(group, input.sessions, now, input.staleAfterMs)).sort(compareRoots);
+  const index = indexExternalFacts(input.externalFacts, groups);
+  const roots = groups
+    .map((group) => buildRoot(group, input.sessions, index, now, input.staleAfterMs))
+    .sort(compareRoots);
   const joined = roots.filter((root) => root.session !== null).length;
   const readTruncated = input.readTruncated ?? false;
   return {
     coverage: {
-      checkouts: { failed: 0, lastRunAt: null, observed: 0 },
+      ...factCoverage(input.externalFacts.runStates, input.machineId),
       desktopSessions: desktopCoverage(input.collectionStates, input.refusedRows ?? 0, readTruncated),
-      pullRequests: { disabled: true, failed: 0, lastRunAt: null, observed: 0 },
       sessions: {
         joined,
         revision: input.sessions.revision,
@@ -486,6 +748,65 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
     truncated: roots.length > limit || readTruncated,
   };
 };
+
+/** Reads one bounded page per chunk of keys; no keys, no read (an empty filter would mean "all"). */
+const readInChunks = <Key, Item>(
+  keys: readonly Key[],
+  read: (chunk: readonly Key[]) => Effect.Effect<{ readonly items: readonly Item[] }, UsageStoreError>,
+): Effect.Effect<Item[], UsageStoreError> =>
+  Effect.gen(function* () {
+    const items: Item[] = [];
+    for (let start = 0; start < keys.length; start += MAX_WORK_FACT_QUERY_LIMIT) {
+      const page = yield* read(keys.slice(start, start + MAX_WORK_FACT_QUERY_LIMIT));
+      items.push(...page.items);
+    }
+    return items;
+  });
+
+/** The pull requests any session of the read declared, each once; the only links ever looked up. */
+const declaredLinks = (
+  observations: readonly ClaudeDesktopSessionObservation[],
+): { readonly host: string; readonly number: number; readonly repository: string }[] => {
+  const seen = new Set<string>();
+  const links: { readonly host: string; readonly number: number; readonly repository: string }[] = [];
+  for (const observation of observations) {
+    for (const pullRequest of observation.declaredPullRequests) {
+      const key = pullRequestKey('', pullRequest.host, pullRequest.repository, pullRequest.number);
+      if (!seen.has(key)) {
+        seen.add(key);
+        links.push({ host: pullRequest.host, number: pullRequest.number, repository: pullRequest.repository });
+      }
+    }
+  }
+  return links;
+};
+
+const readExternalFacts = (
+  input: QueryWorkAttentionInput,
+  observations: readonly ClaudeDesktopSessionObservation[],
+): Effect.Effect<WorkAttentionExternalFacts, UsageStoreError> =>
+  Effect.gen(function* () {
+    const machineFilter = input.machineId === undefined ? {} : { machineId: input.machineId };
+    const paths = [...new Set(observations.map(checkoutPathOf))];
+    const pullRequests = yield* readInChunks(declaredLinks(observations), (links) =>
+      queryLatestPullRequestObservations({
+        dbPath: input.dbPath,
+        limit: MAX_WORK_FACT_QUERY_LIMIT,
+        links,
+        ...machineFilter,
+      }),
+    );
+    const checkouts = yield* readInChunks(paths, (chunk) =>
+      queryLatestCheckoutStatusObservations({
+        dbPath: input.dbPath,
+        limit: MAX_WORK_FACT_QUERY_LIMIT,
+        paths: chunk,
+        ...machineFilter,
+      }),
+    );
+    const { runs } = yield* queryWorkFactRunStates({ dbPath: input.dbPath });
+    return { checkouts, pullRequests, runStates: runs };
+  });
 
 export const queryWorkAttention = (
   input: QueryWorkAttentionInput,
@@ -505,8 +826,10 @@ export const queryWorkAttention = (
     });
     const states = yield* queryClaudeDesktopCollectionState({ dbPath: input.dbPath, ...machineFilter });
     const sessions = yield* joinSessions(input.dbPath, read.observations);
+    const externalFacts = yield* readExternalFacts(input, read.observations);
     return assembleWorkAttention({
       collectionStates: states.states,
+      externalFacts,
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...machineFilter,
       ...(input.now === undefined ? {} : { now: input.now }),

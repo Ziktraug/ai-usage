@@ -73,6 +73,12 @@ export interface InterpretExternalFactsInput {
   /** How long an observation counts as current. Default 24 hours. */
   readonly freshMs?: number;
   readonly now: Date;
+  /**
+   * How many roots of the dataset share each checkout path (same machine as the facts). A count
+   * above one is named in the local-changes statement: the changes seen there may belong to any
+   * of those roots, not to this one.
+   */
+  readonly rootsPerCheckout?: ReadonlyMap<string, number>;
 }
 
 const { maxDetailText, maxInterpretations } = WORK_ATTENTION_BOUNDS;
@@ -146,7 +152,11 @@ const interpretPullRequest = (fact: PullRequestFact, stale: boolean): WorkInterp
   return null;
 };
 
-const interpretCheckout = (fact: CheckoutStatusFact, stale: boolean): WorkInterpretation | null => {
+const interpretCheckout = (
+  fact: CheckoutStatusFact,
+  stale: boolean,
+  sharedRoots: number,
+): WorkInterpretation | null => {
   const label = path.basename(fact.checkoutPath) || fact.checkoutPath;
   const { observedAt } = fact.provenance;
   if (fact.outcome !== 'observed') {
@@ -168,11 +178,12 @@ const interpretCheckout = (fact: CheckoutStatusFact, stale: boolean): WorkInterp
       staleUncertainty(observedAt),
     );
   }
+  const shared = sharedRoots > 1 ? ` Checkout shared by ${String(sharedRoots)} roots.` : '';
   return interpretation(
     'local-changes-unvalidated',
     [fact.id],
-    `${String(fact.modifiedCount ?? 0)} modified, ${String(fact.untrackedCount ?? 0)} untracked observed at ${observedAt} on ${fact.branch ?? 'a detached HEAD'} in ${label}; since when is unknown; validation and delivery unobserved.`,
-    'The first dirty observation does not date the changes; whether they were tested, committed or pushed elsewhere is not visible.',
+    `${String(fact.modifiedCount ?? 0)} modified, ${String(fact.untrackedCount ?? 0)} untracked observed at ${observedAt} on ${fact.branch ?? 'a detached HEAD'} in ${label}; since when is unknown; validation and delivery unobserved.${shared}`,
+    `The first dirty observation does not date the changes; whether they were tested, committed or pushed elsewhere is not visible.${sharedRoots > 1 ? ' The changes may belong to any of the roots sharing this checkout.' : ''}`,
   );
 };
 
@@ -189,7 +200,10 @@ export const interpretExternalFacts = (input: InterpretExternalFactsInput): Work
       continue;
     }
     const stale = canonicalInstantEpochMs(fact.provenance.observedAt) < horizon;
-    const result = fact.kind === 'pull-request' ? interpretPullRequest(fact, stale) : interpretCheckout(fact, stale);
+    const result =
+      fact.kind === 'pull-request'
+        ? interpretPullRequest(fact, stale)
+        : interpretCheckout(fact, stale, input.rootsPerCheckout?.get(fact.checkoutPath) ?? 1);
     if (result !== null) {
       interpretations.push(result);
     }
