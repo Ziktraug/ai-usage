@@ -137,7 +137,10 @@ test('accepted Memory survives edited acceptance, rejection, restart and scoped 
   await rejected.getByRole('button', { name: 'Reject proposal' }).click();
   await expect(page.getByText('No Memory proposals need review.')).toBeVisible();
   await restart();
-  await page.getByRole('link', { name: 'Knowledge', exact: true }).click();
+  const knowledge = page.getByRole('link', { name: 'Knowledge', exact: true });
+  await knowledge.click();
+  // Reloading before client navigation settles would reload the review view instead.
+  await expect(knowledge).toHaveAttribute('aria-current', 'page');
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Verify direct reads before reusing the lesson' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Reject an unsupported recommendation' })).toHaveCount(0);

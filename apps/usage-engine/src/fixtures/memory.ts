@@ -11,7 +11,7 @@ import {
 } from '@ai-usage/platform-core/identity';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { createUsageReportPayload } from '@ai-usage/report-core/report-data';
-import { importLocalRows, publishServedReportRevision } from '@ai-usage/usage-store/testing';
+import { importLocalRows, publishServedReportRevision, updateUsageMachineLabel } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { createRandomMemoryServiceToken, startLocalMemoryService } from '../memory-service-server';
 
@@ -28,6 +28,8 @@ export const createMemoryFixture = async () => {
   ]);
   const machine = { id: 'synthetic-memory-machine', label: 'Synthetic Memory machine' };
   await Effect.runPromise(importLocalRows({ dbPath: databasePath, machine, rows: [] }));
+  // An empty import records no rows, so the served report would lack its local machine identity.
+  await Effect.runPromise(updateUsageMachineLabel({ dbPath: databasePath, machine }));
   const payload = createUsageReportPayload(
     { rows: [], tableRows: [], omittedRows: 0 },
     { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
