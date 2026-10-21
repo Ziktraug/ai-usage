@@ -19,6 +19,7 @@ export const collectionSourceIds = [
   'executors.capabilities',
   'checkouts.status',
   'github.pull-requests',
+  'jira.issues',
 ] as const;
 
 export type CollectionSourceId = (typeof collectionSourceIds)[number];
@@ -163,6 +164,16 @@ export const collectionSourceDefinitions = [
     id: 'github.pull-requests',
     kind: 'producer',
     label: 'GitHub pull requests',
+  },
+  {
+    // Spawns one read-only `acli` process per Jira key a Desktop session linked explicitly
+    // (ADR 0054); the same cadence and placement as the pull request producer.
+    cadenceMs: tenMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'jira.issues',
+    kind: 'producer',
+    label: 'Jira issues',
   },
 ] as const satisfies readonly CollectionSourceDefinition[];
 

@@ -1,7 +1,10 @@
 import path from 'node:path';
-import { canonicalInstantEpochMs } from './canonical-instant';
+import { type CanonicalInstant, canonicalInstantEpochMs } from './canonical-instant';
 import {
   type CheckoutStatusObservation,
+  type ClaudeDesktopSessionObservation,
+  JIRA_ISSUE_KEY_PATTERN,
+  type JiraIssueObservation,
   type PullRequestObservation,
   WORK_ATTENTION_BOUNDS,
   type WorkFact,
@@ -213,4 +216,244 @@ export const interpretExternalFacts = (input: InterpretExternalFactsInput): Work
     }
   }
   return interpretations;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Jira issues (ADR 0054): explicit keys only, read through the operator's `acli` session
+// ---------------------------------------------------------------------------------------------
+
+export type JiraIssueFact = Extract<WorkFact, { readonly kind: 'jira-issue' }>;
+
+/** `<PROJECT>-0` is the local convention for "no ticket"; it never names an issue. */
+const isPlaceholderJiraKey = (key: string): boolean => Number(key.slice(key.lastIndexOf('-') + 1)) === 0;
+
+/**
+ * The Jira keys one branch name writes explicitly: every `/`-separated segment that is a whole
+ * issue key. The typed-prefix convention (`feat/XLB-2090/slug`, `fix/…`, `chore/…`, `hotfix/…`,
+ * `release/…`) is the common case of that rule; a number alone (`pr/user/123`), a key embedded
+ * in prose, or anything outside the branch name is never a link.
+ */
+export const jiraKeysInBranch = (branch: string): readonly string[] => {
+  const keys: string[] = [];
+  for (const segment of branch.split('/')) {
+    if (JIRA_ISSUE_KEY_PATTERN.test(segment) && !isPlaceholderJiraKey(segment) && !keys.includes(segment)) {
+      keys.push(segment);
+    }
+  }
+  return keys;
+};
+
+/**
+ * The Jira keys a Desktop session linked explicitly, each once, in the order first written:
+ * `writtenBranches[]`, then its own `branch` and `sourceBranch`, then the branches of the pull
+ * requests it declared. The title, the working directory and the transcript are never consulted.
+ */
+export const explicitJiraKeys = (
+  session: Pick<
+    ClaudeDesktopSessionObservation,
+    'branch' | 'declaredPullRequests' | 'sourceBranch' | 'writtenBranches'
+  >,
+): readonly string[] => {
+  const branches = [
+    ...session.writtenBranches,
+    ...(session.branch === null ? [] : [session.branch]),
+    ...(session.sourceBranch === null ? [] : [session.sourceBranch]),
+    ...session.declaredPullRequests.flatMap((pullRequest) => (pullRequest.branch === null ? [] : [pullRequest.branch])),
+  ];
+  const keys: string[] = [];
+  for (const branch of branches) {
+    for (const key of jiraKeysInBranch(branch)) {
+      if (!keys.includes(key)) {
+        keys.push(key);
+      }
+    }
+  }
+  return keys;
+};
+
+/**
+ * The fact one observation yields for one root. `newCommentsSince` counts the kept comments
+ * created after the family's last activity (at most the ten the observation holds); it is `null`
+ * when the read failed, because the failure says nothing about the comments.
+ */
+export const jiraIssueFact = (
+  observation: JiraIssueObservation,
+  factId: string,
+  familyLastActivityAt: CanonicalInstant,
+): JiraIssueFact => {
+  const newestCommentAt = observation.comments.reduce<CanonicalInstant | null>(
+    (newest, comment) => (newest === null || comment.createdAt > newest ? comment.createdAt : newest),
+    null,
+  );
+  return {
+    commentCount: observation.commentCount,
+    id: factId,
+    key: observation.key,
+    kind: 'jira-issue',
+    newCommentsSince:
+      observation.outcome === 'observed'
+        ? observation.comments.filter((comment) => comment.createdAt > familyLastActivityAt).length
+        : null,
+    newestCommentAt,
+    outcome: observation.outcome,
+    provenance: {
+      coverage: observation.outcome === 'observed' ? 'complete' : 'partial',
+      machineId: observation.machineId,
+      observedAt: observation.observedAt,
+      source: 'jira',
+    },
+    status: observation.status,
+    statusCategory: observation.statusCategory,
+    updatedAt: observation.updatedAt,
+    url: null,
+  };
+};
+
+export interface InterpretJiraFactsInput {
+  /** The root's facts: the Jira facts to interpret and the pull request facts they are confronted with. */
+  readonly facts: readonly WorkFact[];
+  /** The latest `lastActivityAt` of the root and its children. */
+  readonly familyLastActivityAt: CanonicalInstant;
+  /** How long an observation counts as current. Default 24 hours. */
+  readonly freshMs?: number;
+  readonly now: Date;
+}
+
+const DELIVERED_PULL_REQUEST_STATES = new Set(['OPEN', 'MERGED']);
+
+interface PullRequestStanding {
+  readonly at: CanonicalInstant;
+  readonly label: string;
+  readonly source: string;
+  readonly state: string;
+}
+
+/** The pull request a Jira status is confronted with: GitHub's observation first, else the session's declaration. */
+const pullRequestStanding = (facts: readonly WorkFact[]): PullRequestStanding | null => {
+  for (const fact of facts) {
+    if (
+      fact.kind === 'pull-request' &&
+      fact.outcome === 'observed' &&
+      fact.state !== null &&
+      DELIVERED_PULL_REQUEST_STATES.has(fact.state)
+    ) {
+      return {
+        at: fact.updatedAt ?? fact.provenance.observedAt,
+        label: pullRequestLabel(fact),
+        source: 'GitHub',
+        state: fact.state,
+      };
+    }
+  }
+  for (const fact of facts) {
+    if (fact.kind === 'declared-pull-request' && DELIVERED_PULL_REQUEST_STATES.has(fact.state.toUpperCase())) {
+      return {
+        at: fact.provenance.observedAt,
+        label: `${fact.repository}#${String(fact.number)}`,
+        source: 'the session declared',
+        state: fact.state.toUpperCase(),
+      };
+    }
+  }
+  return null;
+};
+
+const JIRA_FAILURE_UNCERTAINTY =
+  'The ticket state is unknown from this observation; an earlier successful read, if any, is the last known state.';
+
+const interpretJiraFailure = (fact: JiraIssueFact): WorkInterpretation => {
+  const { observedAt } = fact.provenance;
+  if (fact.outcome === 'unauthenticated') {
+    return interpretation(
+      'coverage-gap',
+      [fact.id],
+      `Jira rejected the read of ${fact.key} as unauthenticated at ${observedAt}.`,
+      'Action: sign in to Jira (acli jira auth login). Until then the ticket state is unknown; an earlier successful read, if any, is the last known state.',
+    );
+  }
+  if (fact.outcome === 'disabled') {
+    return interpretation(
+      'coverage-gap',
+      [fact.id],
+      `${fact.key} could not be read at ${observedAt}: the Atlassian CLI (acli) is not installed.`,
+      JIRA_FAILURE_UNCERTAINTY,
+    );
+  }
+  return interpretation(
+    'coverage-gap',
+    [fact.id],
+    `${fact.key} could not be read from Jira at ${observedAt} (${fact.outcome}).`,
+    JIRA_FAILURE_UNCERTAINTY,
+  );
+};
+
+const interpretJiraIssue = (
+  fact: JiraIssueFact,
+  input: InterpretJiraFactsInput,
+  stale: boolean,
+  pullRequest: PullRequestStanding | null,
+): WorkInterpretation[] => {
+  if (fact.outcome !== 'observed') {
+    return [interpretJiraFailure(fact)];
+  }
+  const { observedAt } = fact.provenance;
+  const results: WorkInterpretation[] = [];
+  const arrived = fact.newCommentsSince ?? 0;
+  if (arrived > 0) {
+    // A comment that arrived is final, so a stale observation still establishes the arrival.
+    results.push(
+      interpretation(
+        'jira-reply-arrived',
+        [fact.id],
+        `${String(arrived)} comment${arrived === 1 ? '' : 's'} arrived on ${fact.key} after this session family's last activity (${input.familyLastActivityAt}); no resumption observed.`,
+        `You may have read them in Jira; this view cannot tell. Newest comment ${fact.newestCommentAt ?? 'undated'}, observed ${observedAt}.`,
+      ),
+    );
+  }
+  if (!stale && fact.statusCategory === 'todo' && pullRequest !== null) {
+    results.push(
+      interpretation(
+        'jira-status-differs',
+        [fact.id],
+        `${fact.key} is still To Do (Jira status ${fact.status ?? 'To Do'}, observed ${observedAt}) while ${pullRequest.label} is ${pullRequest.state} (${pullRequest.source} ${pullRequest.at}); a different status is not automatically an error.`,
+        'Whether the ticket should follow the pull request is a team convention this view does not know; both are dated reads, not current states.',
+      ),
+    );
+  }
+  if (stale && results.length === 0) {
+    results.push(
+      interpretation(
+        'coverage-gap',
+        [fact.id],
+        `${fact.key} was ${fact.status ?? 'in an unknown status'} when last observed at ${observedAt}; nothing fresher.`,
+        staleUncertainty(observedAt),
+      ),
+    );
+  }
+  return results;
+};
+
+/**
+ * Interprets the Jira facts of one root, in fact order, capped at the contract's interpretation
+ * bound. A reply that arrived after the family's last activity is named without claiming it was
+ * not read elsewhere; a To Do ticket beside an open or merged pull request is named as a
+ * difference, not as an error; a failed read names its cause and the exact action when there is
+ * one. Facts of other kinds are consulted (pull requests) but never interpreted here.
+ */
+export const interpretJiraFacts = (input: InterpretJiraFactsInput): WorkInterpretation[] => {
+  const freshMs = input.freshMs ?? WORK_FACT_FRESHNESS_MS;
+  const horizon = input.now.getTime() - freshMs;
+  const pullRequest = pullRequestStanding(input.facts);
+  const interpretations: WorkInterpretation[] = [];
+  for (const fact of input.facts) {
+    if (fact.kind !== 'jira-issue') {
+      continue;
+    }
+    const stale = canonicalInstantEpochMs(fact.provenance.observedAt) < horizon;
+    interpretations.push(...interpretJiraIssue(fact, input, stale, pullRequest));
+    if (interpretations.length >= maxInterpretations) {
+      break;
+    }
+  }
+  return interpretations.slice(0, maxInterpretations);
 };

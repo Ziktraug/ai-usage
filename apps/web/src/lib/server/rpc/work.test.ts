@@ -8,6 +8,7 @@ const AT = '2026-10-20T12:00:00.000Z';
 const dataset: WorkAttentionDatasetWire = {
   coverage: {
     checkouts: { failed: 0, lastRunAt: null, observed: 0 },
+    jira: { disabled: false, failed: 0, lastRunAt: null, observed: 0, reason: null },
     desktopSessions: {
       collectedAt: AT,
       filesParsed: 0,

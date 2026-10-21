@@ -5,6 +5,7 @@ import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
   type CheckoutStatusObservation,
   type ClaudeDesktopSessionObservation,
+  type JiraIssueObservation,
   type PullRequestObservation,
   WORK_ATTENTION_BOUNDS,
   type WorkAttentionCoverage,
@@ -19,7 +20,10 @@ import {
 } from '@ai-usage/report-core/work-attention';
 import {
   checkoutStatusFact,
+  explicitJiraKeys,
   interpretExternalFacts,
+  interpretJiraFacts,
+  jiraIssueFact,
   pullRequestFact,
 } from '@ai-usage/report-core/work-attention-facts';
 import { interpretWorkRoot } from '@ai-usage/report-core/work-attention-interpretation';
@@ -30,6 +34,7 @@ import {
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
   queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   querySessionRowsBySourceSessionIds,
   queryWorkFactRunStates,
@@ -54,6 +59,9 @@ import { Effect } from 'effect';
  * - a `checkout-status` observation joins a root when `worktreePath ?? cwd` of a family member
  *   is that path, on the same machine; several roots may share one checkout and each then
  *   receives the fact with the sharing named in its interpretation;
+ * - a `jira-issue` observation joins a root when a member of its family wrote that key as a
+ *   whole segment of a branch name (`explicitJiraKeys`, ADR 0054), on the same machine; a key in
+ *   a title or a path never links one, and the same number on another project is another key;
  * - when the latest observation failed and an older successful one exists, both are attached:
  *   the dated state stays the last known one and the failure stays visible.
  *
@@ -102,11 +110,17 @@ export interface LatestWorkObservation<Observation> {
 /** The external and local fact family as the store readers return it, in any order. */
 export interface WorkAttentionExternalFacts {
   readonly checkouts: readonly LatestWorkObservation<CheckoutStatusObservation>[];
+  readonly jiraIssues: readonly LatestWorkObservation<JiraIssueObservation>[];
   readonly pullRequests: readonly LatestWorkObservation<PullRequestObservation>[];
   readonly runStates: readonly WorkFactRunState[];
 }
 
-export const NO_EXTERNAL_FACTS: WorkAttentionExternalFacts = { checkouts: [], pullRequests: [], runStates: [] };
+export const NO_EXTERNAL_FACTS: WorkAttentionExternalFacts = {
+  checkouts: [],
+  jiraIssues: [],
+  pullRequests: [],
+  runStates: [],
+};
 
 const ATTENTION_RANK: Record<WorkAttentionKind, number> = {
   'external-wait': 1,
@@ -201,8 +215,30 @@ const familyPullRequestLinks = (
   return links;
 };
 
+/** The identity the Jira producer stores: the key as Jira writes it, per observing machine. */
+const jiraIssueKey = (machineId: string, key: string): string => JSON.stringify([machineId, key]);
+
+/** The distinct Jira keys a family wrote in branch names, in family order, each once. */
+const familyJiraKeys = (group: RootGroup): string[] => {
+  const keys: string[] = [];
+  for (const member of [group.root, ...group.children]) {
+    for (const key of explicitJiraKeys(member)) {
+      if (!keys.includes(key)) {
+        keys.push(key);
+      }
+    }
+  }
+  return keys;
+};
+
+const latestActivity = (group: RootGroup): CanonicalInstant =>
+  [group.root, ...group.children]
+    .map((observation) => observation.lastActivityAt)
+    .reduce((latest, current) => (current > latest ? current : latest));
+
 interface ExternalFactIndex {
   readonly checkouts: ReadonlyMap<string, LatestWorkObservation<CheckoutStatusObservation>>;
+  readonly jiraIssues: ReadonlyMap<string, LatestWorkObservation<JiraIssueObservation>>;
   readonly pullRequests: ReadonlyMap<string, LatestWorkObservation<PullRequestObservation>>;
   /** Per machine, how many roots of the dataset have that checkout path in their family. */
   readonly rootsPerCheckout: ReadonlyMap<string, ReadonlyMap<string, number>>;
@@ -218,6 +254,10 @@ const indexExternalFacts = (facts: WorkAttentionExternalFacts, groups: readonly 
   for (const item of facts.checkouts) {
     checkouts.set(checkoutKey(item.latest.machineId, item.latest.checkoutPath), item);
   }
+  const jiraIssues = new Map<string, LatestWorkObservation<JiraIssueObservation>>();
+  for (const item of facts.jiraIssues) {
+    jiraIssues.set(jiraIssueKey(item.latest.machineId, item.latest.key), item);
+  }
   const rootsPerCheckout = new Map<string, Map<string, number>>();
   for (const group of groups) {
     const perMachine = rootsPerCheckout.get(group.root.machineId) ?? new Map<string, number>();
@@ -226,7 +266,7 @@ const indexExternalFacts = (facts: WorkAttentionExternalFacts, groups: readonly 
     }
     rootsPerCheckout.set(group.root.machineId, perMachine);
   }
-  return { checkouts, pullRequests, rootsPerCheckout };
+  return { checkouts, jiraIssues, pullRequests, rootsPerCheckout };
 };
 
 /**
@@ -272,6 +312,22 @@ const externalFactsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[]
         checkoutStatusFact(
           observation,
           `${root.desktopSessionId}:checkout:${pathDigest(observation.checkoutPath)}@${observation.observedAt}`,
+        ),
+      );
+    }
+  }
+  const familyLastActivityAt = latestActivity(group);
+  for (const key of familyJiraKeys(group)) {
+    const item = index.jiraIssues.get(jiraIssueKey(root.machineId, key));
+    if (item === undefined) {
+      continue;
+    }
+    for (const observation of observationsOf(item)) {
+      facts.push(
+        jiraIssueFact(
+          observation,
+          `${root.desktopSessionId}:jira:${observation.key}@${observation.observedAt}`,
+          familyLastActivityAt,
         ),
       );
     }
@@ -380,7 +436,7 @@ const factPriority = (fact: WorkFact): number => {
   if (fact.kind === 'declared-turn') {
     return 0;
   }
-  return fact.kind === 'pull-request' || fact.kind === 'checkout-status' ? 1 : 2;
+  return fact.kind === 'pull-request' || fact.kind === 'checkout-status' || fact.kind === 'jira-issue' ? 1 : 2;
 };
 
 const boundFacts = (facts: readonly WorkFact[]): { readonly cut: number; readonly facts: WorkFact[] } => {
@@ -417,10 +473,12 @@ const DECLARATION_INTERPRETATION_KINDS = new Set<WorkInterpretation['kind']>([
 ]);
 
 /**
- * The two interpreters meet here. Attention: a human request first; else an external wait when
- * GitHub showed a pull request awaiting someone else; else what the declaration interpreter said
- * (an optional lead, or nothing). The merged list leads with the declaration's own statement,
- * then the external and local statements, then proposals, staleness and coverage gaps.
+ * The three interpreters meet here. Attention: a human request first, which a Jira reply that
+ * arrived after the family's last activity also makes (nothing on this machine shows it was
+ * read); else an external wait when GitHub showed a pull request awaiting someone else; else
+ * what the declaration interpreter said (an optional lead, or nothing). The merged list leads
+ * with the declaration's own statement, then the external and local statements, then the Jira
+ * statements, then proposals, staleness and coverage gaps.
  */
 const mergeInterpretations = (
   declared: {
@@ -429,6 +487,7 @@ const mergeInterpretations = (
     readonly reconsidered: boolean;
   },
   external: readonly WorkInterpretation[],
+  jira: readonly WorkInterpretation[],
   factsCut: number,
 ): {
   readonly attention: WorkAttentionKind;
@@ -438,9 +497,11 @@ const mergeInterpretations = (
   const leading = declared.interpretations.filter(({ kind }) => DECLARATION_INTERPRETATION_KINDS.has(kind));
   const trailing = declared.interpretations.filter(({ kind }) => !DECLARATION_INTERPRETATION_KINDS.has(kind));
   const cut = factsCut > 0 ? [factsCutInterpretation(factsCut)] : [];
-  const interpretations = [...leading, ...cut, ...external, ...trailing].slice(0, maxInterpretations);
+  const interpretations = [...leading, ...cut, ...external, ...jira, ...trailing].slice(0, maxInterpretations);
   let attention: WorkAttentionKind = declared.attention;
-  if (attention !== 'human-request' && external.some(({ kind }) => kind === 'external-review-pending')) {
+  if (jira.some(({ kind }) => kind === 'jira-reply-arrived')) {
+    attention = 'human-request';
+  } else if (attention !== 'human-request' && external.some(({ kind }) => kind === 'external-review-pending')) {
     attention = 'external-wait';
   }
   return { attention, interpretations, reconsidered: declared.reconsidered };
@@ -500,11 +561,6 @@ const groupRoots = (observations: readonly ClaudeDesktopSessionObservation[]): R
   }
   return [...groups.values()];
 };
-
-const latestActivity = (group: RootGroup): CanonicalInstant =>
-  [group.root, ...group.children]
-    .map((observation) => observation.lastActivityAt)
-    .reduce((latest, current) => (current > latest ? current : latest));
 
 /** The attentions the activity window never hides: a pending request keeps its root visible at any age. */
 const PENDING_ATTENTIONS = new Set<WorkAttentionKind>(['human-request', 'external-wait']);
@@ -612,7 +668,8 @@ const buildRoot = (
     now,
     ...(rootsPerCheckout === undefined ? {} : { rootsPerCheckout }),
   });
-  const { attention, interpretations, reconsidered } = mergeInterpretations(declaredResult, external, cut);
+  const jira = interpretJiraFacts({ facts, familyLastActivityAt: latestActivity(group), now });
+  const { attention, interpretations, reconsidered } = mergeInterpretations(declaredResult, external, jira, cut);
   const checkoutPath = checkoutPathOf(root);
   return {
     age: {
@@ -665,23 +722,32 @@ const desktopCoverage = (
 };
 
 /**
- * What the two fact producers last did, from their run states. No run yet means no date and
- * zero counts, not a disabled source: `disabled` is true only when the run itself said so.
+ * What the three fact producers last did, from their run states. No run yet means no date and
+ * zero counts, not a disabled source: `disabled` is true only when the run itself said so, and
+ * the Jira `reason` is that run's own message (`acli not installed`, `jira.enabled is false`).
  */
 const factCoverage = (
   runStates: readonly WorkFactRunState[],
   machineId: string | undefined,
-): Pick<WorkAttentionCoverage, 'checkouts' | 'pullRequests'> => {
+): Pick<WorkAttentionCoverage, 'checkouts' | 'jira' | 'pullRequests'> => {
   const runOf = (sourceId: WorkFactRunState['sourceId']): WorkFactRunState | null =>
     runStates.find((run) => run.sourceId === sourceId && (machineId === undefined || run.machineId === machineId)) ??
     null;
   const checkouts = runOf('checkouts.status');
   const pullRequests = runOf('github.pull-requests');
+  const jira = runOf('jira.issues');
   return {
     checkouts: {
       failed: checkouts?.failed ?? 0,
       lastRunAt: checkouts?.ranAt ?? null,
       observed: checkouts?.observed ?? 0,
+    },
+    jira: {
+      disabled: jira?.disabled ?? false,
+      failed: jira?.failed ?? 0,
+      lastRunAt: jira?.ranAt ?? null,
+      observed: jira?.observed ?? 0,
+      reason: jira?.disabled === true ? jira.message : null,
     },
     pullRequests: {
       disabled: pullRequests?.disabled ?? false,
@@ -816,6 +882,11 @@ const declaredLinks = (
   return links;
 };
 
+/** The Jira keys any session of the read wrote in a branch name, each once; the only keys ever looked up. */
+const declaredJiraKeys = (observations: readonly ClaudeDesktopSessionObservation[]): string[] => [
+  ...new Set(observations.flatMap((observation) => explicitJiraKeys(observation))),
+];
+
 const readExternalFacts = (
   input: QueryWorkAttentionInput,
   observations: readonly ClaudeDesktopSessionObservation[],
@@ -839,8 +910,16 @@ const readExternalFacts = (
         ...machineFilter,
       }),
     );
+    const jiraIssues = yield* readInChunks(declaredJiraKeys(observations), (keys) =>
+      queryLatestJiraIssueObservations({
+        dbPath: input.dbPath,
+        keys,
+        limit: MAX_WORK_FACT_QUERY_LIMIT,
+        ...machineFilter,
+      }),
+    );
     const { runs } = yield* queryWorkFactRunStates({ dbPath: input.dbPath });
-    return { checkouts, pullRequests, runStates: runs };
+    return { checkouts, jiraIssues, pullRequests, runStates: runs };
   });
 
 export const queryWorkAttention = (

@@ -15,6 +15,11 @@ import {
   type PullRequestLink,
 } from '@ai-usage/local-collectors/github-pull-requests';
 import {
+  JIRA_ISSUE_DEFAULTS,
+  JIRA_NOT_INSTALLED_MESSAGE,
+  observeJiraIssues,
+} from '@ai-usage/local-collectors/jira-issues';
+import {
   type CollectorRow,
   enrichCollectorRowsWithRtkSavingsResult,
   stripProjectPath,
@@ -49,10 +54,12 @@ import {
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
+import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
 import {
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importExecutorObservations,
+  importJiraIssueObservations,
   importLocalRows,
   importNormalizedDatasetItems,
   importPullRequestObservations,
@@ -111,6 +118,8 @@ export interface WorkFactInputs {
 }
 
 export interface SourceAdapterOptions {
+  /** Defaults to `acli` being on PATH; the Jira issue source is not detected without it. */
+  readonly acliAvailable?: () => boolean;
   readonly claudeLiveAvailable?: () => boolean;
   readonly codexLiveAvailable?: () => boolean;
   readonly configCwd?: string;
@@ -622,7 +631,7 @@ const createClaudeDesktopSessionSource = (input: {
         changed: false,
         inputCount: collection.completeness.filesSeen,
         outputCount: imported.inserted + imported.updated + imported.unchanged,
-        ...(changedRows > 0 ? { wake: ['checkouts.status', 'github.pull-requests'] as const } : {}),
+        ...(changedRows > 0 ? { wake: ['checkouts.status', 'github.pull-requests', 'jira.issues'] as const } : {}),
         warnings: sanitizeSourceWarnings('Claude Desktop sessions', [...collection.warnings, ...storeWarnings]),
       };
     }),
@@ -800,12 +809,14 @@ const pullRequestLinkKey = (link: PullRequestLink): string => JSON.stringify([li
 const DESKTOP_WORK_FACT_WINDOW_MS = 14 * 86_400_000;
 
 interface DesktopWorkFactInputs {
+  /** Jira keys written in the sessions' branch names (ADR 0054), never read from titles or paths. */
+  readonly jiraKeys: readonly string[];
   readonly links: readonly PullRequestLink[];
   readonly paths: readonly string[];
   readonly warnings: readonly { readonly code: string; readonly message: string }[];
 }
 
-const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = { links: [], paths: [], warnings: [] };
+const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = { jiraKeys: [], links: [], paths: [], warnings: [] };
 
 const normalizedLinkKey = (link: PullRequestLink): string =>
   pullRequestLinkKey({ host: link.host.trim().toLowerCase(), number: link.number, repository: link.repository.trim() });
@@ -855,7 +866,8 @@ const withoutMergedLinks = (
 
 /**
  * What the Claude Desktop sessions active in the last fourteen days named: `worktreePath ?? cwd`
- * as the checkout, `prs[]` as the pull requests, most recently active session first, each once.
+ * as the checkout, `prs[]` as the pull requests, the Jira keys written in their branch names as
+ * the issues, most recently active session first, each once.
  * The Work read attaches facts only to these families, so they lead the served inputs under the
  * per-run bounds. A store that does not exist yet means no candidates; a read that fails for any
  * other reason also yields none and is said in a warning, so the run goes on with the served and
@@ -875,11 +887,17 @@ const desktopWorkFactInputs = (input: {
     Effect.flatMap(({ observations }) => {
       const paths: string[] = [];
       const links: PullRequestLink[] = [];
+      const jiraKeys: string[] = [];
       const seenLinks = new Set<string>();
       for (const observation of observations) {
         const checkoutPath = observation.worktreePath ?? observation.cwd;
         if (!paths.includes(checkoutPath)) {
           paths.push(checkoutPath);
+        }
+        for (const key of explicitJiraKeys(observation)) {
+          if (!jiraKeys.includes(key)) {
+            jiraKeys.push(key);
+          }
         }
         for (const pullRequest of observation.declaredPullRequests) {
           const link: PullRequestLink = {
@@ -895,7 +913,7 @@ const desktopWorkFactInputs = (input: {
         }
       }
       return withoutMergedLinks(input.dbPath, input.machineId, links).pipe(
-        Effect.map((open): DesktopWorkFactInputs => ({ links: open.links, paths, warnings: open.warnings })),
+        Effect.map((open): DesktopWorkFactInputs => ({ jiraKeys, links: open.links, paths, warnings: open.warnings })),
       );
     }),
     Effect.catchAll((error) =>
@@ -1125,6 +1143,106 @@ const createPullRequestSource = (input: {
     }),
 });
 
+/**
+ * The Jira issue producer (ADR 0054): one bounded `acli` read per key the active Desktop sessions
+ * wrote in a branch name, through the operator's own CLI session. The run records itself
+ * `disabled` when `jira.enabled` is false, and also when every read found no `acli` (the binary
+ * left between detection and the run), so the Work view can name the reason.
+ */
+const createJiraIssueSource = (input: {
+  dbPath: string;
+  detect: Effect.Effect<SourceDetectionResult>;
+  machine: UsageMachine;
+  now: () => Date;
+  options: SourceAdapterOptions;
+  storage: LocalHistoryStorageService;
+}): ScheduledSource => ({
+  cadence: Duration.millis(getCollectionSourceDefinition('jira.issues').cadenceMs),
+  detect: input.detect,
+  id: 'jira.issues',
+  run: (context) =>
+    Effect.gen(function* () {
+      yield* reportProgress(context, { phase: 'discovering' });
+      const availability = yield* input.detect;
+      if (availability.availability !== 'detected') {
+        return sourceUnavailableResult();
+      }
+      const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
+        Effect.provideService(LocalHistoryStorage, input.storage),
+        Effect.catchAllDefect((cause) => Effect.fail(cause)),
+        Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
+      );
+      if (config.jira?.enabled === false) {
+        const message = 'jira.enabled is false in the local config.';
+        yield* recordWorkFactRun({
+          dbPath: input.dbPath,
+          disabled: true,
+          failed: 0,
+          machineId: input.machine.id,
+          message,
+          observed: 0,
+          ranAt: input.now(),
+          sourceId: 'jira.issues',
+        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+        return {
+          changed: false,
+          inputCount: 0,
+          outputCount: 0,
+          unavailable: { code: 'policy-disabled', message },
+          warnings: [],
+        };
+      }
+      const desktop = yield* desktopWorkFactInputs({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        now: input.now,
+      });
+      const keys = desktop.jiraKeys.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
+      const truncated = desktop.jiraKeys.length > keys.length;
+      yield* reportProgress(context, { completed: 0, phase: 'reading', total: keys.length });
+      const batch = yield* observeJiraIssues({
+        keys,
+        machineId: input.machine.id,
+        now: input.now,
+        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      });
+      yield* abortIfRequested(context.signal);
+      yield* reportProgress(context, { completed: 0, phase: 'importing', total: batch.observations.length });
+      yield* importJiraIssueObservations({ dbPath: input.dbPath, observations: batch.observations }).pipe(
+        Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
+      );
+      const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
+      const failed = batch.observations.filter(
+        ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled',
+      ).length;
+      const notInstalled =
+        batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
+      const truncation = truncated
+        ? `Observed the first ${String(keys.length)} of ${String(desktop.jiraKeys.length)} linked Jira issues.`
+        : null;
+      yield* recordWorkFactRun({
+        dbPath: input.dbPath,
+        disabled: notInstalled,
+        failed,
+        machineId: input.machine.id,
+        message: notInstalled ? JIRA_NOT_INSTALLED_MESSAGE : truncation,
+        observed,
+        ranAt: input.now(),
+        sourceId: 'jira.issues',
+      }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+      return {
+        changed: false,
+        inputCount: keys.length,
+        outputCount: batch.observations.length,
+        warnings: [
+          ...desktop.warnings,
+          ...(truncation === null ? [] : [{ code: 'jira-issues-truncated', message: truncation }]),
+        ],
+      };
+    }),
+});
+
 const harnessAdapter = (
   sourceId: 'claude.sessions' | 'codex.sessions' | 'opencode.sessions',
 ): Effect.Effect<HarnessAdapter, SourceRunError> => {
@@ -1184,6 +1302,16 @@ export const createScheduledSourceRegistry = (
         return notDetected('The GitHub CLI (gh) was not found on PATH, so pull requests cannot be observed.');
       }
       // A config file that fails validation throws inside the reader, so only an exit sees it.
+      const config = yield* Effect.exit(
+        readMergedAiUsageConfigFrom(options.configCwd).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      return Exit.isFailure(config) ? misconfigured() : detected();
+    });
+    // Same rule for Jira (ADR 0054): the Atlassian CLI is the input, its sign-in is an outcome.
+    const jiraIssueDetection = Effect.gen(function* () {
+      if (!(options.acliAvailable?.() ?? Bun.which('acli') !== null)) {
+        return notDetected('The Atlassian CLI (acli) was not found on PATH, so Jira issues cannot be observed.');
+      }
       const config = yield* Effect.exit(
         readMergedAiUsageConfigFrom(options.configCwd).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
@@ -1301,6 +1429,14 @@ export const createScheduledSourceRegistry = (
       createPullRequestSource({
         dbPath,
         detect: pullRequestDetection,
+        machine,
+        now: options.now ?? (() => new Date()),
+        options,
+        storage,
+      }),
+      createJiraIssueSource({
+        dbPath,
+        detect: jiraIssueDetection,
         machine,
         now: options.now ?? (() => new Date()),
         options,

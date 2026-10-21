@@ -48,6 +48,7 @@ const desktop = (observedAt: CanonicalInstant = COLLECTED_AT): WorkFactProvenanc
 const github = (coverage: WorkFactProvenance['coverage'] = 'complete'): WorkFactProvenance =>
   provenance('github', OBSERVED_AT, coverage);
 const checkout = (): WorkFactProvenance => provenance('local-checkout', OBSERVED_AT);
+const jira = (): WorkFactProvenance => provenance('jira', OBSERVED_AT);
 
 interface RootSeed {
   readonly archived?: boolean;
@@ -190,6 +191,22 @@ const observedPullRequest = (
   ...fields,
 });
 
+const jiraIssue = (id: string, key: string, fields: Partial<Extract<WorkFact, { kind: 'jira-issue' }>>): WorkFact => ({
+  commentCount: 2,
+  id: `${id}:jira-${key}`,
+  key,
+  kind: 'jira-issue',
+  newCommentsSince: 0,
+  newestCommentAt: hoursAgo(4),
+  outcome: 'observed',
+  provenance: jira(),
+  status: 'In Progress',
+  statusCategory: 'in-progress',
+  updatedAt: hoursAgo(4),
+  url: null,
+  ...fields,
+});
+
 const checkoutStatus = (id: string, path: string, branch: string, dirty: boolean, modified = 0): WorkFact => ({
   ahead: dirty ? 2 : 0,
   behind: 0,
@@ -318,6 +335,7 @@ const seeds = (): readonly RootSeed[] => [
         provenance: desktop(),
         text: 'Nothing was lost: the store captured the history five days before the purge. A snapshot re-import is due within two weeks.',
       },
+      jiraIssue('enquete-retention', 'XLB-2090', { newCommentsSince: 2 }),
     ],
     id: 'enquete-retention',
     interpretations: [
@@ -326,6 +344,12 @@ const seeds = (): readonly RootSeed[] => [
         'The session declared its result ready for review 9 hours ago.',
         'Review readiness is the session’s own claim; no reviewer has been observed.',
         ['enquete-retention:declared'],
+      ),
+      interpretation(
+        'jira-reply-arrived',
+        `2 comments arrived on XLB-2090 after this session family's last activity (${hoursAgo(9)}); no resumption observed.`,
+        `You may have read them in Jira; this view cannot tell. Newest comment ${hoursAgo(4)}, observed ${OBSERVED_AT}.`,
+        ['enquete-retention:jira-XLB-2090'],
       ),
     ],
     lastActivityHoursAgo: 9,
@@ -1070,6 +1094,7 @@ export const syntheticWorkAttentionDataset = (): WorkAttentionDataset => {
         truncated: false,
         unsupported: 2,
       },
+      jira: { disabled: false, failed: 0, lastRunAt: OBSERVED_AT, observed: 1, reason: null },
       pullRequests: { disabled: false, failed: 1, lastRunAt: OBSERVED_AT, observed: 7 },
       sessions: { joined: 22, revision: 'synthetic-work-v1', unmatched: 3 },
       window: { excludedRoots: 4, sinceDays: 30 },

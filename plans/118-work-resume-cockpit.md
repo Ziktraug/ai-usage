@@ -122,3 +122,37 @@ Gate at `170ae9bc` (run after the merges above): `bun run verify` PASS in 266 s 
 typecheck, tests, build); `bun test packages/usage-store` 249 pass, 0 fail. The earlier single
 failure of `aligns heartbeats of rows going idle…` (5.5 s under parallel gates) did not recur and
 passes alone in 3 s: timing-sensitive under CPU contention, not a regression of this slice.
+
+### 2026-10-22 02:50 — observed facts proven in the browser; first independent review
+
+`84babac8` (merged as `216f726f`): the production spec now waits for the fact producers and proves
+observed GitHub and checkout facts on the production path (fake `gh pr view` and real `git status`
+on the registry's checkouts → store → read model → UI): four sections (4 / 3 / 1 / 13), coverage
+"Pull requests: 4 observed · Checkouts: 1 observed", "Waiting on others" rows with review-required
+chips, local-checkout facts in the detail; production 17/17, default-config 50/50.
+Defect found there: at engine start `checkouts.status` and `github.pull-requests` run before the
+first Desktop import and read an empty registry until their 5/10-minute cadence; the spec works
+around it with the operator run-now command until the engine wakes the producers itself.
+Independent Claude review at `170ae9bc` (verdict: partial, record in the campaign state): four P1
+findings on interpretation and presentation — a declared question could be reclassified as
+satisfied by any pull request of its family including the root's own checkout mirror; the 30-day
+window hid older questions without saying so; the "Recent, nothing pending" label asserted an
+absence that was not observed; worktree sessions took the worktree name as project — plus P2 items
+(executor probe outside the shared bounded runner, declared-PR chip dated by file mtime, missing
+export/replication exclusion tests for two families, stale comment, repeated "auto title" marker,
+merged PRs re-observed). A fix lot addresses them before the next gate.
+
+### 2026-10-22 03:20 — lot J integrated (`ab5d61ff`)
+
+Lot J (`b4be56a5`, ADR 0054): Jira issue facts for explicitly linked keys only (keys written in
+branches: `writtenBranches`, Desktop `branch`/`sourceBranch`, declared PR branches; never titles
+or bare numbers; `<PROJ>-0` ignored), read through the operator's Atlassian CLI session
+(`acli jira workitem view <KEY> --json`, a documented assumption: the CLI is not installed on this
+machine, so nothing live was exercised), additive `jira_issue_observations` table, `jira.issues`
+source (10 min, not detected without `acli`), `jira-reply-arrived` (a reply after the family's last
+activity → needs you, "you may have read them in Jira; this view cannot tell") and
+`jira-status-differs` interpretations, coverage.jira, row chip and detail facts. Verified at
+`ab5d61ff`: `bun run typecheck` 58/58, lint and check clean, package suites 1258 pass, web 1524 pass.
+
+Gate at `216f726f` (before lot J): `bun run test:e2e` (default Playwright suite, including the visual
+regression specs) 248 passed in 2.1 min; no snapshot changed.

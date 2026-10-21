@@ -8,6 +8,7 @@ import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import {
   type CheckoutStatusObservation,
   type ClaudeDesktopSessionObservation,
+  type JiraIssueObservation,
   type PullRequestObservation,
   parseClaudeDesktopSessionObservation,
   WORK_ATTENTION_BOUNDS,
@@ -16,6 +17,7 @@ import { type UsageStoreError, usageStoreErrorReasonFrom, type WorkFactRunState 
 import {
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importJiraIssueObservations,
   importPullRequestObservations,
   initializeUsageStore,
   publishServedReportRevision,
@@ -54,6 +56,7 @@ interface SessionSpec {
   readonly title: string;
   readonly unsupported?: boolean;
   readonly worktree?: boolean;
+  readonly writtenBranches?: readonly string[];
 }
 
 const session = (spec: SessionSpec): ClaudeDesktopSessionObservation => {
@@ -122,7 +125,7 @@ const session = (spec: SessionSpec): ClaudeDesktopSessionObservation => {
     unsupportedReason: spec.unsupported ? 'Unsupported field shape: prs.' : null,
     worktreePath: spec.worktree ? '/home/fixture/work/project/.claude/worktrees/wt-1' : null,
     wrapUpDescription: spec.status === 'blocked' ? 'Wrap-up.' : null,
-    writtenBranches: spec.pullRequestState === undefined ? [] : ['fixture/pr'],
+    writtenBranches: spec.writtenBranches ?? (spec.pullRequestState === undefined ? [] : ['fixture/pr']),
   });
   if (parsed === null) {
     throw new Error(`fixture session ${spec.id} must satisfy the contract`);
@@ -184,7 +187,7 @@ const sessions: readonly ClaudeDesktopSessionObservation[] = [
   session({ id: 'g', lastActivityHoursAgo: 1, status: 'review_ready', title: 'Fixture: G review ready' }),
 ];
 
-const createStore = async (): Promise<string> => {
+const createStore = async (observations: readonly ClaudeDesktopSessionObservation[] = sessions): Promise<string> => {
   const root = await mkdtemp(path.join(tmpdir(), 'work-attention-read-'));
   temporaryRoots.push(root);
   const dbPath = path.join(root, 'usage-store.sqlite');
@@ -195,7 +198,7 @@ const createStore = async (): Promise<string> => {
       completeness: { filesParsed: 9, filesSeen: 10, rejected: 0, truncated: false, unsupported: 1 },
       dbPath,
       machineId: MACHINE,
-      observations: sessions,
+      observations,
     }),
   );
   return dbPath;
@@ -405,6 +408,7 @@ describe('queryWorkAttention', () => {
         unsupported: 1,
       },
       // No producer has run: no date, zero counts, and not disabled (only a run can say so).
+      jira: { disabled: false, failed: 0, lastRunAt: null, observed: 0, reason: null },
       pullRequests: { disabled: false, failed: 0, lastRunAt: null, observed: 0 },
       sessions: { joined: 1, revision: 'revision-work', unmatched: 5 },
       window: { excludedRoots: 1, sinceDays: 30 },
@@ -888,5 +892,241 @@ describe('assembleWorkAttention with external facts', () => {
     });
     expect(elsewhere.coverage.pullRequests).toEqual({ disabled: false, failed: 0, lastRunAt: null, observed: 0 });
     expect(elsewhere.coverage.checkouts).toEqual({ failed: 0, lastRunAt: null, observed: 0 });
+  });
+});
+
+const jiraObservation = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation => ({
+  assigneeLabel: 'Alex',
+  commentCount: 1,
+  comments: [{ authorLabel: 'Sam', createdAt: hoursAgo(2), excerpt: 'Reply from Jira.', id: '1' }],
+  key: 'XLB-2090',
+  machineId: MACHINE,
+  observedAt: hoursAgo(1),
+  outcome: 'observed',
+  outcomeMessage: null,
+  parentKey: null,
+  sprint: null,
+  status: 'In Progress',
+  statusCategory: 'in-progress',
+  summary: 'Fixture ticket',
+  updatedAt: hoursAgo(2),
+  ...overrides,
+});
+
+const failedJiraObservation = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation =>
+  jiraObservation({
+    assigneeLabel: null,
+    commentCount: null,
+    comments: [],
+    observedAt: hoursAgo(0.5),
+    outcome: 'unauthenticated',
+    outcomeMessage: 'Jira rejected the credentials (HTTP 401); sign in to Jira (acli jira auth login)',
+    status: null,
+    statusCategory: null,
+    summary: null,
+    updatedAt: null,
+    ...overrides,
+  });
+
+/**
+ * A family whose root wrote XLB-2090 and whose child wrote XLB-2091 (last activity 5 h ago), a
+ * root on the same number in another project, and a root on XLB-2092 with a merged pull request.
+ */
+const jiraSessions: readonly ClaudeDesktopSessionObservation[] = [
+  session({
+    id: 'j1',
+    lastActivityHoursAgo: 6,
+    status: 'completed',
+    title: 'Fixture: J1 works on XLB-2090',
+    writtenBranches: ['feat/XLB-2090/slug', 'chore/XLB-0/agent-setup'],
+  }),
+  session({
+    id: 'j1c',
+    lastActivityHoursAgo: 5,
+    spawnedFromId: 'local_j1',
+    status: 'completed',
+    title: 'Fixture: J1 child on XLB-2091',
+    writtenBranches: ['fix/XLB-2091/child'],
+  }),
+  session({
+    id: 'j2',
+    lastActivityHoursAgo: 3,
+    status: 'completed',
+    title: 'Fixture: J2 on OTH-2090',
+    writtenBranches: ['feat/OTH-2090/other-project'],
+  }),
+  session({
+    id: 'j3',
+    lastActivityHoursAgo: 4,
+    pullRequestState: 'MERGED',
+    status: 'completed',
+    title: 'Fixture: J3 merged XLB-2092',
+    writtenBranches: ['feat/XLB-2092/merged'],
+  }),
+];
+
+const assembleJira = (
+  jiraIssues: WorkAttentionExternalFacts['jiraIssues'],
+  extra: Partial<WorkAttentionExternalFacts> = {},
+) => assemble({ ...NO_EXTERNAL_FACTS, jiraIssues, ...extra }, jiraSessions);
+
+describe('assembleWorkAttention with Jira facts', () => {
+  test('a reply after the family’s last activity is a human request; the same number elsewhere is not attached', () => {
+    const replied = jiraObservation();
+    const other = jiraObservation({ key: 'OTH-2090', comments: [], commentCount: 0 });
+    const dataset = assembleJira([
+      { latest: replied, latestObserved: replied },
+      { latest: other, latestObserved: other },
+      // The declared key as another machine observed it: another observer, not attached.
+      { latest: jiraObservation({ machineId: 'machine-elsewhere' }), latestObserved: null },
+    ]);
+    const j1 = rootOf(dataset, 'local_j1');
+    expect(j1.attention).toBe('human-request');
+    expect(j1.facts.filter((fact) => fact.kind === 'jira-issue')).toEqual([
+      {
+        commentCount: 1,
+        id: `local_j1:jira:XLB-2090@${hoursAgo(1)}`,
+        key: 'XLB-2090',
+        kind: 'jira-issue',
+        newCommentsSince: 1,
+        newestCommentAt: hoursAgo(2),
+        outcome: 'observed',
+        provenance: { coverage: 'complete', machineId: MACHINE, observedAt: hoursAgo(1), source: 'jira' },
+        status: 'In Progress',
+        statusCategory: 'in-progress',
+        updatedAt: hoursAgo(2),
+        url: null,
+      },
+    ]);
+    expect(j1.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-arrived']);
+    expect(j1.interpretations[0]?.text).toBe(
+      `1 comment arrived on XLB-2090 after this session family's last activity (${hoursAgo(5)}); no resumption observed.`,
+    );
+    expect(j1.interpretations[0]?.uncertainty).toContain('You may have read them in Jira; this view cannot tell.');
+    const j2 = rootOf(dataset, 'local_j2');
+    expect(j2.facts.filter((fact) => fact.kind === 'jira-issue').map((fact) => fact.key)).toEqual(['OTH-2090']);
+    expect(j2.attention).toBe('none');
+    expect(JSON.stringify(j2)).not.toContain('XLB-2090');
+  });
+
+  test('a reply before the family resumed leaves the root alone; a key written only by a child still attaches to the root', () => {
+    const earlier = jiraObservation({
+      comments: [{ authorLabel: 'Sam', createdAt: hoursAgo(8), excerpt: 'Early.', id: '1' }],
+    });
+    const childKey = jiraObservation({ key: 'XLB-2091' });
+    const dataset = assembleJira([
+      { latest: earlier, latestObserved: earlier },
+      { latest: childKey, latestObserved: childKey },
+    ]);
+    const j1 = rootOf(dataset, 'local_j1');
+    const jira = j1.facts.filter((fact) => fact.kind === 'jira-issue');
+    expect(jira.map((fact) => [fact.key, fact.newCommentsSince])).toEqual([
+      ['XLB-2090', 0],
+      ['XLB-2091', 1],
+    ]);
+    expect(j1.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-arrived']);
+    expect(j1.interpretations[0]?.text).toContain('XLB-2091');
+    const quiet = assembleJira([{ latest: earlier, latestObserved: earlier }]);
+    expect(rootOf(quiet, 'local_j1').attention).toBe('none');
+    expect(rootOf(quiet, 'local_j1').interpretations).toEqual([]);
+    expect(
+      dataset.roots
+        .filter((root) => root.desktopSessionId !== 'local_j1')
+        .every((root) => !root.facts.some((fact) => fact.kind === 'jira-issue')),
+    ).toBe(true);
+  });
+
+  test('a To Do ticket beside a merged pull request is a difference; an unauthenticated read keeps the dated success', () => {
+    const merged = pullRequestObservation({
+      mergedAt: hoursAgo(3),
+      reviewDecision: 'APPROVED',
+      state: 'MERGED',
+      updatedAt: hoursAgo(3),
+    });
+    const todo = jiraObservation({
+      comments: [],
+      commentCount: 0,
+      key: 'XLB-2092',
+      status: 'To Do',
+      statusCategory: 'todo',
+    });
+    const differs = assembleJira([{ latest: todo, latestObserved: todo }], {
+      pullRequests: [{ latest: merged, latestObserved: merged }],
+    });
+    const j3 = rootOf(differs, 'local_j3');
+    expect(j3.attention).toBe('none');
+    expect(j3.interpretations.map(({ kind }) => kind)).toEqual(['pull-request-merged', 'jira-status-differs']);
+    expect(j3.interpretations[1]?.text).toContain('XLB-2092 is still To Do');
+    expect(j3.interpretations[1]?.text).toContain('fixture/project#117 is MERGED');
+
+    const lastSuccess = jiraObservation({ comments: [], commentCount: 0, key: 'XLB-2092', observedAt: hoursAgo(26) });
+    const unreadable = assembleJira([
+      { latest: failedJiraObservation({ key: 'XLB-2092' }), latestObserved: lastSuccess },
+    ]);
+    const kept = rootOf(unreadable, 'local_j3');
+    expect(
+      kept.facts
+        .filter((fact) => fact.kind === 'jira-issue')
+        .map((fact) => [fact.outcome, fact.status, fact.provenance.observedAt]),
+    ).toEqual([
+      ['observed', 'In Progress', hoursAgo(26)],
+      ['unauthenticated', null, hoursAgo(0.5)],
+    ]);
+    expect(kept.interpretations.map(({ kind }) => kind)).toEqual(['coverage-gap', 'coverage-gap']);
+    expect(kept.interpretations[0]?.text).toContain(`was In Progress when last observed at ${hoursAgo(26)}`);
+    expect(kept.interpretations[1]?.uncertainty).toContain('sign in to Jira (acli jira auth login)');
+  });
+
+  test('coverage.jira comes from the jira.issues run state, with the reason when the run was disabled', () => {
+    expect(assembleJira([]).coverage.jira).toEqual({
+      disabled: false,
+      failed: 0,
+      lastRunAt: null,
+      observed: 0,
+      reason: null,
+    });
+    const disabled = assembleJira([], {
+      runStates: [runState('jira.issues', { disabled: true, message: 'acli not installed', observed: 0 })],
+    });
+    expect(disabled.coverage.jira).toEqual({
+      disabled: true,
+      failed: 0,
+      lastRunAt: hoursAgo(0.25),
+      observed: 0,
+      reason: 'acli not installed',
+    });
+    const ran = assembleJira([], {
+      runStates: [runState('jira.issues', { failed: 1, message: 'ignored', observed: 2 })],
+    });
+    expect(ran.coverage.jira).toEqual({
+      disabled: false,
+      failed: 1,
+      lastRunAt: hoursAgo(0.25),
+      observed: 2,
+      reason: null,
+    });
+  });
+
+  test('queryWorkAttention reads only the keys the registry wrote and attaches them by family', async () => {
+    const dbPath = await createStore(jiraSessions);
+    await Effect.runPromise(
+      importJiraIssueObservations({
+        dbPath,
+        observations: [jiraObservation(), jiraObservation({ key: 'XLB-5555', summary: 'Linked by nobody' })],
+      }),
+    );
+    await Effect.runPromise(recordWorkFactRun({ ...runInput('jira.issues', { failed: 0, observed: 2 }), dbPath }));
+    const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: NOW }));
+    const j1 = dataset.roots.find((root) => root.desktopSessionId === 'local_j1');
+    expect(j1?.attention).toBe('human-request');
+    expect(j1?.facts.filter((fact) => fact.kind === 'jira-issue').map((fact) => fact.key)).toEqual(['XLB-2090']);
+    expect(JSON.stringify(dataset)).not.toContain('XLB-5555');
+    expect(dataset.coverage.jira).toEqual({
+      disabled: false,
+      failed: 0,
+      lastRunAt: hoursAgo(0.25),
+      observed: 2,
+      reason: null,
+    });
   });
 });

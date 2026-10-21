@@ -10,6 +10,7 @@ import type {
   AiUsageConfig,
   AiUsageGitHubAccountConfig,
   AiUsageGitHubConfig,
+  AiUsageJiraConfig,
 } from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
@@ -263,6 +264,24 @@ const isGitHubConfig = (value: unknown): value is AiUsageGitHubConfig => {
   );
 };
 
+const JIRA_CONFIG_KEYS = new Set(['enabled', 'site']);
+/** A host name such as `example.atlassian.net`: labels of letters, digits and dashes, at least one dot. */
+const JIRA_SITE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
+
+/** Strict (ADR 0054): unknown keys, a non-boolean flag or a site that is not a host name invalidate the config. */
+const isJiraConfig = (value: unknown): value is AiUsageJiraConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => JIRA_CONFIG_KEYS.has(key)) &&
+    (record.enabled === undefined || typeof record.enabled === 'boolean') &&
+    (record.site === undefined ||
+      (typeof record.site === 'string' && record.site.length <= 256 && JIRA_SITE_PATTERN.test(record.site)))
+  );
+};
+
 const isSkillManagementConfig = (value: unknown): value is SkillManagementConfig => {
   try {
     parseSkillConfigInput(value);
@@ -438,6 +457,10 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   if (github !== undefined && !isGitHubConfig(github)) {
     return false;
   }
+  const jira = config.jira;
+  if (jira !== undefined && !isJiraConfig(jira)) {
+    return false;
+  }
   return true;
 };
 
@@ -531,7 +554,7 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
       (module as { default?: unknown; config?: unknown }).config;
     const homeOnlyField =
       typeof exportedConfig === 'object' && exportedConfig !== null
-        ? ['campaignLabelOverrides', 'github', 'routing', 'sourcePolicies'].find((field) =>
+        ? ['campaignLabelOverrides', 'github', 'jira', 'routing', 'sourcePolicies'].find((field) =>
             Object.hasOwn(exportedConfig, field),
           )
         : undefined;

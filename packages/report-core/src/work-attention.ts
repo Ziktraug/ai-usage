@@ -26,6 +26,9 @@ export const WORK_ATTENTION_BOUNDS = {
   maxFacts: 64,
   maxId: 512,
   maxInterpretations: 16,
+  maxJiraAuthorLabel: 64,
+  maxJiraCommentExcerpt: 280,
+  maxJiraComments: 10,
   maxListItems: 64,
   maxPath: 4096,
   maxReportText: 1000,
@@ -226,8 +229,18 @@ const list = <Item>(
   return items;
 };
 
-const { maxDetailText, maxId, maxListItems, maxPath, maxReportText, maxShortText, maxSideSessionNotes } =
-  WORK_ATTENTION_BOUNDS;
+const {
+  maxDetailText,
+  maxId,
+  maxJiraAuthorLabel,
+  maxJiraCommentExcerpt,
+  maxJiraComments,
+  maxListItems,
+  maxPath,
+  maxReportText,
+  maxShortText,
+  maxSideSessionNotes,
+} = WORK_ATTENTION_BOUNDS;
 
 const parseTurnSummary = (value: unknown): ClaudeDesktopTurnSummary | null | undefined => {
   if (value === null || value === undefined) {
@@ -664,6 +677,141 @@ export const parseCheckoutStatusObservation = (value: unknown): CheckoutStatusOb
 };
 
 // ---------------------------------------------------------------------------------------------
+// Fact family 3 — Jira issues a session explicitly linked, read through the operator's `acli`
+// ---------------------------------------------------------------------------------------------
+
+export const JIRA_ISSUE_OBSERVATION_OUTCOMES = [
+  'observed',
+  'unauthenticated',
+  'not-found',
+  'network',
+  'timeout',
+  'disabled',
+  'invalid',
+] as const;
+export type JiraIssueObservationOutcome = (typeof JIRA_ISSUE_OBSERVATION_OUTCOMES)[number];
+export const JIRA_STATUS_CATEGORIES = ['todo', 'in-progress', 'done', 'unknown'] as const;
+export type JiraStatusCategory = (typeof JIRA_STATUS_CATEGORIES)[number];
+
+/** An issue key as Jira writes it: an upper-case project key, a dash, a number. */
+export const JIRA_ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9]+-\d+$/;
+
+/** One comment as kept on this machine: who (a display label, never an address), when, a short excerpt. */
+export interface JiraIssueComment {
+  readonly authorLabel: string;
+  readonly createdAt: CanonicalInstant;
+  readonly excerpt: string;
+  readonly id: string;
+}
+
+/**
+ * One dated read of one Jira issue through the Atlassian CLI (ADR 0054). As for pull requests, a
+ * failed read is an observation with its outcome and every Jira-reported field null, so the last
+ * successful observation stays the latest fact and the failure stays visible beside it.
+ * `comments` holds the newest `maxJiraComments` at most, newest first.
+ */
+export interface JiraIssueObservation {
+  readonly assigneeLabel: string | null;
+  readonly commentCount: number | null;
+  readonly comments: readonly JiraIssueComment[];
+  readonly key: string;
+  readonly machineId: string;
+  readonly observedAt: CanonicalInstant;
+  readonly outcome: JiraIssueObservationOutcome;
+  readonly outcomeMessage: string | null;
+  readonly parentKey: string | null;
+  readonly sprint: string | null;
+  readonly status: string | null;
+  readonly statusCategory: JiraStatusCategory | null;
+  readonly summary: string | null;
+  readonly updatedAt: CanonicalInstant | null;
+}
+
+const jiraKey = (value: unknown): string | null =>
+  typeof value === 'string' && value.length <= maxShortText && JIRA_ISSUE_KEY_PATTERN.test(value) ? value : null;
+
+/** A person label the store may keep: non-empty, bounded, and never an e-mail address. */
+const personLabel = (value: unknown): string | null | undefined => {
+  const parsed = optionalText(value, maxJiraAuthorLabel);
+  if (parsed === null || parsed === undefined) {
+    return parsed;
+  }
+  return parsed.trim().length === 0 || parsed.includes('@') ? undefined : parsed;
+};
+
+const parseJiraIssueComment = (value: unknown): JiraIssueComment | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = requiredText(value.id, maxId);
+  const authorLabel = personLabel(value.authorLabel);
+  const createdAt = normalizeIsoTimestamp(value.createdAt);
+  const excerpt = text(value.excerpt, maxJiraCommentExcerpt);
+  if (id === null || authorLabel === null || authorLabel === undefined || createdAt === null || excerpt === null) {
+    return null;
+  }
+  return { authorLabel, createdAt, excerpt, id };
+};
+
+export const parseJiraIssueObservation = (value: unknown): JiraIssueObservation | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const machineId = requiredText(value.machineId, maxId);
+  const key = jiraKey(value.key);
+  const observedAt = normalizeIsoTimestamp(value.observedAt);
+  const outcome = oneOf(JIRA_ISSUE_OBSERVATION_OUTCOMES, value.outcome);
+  const outcomeMessage = optionalText(value.outcomeMessage, maxDetailText);
+  const status = optionalText(value.status, maxShortText);
+  const statusCategory =
+    value.statusCategory === null || value.statusCategory === undefined
+      ? null
+      : oneOf(JIRA_STATUS_CATEGORIES, value.statusCategory);
+  const summary = optionalText(value.summary, maxShortText);
+  const updatedAt = optionalInstant(value.updatedAt);
+  const assigneeLabel = personLabel(value.assigneeLabel);
+  const sprint = optionalText(value.sprint, maxShortText);
+  const parentKey =
+    value.parentKey === null || value.parentKey === undefined ? null : (jiraKey(value.parentKey) ?? undefined);
+  const commentCount = optionalCount(value.commentCount);
+  const comments = list(value.comments, maxJiraComments, parseJiraIssueComment);
+  if (
+    machineId === null ||
+    key === null ||
+    observedAt === null ||
+    outcome === undefined ||
+    outcomeMessage === undefined ||
+    status === undefined ||
+    statusCategory === undefined ||
+    summary === undefined ||
+    updatedAt === undefined ||
+    assigneeLabel === undefined ||
+    sprint === undefined ||
+    parentKey === undefined ||
+    commentCount === undefined ||
+    comments === undefined
+  ) {
+    return null;
+  }
+  return {
+    assigneeLabel,
+    commentCount,
+    comments,
+    key,
+    machineId,
+    observedAt,
+    outcome,
+    outcomeMessage,
+    parentKey,
+    sprint,
+    status,
+    statusCategory,
+    summary,
+    updatedAt,
+  };
+};
+
+// ---------------------------------------------------------------------------------------------
 // Read model — what the Work view receives (assembled in `packages/report-data`)
 // ---------------------------------------------------------------------------------------------
 
@@ -742,6 +890,20 @@ export type WorkFact = WorkFactBase &
         readonly untrackedCount: number | null;
       }
     | {
+        readonly kind: 'jira-issue';
+        readonly commentCount: number | null;
+        readonly key: string;
+        /** Comments created after the family's last activity; `null` when the read failed. */
+        readonly newCommentsSince: number | null;
+        readonly newestCommentAt: CanonicalInstant | null;
+        readonly outcome: JiraIssueObservationOutcome;
+        readonly status: string | null;
+        readonly statusCategory: JiraStatusCategory | null;
+        readonly updatedAt: CanonicalInstant | null;
+        /** No browse address is built in this version: the Jira site is not part of the observation. */
+        readonly url: null;
+      }
+    | {
         readonly kind: 'proposal';
         readonly createdAt: CanonicalInstant | null;
         readonly resolution: 'open' | ClaudeDesktopSuggestionResolution;
@@ -776,6 +938,8 @@ export const WORK_INTERPRETATION_KINDS = [
   'external-review-pending',
   'pull-request-merged',
   'local-changes-unvalidated',
+  'jira-reply-arrived',
+  'jira-status-differs',
   'proposal-open',
   'proposal-resolved',
   'declared-status-stale',
@@ -868,6 +1032,18 @@ export interface WorkAttentionCoverage {
     readonly refusedRows: number;
     readonly truncated: boolean;
     readonly unsupported: number;
+  };
+  /**
+   * What the Jira producer last did. `reason` is the run's own message when it recorded itself
+   * disabled (`jira.enabled: false`, or `acli not installed` at run time); a source never detected
+   * leaves no run, so both stay at their defaults and the gap shows as "not observed".
+   */
+  readonly jira: {
+    readonly disabled: boolean;
+    readonly failed: number;
+    readonly lastRunAt: CanonicalInstant | null;
+    readonly observed: number;
+    readonly reason: string | null;
   };
   readonly pullRequests: {
     readonly disabled: boolean;

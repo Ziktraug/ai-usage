@@ -26,6 +26,17 @@ export interface AiUsageGitHubConfig {
   enabled?: boolean;
 }
 
+/**
+ * User-home only (ADR 0054). Absent means the Jira issue source runs through the Atlassian CLI's
+ * signed-in session whenever `acli` is installed; `enabled: false` records a disabled run instead.
+ * `site` names the Jira site the explicit keys belong to, for the operator's record; this version
+ * does not pass it to the CLI.
+ */
+export interface AiUsageJiraConfig {
+  enabled?: boolean;
+  site?: string;
+}
+
 export interface AiUsageConfig {
   campaignLabelOverrides?: CampaignLabelOverride[];
   cursor?: {
@@ -37,6 +48,7 @@ export interface AiUsageConfig {
     user?: string;
   };
   github?: AiUsageGitHubConfig;
+  jira?: AiUsageJiraConfig;
   projectAliases?: ProjectAliasEntry[];
   projectGroups?: ProjectGroupConfig[];
   /** Home-only review routing declarations (`routing.executors[]`); entries are parsed by `parseExecutorDeclarations`. */

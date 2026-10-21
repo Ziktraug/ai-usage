@@ -106,6 +106,20 @@ export and the replication outbox: they describe this machine only and never
 leave it. A binary from before this change opens the store normally and
 ignores the tables; nothing is stored in them that an older reader needs.
 
+### Additive table under usage version 4 (2026-10-22, Jira issue observations)
+
+The Jira fact producer (ADR 0054) adds one more table to the same family,
+`jira_issue_observations` (dated `acli jira workitem view` reads of issues a
+Desktop session linked explicitly, with the ten newest comments stored as
+JSON), and a third `work_fact_run_state` source id, `jira.issues`. The same
+rules apply: created by the engine on its next start when absent, no
+backfill, no change to `user_version` or to the store generation, rows
+re-validated on read (a row whose comments column no longer parses is counted
+as skipped, never shown), retention of five rows per issue plus the newest
+success, outside the served revision, the export and the replication outbox.
+A binary from before this change ignores the table; a binary from after it
+reads an older store with no Jira rows as "not observed".
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

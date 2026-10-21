@@ -4,10 +4,15 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type CanonicalInstant, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
-import type { CheckoutStatusObservation, PullRequestObservation } from '@ai-usage/report-core/work-attention';
+import type {
+  CheckoutStatusObservation,
+  JiraIssueObservation,
+  PullRequestObservation,
+} from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
 import {
   queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryUsageStoreGeneration,
   queryWorkFactRunStates,
@@ -15,6 +20,7 @@ import {
 } from './reader';
 import {
   importCheckoutStatusObservations,
+  importJiraIssueObservations,
   importPullRequestObservations,
   initializeUsageStore,
   recordWorkFactRun,
@@ -334,5 +340,138 @@ describe('work fact store: run state', () => {
       await failureReason(recordWorkFactRun({ ...run, sourceId: 'claude.sessions' as unknown as 'checkouts.status' })),
     ).toBe('invalid-input');
     expect(await failureReason(recordWorkFactRun({ ...run, failed: -1 }))).toBe('invalid-input');
+  });
+});
+
+const jiraIssue = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation =>
+  ({
+    assigneeLabel: 'Alex',
+    commentCount: 2,
+    comments: [
+      { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-21T18:30:00.000Z'), excerpt: 'Second.', id: '2' },
+      { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-20T08:00:00.000Z'), excerpt: 'First.', id: '1' },
+    ],
+    key: 'XLB-2090',
+    machineId: 'machine-a',
+    observedAt: at(0),
+    outcome: 'observed',
+    outcomeMessage: null,
+    parentKey: 'XLB-2000',
+    sprint: 'Sprint 42',
+    status: 'In Progress',
+    statusCategory: 'in-progress',
+    summary: 'Promo badge',
+    updatedAt: parseCanonicalInstant('2026-10-21T18:30:00.000Z'),
+    ...overrides,
+  }) as JiraIssueObservation;
+
+const failedJiraIssue = (minute: number, overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation =>
+  jiraIssue({
+    assigneeLabel: null,
+    commentCount: null,
+    comments: [],
+    observedAt: at(minute),
+    outcome: 'unauthenticated',
+    outcomeMessage: 'Jira rejected the credentials (HTTP 401); sign in to Jira (acli jira auth login)',
+    parentKey: null,
+    sprint: null,
+    status: null,
+    statusCategory: null,
+    summary: null,
+    updatedAt: null,
+    ...overrides,
+  });
+
+describe('work fact store: Jira issue observations', () => {
+  test('stores the comments as JSON, re-validates on read, and keeps the last success beside a failure', async () => {
+    const dbPath = await createStore('jira');
+    expect(
+      await Effect.runPromise(
+        importJiraIssueObservations({
+          dbPath,
+          observations: [
+            jiraIssue(),
+            jiraIssue(), // same identity and instant: unchanged
+            jiraIssue({ key: 'XLB-2091', machineId: 'machine-b', observedAt: at(1) }),
+            { ...jiraIssue(), key: 'xlb-2090' }, // not an issue key: rejected
+            { ...jiraIssue(), comments: [{ authorLabel: 'sam@example.com', createdAt: at(0), excerpt: '', id: '9' }] },
+          ],
+        }),
+      ),
+    ).toEqual({ inserted: 2, pruned: 0, rejected: 2, unchanged: 1 });
+    expect(
+      await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [failedJiraIssue(5)] })),
+    ).toEqual({ inserted: 1, pruned: 0, rejected: 0, unchanged: 0 });
+
+    const all = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }));
+    expect(all.skipped).toBe(0);
+    expect(all.truncated).toBe(false);
+    expect(
+      all.items.map(({ latest, latestObserved }) => [latest.key, latest.outcome, latestObserved?.observedAt]),
+    ).toEqual([
+      ['XLB-2090', 'unauthenticated', at(0)],
+      ['XLB-2091', 'observed', at(1)],
+    ]);
+    expect(all.items[0]?.latestObserved).toEqual(jiraIssue());
+    expect(all.items[0]?.latest).toEqual(failedJiraIssue(5));
+
+    const filtered = await Effect.runPromise(
+      queryLatestJiraIssueObservations({ dbPath, keys: ['XLB-2091', 'XLB-9'], machineId: 'machine-b' }),
+    );
+    expect(filtered.items.map(({ latest }) => latest.key)).toEqual(['XLB-2091']);
+    expect((await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, keys: ['XLB-9'] }))).items).toEqual([]);
+    const invalid = await Effect.runPromise(
+      Effect.flip(queryLatestJiraIssueObservations({ dbPath, keys: ['not a key'] })),
+    );
+    expect((invalid as UsageStoreError).reason).toBe('invalid-input');
+  });
+
+  test('retains five rows per issue plus the newest success, and skips a row whose comments no longer parse', async () => {
+    const dbPath = await createStore('jira-retention');
+    await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue()] }));
+    const failures = Array.from({ length: 6 }, (_value, index) => failedJiraIssue(index + 1));
+    const result = await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: failures }));
+    expect(result.inserted).toBe(6);
+    expect(result.pruned).toBe(1);
+    expect(rowCount(dbPath, 'jira_issue_observations')).toBe(6);
+    const latest = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }));
+    expect(latest.items[0]?.latest.observedAt).toBe(at(6));
+    expect(latest.items[0]?.latestObserved?.observedAt).toBe(at(0));
+
+    const db = new Database(dbPath);
+    db.run("UPDATE jira_issue_observations SET comments_json = '{not json' WHERE observed_at = ?", [at(0)]);
+    db.close();
+    const degraded = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }));
+    expect(degraded.skipped).toBe(1);
+    expect(degraded.items[0]?.latestObserved).toBeNull();
+  });
+
+  test('records a jira.issues run state beside the other producers', async () => {
+    const dbPath = await createStore('jira-run');
+    expect(
+      await Effect.runPromise(
+        recordWorkFactRun({
+          dbPath,
+          disabled: true,
+          failed: 0,
+          machineId: 'machine-a',
+          message: 'acli not installed',
+          observed: 0,
+          ranAt: new Date(at(0)),
+          sourceId: 'jira.issues',
+        }),
+      ),
+    ).toEqual({ changed: true });
+    expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).runs).toEqual([
+      {
+        disabled: true,
+        failed: 0,
+        machineId: 'machine-a',
+        message: 'acli not installed',
+        observed: 0,
+        ranAt: at(0),
+        sourceId: 'jira.issues',
+      },
+    ]);
   });
 });

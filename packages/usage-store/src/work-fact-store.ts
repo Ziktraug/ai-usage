@@ -2,8 +2,11 @@ import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
   type CheckoutStatusObservation,
+  JIRA_ISSUE_KEY_PATTERN,
+  type JiraIssueObservation,
   type PullRequestObservation,
   parseCheckoutStatusObservation,
+  parseJiraIssueObservation,
   parsePullRequestObservation,
   WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
@@ -11,10 +14,13 @@ import { Effect } from 'effect';
 import type { UsageStoreError, UsageStoreErrorReason } from './errors';
 import type {
   ImportCheckoutStatusObservationsInput,
+  ImportJiraIssueObservationsInput,
   ImportPullRequestObservationsInput,
   LatestCheckoutStatusObservations,
+  LatestJiraIssueObservations,
   LatestPullRequestObservations,
   QueryLatestCheckoutStatusObservationsInput,
+  QueryLatestJiraIssueObservationsInput,
   QueryLatestPullRequestObservationsInput,
   QueryWorkFactRunStatesInput,
   RecordWorkFactRunInput,
@@ -24,9 +30,9 @@ import type {
 } from './index';
 
 /**
- * Durable storage for the external and local fact family of the Work view (ADR 0051):
- * dated GitHub pull request observations, dated checkout status observations, and one run
- * state row per producing source. Modelled on `skill-observation-store.ts`:
+ * Durable storage for the external and local fact family of the Work view (ADR 0051, ADR 0054):
+ * dated GitHub pull request observations, dated checkout status observations, dated Jira issue
+ * observations, and one run state row per producing source. Modelled on `skill-observation-store.ts`:
  *
  * - **Rows are re-validated on read** with the shared contract parsers; a row that no longer
  *   parses is counted in `skipped`, never silently dropped.
@@ -39,7 +45,7 @@ import type {
  *   or the replication outbox; these facts are local to the observing machine.
  */
 
-export const WORK_FACT_SOURCE_IDS = ['checkouts.status', 'github.pull-requests'] as const;
+export const WORK_FACT_SOURCE_IDS = ['checkouts.status', 'github.pull-requests', 'jira.issues'] as const;
 export type WorkFactSourceId = (typeof WORK_FACT_SOURCE_IDS)[number];
 
 export const WORK_FACT_RETENTION_PER_KEY = 5;
@@ -92,6 +98,26 @@ export const workFactSchemaSql = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_checkout_status_observations_identity
     ON checkout_status_observations(machine_id, checkout_path, observed_at DESC);
 
+  CREATE TABLE IF NOT EXISTS jira_issue_observations (
+    id INTEGER PRIMARY KEY,
+    machine_id TEXT NOT NULL,
+    issue_key TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    outcome_message TEXT,
+    status TEXT,
+    status_category TEXT,
+    summary TEXT,
+    updated_at TEXT,
+    assignee_label TEXT,
+    sprint TEXT,
+    parent_key TEXT,
+    comment_count INTEGER CHECK (comment_count IS NULL OR comment_count >= 0),
+    comments_json TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_issue_observations_identity
+    ON jira_issue_observations(machine_id, issue_key, observed_at DESC);
+
   CREATE TABLE IF NOT EXISTS work_fact_run_state (
     source_id TEXT PRIMARY KEY,
     machine_id TEXT NOT NULL,
@@ -106,6 +132,7 @@ export const workFactSchemaSql = `
 export const WORK_FACT_TABLES = [
   'pull_request_observations',
   'checkout_status_observations',
+  'jira_issue_observations',
   'work_fact_run_state',
 ] as const;
 
@@ -185,6 +212,25 @@ interface CheckoutStatusRecord {
   upstream: string | null;
 }
 
+interface JiraIssueRecord {
+  assignee_label: string | null;
+  comment_count: number | null;
+  comments_json: string;
+  id: number;
+  issue_key: string;
+  machine_id: string;
+  observed_at: string;
+  outcome: string;
+  outcome_message: string | null;
+  parent_key: string | null;
+  rank_all: number;
+  sprint: string | null;
+  status: string | null;
+  status_category: string | null;
+  summary: string | null;
+  updated_at: string | null;
+}
+
 interface RunStateRecord {
   disabled: number;
   failed: number;
@@ -245,6 +291,32 @@ const checkoutStatusValue = (record: CheckoutStatusRecord): unknown => ({
   stagedCount: record.staged_count,
   untrackedCount: record.untracked_count,
   upstream: record.upstream,
+});
+
+/** The stored comments; a column that no longer parses is handed over as text, which is not a list and fails re-validation. */
+const commentsFromColumn = (value: string): unknown => {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+};
+
+const jiraIssueValue = (record: JiraIssueRecord): unknown => ({
+  assigneeLabel: record.assignee_label,
+  commentCount: record.comment_count,
+  comments: commentsFromColumn(record.comments_json),
+  key: record.issue_key,
+  machineId: record.machine_id,
+  observedAt: record.observed_at,
+  outcome: record.outcome,
+  outcomeMessage: record.outcome_message,
+  parentKey: record.parent_key,
+  sprint: record.sprint,
+  status: record.status,
+  statusCategory: record.status_category,
+  summary: record.summary,
+  updatedAt: record.updated_at,
 });
 
 const isWorkFactSourceId = (value: unknown): value is WorkFactSourceId =>
@@ -369,6 +441,26 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           LIMIT 1
         )
     `).run(key.machineId, key.checkoutPath, key.machineId, key.checkoutPath, key.machineId, key.checkoutPath);
+    return changes(db);
+  };
+
+  const retainJiraIssue = (db: SqliteDatabase, key: Pick<JiraIssueObservation, 'key' | 'machineId'>): number => {
+    db.query(`
+      DELETE FROM jira_issue_observations
+      WHERE machine_id = ? AND issue_key = ?
+        AND id NOT IN (
+          SELECT id FROM jira_issue_observations
+          WHERE machine_id = ? AND issue_key = ?
+          ORDER BY observed_at DESC, id DESC
+          LIMIT ${WORK_FACT_RETENTION_PER_KEY}
+        )
+        AND id NOT IN (
+          SELECT id FROM jira_issue_observations
+          WHERE machine_id = ? AND issue_key = ? AND outcome = 'observed'
+          ORDER BY observed_at DESC, id DESC
+          LIMIT 1
+        )
+    `).run(key.machineId, key.key, key.machineId, key.key, key.machineId, key.key);
     return changes(db);
   };
 
@@ -518,6 +610,76 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           return result;
         },
         catch: (cause) => usageStoreError('importCheckoutStatusObservations', input.dbPath, cause, 'storage-failure'),
+      }),
+    );
+  };
+
+  const importJiraIssueObservations = (
+    input: ImportJiraIssueObservationsInput,
+  ): Effect.Effect<WorkFactImportResult, UsageStoreError> => {
+    if (input.observations.length > MAX_WORK_FACT_BATCH) {
+      return Effect.fail(
+        usageStoreError(
+          'importJiraIssueObservations',
+          input.dbPath,
+          `Jira issue observation batch exceeds ${MAX_WORK_FACT_BATCH} rows`,
+          'invalid-input',
+        ),
+      );
+    }
+    return withUsageStoreWriter(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
+          const touched = new Map<string, Pick<JiraIssueObservation, 'key' | 'machineId'>>();
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            const insert = db.query(`
+              INSERT OR IGNORE INTO jira_issue_observations (
+                machine_id, issue_key, observed_at, outcome, outcome_message, status, status_category, summary,
+                updated_at, assignee_label, sprint, parent_key, comment_count, comments_json
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+            for (const candidate of input.observations) {
+              const observation = parseJiraIssueObservation(candidate);
+              if (observation === null) {
+                result.rejected += 1;
+                continue;
+              }
+              insert.run(
+                observation.machineId,
+                observation.key,
+                observation.observedAt,
+                observation.outcome,
+                observation.outcomeMessage,
+                observation.status,
+                observation.statusCategory,
+                observation.summary,
+                observation.updatedAt,
+                observation.assigneeLabel,
+                observation.sprint,
+                observation.parentKey,
+                observation.commentCount,
+                JSON.stringify(observation.comments),
+              );
+              if (changes(db) === 1) {
+                result.inserted += 1;
+              } else {
+                result.unchanged += 1;
+              }
+              touched.set(JSON.stringify([observation.machineId, observation.key]), observation);
+            }
+            for (const key of touched.values()) {
+              result.pruned += retainJiraIssue(db, key);
+            }
+            db.exec('COMMIT');
+          } catch (cause) {
+            db.exec('ROLLBACK');
+            throw cause;
+          }
+          return result;
+        },
+        catch: (cause) => usageStoreError('importJiraIssueObservations', input.dbPath, cause, 'storage-failure'),
       }),
     );
   };
@@ -699,6 +861,64 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     );
   };
 
+  const queryLatestJiraIssueObservations = (
+    input: QueryLatestJiraIssueObservationsInput,
+  ): Effect.Effect<LatestJiraIssueObservations, UsageStoreError> => {
+    const limit = validLimit(input.limit);
+    const keys = input.keys ?? [];
+    if (
+      limit === null ||
+      !validMachineId(input.machineId) ||
+      keys.length > MAX_WORK_FACT_QUERY_LIMIT ||
+      keys.some((key) => typeof key !== 'string' || !JIRA_ISSUE_KEY_PATTERN.test(key))
+    ) {
+      return Effect.fail(
+        usageStoreError(
+          'queryLatestJiraIssueObservations',
+          input.dbPath,
+          'Jira issue observation query is out of bounds',
+          'invalid-input',
+        ),
+      );
+    }
+    const keyFilter = keys.length === 0 ? '' : `AND issue_key IN (${keys.map(() => '?').join(', ')})`;
+    return withUsageStoreReader(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          const records = db
+            .query(`
+              WITH ranked AS (
+                SELECT *,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY machine_id, issue_key
+                    ORDER BY observed_at DESC, id DESC
+                  ) AS rank_all,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY machine_id, issue_key, outcome = 'observed'
+                    ORDER BY observed_at DESC, id DESC
+                  ) AS rank_outcome,
+                  MAX(observed_at) OVER (PARTITION BY machine_id, issue_key) AS key_latest
+                FROM jira_issue_observations
+                WHERE (? IS NULL OR machine_id = ?) ${keyFilter}
+              )
+              SELECT * FROM ranked
+              WHERE rank_all = 1 OR (outcome = 'observed' AND rank_outcome = 1)
+              ORDER BY key_latest DESC, machine_id, issue_key, rank_all
+              LIMIT ?
+            `)
+            .all(input.machineId ?? null, input.machineId ?? null, ...keys, 2 * (limit + 1)) as JiraIssueRecord[];
+          return groupLatest(
+            records,
+            (record) => JSON.stringify([record.machine_id, record.issue_key]),
+            (record) => parseJiraIssueObservation(jiraIssueValue(record)),
+            limit,
+          );
+        },
+        catch: (cause) => usageStoreReadError('queryLatestJiraIssueObservations', input.dbPath, cause),
+      }),
+    );
+  };
+
   const queryWorkFactRunStates = (
     input: QueryWorkFactRunStatesInput,
   ): Effect.Effect<WorkFactRunStates, UsageStoreError> =>
@@ -741,8 +961,10 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
 
   return {
     importCheckoutStatusObservations,
+    importJiraIssueObservations,
     importPullRequestObservations,
     queryLatestCheckoutStatusObservations,
+    queryLatestJiraIssueObservations,
     queryLatestPullRequestObservations,
     queryWorkFactRunStates,
     recordWorkFactRun,
