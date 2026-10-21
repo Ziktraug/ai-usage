@@ -151,6 +151,29 @@ describe('interpretExternalFacts', () => {
     ).toEqual([]);
   });
 
+  test('names a checkout several roots share, and keeps the statement tied to the observation', () => {
+    const shared = interpretExternalFacts({
+      facts: [checkoutStatusFact(checkout(), 'co-1')],
+      now: NOW,
+      rootsPerCheckout: new Map([['/home/alex/projects/example', 3]]),
+    });
+    expect(shared).toHaveLength(1);
+    expect(shared[0]?.kind).toBe('local-changes-unvalidated');
+    expect(shared[0]?.text).toEndWith('validation and delivery unobserved. Checkout shared by 3 roots.');
+    expect(shared[0]?.uncertainty).toContain('may belong to any of the roots sharing this checkout');
+    // One root, or another path in the map: the statement is unchanged.
+    const alone = interpretExternalFacts({
+      facts: [checkoutStatusFact(checkout(), 'co-1')],
+      now: NOW,
+      rootsPerCheckout: new Map([
+        ['/home/alex/projects/example', 1],
+        ['/home/alex/projects/other', 4],
+      ]),
+    });
+    expect(alone).toEqual(interpret([checkoutStatusFact(checkout(), 'co-1')]));
+    expect(alone[0]?.text).not.toContain('shared');
+  });
+
   test('turns a stale observation into an uncertainty instead of a current state', () => {
     const stale = interpret([
       pullRequestFact(pullRequest({ observedAt: STALE }), 'pr-1'),

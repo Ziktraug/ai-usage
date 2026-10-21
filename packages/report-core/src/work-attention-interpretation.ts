@@ -14,8 +14,12 @@ import {
  * coverage, this function names what they add up to and how sure it is. Nothing here is
  * persisted; a changed rule re-reads the same facts differently on the next request.
  *
- * `facts` already carries the shapes the next producers emit (`pull-request`, `checkout-status`),
- * so adding an observed pull request later means adding a rule, not a parameter.
+ * The external and local fact family (`pull-request`, `checkout-status`) is interpreted by
+ * `work-attention-facts.ts`; the read model merges both results. The one rule here that reads an
+ * observed pull request is the satisfaction of a request, because that confrontation needs the
+ * declaration. A `pull-request` fact reaches this function only when the read model attached it
+ * to the root, which it does for the pull requests the session family declared and for nothing
+ * else (never by branch or by proximity).
  */
 
 export const WORK_ATTENTION_STALE_AFTER_MS = 7 * 86_400_000;
@@ -73,17 +77,71 @@ const requestedAction = (declaration: WorkRootDeclaration | null): string | null
 
 const asksForPullRequest = (needsAction: string): boolean => PULL_REQUEST_VOCABULARY.test(needsAction);
 
+type DeclaredPullRequestFact = Extract<WorkFact, { kind: 'declared-pull-request' }>;
+type ObservedPullRequestFact = Extract<WorkFact, { kind: 'pull-request' }>;
+
 /** Declared pull requests of the same session family, dated at or after the declaration. */
-const satisfyingDeclaredPullRequests = (facts: readonly WorkFact[], declaredAt: CanonicalInstant): WorkFact[] =>
+const satisfyingDeclaredPullRequests = (
+  facts: readonly WorkFact[],
+  declaredAt: CanonicalInstant,
+): DeclaredPullRequestFact[] =>
   facts.filter(
-    (fact) =>
+    (fact): fact is DeclaredPullRequestFact =>
       fact.kind === 'declared-pull-request' &&
       SATISFYING_PULL_REQUEST_STATES.has(fact.state.toUpperCase()) &&
       fact.provenance.observedAt >= declaredAt,
   );
 
-const pullRequestLabel = (fact: Extract<WorkFact, { kind: 'declared-pull-request' }>): string =>
+/**
+ * Pull requests GitHub showed open or merged, observed at or after the declaration and, when
+ * GitHub dates the last change, changed at or after it too: a pull request whose last activity
+ * precedes the request cannot be what answered it, however recently it was read.
+ */
+const satisfyingObservedPullRequests = (
+  facts: readonly WorkFact[],
+  declaredAt: CanonicalInstant,
+): ObservedPullRequestFact[] =>
+  facts.filter(
+    (fact): fact is ObservedPullRequestFact =>
+      fact.kind === 'pull-request' &&
+      fact.outcome === 'observed' &&
+      fact.state !== null &&
+      SATISFYING_PULL_REQUEST_STATES.has(fact.state) &&
+      fact.provenance.observedAt >= declaredAt &&
+      (fact.updatedAt === null || fact.updatedAt >= declaredAt),
+  );
+
+const pullRequestLabel = (fact: DeclaredPullRequestFact | ObservedPullRequestFact): string =>
   `${fact.repository}#${fact.number} (${fact.state})`;
+
+/** The text names a few pull requests; the evidence carries them all. */
+const listLabels = (facts: readonly (DeclaredPullRequestFact | ObservedPullRequestFact)[]): string => {
+  const labels = facts.slice(0, MAX_LISTED_PULL_REQUESTS).map(pullRequestLabel);
+  const more = facts.length - labels.length;
+  return `${labels.join(', ')}${more > 0 ? ` and ${more} more` : ''}`;
+};
+
+const satisfiedElsewhere = (
+  declared: readonly DeclaredPullRequestFact[],
+  observed: readonly ObservedPullRequestFact[],
+): WorkInterpretation => {
+  const observedAt = observed[0]?.provenance.observedAt;
+  const parts = [
+    declared.length > 0 ? `the same family of sessions later declared ${listLabels(declared)}` : null,
+    observedAt === undefined
+      ? null
+      : `GitHub showed ${listLabels(observed)} at ${observedAt} for a pull request this family declared`,
+  ].filter((part) => part !== null);
+  return {
+    evidence: [...declared, ...observed].map((fact) => fact.id),
+    kind: 'request-satisfied-elsewhere',
+    text: `Asked to act on a pull request; ${parts.join(' and ')}.`,
+    uncertainty:
+      observed.length > 0
+        ? 'The link rests on a pull request observed on GitHub for the PR this session family declared, not on proof that it is the same work.'
+        : 'The link rests on a pull request declared by the same family of sessions, not on proof that it is the same work.',
+  };
+};
 
 export const interpretWorkRoot = (input: InterpretWorkRootInput): WorkRootInterpretationResult => {
   const now = instantOf(input.now);
@@ -100,22 +158,11 @@ export const interpretWorkRoot = (input: InterpretWorkRootInput): WorkRootInterp
 
   const needsAction = requestedAction(declaration);
   if (declaration !== null && needsAction !== null) {
-    const satisfying = asksForPullRequest(needsAction)
-      ? satisfyingDeclaredPullRequests(input.facts, declaration.at)
-      : [];
-    if (satisfying.length > 0) {
-      // The text names a few pull requests; the evidence carries them all.
-      const labels = satisfying
-        .slice(0, MAX_LISTED_PULL_REQUESTS)
-        .map((fact) => (fact.kind === 'declared-pull-request' ? pullRequestLabel(fact) : fact.id));
-      const more = satisfying.length - labels.length;
-      interpretations.push({
-        evidence: satisfying.map((fact) => fact.id),
-        kind: 'request-satisfied-elsewhere',
-        text: `Asked to act on a pull request; the same family of sessions later declared ${labels.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`,
-        uncertainty:
-          'The link rests on a pull request declared by the same family of sessions, not on proof that it is the same work.',
-      });
+    const asksPullRequest = asksForPullRequest(needsAction);
+    const declared = asksPullRequest ? satisfyingDeclaredPullRequests(input.facts, declaration.at) : [];
+    const observed = asksPullRequest ? satisfyingObservedPullRequests(input.facts, declaration.at) : [];
+    if (declared.length + observed.length > 0) {
+      interpretations.push(satisfiedElsewhere(declared, observed));
     } else {
       attention = 'human-request';
       interpretations.push({
@@ -132,28 +179,6 @@ export const interpretWorkRoot = (input: InterpretWorkRootInput): WorkRootInterp
       kind: 'review-ready',
       text: 'The session declared its change ready for a review.',
       uncertainty: 'Declared by the session; no review outcome has been observed.',
-    });
-  }
-
-  // An observed pull request waiting on someone else. Provisional until the GitHub producer
-  // lands: the rule reads the shape the contract already defines and nothing more.
-  const pendingReviews = input.facts.filter(
-    (fact) =>
-      fact.kind === 'pull-request' &&
-      fact.outcome === 'observed' &&
-      fact.state === 'OPEN' &&
-      fact.draft !== true &&
-      (fact.reviewDecision === null || fact.checksRollup === 'pending'),
-  );
-  if (pendingReviews.length > 0) {
-    if (attention === 'none') {
-      attention = 'external-wait';
-    }
-    interpretations.push({
-      evidence: pendingReviews.map((fact) => fact.id),
-      kind: 'external-review-pending',
-      text: `${pendingReviews.length === 1 ? 'An open pull request is' : `${pendingReviews.length} open pull requests are`} waiting on a review or on checks.`,
-      uncertainty: 'States what GitHub showed at the observation time; a review since then is not yet observed.',
     });
   }
 
