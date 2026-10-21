@@ -180,8 +180,16 @@ test('accepted Memory survives edited acceptance, rejection, restart and scoped 
   await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBeNull();
   await page.goBack();
   await expect(page.getByLabel('Project ID (optional)')).toHaveValue(metadata.projectId);
+  const beforeRetiredVisit = page.url();
   await page.goto('/memory?view=analyses&analysis=historical-account&cursor=retired-cursor');
+  await expect(page).toHaveURL('/memory?view=knowledge');
   await expect(page.getByRole('heading', { name: 'Verify direct reads before reusing the lesson' })).toBeVisible();
+  await expect(page.locator('a[href*="analysis="]')).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL(beforeRetiredVisit);
+  await expect(page.getByLabel('Project ID (optional)')).toHaveValue(metadata.projectId);
+  await page.goForward();
+  await expect(page).toHaveURL('/memory?view=knowledge');
   await expect(page.locator('a[href*="analysis="]')).toHaveCount(0);
   expect(pageErrors).toEqual([]);
 });

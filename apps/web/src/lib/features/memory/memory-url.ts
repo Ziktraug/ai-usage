@@ -6,6 +6,30 @@ export interface MemoryLocation {
   proposalId: string | null;
   view: MemoryView;
 }
+
+const retiredMemoryParameters = ['analysis', 'analysisProject', 'element', 'episode'] as const;
+
+/** Canonicalize Memory-owned state before rendering shell links; keep unrelated report filters. */
+export const memoryCanonicalRedirect = (address: string): string | null => {
+  const url = new URL(address, 'http://memory.invalid');
+  const params = url.searchParams;
+  const views = params.getAll('view');
+  const view = params.get('view');
+  let changed = false;
+  if (views.length > 1 || (view !== null && view !== 'knowledge' && view !== 'review')) {
+    params.set('view', view === 'review' ? 'review' : 'knowledge');
+    changed = true;
+  }
+  const removed = view === 'review' ? retiredMemoryParameters : [...retiredMemoryParameters, 'cursor', 'proposal'];
+  for (const key of removed) {
+    if (params.has(key)) {
+      params.delete(key);
+      changed = true;
+    }
+  }
+  return changed ? `${url.pathname}${url.search}${url.hash}` : null;
+};
+
 export const memoryLocation = (address: string): MemoryLocation => {
   const params = new URL(address, 'http://memory.invalid').searchParams;
   const view = params.get('view');
