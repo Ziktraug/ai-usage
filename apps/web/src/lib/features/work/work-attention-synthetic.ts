@@ -1072,6 +1072,7 @@ export const syntheticWorkAttentionDataset = (): WorkAttentionDataset => {
       },
       pullRequests: { disabled: false, failed: 1, lastRunAt: OBSERVED_AT, observed: 7 },
       sessions: { joined: 22, revision: 'synthetic-work-v1', unmatched: 3 },
+      window: { excludedRoots: 4, sinceDays: 30 },
     },
     generatedAt: DEMO_INSTANT,
     machineId: null,

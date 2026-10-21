@@ -107,6 +107,8 @@ describe('work attention e2e fixture', () => {
     });
     expect(result.data.coverage.checkouts).toEqual({ failed: 0, lastRunAt: hoursBefore(40 / 60), observed: 1 });
     expect(result.data.coverage.sessions).toEqual({ joined: 0, revision: null, unmatched: 0 });
+    expect(result.data.coverage.window.sinceDays).toBe(30);
+    expect(result.data.totalRoots).toBe(result.data.roots.length + result.data.coverage.window.excludedRoots);
     expect(JSON.stringify(result)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
     // Every first-level group the Work view renders is present at least once.
     const attentions = new Set(result.data.roots.map((root) => root.attention));

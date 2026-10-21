@@ -306,7 +306,9 @@ describe('queryWorkAttention', () => {
 
     expect(dataset.generatedAt).toBe(canonicalInstantFromDate(NOW));
     expect(dataset.machineId).toBe(MACHINE);
-    expect(dataset.totalRoots).toBe(6);
+    // Seven roots exist; the 45-day-old completed one is hidden by the window and counted.
+    expect(dataset.totalRoots).toBe(7);
+    expect(dataset.roots).toHaveLength(6);
     expect(dataset.truncated).toBe(false);
     // Ranking: human requests by declaration recency with the reconsidered one last, then the
     // optional lead, then the rest by activity.
@@ -404,7 +406,53 @@ describe('queryWorkAttention', () => {
       // No producer has run: no date, zero counts, and not disabled (only a run can say so).
       pullRequests: { disabled: false, failed: 0, lastRunAt: null, observed: 0 },
       sessions: { joined: 1, revision: 'revision-work', unmatched: 5 },
+      window: { excludedRoots: 1, sinceDays: 30 },
     });
+  });
+
+  test('the window never hides a pending request, only older roots with nothing pending', async () => {
+    const dbPath = await createStore();
+    const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: NOW }));
+    expect(dataset.roots.some((root) => root.desktopSessionId === 'local_f')).toBe(false);
+    expect(dataset.coverage.window).toEqual({ excludedRoots: 1, sinceDays: 30 });
+
+    const older = [
+      session({
+        id: 'oldq',
+        lastActivityHoursAgo: 40 * 24,
+        needsAction: 'Decide the layout.',
+        status: 'blocked',
+        title: 'Old question',
+      }),
+      session({ id: 'oldr', lastActivityHoursAgo: 35 * 24, status: 'review_ready', title: 'Old review' }),
+      session({ id: 'olddone', lastActivityHoursAgo: 45 * 24, status: 'completed', title: 'Old completed' }),
+      session({ id: 'recent', lastActivityHoursAgo: 1, status: 'completed', title: 'Recent completed' }),
+    ];
+    const assembled = assemble(NO_EXTERNAL_FACTS, older);
+    expect(assembled.roots.map((root) => [root.desktopSessionId, root.attention])).toEqual([
+      ['local_oldr', 'human-request'],
+      ['local_oldq', 'human-request'],
+      ['local_recent', 'none'],
+    ]);
+    expect(rootOf(assembled, 'local_oldq').interpretations.map(({ kind }) => kind)).toEqual([
+      'request-open',
+      'declared-status-stale',
+    ]);
+    expect(assembled.totalRoots).toBe(4);
+    expect(assembled.truncated).toBe(false);
+    expect(assembled.coverage.window).toEqual({ excludedRoots: 1, sinceDays: 30 });
+    // A wider window keeps the completed root too, and says so.
+    const wide = assembleWorkAttention({
+      collectionStates: [],
+      externalFacts: NO_EXTERNAL_FACTS,
+      machineId: MACHINE,
+      now: NOW,
+      observations: older,
+      sessions: NO_SERVED_REVISION,
+      sinceDays: 60,
+    });
+    expect(wide.roots).toHaveLength(4);
+    expect(wide.coverage.window).toEqual({ excludedRoots: 0, sinceDays: 60 });
   });
 
   test('reads the facts the family declared from the store, with the producers’ run states', async () => {
@@ -481,7 +529,8 @@ describe('queryWorkAttention', () => {
     const dbPath = await createStore();
     const page = await Effect.runPromise(queryWorkAttention({ dbPath, limit: 2, machineId: MACHINE, now: NOW }));
     expect(page.roots.map((root) => root.desktopSessionId)).toEqual(['local_g', 'local_b']);
-    expect(page.totalRoots).toBe(6);
+    expect(page.totalRoots).toBe(7);
+    expect(page.coverage.window).toEqual({ excludedRoots: 1, sinceDays: 30 });
     expect(page.truncated).toBe(true);
 
     expect(await failureReason(queryWorkAttention({ dbPath, limit: 0 }))).toBe('invalid-input');
@@ -717,7 +766,9 @@ describe('assembleWorkAttention with external facts', () => {
         },
       ],
     });
-    expect(dataset.totalRoots).toBe(6);
+    // Seven roots exist; the sharing count names the six the window kept.
+    expect(dataset.totalRoots).toBe(7);
+    expect(dataset.roots).toHaveLength(6);
     // Root A works in its worktree and its children in the project: both checkouts are its family's.
     const a = rootOf(dataset, 'local_a');
     expect(a.facts.filter((fact) => fact.kind === 'checkout-status').map((fact) => fact.checkoutPath)).toEqual([

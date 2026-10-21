@@ -229,6 +229,7 @@ export const workAttentionCoverageSchema = strictObject({
     revision: nullable(pipe(string(), minLength(1), maxLength(MAX_REVISION_LENGTH))),
     unmatched: countSchema,
   }),
+  window: strictObject({ excludedRoots: countSchema, sinceDays: positiveIntegerSchema }),
 });
 
 export const workAttentionDatasetSchema = strictObject({

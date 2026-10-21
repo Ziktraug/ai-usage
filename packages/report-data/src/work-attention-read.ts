@@ -78,7 +78,10 @@ export interface QueryWorkAttentionInput {
   readonly limit?: number;
   readonly machineId?: string;
   readonly now?: Date;
-  /** Roots whose family had no activity in this window are left out; defaults to 30 days. */
+  /**
+   * Roots whose family had no activity in this window are left out unless their attention is a
+   * human request or an external wait (a question stays a question at any age); defaults to 30 days.
+   */
   readonly sinceDays?: number;
   readonly staleAfterMs?: number;
 }
@@ -503,6 +506,9 @@ const latestActivity = (group: RootGroup): CanonicalInstant =>
     .map((observation) => observation.lastActivityAt)
     .reduce((latest, current) => (current > latest ? current : latest));
 
+/** The attentions the activity window never hides: a pending request keeps its root visible at any age. */
+const PENDING_ATTENTIONS = new Set<WorkAttentionKind>(['human-request', 'external-wait']);
+
 const compareRoots = (left: WorkRoot, right: WorkRoot): number => {
   const rank = ATTENTION_RANK[left.attention] - ATTENTION_RANK[right.attention];
   if (rank !== 0) {
@@ -741,7 +747,17 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
     input.machineId === undefined
       ? input.observations
       : input.observations.filter((observation) => observation.machineId === input.machineId);
-  const groups = groupRoots(observations).filter((group) => latestActivity(group) >= since);
+  const allGroups = groupRoots(observations);
+  // The window applies after interpretation, never before it: an old root is hidden only when
+  // nothing pending was read for it. Its attention does not depend on the checkout-sharing index,
+  // so the older roots are classified against the full index and the kept ones rebuilt against
+  // the index of the roots the dataset actually carries.
+  const fullIndex = indexExternalFacts(input.externalFacts, allGroups);
+  const groups = allGroups.filter(
+    (group) =>
+      latestActivity(group) >= since ||
+      PENDING_ATTENTIONS.has(buildRoot(group, input.sessions, fullIndex, now, input.staleAfterMs).attention),
+  );
   const index = indexExternalFacts(input.externalFacts, groups);
   const roots = groups
     .map((group) => buildRoot(group, input.sessions, index, now, input.staleAfterMs))
@@ -757,11 +773,12 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
         revision: input.sessions.revision,
         unmatched: input.sessions.revision === null ? 0 : roots.length - joined,
       },
+      window: { excludedRoots: allGroups.length - groups.length, sinceDays },
     },
     generatedAt,
     machineId: input.machineId ?? null,
     roots: roots.slice(0, limit),
-    totalRoots: roots.length,
+    totalRoots: allGroups.length,
     truncated: roots.length > limit || readTruncated,
   };
 };

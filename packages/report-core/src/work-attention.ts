@@ -882,6 +882,15 @@ export interface WorkAttentionCoverage {
     readonly revision: string | null;
     readonly unmatched: number;
   };
+  /**
+   * The activity window the read applied to roots with nothing pending. A root whose attention is
+   * a human request or an external wait is never hidden by it, however old; `excludedRoots`
+   * counts the others it left out, so the page can say so instead of implying they do not exist.
+   */
+  readonly window: {
+    readonly excludedRoots: number;
+    readonly sinceDays: number;
+  };
 }
 
 export interface WorkAttentionDataset {
@@ -889,7 +898,10 @@ export interface WorkAttentionDataset {
   readonly generatedAt: CanonicalInstant;
   readonly machineId: string | null;
   readonly roots: readonly WorkRoot[];
-  /** Roots that exist beyond `roots`; the page must say the ranking covers a selection. */
+  /**
+   * Every root of the read, including those beyond the page limit and those the activity window
+   * hid (`coverage.window.excludedRoots`); the page must say the ranking covers a selection.
+   */
   readonly totalRoots: number;
   readonly truncated: boolean;
 }

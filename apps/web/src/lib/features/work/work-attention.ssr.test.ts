@@ -96,6 +96,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     }
     expect(body).toContain('39 of 41 files parsed');
     expect(body).toContain('2 unsupported');
+    expect(body).toContain('4 older roots without pending declarations hidden (30-day window)');
     expect(body).toContain(`ranking covers ${dataset.roots.length} of ${dataset.totalRoots} roots`);
     expect(body).not.toContain('Known waits');
     expect(body).not.toContain('Simulate review assignment');

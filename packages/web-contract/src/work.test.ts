@@ -87,6 +87,7 @@ const dataset = (roots: readonly WorkRootWire[] = [root()]): WorkAttentionDatase
     },
     pullRequests: { disabled: true, failed: 0, lastRunAt: null, observed: 0 },
     sessions: { joined: 1, revision: 'revision-1', unmatched: 0 },
+    window: { excludedRoots: 0, sinceDays: 30 },
   },
   generatedAt: AT,
   machineId: 'machine-a',

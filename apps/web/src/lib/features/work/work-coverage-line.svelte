@@ -8,6 +8,7 @@
   const desktop = $derived(coverage.desktopSessions);
   const pulls = $derived(coverage.pullRequests);
   const checkouts = $derived(coverage.checkouts);
+  const hidden = $derived(coverage.window.excludedRoots);
 </script>
 
 <p class={workCoverageLine} data-work-coverage>
@@ -54,4 +55,11 @@
       not observed
     {/if}
   </span>
+  {#if hidden > 0}
+    <span data-work-window>
+      {hidden}
+      older {hidden === 1 ? 'root' : 'roots'} without pending declarations hidden ({coverage.window.sinceDays}-day
+      window)
+    </span>
+  {/if}
 </p>

@@ -344,13 +344,22 @@ describe('work attention chain', () => {
     expect(confronted.coverage.checkouts).toEqual({ failed: 0, lastRunAt: hoursBefore(40 / 60), observed: 1 });
     expect(confronted.totalRoots).toBe(dataset.totalRoots);
 
-    // The default window leaves out the 40-day-old root; a short page still reports the total.
+    // The default window never hides the 40-day-old question; it hides only older roots with
+    // nothing pending, counts them, and a short page still reports the total.
     const windowed = await Effect.runPromise(queryWorkAttention({ dbPath, limit: 5, machineId: MACHINE, now: EPOCH }));
     expect(windowed.roots).toHaveLength(5);
     expect(windowed.truncated).toBe(true);
-    expect(windowed.totalRoots).toBeGreaterThanOrEqual(20);
-    expect(windowed.totalRoots).toBeLessThan(dataset.totalRoots);
-    expect(windowed.roots.some((root) => root.desktopSessionId === ids.staleRoot)).toBe(false);
+    expect(windowed.totalRoots).toBe(dataset.totalRoots);
+    expect(windowed.coverage.window.sinceDays).toBe(30);
+    const unpaged = await Effect.runPromise(queryWorkAttention({ dbPath, limit: 200, machineId: MACHINE, now: EPOCH }));
+    expect(unpaged.roots.some((root) => root.desktopSessionId === ids.staleRoot)).toBe(true);
+    expect(unpaged.coverage.window.excludedRoots).toBe(dataset.totalRoots - unpaged.roots.length);
+    expect(
+      unpaged.roots
+        .filter((root) => Date.parse(root.age.lastActivityAt ?? '') < EPOCH.getTime() - 30 * 86_400_000)
+        .every((root) => root.attention === 'human-request' || root.attention === 'external-wait'),
+    ).toBe(true);
+    expect(dataset.coverage.window).toEqual({ excludedRoots: 0, sinceDays: 60 });
 
     // A second sweep of the untouched registry changes nothing in the store.
     const again = await Effect.runPromise(

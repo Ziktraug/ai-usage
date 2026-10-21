@@ -480,7 +480,8 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
       isRecord(value.checkouts) &&
       isRecord(value.desktopSessions) &&
       isRecord(value.pullRequests) &&
-      isRecord(value.sessions)
+      isRecord(value.sessions) &&
+      isRecord(value.window)
     )
   ) {
     return;
@@ -509,12 +510,17 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     revision: nullableRevision(value.sessions.revision),
     unmatched: count(value.sessions.unmatched),
   };
+  const window = {
+    excludedRoots: count(value.window.excludedRoots),
+    sinceDays: positiveInteger(value.window.sinceDays),
+  };
   if (
     !(
       defined(Object.values(checkouts)) &&
       defined(Object.values(desktopSessions)) &&
       defined(Object.values(pullRequests)) &&
-      defined(Object.values(sessions))
+      defined(Object.values(sessions)) &&
+      defined(Object.values(window))
     )
   ) {
     return;
@@ -524,6 +530,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     desktopSessions: desktopSessions as WorkAttentionCoverage['desktopSessions'],
     pullRequests: pullRequests as WorkAttentionCoverage['pullRequests'],
     sessions: sessions as WorkAttentionCoverage['sessions'],
+    window: window as WorkAttentionCoverage['window'],
   };
 };
 
