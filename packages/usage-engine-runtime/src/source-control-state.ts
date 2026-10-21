@@ -42,6 +42,12 @@ export interface InternalSourceState {
 export interface InternalPublicationState {
   readonly acknowledgedRequestGeneration: number;
   readonly dirtyGeneration: number;
+  /**
+   * An explicit publication request arrived while a job was already queued or
+   * running. The queued job object cannot be re-tagged, so the settle decision
+   * reads this instead: explicit demand is never deferred behind a burst.
+   */
+  readonly explicitRequestPending: boolean;
   readonly lastDurationMs?: number;
   readonly lastOutcome: 'not-run' | 'success' | 'failed';
   readonly lastPublishedAt?: string;
@@ -80,7 +86,9 @@ export interface SourceJob {
 
 export interface PublicationJob {
   readonly _tag: 'publication';
+  readonly deferrals: number;
   readonly queuedAt: number;
+  readonly reason: 'request' | 'source-wake';
 }
 
 export interface SourceStartDecision {
@@ -250,6 +258,7 @@ export const initialSourceControlState = (
     publication: {
       acknowledgedRequestGeneration: 0,
       dirtyGeneration: 0,
+      explicitRequestPending: false,
       lastOutcome: 'not-run',
       publishedGeneration: 0,
       queued: false,
@@ -381,6 +390,7 @@ export const admitSourceJob = (
 export const admitPublicationJob = (
   state: InternalControlState,
   queuedAt: number,
+  reason: PublicationJob['reason'],
 ): StateTransition<PublicationJob | undefined> => {
   if (state.publication.queued || state.publication.running) {
     return transition(state, state, undefined, queuedAt);
@@ -392,27 +402,64 @@ export const admitPublicationJob = (
       publication: { ...state.publication, queued: true },
       queueDepth: state.queueDepth + 1,
     },
-    { _tag: 'publication', queuedAt },
+    { _tag: 'publication', deferrals: 0, queuedAt, reason },
     queuedAt,
   );
+};
+
+export const publicationSettleDecision = (
+  state: InternalControlState,
+  job: PublicationJob,
+  now: number,
+  settleMs: number,
+  maxDeferrals: number,
+  minWaitMs = 0,
+): { readonly defer: false } | { readonly defer: true; readonly waitMs: number } => {
+  if (job.reason === 'request' || state.publication.explicitRequestPending || job.deferrals >= maxDeferrals) {
+    return { defer: false };
+  }
+  let waitMs: number | undefined;
+  for (const source of Object.values(state.sources)) {
+    if (!source.enabled || source.availability !== 'detected') {
+      continue;
+    }
+    if (source.queued) {
+      return { defer: true, waitMs: 0 };
+    }
+    if (source.nextDueAt !== undefined) {
+      const untilDue = Math.max(0, Date.parse(source.nextDueAt) - now);
+      if (untilDue <= settleMs) {
+        // A source that is due but not yet queued has a cadence timer about to
+        // fire; waiting at least `minWaitMs` keeps a scheduling lag of a few
+        // milliseconds from spending the whole deferral budget on zero waits.
+        waitMs = Math.min(waitMs ?? settleMs, Math.max(untilDue, minWaitMs));
+      }
+    }
+  }
+  return waitMs === undefined ? { defer: false } : { defer: true, waitMs };
 };
 
 export const requestPublicationTransition = (
   state: InternalControlState,
   requestedAt: number,
-): StateTransition<{ readonly shouldQueue: boolean }> =>
-  transition(
+): StateTransition<{ readonly shouldQueue: boolean }> => {
+  const shouldQueue = !(state.publication.queued || state.publication.running);
+  return transition(
     state,
     {
       ...state,
       publication: {
         ...state.publication,
+        // A request that joins an already queued or running job rides it; the
+        // marker keeps that job from settling behind other sources.
+        explicitRequestPending: state.publication.explicitRequestPending || !shouldQueue,
         requestedGeneration: state.publication.requestedGeneration + 1,
       },
     },
-    { shouldQueue: !(state.publication.queued || state.publication.running) },
+    { shouldQueue },
     requestedAt,
   );
+};
 
 export const scheduleSourceTransition = (
   state: InternalControlState,
@@ -655,7 +702,11 @@ export const startPublicationJobTransition = (
   }
   return transition(
     state,
-    { ...state, publication: { ...state.publication, queued: false, running: true }, queueDepth },
+    {
+      ...state,
+      publication: { ...state.publication, explicitRequestPending: false, queued: false, running: true },
+      queueDepth,
+    },
     {
       dataTarget: state.publication.dirtyGeneration,
       previousPublishedGeneration: state.publication.publishedGeneration,

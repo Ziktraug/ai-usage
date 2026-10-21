@@ -8,9 +8,12 @@ import {
   initialSourceControlState,
   lifecycleAfterPolicyChange,
   outcomeAfterRun,
+  type PublicationJob,
+  publicationSettleDecision,
   reasonAfterCompletion,
   reasonForAvailability,
   requestPublicationTransition,
+  scheduleSourceTransition,
   setSourcePolicyTransition,
   sourceControlView,
   startPublicationJobTransition,
@@ -268,7 +271,7 @@ describe('source control state transitions', () => {
 
   test('captures and acknowledges publication targets without losing demand arriving during a run', () => {
     const requested = requestPublicationTransition(initialSourceControlState('instance-a', [], {}, 0), 1);
-    const admitted = admitPublicationJob(requested.state, 2);
+    const admitted = admitPublicationJob(requested.state, 2, 'request');
     const started = startPublicationJobTransition(admitted.state, 3);
     if (!started.decision.ready) {
       throw new Error('Expected publication to start');
@@ -301,7 +304,7 @@ describe('source control state transitions', () => {
     expect(durableFinish.state.publication.lastPublishedAt).toBe(durablePublishedAt);
     expect(durableFinish.state.publication.lastOutcome).toBe('success');
 
-    const successor = admitPublicationJob(firstFinish.state, 6);
+    const successor = admitPublicationJob(firstFinish.state, 6, 'request');
     const successorStart = startPublicationJobTransition(successor.state, 7);
     if (!successorStart.decision.ready) {
       throw new Error('Expected successor publication to start');
@@ -321,7 +324,7 @@ describe('source control state transitions', () => {
 
   test('preserves publication demand after failure', () => {
     const requested = requestPublicationTransition(initialSourceControlState('instance-a', [], {}, 0), 1);
-    const admitted = admitPublicationJob(requested.state, 2);
+    const admitted = admitPublicationJob(requested.state, 2, 'request');
     const started = startPublicationJobTransition(admitted.state, 3);
     if (!started.decision.ready) {
       throw new Error('Expected publication to start');
@@ -340,5 +343,133 @@ describe('source control state transitions', () => {
       lastOutcome: 'failed',
       requestedGeneration: 1,
     });
+  });
+});
+
+describe('publication settling', () => {
+  const job: PublicationJob = { _tag: 'publication', deferrals: 0, queuedAt: 1000, reason: 'source-wake' };
+
+  test.each(['request', 'source-wake'] as const)('records %s admission without allowing a second job', (reason) => {
+    const initial = requestPublicationTransition(detectedState('claude.sessions'), 1000).state;
+    const admitted = admitPublicationJob(initial, 1000, reason);
+    expect(admitted.decision).toEqual({ ...job, reason });
+    expect(admitted.state.queueDepth).toBe(1);
+    expect(admitted.state.publication.queued).toBe(true);
+    expect(admitPublicationJob(admitted.state, 1001, reason).decision).toBeUndefined();
+    const started = startPublicationJobTransition(admitted.state, 1002);
+    expect(admitPublicationJob(started.state, 1003, reason).decision).toBeUndefined();
+  });
+
+  test('runs when no source is queued or due soon', () => {
+    expect(publicationSettleDecision(detectedState('claude.sessions'), job, 1000, 5000, 2)).toEqual({ defer: false });
+  });
+
+  test('yields immediately to a queued source without mutating pending publication demand', () => {
+    const requested = requestPublicationTransition(detectedState('claude.sessions', 'codex.sessions'), 1000).state;
+    const admitted = admitPublicationJob(requested, 1000, 'source-wake');
+    const queued = admitSourceJob(admitted.state, 'codex.sessions', true, 1000, 'cadence').state;
+
+    expect(publicationSettleDecision(queued, job, 1000, 5000, 2)).toEqual({ defer: true, waitMs: 0 });
+    expect(queued.publication).toMatchObject({
+      acknowledgedRequestGeneration: 0,
+      queued: true,
+      requestedGeneration: 1,
+      running: false,
+    });
+    expect(queued.queueDepth).toBe(2);
+  });
+
+  test.each([
+    [3000, { defer: true, waitMs: 3000 }],
+    [5000, { defer: true, waitMs: 5000 }],
+    [8000, { defer: false }],
+    [-1000, { defer: true, waitMs: 0 }],
+  ] as const)('handles a source due in %i ms', (untilDue, expected) => {
+    const scheduled = scheduleSourceTransition(
+      detectedState('claude.sessions', 'codex.sessions'),
+      'codex.sessions',
+      1000 + untilDue,
+      1000,
+    ).state;
+    expect(publicationSettleDecision(scheduled, job, 1000, 5000, 2)).toEqual(expected);
+  });
+
+  test.each([
+    [-1000, { defer: true, waitMs: 250 }],
+    [100, { defer: true, waitMs: 250 }],
+    [3000, { defer: true, waitMs: 3000 }],
+  ] as const)('waits at least the minimum for a due but unqueued source (%i ms)', (untilDue, expected) => {
+    const scheduled = scheduleSourceTransition(
+      detectedState('claude.sessions', 'codex.sessions'),
+      'codex.sessions',
+      1000 + untilDue,
+      1000,
+    ).state;
+    expect(publicationSettleDecision(scheduled, job, 1000, 5000, 2, 250)).toEqual(expected);
+    // A queued source still yields immediately: the re-offer lands behind it.
+    const queued = admitSourceJob(scheduled, 'codex.sessions', true, 1000, 'cadence').state;
+    expect(publicationSettleDecision(queued, job, 1000, 5000, 2, 250)).toEqual({ defer: true, waitMs: 0 });
+  });
+
+  test('chooses the earliest due source', () => {
+    const initial = detectedState('claude.sessions', 'codex.sessions');
+    const first = scheduleSourceTransition(initial, 'claude.sessions', 5000, 1000).state;
+    const second = scheduleSourceTransition(first, 'codex.sessions', 3000, 1000).state;
+    expect(publicationSettleDecision(second, job, 1000, 5000, 2)).toEqual({ defer: true, waitMs: 2000 });
+  });
+
+  test('never defers an explicit request or a job at its deferral limit', () => {
+    const queued = admitSourceJob(detectedState('codex.sessions'), 'codex.sessions', true, 1000, 'manual').state;
+    expect(publicationSettleDecision(queued, { ...job, reason: 'request' }, 1000, 5000, 2)).toEqual({ defer: false });
+    expect(publicationSettleDecision(queued, { ...job, deferrals: 1 }, 1000, 5000, 2)).toEqual({
+      defer: true,
+      waitMs: 0,
+    });
+    expect(publicationSettleDecision(queued, { ...job, deferrals: 2 }, 1000, 5000, 2)).toEqual({ defer: false });
+    expect(publicationSettleDecision(queued, { ...job, deferrals: 3 }, 1000, 5000, 2)).toEqual({ defer: false });
+  });
+
+  test('keeps an explicit request that joins a queued source-wake job from settling', () => {
+    const woken = admitPublicationJob(detectedState('claude.sessions', 'codex.sessions'), 1000, 'source-wake');
+    const queuedSource = admitSourceJob(woken.state, 'codex.sessions', true, 1000, 'cadence').state;
+    expect(publicationSettleDecision(queuedSource, job, 1000, 5000, 2)).toEqual({ defer: true, waitMs: 0 });
+
+    const joined = requestPublicationTransition(queuedSource, 1001);
+    expect(joined.decision).toEqual({ shouldQueue: false });
+    expect(joined.state.publication).toMatchObject({
+      explicitRequestPending: true,
+      queued: true,
+      requestedGeneration: 1,
+    });
+    expect(publicationSettleDecision(joined.state, job, 1001, 5000, 2)).toEqual({ defer: false });
+
+    const started = startPublicationJobTransition(joined.state, 1002);
+    expect(started.decision.ready).toBe(true);
+    expect(started.state.publication).toMatchObject({ explicitRequestPending: false, queued: false, running: true });
+  });
+
+  test('leaves the explicit marker clear when a request is admitted as its own job', () => {
+    const requested = requestPublicationTransition(detectedState('claude.sessions'), 1000);
+    expect(requested.decision).toEqual({ shouldQueue: true });
+    expect(requested.state.publication.explicitRequestPending).toBe(false);
+  });
+
+  test('ignores disabled and unavailable sources even when queued or due soon', () => {
+    const initial = detectedState('claude.sessions', 'codex.sessions');
+    const scheduled = scheduleSourceTransition(initial, 'claude.sessions', 4000, 1000).state;
+    const queued = admitSourceJob(scheduled, 'codex.sessions', true, 1000, 'manual').state;
+    const ignored = {
+      ...queued,
+      sources: {
+        ...queued.sources,
+        'claude.sessions': { ...queued.sources['claude.sessions'], enabled: false, queued: true },
+        'codex.sessions': {
+          ...queued.sources['codex.sessions'],
+          availability: 'not-detected' as const,
+          nextDueAt: new Date(4000).toISOString(),
+        },
+      },
+    };
+    expect(publicationSettleDecision(ignored, job, 1000, 5000, 2)).toEqual({ defer: false });
   });
 });
