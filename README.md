@@ -280,7 +280,7 @@ candidate shows where it came from (`declared <date>`, `observed-now`,
         "subscription": "verified",
         "capabilities": ["read-only-review"],
         "quality": "review-capable",
-        "model": "Opus",
+        "model": "Fable",
         "effort": "high",
         "declaredAt": "2026-10-21T22:00:00+02:00"
       }
@@ -310,8 +310,9 @@ candidate shows where it came from (`declared <date>`, `observed-now`,
   values the current simulation understands.
 - `model`, `effort` (optional): the model and effort the review would run with.
   Declare `model` when the provider reports model-scoped quota windows (ids
-  `model:<name>` in the quota feed), otherwise those windows cannot be
-  attributed and the candidate stays excluded.
+  `model:<name>` in the quota feed, for example `model:Fable` on a Claude Max
+  plan today); the declared name must equal `<name>` exactly, otherwise those
+  windows cannot be attributed and the candidate stays excluded.
 - `declaredAt`: required RFC 3339 date-time; the declaration is a dated
   statement, not a current observation.
 
