@@ -71,6 +71,7 @@ publication settle window therefore takes 0048.
 | [0047](0047-codex-compressed-rollout-discovery.md) | Discover Codex rollouts in their compressed and archived forms | 2026-10-17 | Accepted; extends 0009, 0016 |
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
 | [0049](0049-retire-session-distillation.md) | Retire Session distillation while preserving Memory and stored evidence | 2026-10-21 | Accepted; supersedes feature clauses of 0042 and 0043; preserves 0044 |
+| [0050](0050-work-attention-facts-outside-the-served-revision.md) | Work attention facts stay outside the served revision | 2026-10-21 | Accepted; extends 0009, 0016, 0017 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the
