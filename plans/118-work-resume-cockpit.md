@@ -156,3 +156,21 @@ activity → needs you, "you may have read them in Jira; this view cannot tell")
 
 Gate at `216f726f` (before lot J): `bun run test:e2e` (default Playwright suite, including the visual
 regression specs) 248 passed in 2.1 min; no snapshot changed.
+
+### 2026-10-22 03:50 — review fixes integrated (`7e6aa072`, fast-forward of lot F with lot J merged)
+
+Lot F (`c89627c7`…`7e6aa072`) answers the first review: a declared question is never closed by a
+later pull request — the root stays "needs you", ranks last with a "possibly answered · PR #n" chip
+when a child session declared the PR after the question or GitHub shows it merged after it, and the
+root's own `prs[]` never counts; the activity window never hides a pending request and
+`coverage.window` reports how many older roots without pending declarations are hidden; the fourth
+section is "Recent · no pending declaration read" and a blocked declaration without a question says
+so; a worktree root is labelled by its origin project; the executor probe runs through the shared
+bounded runner with an environment allow-list and records `authMethod`, and a fresh API-key sign-in
+contradicts a declared subscription; declared-PR chips are dated "listed", observed facts "observed";
+isolation from served rows, export and replication is now tested for all four auxiliary families;
+merged pull requests are not re-observed; the catalogue places the Desktop registry before the fact
+producers and a Desktop run that inserted rows wakes them once (real-scheduler integration test),
+which removes the empty first cycle found by the production spec. Verified at `7e6aa072`: `bun run
+check` and `lint` clean, `bun run --cwd apps/web test` 1530 pass; worker evidence: typecheck 58/58,
+package suites 1233 pass. The e2e specs encode the previous texts and counts and are being realigned.
