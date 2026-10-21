@@ -125,15 +125,25 @@ describe('executor declarations', () => {
       declarations: [],
       issues: [],
     });
-    for (const malformed of [null, [], { executors: 'none' }, { executors: [], other: true }]) {
+    for (const malformed of [
+      null,
+      [],
+      { executors: 'none' },
+      { executors: [], other: true },
+      { executors: [], reviewTargets: '/not-an-array' },
+    ]) {
       expect(isRoutingConfigShape(malformed)).toBe(false);
       const result = parseExecutorDeclarations(malformed, { defaultMachineId: MACHINE, path: 'home.routing' });
       expect(result.declarations).toEqual([]);
       expect(result.issues).toEqual([
-        { path: 'home.routing', reason: 'must be an object whose only key is an executors array' },
+        {
+          path: 'home.routing',
+          reason: 'must be an object with an executors array and an optional reviewTargets array',
+        },
       ]);
     }
     expect(isRoutingConfigShape({ executors: [] })).toBe(true);
+    expect(isRoutingConfigShape({ executors: [], reviewTargets: [] })).toBe(true);
   });
 
   test('maps harnesses to quota key families both ways', () => {

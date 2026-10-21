@@ -1,4 +1,9 @@
 import {
+  parseReviewTargetDeclarations,
+  type ReviewTargetDeclaration,
+  type ReviewTargetDeclarationIssue,
+} from '@ai-usage/report-core/work-attempts';
+import {
   type ExecutorDeclaration,
   type ExecutorDeclarationIssue,
   parseExecutorDeclarations,
@@ -15,6 +20,10 @@ export interface LocalRoutingDeclarations {
   readonly issues: readonly ExecutorDeclarationIssue[];
   /** This machine's identity from `machine.json`, or `null` when the engine has never created one. */
   readonly machineId: string | null;
+  /** `routing.reviewTargets[]` entries that failed, located the same way. */
+  readonly reviewTargetIssues: readonly ReviewTargetDeclarationIssue[];
+  /** Checkouts a launched review may run in (ADR 0053); empty means no launch is possible. */
+  readonly reviewTargets: readonly ReviewTargetDeclaration[];
 }
 
 /**
@@ -31,10 +40,13 @@ export const readLocalRoutingDeclarations = async (homePath?: string): Promise<L
     Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
   const [config, machine] = await Promise.all([provide(readAiUsageConfig), provide(readMachineConfigIfPresent)]);
   const parsed = parseExecutorDeclarations(config.routing, { defaultMachineId: machine?.id ?? null, path: 'routing' });
+  const reviewTargets = parseReviewTargetDeclarations(config.routing?.reviewTargets, { path: 'routing.reviewTargets' });
   return {
     configPath: aiUsageConfigPath(storage),
     declarations: parsed.declarations,
     issues: parsed.issues,
     machineId: machine?.id ?? null,
+    reviewTargetIssues: reviewTargets.issues,
+    reviewTargets: reviewTargets.targets,
   };
 };
