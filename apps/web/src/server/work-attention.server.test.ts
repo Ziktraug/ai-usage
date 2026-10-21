@@ -2,12 +2,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
-import { CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL } from '@ai-usage/local-machine/testing/claude-desktop-sessions';
-import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
-import { importClaudeDesktopSessions, initializeUsageStore } from '@ai-usage/usage-store/writer';
+import {
+  CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL,
+  claudeDesktopFixtureRegistry,
+} from '@ai-usage/report-core/test-fixtures/claude-desktop-sessions';
+import type { ClaudeDesktopSessionObservation } from '@ai-usage/report-core/work-attention';
+import { parseClaudeDesktopSessionFile } from '@ai-usage/report-core/work-attention-native';
+import { importClaudeDesktopSessions, initializeUsageStore } from '@ai-usage/usage-store/testing';
 import { parseWorkAttentionOutput } from '@ai-usage/web-contract/work';
 import { Effect } from 'effect';
 import { readWorkAttentionForServer } from './work-attention.server';
@@ -26,25 +28,52 @@ afterEach(async () => {
 const MACHINE = 'machine-web-work';
 const NOW = new Date('2026-10-20T12:00:00.000Z');
 
+/** The minimal registry, normalized the way the collector normalizes files, imported like the engine does. */
 const seededStore = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'web-work-attention-'));
   temporaryRoots.push(root);
-  const home = join(root, 'home');
   const dbPath = join(root, 'usage-store.sqlite');
   await Effect.runPromise(initializeUsageStore({ dbPath }));
-  await seedHarnessHome(home, { claudeDesktopEpoch: NOW, claudeDesktopSessions: 'minimal', harnesses: ['claude'] });
-  const collection = await Effect.runPromise(
-    collectClaudeDesktopSessions({ machineId: MACHINE, now: () => NOW }).pipe(
-      Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
-    ),
-  );
+  const registry = claudeDesktopFixtureRegistry({
+    cliSessionIdWithTranscript: 'claude-fixture-025',
+    epoch: NOW,
+    repository: `${root}/home/work/fixture`,
+    variant: 'minimal',
+  });
+  const observations: ClaudeDesktopSessionObservation[] = [];
+  let unsupported = 0;
+  for (const entry of registry.documents) {
+    const result = parseClaudeDesktopSessionFile(entry.document, {
+      accountDirectory: entry.account,
+      fileModifiedAt: entry.modifiedAt.toISOString(),
+      machineId: MACHINE,
+      observedAt: NOW.toISOString(),
+      organizationDirectory: entry.organization,
+      relativeFilePath: `.config/Claude/claude-code-sessions/${entry.account}/${entry.organization}/${entry.fileName}`,
+    });
+    if (result.kind === 'rejected') {
+      throw new Error(`fixture document ${entry.fileName} was rejected`);
+    }
+    if (result.kind === 'unsupported') {
+      unsupported += 1;
+    }
+    if (result.observation !== null) {
+      observations.push(result.observation);
+    }
+  }
   await Effect.runPromise(
     importClaudeDesktopSessions({
       collectedAt: NOW,
-      completeness: collection.completeness,
+      completeness: {
+        filesParsed: registry.documents.length - unsupported,
+        filesSeen: registry.documents.length,
+        rejected: 0,
+        truncated: false,
+        unsupported,
+      },
       dbPath,
       machineId: MACHINE,
-      observations: collection.observations,
+      observations,
     }),
   );
   return dbPath;
@@ -95,7 +124,7 @@ describe('work attention server', () => {
     expect(JSON.stringify(corrupt)).not.toContain(root);
   });
 
-  test('serves the representative fixture once per process in e2e mode', async () => {
+  test('serves the representative fixture through the same assembly in e2e mode', async () => {
     const first = await readWorkAttentionForServer({ machineId: WORK_ATTENTION_E2E_MACHINE_ID }, { mode: 'e2e' });
     expect(parseWorkAttentionOutput(first)).toEqual(JSON.parse(JSON.stringify(first)));
     if (!first.ok) {
@@ -108,12 +137,17 @@ describe('work attention server', () => {
     expect(
       first.data.roots.some((root) => root.interpretations.some(({ kind }) => kind === 'request-satisfied-elsewhere')),
     ).toBe(true);
-    expect(first.data.coverage.desktopSessions.unsupported).toBe(1);
+    expect(first.data.coverage.desktopSessions).toMatchObject({ truncated: false, unsupported: 1 });
+    expect(first.data.coverage.sessions).toEqual({ joined: 0, revision: null, unmatched: 0 });
     expect(JSON.stringify(first)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
 
     const second = await readE2EWorkAttention({ limit: 5 });
     expect(second.ok && second.data.roots).toHaveLength(5);
     expect(second.ok && second.data.truncated).toBe(true);
     expect(second.ok && second.data.totalRoots).toBe(first.data.totalRoots);
+
+    // A machine the fixture does not know yields an empty, honest dataset rather than an error.
+    const other = await readE2EWorkAttention({ machineId: 'machine-elsewhere' });
+    expect(other.ok && other.data.totalRoots).toBe(0);
   });
 });

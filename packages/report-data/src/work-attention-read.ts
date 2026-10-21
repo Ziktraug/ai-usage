@@ -289,26 +289,35 @@ const compareRoots = (left: WorkRoot, right: WorkRoot): number => {
   return left.key.sourceSessionId < right.key.sourceSessionId ? -1 : 1;
 };
 
-interface SessionJoin {
-  readonly byRoot: ReadonlyMap<string, ServedSessionRowIdentity>;
-  /** `null` when no served revision was published. */
+/**
+ * How a root finds the served Session it corresponds to. `revision` is `null` when no served
+ * revision exists; then no root can say whether its transcript was collected and the dataset
+ * reports the join as unavailable instead of flagging every root.
+ */
+export interface WorkAttentionSessionLookup {
+  readonly find: (machineId: string, sourceSessionId: string) => ServedSessionRowIdentity | undefined;
   readonly revision: string | null;
 }
 
+export const NO_SERVED_REVISION: WorkAttentionSessionLookup = { find: () => undefined, revision: null };
+
 const joinKey = (machineId: string, sourceSessionId: string): string => `${machineId}\u0000${sourceSessionId}`;
 
-const joinSessions = (dbPath: string, groups: readonly RootGroup[]): Effect.Effect<SessionJoin, UsageStoreError> =>
+const joinSessions = (
+  dbPath: string,
+  observations: readonly ClaudeDesktopSessionObservation[],
+): Effect.Effect<WorkAttentionSessionLookup, UsageStoreError> =>
   Effect.gen(function* () {
     const idsByMachine = new Map<string, Set<string>>();
-    for (const group of groups) {
-      const ids = idsByMachine.get(group.root.machineId) ?? new Set<string>();
-      ids.add(group.root.cliSessionId);
-      idsByMachine.set(group.root.machineId, ids);
+    for (const observation of observations) {
+      const ids = idsByMachine.get(observation.machineId) ?? new Set<string>();
+      ids.add(observation.cliSessionId);
+      idsByMachine.set(observation.machineId, ids);
     }
     if (idsByMachine.size > MAX_JOINED_MACHINES) {
       return yield* Effect.fail(invalidInput(dbPath, 'too many machines in one Work read; pass machineId'));
     }
-    const byRoot = new Map<string, ServedSessionRowIdentity>();
+    const byKey = new Map<string, ServedSessionRowIdentity>();
     let revision: string | null = null;
     for (const [machineId, ids] of idsByMachine) {
       const joined = yield* querySessionRowsBySourceSessionIds({
@@ -319,27 +328,32 @@ const joinSessions = (dbPath: string, groups: readonly RootGroup[]): Effect.Effe
       });
       revision = joined.revision;
       if (joined.revision === null) {
-        break;
+        return NO_SERVED_REVISION;
       }
       for (const row of joined.rows) {
         // The first served row for an identity wins; a transcript split across rows is one Session.
-        if (!byRoot.has(joinKey(machineId, row.sourceSessionId))) {
-          byRoot.set(joinKey(machineId, row.sourceSessionId), row);
+        if (!byKey.has(joinKey(machineId, row.sourceSessionId))) {
+          byKey.set(joinKey(machineId, row.sourceSessionId), row);
         }
       }
     }
-    return { byRoot, revision };
+    return { find: (machineId, sourceSessionId) => byKey.get(joinKey(machineId, sourceSessionId)), revision };
   });
 
-const buildRoot = (group: RootGroup, join: SessionJoin, now: Date, staleAfterMs: number | undefined): WorkRoot => {
+const buildRoot = (
+  group: RootGroup,
+  sessions: WorkAttentionSessionLookup,
+  now: Date,
+  staleAfterMs: number | undefined,
+): WorkRoot => {
   const { root } = group;
   const facts = factsOf(group);
   const declared = declarationOf(root);
-  const session = join.byRoot.get(joinKey(root.machineId, root.cliSessionId)) ?? null;
+  const session = sessions.find(root.machineId, root.cliSessionId) ?? null;
   const { attention, interpretations } = interpretWorkRoot({
     coverage: {
       parentMissing: group.parentMissing,
-      sessionJoined: join.revision === null ? null : session !== null,
+      sessionJoined: sessions.revision === null ? null : session !== null,
       unsupportedReason: root.unsupportedReason,
     },
     declaration: declared,
@@ -396,28 +410,92 @@ const desktopCoverage = (
   return { collectedAt, ...totals, refusedRows };
 };
 
+export interface AssembleWorkAttentionInput {
+  readonly collectionStates: readonly ClaudeDesktopCollectionState[];
+  readonly limit?: number;
+  readonly machineId?: string;
+  readonly now?: Date;
+  /** Re-validated observations of the family, any order; children fold under their roots here. */
+  readonly observations: readonly ClaudeDesktopSessionObservation[];
+  /** The store read stopped at its bound; the dataset then reports itself truncated. */
+  readonly readTruncated?: boolean;
+  /** Persisted rows the read refused on re-validation. */
+  readonly refusedRows?: number;
+  readonly sessions: WorkAttentionSessionLookup;
+  readonly sinceDays?: number;
+  readonly staleAfterMs?: number;
+}
+
+const boundsProblem = (input: Pick<AssembleWorkAttentionInput, 'limit' | 'now' | 'sinceDays'>): string | null => {
+  const limit = input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT;
+  const sinceDays = input.sinceDays ?? WORK_ATTENTION_DEFAULT_SINCE_DAYS;
+  if (!(Number.isSafeInteger(limit) && limit > 0 && limit <= maxRoots)) {
+    return `limit must be an integer between 1 and ${maxRoots}`;
+  }
+  if (!(Number.isSafeInteger(sinceDays) && sinceDays > 0 && sinceDays <= MAX_SINCE_DAYS)) {
+    return `sinceDays must be an integer between 1 and ${MAX_SINCE_DAYS}`;
+  }
+  if (input.now !== undefined && normalizeIsoTimestamp(input.now.getTime()) === null) {
+    return 'now must be a valid date';
+  }
+  return null;
+};
+
+/**
+ * The pure assembly: groups, joins, interprets, ranks and bounds, from observations already in
+ * hand. `queryWorkAttention` feeds it from the store; the web e2e composition feeds it from the
+ * seeded registry parsed in memory, so both cross the same code. Throws `RangeError` on bounds
+ * outside the contract.
+ */
+export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAttentionDataset => {
+  const problem = boundsProblem(input);
+  if (problem !== null) {
+    throw new RangeError(`assembleWorkAttention: ${problem}`);
+  }
+  const limit = input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT;
+  const sinceDays = input.sinceDays ?? WORK_ATTENTION_DEFAULT_SINCE_DAYS;
+  const now = input.now ?? new Date();
+  const generatedAt = normalizeIsoTimestamp(now.getTime());
+  if (generatedAt === null) {
+    throw new RangeError('assembleWorkAttention: now must be a valid date');
+  }
+  const since = new Date(now.getTime() - sinceDays * DAY_MS).toISOString();
+  const observations =
+    input.machineId === undefined
+      ? input.observations
+      : input.observations.filter((observation) => observation.machineId === input.machineId);
+  const groups = groupRoots(observations).filter((group) => latestActivity(group) >= since);
+  const roots = groups.map((group) => buildRoot(group, input.sessions, now, input.staleAfterMs)).sort(compareRoots);
+  const joined = roots.filter((root) => root.session !== null).length;
+  const readTruncated = input.readTruncated ?? false;
+  return {
+    coverage: {
+      checkouts: { failed: 0, lastRunAt: null, observed: 0 },
+      desktopSessions: desktopCoverage(input.collectionStates, input.refusedRows ?? 0, readTruncated),
+      pullRequests: { disabled: true, failed: 0, lastRunAt: null, observed: 0 },
+      sessions: {
+        joined,
+        revision: input.sessions.revision,
+        unmatched: input.sessions.revision === null ? 0 : roots.length - joined,
+      },
+    },
+    generatedAt,
+    machineId: input.machineId ?? null,
+    roots: roots.slice(0, limit),
+    totalRoots: roots.length,
+    truncated: roots.length > limit || readTruncated,
+  };
+};
+
 export const queryWorkAttention = (
   input: QueryWorkAttentionInput,
 ): Effect.Effect<WorkAttentionDataset, UsageStoreError> =>
   Effect.gen(function* () {
-    const limit = input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT;
-    const sinceDays = input.sinceDays ?? WORK_ATTENTION_DEFAULT_SINCE_DAYS;
-    const now = input.now ?? new Date();
-    if (!(Number.isSafeInteger(limit) && limit > 0 && limit <= maxRoots)) {
-      return yield* Effect.fail(invalidInput(input.dbPath, `limit must be an integer between 1 and ${maxRoots}`));
+    const problem = boundsProblem(input);
+    if (problem !== null) {
+      return yield* Effect.fail(invalidInput(input.dbPath, problem));
     }
-    if (!(Number.isSafeInteger(sinceDays) && sinceDays > 0 && sinceDays <= MAX_SINCE_DAYS)) {
-      return yield* Effect.fail(
-        invalidInput(input.dbPath, `sinceDays must be an integer between 1 and ${MAX_SINCE_DAYS}`),
-      );
-    }
-    const generatedAt = normalizeIsoTimestamp(now.getTime());
-    if (generatedAt === null) {
-      return yield* Effect.fail(invalidInput(input.dbPath, 'now must be a valid date'));
-    }
-    const since = new Date(now.getTime() - sinceDays * DAY_MS).toISOString();
     const machineFilter = input.machineId === undefined ? {} : { machineId: input.machineId };
-
     // The whole bounded family, most recent first, so a child outside the window still folds
     // under its root and is never mistaken for an orphan.
     const read = yield* queryClaudeDesktopSessions({
@@ -426,21 +504,17 @@ export const queryWorkAttention = (
       ...machineFilter,
     });
     const states = yield* queryClaudeDesktopCollectionState({ dbPath: input.dbPath, ...machineFilter });
-    const groups = groupRoots(read.observations).filter((group) => latestActivity(group) >= since);
-    const join = yield* joinSessions(input.dbPath, groups);
-    const roots = groups.map((group) => buildRoot(group, join, now, input.staleAfterMs)).sort(compareRoots);
-    const joined = roots.filter((root) => root.session !== null).length;
-    return {
-      coverage: {
-        checkouts: { failed: 0, lastRunAt: null, observed: 0 },
-        desktopSessions: desktopCoverage(states.states, read.skipped, read.truncated),
-        pullRequests: { disabled: true, failed: 0, lastRunAt: null, observed: 0 },
-        sessions: { joined, revision: join.revision, unmatched: join.revision === null ? 0 : roots.length - joined },
-      },
-      generatedAt,
-      machineId: input.machineId ?? null,
-      roots: roots.slice(0, limit),
-      totalRoots: roots.length,
-      truncated: roots.length > limit || read.truncated,
-    };
+    const sessions = yield* joinSessions(input.dbPath, read.observations);
+    return assembleWorkAttention({
+      collectionStates: states.states,
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...machineFilter,
+      ...(input.now === undefined ? {} : { now: input.now }),
+      observations: read.observations,
+      readTruncated: read.truncated,
+      refusedRows: read.skipped,
+      sessions,
+      ...(input.sinceDays === undefined ? {} : { sinceDays: input.sinceDays }),
+      ...(input.staleAfterMs === undefined ? {} : { staleAfterMs: input.staleAfterMs }),
+    });
   });

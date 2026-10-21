@@ -1,75 +1,95 @@
-import { mkdir, mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
-import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
-import { importClaudeDesktopSessions, initializeUsageStore } from '@ai-usage/usage-store/writer';
+import {
+  CLAUDE_DESKTOP_FIXTURE_PAIRS,
+  claudeDesktopFixtureRegistry,
+} from '@ai-usage/report-core/test-fixtures/claude-desktop-sessions';
+import type {
+  ClaudeDesktopCollectionCompleteness,
+  ClaudeDesktopSessionObservation,
+  WorkAttentionDataset,
+} from '@ai-usage/report-core/work-attention';
+import { parseClaudeDesktopSessionFile } from '@ai-usage/report-core/work-attention-native';
+import { assembleWorkAttention, NO_SERVED_REVISION } from '@ai-usage/report-data/work-attention-read';
 import type { WorkAttentionInput } from '@ai-usage/web-contract/work';
-import { Effect } from 'effect';
-import { readWorkAttentionFromStore, type WorkAttentionServerResult } from './work-attention.server';
+import type { WorkAttentionServerResult } from './work-attention.server';
 
 /**
- * The e2e composition of `work.attention`: one disposable store per process, built from the
- * representative seeded Desktop registry through the real collector and the real import, then
- * served by the real read model. The browser regression therefore crosses the same code as live
- * mode; only the store and the clock are synthetic. Writing the store here is the fixture's job
- * and happens only under `VITE_AI_USAGE_E2E=1`, never against the operator's store.
+ * The e2e composition of `work.attention`: the representative seeded registry, normalized by the
+ * same parser the collector runs and assembled by the same read model live mode runs, held in
+ * memory for the process. The web app may not import the collector or the store writer (package
+ * boundaries), so the only link live mode has and this one lacks is the SQLite round trip; every
+ * clamp, fold, interpretation and ranking is the production code.
  */
 
 /** The id the other e2e fixtures use for the current machine, so a machine filter matches. */
 export const WORK_ATTENTION_E2E_MACHINE_ID = 'e2e-current-machine';
 /** Fixed clock: the seeded ages (one hour to forty days) are relative to it. */
 export const WORK_ATTENTION_E2E_NOW = new Date('2026-10-20T12:00:00.000Z');
+const E2E_HOME = '/e2e/home';
+const E2E_REPOSITORY = `${E2E_HOME}/work/fixture`;
+const E2E_TRANSCRIPT_ID = 'claude-fixture-025';
 
-let storePathPromise: Promise<string> | undefined;
+interface E2EWorkAttentionSource {
+  readonly completeness: ClaudeDesktopCollectionCompleteness;
+  readonly observations: readonly ClaudeDesktopSessionObservation[];
+}
 
-const buildStore = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), 'ai-usage-e2e-work-attention-'));
-  const home = join(root, 'home');
-  await mkdir(home, { recursive: true });
-  const dbPath = join(root, 'usage-store.sqlite');
-  await Effect.runPromise(initializeUsageStore({ dbPath }));
-  await seedHarnessHome(home, {
-    claudeDesktopEpoch: WORK_ATTENTION_E2E_NOW,
-    claudeDesktopSessions: 'representative',
-    harnesses: ['claude'],
+let source: E2EWorkAttentionSource | undefined;
+
+const buildSource = (): E2EWorkAttentionSource => {
+  const registry = claudeDesktopFixtureRegistry({
+    cliSessionIdWithTranscript: E2E_TRANSCRIPT_ID,
+    epoch: WORK_ATTENTION_E2E_NOW,
+    repository: E2E_REPOSITORY,
+    variant: 'representative',
   });
-  const collection = await Effect.runPromise(
-    collectClaudeDesktopSessions({ machineId: WORK_ATTENTION_E2E_MACHINE_ID, now: () => WORK_ATTENTION_E2E_NOW }).pipe(
-      Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
-    ),
-  );
-  await Effect.runPromise(
-    importClaudeDesktopSessions({
-      collectedAt: WORK_ATTENTION_E2E_NOW,
-      completeness: collection.completeness,
-      dbPath,
+  const observedAt = WORK_ATTENTION_E2E_NOW.toISOString();
+  const observations: ClaudeDesktopSessionObservation[] = [];
+  const completeness = { filesParsed: 0, filesSeen: 0, rejected: 0, truncated: false, unsupported: 0 };
+  for (const entry of registry.documents) {
+    completeness.filesSeen += 1;
+    const pairIndex = CLAUDE_DESKTOP_FIXTURE_PAIRS.findIndex((pair) => pair.account === entry.account);
+    const result = parseClaudeDesktopSessionFile(entry.document, {
+      accountDirectory: entry.account,
+      fileModifiedAt: entry.modifiedAt.toISOString(),
       machineId: WORK_ATTENTION_E2E_MACHINE_ID,
-      observations: collection.observations,
-    }),
-  );
-  return dbPath;
-};
-
-/** Built once; a failed build is not cached so the next request retries rather than staying broken. */
-export const getWorkAttentionE2EStorePath = (): Promise<string> => {
-  if (storePathPromise === undefined) {
-    storePathPromise = buildStore().catch((error: unknown) => {
-      storePathPromise = undefined;
-      throw error;
+      observedAt,
+      organizationDirectory: entry.organization,
+      relativeFilePath: `.config/Claude/claude-code-sessions/${entry.account}/${entry.organization}/${entry.fileName}`,
     });
+    if (result.kind === 'observation') {
+      completeness.filesParsed += 1;
+      observations.push(result.observation);
+    } else if (result.kind === 'unsupported') {
+      completeness.unsupported += 1;
+      if (result.observation !== null) {
+        observations.push(result.observation);
+      }
+    } else {
+      completeness.rejected += 1;
+    }
+    if (pairIndex < 0) {
+      throw new Error('The e2e Desktop registry names an account outside its pairs.');
+    }
   }
-  return storePathPromise;
+  return { completeness, observations };
 };
 
-export const readE2EWorkAttention = async (
-  request: WorkAttentionInput,
-  signal?: AbortSignal,
-): Promise<WorkAttentionServerResult> =>
-  await readWorkAttentionFromStore({
-    dbPath: await getWorkAttentionE2EStorePath(),
-    now: () => WORK_ATTENTION_E2E_NOW,
-    request,
-    ...(signal === undefined ? {} : { signal }),
+const getSource = (): E2EWorkAttentionSource => {
+  source ??= buildSource();
+  return source;
+};
+
+export const readE2EWorkAttention = (request: WorkAttentionInput): Promise<WorkAttentionServerResult> => {
+  const { completeness, observations } = getSource();
+  const data: WorkAttentionDataset = assembleWorkAttention({
+    collectionStates: [
+      { collectedAt: WORK_ATTENTION_E2E_NOW.toISOString(), completeness, machineId: WORK_ATTENTION_E2E_MACHINE_ID },
+    ],
+    ...(request.limit === undefined ? {} : { limit: request.limit }),
+    ...(request.machineId === undefined || request.machineId === null ? {} : { machineId: request.machineId }),
+    now: WORK_ATTENTION_E2E_NOW,
+    observations,
+    sessions: NO_SERVED_REVISION,
   });
+  return Promise.resolve({ data, ok: true });
+};

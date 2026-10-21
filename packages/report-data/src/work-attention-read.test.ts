@@ -15,7 +15,7 @@ import {
   initializeUsageStore,
   publishServedReportRevision,
   updateUsageMachineLabel,
-} from '@ai-usage/usage-store/writer';
+} from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { queryWorkAttention } from './work-attention-read';
 

@@ -1,5 +1,6 @@
 export {
   createUsageStore,
+  importClaudeDesktopSessions,
   importLocalRows,
   importNormalizedDatasetItems,
   importPeerMergeBundle,

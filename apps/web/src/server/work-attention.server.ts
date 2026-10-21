@@ -80,7 +80,7 @@ export const readWorkAttentionForServer = async (
   }
   if (mode === 'e2e') {
     const fixture = await import('./work-attention-e2e-fixture.server');
-    return await fixture.readE2EWorkAttention(request, options.signal);
+    return await fixture.readE2EWorkAttention(request);
   }
   return await readWorkAttentionFromStore({
     dbPath: options.dbPath ?? resolveUsageWebRuntimePaths().databasePath,
