@@ -5,6 +5,7 @@ import {
   ensureHistoryEntryKey,
   isActiveManagementDestination,
   isManagementPath,
+  mobileNavigationFor,
   navigationTypeForScroll,
   reportDestinationHeading,
   reportDestinationUrl,
@@ -13,6 +14,56 @@ import {
 } from './navigation';
 
 describe('Svelte application shell navigation', () => {
+  test.each([
+    'live',
+    'e2e',
+    'demo',
+  ] as const)('keeps five mobile slots and Campaigns in overflow in %s mode', (mode) => {
+    const navigation = mobileNavigationFor(new URL('http://localhost/work'), mode);
+    expect([...navigation.primary.map(({ label }) => label), 'Manage']).toEqual([
+      'Work',
+      'Overview',
+      'Sessions',
+      'Analysis',
+      'Manage',
+    ]);
+    expect(navigation.primary.filter(({ active }) => active).map(({ label }) => label)).toEqual(['Work']);
+    expect(navigation.overflow[0]?.label).toBe('Campaigns');
+    expect(navigation.manageActive).toBe(false);
+  });
+
+  test('hides business management destinations in demo while retaining Campaigns access', () => {
+    const url = new URL('http://localhost/campaigns?range=all&machine=%5B%22demo%22%5D');
+    const demo = mobileNavigationFor(url, 'demo');
+    expect(demo.overflow.map(({ label }) => label)).toEqual(['Campaigns']);
+    expect(demo.overflow[0]?.href).toBe(`/campaigns${url.search}`);
+    expect(demo.manageActive).toBe(true);
+    expect(mobileNavigationFor(url, 'live').overflow.map(({ label }) => label)).toEqual([
+      'Campaigns',
+      'Memory',
+      'Projects',
+      'Skills',
+      'Sync',
+      'Sources',
+    ]);
+  });
+
+  test('preserves report filters and identifies the active direct or overflow destination', () => {
+    const url = new URL('http://localhost/campaigns?tab=projects&range=all&foreign=kept');
+    const navigation = mobileNavigationFor(url, 'live');
+    expect(navigation.primary.some(({ active }) => active)).toBe(false);
+    expect(navigation.manageActive).toBe(true);
+    expect(navigation.primary.find(({ label }) => label === 'Analysis')?.href).toBe(
+      reportDestinationUrl(url, 'breakdown').href,
+    );
+    expect(mobileNavigationFor(new URL('http://localhost/sources'), 'live').manageActive).toBe(true);
+    expect(mobileNavigationFor(new URL('http://localhost/skills/project'), 'live').manageActive).toBe(true);
+    expect(mobileNavigationFor(new URL('http://localhost/sources'), 'demo').manageActive).toBe(false);
+    expect(mobileNavigationFor(new URL('http://localhost/campaigns-copy'), 'live').manageActive).toBe(false);
+    const reportDetail = mobileNavigationFor(new URL('http://localhost/campaigns/id?tab=sessions'), 'live');
+    expect(reportDetail.primary.filter(({ active }) => active).map(({ label }) => label)).toEqual(['Sessions']);
+    expect(reportDetail.manageActive).toBe(false);
+  });
   test('publishes Work without changing report or management identities', () => {
     expect(workDestination).toEqual({ href: '/work', icon: 'work', label: 'Work' });
     expect(isManagementPath('/work')).toBe(false);

@@ -190,7 +190,7 @@ for (const route of routes) {
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });
     await manageButton.click();
     const manageNavigation = page.getByRole('navigation', { name: 'Manage destinations' });
-    for (const label of ['Memory', 'Projects', 'Skills', 'Sync', 'Sources']) {
+    for (const label of ['Campaigns', 'Memory', 'Projects', 'Skills', 'Sync', 'Sources']) {
       await expect(manageNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     await page.keyboard.press('Escape');

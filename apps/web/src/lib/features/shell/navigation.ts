@@ -7,6 +7,7 @@ import {
   primaryDashboardTabFor,
   validateDashboardSearch,
 } from '../../../dashboard-search';
+import type { RuntimeMode } from '../../../runtime-mode';
 import {
   type DashboardSearchCodec,
   dashboardUrlFor,
@@ -27,6 +28,12 @@ export type ShellIconName =
   | 'work';
 
 export const workDestination = { href: '/work', icon: 'work', label: 'Work' } as const;
+
+export const reportTabs = [
+  { icon: 'overview', label: 'Overview', tab: 'overview' },
+  { icon: 'sessions', label: 'Sessions', tab: 'sessions' },
+  { icon: 'breakdown', label: 'Analysis', tab: 'breakdown' },
+] as const;
 
 export interface ShellDestination {
   readonly href: string;
@@ -79,6 +86,35 @@ export const isManagementPath = (pathname: string): boolean =>
 
 export const isActiveManagementDestination = (pathname: string, href: string): boolean =>
   pathname === href || pathname.startsWith(`${href}/`);
+
+interface MobileDestination extends ShellDestination {
+  readonly active: boolean;
+  readonly preserveScroll?: boolean;
+}
+
+/** Four direct destinations and one Manage disclosure, including in the isolated demo. */
+export const mobileNavigationFor = (url: URL, runtimeMode: RuntimeMode) => {
+  const primary: readonly MobileDestination[] = [
+    { ...workDestination, active: url.pathname === workDestination.href },
+    ...reportTabs.map((destination) => ({
+      href: reportDestinationUrl(url, destination.tab).href,
+      icon: destination.icon,
+      label: destination.label,
+      active: isReportPathname(url.pathname) && activeReportTab(url) === destination.tab,
+      preserveScroll: true,
+    })),
+  ];
+  const overflow: readonly MobileDestination[] = [
+    { href: `/campaigns${url.search}`, icon: 'campaigns', label: 'Campaigns', active: url.pathname === '/campaigns' },
+    ...(runtimeMode === 'demo'
+      ? []
+      : shellManagementDestinations.map((destination) => ({
+          ...destination,
+          active: isActiveManagementDestination(url.pathname, destination.href),
+        }))),
+  ];
+  return { primary, overflow, manageActive: overflow.some((destination) => destination.active) };
+};
 
 export const navigationTypeForScroll = (type: string): 'enter' | 'form' | 'goto' | 'leave' | 'link' | 'popstate' => {
   if (type === 'enter' || type === 'form' || type === 'goto' || type === 'leave' || type === 'popstate') {
