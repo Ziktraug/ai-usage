@@ -8,6 +8,7 @@ import { completeSkillObservationCollection } from '@ai-usage/report-core/skill-
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
+  queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
   querySkillObservations,
@@ -17,6 +18,7 @@ import {
 } from './reader';
 import { SERVED_REPORT_PROJECTION_SCHEMA_VERSION } from './served-revision';
 import {
+  importExecutorObservations,
   importLocalRows,
   importProviderQuotaBatch,
   importSkillObservations,
@@ -38,6 +40,7 @@ interface SchemaObject {
 }
 
 const durableTables = [
+  'executor_observations',
   'provider_quota_observations',
   'served_report_revisions',
   'skill_observation_collection_state',
@@ -423,6 +426,78 @@ describe('usage-store forward migration', () => {
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
     expect(read.skipped).toBe(0);
     expect(read.observations.map(({ observation }) => observation.skillName)).toEqual(['write-a-skill']);
+  });
+
+  test('adds the executor observation table to a current-version store without bumping user_version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-executor-observation-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    beforeMigration.exec('DROP TABLE executor_observations;');
+    expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    beforeMigration.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const observation = {
+      authEvidence: 'codex login status exit 0 (output mentions "Logged in")',
+      authState: 'logged-in',
+      binaryPath: '/usr/bin/codex',
+      harness: 'codex',
+      machineId: 'machine-a',
+      observedAt: '2026-10-21T21:00:00.000Z',
+      outcome: 'observed',
+      version: 'codex-cli 0.163.0',
+    };
+    const imported = await Effect.runPromise(
+      importExecutorObservations({
+        dbPath,
+        observations: [
+          ...Array.from({ length: 12 }, (_, index) => ({
+            ...observation,
+            observedAt: new Date(Date.parse(observation.observedAt) + index * 60_000).toISOString(),
+          })),
+          { ...observation, harness: 'claude-code', binaryPath: '/usr/bin/claude', version: '2.1.303 (Claude Code)' },
+          { ...observation, harness: 'cursor' },
+        ],
+      }),
+    );
+    expect(imported).toEqual({ inserted: 13, pruned: 2, rejected: 1 });
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const retained = migrated
+      .query('SELECT harness, COUNT(*) AS count FROM executor_observations GROUP BY harness ORDER BY harness')
+      .all();
+    expect(retained).toEqual([
+      { count: 1, harness: 'claude-code' },
+      { count: 10, harness: 'codex' },
+    ]);
+    // A row that fails re-validation is counted, not served.
+    migrated.close(true);
+    const corrupting = new Database(dbPath, { create: false, readwrite: true });
+    corrupting.exec(`
+      INSERT INTO executor_observations (machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, outcome)
+      VALUES ('machine-b', 'codex', 'not-a-time', NULL, NULL, 'unknown', 'manual row', 'invalid');
+    `);
+    corrupting.close(true);
+
+    const latest = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(latest.truncated).toBe(false);
+    expect(latest.skipped).toBe(1);
+    expect(latest.observations.map(({ harness, observedAt }) => [harness, observedAt])).toEqual([
+      ['claude-code', '2026-10-21T21:00:00.000Z'],
+      ['codex', '2026-10-21T21:11:00.000Z'],
+    ]);
+    expect(await Effect.runPromise(queryLatestExecutorObservations({ dbPath, machineId: 'machine-b' }))).toEqual({
+      observations: [],
+      skipped: 1,
+      truncated: false,
+    });
+    // Observations qualify routing; they are not report data and never request a publication.
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
   });
 
   test('migrates a populated schema-3 store to schema 4 by adding the replication outbox and refuses a newer schema', async () => {

@@ -122,9 +122,10 @@ bun run cli -- --stored
 ```
 
 The dedicated usage engine runs collection independently from browser
-visibility. Its eight collection sources are Claude, Codex, OpenCode, and
-Cursor sessions; Codex and experimental Claude usage limits; RTK savings; and
-Cursor commit attribution.
+visibility. Its nine collection sources are Claude, Codex, OpenCode, and
+Cursor sessions; Codex and experimental Claude usage limits; RTK savings;
+Cursor commit attribution; and executor capabilities (which harness CLIs this
+machine can run, for the Work view's review routing).
 Each source has separate policy, detection, lifecycle, outcome, and cadence
 state on `/sources`. Sparse policy overrides live only in
 `~/.config/ai-usage/config.json`; repository config cannot enable background

@@ -1,5 +1,9 @@
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
+export type {
+  QueryLatestExecutorObservationsInput,
+  QueryLatestExecutorObservationsResult,
+} from './executor-observation-store';
 export type { FocusedReportQueryResult } from './focused-report-query-sqlite';
 export { executeFocusedReportQuery } from './focused-report-query-sqlite';
 export type {
@@ -49,6 +53,7 @@ export {
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
   queryDistillationSessionMetadata,
+  queryLatestExecutorObservations,
   queryLatestLocalProviderQuotaObservations,
   queryLatestProviderQuotaObservations,
   queryLocalMergeBundle,

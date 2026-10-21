@@ -12,6 +12,7 @@ export const collectionSourceIds = [
   'claude.usage-limits',
   'rtk.savings',
   'cursor.commit-attribution',
+  'executors.capabilities',
 ] as const;
 
 export type CollectionSourceId = (typeof collectionSourceIds)[number];
@@ -40,6 +41,7 @@ export interface CollectionSourceDefinition {
 
 const oneMinuteMs = 60_000;
 const fiveMinutesMs = 5 * oneMinuteMs;
+const fifteenMinutesMs = 15 * oneMinuteMs;
 
 export const collectionSourceDefinitions = [
   {
@@ -113,6 +115,16 @@ export const collectionSourceDefinitions = [
     id: 'cursor.commit-attribution',
     kind: 'dataset-producer',
     label: 'Cursor commit attribution',
+  },
+  {
+    // Spawns `claude --version` / `codex login status` style metadata commands, so it polls far
+    // less often than the file readers. It qualifies review routing; it is never report data.
+    cadenceMs: fifteenMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'executors.capabilities',
+    kind: 'producer',
+    label: 'Executor capabilities',
   },
 ] as const satisfies readonly CollectionSourceDefinition[];
 

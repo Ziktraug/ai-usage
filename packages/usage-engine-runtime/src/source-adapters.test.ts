@@ -10,6 +10,7 @@ import { collectionSourceIds } from '@ai-usage/report-core/source-control';
 import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
   initializeUsageStore,
+  queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
@@ -233,6 +234,79 @@ describe('scheduled source adapters', () => {
       expect(
         (await Effect.runPromise(registry.get('opencode.sessions')?.detect ?? Effect.die('missing'))).availability,
       ).toBe('not-detected');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('observes executor capabilities through injected seams and stores them without a publication', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-executors-'));
+    try {
+      const spawned: string[] = [];
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const registry = await createRegistry(home, {
+        executorObservation: {
+          run: (spec) => {
+            spawned.push(`${spec.command} ${spec.args.join(' ')}`);
+            if (spec.command === 'claude') {
+              return Promise.resolve(
+                spec.args[0] === '--version'
+                  ? { exitCode: 0, stdout: '2.1.303 (Claude Code)\n' }
+                  : { exitCode: 0, stdout: JSON.stringify({ loggedIn: true, email: 'hidden@example.test' }) },
+              );
+            }
+            return Promise.resolve({ exitCode: 1, stdout: '' });
+          },
+          which: (command) => (command === 'claude' ? '/usr/bin/claude' : null),
+        },
+        now: () => now,
+      });
+      const source = registry.get('executors.capabilities');
+      expect(Duration.toMillis(source?.cadence ?? Duration.zero)).toBe(900_000);
+      expect((await Effect.runPromise(source?.detect ?? Effect.die('missing'))).availability).toBe('detected');
+      const progress: unknown[] = [];
+      const result = await Effect.runPromise(source?.run(progressContext(progress)) ?? Effect.die('missing'));
+      expect(result).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
+      // The missing Codex binary is observed, not probed.
+      expect(spawned).toEqual(['claude --version', 'claude auth status']);
+
+      const stored = await Effect.runPromise(
+        queryLatestExecutorObservations({ dbPath: usageStorePath(home), machineId: machine.id }),
+      );
+      expect(stored.skipped).toBe(0);
+      expect(stored.observations).toEqual([
+        {
+          authEvidence: 'claude auth status exit 0 loggedIn=true',
+          authState: 'logged-in',
+          binaryPath: '/usr/bin/claude',
+          harness: 'claude-code',
+          machineId: machine.id,
+          observedAt: now.toISOString(),
+          outcome: 'observed',
+          version: '2.1.303 (Claude Code)',
+        },
+        {
+          authEvidence: 'codex binary not found on PATH',
+          authState: 'unknown',
+          binaryPath: null,
+          harness: 'codex',
+          machineId: machine.id,
+          observedAt: now.toISOString(),
+          outcome: 'unavailable',
+          version: null,
+        },
+      ]);
+      expect(JSON.stringify(stored)).not.toContain('hidden@example.test');
+
+      const withoutBinaries = await createRegistry(home, { executorObservation: { which: () => null } });
+      expect(
+        (await Effect.runPromise(withoutBinaries.get('executors.capabilities')?.detect ?? Effect.die('missing')))
+          .availability,
+      ).toBe('not-detected');
+      const unavailable = await Effect.runPromise(
+        withoutBinaries.get('executors.capabilities')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(unavailable.unavailable?.code).toBe('run-unavailable');
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

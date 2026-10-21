@@ -1,6 +1,10 @@
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 export type {
+  ExecutorObservationImportResult,
+  ImportExecutorObservationsInput,
+} from './executor-observation-store';
+export type {
   AcknowledgeUsageReplicationBatchInput,
   BackfillUsageReplicationOutboxInput,
   BackfillUsageReplicationOutboxResult,
@@ -78,6 +82,7 @@ export {
   confirmPeerMergeBundle,
   createUsageStore,
   exportLocalMergeBundle,
+  importExecutorObservations,
   importLocalRows,
   importNormalizedDatasetItems,
   importPeerMergeBundle,

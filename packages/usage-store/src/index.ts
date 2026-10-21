@@ -63,6 +63,7 @@ import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import { createExecutorObservationStore } from './executor-observation-store';
 import {
   inspectPrivateStoreForConfirmation,
   type PrivateStoreConfirmationIdentity,
@@ -1298,6 +1299,11 @@ const migrate = (db: SqliteDatabase): boolean => {
       .query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'skill_observation_collection_state'")
       .get() === null;
   schemaChanged ||= skillObservationsMissing || skillObservationCollectionStateMissing;
+  // Executor observations (review routing) are additive under the same user_version; presence is
+  // again the only signal.
+  const executorObservationsMissing =
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'executor_observations'").get() === null;
+  schemaChanged ||= executorObservationsMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1572,6 +1578,23 @@ const migrate = (db: SqliteDatabase): boolean => {
       ON skill_observations(tier, observed_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_skill_observations_machine
       ON skill_observations(machine_id, observed_at, id);
+
+    -- Executor observations: which harness CLIs a machine can run and whether they are signed
+    -- in, observed by the executors.capabilities source. Retention is 10 rows per machine and
+    -- harness, enforced on import. auth_evidence is a bounded, credential-free classification.
+    CREATE TABLE IF NOT EXISTS executor_observations (
+      id INTEGER PRIMARY KEY,
+      machine_id TEXT NOT NULL,
+      harness TEXT NOT NULL CHECK (harness IN ('claude-code', 'codex')),
+      observed_at TEXT NOT NULL,
+      binary_path TEXT,
+      version TEXT,
+      auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
+      auth_evidence TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_executor_observations_latest
+      ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
     if (skillObservationCollectionStateMissing) {
       // Stores written by the first implementation have observation/session
@@ -4188,6 +4211,13 @@ export const { importSkillObservations, querySkillObservations, retainSkillObser
     withUsageStoreWriter,
   },
 );
+
+export const { importExecutorObservations, queryLatestExecutorObservations } = createExecutorObservationStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,

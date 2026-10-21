@@ -5,6 +5,7 @@ import {
   type HarnessAdapter,
   selectedHarnessAdapters,
 } from '@ai-usage/local-collectors/collectors';
+import { type BoundedRun, observeExecutors } from '@ai-usage/local-collectors/executor-observations';
 import { collectCursorCommitAttributionResult } from '@ai-usage/local-collectors/facets';
 import {
   type CollectorRow,
@@ -38,6 +39,7 @@ import {
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import {
+  importExecutorObservations,
   importLocalRows,
   importNormalizedDatasetItems,
   importSkillObservations,
@@ -77,6 +79,11 @@ export interface SourceAdapterOptions {
   readonly codexLiveAvailable?: () => boolean;
   readonly configCwd?: string;
   readonly dbPath?: string;
+  /** Seams for the executor capabilities source: binary lookup and bounded process execution. */
+  readonly executorObservation?: {
+    readonly run?: BoundedRun;
+    readonly which?: (command: string) => string | null;
+  };
   readonly machine?: UsageMachine;
   readonly now?: () => Date;
   readonly providerQuotaOptions?: ProviderQuotaRuntimeOptions;
@@ -511,6 +518,58 @@ const createCursorAttributionSource = (input: {
     }),
 });
 
+const createExecutorCapabilitiesSource = (input: {
+  dbPath: string;
+  detect: Effect.Effect<SourceDetectionResult>;
+  machine: UsageMachine;
+  now: () => Date;
+  observation: SourceAdapterOptions['executorObservation'];
+}): ScheduledSource => ({
+  cadence: Duration.millis(getCollectionSourceDefinition('executors.capabilities').cadenceMs),
+  detect: input.detect,
+  id: 'executors.capabilities',
+  run: (context) =>
+    Effect.gen(function* () {
+      yield* reportProgress(context, { phase: 'reading' });
+      const availability = yield* input.detect;
+      if (availability.availability !== 'detected') {
+        return sourceUnavailableResult();
+      }
+      const observations = yield* Effect.tryPromise({
+        catch: (cause) => sourceFailure('executors.capabilities', cause),
+        try: () =>
+          observeExecutors({
+            machineId: input.machine.id,
+            now: input.now,
+            ...(input.observation?.run === undefined ? {} : { run: input.observation.run }),
+            ...(input.observation?.which === undefined ? {} : { which: input.observation.which }),
+          }),
+      });
+      yield* abortIfRequested(context.signal);
+      yield* reportProgress(context, { completed: 0, phase: 'importing', total: observations.length });
+      const imported = yield* importExecutorObservations({ dbPath: input.dbPath, observations }).pipe(
+        Effect.mapError((cause) => sourceFailure('executors.capabilities', cause)),
+      );
+      // Observations qualify review routing; they are not report data, so a new row never asks
+      // for a served-revision publication. An absent binary is an observed fact, not a warning;
+      // only a probe that could not conclude (timeout, unreadable output) is worth surfacing.
+      return {
+        changed: false,
+        inputCount: observations.length,
+        outputCount: imported.inserted,
+        warnings: observations
+          .filter((observation) => observation.outcome === 'timeout' || observation.outcome === 'invalid')
+          .map((observation) => ({
+            code: `executor-${observation.harness}-${observation.outcome}`,
+            message: `${observation.harness}: ${observation.authEvidence}`.slice(
+              0,
+              sourceControlBounds.maxMessageLength,
+            ),
+          })),
+      };
+    }),
+});
+
 const createProviderQuotaSource = (input: {
   dbPath: string;
   detect: Effect.Effect<SourceDetectionResult>;
@@ -604,6 +663,12 @@ export const createScheduledSourceRegistry = (
       const liveAvailable = options.claudeLiveAvailable?.() ?? Bun.which('claude') !== null;
       return liveAvailable && history.availability === 'detected' ? detected() : notDetected();
     });
+    // At least one harness CLI on the PATH. Only metadata commands run, so no local history is
+    // required: an installed but never-used CLI is still a fact worth recording.
+    const executorDetection = Effect.sync(() => {
+      const which = options.executorObservation?.which ?? ((command: string) => Bun.which(command));
+      return which('claude') !== null || which('codex') !== null ? detected() : notDetected();
+    });
     const sources: ScheduledSource[] = [
       createSessionSource({
         adapter: () => harnessAdapter('claude.sessions'),
@@ -690,6 +755,13 @@ export const createScheduledSourceRegistry = (
         detect: detections.cursorAttribution,
         machine,
         storage,
+      }),
+      createExecutorCapabilitiesSource({
+        dbPath,
+        detect: executorDetection,
+        machine,
+        now: options.now ?? (() => new Date()),
+        observation: options.executorObservation,
       }),
     ];
     const registry = new Map(sources.map((source) => [source.id, source] as const));
