@@ -92,7 +92,8 @@ describe('work attention chain', () => {
     expect(blocked?.attention).toBe('human-request');
     expect(blocked?.declared?.status).toBe('blocked');
     expect(blocked?.declared?.needsAction).toBe('Confirm whether the fixture should keep checkout 3 or delete it.');
-    expect(blocked?.children).toMatchObject({ blocked: 0, completed: 1, count: 2, reviewReady: 1 });
+    // Two children and one grandchild, all folded under the root.
+    expect(blocked?.children).toMatchObject({ blocked: 0, completed: 2, count: 3, reviewReady: 1 });
     expect(blocked?.key).toEqual({ harness: 'claude', machineId: MACHINE, sourceSessionId: fixture.ids.claude });
     expect(blocked?.project.worktreeName).toBe('checkout-3');
     expect(blocked?.facts.map(({ kind }) => kind)).toEqual([

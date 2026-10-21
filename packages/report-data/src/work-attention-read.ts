@@ -209,39 +209,59 @@ const factsOf = (group: RootGroup): WorkFact[] => {
   return facts.slice(0, maxFacts);
 };
 
+const sessionKey = (observation: Pick<ClaudeDesktopSessionObservation, 'desktopSessionId' | 'machineId'>): string =>
+  `${observation.machineId}\u0000${observation.desktopSessionId}`;
+
 /**
- * Roots and children, by `spawnedFrom`. A child's parent must be a session of the same machine in
- * this read; a child whose parent is absent becomes a root flagged `parentMissing`, because
- * hiding it would hide a declaration and promoting it silently would claim a certainty the
- * registry does not give.
+ * Roots and their descendants, by `spawnedFrom`. The chain is followed to its top: a child of a
+ * child folds under the same root as its parent, so a root's `children` are its whole family and
+ * no session disappears between two levels. A parent must be a session of the same machine in
+ * this read; the top of a chain whose parent is absent becomes a root flagged `parentMissing`,
+ * because hiding it would hide a declaration and promoting it silently would claim a certainty
+ * the registry does not give. A cycle (which the registry never writes) stops at the first
+ * repeated session, which then stands as the root.
  */
 const groupRoots = (observations: readonly ClaudeDesktopSessionObservation[]): RootGroup[] => {
   const byKey = new Map<string, ClaudeDesktopSessionObservation>();
   for (const observation of observations) {
-    byKey.set(`${observation.machineId}\u0000${observation.desktopSessionId}`, observation);
+    byKey.set(sessionKey(observation), observation);
   }
-  const childrenByParent = new Map<string, ClaudeDesktopSessionObservation[]>();
-  const roots: { observation: ClaudeDesktopSessionObservation; parentMissing: boolean }[] = [];
-  for (const observation of observations) {
-    const parentKey =
-      observation.spawnedFrom === null ? null : `${observation.machineId}\u0000${observation.spawnedFrom.sessionId}`;
-    if (
-      parentKey !== null &&
-      byKey.has(parentKey) &&
-      parentKey !== `${observation.machineId}\u0000${observation.desktopSessionId}`
-    ) {
-      const siblings = childrenByParent.get(parentKey) ?? [];
-      siblings.push(observation);
-      childrenByParent.set(parentKey, siblings);
-      continue;
+  const topOf = (
+    observation: ClaudeDesktopSessionObservation,
+  ): { readonly parentMissing: boolean; readonly top: ClaudeDesktopSessionObservation } => {
+    const visited = new Set<string>([sessionKey(observation)]);
+    let current = observation;
+    for (;;) {
+      if (current.spawnedFrom === null) {
+        return { parentMissing: false, top: current };
+      }
+      const parent = byKey.get(
+        sessionKey({ desktopSessionId: current.spawnedFrom.sessionId, machineId: current.machineId }),
+      );
+      if (parent === undefined) {
+        return { parentMissing: true, top: current };
+      }
+      if (visited.has(sessionKey(parent))) {
+        return { parentMissing: false, top: current };
+      }
+      visited.add(sessionKey(parent));
+      current = parent;
     }
-    roots.push({ observation, parentMissing: parentKey !== null });
+  };
+  const groups = new Map<
+    string,
+    { children: ClaudeDesktopSessionObservation[]; parentMissing: boolean; root: ClaudeDesktopSessionObservation }
+  >();
+  for (const observation of observations) {
+    const { parentMissing, top } = topOf(observation);
+    const key = sessionKey(top);
+    const group = groups.get(key) ?? { children: [], parentMissing, root: top };
+    if (top !== observation) {
+      group.children.push(observation);
+    }
+    groups.set(key, group);
   }
-  return roots.map(({ observation, parentMissing }) => ({
-    children: childrenByParent.get(`${observation.machineId}\u0000${observation.desktopSessionId}`) ?? [],
-    parentMissing,
-    root: observation,
-  }));
+  return [...groups.values()];
 };
 
 const latestActivity = (group: RootGroup): CanonicalInstant =>

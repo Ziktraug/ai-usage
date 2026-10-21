@@ -277,6 +277,15 @@ const representativeSpecs = (cliSessionIdWithTranscript: string): readonly Sessi
       status: 'review_ready',
       title: 'Fixture: orphan child',
     },
+    // A child of a child: it must fold under the blocked root, not vanish between two levels.
+    {
+      ageHours: 0.6,
+      id: id('blocked-grandchild-1'),
+      pair: 0,
+      spawnedFromId: id('blocked-child-1'),
+      status: 'completed',
+      title: 'Fixture: grandchild of checkout 3',
+    },
     { ageHours: 15, id: id('enquete-1'), pair: 1, status: 'completed', title: 'Enquête' },
     { ageHours: 26, id: id('enquete-2'), pair: 0, status: 'completed', title: 'Enquête' },
     ...filler,

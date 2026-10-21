@@ -136,6 +136,14 @@ const sessions: readonly ClaudeDesktopSessionObservation[] = [
     title: 'Fixture: A child opened it',
   }),
   session({ id: 'a2', lastActivityHoursAgo: 4, spawnedFromId: 'local_a', status: 'review_ready', title: 'Enquête' }),
+  // A grandchild: spawned from a child, folded under the same root.
+  session({
+    id: 'a3',
+    lastActivityHoursAgo: 2.5,
+    spawnedFromId: 'local_a1',
+    status: 'completed',
+    title: 'Fixture: A grandchild',
+  }),
   session({
     cliSessionId: 'cli-served',
     id: 'b',
@@ -172,7 +180,7 @@ const createStore = async (): Promise<string> => {
   await Effect.runPromise(
     importClaudeDesktopSessions({
       collectedAt: new Date('2026-10-20T11:59:00.000Z'),
-      completeness: { filesParsed: 8, filesSeen: 9, rejected: 0, truncated: false, unsupported: 1 },
+      completeness: { filesParsed: 9, filesSeen: 10, rejected: 0, truncated: false, unsupported: 1 },
       dbPath,
       machineId: MACHINE,
       observations: sessions,
@@ -302,10 +310,11 @@ describe('queryWorkAttention', () => {
     const a = byId.get('local_a');
     expect(a?.children).toEqual({
       blocked: 0,
-      completed: 1,
-      count: 2,
+      completed: 2,
+      count: 3,
       reviewReady: 1,
-      titles: ['Fixture: A child opened it', 'Enquête'],
+      // Most recently active first, the order the family was read in.
+      titles: ['Fixture: A grandchild', 'Fixture: A child opened it', 'Enquête'],
     });
     expect(a?.declared).toEqual({
       at: hoursAgo(5),
@@ -364,8 +373,8 @@ describe('queryWorkAttention', () => {
       checkouts: { failed: 0, lastRunAt: null, observed: 0 },
       desktopSessions: {
         collectedAt: canonicalInstantFromDate(new Date('2026-10-20T11:59:00.000Z')),
-        filesParsed: 8,
-        filesSeen: 9,
+        filesParsed: 9,
+        filesSeen: 10,
         refusedRows: 0,
         truncated: false,
         unsupported: 1,
