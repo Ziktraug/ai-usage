@@ -80,7 +80,7 @@ describe('Work session Svelte rendering from synthetic projection boundaries', (
     expect(page.items[0]?.row.campaignTotalCount).toBe(1);
     expect(page.items[0]?.row.originProvenance).toBeUndefined();
     const html = render(fixture, {
-      props: { session: { client, item: page.items[0], revision, onSelect: () => undefined } },
+      props: { session: { client, item: page.items[0], revision } },
     }).body.replaceAll(/\s+/g, ' ');
     expect(html).toContain('Delegated');
     expect(html).toContain('Parent relationship unavailable');
@@ -94,7 +94,7 @@ describe('Work session Svelte rendering from synthetic projection boundaries', (
     const { origin: _origin, ...row } = syntheticSessionRow(0);
     const page = projectSessionPage([{ ...row, ...(origin ? { origin } : {}) }], workRequest(revision));
     const html = render(fixture, {
-      props: { session: { client, item: page.items[0], revision, onSelect: () => undefined } },
+      props: { session: { client, item: page.items[0], revision } },
     }).body;
     expect(html).not.toContain('Parent relationship unavailable');
     expect(html).not.toContain('Declared parent:');
@@ -104,7 +104,7 @@ describe('Work session Svelte rendering from synthetic projection boundaries', (
     const { source: _source, ...row } = syntheticSessionRow(0);
     const page = projectSessionPage([{ ...row, origin: 'subagent', subagent: true }], workRequest(revision));
     const html = render(fixture, {
-      props: { session: { client, item: page.items[0], revision, onSelect: () => undefined } },
+      props: { session: { client, item: page.items[0], revision } },
     }).body;
     expect(html).toContain('Native session identity is unavailable');
     expect(html).toContain('Parent relationship unavailable');
@@ -125,7 +125,7 @@ describe('Work session Svelte rendering from synthetic projection boundaries', (
       workRequest(revision),
     );
     const html = render(fixture, {
-      props: { session: { client, item: page.items[0], revision, onSelect: () => undefined } },
+      props: { session: { client, item: page.items[0], revision } },
     }).body.replaceAll(/\s+/g, ' ');
     expect(html).toContain('Declared parent: declared-parent');
     expect(html).not.toContain('No parent identifier is present in this observation.');

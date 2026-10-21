@@ -1,58 +1,166 @@
 import AxeBuilder from '@axe-core/playwright';
-import type { Page } from '@playwright/test';
-import { expect, test, waitForHydratedReport } from './browser-test';
+import type { Locator, Page } from '@playwright/test';
+import { expect, test } from './browser-test';
+
+/**
+ * The Work resume surface reads the `work.attention` dataset. Until that procedure joins the web
+ * contract, the e2e runtime answers a typed unavailability, so these regressions run the page in
+ * the demo composition (synthetic dataset, no `/rpc`), which the server selects per request.
+ */
+test.use({ extraHTTPHeaders: { 'x-ai-usage-sveltekit-mode': 'demo' } });
+
+const SYNTHETIC_ROOTS = 25;
+const BLOCKED_TITLE = 'Fix mobile navigation label overlap';
+const BLOCKED_QUESTION = 'Which of the two 320px layouts do you prefer?';
+const JOINED_TITLE = 'Build report UI';
+const KNOWN_WAITS_PATTERN = /Known waits/;
+const NEEDS_YOU_CHIP_PATTERN = /^Needs you/;
+const CLAUDE_CHIP_PATTERN = /^Claude/;
 
 const waitForHydratedWork = async (page: Page): Promise<void> => {
-  await expect(page.locator('[data-work-session][data-work-hydrated="true"]').first()).toBeVisible();
+  await expect(page.locator('main[data-route-shell="work"][data-work-hydrated="true"]')).toBeVisible({
+    timeout: 15_000,
+  });
 };
-
-test('Work uses bounded synthetic observations, accessible detail links and a side-effect-free routing simulation', async ({
-  page,
-}) => {
-  await page.goto('/');
-  await waitForHydratedReport(page);
-  await page.getByRole('navigation', { name: 'Work space' }).getByRole('link', { name: 'Work', exact: true }).click();
-  await waitForHydratedWork(page);
-  await expect(page.getByRole('heading', { name: 'Work', exact: true, level: 1 })).toBeVisible();
-  await expect(
-    page.getByText('Synthetic demonstration · no local history is read. Routing eligibility is fixture data.'),
-  ).toBeVisible();
-  const sourceSummary = page.locator('summary').filter({ hasText: 'Sources and limits' });
-  await sourceSummary.focus();
-  await page.keyboard.press('Enter');
-  await expect(page.getByText('Known waits are unavailable.', { exact: false })).toBeVisible();
-  const session = page.locator('[data-work-session]').filter({ hasText: 'Build report UI' }).first();
-  await expect(session).toContainText('Last recorded activity across related sessions');
-  await session.getByRole('link', { name: 'Open session detail' }).click();
-  await expect(page.getByRole('dialog', { name: 'Session details', exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await page.goto('/work');
-  await waitForHydratedWork(page);
+const rowNamed = (page: Page, title: string): Locator =>
+  page.locator('[data-work-root]').filter({ has: page.getByText(title, { exact: true }) });
+const expectNoOverflow = async (page: Page): Promise<void> => {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+};
+const expectAxeClean = async (page: Page): Promise<void> => {
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+};
+/** Overlay animations blend colours while they run; axe reads the settled frame. */
+const settleAnimations = async (page: Page): Promise<void> => {
+  await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
+};
+const trackPosts = (page: Page): string[] => {
   const posts: string[] = [];
   page.on('request', (request) => {
     if (request.method() === 'POST') {
       posts.push(new URL(request.url()).pathname);
     }
   });
-  await page.locator('[data-work-session]').first().getByRole('button', { name: 'Simulate review assignment' }).click();
-  await expect(page.getByRole('heading', { name: 'Review assignment simulation', exact: true })).toBeFocused();
-  await page.getByRole('button', { name: 'Run simulation', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Routing result' })).toContainText('Chosen: Claude Code');
-  await page.getByLabel('Harness preference').selectOption('codex');
-  await expect(page.getByRole('region', { name: 'Routing result' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Run simulation', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Routing result' })).toContainText('Chosen: Codex');
-  await expect(page.getByRole('region', { name: 'Routing result' })).toContainText('No execution was started');
-  await page.locator('summary').filter({ hasText: 'Synthetic evidence examples' }).click();
-  await expect(page.getByText('Projection-boundary fixtures; these are not collected native outcomes.')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Requested PR observed open' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Proposal unanswered' })).toBeVisible();
+  return posts;
+};
+
+test('desktop arrival is informative, searchable, keyboard-navigable and keeps the simulation inside the detail', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const posts = trackPosts(page);
+  await page.goto('/work');
+  await waitForHydratedWork(page);
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
+  await expect(main.locator('[data-work-coverage]')).toContainText('39 of 41 files parsed');
+  for (const name of ['Needs you', 'Waiting on others', 'Leads', 'Recent, nothing pending']) {
+    await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
+  }
+  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(5);
+  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(10);
+  await expect(main.getByText(KNOWN_WAITS_PATTERN)).toHaveCount(0);
+  await expect(main.getByRole('button', { name: 'Simulate review assignment' })).toHaveCount(0);
+  await expect(main.getByRole('button', { name: 'Run simulation' })).toHaveCount(0);
+  await expect(main.getByText('Declared by the session; current state unobserved.')).toHaveCount(3);
+  await expect(
+    main.getByRole('status').filter({ hasText: `${SYNTHETIC_ROOTS} of ${SYNTHETIC_ROOTS} roots shown` }),
+  ).toBeVisible();
+  await expect(main.locator('summary').filter({ hasText: 'Sources and limits' })).toBeVisible();
+  await expect(main.locator('details[data-work-sources]')).not.toHaveAttribute('open', '');
+  await expect(main.locator('details[data-work-served-roots]')).not.toHaveAttribute('open', '');
+
+  // Search narrows the sections and lands in the address.
+  await page.getByRole('searchbox').fill('mobile navigation');
+  await expect(main.getByRole('status').filter({ hasText: `1 of ${SYNTHETIC_ROOTS} roots shown` })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('mobile navigation');
+  const blocked = rowNamed(page, BLOCKED_TITLE);
+  await expect(blocked).toHaveCount(1);
+  await expect(blocked).toContainText('blocked · 26 h ago');
+  await expect(blocked).toContainText('PR #71 checks pending');
+
+  // The detail opens beside the list with the declaration, its exact date and the grouped facts.
+  await blocked.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBe('desk-mobile-nav');
+  const aside = main.locator('[data-work-aside]');
+  await expect(aside.locator('[data-work-detail]')).toBeVisible();
+  await expect(aside.locator('[data-work-question]')).toContainText(BLOCKED_QUESTION);
+  await expect(aside).toContainText('Declared by the session at Jun 10, 2026, 10:00 UTC');
+  await expect(aside.getByRole('heading', { level: 3, name: 'Facts by source' })).toBeVisible();
+  await expect(aside).toContainText('GitHub');
+  await expect(aside).toContainText('Local checkout');
+  await expect(aside.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(aside.getByRole('button', { name: 'Run simulation' })).toHaveCount(0);
+  await expect(aside).toContainText('No collected transcript identifies a review target');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expectAxeClean(page);
+
+  // Closing travels back: the filter and the scroll position survive, focus returns to the row.
+  await page.goBack();
+  await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBeNull();
+  expect(new URL(page.url()).searchParams.get('q')).toBe('mobile navigation');
+  await expect(aside.locator('[data-work-detail]')).toHaveCount(0);
+  await expect(blocked).toBeFocused();
+
+  // Keyboard: arrows move between rows, Enter opens, Escape closes and restores focus.
+  await page.getByRole('searchbox').fill('');
+  await expect(
+    main.getByRole('status').filter({ hasText: `${SYNTHETIC_ROOTS} of ${SYNTHETIC_ROOTS} roots shown` }),
+  ).toBeVisible();
+  const first = main.locator('[data-work-section="human-request"] [data-work-root]').nth(0);
+  const second = main.locator('[data-work-section="human-request"] [data-work-root]').nth(1);
+  await first.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(second).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(first).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(aside.locator('[data-work-detail]')).toBeVisible();
+  await expect(first).toHaveAttribute('aria-current', 'true');
+  await page.keyboard.press('Escape');
+  await expect(aside.locator('[data-work-detail]')).toHaveCount(0);
+  await expect(first).toBeFocused();
+
+  // The simulation belongs to one understood target: a root joined to a collected Session.
+  await main.locator('[data-work-section="none"] button', { hasText: 'Show all 13' }).click();
+  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(13);
+  await rowNamed(page, JOINED_TITLE).click();
+  await expect(aside).toContainText(`Simulates a read-only review of “${JOINED_TITLE}”`);
+  await expect(aside.getByRole('link', { name: 'Open session detail' })).toBeVisible();
+  await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
+  await expect(aside.getByRole('region', { name: 'Routing result' })).toContainText('Chosen: Claude Code');
+  await expect(aside.getByRole('region', { name: 'Routing result' })).toContainText('No execution was started');
+  await expect(main.getByRole('button', { name: 'Run simulation' })).toHaveCount(1);
   expect(posts).toEqual([]);
-  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await expectAxeClean(page);
 });
 
-test('Work remains usable on mobile with collapsed related sessions and no horizontal overflow', async ({ page }) => {
+test('a direct address restores the filters and the selected root, and the detail links to the session', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/work?attention=human-request&harness=claude&root=desk-mobile-nav');
+  await waitForHydratedWork(page);
+  const main = page.getByRole('main');
+  const filters = main.locator('[data-work-filters]');
+  await expect(filters.getByRole('button', { name: NEEDS_YOU_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
+  await expect(filters.getByRole('button', { name: CLAUDE_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
+  await expect(main.locator('[data-work-root]')).toHaveCount(5);
+  await expect(main.locator('[data-work-aside] [data-work-question]')).toContainText(BLOCKED_QUESTION);
+  await expect(rowNamed(page, BLOCKED_TITLE)).toHaveAttribute('aria-current', 'true');
+  await main.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await expect(main.locator('[data-work-root]')).toHaveCount(22);
+  await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBe('desk-mobile-nav');
+  await main.getByRole('button', { name: 'Close detail', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBeNull();
+  await expect(rowNamed(page, BLOCKED_TITLE)).toBeFocused();
+});
+
+test('mobile keeps the list readable and opens the detail as a drawer without horizontal overflow', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  const posts = trackPosts(page);
   await page.goto('/work');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
@@ -60,33 +168,52 @@ test('Work remains usable on mobile with collapsed related sessions and no horiz
   await expect(
     page.locator('[data-app-navigation="mobile"]').getByRole('link', { name: 'Work', exact: true }),
   ).toBeVisible();
-  const related = main.locator('summary').filter({ hasText: 'related sessions and technical reviews' }).first();
-  const disclosure = related.locator('..');
-  await expect(related).toBeVisible();
-  await expect(disclosure).not.toHaveAttribute('open', '');
-  await related.focus();
-  await page.keyboard.press('Enter');
-  await expect(disclosure).toHaveAttribute('open', '');
-  await expect(disclosure.getByRole('list').getByRole('link').first()).toBeVisible();
-  await related.focus();
-  await page.keyboard.press('Space');
-  await expect(disclosure).not.toHaveAttribute('open', '');
-  await expect(disclosure.getByRole('list')).toBeHidden();
-  await page.keyboard.press('Enter');
-  await expect(disclosure).toHaveAttribute('open', '');
-  await expect(disclosure.getByRole('list').getByRole('link').first()).toBeVisible();
-  await main.getByRole('button', { name: 'Simulate review assignment' }).first().click();
-  await page.getByRole('button', { name: 'Run simulation', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Routing result' })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await expect(main.locator('[data-work-aside]')).toBeHidden();
+  await expectNoOverflow(page);
+  await expectAxeClean(page);
+  await rowNamed(page, BLOCKED_TITLE).click();
+  const dialog = page.getByRole('dialog', { name: 'Selected root', exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('[data-work-question]')).toContainText(BLOCKED_QUESTION);
+  await expect(dialog.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close detail', exact: true })).toBeFocused();
+  await settleAnimations(page);
+  await expectNoOverflow(page);
+  await expectAxeClean(page);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBeNull();
+  expect(posts).toEqual([]);
 });
 
-test('Work preserves a related-session disclosure opened by keyboard before hydration', async ({ page }) => {
+for (const width of [768, 1279]) {
+  test(`the ${width}px band keeps the rail and the detail placement coherent`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/work');
+    await waitForHydratedWork(page);
+    const main = page.getByRole('main');
+    const rail = page.locator('[data-app-navigation="desktop"][data-hydrated="true"]');
+    await expect(rail.getByRole('link', { name: 'Work', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expectNoOverflow(page);
+    await rowNamed(page, BLOCKED_TITLE).click();
+    if (width >= 1024) {
+      await expect(main.locator('[data-work-aside] [data-work-detail]')).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+    } else {
+      await expect(main.locator('[data-work-aside]')).toBeHidden();
+      await expect(page.getByRole('dialog', { name: 'Selected root', exact: true })).toBeVisible();
+    }
+    await settleAnimations(page);
+    await expectNoOverflow(page);
+    await expectAxeClean(page);
+  });
+}
+
+test('Work preserves disclosures opened by keyboard before hydration', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const scriptsBlocked = Promise.withResolvers<void>();
   const releaseScripts = Promise.withResolvers<void>();
-  // Hold the real application scripts so the early native gesture is deterministic.
+  // Hold the real application scripts so the early native gestures are deterministic.
   await page.route('**/*', async (route) => {
     if (route.request().resourceType() === 'script') {
       scriptsBlocked.resolve();
@@ -98,14 +225,23 @@ test('Work preserves a related-session disclosure opened by keyboard before hydr
   try {
     await page.goto('/work', { waitUntil: 'commit' });
     await scriptsBlocked.promise;
-    const card = page
+    const main = page.getByRole('main');
+    await expect(main).toHaveAttribute('data-work-hydrated', 'false');
+    // The resume sections are server-rendered and readable before any script runs.
+    await expect(main.getByRole('heading', { level: 2, name: 'Needs you', exact: true })).toBeVisible();
+    const served = main.locator('details[data-work-served-roots]');
+    const servedSummary = served.locator('> summary');
+    await expect(served).not.toHaveAttribute('open', '');
+    await servedSummary.focus();
+    await page.keyboard.press('Enter');
+    await expect(served).toHaveAttribute('open', '');
+    const card = served
       .locator('[data-work-session]')
       .filter({ hasText: 'related sessions and technical reviews' })
       .first();
     const related = card.locator('summary').filter({ hasText: 'related sessions and technical reviews' });
     const disclosure = related.locator('..');
     await expect(card).toHaveAttribute('data-work-hydrated', 'false');
-    await expect(disclosure).not.toHaveAttribute('open', '');
     await related.focus();
     await page.keyboard.press('Enter');
     await expect(disclosure).toHaveAttribute('open', '');
@@ -113,6 +249,7 @@ test('Work preserves a related-session disclosure opened by keyboard before hydr
 
     releaseScripts.resolve();
     await expect(card).toHaveAttribute('data-work-hydrated', 'true');
+    await expect(served).toHaveAttribute('open', '');
     await expect(disclosure).toHaveAttribute('open', '');
     await expect(disclosure.getByRole('list').getByRole('link').first()).toBeVisible();
   } finally {
