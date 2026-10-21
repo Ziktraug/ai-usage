@@ -73,6 +73,7 @@ import {
   revalidatePrivateStoreForConfirmation,
 } from './private-storage';
 import { createProviderQuotaStore, MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-store';
+import { createReviewAttemptStore, REVIEW_ATTEMPT_TABLES, reviewAttemptSchemaSql } from './review-attempt-store';
 import type { ServedRevisionQueryKind } from './served-query-catalog';
 import { createServedReportStore } from './served-report-store';
 import {
@@ -1430,6 +1431,11 @@ const migrate = (db: SqliteDatabase): boolean => {
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_collection_state'").get() ===
       null;
   schemaChanged ||= claudeDesktopSessionsMissing;
+  // Review attempts (ADR 0053) follow the same additive rule: presence of the table is the signal.
+  const reviewAttemptsMissing = REVIEW_ATTEMPT_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= reviewAttemptsMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1723,6 +1729,7 @@ const migrate = (db: SqliteDatabase): boolean => {
       ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
     db.exec(workFactSchemaSql);
+    db.exec(reviewAttemptSchemaSql);
     if (skillObservationCollectionStateMissing) {
       // Stores written by the first implementation have observation/session
       // rows but no durable producer bound. The lost answer cannot be
@@ -4368,6 +4375,18 @@ export const { importClaudeDesktopSessions, queryClaudeDesktopCollectionState, q
     withUsageStoreReader,
     withUsageStoreWriter,
   });
+export const {
+  markReviewAttemptsLost,
+  queryReviewAttempts,
+  queryReviewTargetResolution,
+  requestReviewAttempt,
+  transitionReviewAttempt,
+} = createReviewAttemptStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,
