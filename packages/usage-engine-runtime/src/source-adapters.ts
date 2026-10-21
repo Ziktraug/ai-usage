@@ -614,10 +614,15 @@ const createClaudeDesktopSessionSource = (input: {
         imported.skipped > 0
           ? [{ operation: 'claudeDesktopSessions.storeRefused', rejectedRecords: imported.skipped }]
           : [];
+      // New or changed registry rows name checkouts and pull requests the two fact producers have
+      // not observed yet: wake them once rather than leave the Work view without facts until
+      // their cadence. Neither producer wakes anything, so this never chains.
+      const changedRows = imported.inserted + imported.updated;
       return {
         changed: false,
         inputCount: collection.completeness.filesSeen,
         outputCount: imported.inserted + imported.updated + imported.unchanged,
+        ...(changedRows > 0 ? { wake: ['checkouts.status', 'github.pull-requests'] as const } : {}),
         warnings: sanitizeSourceWarnings('Claude Desktop sessions', [...collection.warnings, ...storeWarnings]),
       };
     }),
@@ -1271,6 +1276,14 @@ export const createScheduledSourceRegistry = (
         machine,
         storage,
       }),
+      // Before the fact producers it feeds; the registry map keeps this order for the startup runs.
+      createClaudeDesktopSessionSource({
+        dbPath,
+        detect: detections.claudeDesktop,
+        machine,
+        now: options.now ?? (() => new Date()),
+        storage,
+      }),
       createExecutorCapabilitiesSource({
         dbPath,
         detect: executorDetection,
@@ -1291,13 +1304,6 @@ export const createScheduledSourceRegistry = (
         machine,
         now: options.now ?? (() => new Date()),
         options,
-        storage,
-      }),
-      createClaudeDesktopSessionSource({
-        dbPath,
-        detect: detections.claudeDesktop,
-        machine,
-        now: options.now ?? (() => new Date()),
         storage,
       }),
     ];

@@ -127,6 +127,102 @@ const makePublication = (
   });
 
 describe('source control plane', () => {
+  test('a result that wakes other sources queues each once as a dependency run, without a loop', async () => {
+    const wakers = (runs: Ref.Ref<string[]>): ReadonlyMap<CollectionSourceId, ScheduledSource> => {
+      const record = (id: CollectionSourceId) => Ref.update(runs, (current) => [...current, id]);
+      return new Map<CollectionSourceId, ScheduledSource>([
+        // The woken sources sit first, so their detection runs precede the waker's and the wake
+        // has to queue them again; the waker also names itself and an unregistered source.
+        [
+          'checkouts.status',
+          fakeSource('checkouts.status', () => record('checkouts.status').pipe(Effect.as(successResult()))),
+        ],
+        [
+          'github.pull-requests',
+          fakeSource('github.pull-requests', () => record('github.pull-requests').pipe(Effect.as(successResult()))),
+        ],
+        [
+          'claude.desktop-sessions',
+          fakeSource('claude.desktop-sessions', () =>
+            record('claude.desktop-sessions').pipe(
+              Effect.as({
+                ...successResult(),
+                wake: ['checkouts.status', 'github.pull-requests', 'claude.desktop-sessions', 'rtk.savings'] as const,
+              }),
+            ),
+          ),
+        ],
+      ]);
+    };
+    const waitForRuns = (runs: Ref.Ref<string[]>, count: number): Effect.Effect<string[]> =>
+      Effect.gen(function* () {
+        for (let attempt = 0; attempt < 2000; attempt++) {
+          const seen = yield* Ref.get(runs);
+          if (seen.length >= count) {
+            return seen;
+          }
+          yield* Effect.promise(() => hostScheduler.yield());
+        }
+        return yield* Ref.get(runs);
+      });
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const runs = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const control = yield* createSourceControl({
+          initialPublicationOrder: 'externally-published',
+          policyStore: store,
+          publication: publication.port,
+          sources: wakers(runs),
+        });
+        expect(yield* waitForRuns(runs, 5)).toEqual([
+          'checkouts.status',
+          'github.pull-requests',
+          'claude.desktop-sessions',
+          'checkouts.status',
+          'github.pull-requests',
+        ]);
+        const settled = yield* waitFor(
+          control,
+          (view) =>
+            view.queueDepth === 0 &&
+            (['checkouts.status', 'github.pull-requests', 'claude.desktop-sessions'] as const).every(
+              (id) => sourceView(view, id).lifecycle === 'scheduled' && sourceView(view, id).lastOutcome === 'success',
+            ),
+        );
+        expect(settled.queueDepth).toBe(0);
+        // Nothing wakes anything further: no cadence has elapsed and the woken sources name no wake.
+        yield* Effect.promise(() => hostScheduler.yield());
+        expect((yield* Ref.get(runs)).length).toBe(5);
+
+        // A foreground engine (autonomous collection closed) runs what it was asked for and follows no wake.
+        const foregroundRuns = yield* Ref.make<string[]>([]);
+        const foreground = yield* createSourceControl({
+          autonomousCollection: false,
+          initialPublicationOrder: 'externally-published',
+          policyStore: store,
+          publication: publication.port,
+          sources: wakers(foregroundRuns),
+        });
+        yield* waitFor(foreground, (view) =>
+          (['checkouts.status', 'github.pull-requests', 'claude.desktop-sessions'] as const).every(
+            (id) => sourceView(view, id).lastOutcome === 'success',
+          ),
+        );
+        yield* Effect.promise(() => hostScheduler.yield());
+        expect(yield* Ref.get(foregroundRuns)).toEqual([
+          'checkouts.status',
+          'github.pull-requests',
+          'claude.desktop-sessions',
+        ]);
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(testEnvLayer)));
+  });
+
   test('keeps a gated source queued until the writer permit is available', async () => {
     const program = Effect.scoped(
       Effect.gen(function* () {

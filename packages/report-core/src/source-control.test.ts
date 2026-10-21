@@ -59,6 +59,12 @@ describe('collection source contracts', () => {
   test('defines every stable source exactly once with the agreed defaults', () => {
     expect(collectionSourceDefinitions.map(({ id }) => id)).toEqual([...collectionSourceIds]);
     expect(new Set(collectionSourceIds).size).toBe(collectionSourceIds.length);
+    // The Desktop registry feeds the fact producers' inputs, so it precedes them: startup runs are
+    // serialized in catalogue order and the producers' first run must already see its rows.
+    const position = (id: (typeof collectionSourceIds)[number]) => collectionSourceIds.indexOf(id);
+    for (const fed of ['executors.capabilities', 'checkouts.status', 'github.pull-requests'] as const) {
+      expect(position('claude.desktop-sessions')).toBeLessThan(position(fed));
+    }
     // Provider quota is polled against a remote allowance, so it runs on a slower cadence than the
     // local-file sources; everything else reads the filesystem every minute.
     expect(

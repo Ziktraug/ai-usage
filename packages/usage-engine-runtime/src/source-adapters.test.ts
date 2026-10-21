@@ -775,8 +775,15 @@ describe('scheduled source adapters', () => {
         queryClaudeDesktopSessions({ dbPath: usageStorePath(home), machineId: machine.id }),
       );
 
-      // The family is outside the served revision: a full import is not a report change.
-      expect(first).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
+      // The family is outside the served revision: a full import is not a report change, but new
+      // rows wake the two fact producers that read them.
+      expect(first).toEqual({
+        changed: false,
+        inputCount: 2,
+        outputCount: 2,
+        wake: ['checkouts.status', 'github.pull-requests'],
+        warnings: [],
+      });
       expect(progress.map((update) => (update as { phase: string }).phase)).toEqual([
         'reading',
         'normalizing',
@@ -790,6 +797,7 @@ describe('scheduled source adapters', () => {
       expect(stored.observations[0]?.turnSummary?.needsAction).toBe('Decide whether to open the pull request.');
       expect(JSON.stringify(stored)).not.toContain('PRIVATE_DESKTOP_PROMPT_SENTINEL');
 
+      // An unchanged registry wakes nothing.
       const second = await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
       expect(second).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
     } finally {
