@@ -137,3 +137,4 @@ export {
   upsertRtkSavingsContributions,
   usageStorePath,
 } from './index';
+export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';

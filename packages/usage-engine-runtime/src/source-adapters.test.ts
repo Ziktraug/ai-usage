@@ -21,6 +21,7 @@ import {
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
 import {
+  importPullRequestObservations,
   queryLatestCheckoutStatusObservations,
   queryLatestPullRequestObservations,
   queryWorkFactRunStates,
@@ -1109,6 +1110,90 @@ describe('work fact sources', () => {
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => latest.number).sort((left, right) => left - right)).toEqual([66, 67, 70]);
       expect(JSON.stringify(stored)).not.toContain('#99');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('does not re-observe a declared pull request whose latest stored read showed it merged', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-merged-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const checkoutPath = path.join(home, 'projects', 'example');
+      const worktreePath = path.join(checkoutPath, '.claude', 'worktrees', 'wt-1');
+      mkdirSync(worktreePath, { recursive: true });
+      writeClaudeDesktopWorkRegistry(home, { checkoutPath, now, oldPath: path.join(home, 'old'), worktreePath });
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        ghAvailable: () => true,
+        gitAvailable: () => true,
+        now: () => now,
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      await Effect.runPromise(
+        registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      const stored = (number: number, overrides: Record<string, unknown>) => ({
+        accountLabel: null,
+        baseRef: 'main',
+        checksRollup: 'success',
+        draft: false,
+        headRef: `feat/pr-${String(number)}`,
+        host: 'github.com',
+        machineId: machine.id,
+        mergedAt: null,
+        number,
+        observedAt: '2026-10-21T20:00:00.000Z',
+        outcome: 'observed',
+        outcomeMessage: null,
+        repository: 'fixture/project',
+        reviewDecision: null,
+        state: 'OPEN',
+        title: 'Fixture pull request',
+        updatedAt: '2026-10-21T19:00:00.000Z',
+        url: `https://github.com/fixture/project/pull/${String(number)}`,
+        ...overrides,
+      });
+      // #66 was last seen merged; #67 was seen open and then could not be read: only #67 is live.
+      await Effect.runPromise(
+        importPullRequestObservations({
+          dbPath: usageStorePath(home),
+          observations: [
+            stored(66, { mergedAt: '2026-10-21T19:30:00.000Z', state: 'MERGED' }),
+            stored(67, {}),
+            stored(67, {
+              baseRef: null,
+              checksRollup: null,
+              draft: null,
+              headRef: null,
+              observedAt: '2026-10-21T20:30:00.000Z',
+              outcome: 'network',
+              outcomeMessage: 'gh exited 1',
+              state: null,
+              title: null,
+              updatedAt: null,
+              url: null,
+            }),
+          ],
+        }),
+      );
+
+      const pullRequests = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(pullRequests).toEqual({ changed: false, inputCount: 1, outputCount: 1, warnings: [] });
+      expect(calls.map(({ args }) => [args[0], args[1], args[2], args[4]])).toEqual([
+        ['pr', 'view', '67', 'fixture/project'],
+      ]);
+      const latest = await Effect.runPromise(
+        queryLatestPullRequestObservations({ dbPath: usageStorePath(home), machineId: machine.id }),
+      );
+      expect(
+        latest.items.map(({ latest: item }) => [item.number, item.outcome, item.state, item.observedAt]).sort(),
+      ).toEqual([
+        [66, 'observed', 'MERGED', canonicalInstantFromDate(new Date('2026-10-21T20:00:00.000Z'))],
+        [67, 'observed', 'OPEN', canonicalInstantFromDate(now)],
+      ]);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

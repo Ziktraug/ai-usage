@@ -58,9 +58,11 @@ import {
   importPullRequestObservations,
   importSkillObservations,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
+  MAX_WORK_FACT_QUERY_LIMIT,
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
+  queryLatestPullRequestObservations,
   queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
   type RtkSavingsContribution,
@@ -800,6 +802,52 @@ interface DesktopWorkFactInputs {
 
 const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = { links: [], paths: [], warnings: [] };
 
+const normalizedLinkKey = (link: PullRequestLink): string =>
+  pullRequestLinkKey({ host: link.host.trim().toLowerCase(), number: link.number, repository: link.repository.trim() });
+
+/**
+ * Leaves out the links whose latest stored observation already showed the pull request merged.
+ * A merge is terminal: re-reading it every cadence for the fourteen days a session stays active
+ * spends `gh` calls to learn nothing. Only a successful latest read counts; a failed read after a
+ * merge, or no observation at all, keeps the link in the batch. A store that cannot be consulted
+ * keeps every link and says so.
+ */
+const withoutMergedLinks = (
+  dbPath: string,
+  machineId: string,
+  links: readonly PullRequestLink[],
+): Effect.Effect<Pick<DesktopWorkFactInputs, 'links' | 'warnings'>> =>
+  Effect.gen(function* () {
+    const merged = new Set<string>();
+    for (let start = 0; start < links.length; start += MAX_WORK_FACT_QUERY_LIMIT) {
+      const { items } = yield* queryLatestPullRequestObservations({
+        dbPath,
+        limit: MAX_WORK_FACT_QUERY_LIMIT,
+        links: links.slice(start, start + MAX_WORK_FACT_QUERY_LIMIT),
+        machineId,
+      });
+      for (const { latest } of items) {
+        if (latest.outcome === 'observed' && latest.state === 'MERGED') {
+          merged.add(normalizedLinkKey({ host: latest.host, number: latest.number, repository: latest.repository }));
+        }
+      }
+    }
+    return { links: links.filter((link) => !merged.has(normalizedLinkKey(link))), warnings: [] };
+  }).pipe(
+    Effect.catchAll(() =>
+      Effect.succeed({
+        links,
+        warnings: [
+          {
+            code: 'merged-links-unread',
+            message:
+              'Stored pull request observations could not be read; merged pull requests are re-observed this run.',
+          },
+        ],
+      }),
+    ),
+  );
+
 /**
  * What the Claude Desktop sessions active in the last fourteen days named: `worktreePath ?? cwd`
  * as the checkout, `prs[]` as the pull requests, most recently active session first, each once.
@@ -819,7 +867,7 @@ const desktopWorkFactInputs = (input: {
     machineId: input.machineId,
     sinceLastActivityAt: new Date(input.now().getTime() - DESKTOP_WORK_FACT_WINDOW_MS).toISOString(),
   }).pipe(
-    Effect.map(({ observations }): DesktopWorkFactInputs => {
+    Effect.flatMap(({ observations }) => {
       const paths: string[] = [];
       const links: PullRequestLink[] = [];
       const seenLinks = new Set<string>();
@@ -841,7 +889,9 @@ const desktopWorkFactInputs = (input: {
           }
         }
       }
-      return { links, paths, warnings: [] };
+      return withoutMergedLinks(input.dbPath, input.machineId, links).pipe(
+        Effect.map((open): DesktopWorkFactInputs => ({ links: open.links, paths, warnings: open.warnings })),
+      );
     }),
     Effect.catchAll((error) =>
       Effect.succeed<DesktopWorkFactInputs>(
