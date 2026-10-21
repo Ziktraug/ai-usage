@@ -8,6 +8,8 @@ import {
   type ProviderResetCredit,
   type ProviderStatus,
   parseProviderStatusDataset,
+  providerStatusWithFeedFreshness,
+  providerStatusWithFreshness,
 } from './provider-status';
 
 const FIXTURE_GENERATED_AT = '2026-01-01T00:00:00.000Z';
@@ -48,6 +50,25 @@ const providerStatusDatasetFixture = (provider = providerStatusFixture()) =>
   createProviderStatusDataset([provider], new Date(FIXTURE_GENERATED_AT));
 
 describe('provider status', () => {
+  test('shared feed freshness ages history and live observations after fifteen minutes without replacing terminal reasons', () => {
+    const now = new Date('2026-01-01T00:15:00.000Z');
+    for (const source of ['live-api', 'local-history'] as const) {
+      const provider = providerStatusFixture({ source });
+      expect(providerStatusWithFeedFreshness(provider, now)).toBe(provider);
+      expect(providerStatusWithFeedFreshness(provider, new Date(now.getTime() + 1)).state).toBe('stale');
+      for (const state of ['auth-required', 'error', 'stale', 'unsupported'] as const) {
+        const terminal = { ...provider, state };
+        expect(providerStatusWithFeedFreshness(terminal, new Date(now.getTime() + 1))).toBe(terminal);
+      }
+    }
+    const history = providerStatusFixture({ source: 'local-history' });
+    expect(providerStatusWithFreshness(history, new Date(now.getTime() + 1))).toBe(history);
+    for (const source of ['manual', 'unsupported'] as const) {
+      const provider = providerStatusFixture({ source });
+      expect(providerStatusWithFeedFreshness(provider, new Date(now.getTime() + 1))).toBe(provider);
+    }
+  });
+
   test('normalizes Codex usage payload windows', () => {
     const status = normalizeCodexRateLimitStatus({
       generatedAt: '2026-01-01T00:00:00.000Z',

@@ -598,6 +598,27 @@ export const providerStatusWithFreshness = (
   return Number.isFinite(ageMs) && ageMs > maximumAgeMs ? { ...provider, state: 'stale' } : provider;
 };
 
+const FEED_AGED_SOURCES: ReadonlySet<ProviderStatus['source']> = new Set(['live-api', 'local-history']);
+const FEED_TERMINAL_STATES: ReadonlySet<ProviderStatusState> = new Set([
+  'auth-required',
+  'error',
+  'stale',
+  'unsupported',
+]);
+
+/**
+ * A current quota feed ages session-log observations on the same budget as live
+ * readings. Historical report presentation deliberately keeps its older rule.
+ * Existing terminal reasons and manual/unsupported sources remain unchanged.
+ */
+export const providerStatusWithFeedFreshness = (provider: ProviderStatus, now: Date): ProviderStatus => {
+  if (!FEED_AGED_SOURCES.has(provider.source) || FEED_TERMINAL_STATES.has(provider.state)) {
+    return provider;
+  }
+  const ageMs = now.getTime() - Date.parse(provider.generatedAt);
+  return Number.isFinite(ageMs) && ageMs > LIVE_PROVIDER_STATUS_MAX_AGE_MS ? { ...provider, state: 'stale' } : provider;
+};
+
 export const compareProviderStatusStates = (left: ProviderStatusState, right: ProviderStatusState): number =>
   STATE_RANK[left] - STATE_RANK[right];
 
