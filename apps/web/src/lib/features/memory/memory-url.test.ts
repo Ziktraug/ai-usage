@@ -1,28 +1,28 @@
 import { describe, expect, test } from 'bun:test';
-import { isMemoryProposalId, memoryDateBound, memoryHref, memoryLocation, memoryPeriodError } from './memory-url';
+import { isMemoryProposalId, memoryHref, memoryLocation, memoryProjectError } from './memory-url';
 
+const projectId = '0198f179-4837-7000-8000-000000000011';
 describe('durable Memory navigation', () => {
-  test('opens the selected proposal passage without its temporary usage revision', () => {
-    expect(
-      memoryLocation('/memory?view=analyses&project=known&analysis=saved&element=work%3Adecision%3A2'),
-    ).toMatchObject({
-      analysisId: 'saved',
-      analysisProjectId: 'known',
-      episodeId: 'work',
-      elementKey: 'work:decision:2',
-    });
+  test('opens accepted knowledge by default and retires account addresses without carrying their cursors', () => {
+    expect(memoryLocation('/memory')).toEqual({ view: 'knowledge', projectId: null, cursor: null, proposalId: null });
+    const legacy = `/memory?view=analyses&project=${projectId}&analysis=saved&analysisProject=other&element=summary&episode=work&q=cache&since=2026-10-06&until=2026-10-07&cursor=old#account`;
+    expect(memoryLocation(legacy)).toEqual({ view: 'knowledge', projectId, cursor: null, proposalId: null });
+    const next = new URL(memoryHref(legacy, { view: 'review' }), 'http://memory.invalid');
+    expect(Object.fromEntries(next.searchParams)).toEqual({ view: 'review', project: projectId });
+    expect(next.hash).toBe('');
   });
-  test('rejects invalid dates without throwing or silently broadening a corpus', () => {
-    for (const date of ['nonsense', '2026-99-01', '2026-02-30', '2026-10-06T00:00:00Z']) {
-      expect(memoryDateBound(date)).toBeNull();
-      expect(memoryLocation(`/memory?since=${encodeURIComponent(date)}`).periodError).not.toBeNull();
+  test('validates Project scope and preserves it through navigation, clearing and history restoration', () => {
+    expect(memoryProjectError(projectId)).toBeNull();
+    expect(memoryProjectError(null)).toBeNull();
+    expect(memoryProjectError('')).toBeNull();
+    for (const invalid of ['invalid', `${projectId}0`, projectId.toUpperCase()]) {
+      expect(memoryProjectError(invalid)).toContain('valid Project ID');
     }
-    expect(memoryDateBound('2026-10-06')).toBe('2026-10-06T00:00:00.000Z');
-    expect(memoryPeriodError('2026-10-06', '2026-10-01')).not.toBeNull();
-  });
-  test('keeps library scope separate from an opened account Project', () => {
-    const href = memoryHref('/memory?q=cache', { analysis: 'saved', analysisProject: 'one-project' });
-    expect(memoryLocation(href)).toMatchObject({ projectId: null, analysisProjectId: 'one-project', query: 'cache' });
+    const scoped = memoryHref('/memory', { project: projectId, cursor: null });
+    expect(memoryLocation(scoped)).toMatchObject({ view: 'knowledge', projectId });
+    expect(memoryLocation(memoryHref(scoped, { view: 'review' }))).toMatchObject({ view: 'review', projectId });
+    expect(memoryLocation(memoryHref(scoped, { project: null }))).toMatchObject({ projectId: null });
+    expect(memoryLocation(scoped).projectId).toBe(projectId);
   });
   test('addresses one pending proposal in the review queue and leaves the queue by clearing it', () => {
     const proposalId = '0198f179-4837-7000-8000-000000000010';

@@ -12,7 +12,6 @@
     "./schema-conventions": "./src/schema-conventions.ts",
     "./report": "./src/report.ts",
     "./session": "./src/session.ts",
-    "./session-distillation": "./src/session-distillation.ts",
     "./skills": "./src/skills.ts",
     "./control": "./src/control.ts",
     "./sync": "./src/sync.ts"
@@ -21,8 +20,7 @@
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/skills": "workspace:*",
     "@orpc/contract": "1.14.13",
-    "valibot": "1.4.2",
-    "@ai-usage/platform-core": "workspace:*"
+    "valibot": "1.4.2"
   },
   "scripts": {
     "build": "tsc --noEmit",

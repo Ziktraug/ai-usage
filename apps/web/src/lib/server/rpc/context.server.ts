@@ -327,21 +327,6 @@ const createProjectsDependencies = (): WebRpcRouterDependencies['projects'] => (
     }),
 });
 
-const createSessionDistillationDependencies = (): WebRpcRouterDependencies['sessionDistillation'] => ({
-  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
-  read: async (input, signal) =>
-    await phaseBound(signal, async () => {
-      if ((await runtimeMode(abortOptions(signal))) === 'e2e') {
-        if (input.kind === 'projects' || input.kind === 'browse') {
-          return { items: [], nextCursor: null };
-        }
-        throw new Error('Synthetic browser mode does not acquire local analysis authority.');
-      }
-      const server = await import('../../../server/session-distillation.server');
-      return await server.readSessionDistillationForServer(input, signal);
-    }),
-});
-
 const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
   getKnowledge: async (input, signal) =>
     await phaseBound(signal, async () => {
@@ -360,15 +345,6 @@ const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
       }
       const server = await import('../../../server/memory-service.server');
       return await server.listMemoryKnowledgeForServer(input, signal);
-    }),
-  promoteAnalysis: async (input, signal) =>
-    await phaseBound(signal, async () => {
-      const mode = await runtimeMode(abortOptions(signal));
-      if (mode === 'e2e') {
-        throw new Error('Synthetic review fixture does not consume local analyses.');
-      }
-      const server = await import('../../../server/memory-service.server');
-      return await server.promoteMemoryAnalysisForServer(input, signal);
     }),
   applyProposalReviewAction: async (input, signal) =>
     await phaseBound(signal, async () => {
@@ -439,7 +415,6 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
     report: createReportDependencies(request),
     replication: createReplicationDependencies(),
     session: createSessionDependencies(),
-    sessionDistillation: createSessionDistillationDependencies(),
     skills: {
       preflight: preflightSkills,
       selectCapability: async (options) => await selectSkillsCapability(options, fixtureVariant),

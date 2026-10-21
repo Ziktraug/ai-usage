@@ -18,7 +18,6 @@ const router = (listProposalReviews: MemoryRpcDependencies['listProposalReviews'
     isDemo: async () => false,
     listKnowledge: unused,
     listProposalReviews,
-    promoteAnalysis: unused,
     searchMemory: unused,
   });
 

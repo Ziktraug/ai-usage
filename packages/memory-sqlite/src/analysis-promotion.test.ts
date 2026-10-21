@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSingleUserAuthorizer } from '@ai-usage/authorization/single-user';
@@ -19,8 +19,67 @@ import {
   createProjectId,
   createSpaceId,
 } from '@ai-usage/platform-core/identity';
-import { parseSessionAnalysis } from '@ai-usage/platform-core/session-distillation';
+import type { SessionAnalysisContent } from '@ai-usage/platform-core/session-distillation';
 import { openLocalIdentityKernel } from './identity';
+
+// Historical local-only provenance remains protected after the producer is retired.
+// This fixture is self-contained so that preservation tests do not depend on its old tools.
+const sourceContent: SessionAnalysisContent = {
+  schemaVersion: 1,
+  summary: {
+    text: 'A focused regression is required before treating the cache fix as validated.',
+    basis: 'reported',
+    evidence: [{ eventId: 'synthetic-user', quote: 'Verify the cache fix with a focused regression.' }],
+  },
+  episodes: [],
+  abstention: 'The synthetic source supplies guidance but no observed verification result.',
+};
+
+const sourcePacket = (projectId: string) =>
+  parseDistillationEvidencePacket({
+    schemaVersion: 1,
+    normalizationVersion: 1,
+    redactionVersion: 1,
+    packetDigest: '0'.repeat(64),
+    source: {
+      harnessKey: 'codex',
+      machineId: 'synthetic-machine',
+      projectId,
+      nativeSessionId: 'synthetic-session',
+      reportAnchor: { revision: 'promotion-fixture', rowId: 'synthetic-session' },
+      version: {
+        digest: createHash('sha256').update('synthetic-promotion-source').digest('hex'),
+        bytes: 100,
+        totalBytes: 100,
+        modifiedAtMs: 1,
+      },
+    },
+    events: [
+      {
+        id: 'synthetic-user',
+        line: 1,
+        kind: 'user',
+        text: 'Verify the cache fix with a focused regression.',
+        timestamp: null,
+        nativeTurnId: 'synthetic-turn',
+        roundId: 'prompt:synthetic-prompt',
+        toolName: null,
+        callId: null,
+        truncated: false,
+        redacted: false,
+      },
+    ],
+    coverage: {
+      scope: 'session-only',
+      completion: 'completed',
+      status: 'complete',
+      lines: 1,
+      includedEvents: 1,
+      exclusions: [],
+      childDiscovery: 'not-performed',
+      childrenNotAnalyzed: null,
+    },
+  });
 
 test('explicit promotion keeps normal knowledge local through replay, acceptance, enrollment, revision and purge', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'memory-promotion-'));
@@ -52,31 +111,8 @@ test('explicit promotion keeps normal knowledge local through replay, acceptance
       authorization: { activeSpaceId: identity.space.id, trustedDevice: true },
       principal: { kind: 'person' as const, personId: identity.person.id },
     };
-    const fixtureAnalysis = parseSessionAnalysis(
-      JSON.parse(
-        await readFile(
-          path.resolve(
-            import.meta.dir,
-            '../../../tools/fixtures/distillation/generated/integration/multi-attempt.persisted-analysis.json.txt',
-          ),
-          'utf8',
-        ),
-      ),
-    );
-    const packet = parseDistillationEvidencePacket(
-      JSON.parse(
-        await readFile(
-          path.resolve(
-            import.meta.dir,
-            '../../../tools/fixtures/distillation/generated/initial/multi-attempt.review-packet.json.txt',
-          ),
-          'utf8',
-        ),
-      ),
-    );
-    packet.source.projectId = projectId;
-    const selection = { revision: 'promotion-fixture', rowId: 'multi-attempt' };
-    packet.source.reportAnchor = selection;
+    const packet = sourcePacket(projectId);
+    const selection = { revision: 'promotion-fixture', rowId: 'synthetic-session' };
     packet.packetDigest = createHash('sha256').update(distillationEvidenceDigestInput(packet)).digest('hex');
     const job = await kernel.distillation.prepare({
       packet,
@@ -97,7 +133,7 @@ test('explicit promotion keeps normal knowledge local through replay, acceptance
       jobId: job.id,
       leaseId: lease.leaseId,
       packetDigest: packet.packetDigest,
-      content: fixtureAnalysis.content,
+      content: sourceContent,
     });
     let reads = 0;
     const promotion = () =>
@@ -196,11 +232,25 @@ test('explicit promotion keeps normal knowledge local through replay, acceptance
       expect(
         projectMemoryItemsBrowsePage(revisedBrowse.value).items.find((item) => item.id === accepted.value.item.id),
       ).toMatchObject({
-        provenance: { sourceLocator: first.sourceLocator, sourceKind: 'session', analysisRevision: source.revision },
+        provenance: {
+          sourceLocator: `Session account ${source.id}, element summary`,
+          sourceKind: 'session',
+          analysisRevision: source.revision,
+        },
       });
     }
+    const itemQuery = { ...context, itemId: accepted.value.item.id, spaceId: identity.space.id };
+    const beforeReopen = await service().getMemoryItem(itemQuery);
+    expect(beforeReopen.kind).toBe('success');
+    const exportQuery = { ...context, format: 'jsonl' as const, spaceId: identity.space.id };
+    const exportedBeforeReopen = await service().exportMemory(exportQuery);
+    expect(exportedBeforeReopen).toMatchObject({ kind: 'success', value: { itemCount: 2 } });
     await kernel.close();
     kernel = await openLocalIdentityKernel({ databasePath });
+    expect(await kernel.distillation.get(projectId, source.id)).toEqual(source);
+    expect(await service().getMemoryItem(itemQuery)).toEqual(beforeReopen);
+    expect(await browse()).toEqual(revisedBrowse);
+    expect(await service().exportMemory(exportQuery)).toEqual(exportedBeforeReopen);
     expect(await promotion()(request, context)).toEqual(first);
     expect(
       await kernel.configureReplication({ captureContext, localProjectId: projectId, localSpaceId: identity.space.id }),
