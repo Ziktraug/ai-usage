@@ -308,14 +308,15 @@ describe('queryWorkAttention', () => {
     expect(dataset.machineId).toBe(MACHINE);
     expect(dataset.totalRoots).toBe(6);
     expect(dataset.truncated).toBe(false);
-    // Ranking: human requests by declaration recency, then the optional lead, then the rest by activity.
-    expect(dataset.roots.map((root) => [root.desktopSessionId, root.attention])).toEqual([
-      ['local_g', 'human-request'],
-      ['local_b', 'human-request'],
-      ['local_e', 'human-request'],
-      ['local_c', 'optional-lead'],
-      ['local_a', 'none'],
-      ['local_d', 'none'],
+    // Ranking: human requests by declaration recency with the reconsidered one last, then the
+    // optional lead, then the rest by activity.
+    expect(dataset.roots.map((root) => [root.desktopSessionId, root.attention, root.reconsidered])).toEqual([
+      ['local_g', 'human-request', false],
+      ['local_b', 'human-request', false],
+      ['local_e', 'human-request', false],
+      ['local_a', 'human-request', true],
+      ['local_c', 'optional-lead', false],
+      ['local_d', 'none', false],
     ]);
     const byId = new Map(dataset.roots.map((root) => [root.desktopSessionId, root]));
 
@@ -334,15 +335,24 @@ describe('queryWorkAttention', () => {
       needsAction: 'Open the pull request for the collector branch.',
       status: 'blocked',
     });
-    // The revision is published and carries no row for A's transcript: that gap is named, not hidden.
-    expect(a?.interpretations.map(({ kind }) => kind)).toEqual(['request-satisfied-elsewhere', 'coverage-gap']);
-    expect(a?.interpretations[0]?.evidence).toEqual(['local_a1:pr:github.com/fixture/project#117']);
+    // The child's later pull request reconsiders the request without closing it; the revision is
+    // published and carries no row for A's transcript: that gap is named, not hidden.
+    expect(a?.interpretations.map(({ kind }) => kind)).toEqual([
+      'request-open',
+      'request-satisfied-elsewhere',
+      'coverage-gap',
+    ]);
+    expect(a?.interpretations[1]?.evidence).toEqual(['local_a1:pr:github.com/fixture/project#117']);
+    expect(a?.interpretations[1]?.text).toBe(
+      `Possibly answered elsewhere: fixture/project#117 (OPEN) declared by a child session at ${hoursAgo(3)}, after the question.`,
+    );
     expect(a?.facts.map(({ kind }) => kind)).toEqual([
       'declared-turn',
       'wrap-up',
       'turn-report',
       'declared-pull-request',
     ]);
+    expect(a?.facts[3]).toMatchObject({ declaredBy: 'child', kind: 'declared-pull-request', number: 117 });
     expect(a?.project).toEqual({
       branch: 'fixture/worktree',
       checkoutPath: '/home/fixture/work/project/.claude/worktrees/wt-1',
@@ -422,7 +432,9 @@ describe('queryWorkAttention', () => {
 
     const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: NOW }));
     const a = dataset.roots.find((root) => root.desktopSessionId === 'local_a');
-    expect(a?.attention).toBe('external-wait');
+    // The question stays a human request; the external wait is named beside it, never above it.
+    expect(a?.attention).toBe('human-request');
+    expect(a?.reconsidered).toBe(true);
     expect(a?.facts.map(({ kind }) => kind)).toEqual([
       'declared-turn',
       'wrap-up',
@@ -432,6 +444,7 @@ describe('queryWorkAttention', () => {
       'checkout-status',
     ]);
     expect(a?.interpretations.map(({ kind }) => kind)).toEqual([
+      'request-open',
       'request-satisfied-elsewhere',
       'external-review-pending',
       'local-changes-unvalidated',
@@ -608,6 +621,7 @@ describe('assembleWorkAttention with external facts', () => {
         host: 'github.com',
         id: `local_a:gh:github.com/fixture/project#117@${hoursAgo(1)}`,
         kind: 'pull-request',
+        mergedAt: null,
         number: 117,
         outcome: 'observed',
         provenance: { coverage: 'complete', machineId: MACHINE, observedAt: hoursAgo(1), source: 'github' },
@@ -618,9 +632,12 @@ describe('assembleWorkAttention with external facts', () => {
         url: 'https://github.com/fixture/project/pull/117',
       },
     ]);
-    // The request was satisfied by the child's declaration; GitHub now shows it awaiting review.
-    expect(a.attention).toBe('external-wait');
+    // The child's declaration reconsiders the request; GitHub shows the pull request awaiting
+    // review, which is named but does not outrank the question.
+    expect(a.attention).toBe('human-request');
+    expect(a.reconsidered).toBe(true);
     expect(a.interpretations.map(({ kind }) => kind)).toEqual([
+      'request-open',
       'request-satisfied-elsewhere',
       'external-review-pending',
     ]);
@@ -630,17 +647,28 @@ describe('assembleWorkAttention with external facts', () => {
   });
 
   test('a draft pull request, or an approved one, is not an external wait', () => {
+    // Root P declared nothing pending; its external wait depends on the observation alone.
+    const completed = session({
+      id: 'p',
+      lastActivityHoursAgo: 1,
+      pullRequestState: 'OPEN',
+      status: 'completed',
+      title: 'P',
+    });
     const draft = pullRequestObservation({ draft: true });
     expect(
-      rootOf(assemble({ ...NO_EXTERNAL_FACTS, pullRequests: [{ latest: draft, latestObserved: draft }] }), 'local_a'),
-    ).toMatchObject({ attention: 'none' });
+      rootOf(
+        assemble({ ...NO_EXTERNAL_FACTS, pullRequests: [{ latest: draft, latestObserved: draft }] }, [completed]),
+        'local_p',
+      ),
+    ).toMatchObject({ attention: 'none', interpretations: [] });
     const approved = pullRequestObservation({ reviewDecision: 'APPROVED' });
-    const a = rootOf(
-      assemble({ ...NO_EXTERNAL_FACTS, pullRequests: [{ latest: approved, latestObserved: approved }] }),
-      'local_a',
+    const p = rootOf(
+      assemble({ ...NO_EXTERNAL_FACTS, pullRequests: [{ latest: approved, latestObserved: approved }] }, [completed]),
+      'local_p',
     );
-    expect(a.attention).toBe('none');
-    expect(a.interpretations.map(({ kind }) => kind)).toEqual(['request-satisfied-elsewhere']);
+    expect(p.attention).toBe('none');
+    expect(p.interpretations).toEqual([]);
   });
 
   test('a human request outranks an external wait; an external wait outranks an optional lead', () => {
@@ -729,12 +757,13 @@ describe('assembleWorkAttention with external facts', () => {
       ['unauthenticated', hoursAgo(0.25)],
     ]);
     expect(a.interpretations.map(({ kind }) => kind)).toEqual([
+      'request-open',
       'request-satisfied-elsewhere',
       'external-review-pending',
       'coverage-gap',
     ]);
-    expect(a.interpretations[2]?.text).toContain('unauthenticated');
-    expect(a.attention).toBe('external-wait');
+    expect(a.interpretations[3]?.text).toContain('unauthenticated');
+    expect(a.attention).toBe('human-request');
   });
 
   test('keeps the declaration and the external facts first when the fact bound cuts', () => {
@@ -772,9 +801,11 @@ describe('assembleWorkAttention with external facts', () => {
       'proposal',
     ]);
     expect(z.facts.some(({ kind }) => kind === 'written-branch')).toBe(false);
-    // 1 + 2 + 1 + 1 + 1 + 60 + 30 = 96 facts, 32 of them cut.
+    // 1 + 2 + 1 + 1 + 1 + 60 + 30 = 96 facts, 32 of them cut. Z's own declared pull request and
+    // an observation changed before the question reconsider nothing.
+    expect(z.reconsidered).toBe(false);
     expect(z.interpretations.map(({ kind }) => kind)).toEqual([
-      'request-satisfied-elsewhere',
+      'request-open',
       'coverage-gap',
       'external-review-pending',
       'local-changes-unvalidated',

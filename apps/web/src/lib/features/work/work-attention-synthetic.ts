@@ -64,6 +64,7 @@ interface RootSeed {
   readonly lastActivityHoursAgo: number;
   readonly machineId?: string;
   readonly project: string;
+  readonly reconsidered?: boolean;
   readonly title: string;
   readonly titleSource?: WorkRoot['titleSource'];
   readonly worktreeName?: string | null;
@@ -123,6 +124,7 @@ const root = (seed: RootSeed, joins: ReadonlyMap<string, WorkRootSession>): Work
       label: seed.project,
       worktreeName: seed.worktreeName ?? null,
     },
+    reconsidered: seed.reconsidered ?? false,
     session: joins.get(seed.id) ?? null,
     title: seed.title,
     titleSource: seed.titleSource ?? (harness === 'claude' ? 'tool' : 'unknown'),
@@ -146,8 +148,15 @@ const declaredTurn = (
   status,
 });
 
-const declaredPullRequest = (id: string, number: number, state: string, branch: string): WorkFact => ({
+const declaredPullRequest = (
+  id: string,
+  number: number,
+  state: string,
+  branch: string,
+  declaredBy: 'root' | 'child' = 'root',
+): WorkFact => ({
   branch,
+  declaredBy,
   host: 'github.example',
   id: `${id}:declared-pr-${number}`,
   kind: 'declared-pull-request',
@@ -169,6 +178,7 @@ const observedPullRequest = (
   host: 'github.example',
   id: `${id}:pr-${number}`,
   kind: 'pull-request',
+  mergedAt: null,
   number,
   outcome: 'observed',
   provenance: github(),
@@ -727,7 +737,7 @@ const seeds = (): readonly RootSeed[] => [
         null,
       ),
       declaredPullRequest('quota-timer', 60, 'MERGED', 'fix/quota-timer'),
-      observedPullRequest('quota-timer', 60, { state: 'MERGED', updatedAt: hoursAgo(2) }),
+      observedPullRequest('quota-timer', 60, { mergedAt: hoursAgo(2), state: 'MERGED', updatedAt: hoursAgo(2) }),
       wrapUp(
         'quota-timer',
         hoursAgo(2),
@@ -748,8 +758,9 @@ const seeds = (): readonly RootSeed[] => [
     title: 'Quota timer is not collection',
   },
   {
-    attention: 'none',
+    attention: 'human-request',
     branch: 'perf/scan-resources',
+    children: { blocked: 0, completed: 1, count: 1, titles: ['Open the per-file cache pull request'] },
     declared: {
       at: hoursAgo(36),
       detail: 'Per-file cache and hourly heartbeat implemented.',
@@ -764,19 +775,27 @@ const seeds = (): readonly RootSeed[] => [
         'Per-file cache and hourly heartbeat implemented.',
         'Open the pull request for the per-file cache once the measurement kit is committed.',
       ),
-      observedPullRequest('scan-resources', 61, { state: 'MERGED', updatedAt: hoursAgo(20) }),
+      declaredPullRequest('scan-resources', 61, 'MERGED', 'perf/scan-resources', 'child'),
+      observedPullRequest('scan-resources', 61, { mergedAt: hoursAgo(20), state: 'MERGED', updatedAt: hoursAgo(20) }),
     ],
     id: 'scan-resources',
     interpretations: [
       interpretation(
+        'request-open',
+        'The session stopped on a question: Open the pull request for the per-file cache once the measurement kit is committed.',
+        'This is the session’s own last declaration; a later pull request may be the answer, but nothing confirms it.',
+        ['scan-resources:declared'],
+      ),
+      interpretation(
         'request-satisfied-elsewhere',
-        'The requested pull request (#61) was observed open and then merged after the request was declared.',
-        'The link rests on the branch name; the session itself never recorded the outcome.',
-        ['scan-resources:declared', 'scan-resources:pr-61'],
+        `Possibly answered elsewhere: demo/ai-usage#61 (MERGED) declared by a child session at ${COLLECTED_AT}; demo/ai-usage#61 (MERGED, merged at ${hoursAgo(20)}) observed on GitHub at ${OBSERVED_AT}, after the question.`,
+        'This does not prove it is the same work; the question stays yours until you confirm.',
+        ['scan-resources:declared-pr-61', 'scan-resources:pr-61'],
       ),
     ],
     lastActivityHoursAgo: 36,
     project: 'ai-usage',
+    reconsidered: true,
     title: 'Scan resource optimization',
   },
   {
@@ -902,7 +921,7 @@ const seeds = (): readonly RootSeed[] => [
         null,
       ),
       declaredPullRequest('atelier-ui', 54, 'MERGED', 'feat/atelier-ui'),
-      observedPullRequest('atelier-ui', 54, { state: 'MERGED', updatedAt: daysAgo(25) }),
+      observedPullRequest('atelier-ui', 54, { mergedAt: daysAgo(25), state: 'MERGED', updatedAt: daysAgo(25) }),
     ],
     id: 'atelier-ui',
     interpretations: [

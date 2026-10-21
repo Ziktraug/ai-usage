@@ -155,13 +155,17 @@ describe('work attention chain', () => {
       'side-session-note',
     ]);
 
+    // The child's later pull request reconsiders the request; the question stays a human request.
     const satisfied = byId.get(ids.satisfiedRoot ?? '');
-    expect(satisfied?.attention).toBe('none');
+    expect(satisfied?.attention).toBe('human-request');
+    expect(satisfied?.reconsidered).toBe(true);
     expect(satisfied?.declared?.status).toBe('blocked');
-    expect(satisfied?.interpretations.map(({ kind }) => kind)).toEqual(['request-satisfied-elsewhere']);
+    expect(satisfied?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-satisfied-elsewhere']);
+    expect(satisfied?.interpretations[1]?.text).toContain('declared by a child session');
 
     const mergedBefore = byId.get(ids.mergedBeforeRoot ?? '');
     expect(mergedBefore?.attention).toBe('human-request');
+    expect(mergedBefore?.reconsidered).toBe(false);
     expect(mergedBefore?.interpretations.map(({ kind }) => kind)).toEqual(['request-open']);
 
     const proposal = byId.get(ids.proposalRoot ?? '');
@@ -180,10 +184,14 @@ describe('work attention chain', () => {
       'coverage-gap',
     ]);
 
-    // Ranking: every human request precedes every other group.
+    // Ranking: every human request precedes every other group, the reconsidered ones last among them.
     const attentions = dataset.roots.map((root) => root.attention);
     const lastRequest = attentions.lastIndexOf('human-request');
     expect(attentions.slice(0, lastRequest + 1).every((kind) => kind === 'human-request')).toBe(true);
+    const requests = dataset.roots.filter((root) => root.attention === 'human-request');
+    const firstReconsidered = requests.findIndex((root) => root.reconsidered);
+    expect(firstReconsidered).toBeGreaterThan(0);
+    expect(requests.slice(firstReconsidered).every((root) => root.reconsidered)).toBe(true);
 
     // Coverage carries the collector's counts; the join is absent and says so.
     expect(dataset.coverage.desktopSessions).toEqual({
@@ -267,21 +275,35 @@ describe('work attention chain', () => {
     expect(kindsOf(ids.completedRoot)).toEqual(['external-review-pending']);
     expect(completed?.facts.filter(({ kind }) => kind === 'pull-request')).toHaveLength(1);
 
-    // #90: the child declared it merged before the request, so the declaration did not satisfy
-    // it; GitHub then showed it merged two hours ago, after the request, and that does.
+    // #90: the child declared it merged before the request, so the declaration reconsiders
+    // nothing; GitHub then showed it merged two hours ago, after the request, and that does.
+    // The question stays a human request either way.
     const merged = confrontedById.get(ids.mergedBeforeRoot ?? '');
-    expect(merged?.attention).toBe('none');
-    expect(kindsOf(ids.mergedBeforeRoot)).toEqual(['request-satisfied-elsewhere', 'pull-request-merged']);
-    expect(merged?.interpretations[0]?.uncertainty).toContain('observed on GitHub');
-    expect(merged?.interpretations[0]?.evidence).toEqual([
+    expect(merged?.attention).toBe('human-request');
+    expect(merged?.reconsidered).toBe(true);
+    expect(kindsOf(ids.mergedBeforeRoot)).toEqual([
+      'request-open',
+      'request-satisfied-elsewhere',
+      'pull-request-merged',
+    ]);
+    expect(merged?.interpretations[1]?.text).toContain(
+      `merged at ${hoursBefore(2)}) observed on GitHub at ${hoursBefore(1)}`,
+    );
+    expect(merged?.interpretations[1]?.evidence).toEqual([
       `${ids.mergedBeforeRoot}:gh:github.com/fixture/ai-usage#90@${hoursBefore(1)}`,
     ]);
 
     // #117: the failed read and the last successful one both reach the root; neither replaces
-    // the child's declaration that satisfied the request, and neither is presented as current.
+    // the child's declaration that reconsidered the request, and neither is presented as current.
     const satisfiedWithFacts = confrontedById.get(ids.satisfiedRoot ?? '');
-    expect(satisfiedWithFacts?.attention).toBe('none');
-    expect(kindsOf(ids.satisfiedRoot)).toEqual(['request-satisfied-elsewhere', 'coverage-gap', 'coverage-gap']);
+    expect(satisfiedWithFacts?.attention).toBe('human-request');
+    expect(satisfiedWithFacts?.reconsidered).toBe(true);
+    expect(kindsOf(ids.satisfiedRoot)).toEqual([
+      'request-open',
+      'request-satisfied-elsewhere',
+      'coverage-gap',
+      'coverage-gap',
+    ]);
     expect(
       satisfiedWithFacts?.facts
         .filter((fact) => fact.kind === 'pull-request')
@@ -290,8 +312,8 @@ describe('work attention chain', () => {
       ['observed', hoursBefore(26)],
       ['unauthenticated', hoursBefore(0.5)],
     ]);
-    expect(satisfiedWithFacts?.interpretations[1]?.text).toContain('nothing fresher');
-    expect(satisfiedWithFacts?.interpretations[2]?.uncertainty).toContain('sign in gh');
+    expect(satisfiedWithFacts?.interpretations[2]?.text).toContain('nothing fresher');
+    expect(satisfiedWithFacts?.interpretations[3]?.uncertainty).toContain('sign in gh');
 
     // The dirty worktree reaches every root working in it, each told how many share it.
     const blockedWithFacts = confrontedById.get(ids.blockedRoot);

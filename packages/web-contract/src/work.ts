@@ -94,6 +94,7 @@ export const workFactSchema = variant('kind', [
   strictObject({
     ...factBase,
     branch: nullable(shortTextSchema),
+    declaredBy: picklist(['root', 'child']),
     host: shortTextSchema,
     kind: literal('declared-pull-request'),
     number: positiveIntegerSchema,
@@ -108,6 +109,7 @@ export const workFactSchema = variant('kind', [
     draft: nullable(boolean()),
     host: shortTextSchema,
     kind: literal('pull-request'),
+    mergedAt: nullable(instantSchema),
     number: positiveIntegerSchema,
     outcome: picklist(PULL_REQUEST_OBSERVATION_OUTCOMES),
     repository: shortTextSchema,
@@ -200,6 +202,7 @@ export const workRootSchema = strictObject({
     label: pathTextSchema,
     worktreeName: nullable(shortTextSchema),
   }),
+  reconsidered: boolean(),
   session: nullable(strictObject({ campaignKey: nullable(identifierSchema), rowId: identifierSchema })),
   title: shortTextSchema,
   titleSource: picklist(CLAUDE_DESKTOP_TITLE_SOURCES),

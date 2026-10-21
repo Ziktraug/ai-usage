@@ -703,6 +703,11 @@ export type WorkFact = WorkFactBase &
     | {
         readonly kind: 'declared-pull-request';
         readonly branch: string | null;
+        /**
+         * Whether the root itself or one of its children listed this pull request. A root's own
+         * `prs[]` mirrors the checkout branch, so it never answers the root's own request.
+         */
+        readonly declaredBy: 'root' | 'child';
         readonly host: string;
         readonly number: number;
         readonly repository: string;
@@ -715,6 +720,7 @@ export type WorkFact = WorkFactBase &
         readonly checksRollup: PullRequestCheckRollup | null;
         readonly draft: boolean | null;
         readonly host: string;
+        readonly mergedAt: CanonicalInstant | null;
         readonly number: number;
         readonly outcome: PullRequestObservationOutcome;
         readonly repository: string;
@@ -832,6 +838,12 @@ export interface WorkRoot {
   readonly interpretations: readonly WorkInterpretation[];
   readonly key: WorkSessionKey;
   readonly project: WorkRootProject;
+  /**
+   * A later pull request (declared by a child session, or merged on GitHub after the request)
+   * may have answered this root's request. The attention is unchanged: the question stays the
+   * operator's until confirmed; the view ranks such roots after the unreconsidered requests.
+   */
+  readonly reconsidered: boolean;
   /**
    * The served Session row this root joins to, when the current revision carries one for
    * `key`; the Work view opens session detail through it. `null` also means `project.label`

@@ -42,17 +42,34 @@ describe('Work attention grouping and ordering', () => {
     ]);
     expect(groups.reduce((total, group) => total + group.roots.length, 0)).toBe(roots.length);
     for (const group of groups) {
-      const instants = group.roots.map((root) => Date.parse(root.age.declaredAt ?? root.age.lastActivityAt ?? ''));
+      // Most recent first, except that reconsidered requests follow every unreconsidered one.
+      const firstReconsidered = group.roots.findIndex((root) => root.reconsidered);
+      const leading = firstReconsidered < 0 ? group.roots : group.roots.slice(0, firstReconsidered);
+      expect(group.roots.slice(leading.length).every((root) => root.reconsidered)).toBe(true);
+      const instants = leading.map((root) => Date.parse(root.age.declaredAt ?? root.age.lastActivityAt ?? ''));
       expect([...instants].sort((left, right) => right - left)).toEqual(instants);
       expect(group.roots.every((root) => root.attention === group.section.kind)).toBe(true);
     }
     expect(groups[0]?.roots[0]?.title).toBe('Recover Claude history');
   });
-  test('a satisfied request keeps its declaration but never ranks as a human request', () => {
-    const satisfied = rootNamed('Scan resource optimization');
-    expect(satisfied.declared?.needsAction).not.toBeNull();
-    expect(satisfied.attention).toBe('none');
-    expect(satisfied.interpretations.map((entry) => entry.kind)).toContain('request-satisfied-elsewhere');
+  test('a reconsidered request stays a human request, ranks last in Needs you and names the pull request', () => {
+    const reconsidered = rootNamed('Scan resource optimization');
+    expect(reconsidered.declared?.needsAction).not.toBeNull();
+    expect(reconsidered.attention).toBe('human-request');
+    expect(reconsidered.reconsidered).toBe(true);
+    expect(reconsidered.interpretations.map((entry) => entry.kind)).toEqual([
+      'request-open',
+      'request-satisfied-elsewhere',
+    ]);
+    const needsYou = groupWorkRoots(roots)[0]!.roots;
+    expect(needsYou.at(-1)?.title).toBe('Scan resource optimization');
+    expect(needsYou.slice(0, -1).every((root) => !root.reconsidered)).toBe(true);
+    // Older than every other request, it would rank first by date alone; the flag sorts it last.
+    expect(workRootFactChips(reconsidered).map((chip) => chip.label)).toEqual([
+      'possibly answered · PR #61',
+      'PR #61 merged',
+      'children 1',
+    ]);
   });
   test('sorting is stable for undated roots and ties on title', () => {
     const [first, second] = roots;
@@ -81,7 +98,7 @@ describe('Work attention search and filters', () => {
   });
   test('attention, harness, machine and project chips narrow the list independently', () => {
     const blocked = filterWorkRoots(roots, { ...EMPTY_WORK_ATTENTION_SEARCH, attention: ['human-request'] });
-    expect(blocked.length).toBe(5);
+    expect(blocked.length).toBe(6);
     expect(blocked.every((root) => root.attention === 'human-request')).toBe(true);
     const codex = filterWorkRoots(roots, { ...EMPTY_WORK_ATTENTION_SEARCH, harness: ['codex'] });
     expect(codex.length).toBeGreaterThanOrEqual(3);

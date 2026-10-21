@@ -172,6 +172,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
     }
     case 'declared-pull-request': {
       const branch = optionalText(value.branch, maxShortText);
+      const declaredBy = oneOf(['root', 'child'] as const, value.declaredBy);
       const host = requiredText(value.host, maxShortText);
       const number = positiveInteger(value.number);
       const repository = requiredText(value.repository, maxShortText);
@@ -179,6 +180,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
       const url = optionalText(value.url, maxPath);
       if (
         branch === undefined ||
+        declaredBy === undefined ||
         host === undefined ||
         number === undefined ||
         repository === undefined ||
@@ -187,13 +189,14 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
       ) {
         return;
       }
-      return { branch, host, kind: 'declared-pull-request', number, repository, state, url };
+      return { branch, declaredBy, host, kind: 'declared-pull-request', number, repository, state, url };
     }
     case 'pull-request': {
       const accountLabel = optionalText(value.accountLabel, maxShortText);
       const checksRollup = optionalOneOf(PULL_REQUEST_CHECK_ROLLUPS, value.checksRollup);
       const draft = optionalBoolean(value.draft);
       const host = requiredText(value.host, maxShortText);
+      const mergedAt = optionalInstant(value.mergedAt);
       const number = positiveInteger(value.number);
       const outcome = oneOf(PULL_REQUEST_OBSERVATION_OUTCOMES, value.outcome);
       const repository = requiredText(value.repository, maxShortText);
@@ -206,6 +209,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
         checksRollup === undefined ||
         draft === undefined ||
         host === undefined ||
+        mergedAt === undefined ||
         number === undefined ||
         outcome === undefined ||
         repository === undefined ||
@@ -222,6 +226,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
         draft,
         host,
         kind: 'pull-request',
+        mergedAt,
         number,
         outcome,
         repository,
@@ -387,6 +392,7 @@ const parseRoot = (value: unknown): WorkRoot | undefined => {
   const declared = parseDeclaration(value.declared);
   const session = parseSession(value.session);
   const archived = typeof value.archived === 'boolean' ? value.archived : undefined;
+  const reconsidered = typeof value.reconsidered === 'boolean' ? value.reconsidered : undefined;
   const attention = oneOf(WORK_ATTENTION_KINDS, value.attention);
   const desktopSessionId = optionalText(value.desktopSessionId, maxId);
   const facts = boundedList(value.facts, maxFacts, parseFact);
@@ -403,6 +409,7 @@ const parseRoot = (value: unknown): WorkRoot | undefined => {
     declared === undefined ||
     session === undefined ||
     archived === undefined ||
+    reconsidered === undefined ||
     attention === undefined ||
     desktopSessionId === undefined ||
     facts === undefined ||
@@ -423,6 +430,7 @@ const parseRoot = (value: unknown): WorkRoot | undefined => {
     interpretations,
     key: key as WorkRoot['key'],
     project: project as WorkRoot['project'],
+    reconsidered,
     session,
     title,
     titleSource,

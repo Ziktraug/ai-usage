@@ -75,6 +75,7 @@ describe('fact builders', () => {
       host: 'github.com',
       id: 'pr-1',
       kind: 'pull-request',
+      mergedAt: null,
       number: 66,
       outcome: 'observed',
       provenance: { coverage: 'complete', machineId: 'machine-a', observedAt: FRESH, source: 'github' },

@@ -31,6 +31,7 @@ const root = (overrides: Partial<WorkRootWire> = {}): WorkRootWire => ({
     },
     {
       branch: 'fixture/pr',
+      declaredBy: 'child',
       host: 'github.com',
       id: 'local_child:pr:github.com/fixture/project#117',
       kind: 'declared-pull-request',
@@ -66,6 +67,7 @@ const root = (overrides: Partial<WorkRootWire> = {}): WorkRootWire => ({
     label: 'project',
     worktreeName: null,
   },
+  reconsidered: false,
   session: { campaignKey: null, rowId: 'row-1' },
   title: 'Fixture: root',
   titleSource: 'auto',

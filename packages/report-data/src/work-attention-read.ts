@@ -145,9 +145,13 @@ const childrenOf = (children: readonly ClaudeDesktopSessionObservation[]): WorkR
   titles: children.slice(0, maxChildrenTitles).map((child) => child.title),
 });
 
-const declaredPullRequestFacts = (observation: ClaudeDesktopSessionObservation): WorkFact[] =>
+const declaredPullRequestFacts = (
+  observation: ClaudeDesktopSessionObservation,
+  declaredBy: 'root' | 'child',
+): WorkFact[] =>
   observation.declaredPullRequests.map((pullRequest) => ({
     branch: pullRequest.branch,
+    declaredBy,
     host: pullRequest.host,
     id: `${observation.desktopSessionId}:pr:${pullRequest.host}/${pullRequest.repository}#${pullRequest.number}`,
     kind: 'declared-pull-request',
@@ -312,8 +316,8 @@ const factsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
     });
   }
   facts.push(
-    ...declaredPullRequestFacts(root),
-    ...group.children.flatMap(declaredPullRequestFacts),
+    ...declaredPullRequestFacts(root, 'root'),
+    ...group.children.flatMap((child) => declaredPullRequestFacts(child, 'child')),
     ...externalFactsOf(group, index),
   );
   for (const suggestion of root.openSuggestions) {
@@ -416,10 +420,18 @@ const DECLARATION_INTERPRETATION_KINDS = new Set<WorkInterpretation['kind']>([
  * then the external and local statements, then proposals, staleness and coverage gaps.
  */
 const mergeInterpretations = (
-  declared: { readonly attention: WorkAttentionKind; readonly interpretations: readonly WorkInterpretation[] },
+  declared: {
+    readonly attention: WorkAttentionKind;
+    readonly interpretations: readonly WorkInterpretation[];
+    readonly reconsidered: boolean;
+  },
   external: readonly WorkInterpretation[],
   factsCut: number,
-): { readonly attention: WorkAttentionKind; readonly interpretations: WorkInterpretation[] } => {
+): {
+  readonly attention: WorkAttentionKind;
+  readonly interpretations: WorkInterpretation[];
+  readonly reconsidered: boolean;
+} => {
   const leading = declared.interpretations.filter(({ kind }) => DECLARATION_INTERPRETATION_KINDS.has(kind));
   const trailing = declared.interpretations.filter(({ kind }) => !DECLARATION_INTERPRETATION_KINDS.has(kind));
   const cut = factsCut > 0 ? [factsCutInterpretation(factsCut)] : [];
@@ -428,7 +440,7 @@ const mergeInterpretations = (
   if (attention !== 'human-request' && external.some(({ kind }) => kind === 'external-review-pending')) {
     attention = 'external-wait';
   }
-  return { attention, interpretations };
+  return { attention, interpretations, reconsidered: declared.reconsidered };
 };
 
 const sessionKey = (observation: Pick<ClaudeDesktopSessionObservation, 'desktopSessionId' | 'machineId'>): string =>
@@ -497,6 +509,10 @@ const compareRoots = (left: WorkRoot, right: WorkRoot): number => {
     return rank;
   }
   if (left.attention === 'human-request') {
+    // A request a later pull request may have answered ranks after the ones nothing reconsidered.
+    if (left.reconsidered !== right.reconsidered) {
+      return left.reconsidered ? 1 : -1;
+    }
     const leftAt = left.age.declaredAt ?? '';
     const rightAt = right.age.declaredAt ?? '';
     if (leftAt !== rightAt) {
@@ -590,7 +606,7 @@ const buildRoot = (
     now,
     ...(rootsPerCheckout === undefined ? {} : { rootsPerCheckout }),
   });
-  const { attention, interpretations } = mergeInterpretations(declaredResult, external, cut);
+  const { attention, interpretations, reconsidered } = mergeInterpretations(declaredResult, external, cut);
   const checkoutPath = checkoutPathOf(root);
   return {
     age: {
@@ -614,6 +630,7 @@ const buildRoot = (
       label: session?.projectLabel ?? path.basename(root.cwd),
       worktreeName: root.worktreePath === null ? null : path.basename(root.worktreePath),
     },
+    reconsidered,
     session: session === null ? null : { campaignKey: session.campaignKey, rowId: session.rowId },
     title: root.title,
     titleSource: root.titleSource,

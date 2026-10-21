@@ -153,10 +153,14 @@ const compareInstantsDescending = (left: string | null, right: string | null): n
   return rightTime - leftTime;
 };
 
-/** Most recent first; ties fall back to the title and then to the stable session key. */
+/**
+ * Most recent first; ties fall back to the title and then to the stable session key. A request a
+ * later pull request may have answered (`reconsidered`) ranks after the ones nothing reconsidered.
+ */
 export const sortWorkRoots = (roots: readonly WorkRoot[]): readonly WorkRoot[] =>
   [...roots].sort(
     (left, right) =>
+      Number(left.reconsidered) - Number(right.reconsidered) ||
       compareInstantsDescending(workRootRelevantInstant(left), workRootRelevantInstant(right)) ||
       left.title.localeCompare(right.title) ||
       workSessionKeyString(left.key).localeCompare(workSessionKeyString(right.key)),
@@ -174,7 +178,7 @@ export const WORK_ATTENTION_SECTIONS: readonly WorkAttentionSection[] = [
   {
     collapseBeyond: null,
     kind: 'human-request',
-    note: 'Questions and review requests the sessions declared; no later fact answers them.',
+    note: 'Questions and review requests the sessions declared. A root marked “possibly answered” has a later pull request that may be the answer; it ranks last and stays yours until you confirm.',
     title: 'Needs you',
   },
   {
@@ -372,9 +376,32 @@ const pullRequestChips = (root: WorkRoot): readonly WorkFactChip[] => {
   return [...byNumber.values()];
 };
 
+/**
+ * The pull request named first by the "possibly answered" interpretation, for the row's chip.
+ * The evidence ids are resolved against the root's own facts; nothing is parsed out of text.
+ */
+const reconsideredPullRequestNumber = (root: WorkRoot): number | null => {
+  const evidence = new Set(
+    root.interpretations
+      .filter(({ kind }) => kind === 'request-satisfied-elsewhere')
+      .flatMap((entry) => entry.evidence),
+  );
+  return pullRequestFacts(root).find((fact) => evidence.has(fact.id))?.number ?? null;
+};
+
 /** The compact facts a row shows: pull requests, a dirty checkout, proposals and children. */
 export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
-  const chips: WorkFactChip[] = [...pullRequestChips(root)];
+  const chips: WorkFactChip[] = [];
+  if (root.reconsidered) {
+    const number = reconsideredPullRequestNumber(root);
+    chips.push({
+      id: `${workRootId(root)}:reconsidered`,
+      instant: null,
+      label: number === null ? 'possibly answered' : `possibly answered · PR #${number}`,
+      tone: 'neutral',
+    });
+  }
+  chips.push(...pullRequestChips(root));
   for (const fact of root.facts) {
     if (fact.kind === 'checkout-status' && fact.dirty === true) {
       chips.push({

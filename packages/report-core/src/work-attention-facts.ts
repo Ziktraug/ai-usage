@@ -33,6 +33,7 @@ export const pullRequestFact = (observation: PullRequestObservation, factId: str
   host: observation.host,
   id: factId,
   kind: 'pull-request',
+  mergedAt: observation.mergedAt,
   number: observation.number,
   outcome: observation.outcome,
   provenance: {

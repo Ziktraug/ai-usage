@@ -71,6 +71,10 @@ describe('Work attention client narrowing', () => {
       },
     ],
     ['total below the served roots', { data: { ...dataset, totalRoots: 1 }, ok: true }],
+    [
+      'root without the reconsidered flag',
+      { data: { ...dataset, roots: [{ ...dataset.roots[0], reconsidered: undefined }] }, ok: true },
+    ],
     ['too many roots', { data: { ...dataset, roots: Array.from({ length: 201 }, () => dataset.roots[0]) }, ok: true }],
     ['error without a known tag', { error: { message: 'x', tag: 'Teapot' }, ok: false }],
   ])('rejects a malformed envelope (%s) as a typed failure without inventing data', async (_label, response) => {

@@ -50,12 +50,14 @@ describe('work attention e2e fixture', () => {
     ]);
 
     // A request to merge, declared after the child's declared merge but before GitHub's merge:
-    // satisfied by the observation, not by the declaration.
+    // reconsidered by the observation, not by the declaration, and still a human request.
     const merged = byId.get(ids.mergedBeforeRoot);
-    expect(merged?.attention).toBe('none');
-    expect(kindsOf(merged)).toEqual(['request-satisfied-elsewhere', 'pull-request-merged']);
-    expect(merged?.interpretations[0]?.uncertainty).toContain('observed on GitHub');
-    expect(merged?.interpretations[1]?.text).toContain('merge does not prove deployment');
+    expect(merged?.attention).toBe('human-request');
+    expect(merged?.reconsidered).toBe(true);
+    expect(kindsOf(merged)).toEqual(['request-open', 'request-satisfied-elsewhere', 'pull-request-merged']);
+    expect(merged?.interpretations[1]?.text).toContain('observed on GitHub');
+    expect(merged?.interpretations[1]?.uncertainty).toContain('the question stays yours until you confirm');
+    expect(merged?.interpretations[2]?.text).toContain('merge does not prove deployment');
 
     // A dirty checkout observed forty minutes ago, shared by the blocked root and three others.
     const blocked = byId.get(ids.blockedRoot);
@@ -72,8 +74,10 @@ describe('work attention e2e fixture', () => {
 
     // An unauthenticated read with an older successful one: two coverage gaps, the dated state kept.
     const satisfied = byId.get(ids.satisfiedRoot);
-    expect(satisfied?.attention).toBe('none');
-    expect(kindsOf(satisfied)).toEqual(['request-satisfied-elsewhere', 'coverage-gap', 'coverage-gap']);
+    expect(satisfied?.attention).toBe('human-request');
+    expect(satisfied?.reconsidered).toBe(true);
+    expect(kindsOf(satisfied)).toEqual(['request-open', 'request-satisfied-elsewhere', 'coverage-gap', 'coverage-gap']);
+    expect(satisfied?.interpretations[1]?.text).toContain('declared by a child session');
     expect(
       satisfied?.facts
         .filter((fact) => fact.kind === 'pull-request')
@@ -82,8 +86,8 @@ describe('work attention e2e fixture', () => {
       ['observed', 'OPEN', hoursBefore(26)],
       ['unauthenticated', null, hoursBefore(0.5)],
     ]);
-    expect(satisfied?.interpretations[1]?.text).toContain(`was OPEN when last observed at ${hoursBefore(26)}`);
-    expect(satisfied?.interpretations[2]?.uncertainty).toContain('sign in gh for github.com');
+    expect(satisfied?.interpretations[2]?.text).toContain(`was OPEN when last observed at ${hoursBefore(26)}`);
+    expect(satisfied?.interpretations[3]?.uncertainty).toContain('sign in gh for github.com');
 
     // No other root carries a pull request fact: attachment follows declarations only.
     const withPullRequests = [...byId.values()]

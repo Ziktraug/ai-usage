@@ -100,9 +100,10 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).not.toContain('Known waits');
     expect(body).not.toContain('Simulate review assignment');
     expect(occurrences(body, 'Declared by the session; current state unobserved.')).toBe(3);
-    expect(rowsIn(body, 'human-request')).toBe(5);
+    expect(rowsIn(body, 'human-request')).toBe(6);
     expect(rowsIn(body, 'none')).toBe(10);
-    expect(body).toContain('Show all 13 in Recent, nothing pending');
+    expect(body).toContain('Show all 12 in Recent, nothing pending');
+    expect(body).toContain('possibly answered · PR #61');
     expect(body).toContain('Confirm whether the Codex quota window should be dated by its last confirmation');
     expect(body).toContain('blocked · <time datetime="2026-06-11T09:00:00.000Z"');
     expect(body).toContain('3 h ago');

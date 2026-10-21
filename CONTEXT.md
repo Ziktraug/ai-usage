@@ -140,8 +140,10 @@ _Avoid_: finding, verdict, status, truth
 **Interpretation**:
 A reading computed on request that confronts a Session's declarations with the
 facts gathered around it and names its own uncertainty, such as "request open"
-or "request satisfied elsewhere". It is never persisted and never shown as a
-fact; a changed rule re-reads the same facts differently.
+or "possibly answered elsewhere". It is never persisted and never shown as a
+fact; a changed rule re-reads the same facts differently. An interpretation
+never closes a request: a later pull request can mark a root reconsidered, and
+the question stays the operator's until they confirm.
 _Avoid_: fact, inferred state, conclusion, task status
 
 **Proposal**:

@@ -24,12 +24,18 @@ const declaredTurn = (declaration: WorkRootDeclaration): WorkFact => ({
   status: declaration.status,
 });
 
-const declaredPullRequest = (id: string, state: string, hoursAgo: number): WorkFact => ({
+const declaredPullRequest = (
+  id: string,
+  state: string,
+  hoursAgo: number,
+  options: { readonly declaredBy?: 'root' | 'child'; readonly number?: number } = {},
+): WorkFact => ({
   branch: 'fixture/branch',
+  declaredBy: options.declaredBy ?? 'child',
   host: 'github.com',
   id,
   kind: 'declared-pull-request',
-  number: 117,
+  number: options.number ?? 117,
   provenance: provenance(hoursAgo),
   repository: 'fixture/ai-usage',
   state,
@@ -39,6 +45,9 @@ const declaredPullRequest = (id: string, state: string, hoursAgo: number): WorkF
 const observedPullRequest = (
   id: string,
   pullRequest: {
+    readonly draft?: boolean | null;
+    readonly mergedAtHoursAgo?: number | null;
+    readonly number?: number;
     readonly outcome?: 'observed' | 'network';
     readonly state: 'OPEN' | 'MERGED' | 'CLOSED' | null;
     readonly updatedAtHoursAgo: number | null;
@@ -47,11 +56,15 @@ const observedPullRequest = (
 ): WorkFact => ({
   accountLabel: null,
   checksRollup: 'success',
-  draft: false,
+  draft: pullRequest.draft === undefined ? false : pullRequest.draft,
   host: 'github.com',
   id,
   kind: 'pull-request',
-  number: 90,
+  mergedAt:
+    pullRequest.mergedAtHoursAgo === undefined || pullRequest.mergedAtHoursAgo === null
+      ? null
+      : iso(pullRequest.mergedAtHoursAgo),
+  number: pullRequest.number ?? 90,
   outcome: pullRequest.outcome ?? 'observed',
   provenance: provenance(observedHoursAgo, 'github'),
   repository: 'fixture/ai-usage',
@@ -89,19 +102,24 @@ const interpret = (
 
 const kinds = (result: ReturnType<typeof interpretWorkRoot>) => result.interpretations.map(({ kind }) => kind);
 
+const STAYS_YOURS = 'This does not prove it is the same work; the question stays yours until you confirm.';
+
 describe('interpretWorkRoot', () => {
   test('a blocked declaration with a question is an open request', () => {
     const declaration = blocked('Confirm whether checkout 3 should be deleted.');
     const result = interpret(declaration, [declaredTurn(declaration)]);
     expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(false);
     expect(kinds(result)).toEqual(['request-open']);
     expect(result.interpretations[0]?.evidence).toEqual(['local_root:declared-turn']);
     expect(result.interpretations[0]?.text).toContain('checkout 3');
+    expect(result.interpretations[0]?.uncertainty).toContain('nothing observed since says it was answered');
   });
 
   test('a review-ready declaration is a human request', () => {
     const result = interpret({ at: iso(1), detail: 'Ready.', needsAction: null, status: 'review_ready' });
     expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(false);
     expect(kinds(result)).toEqual(['review-ready']);
   });
 
@@ -109,48 +127,168 @@ describe('interpretWorkRoot', () => {
     expect(interpret({ at: iso(1), detail: 'Done.', needsAction: null, status: 'completed' })).toEqual({
       attention: 'none',
       interpretations: [],
+      reconsidered: false,
     });
-    expect(interpret(null)).toEqual({ attention: 'none', interpretations: [] });
+    expect(interpret(null)).toEqual({ attention: 'none', interpretations: [], reconsidered: false });
     // Blocked without a question is not a request the product can relay.
     expect(interpret(blocked(null)).attention).toBe('none');
     expect(interpret(blocked('   ')).attention).toBe('none');
   });
 
-  test('a request for a pull request is satisfied by one declared later in the same family', () => {
+  test('a pull request a child declared after the request marks it reconsidered, never answered', () => {
     const declaration = blocked('Open the pull request for the collector branch and push it.');
     const result = interpret(declaration, [declaredTurn(declaration), declaredPullRequest('child:pr', 'OPEN', 3)]);
-    expect(result.attention).toBe('none');
-    expect(kinds(result)).toEqual(['request-satisfied-elsewhere']);
-    expect(result.interpretations[0]?.evidence).toEqual(['child:pr']);
-    expect(result.interpretations[0]?.uncertainty).toContain('same family of sessions');
-    expect(result.interpretations[0]?.text).toContain('fixture/ai-usage#117 (OPEN)');
-    // Vocabulary variants and a MERGED state also satisfy.
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(true);
+    expect(kinds(result)).toEqual(['request-open', 'request-satisfied-elsewhere']);
+    expect(result.interpretations[0]?.uncertainty).toContain('a later pull request may be the answer');
+    expect(result.interpretations[1]).toEqual({
+      evidence: ['child:pr'],
+      kind: 'request-satisfied-elsewhere',
+      text: `Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) declared by a child session at ${iso(3)}, after the question.`,
+      uncertainty: STAYS_YOURS,
+    });
+    // Vocabulary variants and a MERGED state are read the same way.
     for (const needsAction of ['Please push the branch.', 'Commit the fix.', 'Merge it when green.', 'Open a PR.']) {
       const variant = blocked(needsAction);
-      expect(interpret(variant, [declaredTurn(variant), declaredPullRequest('x', 'merged', 1)]).attention).toBe('none');
+      const read = interpret(variant, [declaredTurn(variant), declaredPullRequest('x', 'merged', 1)]);
+      expect(read.attention).toBe('human-request');
+      expect(read.reconsidered).toBe(true);
     }
   });
 
-  test('an ambiguous question is never satisfied by a pull request', () => {
+  test('probe A: the root’s own declared pull request never answers its own question', () => {
+    // The desktop app lists the checkout branch's pull request on the root itself.
+    const declaration = blocked('Should I push the WIP commit before the review starts?');
+    const result = interpret(declaration, [
+      declaredTurn(declaration),
+      declaredPullRequest('root:pr', 'OPEN', 1, { declaredBy: 'root', number: 66 }),
+    ]);
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(false);
+    expect(kinds(result)).toEqual(['request-open']);
+  });
+
+  test('probe B: a question without pull request vocabulary is never reconsidered by one', () => {
     const declaration = blocked('Yes or no?');
     const result = interpret(declaration, [declaredTurn(declaration), declaredPullRequest('child:pr', 'OPEN', 1)]);
     expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(false);
     expect(kinds(result)).toEqual(['request-open']);
     // "prs" inside another word does not count either.
     const other = blocked('Should the supressor stay?');
-    expect(interpret(other, [declaredTurn(other), declaredPullRequest('child:pr', 'OPEN', 1)]).attention).toBe(
-      'human-request',
+    expect(interpret(other, [declaredTurn(other), declaredPullRequest('child:pr', 'OPEN', 1)]).reconsidered).toBe(
+      false,
+    );
+    const observedOnly = blocked('Yes or no?');
+    expect(
+      interpret(observedOnly, [
+        declaredTurn(observedOnly),
+        observedPullRequest('gh:1', { mergedAtHoursAgo: 1, state: 'MERGED', updatedAtHoursAgo: 1 }, 1),
+      ]).reconsidered,
+    ).toBe(false);
+  });
+
+  test('probe D: an open pull request merely updated after the question is a hint, not an answer', () => {
+    const declaration = blocked('Push the WIP commit and open the PR.');
+    const bumped = observedPullRequest('gh:66', { number: 66, state: 'OPEN', updatedAtHoursAgo: 1 }, 0.5);
+    // Observed alone, or beside the root's own declaration of the same pull request.
+    for (const facts of [
+      [declaredTurn(declaration), bumped],
+      [
+        declaredTurn(declaration),
+        declaredPullRequest('root:pr', 'OPEN', 1, { declaredBy: 'root', number: 66 }),
+        bumped,
+      ],
+    ]) {
+      const result = interpret(declaration, facts);
+      expect(result.attention).toBe('human-request');
+      expect(result.reconsidered).toBe(false);
+      expect(kinds(result)).toEqual(['request-open']);
+    }
+    // The same open pull request declared by a child after the question: both sources agree.
+    const both = interpret(declaration, [
+      declaredTurn(declaration),
+      declaredPullRequest('child:pr', 'OPEN', 2, { number: 66 }),
+      bumped,
+    ]);
+    expect(both.attention).toBe('human-request');
+    expect(both.reconsidered).toBe(true);
+    expect(both.interpretations[1]?.evidence).toEqual(['child:pr', 'gh:66']);
+    expect(both.interpretations[1]?.text).toContain('declared by a child session');
+    expect(both.interpretations[1]?.text).toContain('observed on GitHub');
+    // A draft, or an open pull request GitHub never dated, is not an answer even with the child.
+    const draft = observedPullRequest('gh:66', { draft: true, number: 66, state: 'OPEN', updatedAtHoursAgo: 1 }, 0.5);
+    const undated = observedPullRequest('gh:66', { number: 66, state: 'OPEN', updatedAtHoursAgo: null }, 0.5);
+    for (const fact of [draft, undated]) {
+      const read = interpret(declaration, [declaredTurn(declaration), declaredPullRequest('old', 'OPEN', 8), fact]);
+      expect(read.reconsidered).toBe(false);
+    }
+  });
+
+  test('a pull request GitHub showed merged at or after the request marks it reconsidered', () => {
+    // Declared MERGED by the child long before the request: the declaration path says nothing.
+    const declaration = blocked('Push the fix and merge it.', 6);
+    const before = interpret(declaration, [declaredTurn(declaration), declaredPullRequest('child:pr', 'MERGED', 30)]);
+    expect(before.attention).toBe('human-request');
+    expect(before.reconsidered).toBe(false);
+
+    const merged = observedPullRequest('gh:90', { mergedAtHoursAgo: 2, state: 'MERGED', updatedAtHoursAgo: 2 }, 1);
+    const result = interpret(declaration, [
+      declaredTurn(declaration),
+      declaredPullRequest('child:pr', 'MERGED', 30),
+      merged,
+    ]);
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(true);
+    expect(kinds(result)).toEqual(['request-open', 'request-satisfied-elsewhere']);
+    expect(result.interpretations[1]?.evidence).toEqual(['gh:90']);
+    expect(result.interpretations[1]?.text).toBe(
+      `Possibly answered elsewhere: fixture/ai-usage#90 (MERGED, merged at ${iso(2)}) observed on GitHub at ${iso(1)}, after the question.`,
+    );
+    expect(result.interpretations[1]?.uncertainty).toBe(STAYS_YOURS);
+
+    // Merged before the request, or merged at an unknown time, is not an answer however recently read.
+    const earlier = observedPullRequest('gh:stale', { mergedAtHoursAgo: 30, state: 'MERGED', updatedAtHoursAgo: 1 }, 1);
+    const undated = observedPullRequest(
+      'gh:undated',
+      { mergedAtHoursAgo: null, state: 'MERGED', updatedAtHoursAgo: 1 },
+      1,
+    );
+    for (const fact of [earlier, undated]) {
+      const read = interpret(declaration, [declaredTurn(declaration), fact]);
+      expect(read.reconsidered).toBe(false);
+      expect(kinds(read)).toEqual(['request-open']);
+    }
+
+    // Declared and observed together: both are named and both are evidence.
+    const both = interpret(declaration, [
+      declaredTurn(declaration),
+      declaredPullRequest('child:new', 'OPEN', 3),
+      merged,
+    ]);
+    expect(both.interpretations[1]?.evidence).toEqual(['child:new', 'gh:90']);
+    expect(both.interpretations[1]?.text).toContain(
+      `fixture/ai-usage#117 (OPEN) declared by a child session at ${iso(3)}; fixture/ai-usage#90 (MERGED`,
     );
   });
 
-  test('a pull request declared before the request, or closed, satisfies nothing', () => {
+  test('a pull request declared before the request, closed, read before it or failed changes nothing', () => {
     const declaration = blocked('Push the fix and merge it.', 6);
-    expect(interpret(declaration, [declaredTurn(declaration), declaredPullRequest('old', 'MERGED', 30)])).toMatchObject(
-      { attention: 'human-request' },
-    );
-    expect(
-      interpret(declaration, [declaredTurn(declaration), declaredPullRequest('closed', 'CLOSED', 1)]),
-    ).toMatchObject({ attention: 'human-request' });
+    const cases: readonly WorkFact[] = [
+      declaredPullRequest('old', 'MERGED', 30),
+      declaredPullRequest('closed', 'CLOSED', 1),
+      // Read before the declaration.
+      observedPullRequest('gh:early', { mergedAtHoursAgo: 7, state: 'MERGED', updatedAtHoursAgo: null }, 8),
+      observedPullRequest('gh:failed', { outcome: 'network', state: null, updatedAtHoursAgo: null }, 1),
+      observedPullRequest('gh:closed', { state: 'CLOSED', updatedAtHoursAgo: 1 }, 1),
+    ];
+    for (const fact of cases) {
+      const result = interpret(declaration, [declaredTurn(declaration), fact]);
+      expect(result.attention).toBe('human-request');
+      expect(result.reconsidered).toBe(false);
+      expect(kinds(result)).toEqual(['request-open']);
+    }
   });
 
   test('open proposals are an optional lead that never outranks a request', () => {
@@ -224,74 +362,14 @@ describe('interpretWorkRoot', () => {
     expect(interpret(null, [], { ...covered, sessionJoined: null })).toEqual({
       attention: 'none',
       interpretations: [],
+      reconsidered: false,
     });
-  });
-
-  test('a request for a pull request is satisfied by one GitHub showed changed after the declaration', () => {
-    // Declared MERGED long before the request: the declaration path does not satisfy it.
-    const declaration = blocked('Push the fix and merge it.', 6);
-    const before = interpret(declaration, [declaredTurn(declaration), declaredPullRequest('child:pr', 'MERGED', 30)]);
-    expect(before.attention).toBe('human-request');
-
-    const merged = observedPullRequest('gh:90', { state: 'MERGED', updatedAtHoursAgo: 2 }, 1);
-    const result = interpret(declaration, [
-      declaredTurn(declaration),
-      declaredPullRequest('child:pr', 'MERGED', 30),
-      merged,
-    ]);
-    expect(result.attention).toBe('none');
-    expect(kinds(result)).toEqual(['request-satisfied-elsewhere']);
-    expect(result.interpretations[0]?.evidence).toEqual(['gh:90']);
-    expect(result.interpretations[0]?.text).toBe(
-      `Asked to act on a pull request; GitHub showed fixture/ai-usage#90 (MERGED) at ${iso(1)} for a pull request this family declared.`,
-    );
-    expect(result.interpretations[0]?.uncertainty).toContain(
-      'observed on GitHub for the PR this session family declared',
-    );
-
-    // An open pull request GitHub never dated counts from its observation time alone.
-    const open = observedPullRequest('gh:91', { state: 'OPEN', updatedAtHoursAgo: null }, 1);
-    expect(interpret(declaration, [declaredTurn(declaration), open]).attention).toBe('none');
-
-    // Declared and observed together: both are named and both are evidence.
-    const both = interpret(declaration, [
-      declaredTurn(declaration),
-      declaredPullRequest('child:new', 'OPEN', 3),
-      merged,
-    ]);
-    expect(both.interpretations[0]?.evidence).toEqual(['child:new', 'gh:90']);
-    expect(both.interpretations[0]?.text).toContain('later declared fixture/ai-usage#117 (OPEN) and GitHub showed');
-  });
-
-  test('an observed pull request changed before the request, read before it, failed or closed satisfies nothing', () => {
-    const declaration = blocked('Push the fix and merge it.', 6);
-    const cases: readonly WorkFact[] = [
-      // Merged before the declaration, however recently read.
-      observedPullRequest('gh:stale', { state: 'MERGED', updatedAtHoursAgo: 30 }, 1),
-      // Read before the declaration.
-      observedPullRequest('gh:early', { state: 'OPEN', updatedAtHoursAgo: null }, 8),
-      observedPullRequest('gh:failed', { outcome: 'network', state: null, updatedAtHoursAgo: null }, 1),
-      observedPullRequest('gh:closed', { state: 'CLOSED', updatedAtHoursAgo: 1 }, 1),
-    ];
-    for (const fact of cases) {
-      const result = interpret(declaration, [declaredTurn(declaration), fact]);
-      expect(result.attention).toBe('human-request');
-      expect(kinds(result)).toEqual(['request-open']);
-    }
-    // A question without pull request vocabulary is never answered by one.
-    const question = blocked('Yes or no?');
-    expect(
-      interpret(question, [
-        declaredTurn(question),
-        observedPullRequest('gh:1', { state: 'MERGED', updatedAtHoursAgo: 1 }, 1),
-      ]).attention,
-    ).toBe('human-request');
   });
 
   test('does not name external waits: an observed open pull request alone leaves attention at none', () => {
     // `external-review-pending` belongs to `interpretExternalFacts`; the read model merges the two.
     const observed = observedPullRequest('gh:117', { state: 'OPEN', updatedAtHoursAgo: null }, 1);
-    expect(interpret(null, [observed])).toEqual({ attention: 'none', interpretations: [] });
+    expect(interpret(null, [observed])).toEqual({ attention: 'none', interpretations: [], reconsidered: false });
     const declaration = blocked('Decide.');
     expect(interpret(declaration, [declaredTurn(declaration), observed]).attention).toBe('human-request');
   });
