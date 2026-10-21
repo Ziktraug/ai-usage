@@ -8,6 +8,7 @@
     "./codex-history": "./src/codex-history.ts",
     "./collectors": "./src/collectors/index.ts",
     "./datasets": "./src/datasets.ts",
+    "./executor-observations": "./src/executor-observations.ts",
     "./facets": "./src/facets.ts",
     "./rtk-enrichment": "./src/rtk-enrichment.ts"
   },
