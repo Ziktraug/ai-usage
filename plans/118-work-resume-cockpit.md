@@ -153,3 +153,6 @@ source (10 min, not detected without `acli`), `jira-reply-arrived` (a reply afte
 activity → needs you, "you may have read them in Jira; this view cannot tell") and
 `jira-status-differs` interpretations, coverage.jira, row chip and detail facts. Verified at
 `ab5d61ff`: `bun run typecheck` 58/58, lint and check clean, package suites 1258 pass, web 1524 pass.
+
+Gate at `216f726f` (before lot J): `bun run test:e2e` (default Playwright suite, including the visual
+regression specs) 248 passed in 2.1 min; no snapshot changed.
