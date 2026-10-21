@@ -57,3 +57,22 @@ shell e2e 43/43, bundle budget 4/4, svelte-check 0 errors. Not verified: the liv
 `work.attention` path (contract lands with lot A; `resolveWorkAttentionClient` returns a typed
 unavailable client until then), visual-regression suite (no `/work` snapshot exists),
 `test:e2e-demo`, `test:web-production`.
+
+### 2026-10-22 00:05 — lots R and B integrated (`b131466a`, `60418a91`)
+
+Lot R (`764514fe`…`75476539`, ADR 0052): `routing.executors[]` declarations in the home config,
+`executors.capabilities` source (15 min, CLI metadata only), `executor_observations` table,
+`qualifyReviewCandidates` with per-field provenance and qualification actions, `workRouting.context`
+procedure, routing panel. Worker evidence: 62 routing tests incl. the acceptance grid; isolated real
+smoke: both CLIs observed signed in, real quota read through `ai-usage quota --stored --json` (bare
+`claude`/`codex` keys), an example declaration with `model: 'Fable'` makes the Claude route a
+real recommendation; nothing written to the operator's config.
+Lot B (`4874c28b`…`220ab209`, ADR 0051): shared bounded process runner, `checkouts.status` (5 min)
+and `github.pull-requests` (10 min) sources, `pull_request_observations` /
+`checkout_status_observations` / `work_fact_run_state` tables, pure external-fact interpretations.
+Worker evidence: fixture suites plus an isolated real smoke (PR #66 observed OPEN with failing checks,
+six checkouts observed, unknown PR → not-found) into a disposable store.
+Integration: thirteen append conflicts between R and B resolved keeping both sides (source catalogue
+order `executors.capabilities`, `checkouts.status`, `github.pull-requests`). Verified at `60418a91`:
+`bun run typecheck` 58/58, `bun run lint` clean, source-control / migration / machine-config /
+source-adapters / package-boundary tests 115 pass. Broad test gates recorded below when complete.
