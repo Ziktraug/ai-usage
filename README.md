@@ -320,6 +320,38 @@ An invalid entry is reported on the Work view with its config path and reason
 and does not hide the other entries. Declarations are read, never written, by
 the app.
 
+### 8. Declare which checkouts a launched review may run in
+
+A `real` recommendation for Claude Code can become one execution (ADR 0053):
+the engine runs `claude -p` in plan mode with read-only tools, in the
+session's checkout, with your own Claude Code sign-in, and records the attempt.
+It does so only when that checkout is equal to, or below, an entry you
+declared under `routing.reviewTargets` in the same home config:
+
+```json
+{
+  "routing": {
+    "executors": [{ "...": "see section 7" }],
+    "reviewTargets": [{ "checkoutPath": "/home/you/src/ai-usage", "label": "AI Usage checkout" }]
+  }
+}
+```
+
+- `checkoutPath`: absolute path of a checkout; its worktrees under it are
+  admitted too. The checkout a session is reviewed in is the Desktop session's
+  worktree, else its cwd, else the served session's path; the Work view names
+  it beside the button.
+- `label` (optional): how the entry is referred to in the cockpit.
+
+Without a matching entry the button stays absent and the view says exactly
+what to add (`add routing.reviewTargets for <path>`). The engine re-reads the
+declaration, the executor observation, the quota and the checkout at launch
+time; the browser never decides. One attempt is live per target at a time: a
+second click, a retry or a reload returns the existing one. An attempt the
+engine lost contact with (restart, shutdown) is shown as "contact lost; verify
+in the harness" and is never relaunched. Only Claude Code launches in this
+version; Codex stays at simulation.
+
 ## Output formats
 
 The default output is a terminal table with an analytics summary. The same report can be emitted in other formats:
