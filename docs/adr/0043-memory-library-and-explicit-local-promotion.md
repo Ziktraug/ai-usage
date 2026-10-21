@@ -1,6 +1,6 @@
 # ADR 0043: Browse Session accounts and explicitly promote local knowledge
 
-- **Status**: Accepted
+- **Status**: Accepted; superseded in part by [ADR 0049](0049-retire-session-distillation.md) for the retired feature; data-preservation and publication restrictions remain.
 - **Date**: 2026-10-06
 - **Amends**: 0042
 
