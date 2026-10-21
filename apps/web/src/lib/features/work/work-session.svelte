@@ -20,12 +20,10 @@
     item,
     revision,
     client,
-    onSelect,
   }: {
     item: SessionPageItem;
     revision: string;
     client: SessionClientAdapter;
-    onSelect: (row: SessionPresentationRow) => void;
   } = $props();
   let expanded = $state(false);
   let hydrated = $state(false);
@@ -59,7 +57,6 @@
       · Last recorded activity across related sessions: {row.activeDate ?? row.endDate ?? row.date ?? 'unavailable'}
     </p>
     <p class={workMuted}>
-      Known waits unavailable ·
       {row.partial || row.usageUnavailable ? 'Partial session coverage' : 'Recorded usage only; work outcomes unobserved'}
     </p>
     {#if row.originProvenance}
@@ -81,7 +78,6 @@
     {/if}
     <div class={workRow}>
       <a class={workLink} href={detailHref(row)}>Open session detail</a>
-      <button class={workButton} onclick={() => onSelect(row)} type="button">Simulate review assignment</button>
     </div>
     {#if memberCount > 0}
       <details ontoggle={(event) => { expanded = event.currentTarget.open; }} bind:this={relatedDetails}>

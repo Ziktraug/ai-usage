@@ -10,12 +10,17 @@ import { StandardRPCJsonSerializer, StandardRPCSerializer } from '@orpc/client/s
 import { InfiniteQueryObserver, keepPreviousData, QueryObserver } from '@tanstack/svelte-query';
 import { demoReportPayload } from '../../../report-data';
 import { createHydratedWebQueryClient } from '../../query/client';
+import { createWebQueryRuntime } from '../../query/composition';
 import { retainedCampaignOptions } from '../../query/options/campaigns';
 import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
 import { WORK_PAGE_SIZE, workRequest, workSessionsOptions } from '../../query/options/work';
+import { workAttentionKey, workAttentionQueryOptions, workAttentionRequest } from '../../query/options/work-attention';
+import { prefetchWorkQueries } from '../../query/work-prefetch';
 import type { SessionClientAdapter } from '../../rpc/session-client';
-import { loadWorkPageData } from './work-load';
-import { WORK_DEMO_REVISION } from './work-synthetic';
+import type { WorkAttentionClient } from '../../rpc/work-attention-client';
+import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
+import { loadWorkPageData, workPrefetchSourcesFor } from './work-load';
+import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
 
 const revision = 'work-ssr-fixture';
 const serializer = new StandardRPCSerializer(new StandardRPCJsonSerializer());
@@ -280,8 +285,99 @@ describe('Work bounded stored metadata and Query hydration', () => {
     );
     expect(reads).toBe(0);
     expect(data.mode).toBe('demo');
+    expect(data.attentionFailure).toBeNull();
     expect(JSON.stringify(data.queryState)).toContain(WORK_DEMO_REVISION);
     expect(JSON.stringify(data.queryState)).not.toContain(revision);
+    const attention = data.queryState.dehydratedState.queries.find((query) =>
+      query.queryKey.includes('work-attention'),
+    );
+    expect(attention?.queryKey).toEqual(workAttentionKey(workAttentionRequest()));
+    const hydrated = createHydratedWebQueryClient(data.queryState);
+    const forbidden: WorkAttentionClient = {
+      attention: () => Promise.reject(new Error('Hydrated demo Work must not read again')),
+    };
+    try {
+      const dataset = await hydrated.fetchQuery(
+        workAttentionQueryOptions(forbidden, workAttentionRequest(), { browser: false, enabled: true }),
+      );
+      expect(dataset.roots.length).toBe(syntheticWorkAttentionDataset().roots.length);
+      expect(dataset.truncated).toBe(true);
+    } finally {
+      hydrated.clear();
+    }
+  });
+  test('each runtime mode names where the two Work surfaces read from', () => {
+    expect(workPrefetchSourcesFor('live')).toEqual({ attention: null, sessions: null });
+    const demo = workPrefetchSourcesFor('demo');
+    expect(demo.attention).not.toBeNull();
+    expect(demo.sessions?.revision).toBe(WORK_DEMO_REVISION);
+    const e2e = workPrefetchSourcesFor('e2e');
+    expect(e2e.attention).toBeNull();
+    expect(e2e.sessions?.revision).toBe(WORK_DEMO_REVISION);
+  });
+  test('live SSR keeps a typed attention failure beside readable session roots, without transport detail', async () => {
+    const paths: string[] = [];
+    const data = await loadWorkPageData(
+      {
+        url: new URL('http://work.invalid/work'),
+        fetch: async (request) => {
+          const pathname = new URL(request.url).pathname;
+          paths.push(pathname);
+          if (pathname === '/rpc/report/revisionBootstrap') {
+            return Response.json(serializer.serialize(bootstrap));
+          }
+          if (pathname !== '/rpc/session/page') {
+            throw new Error(`Unexpected acquisition: ${pathname} (private transport detail)`);
+          }
+          const input = parseSessionQueryRequest(serializer.deserialize(await request.json()));
+          const page = projectSessionPage(rows, input);
+          return Response.json(
+            serializer.serialize({ data: page, ok: true, revision, requestFingerprint: page.requestFingerprint }),
+          );
+        },
+      },
+      'live',
+    );
+    // The attention procedure is not part of this checkout's contract: the seam answers a typed
+    // unavailability instead of requesting a route that does not exist.
+    expect(paths).toEqual(['/rpc/report/revisionBootstrap', '/rpc/session/page']);
+    expect(data.attentionFailure).toEqual({
+      kind: 'attention-unavailable',
+      message: 'Declared outcomes could not be read from the local store.',
+    });
+    expect(data.initialFailure).toBeNull();
+    expect(JSON.stringify(data)).not.toContain('private transport detail');
+    expect(data.queryState.dehydratedState.queries.some((query) => query.queryKey.includes('work-attention'))).toBe(
+      false,
+    );
+    expect(data.queryState.dehydratedState.queries.some((query) => query.queryKey.includes('report-bootstrap'))).toBe(
+      true,
+    );
+  });
+  test('an incompatible store becomes a fixed typed message rather than the server wording', async () => {
+    const runtime = createWebQueryRuntime({
+      fetch: () => Promise.reject(new Error('no transport')),
+      url: new URL('http://work.invalid/work'),
+    });
+    const incompatible: WorkAttentionClient = {
+      attention: () =>
+        Promise.resolve({
+          error: { message: 'schema 3 at /home/private/store.sqlite', tag: 'IncompatibleStore' },
+          ok: false,
+        }),
+    };
+    try {
+      const failures = await prefetchWorkQueries(runtime, {
+        attention: incompatible,
+        sessions: { client: createSyntheticWorkClient(), revision: WORK_DEMO_REVISION },
+      });
+      expect(failures.attention?.kind).toBe('attention-unavailable');
+      expect(failures.attention?.message).toContain('older than this build');
+      expect(JSON.stringify(failures)).not.toContain('/home/private');
+      expect(failures.sessions).toBeNull();
+    } finally {
+      runtime.queryClient.clear();
+    }
   });
   test('query scope preserves distinct sessions on the same project and has an explicit page bound', () => {
     const page = projectSessionPage(rows, workRequest(revision));
