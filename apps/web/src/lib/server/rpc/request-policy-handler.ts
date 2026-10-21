@@ -45,6 +45,8 @@ export const rpcPathByOperation = {
   getSkillObservations: '/skills/observations',
   getSkillProjectInventories: '/skills/projectInventories',
   getSyncFleet: '/sync/fleet',
+  getWorkAttention: '/work/attention',
+  getWorkRoutingContext: '/workRouting/context',
   previewReconcileAllManagedSkills: '/skills/previewReconcileAll',
   reconcileAllManagedSkills: '/skills/reconcileAll',
   reconcileManagedSkill: '/skills/reconcileOne',
