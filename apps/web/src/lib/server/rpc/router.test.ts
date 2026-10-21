@@ -11,6 +11,7 @@ test('composes every router leaf under one root router', () => {
     session: {},
     skills: {},
     sync: {},
+    workRouting: {},
   } as unknown as WebRpcRouterDependencies);
 
   expect(Object.keys(router).sort()).toEqual([
@@ -25,5 +26,6 @@ test('composes every router leaf under one root router', () => {
     'session',
     'skills',
     'sync',
+    'workRouting',
   ]);
 });

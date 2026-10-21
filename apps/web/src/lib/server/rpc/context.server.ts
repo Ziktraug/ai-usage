@@ -407,6 +407,18 @@ const createSyncDependencies = (request: Request): WebRpcRouterDependencies['syn
     }),
 });
 
+const createWorkRoutingDependencies = (): WebRpcRouterDependencies['workRouting'] => ({
+  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
+  readContext: async (signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-routing-context.server');
+      if ((await runtimeMode(abortOptions(signal))) === 'e2e') {
+        return server.e2eWorkRoutingContext();
+      }
+      return await server.getWorkRoutingContextForServer(undefined, abortOptions(signal));
+    }),
+});
+
 export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpcRouterDependencies> => {
   const fixtureVariant = e2eSkillsFixtureVariantForHeaders(request.headers);
   return Promise.resolve({
@@ -420,5 +432,6 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
       selectCapability: async (options) => await selectSkillsCapability(options, fixtureVariant),
     },
     sync: createSyncDependencies(request),
+    workRouting: createWorkRoutingDependencies(),
   });
 };

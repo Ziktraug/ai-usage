@@ -12,6 +12,8 @@ import type { SelectSkillsCapability, SkillsRequestPreflight } from './skills';
 import { createSkillsRouter } from './skills';
 import type { SyncRpcDependencies } from './sync';
 import { createSyncRpcRouter } from './sync';
+import type { WorkRoutingRpcDependencies } from './work-routing';
+import { createWorkRoutingRpcRouter } from './work-routing';
 
 export interface WebRpcRouterDependencies {
   readonly memory: MemoryRpcDependencies;
@@ -24,6 +26,7 @@ export interface WebRpcRouterDependencies {
     readonly selectCapability: SelectSkillsCapability;
   };
   readonly sync: SyncRpcDependencies;
+  readonly workRouting: WorkRoutingRpcDependencies;
 }
 
 export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
@@ -34,6 +37,7 @@ export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
   session: createSessionRpcRouter(dependencies.session),
   skills: createSkillsRouter(dependencies.skills.selectCapability, dependencies.skills.preflight),
   sync: createSyncRpcRouter(dependencies.sync),
+  workRouting: createWorkRoutingRpcRouter(dependencies.workRouting),
 });
 
 export type WebRpcRouter = ReturnType<typeof createWebRpcRouter>;

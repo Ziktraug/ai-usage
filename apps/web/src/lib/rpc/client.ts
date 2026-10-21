@@ -18,6 +18,7 @@ const GET_RPC_PATHS = new Set([
   'skills/projectMarkdown',
   'skills/snapshot',
   'sync/fleet',
+  'workRouting/context',
 ]);
 
 export type WebRpcQueryUtils = RouterUtils<WebContractClient>;

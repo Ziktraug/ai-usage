@@ -14,7 +14,8 @@
     "./session": "./src/session.ts",
     "./skills": "./src/skills.ts",
     "./control": "./src/control.ts",
-    "./sync": "./src/sync.ts"
+    "./sync": "./src/sync.ts",
+    "./work-routing": "./src/work-routing.ts"
   },
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",

@@ -7,6 +7,7 @@ import { reportContract } from './report';
 import { sessionContract } from './session';
 import { skillsContract } from './skills';
 import { syncContract } from './sync';
+import { workRoutingContract } from './work-routing';
 
 test('composes every RPC leaf under one root contract', () => {
   expect(webContract).toEqual({
@@ -17,5 +18,6 @@ test('composes every RPC leaf under one root contract', () => {
     session: sessionContract,
     skills: skillsContract,
     sync: syncContract,
+    workRouting: workRoutingContract,
   });
 });
