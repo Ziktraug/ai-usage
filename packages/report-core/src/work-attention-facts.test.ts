@@ -1,7 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { parseCanonicalInstant } from './canonical-instant';
-import type { CheckoutStatusObservation, PullRequestObservation } from './work-attention';
-import { checkoutStatusFact, interpretExternalFacts, pullRequestFact } from './work-attention-facts';
+import type {
+  CheckoutStatusObservation,
+  ClaudeDesktopSessionObservation,
+  JiraIssueObservation,
+  PullRequestObservation,
+  WorkFact,
+} from './work-attention';
+import {
+  checkoutStatusFact,
+  explicitJiraKeys,
+  interpretExternalFacts,
+  interpretJiraFacts,
+  jiraIssueFact,
+  jiraKeysInBranch,
+  pullRequestFact,
+} from './work-attention-facts';
 
 const NOW = new Date('2026-10-21T22:00:00.000Z');
 const FRESH = parseCanonicalInstant('2026-10-21T21:00:00.000Z');
@@ -282,5 +296,226 @@ describe('interpretExternalFacts', () => {
       ),
     );
     expect(interpret(facts)).toHaveLength(16);
+  });
+});
+
+const jiraIssue = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation => ({
+  assigneeLabel: 'Alex',
+  commentCount: 2,
+  comments: [
+    { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-21T20:30:00.000Z'), excerpt: 'Second.', id: '2' },
+    { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-21T17:00:00.000Z'), excerpt: 'First.', id: '1' },
+  ],
+  key: 'XLB-2090',
+  machineId: 'machine-a',
+  observedAt: FRESH,
+  outcome: 'observed',
+  outcomeMessage: null,
+  parentKey: null,
+  sprint: null,
+  status: 'In Progress',
+  statusCategory: 'in-progress',
+  summary: 'Promo badge',
+  updatedAt: parseCanonicalInstant('2026-10-21T20:30:00.000Z'),
+  ...overrides,
+});
+
+const failedJiraIssue = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation =>
+  jiraIssue({
+    assigneeLabel: null,
+    commentCount: null,
+    comments: [],
+    outcome: 'unauthenticated',
+    outcomeMessage: 'Jira rejected the credentials (HTTP 401)',
+    status: null,
+    statusCategory: null,
+    summary: null,
+    updatedAt: null,
+    ...overrides,
+  });
+
+const ACTIVITY_BEFORE_REPLY = parseCanonicalInstant('2026-10-21T18:00:00.000Z');
+const ACTIVITY_AFTER_REPLY = parseCanonicalInstant('2026-10-21T21:30:00.000Z');
+
+const session = (
+  overrides: Partial<
+    Pick<ClaudeDesktopSessionObservation, 'branch' | 'declaredPullRequests' | 'sourceBranch' | 'writtenBranches'>
+  > = {},
+) => ({ branch: null, declaredPullRequests: [], sourceBranch: null, writtenBranches: [], ...overrides });
+
+describe('explicitJiraKeys', () => {
+  test('reads a key only from a branch segment, never from a title, a cwd or a bare number', () => {
+    expect(jiraKeysInBranch('feat/XLB-2090/slug')).toEqual(['XLB-2090']);
+    expect(jiraKeysInBranch('fix/XLB-2091/mobile-nav')).toEqual(['XLB-2091']);
+    expect(jiraKeysInBranch('XLB-2092')).toEqual(['XLB-2092']);
+    expect(jiraKeysInBranch('chore/XLB-0/agent-setup')).toEqual([]);
+    expect(jiraKeysInBranch('pr/user/123')).toEqual([]);
+    expect(jiraKeysInBranch('feat/xlb-2090/slug')).toEqual([]);
+    expect(jiraKeysInBranch('feat/XLB-1998-promo-badge')).toEqual([]);
+    expect(explicitJiraKeys(session({ writtenBranches: ['feat/XLB-2090/slug', 'chore/XLB-0/agent-setup'] }))).toEqual([
+      'XLB-2090',
+    ]);
+    expect(
+      explicitJiraKeys(
+        session({
+          branch: 'fix/XLB-2091/mobile-nav',
+          declaredPullRequests: [
+            {
+              baseRef: 'main',
+              branch: 'release/XLB-2093/cut',
+              host: 'github.com',
+              number: 1,
+              own: true,
+              repository: 'fixture/project',
+              state: 'OPEN',
+              url: null,
+            },
+          ],
+          sourceBranch: 'hotfix/XLB-2092/urgent',
+          writtenBranches: ['feat/XLB-2090/slug', 'fix/XLB-2091/mobile-nav'],
+        }),
+      ),
+    ).toEqual(['XLB-2090', 'XLB-2091', 'XLB-2092', 'XLB-2093']);
+    // The title is not an input of this function at all; a key there cannot reach the result.
+    expect(explicitJiraKeys({ ...session(), title: 'XLB-1998 promo badge' } as never)).toEqual([]);
+  });
+});
+
+describe('jiraIssueFact and interpretJiraFacts', () => {
+  test('counts the comments after the family activity and names a reply that arrived since', () => {
+    const fact = jiraIssueFact(jiraIssue(), 'jira-1', ACTIVITY_BEFORE_REPLY);
+    expect(fact).toEqual({
+      commentCount: 2,
+      id: 'jira-1',
+      key: 'XLB-2090',
+      kind: 'jira-issue',
+      newCommentsSince: 1,
+      newestCommentAt: parseCanonicalInstant('2026-10-21T20:30:00.000Z'),
+      outcome: 'observed',
+      provenance: { coverage: 'complete', machineId: 'machine-a', observedAt: FRESH, source: 'jira' },
+      status: 'In Progress',
+      statusCategory: 'in-progress',
+      updatedAt: parseCanonicalInstant('2026-10-21T20:30:00.000Z'),
+      url: null,
+    });
+    expect(interpretJiraFacts({ facts: [fact], familyLastActivityAt: ACTIVITY_BEFORE_REPLY, now: NOW })).toEqual([
+      {
+        evidence: ['jira-1'],
+        kind: 'jira-reply-arrived',
+        text: `1 comment arrived on XLB-2090 after this session family's last activity (${ACTIVITY_BEFORE_REPLY}); no resumption observed.`,
+        uncertainty: `You may have read them in Jira; this view cannot tell. Newest comment 2026-10-21T20:30:00.000Z, observed ${FRESH}.`,
+      },
+    ]);
+  });
+
+  test('a reply before the family resumed is not an arrival, and a failed read counts nothing', () => {
+    const resumed = jiraIssueFact(jiraIssue(), 'jira-1', ACTIVITY_AFTER_REPLY);
+    expect(resumed.newCommentsSince).toBe(0);
+    expect(interpretJiraFacts({ facts: [resumed], familyLastActivityAt: ACTIVITY_AFTER_REPLY, now: NOW })).toEqual([]);
+    const failed = jiraIssueFact(failedJiraIssue(), 'jira-2', ACTIVITY_BEFORE_REPLY);
+    expect(failed.newCommentsSince).toBeNull();
+    expect(failed.provenance.coverage).toBe('partial');
+  });
+
+  test('names the exact action for an unauthenticated read and the missing CLI for a disabled one', () => {
+    const facts = [
+      jiraIssueFact(failedJiraIssue(), 'jira-1', ACTIVITY_BEFORE_REPLY),
+      jiraIssueFact(
+        failedJiraIssue({ outcome: 'disabled', outcomeMessage: 'acli not installed' }),
+        'jira-2',
+        ACTIVITY_BEFORE_REPLY,
+      ),
+      jiraIssueFact(failedJiraIssue({ outcome: 'network' }), 'jira-3', ACTIVITY_BEFORE_REPLY),
+    ];
+    const result = interpretJiraFacts({ facts, familyLastActivityAt: ACTIVITY_BEFORE_REPLY, now: NOW });
+    expect(result.map(({ kind }) => kind)).toEqual(['coverage-gap', 'coverage-gap', 'coverage-gap']);
+    expect(result[0]?.text).toBe(`Jira rejected the read of XLB-2090 as unauthenticated at ${FRESH}.`);
+    expect(result[0]?.uncertainty).toContain('sign in to Jira (acli jira auth login)');
+    expect(result[1]?.text).toBe(`XLB-2090 could not be read at ${FRESH}: the Atlassian CLI (acli) is not installed.`);
+    expect(result[2]?.text).toBe(`XLB-2090 could not be read from Jira at ${FRESH} (network).`);
+  });
+
+  test('a To Do ticket beside an open or merged pull request is a difference, not an error', () => {
+    const todo = jiraIssueFact(
+      jiraIssue({ comments: [], commentCount: 0, status: 'To Do', statusCategory: 'todo' }),
+      'jira-1',
+      ACTIVITY_BEFORE_REPLY,
+    );
+    const merged = pullRequestFact(pullRequest({ state: 'MERGED', updatedAt: FRESH }), 'pr-1');
+    const withObserved = interpretJiraFacts({
+      facts: [merged, todo],
+      familyLastActivityAt: ACTIVITY_BEFORE_REPLY,
+      now: NOW,
+    });
+    expect(withObserved).toEqual([
+      {
+        evidence: ['jira-1'],
+        kind: 'jira-status-differs',
+        text: `XLB-2090 is still To Do (Jira status To Do, observed ${FRESH}) while fixture/project#66 is MERGED (GitHub ${FRESH}); a different status is not automatically an error.`,
+        uncertainty:
+          'Whether the ticket should follow the pull request is a team convention this view does not know; both are dated reads, not current states.',
+      },
+    ]);
+    const declared: WorkFact = {
+      branch: 'feat/XLB-2090/slug',
+      host: 'github.com',
+      id: 'decl-1',
+      kind: 'declared-pull-request',
+      number: 66,
+      provenance: { coverage: 'complete', machineId: 'machine-a', observedAt: FRESH, source: 'claude-desktop' },
+      repository: 'fixture/project',
+      state: 'open',
+      url: null,
+    };
+    const withDeclared = interpretJiraFacts({
+      facts: [declared, todo],
+      familyLastActivityAt: ACTIVITY_BEFORE_REPLY,
+      now: NOW,
+    });
+    expect(withDeclared[0]?.text).toContain('while fixture/project#66 is OPEN (the session declared');
+    // In progress beside a merged pull request, or To Do without any pull request: nothing to say.
+    expect(
+      interpretJiraFacts({
+        facts: [merged, jiraIssueFact(jiraIssue({ comments: [] }), 'jira-2', ACTIVITY_BEFORE_REPLY)],
+        familyLastActivityAt: ACTIVITY_BEFORE_REPLY,
+        now: NOW,
+      }),
+    ).toEqual([]);
+    expect(interpretJiraFacts({ facts: [todo], familyLastActivityAt: ACTIVITY_BEFORE_REPLY, now: NOW })).toEqual([]);
+  });
+
+  test('a stale observation keeps an arrival but turns a quiet state into an uncertainty', () => {
+    const quiet = jiraIssueFact(jiraIssue({ comments: [], observedAt: STALE }), 'jira-1', ACTIVITY_BEFORE_REPLY);
+    expect(interpretJiraFacts({ facts: [quiet], familyLastActivityAt: ACTIVITY_BEFORE_REPLY, now: NOW })).toEqual([
+      {
+        evidence: ['jira-1'],
+        kind: 'coverage-gap',
+        text: `XLB-2090 was In Progress when last observed at ${STALE}; nothing fresher.`,
+        uncertainty: `last observation ${STALE}; current state unknown`,
+      },
+    ]);
+    const arrived = jiraIssueFact(jiraIssue({ observedAt: STALE }), 'jira-2', ACTIVITY_BEFORE_REPLY);
+    expect(
+      interpretJiraFacts({ facts: [arrived], familyLastActivityAt: ACTIVITY_BEFORE_REPLY, now: NOW }).map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(['jira-reply-arrived']);
+  });
+
+  test('ignores facts of other kinds and caps at the contract bound', () => {
+    const facts = Array.from({ length: 20 }, (_value, index) =>
+      jiraIssueFact(
+        failedJiraIssue({ key: `XLB-${String(index + 1)}` }),
+        `jira-${String(index)}`,
+        ACTIVITY_BEFORE_REPLY,
+      ),
+    );
+    expect(
+      interpretJiraFacts({
+        facts: [checkoutStatusFact(checkout(), 'co-1'), ...facts],
+        familyLastActivityAt: ACTIVITY_BEFORE_REPLY,
+        now: NOW,
+      }),
+    ).toHaveLength(16);
   });
 });

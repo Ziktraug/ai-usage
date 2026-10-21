@@ -2,11 +2,13 @@ import { type CanonicalInstant, canonicalInstantFromDate } from '@ai-usage/repor
 import {
   CLAUDE_DESKTOP_FIXTURE_PAIRS,
   claudeDesktopFixtureRegistry,
+  type SeededClaudeDesktopSessionIds,
 } from '@ai-usage/report-core/test-fixtures/claude-desktop-sessions';
 import type {
   CheckoutStatusObservation,
   ClaudeDesktopCollectionCompleteness,
   ClaudeDesktopSessionObservation,
+  JiraIssueObservation,
   PullRequestObservation,
   WorkAttentionDataset,
 } from '@ai-usage/report-core/work-attention';
@@ -29,7 +31,9 @@ import type { WorkAttentionServerResult } from './work-attention.server';
  * The external and local facts are synthetic observations shaped as the engine's producers store
  * them, chosen so the fixture shows each confrontation the Work view renders: a pull request
  * awaiting review, one merged after the request that asked for it, a checkout with uncommitted
- * changes, and a pull request GitHub refused to read with an older successful read behind it.
+ * changes, a pull request GitHub refused to read with an older successful read behind it, and
+ * three Jira tickets (ADR 0054): a reply that arrived after the family's last activity, a ticket
+ * still To Do beside a merged pull request, and a read Jira refused with an older success.
  */
 
 /** The id the other e2e fixtures use for the current machine, so a machine filter matches. */
@@ -43,6 +47,12 @@ export const WORK_ATTENTION_E2E_REPOSITORY = `${E2E_HOME}/work/fixture`;
 export const WORK_ATTENTION_E2E_WORKTREE = `${WORK_ATTENTION_E2E_REPOSITORY}/.claude/worktrees/checkout-3`;
 const E2E_TRANSCRIPT_ID = 'claude-fixture-025';
 const E2E_REPOSITORY_SLUG = 'fixture/ai-usage';
+/** The ticket on which a reply arrived after the review-ready family's last activity. */
+export const WORK_ATTENTION_E2E_JIRA_REPLY_KEY = 'XLB-2090';
+/** The ticket still To Do while the merged-before family's pull request is merged. */
+export const WORK_ATTENTION_E2E_JIRA_TODO_KEY = 'XLB-2101';
+/** The ticket Jira refused to read, with an older successful read behind it. */
+export const WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY = 'XLB-1998';
 
 interface E2EWorkAttentionSource {
   readonly completeness: ClaudeDesktopCollectionCompleteness;
@@ -54,6 +64,60 @@ let source: E2EWorkAttentionSource | undefined;
 
 const hoursBefore = (hours: number): CanonicalInstant =>
   canonicalInstantFromDate(new Date(WORK_ATTENTION_E2E_NOW.getTime() - hours * 3_600_000));
+
+/**
+ * The seeded registry is shared with other fixtures and writes no Jira key in a branch name, so
+ * the explicit links the Jira facts need are added here, on the parsed observations, the way a
+ * session would have written them (ADR 0054: a whole branch segment, never a title). The
+ * review-ready root and the proposal root each write one branch; the merged-before family's
+ * child names its ticket in the branch of the pull request it declared.
+ */
+const withJiraLinks = (
+  observation: ClaudeDesktopSessionObservation,
+  ids: SeededClaudeDesktopSessionIds,
+): ClaudeDesktopSessionObservation => {
+  if (observation.desktopSessionId === ids.reviewReadyRoot) {
+    return {
+      ...observation,
+      writtenBranches: [...observation.writtenBranches, `feat/${WORK_ATTENTION_E2E_JIRA_REPLY_KEY}/store-migration`],
+    };
+  }
+  if (observation.desktopSessionId === ids.proposalRoot) {
+    return {
+      ...observation,
+      writtenBranches: [...observation.writtenBranches, `feat/${WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY}/proposals`],
+    };
+  }
+  if (observation.declaredPullRequests.some((pullRequest) => pullRequest.number === 90)) {
+    return {
+      ...observation,
+      declaredPullRequests: observation.declaredPullRequests.map((pullRequest) =>
+        pullRequest.number === 90
+          ? { ...pullRequest, branch: `fix/${WORK_ATTENTION_E2E_JIRA_TODO_KEY}/earlier-merged-fix` }
+          : pullRequest,
+      ),
+    };
+  }
+  return observation;
+};
+
+const jiraObservation = (key: string, overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation => ({
+  assigneeLabel: 'Fixture assignee',
+  commentCount: 0,
+  comments: [],
+  key,
+  machineId: WORK_ATTENTION_E2E_MACHINE_ID,
+  observedAt: hoursBefore(1),
+  outcome: 'observed',
+  outcomeMessage: null,
+  parentKey: null,
+  sprint: 'Fixture sprint',
+  status: 'In Progress',
+  statusCategory: 'in-progress',
+  summary: `Fixture ticket ${key}`,
+  updatedAt: hoursBefore(6),
+  ...overrides,
+});
 
 const pullRequestObservation = (
   number: number,
@@ -86,7 +150,10 @@ const pullRequestObservation = (
  * merged two hours ago as GitHub shows it, after the request. Pull request 117 (declared by the
  * satisfied root's child) could not be read half an hour ago for lack of credentials; the last
  * successful read, a day ago, showed it open. The shared worktree had uncommitted changes forty
- * minutes ago. Both producers ran.
+ * minutes ago. On Jira, XLB-2090 received a reply six hours ago, after the review-ready family's
+ * last activity (eleven hours ago); XLB-2101 is still To Do while pull request 90 is merged;
+ * XLB-1998 could not be read half an hour ago for lack of credentials, and its last successful
+ * read, a day ago, showed it in progress. All three producers ran.
  */
 const buildExternalFacts = (): WorkAttentionExternalFacts => {
   const awaitingReview = pullRequestObservation(118);
@@ -128,8 +195,42 @@ const buildExternalFacts = (): WorkAttentionExternalFacts => {
     untrackedCount: 1,
     upstream: null,
   };
+  const replied = jiraObservation(WORK_ATTENTION_E2E_JIRA_REPLY_KEY, {
+    commentCount: 2,
+    comments: [
+      {
+        authorLabel: 'Fixture reviewer',
+        createdAt: hoursBefore(6),
+        excerpt: 'Fixture reply: can this land before the migration window closes?',
+        id: '2',
+      },
+      { authorLabel: 'Fixture assignee', createdAt: hoursBefore(30), excerpt: 'Fixture: picking this up.', id: '1' },
+    ],
+  });
+  const stillTodo = jiraObservation(WORK_ATTENTION_E2E_JIRA_TODO_KEY, {
+    status: 'To Do',
+    statusCategory: 'todo',
+    updatedAt: hoursBefore(50),
+  });
+  const lastJiraRead = jiraObservation(WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY, { observedAt: hoursBefore(26) });
+  const unreadableJira = jiraObservation(WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY, {
+    assigneeLabel: null,
+    observedAt: hoursBefore(0.5),
+    outcome: 'unauthenticated',
+    outcomeMessage: 'Jira rejected the credentials (HTTP 401); sign in to Jira (acli jira auth login)',
+    sprint: null,
+    status: null,
+    statusCategory: null,
+    summary: null,
+    updatedAt: null,
+  });
   return {
     checkouts: [{ latest: dirtyWorktree, latestObserved: dirtyWorktree }],
+    jiraIssues: [
+      { latest: replied, latestObserved: replied },
+      { latest: stillTodo, latestObserved: stillTodo },
+      { latest: unreadableJira, latestObserved: lastJiraRead },
+    ],
     pullRequests: [
       { latest: awaitingReview, latestObserved: awaitingReview },
       { latest: merged, latestObserved: merged },
@@ -153,6 +254,15 @@ const buildExternalFacts = (): WorkAttentionExternalFacts => {
         observed: 1,
         ranAt: hoursBefore(40 / 60),
         sourceId: 'checkouts.status',
+      },
+      {
+        disabled: false,
+        failed: 1,
+        machineId: WORK_ATTENTION_E2E_MACHINE_ID,
+        message: null,
+        observed: 2,
+        ranAt: hoursBefore(0.5),
+        sourceId: 'jira.issues',
       },
     ],
   };
@@ -181,7 +291,7 @@ const buildSource = (): E2EWorkAttentionSource => {
     });
     if (result.kind === 'observation') {
       completeness.filesParsed += 1;
-      observations.push(result.observation);
+      observations.push(withJiraLinks(result.observation, registry.ids));
     } else if (result.kind === 'unsupported') {
       completeness.unsupported += 1;
       if (result.observation !== null) {

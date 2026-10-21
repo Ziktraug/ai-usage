@@ -4,6 +4,9 @@ import {
   CLAUDE_DESKTOP_SUGGESTION_RESOLUTIONS,
   CLAUDE_DESKTOP_TITLE_SOURCES,
   CLAUDE_DESKTOP_TURN_STATUSES,
+  JIRA_ISSUE_KEY_PATTERN,
+  JIRA_ISSUE_OBSERVATION_OUTCOMES,
+  JIRA_STATUS_CATEGORIES,
   PULL_REQUEST_CHECK_ROLLUPS,
   PULL_REQUEST_OBSERVATION_OUTCOMES,
   PULL_REQUEST_STATES,
@@ -24,12 +27,14 @@ import {
   maxValue,
   minLength,
   minValue,
+  null_,
   nullable,
   number,
   optional,
   parse,
   picklist,
   pipe,
+  regex,
   safeInteger,
   strictObject,
   string,
@@ -70,6 +75,7 @@ const detailTextSchema = pipe(string(), maxLength(maxDetailText));
 const reportTextSchema = pipe(string(), maxLength(maxReportText));
 const pathTextSchema = pipe(string(), maxLength(maxPath));
 const countSchema = pipe(number(), finite(), safeInteger(), minValue(0));
+const jiraKeySchema = pipe(string(), maxLength(maxShortText), regex(JIRA_ISSUE_KEY_PATTERN));
 const positiveIntegerSchema = pipe(number(), finite(), safeInteger(), minValue(1));
 
 const provenanceSchema = strictObject({
@@ -128,6 +134,19 @@ export const workFactSchema = variant('kind', [
     modifiedCount: nullable(countSchema),
     outcome: picklist(CHECKOUT_STATUS_OUTCOMES),
     untrackedCount: nullable(countSchema),
+  }),
+  strictObject({
+    ...factBase,
+    commentCount: nullable(countSchema),
+    key: jiraKeySchema,
+    kind: literal('jira-issue'),
+    newCommentsSince: nullable(countSchema),
+    newestCommentAt: nullable(instantSchema),
+    outcome: picklist(JIRA_ISSUE_OBSERVATION_OUTCOMES),
+    status: nullable(shortTextSchema),
+    statusCategory: nullable(picklist(JIRA_STATUS_CATEGORIES)),
+    updatedAt: nullable(instantSchema),
+    url: null_(),
   }),
   strictObject({
     ...factBase,
@@ -214,6 +233,13 @@ export const workAttentionCoverageSchema = strictObject({
     refusedRows: countSchema,
     truncated: boolean(),
     unsupported: countSchema,
+  }),
+  jira: strictObject({
+    disabled: boolean(),
+    failed: countSchema,
+    lastRunAt: nullable(instantSchema),
+    observed: countSchema,
+    reason: nullable(detailTextSchema),
   }),
   pullRequests: strictObject({
     disabled: boolean(),

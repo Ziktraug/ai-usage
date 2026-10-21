@@ -70,6 +70,7 @@ describe('collection source contracts', () => {
     // fact producers spawn one process per checkout or pull request, so they poll more slowly still.
     expect(collectionSourceDefinitions.find(({ id }) => id === 'checkouts.status')?.cadenceMs).toBe(300_000);
     expect(collectionSourceDefinitions.find(({ id }) => id === 'github.pull-requests')?.cadenceMs).toBe(600_000);
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'jira.issues')?.cadenceMs).toBe(600_000);
     expect(
       collectionSourceDefinitions
         .filter(
@@ -77,7 +78,8 @@ describe('collection source contracts', () => {
             group !== 'provider-usage' &&
             id !== 'executors.capabilities' &&
             id !== 'checkouts.status' &&
-            id !== 'github.pull-requests',
+            id !== 'github.pull-requests' &&
+            id !== 'jira.issues',
         )
         .every(({ cadenceMs }) => cadenceMs === 60_000),
     ).toBe(true);

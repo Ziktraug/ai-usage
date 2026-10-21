@@ -13,6 +13,7 @@ import {
   sortWorkRoots,
   toggleListValue,
   WORK_ATTENTION_SECTIONS,
+  workFactSummary,
   workFilterOptions,
   workRootFactChips,
   workRootId,
@@ -182,6 +183,28 @@ describe('Work attention dates and fact chips', () => {
     expect(failed.map((chip) => chip.label)).toEqual(['PR #53 read failed (unauthenticated)']);
     const leads = workRootFactChips(rootNamed('Overview composition pass'));
     expect(leads.map((chip) => chip.label)).toEqual(['proposals 2 open / 1 resolved']);
+  });
+  test('a Jira issue chip names the key, the status and the replies that arrived; a failed read names its outcome', () => {
+    const withJira = roots.find((root) => root.facts.some((fact) => fact.kind === 'jira-issue'));
+    if (withJira === undefined) {
+      throw new Error('Synthetic dataset must carry a Jira fact');
+    }
+    const chips = workRootFactChips(withJira);
+    expect(chips.map((chip) => chip.label)).toContain('Jira XLB-2090 · In Progress · 2 new replies');
+    expect(chips.find((chip) => chip.label.startsWith('Jira'))?.tone).toBe('warn');
+    const fact = withJira.facts.find((candidate) => candidate.kind === 'jira-issue');
+    if (fact === undefined || fact.kind !== 'jira-issue') {
+      throw new Error('expected a Jira fact');
+    }
+    expect(workFactSummary(fact)).toBe(
+      "Jira XLB-2090 In Progress, 2 comments, 2 new replies since the family's last activity",
+    );
+    const failed = { ...fact, newCommentsSince: null, outcome: 'unauthenticated' as const, status: null };
+    expect(workFactSummary(failed)).toBe('Jira XLB-2090 read failed: unauthenticated');
+    expect(workRootFactChips({ ...withJira, facts: [fact, failed] }).map((chip) => chip.label)).toEqual([
+      'Jira XLB-2090 read failed (unauthenticated)',
+    ]);
+    expect(matchesWorkAttentionSearch(withJira, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'xlb-2090' })).toBe(true);
   });
   test('facts group by their source in first-seen order', () => {
     const groups = groupWorkFactsBySource(rootNamed('Fix mobile navigation label overlap').facts);

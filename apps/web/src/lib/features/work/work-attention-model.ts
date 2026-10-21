@@ -110,6 +110,9 @@ const pullRequestFacts = (root: WorkRoot) =>
       fact.kind === 'declared-pull-request' || fact.kind === 'pull-request',
   );
 
+const jiraFacts = (root: WorkRoot) =>
+  root.facts.filter((fact): fact is Extract<WorkFact, { kind: 'jira-issue' }> => fact.kind === 'jira-issue');
+
 const searchableText = (root: WorkRoot): string =>
   [
     root.title,
@@ -119,6 +122,7 @@ const searchableText = (root: WorkRoot): string =>
     root.declared?.needsAction ?? '',
     root.declared?.detail ?? '',
     ...pullRequestFacts(root).flatMap((fact) => [`#${fact.number}`, fact.repository]),
+    ...jiraFacts(root).map((fact) => fact.key),
   ]
     .join('\n')
     .toLowerCase();
@@ -372,9 +376,35 @@ const pullRequestChips = (root: WorkRoot): readonly WorkFactChip[] => {
   return [...byNumber.values()];
 };
 
-/** The compact facts a row shows: pull requests, a dirty checkout, proposals and children. */
+const replies = (count: number): string => `${count} new ${count === 1 ? 'reply' : 'replies'}`;
+
+/** One chip per issue key; as for pull requests, a later failed read replaces the older success in the row. */
+const jiraChips = (root: WorkRoot): readonly WorkFactChip[] => {
+  const byKey = new Map<string, WorkFactChip>();
+  for (const fact of jiraFacts(root)) {
+    if (fact.outcome !== 'observed') {
+      byKey.set(fact.key, {
+        id: fact.id,
+        instant: fact.provenance.observedAt,
+        label: `Jira ${fact.key} read failed (${fact.outcome})`,
+        tone: 'warn',
+      });
+      continue;
+    }
+    const arrived = fact.newCommentsSince ?? 0;
+    byKey.set(fact.key, {
+      id: fact.id,
+      instant: fact.newestCommentAt ?? fact.updatedAt ?? fact.provenance.observedAt,
+      label: `Jira ${fact.key} · ${fact.status ?? 'status unknown'}${arrived > 0 ? ` · ${replies(arrived)}` : ''}`,
+      tone: arrived > 0 ? 'warn' : 'neutral',
+    });
+  }
+  return [...byKey.values()];
+};
+
+/** The compact facts a row shows: pull requests, Jira issues, a dirty checkout, proposals and children. */
 export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
-  const chips: WorkFactChip[] = [...pullRequestChips(root)];
+  const chips: WorkFactChip[] = [...pullRequestChips(root), ...jiraChips(root)];
   for (const fact of root.facts) {
     if (fact.kind === 'checkout-status' && fact.dirty === true) {
       chips.push({
@@ -452,6 +482,10 @@ export const workFactSummary = (fact: WorkFact): string => {
       return fact.outcome === 'observed'
         ? `Checkout ${fact.checkoutPath}${fact.branch ? ` on ${fact.branch}` : ''}: ${fact.dirty ? `dirty, ${fact.modifiedCount ?? '?'} modified, ${fact.untrackedCount ?? '?'} untracked` : 'clean'}${fact.ahead ? `, ${fact.ahead} ahead` : ''}${fact.behind ? `, ${fact.behind} behind` : ''}`
         : `Checkout ${fact.checkoutPath}: ${fact.outcome}`;
+    case 'jira-issue':
+      return fact.outcome === 'observed'
+        ? `Jira ${fact.key} ${fact.status ?? 'status unknown'}${fact.commentCount === null ? '' : `, ${fact.commentCount} comment${fact.commentCount === 1 ? '' : 's'}`}${fact.newCommentsSince ? `, ${replies(fact.newCommentsSince)} since the family's last activity` : ''}`
+        : `Jira ${fact.key} read failed: ${fact.outcome}`;
     case 'proposal':
       return `Proposal ${fact.resolution === 'open' ? 'open' : fact.resolution.replace('_', ' ')}: ${fact.title}${fact.tldr ? ` — ${fact.tldr}` : ''}`;
     case 'wrap-up':
@@ -479,6 +513,8 @@ export const workFactInstant = (fact: WorkFact): string => {
       return fact.at;
     case 'pull-request':
       return fact.updatedAt ?? fact.provenance.observedAt;
+    case 'jira-issue':
+      return fact.newestCommentAt ?? fact.updatedAt ?? fact.provenance.observedAt;
     case 'proposal':
       return fact.createdAt ?? fact.provenance.observedAt;
     default:

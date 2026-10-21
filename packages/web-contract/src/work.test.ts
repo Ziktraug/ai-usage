@@ -41,6 +41,20 @@ const root = (overrides: Partial<WorkRootWire> = {}): WorkRootWire => ({
       url: null,
     },
     {
+      commentCount: 3,
+      id: 'local_root:jira:XLB-2090@2026-10-20T12:00:00.000Z',
+      key: 'XLB-2090',
+      kind: 'jira-issue',
+      newCommentsSince: 1,
+      newestCommentAt: AT,
+      outcome: 'observed',
+      provenance: { coverage: 'complete', machineId: 'machine-a', observedAt: AT, source: 'jira' },
+      status: 'In Progress',
+      statusCategory: 'in-progress',
+      updatedAt: AT,
+      url: null,
+    },
+    {
       createdAt: null,
       id: 'local_root:proposal:task_1',
       kind: 'proposal',
@@ -83,6 +97,7 @@ const dataset = (roots: readonly WorkRootWire[] = [root()]): WorkAttentionDatase
       truncated: false,
       unsupported: 1,
     },
+    jira: { disabled: true, failed: 0, lastRunAt: AT, observed: 0, reason: 'acli not installed' },
     pullRequests: { disabled: true, failed: 0, lastRunAt: null, observed: 0 },
     sessions: { joined: 1, revision: 'revision-1', unmatched: 0 },
   },
@@ -138,6 +153,23 @@ describe('Work contract', () => {
         dataset([root({ facts: [{ ...fact, kind: 'declared-turn', prompt: 'leak' } as unknown as typeof fact] })]),
       ),
     ).toBe(false);
+  });
+
+  test('a Jira fact needs an issue key, a known outcome and a null url; coverage needs its jira section', () => {
+    const accepts = (value: unknown) => safeParse(workAttentionOutputSchema, { data: value, ok: true }).success;
+    const jira = root().facts.find((fact) => fact.kind === 'jira-issue');
+    if (jira === undefined || jira.kind !== 'jira-issue') {
+      throw new Error('fixture root must carry a Jira fact');
+    }
+    expect(accepts(dataset([root({ facts: [{ ...jira, key: 'xlb-2090' }] })]))).toBe(false);
+    expect(accepts(dataset([root({ facts: [{ ...jira, outcome: 'ok' as never }] })]))).toBe(false);
+    expect(accepts(dataset([root({ facts: [{ ...jira, statusCategory: 'open' as never }] })]))).toBe(false);
+    expect(accepts(dataset([root({ facts: [{ ...jira, url: 'https://example.atlassian.net' as never }] })]))).toBe(
+      false,
+    );
+    expect(accepts(dataset([root({ facts: [{ ...jira, newCommentsSince: -1 }] })]))).toBe(false);
+    const { jira: _jira, ...withoutJira } = dataset().coverage;
+    expect(accepts({ ...dataset(), coverage: withoutJira })).toBe(false);
   });
 
   test('bounds the input and refuses unknown fields', () => {

@@ -684,3 +684,62 @@ describe('github config', () => {
     }
   });
 });
+
+describe('jira config', () => {
+  const writeHomeConfig = (home: string, value: unknown): ReturnType<typeof createLocalHistoryStorage> => {
+    const storage = createLocalHistoryStorage(home);
+    mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+    writeFileSync(aiUsageConfigPath(storage), `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    return storage;
+  };
+
+  test('reads a strict jira section from the user home config', async () => {
+    const home = await mkdtemp('ai-usage-jira-config-');
+    try {
+      const storage = writeHomeConfig(home, { jira: { enabled: false, site: 'example.atlassian.net' } });
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.jira).toEqual({ enabled: false, site: 'example.atlassian.net' });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a malformed jira section instead of ignoring it', async () => {
+    const invalid: unknown[] = [
+      { enabled: 'yes' },
+      { site: 'https://example.atlassian.net' },
+      { site: 'not a host' },
+      { enabled: true, token: 'never' },
+      [],
+    ];
+    for (const jira of invalid) {
+      const home = await mkdtemp('ai-usage-jira-config-invalid-');
+      try {
+        const storage = writeHomeConfig(home, { jira });
+        await expect(
+          Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+        ).rejects.toThrow('Invalid ai-usage config');
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('refuses a jira section in repository config', async () => {
+    const home = await mkdtemp('ai-usage-jira-config-repo-');
+    const repo = await mkdtemp('ai-usage-jira-config-repo-cwd-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeFileSync(path.join(repo, 'ai-usage.config.ts'), 'export default { jira: { enabled: false } };\n');
+      const failure = await Effect.runPromise(
+        Effect.flip(readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      );
+      expect(formatLocalHistoryError(failure)).toContain('jira may only be configured in the user home config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
