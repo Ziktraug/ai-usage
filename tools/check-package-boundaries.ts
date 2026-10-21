@@ -303,6 +303,8 @@ const localMachineSessionDetail = `${localMachinePackage}/session-detail`;
 const localMachineSkillsConfig = `${localMachinePackage}/skills-config`;
 const localMachineSourcePolicyConfig = `${localMachinePackage}/source-policy-config`;
 const localMachineRoutingConfig = `${localMachinePackage}/routing-config`;
+// The bounded process runner carries no local data path: it is how the web resolves `gh` on demand.
+const localMachineBoundedProcess = `${localMachinePackage}/bounded-process`;
 const localMachineTestingHarnessHome = `${localMachinePackage}/testing/harness-home`;
 const reportDataPackage = '@ai-usage/report-data';
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
@@ -590,14 +592,15 @@ const targetImportReason = (
   ) {
     const isAllowedWebOperation =
       packageName === '@ai-usage/web' &&
-      (specifier === localMachineCampaignLabelConfig ||
+      (specifier === localMachineBoundedProcess ||
+        specifier === localMachineCampaignLabelConfig ||
         specifier === localMachineSessionDetail ||
         specifier === localMachineSkillsConfig ||
         specifier === localMachineSourcePolicyConfig ||
         specifier === localMachineRoutingConfig);
     const isAllowedTestFixture = specifier === localMachineTestingHarnessHome && isTestOnlySource(relativeFile);
     if (!(isAllowedWebOperation || isAllowedTestFixture)) {
-      return 'Web may import only local-machine campaign-label-config/session-detail/skills-config/source-policy-config/routing-config; CLI has no local-machine data path.';
+      return 'Web may import only local-machine bounded-process/campaign-label-config/session-detail/skills-config/source-policy-config/routing-config; CLI has no local-machine data path.';
     }
   }
   if (

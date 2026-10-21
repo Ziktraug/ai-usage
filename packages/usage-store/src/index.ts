@@ -61,6 +61,7 @@ import type {
 import type { SkillObservationRefusalCounts } from '@ai-usage/report-core/skill-observation-evidence';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
+import type { CheckoutStatusObservation, PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import { createExecutorObservationStore } from './executor-observation-store';
@@ -81,6 +82,7 @@ import {
   servedReportSchemaSql,
 } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
+import { createWorkFactStore, WORK_FACT_TABLES, type WorkFactSourceId, workFactSchemaSql } from './work-fact-store';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -717,6 +719,115 @@ export interface CurrentServedLocalProjectSources {
   readonly sources: readonly ServedLocalProjectSource[];
 }
 
+/** A pull request a local Session explicitly recorded (`source.vcs.pullRequests`), never inferred. */
+export interface ServedSessionPullRequestLink {
+  readonly host: string;
+  readonly number: number;
+  /** `owner/name` as read from the pull request URL. */
+  readonly repository: string;
+  readonly url: string;
+}
+
+export interface QueryServedSessionPullRequestLinksInput extends Omit<QueryServedReportRevisionInput, 'revision'> {
+  /** Distinct links returned at most; more sets `truncated`. Default 200, maximum 500. */
+  readonly limit?: number;
+  /** Only Sessions active within this many days before `now`. Default 14, maximum 365. */
+  readonly sinceDays?: number;
+}
+
+export interface ServedSessionPullRequestLinks {
+  readonly links: readonly ServedSessionPullRequestLink[];
+  readonly revision: string;
+  readonly scannedRows: number;
+  readonly truncated: boolean;
+}
+
+export interface ImportPullRequestObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parsePullRequestObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface ImportCheckoutStatusObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parseCheckoutStatusObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface WorkFactImportResult {
+  readonly inserted: number;
+  /** Rows removed by the per-identity retention after this batch. */
+  readonly pruned: number;
+  readonly rejected: number;
+  /** Rows whose identity and observation time were already stored. */
+  readonly unchanged: number;
+}
+
+export interface RecordWorkFactRunInput {
+  readonly dbPath: string;
+  readonly disabled: boolean;
+  readonly failed: number;
+  readonly machineId: string;
+  readonly message: string | null;
+  readonly observed: number;
+  readonly ranAt: Date | string;
+  readonly sourceId: WorkFactSourceId;
+}
+
+export interface WorkFactRunState {
+  readonly disabled: boolean;
+  readonly failed: number;
+  readonly machineId: string;
+  readonly message: string | null;
+  readonly observed: number;
+  readonly ranAt: PullRequestObservation['observedAt'];
+  readonly sourceId: WorkFactSourceId;
+}
+
+export interface QueryWorkFactRunStatesInput {
+  readonly dbPath: string;
+}
+
+export interface WorkFactRunStates {
+  readonly runs: readonly WorkFactRunState[];
+  readonly skipped: number;
+}
+
+export interface QueryLatestPullRequestObservationsInput {
+  readonly dbPath: string;
+  /** Distinct pull requests returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly links?: readonly { readonly host: string; readonly number: number; readonly repository: string }[];
+  readonly machineId?: string;
+}
+
+/** Per pull request: the latest observation of any outcome, and the latest successful one when it differs. */
+export interface LatestPullRequestObservations {
+  readonly items: readonly {
+    readonly latest: PullRequestObservation;
+    readonly latestObserved: PullRequestObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
+export interface QueryLatestCheckoutStatusObservationsInput {
+  readonly dbPath: string;
+  /** Distinct checkout paths returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly machineId?: string;
+  readonly paths?: readonly string[];
+}
+
+export interface LatestCheckoutStatusObservations {
+  readonly items: readonly {
+    readonly latest: CheckoutStatusObservation;
+    readonly latestObserved: CheckoutStatusObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
 export interface RetainServedReportRevisionsInput {
   readonly abandonedAfterMs?: number;
   readonly dbPath: string;
@@ -1304,6 +1415,12 @@ const migrate = (db: SqliteDatabase): boolean => {
   const executorObservationsMissing =
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'executor_observations'").get() === null;
   schemaChanged ||= executorObservationsMissing;
+  // The external and local fact family (ADR 0051) is additive under the same user_version; the
+  // tables' absence is again the only signal.
+  const workFactTablesMissing = WORK_FACT_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= workFactTablesMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1596,6 +1713,7 @@ const migrate = (db: SqliteDatabase): boolean => {
     CREATE INDEX IF NOT EXISTS idx_executor_observations_latest
       ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
+    db.exec(workFactSchemaSql);
     if (skillObservationCollectionStateMissing) {
       // Stores written by the first implementation have observation/session
       // rows but no durable producer bound. The lost answer cannot be
@@ -3980,6 +4098,7 @@ export const {
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
   queryCurrentServedLocalProjectSources,
+  queryServedSessionPullRequestLinks,
   queryServedReportRevisionSupport,
   queryServedReportRevisionRows,
   queryServedReportRevisionSlices,
@@ -4218,6 +4337,20 @@ export const { importExecutorObservations, queryLatestExecutorObservations } = c
   withUsageStoreReader,
   withUsageStoreWriter,
 });
+export const {
+  importCheckoutStatusObservations,
+  importPullRequestObservations,
+  queryLatestCheckoutStatusObservations,
+  queryLatestPullRequestObservations,
+  queryWorkFactRunStates,
+  recordWorkFactRun,
+} = createWorkFactStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export { WORK_FACT_SOURCE_IDS, type WorkFactSourceId } from './work-fact-store';
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,

@@ -995,6 +995,10 @@ admission, cadence, dependencies, or publication ordering here.
   `executors.capabilities` is a ninth, default-enabled source that runs
   harness CLI metadata commands every fifteen minutes and never changes the
   served report.
+  `checkouts.status` and `github.pull-requests` (ADR 0051) are two further
+  default-enabled producers that read known checkouts and explicitly linked
+  pull requests for the Work view; their facts stay outside the served
+  revision and never mark the report dirty.
 - Sparse source-policy overrides are read only from user-home config. Repository
   config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, outcome, and progress are independent.

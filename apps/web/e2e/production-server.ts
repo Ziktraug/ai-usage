@@ -55,7 +55,26 @@ try {
   const fakeGhPath = path.join(fixtureBinDirectory, 'gh');
   await writeFile(
     fakeGhPath,
-    `#!/usr/bin/env bun\nprocess.stderr.write(${JSON.stringify(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL)});\nprocess.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));\n`,
+    [
+      '#!/usr/bin/env bun',
+      `process.stderr.write(${JSON.stringify(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL)});`,
+      // The same fake answers the web resolver (pr list), the engine's pull request source
+      // (pr view, then api on failure) and the account path (auth token); anything else fails.
+      'const [command, subcommand, ...rest] = process.argv.slice(2);',
+      'if (command === "pr" && subcommand === "list") {',
+      '  process.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));',
+      '} else if (command === "pr" && subcommand === "view") {',
+      '  const repository = rest[rest.indexOf("--repo") + 1] ?? "fixture/ai-usage";',
+      '  const number = Number(rest[0] ?? "42");',
+      '  process.stdout.write(JSON.stringify({ baseRefName: "main", headRefName: "fixture/topic", isDraft: false, mergedAt: null, reviewDecision: "REVIEW_REQUIRED", state: "OPEN", statusCheckRollup: [], title: "Fixture pull request", updatedAt: "2026-07-03T11:00:00Z", url: "https://github.com/" + repository + "/pull/" + String(number) }));',
+      '} else if (command === "api") {',
+      '  process.stdout.write(JSON.stringify({ message: "Not Found", status: "404" }));',
+      '  process.exitCode = 1;',
+      '} else {',
+      '  process.exitCode = 1;',
+      '}',
+      '',
+    ].join('\n'),
   );
   await chmod(fakeGhPath, 0o700);
   // A host Codex app-server migrates its native state database even without

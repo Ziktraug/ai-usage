@@ -58,6 +58,8 @@ PR #53 also raised the engine control-plane protocol from 2 to 3. A Web or
 CLI process from the previous revision fails closed against the new engine,
 so the whole supervised stack restarts together.
 
+## Additive tables under usage version 4 (2026-10-21)
+
 ### Additive tables under usage version 4 (2026-10-21, executor observations)
 
 The `executors.capabilities` source adds one table, `executor_observations`
@@ -68,6 +70,24 @@ as for the skill-observation tables. Rows are retained ten per machine and
 harness, never advance the store generation, and never enter a served revision,
 a snapshot, or replication. An older binary ignores the table; after a restore
 from a pre-table backup the source simply recreates it on its next run.
+
+### Additive tables under usage version 4 (2026-10-21, external and local facts)
+
+The Work view's external and local fact family (ADR 0051) adds three tables to
+the usage store without changing `user_version`: `pull_request_observations`
+(dated `gh pr view` reads of explicitly linked pull requests),
+`checkout_status_observations` (dated `git status --porcelain=v2` reads of
+known checkouts) and `work_fact_run_state` (one row per producing source).
+The engine creates them on its next start when they are absent, the way the
+skill-observation tables were added; no backfill runs, existing rows and the
+served report revisions are untouched, and the store generation does not move.
+Rows are re-validated on read with the shared contract parsers; the readers
+keep the latest observation and the latest successful one apart, and
+retention keeps the five newest rows per pull request or checkout plus the
+newest successful one. These tables are outside the served revision, the
+export and the replication outbox: they describe this machine only and never
+leave it. A binary from before this change opens the store normally and
+ignores the tables; nothing is stored in them that an older reader needs.
 
 ## Backup
 

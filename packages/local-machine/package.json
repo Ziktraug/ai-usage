@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./bounded-process": "./src/bounded-process.ts",
     "./campaign-label-config": "./src/campaign-label-config.ts",
     "./claude-session-analysis": "./src/claude-session-analysis.ts",
     "./claude-session-facts": "./src/claude-session-facts.ts",

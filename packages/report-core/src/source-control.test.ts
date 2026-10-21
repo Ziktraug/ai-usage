@@ -66,10 +66,19 @@ describe('collection source contracts', () => {
         .filter(({ group }) => group === 'provider-usage')
         .every(({ cadenceMs }) => cadenceMs === 300_000),
     ).toBe(true);
-    // Executor capabilities spawn harness CLIs for metadata, so they poll every fifteen minutes.
+    // Executor capabilities spawn harness CLIs for metadata, so they poll every fifteen minutes; the
+    // fact producers spawn one process per checkout or pull request, so they poll more slowly still.
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'checkouts.status')?.cadenceMs).toBe(300_000);
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'github.pull-requests')?.cadenceMs).toBe(600_000);
     expect(
       collectionSourceDefinitions
-        .filter(({ group, id }) => group !== 'provider-usage' && id !== 'executors.capabilities')
+        .filter(
+          ({ group, id }) =>
+            group !== 'provider-usage' &&
+            id !== 'executors.capabilities' &&
+            id !== 'checkouts.status' &&
+            id !== 'github.pull-requests',
+        )
         .every(({ cadenceMs }) => cadenceMs === 60_000),
     ).toBe(true);
     expect(getCollectionSourceDefinition('executors.capabilities').cadenceMs).toBe(900_000);

@@ -10,6 +10,22 @@ export interface ProjectAliasEntry {
   name: string;
 }
 
+/** One `gh` login whose stored token answers pull request reads for one repository owner. */
+export interface AiUsageGitHubAccountConfig {
+  ghUser: string;
+  host: 'github.com';
+  owner: string;
+}
+
+/**
+ * User-home only (ADR 0051). Absent means the pull request source runs through the CLI's active
+ * account whenever `gh` is installed; `enabled: false` records a disabled run instead.
+ */
+export interface AiUsageGitHubConfig {
+  accounts?: AiUsageGitHubAccountConfig[];
+  enabled?: boolean;
+}
+
 export interface AiUsageConfig {
   campaignLabelOverrides?: CampaignLabelOverride[];
   cursor?: {
@@ -20,6 +36,7 @@ export interface AiUsageConfig {
     maxSessionSpanMs?: number;
     user?: string;
   };
+  github?: AiUsageGitHubConfig;
   projectAliases?: ProjectAliasEntry[];
   projectGroups?: ProjectGroupConfig[];
   /** Home-only review routing declarations (`routing.executors[]`); entries are parsed by `parseExecutorDeclarations`. */

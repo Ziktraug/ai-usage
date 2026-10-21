@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
+import { observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
 import {
   collectClaudeRetentionWarnings,
   type HarnessAdapter,
@@ -8,10 +9,16 @@ import {
 import { type BoundedRun, observeExecutors } from '@ai-usage/local-collectors/executor-observations';
 import { collectCursorCommitAttributionResult } from '@ai-usage/local-collectors/facets';
 import {
+  GITHUB_PULL_REQUEST_DEFAULTS,
+  observePullRequests,
+  type PullRequestLink,
+} from '@ai-usage/local-collectors/github-pull-requests';
+import {
   type CollectorRow,
   enrichCollectorRowsWithRtkSavingsResult,
   stripProjectPath,
 } from '@ai-usage/local-collectors/rtk-enrichment';
+import type { BoundedProcessRunner } from '@ai-usage/local-machine/bounded-process';
 import type { LocalHistoryError } from '@ai-usage/local-machine/errors';
 import {
   LocalHistoryStorage,
@@ -19,6 +26,8 @@ import {
 } from '@ai-usage/local-machine/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
+import type { AiUsageGitHubConfig } from '@ai-usage/report-core/project-alias';
+import { projectSourcePathFromId } from '@ai-usage/report-core/project-group';
 import {
   MAX_SKILL_OBSERVATION_BATCH,
   parseSkillObservation,
@@ -38,18 +47,27 @@ import {
   getCollectionSourceDefinition,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
+import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import {
+  importCheckoutStatusObservations,
   importExecutorObservations,
   importLocalRows,
   importNormalizedDatasetItems,
+  importPullRequestObservations,
   importSkillObservations,
+  queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
+  queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
   type RtkSavingsContribution,
+  recordWorkFactRun,
+  type ServedLocalProjectSource,
+  type UsageStoreError,
   upsertRtkSavingsContributions,
   usageStorePath,
+  type WorkFactSourceId,
 } from '@ai-usage/usage-store/writer';
-import { Data, Duration, Effect } from 'effect';
+import { Data, Duration, Effect, Exit } from 'effect';
 import { listManagedCursorUsageExportPaths } from './input-file';
 import type { ProviderQuotaRuntimeOptions } from './provider-quota';
 import { refreshLocalProviderQuotas } from './provider-quota';
@@ -74,6 +92,18 @@ export class SourceRunError extends Data.TaggedError('SourceRunError')<{
   readonly sourceId: CollectionSourceId;
 }> {}
 
+/**
+ * Seams for the Work view's fact producers (ADR 0051). The served local Project sources and the
+ * pull requests local Sessions recorded are always consulted; these add candidates from inputs
+ * this package does not read itself (Claude Desktop session metadata, for one).
+ */
+export interface WorkFactInputs {
+  /** Extra absolute checkout paths to observe beside the served local Project sources. */
+  readonly candidateCheckoutPaths?: () => Effect.Effect<readonly string[]>;
+  /** Extra explicitly linked pull requests beside those local Sessions recorded. */
+  readonly linkedPullRequests?: () => Effect.Effect<readonly PullRequestLink[]>;
+}
+
 export interface SourceAdapterOptions {
   readonly claudeLiveAvailable?: () => boolean;
   readonly codexLiveAvailable?: () => boolean;
@@ -84,9 +114,16 @@ export interface SourceAdapterOptions {
     readonly run?: BoundedRun;
     readonly which?: (command: string) => string | null;
   };
+  /** Defaults to `gh` being on PATH; the pull request source is not detected without it. */
+  readonly ghAvailable?: () => boolean;
+  /** Defaults to `git` being on PATH; the checkout status source is not detected without it. */
+  readonly gitAvailable?: () => boolean;
   readonly machine?: UsageMachine;
   readonly now?: () => Date;
   readonly providerQuotaOptions?: ProviderQuotaRuntimeOptions;
+  readonly workFactInputs?: WorkFactInputs;
+  /** The bounded runner for `git` and `gh`; tests inject a fake. */
+  readonly workFactProcessRunner?: BoundedProcessRunner;
 }
 
 const detected = (): SourceDetectionResult => ({
@@ -94,9 +131,9 @@ const detected = (): SourceDetectionResult => ({
   reason: { code: 'none' },
 });
 
-const notDetected = (): SourceDetectionResult => ({
+const notDetected = (message = 'No supported local input was found.'): SourceDetectionResult => ({
   availability: 'not-detected',
-  reason: { code: 'input-missing', message: 'No supported local input was found.' },
+  reason: { code: 'input-missing', message },
 });
 
 const misconfigured = (): SourceDetectionResult => ({
@@ -624,6 +661,260 @@ const createProviderQuotaSource = (input: {
     }),
 });
 
+const usableLocalPath = (value: string): boolean => path.isAbsolute(value) && !value.includes('\0');
+
+/**
+ * The checkouts a run observes: every canonical path the served local Project sources decode to,
+ * then every linked worktree (the physical path of a source whose published id names another
+ * path), as ADR 0044 observes them, then the injected candidates. Resolved so `/a/b/` and
+ * `/a/b` are one checkout; a path appears once.
+ */
+export const candidateCheckoutPaths = (
+  sources: readonly ServedLocalProjectSource[],
+  machineId: string,
+  injected: readonly string[] = [],
+): string[] => {
+  const canonical = new Set<string>();
+  const worktrees = new Set<string>();
+  for (const source of sources) {
+    if (source.machineId !== machineId || !usableLocalPath(source.sourcePath)) {
+      continue;
+    }
+    const localPath = path.resolve(source.sourcePath);
+    const published =
+      source.projectSourceId === null ? null : projectSourcePathFromId(source.projectSourceId, machineId);
+    const canonicalPath = published !== null && usableLocalPath(published) ? path.resolve(published) : localPath;
+    canonical.add(canonicalPath);
+    if (localPath !== canonicalPath) {
+      worktrees.add(localPath);
+    }
+  }
+  const ordered = [...canonical];
+  for (const worktree of worktrees) {
+    if (!canonical.has(worktree)) {
+      ordered.push(worktree);
+    }
+  }
+  for (const candidate of injected) {
+    if (!usableLocalPath(candidate)) {
+      continue;
+    }
+    const resolved = path.resolve(candidate);
+    if (!ordered.includes(resolved)) {
+      ordered.push(resolved);
+    }
+  }
+  return ordered;
+};
+
+/** A store or revision that does not exist yet means "no served inputs", not a failed run. */
+const servedInputsOrEmpty = <Value>(
+  sourceId: WorkFactSourceId,
+  read: Effect.Effect<Value, UsageStoreError>,
+  empty: Value,
+): Effect.Effect<Value, SourceRunError> =>
+  read.pipe(
+    Effect.catchAll((error) =>
+      error.reason === 'revision-unavailable' || error.reason === 'store-missing'
+        ? Effect.succeed(empty)
+        : Effect.fail(sourceFailure(sourceId, error)),
+    ),
+  );
+
+const pullRequestLinkKey = (link: PullRequestLink): string => JSON.stringify([link.host, link.repository, link.number]);
+
+/** The configured `gh` login for a link's owner, or null for the CLI's active account. */
+const accountFor = (github: AiUsageGitHubConfig | undefined, link: PullRequestLink): string | null => {
+  const owner = link.repository.split('/')[0]?.toLowerCase() ?? '';
+  return (
+    github?.accounts?.find((account) => account.host === link.host && account.owner.toLowerCase() === owner)?.ghUser ??
+    null
+  );
+};
+
+/**
+ * Named explicitly for `gh`: on Linux its tokens may live in the session keyring, which is reached
+ * through the session bus. The address is a socket path, not a credential, and nothing else from
+ * this process's environment is forwarded beyond the runner's allow-list.
+ */
+const ghEnvironment = (): Record<string, string> => {
+  const busAddress = process.env.DBUS_SESSION_BUS_ADDRESS;
+  return busAddress ? { DBUS_SESSION_BUS_ADDRESS: busAddress } : {};
+};
+
+const createCheckoutStatusSource = (input: {
+  dbPath: string;
+  detect: Effect.Effect<SourceDetectionResult>;
+  machine: UsageMachine;
+  now: () => Date;
+  options: SourceAdapterOptions;
+}): ScheduledSource => ({
+  cadence: Duration.millis(getCollectionSourceDefinition('checkouts.status').cadenceMs),
+  detect: input.detect,
+  id: 'checkouts.status',
+  run: (context) =>
+    Effect.gen(function* () {
+      yield* reportProgress(context, { phase: 'discovering' });
+      const availability = yield* input.detect;
+      if (availability.availability !== 'detected') {
+        return sourceUnavailableResult();
+      }
+      const served = yield* servedInputsOrEmpty(
+        'checkouts.status',
+        queryCurrentServedLocalProjectSources({ dbPath: input.dbPath }).pipe(Effect.map(({ sources }) => sources)),
+        [] as readonly ServedLocalProjectSource[],
+      );
+      const injected = input.options.workFactInputs?.candidateCheckoutPaths
+        ? yield* input.options.workFactInputs.candidateCheckoutPaths()
+        : [];
+      const paths = candidateCheckoutPaths(served, input.machine.id, injected);
+      yield* reportProgress(context, { completed: 0, phase: 'reading', total: paths.length });
+      const batch = yield* observeCheckoutStatus({
+        machineId: input.machine.id,
+        now: input.now,
+        paths,
+        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      });
+      yield* abortIfRequested(context.signal);
+      yield* reportProgress(context, { completed: 0, phase: 'importing', total: batch.observations.length });
+      yield* importCheckoutStatusObservations({ dbPath: input.dbPath, observations: batch.observations }).pipe(
+        Effect.mapError((cause) => sourceFailure('checkouts.status', cause)),
+      );
+      const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
+      const message = batch.truncated
+        ? `Observed the first ${String(batch.observations.length)} of ${String(paths.length)} candidate checkouts.`
+        : null;
+      yield* recordWorkFactRun({
+        dbPath: input.dbPath,
+        disabled: false,
+        failed: batch.observations.length - observed,
+        machineId: input.machine.id,
+        message,
+        observed,
+        ranAt: input.now(),
+        sourceId: 'checkouts.status',
+      }).pipe(Effect.mapError((cause) => sourceFailure('checkouts.status', cause)));
+      return {
+        changed: false,
+        inputCount: paths.length,
+        outputCount: batch.observations.length,
+        warnings: message === null ? [] : [{ code: 'checkouts-truncated', message }],
+      };
+    }),
+});
+
+const createPullRequestSource = (input: {
+  dbPath: string;
+  detect: Effect.Effect<SourceDetectionResult>;
+  machine: UsageMachine;
+  now: () => Date;
+  options: SourceAdapterOptions;
+  storage: LocalHistoryStorageService;
+}): ScheduledSource => ({
+  cadence: Duration.millis(getCollectionSourceDefinition('github.pull-requests').cadenceMs),
+  detect: input.detect,
+  id: 'github.pull-requests',
+  run: (context) =>
+    Effect.gen(function* () {
+      yield* reportProgress(context, { phase: 'discovering' });
+      const availability = yield* input.detect;
+      if (availability.availability !== 'detected') {
+        return sourceUnavailableResult();
+      }
+      const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
+        Effect.provideService(LocalHistoryStorage, input.storage),
+        Effect.catchAllDefect((cause) => Effect.fail(cause)),
+        Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
+      );
+      if (config.github?.enabled === false) {
+        const message = 'github.enabled is false in the local config.';
+        yield* recordWorkFactRun({
+          dbPath: input.dbPath,
+          disabled: true,
+          failed: 0,
+          machineId: input.machine.id,
+          message,
+          observed: 0,
+          ranAt: input.now(),
+          sourceId: 'github.pull-requests',
+        }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+        return {
+          changed: false,
+          inputCount: 0,
+          outputCount: 0,
+          unavailable: { code: 'policy-disabled', message },
+          warnings: [],
+        };
+      }
+      const served = yield* servedInputsOrEmpty(
+        'github.pull-requests',
+        queryServedSessionPullRequestLinks({ dbPath: input.dbPath }).pipe(Effect.map(({ links }) => links)),
+        [] as readonly PullRequestLink[],
+      );
+      const injected = input.options.workFactInputs?.linkedPullRequests
+        ? yield* input.options.workFactInputs.linkedPullRequests()
+        : [];
+      const unique = new Map<string, PullRequestLink>();
+      for (const link of [...served, ...injected]) {
+        const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
+        const key = pullRequestLinkKey(candidate);
+        if (!unique.has(key)) {
+          unique.set(key, candidate);
+        }
+      }
+      const links = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
+      const truncated = unique.size > links.length;
+      yield* reportProgress(context, { completed: 0, phase: 'reading', total: links.length });
+      // One batch per gh login: the active account for owners without a configured one.
+      const byAccount = new Map<string | null, PullRequestLink[]>();
+      for (const link of links) {
+        const account = accountFor(config.github, link);
+        byAccount.set(account, [...(byAccount.get(account) ?? []), link]);
+      }
+      const observations: PullRequestObservation[] = [];
+      for (const [account, accountLinks] of byAccount) {
+        yield* abortIfRequested(context.signal);
+        const batch = yield* observePullRequests({
+          environment: ghEnvironment(),
+          links: accountLinks,
+          machineId: input.machine.id,
+          now: input.now,
+          ...(account === null ? {} : { account: { ghUser: account } }),
+          ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+          ...(context.signal === undefined ? {} : { signal: context.signal }),
+        });
+        observations.push(...batch.observations);
+      }
+      yield* abortIfRequested(context.signal);
+      yield* reportProgress(context, { completed: 0, phase: 'importing', total: observations.length });
+      yield* importPullRequestObservations({ dbPath: input.dbPath, observations }).pipe(
+        Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
+      );
+      const observed = observations.filter(({ outcome }) => outcome === 'observed').length;
+      const failed = observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
+      const message = truncated
+        ? `Observed the first ${String(links.length)} of ${String(unique.size)} linked pull requests.`
+        : null;
+      yield* recordWorkFactRun({
+        dbPath: input.dbPath,
+        disabled: false,
+        failed,
+        machineId: input.machine.id,
+        message,
+        observed,
+        ranAt: input.now(),
+        sourceId: 'github.pull-requests',
+      }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      return {
+        changed: false,
+        inputCount: links.length,
+        outputCount: observations.length,
+        warnings: message === null ? [] : [{ code: 'pull-requests-truncated', message }],
+      };
+    }),
+});
+
 const harnessAdapter = (
   sourceId: 'claude.sessions' | 'codex.sessions' | 'opencode.sessions',
 ): Effect.Effect<HarnessAdapter, SourceRunError> => {
@@ -668,6 +959,24 @@ export const createScheduledSourceRegistry = (
     const executorDetection = Effect.sync(() => {
       const which = options.executorObservation?.which ?? ((command: string) => Bun.which(command));
       return which('claude') !== null || which('codex') !== null ? detected() : notDetected();
+    });
+    const checkoutStatusDetection = Effect.sync(() =>
+      (options.gitAvailable?.() ?? Bun.which('git') !== null)
+        ? detected()
+        : notDetected('git was not found on PATH, so checkouts cannot be observed.'),
+    );
+    // The executable is the input; credentials are not. Signing in is an outcome the run records
+    // (`unauthenticated`), never a reason to call the source undetected. A malformed `github`
+    // section is a misconfiguration, as a malformed Cursor section is.
+    const pullRequestDetection = Effect.gen(function* () {
+      if (!(options.ghAvailable?.() ?? Bun.which('gh') !== null)) {
+        return notDetected('The GitHub CLI (gh) was not found on PATH, so pull requests cannot be observed.');
+      }
+      // A config file that fails validation throws inside the reader, so only an exit sees it.
+      const config = yield* Effect.exit(
+        readMergedAiUsageConfigFrom(options.configCwd).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      return Exit.isFailure(config) ? misconfigured() : detected();
     });
     const sources: ScheduledSource[] = [
       createSessionSource({
@@ -762,6 +1071,21 @@ export const createScheduledSourceRegistry = (
         machine,
         now: options.now ?? (() => new Date()),
         observation: options.executorObservation,
+      }),
+      createCheckoutStatusSource({
+        dbPath,
+        detect: checkoutStatusDetection,
+        machine,
+        now: options.now ?? (() => new Date()),
+        options,
+      }),
+      createPullRequestSource({
+        dbPath,
+        detect: pullRequestDetection,
+        machine,
+        now: options.now ?? (() => new Date()),
+        options,
+        storage,
       }),
     ];
     const registry = new Map(sources.map((source) => [source.id, source] as const));
