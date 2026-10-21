@@ -18,6 +18,18 @@ export const demoReviewCandidates = (target: ReviewTarget): readonly ReviewCandi
     availability: 'available',
     capabilities: ['read-only-review'],
     quality: 'review-capable',
+    provenance: {
+      accountScope: 'declared',
+      authorization: 'declared',
+      subscription: 'declared',
+      availability: 'observed-now',
+      capabilities: 'declared',
+      quality: 'declared',
+      quota: 'observed-now',
+      model: 'declared',
+      effort: 'declared',
+    },
+    qualificationActions: [],
     quota: {
       accountLabel: `demo-${harness}-subscription`,
       generatedAt: WORK_DEMO_TIME,

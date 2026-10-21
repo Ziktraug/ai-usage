@@ -1,12 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import type { ProviderLimitWindow, ProviderStatus } from './provider-status';
+import type { ExecutorDeclaration, ExecutorObservation } from './work-executors';
 import {
+  assessReviewRecommendation,
+  type CandidateProvenanceMap,
   MAX_REVIEW_ROUTING_CANDIDATES,
   observedReviewCandidates,
+  type QualifyReviewCandidatesInput,
+  qualifyReviewCandidates,
   type ReviewCandidate,
   type ReviewRoutingInput,
   type ReviewRoutingPolicy,
   type ReviewTarget,
+  recommendationKind,
   simulateWorkReviewRouting,
 } from './work-routing';
 
@@ -54,8 +60,22 @@ const quotaFixture = (
   ...overrides,
 });
 
+const DECLARED_PROVENANCE: CandidateProvenanceMap = {
+  accountScope: 'declared',
+  authorization: 'declared',
+  subscription: 'declared',
+  availability: 'observed-now',
+  capabilities: 'declared',
+  quality: 'declared',
+  quota: 'observed-now',
+  model: 'unknown',
+  effort: 'unknown',
+};
+
 const candidate = (harness: ReviewCandidate['harness'], overrides: Partial<ReviewCandidate> = {}): ReviewCandidate => ({
   id: harness,
+  provenance: DECLARED_PROVENANCE,
+  qualificationActions: [],
   machineId: TARGET.machineId,
   machineLabel: 'Fixture machine',
   accountScope: `${harness}-account`,
@@ -335,5 +355,421 @@ describe('observed review candidates', () => {
     expect(ambiguous[0]?.quota).toBeNull();
     expect(ambiguous[0]?.evidence.source).toContain('Ambiguous');
     expect(observedReviewCandidates([{ ...provider, generatedAt: NOW }, provider])).toEqual(ambiguous);
+  });
+});
+
+describe('qualifyReviewCandidates', () => {
+  const MACHINE = TARGET.machineId;
+  const declaration = (overrides: Partial<ExecutorDeclaration> = {}): ExecutorDeclaration => ({
+    accountScope: 'personal',
+    authorization: 'allowed',
+    capabilities: ['read-only-review'],
+    declaredAt: '2026-10-20T08:00:00.000Z',
+    effort: null,
+    harness: 'claude-code',
+    machineId: MACHINE,
+    model: null,
+    quality: 'review-capable',
+    subscription: 'verified',
+    targets: [{ kind: 'any-local-session' }],
+    ...overrides,
+  });
+  const observation = (overrides: Partial<ExecutorObservation> = {}): ExecutorObservation => ({
+    authEvidence: 'claude auth status exit 0 loggedIn=true',
+    authState: 'logged-in',
+    binaryPath: '/usr/bin/claude',
+    harness: 'claude-code',
+    machineId: MACHINE,
+    observedAt: '2026-10-21T11:50:00.000Z',
+    outcome: 'observed',
+    version: '2.1.303 (Claude Code)',
+    ...overrides,
+  });
+  /** A real stored key is bare (`claude`): the live collectors never record an account suffix. */
+  const bareQuota = (family: 'claude' | 'codex', overrides: Partial<ProviderStatus> = {}): ProviderStatus =>
+    quotaFixture(family === 'claude' ? 'claude-code' : 'codex', { key: family, plan: 'max', ...overrides });
+  const codexObservation = (overrides: Partial<ExecutorObservation> = {}): ExecutorObservation =>
+    observation({
+      authEvidence: 'codex login status exit 0 (output mentions "Logged in")',
+      binaryPath: '/usr/bin/codex',
+      harness: 'codex',
+      version: 'codex-cli 0.163.0',
+      ...overrides,
+    });
+  const qualify = (overrides: Partial<QualifyReviewCandidatesInput> = {}) =>
+    qualifyReviewCandidates({
+      declarations: [declaration()],
+      executorObservations: [observation()],
+      now: NOW,
+      providers: [bareQuota('claude')],
+      target: TARGET,
+      ...overrides,
+    });
+  const run = (candidates: readonly ReviewCandidate[], policy: Partial<ReviewRoutingPolicy> = {}) => {
+    const result = simulate(candidates, { policy: { ...POLICY, ...policy } });
+    return { recommendation: assessReviewRecommendation(result, candidates), result };
+  };
+  const only = (candidates: readonly ReviewCandidate[]): ReviewCandidate => {
+    const [single] = candidates;
+    if (!single || candidates.length !== 1) {
+      throw new Error(`expected one candidate, got ${candidates.length}`);
+    }
+    return single;
+  };
+
+  test('a declared, observed and quota-backed Claude route is a real recommendation with per-field provenance', () => {
+    const candidates = qualify();
+    const claude = only(candidates);
+    expect(claude).toMatchObject({
+      accountScope: 'personal',
+      authorization: 'allowed',
+      authorizedTarget: TARGET,
+      availability: 'available',
+      capabilities: ['read-only-review'],
+      harness: 'claude-code',
+      id: `declared:${JSON.stringify([MACHINE, 'claude-code', 'personal'])}`,
+      machineId: MACHINE,
+      qualificationActions: [],
+      quality: 'review-capable',
+      subscription: 'verified',
+    });
+    expect(claude.quota?.key).toBe('claude');
+    expect(claude.quota?.plan).toBe('max');
+    expect(claude.provenance).toEqual({
+      accountScope: 'declared',
+      authorization: 'declared',
+      subscription: 'declared',
+      availability: 'observed-now',
+      capabilities: 'declared',
+      quality: 'declared',
+      quota: 'observed-now',
+      model: 'unknown',
+      effort: 'unknown',
+    });
+    const { recommendation, result } = run(candidates);
+    expect(result.chosenCandidateId).toBe(claude.id);
+    expect(recommendation).toEqual({ candidateId: claude.id, kind: 'real', missing: null });
+    expect(recommendationKind(result, candidates)).toBe('real');
+  });
+
+  test('is deterministic for identical inputs regardless of input order', () => {
+    const input: QualifyReviewCandidatesInput = {
+      declarations: [declaration({ harness: 'codex', accountScope: 'work' }), declaration()],
+      executorObservations: [
+        codexObservation(),
+        observation(),
+        observation({ observedAt: '2026-10-21T11:00:00.000Z' }),
+      ],
+      now: NOW,
+      providers: [bareQuota('codex'), bareQuota('claude')],
+      target: TARGET,
+    };
+    const first = qualifyReviewCandidates(input);
+    const second = qualifyReviewCandidates({
+      ...input,
+      declarations: [...input.declarations].reverse(),
+      executorObservations: [...input.executorObservations].reverse(),
+      providers: [...input.providers].reverse(),
+    });
+    expect(second).toEqual(first);
+    expect(first.map((entry) => entry.harness)).toEqual(['claude-code', 'codex']);
+    expect(first.every((entry) => entry.availability === 'available')).toBe(true);
+  });
+
+  test('prefers Claude between two real candidates and Codex when the preference says so', () => {
+    const candidates = qualify({
+      declarations: [declaration(), declaration({ harness: 'codex', accountScope: 'work' })],
+      executorObservations: [observation(), codexObservation()],
+      providers: [bareQuota('claude'), bareQuota('codex')],
+    });
+    expect(run(candidates).result.chosenCandidateId).toContain('claude-code');
+    expect(run(candidates, { preferredHarness: 'codex' }).result.chosenCandidateId).toContain('"codex"');
+    expect(run(candidates).recommendation.kind).toBe('real');
+  });
+
+  test('an observed Codex without a declaration is excluded with the exact declaration to add', () => {
+    const candidates = qualify({
+      executorObservations: [observation(), codexObservation()],
+      providers: [bareQuota('claude'), bareQuota('codex')],
+    });
+    const codex = candidates.find((entry) => entry.harness === 'codex');
+    expect(codex).toMatchObject({
+      accountScope: null,
+      authorization: 'unknown',
+      availability: 'available',
+      id: `observed:${JSON.stringify([MACHINE, 'codex', null])}`,
+      subscription: 'unverified',
+    });
+    expect(codex?.provenance).toMatchObject({
+      accountScope: 'unknown',
+      authorization: 'unknown',
+      availability: 'observed-now',
+    });
+    expect(codex?.qualificationActions).toEqual([
+      "Add routing.executors[] for codex:<accountScope> with authorization 'allowed', targets [{kind:'any-local-session'}], subscription 'verified', declaredAt",
+    ]);
+    const { recommendation, result } = run(candidates);
+    expect(result.chosenCandidateId).toContain('claude-code');
+    expect(recommendation.kind).toBe('real');
+    expect(excluded(result, codex?.id ?? '')).toContain('Review authorization is not established');
+  });
+
+  test('a declaration without any quota observation is conditional on exactly that observation', () => {
+    const candidates = qualify({ providers: [] });
+    const claude = only(candidates);
+    expect(claude.quota).toBeNull();
+    expect(claude.provenance.quota).toBe('unknown');
+    expect(claude.qualificationActions).toEqual([
+      'Refresh quota observations (ai-usage quota --json or wait for the 5-minute source)',
+    ]);
+    const { recommendation, result } = run(candidates);
+    expect(result.chosenCandidateId).toBeNull();
+    expect(recommendation).toEqual({ candidateId: claude.id, kind: 'conditional', missing: 'quota observation' });
+  });
+
+  test('a stale executor observation leaves availability unknown and the recommendation conditional', () => {
+    const candidates = qualify({ executorObservations: [observation({ observedAt: '2026-10-21T10:00:00.000Z' })] });
+    const claude = only(candidates);
+    expect(claude.availability).toBe('unknown');
+    expect(claude.provenance.availability).toBe('stale');
+    expect(claude.qualificationActions.join(' ')).toContain('Refresh executor observations');
+    expect(claude.qualificationActions.join(' ')).toContain('last observed 2026-10-21T10:00:00.000Z');
+    expect(run(candidates).recommendation).toEqual({
+      candidateId: claude.id,
+      kind: 'conditional',
+      missing: 'executor availability observation',
+    });
+    const missing = only(qualify({ executorObservations: [] }));
+    expect(missing.provenance.availability).toBe('unknown');
+    expect(run([missing]).recommendation.kind).toBe('conditional');
+  });
+
+  test('a signed-out or absent CLI is unavailable now, with the sign-in or install action', () => {
+    const loggedOut = only(qualify({ executorObservations: [observation({ authState: 'logged-out' })] }));
+    expect(loggedOut).toMatchObject({ availability: 'unavailable', provenance: { availability: 'observed-now' } });
+    expect(loggedOut.qualificationActions).toEqual(['Sign in the Claude Code CLI (claude auth login)']);
+    const absent = only(
+      qualify({ executorObservations: [observation({ binaryPath: null, outcome: 'unavailable', version: null })] }),
+    );
+    expect(absent.qualificationActions).toEqual([`Install the Claude Code CLI (claude) on machine ${MACHINE}`]);
+    const codexOut = only(
+      qualify({
+        declarations: [declaration({ harness: 'codex' })],
+        executorObservations: [codexObservation({ authState: 'logged-out' })],
+        providers: [bareQuota('codex')],
+      }),
+    );
+    expect(codexOut.qualificationActions).toEqual(['Sign in the Codex CLI (codex login)']);
+    for (const entry of [loggedOut, absent, codexOut]) {
+      expect(run([entry]).recommendation.kind).toBe('none');
+    }
+  });
+
+  test('a stale or crossed-reset quota is named precisely and never restored', () => {
+    const stale = only(qualify({ providers: [bareQuota('claude', { generatedAt: '2026-10-21T11:40:00.000Z' })] }));
+    expect(stale.provenance.quota).toBe('stale');
+    expect(stale.qualificationActions).toEqual([
+      'Refresh quota observations (ai-usage quota --json or wait for the 5-minute source); last observed 2026-10-21T11:40:00.000Z',
+    ]);
+    expect(run([stale]).recommendation).toEqual({
+      candidateId: stale.id,
+      kind: 'conditional',
+      missing: 'quota observation',
+    });
+
+    const crossed = only(
+      qualify({
+        providers: [bareQuota('claude', { windows: [windowFixture({ resetsAt: '2026-10-21T11:30:00.000Z' })] })],
+      }),
+    );
+    expect(crossed.qualificationActions).toEqual(['Quota window 5h crossed its reset: a new observation is required']);
+    const crossedRun = run([crossed]);
+    expect(crossedRun.result.chosenCandidateId).toBeNull();
+    expect(excluded(crossedRun.result, crossed.id)).toContain('crossed its observed reset');
+  });
+
+  test('an exhausted window excludes the route and the five-hour and weekly windows are never summed', () => {
+    const windows = [
+      windowFixture({ id: 'primary', label: '5h', usedPercent: 10, remainingPercent: 90 }),
+      windowFixture({
+        blocked: true,
+        group: '7d',
+        id: 'secondary',
+        label: 'Weekly',
+        remainingPercent: 0,
+        resetsAt: '2026-10-25T00:00:00.000Z',
+        usedPercent: 100,
+      }),
+    ];
+    const exhausted = only(qualify({ providers: [bareQuota('claude', { windows })] }));
+    expect(exhausted.qualificationActions).toEqual([
+      'Quota window Weekly is exhausted; wait for its reset at 2026-10-25T00:00:00.000Z',
+    ]);
+    const exhaustedRun = run([exhausted]);
+    expect(exhaustedRun.result.chosenCandidateId).toBeNull();
+    expect(excluded(exhaustedRun.result, exhausted.id)).toContain('Weekly is exhausted');
+    expect(exhaustedRun.recommendation.kind).toBe('none');
+
+    const lopsided = only(
+      qualify({
+        providers: [
+          bareQuota('claude', {
+            windows: [
+              windowFixture({ id: 'primary', label: '5h', usedPercent: 95, remainingPercent: 5 }),
+              windowFixture({ group: '7d', id: 'secondary', label: 'Weekly', usedPercent: 5, remainingPercent: 95 }),
+            ],
+          }),
+        ],
+      }),
+    );
+    expect(run([lopsided]).recommendation.kind).toBe('real');
+  });
+
+  test("several models on one account are one resource; another model's window is not counted, an undeclared model is", () => {
+    const windows = [
+      windowFixture({ id: 'five_hour', label: '5h' }),
+      windowFixture({ group: 'weekly', id: 'seven_day', label: 'Weekly', resetsAt: '2026-10-25T00:00:00.000Z' }),
+      windowFixture({ group: 'weekly', id: 'model:Opus', label: 'Opus · Weekly', scope: 'model' }),
+      windowFixture({
+        blocked: true,
+        group: 'weekly',
+        id: 'model:Sonnet',
+        label: 'Sonnet · Weekly',
+        remainingPercent: 0,
+        scope: 'model',
+        usedPercent: 100,
+      }),
+    ];
+    const opus = qualify({
+      declarations: [declaration({ model: 'Opus' })],
+      providers: [bareQuota('claude', { windows })],
+    });
+    expect(opus).toHaveLength(1);
+    const opusRun = run(opus);
+    expect(opusRun.result.chosenCandidateId).toBe(opus[0]?.id ?? null);
+    expect(opusRun.result.evaluations[0]?.missingData).toContain(
+      'Quota window Sonnet · Weekly applies to another model than Opus; not counted.',
+    );
+    const sonnet = run(
+      qualify({ declarations: [declaration({ model: 'Sonnet' })], providers: [bareQuota('claude', { windows })] }),
+    );
+    expect(sonnet.result.chosenCandidateId).toBeNull();
+    const undeclared = only(qualify({ providers: [bareQuota('claude', { windows })] }));
+    expect(undeclared.qualificationActions).toEqual([
+      'Declare routing.executors[].model for claude:personal: the quota reports model-scoped windows (model:Opus, model:Sonnet) that cannot be attributed without it',
+    ]);
+    expect(run([undeclared]).result.chosenCandidateId).toBeNull();
+  });
+
+  test('a declaration for another account does not bind a scoped quota stream, which stays an observed candidate', () => {
+    const candidates = qualify({
+      declarations: [declaration({ accountScope: 'other' })],
+      providers: [bareQuota('claude', { key: 'claude:personal' })],
+    });
+    expect(candidates.map((entry) => entry.id.split(':')[0])).toEqual(['declared', 'observed']);
+    const declared = candidates.find((entry) => entry.id.startsWith('declared:'));
+    const observed = candidates.find((entry) => entry.id.startsWith('observed:'));
+    expect(declared?.quota).toBeNull();
+    expect(declared?.qualificationActions).toEqual([
+      `Quota streams for claude on machine ${MACHINE} are account-scoped (personal); set routing.executors[].accountScope to one of them`,
+    ]);
+    expect(observed).toMatchObject({ accountScope: 'personal', authorization: 'unknown' });
+    expect(observed?.qualificationActions[0]).toBe(
+      "Add routing.executors[] for claude:personal with authorization 'allowed', targets [{kind:'any-local-session'}], subscription 'verified', declaredAt",
+    );
+    expect(run(candidates).result.chosenCandidateId).toBeNull();
+  });
+
+  test('two declarations for one family on one machine cannot share an unscoped quota stream', () => {
+    const candidates = qualify({
+      declarations: [declaration(), declaration({ accountScope: 'work' })],
+    });
+    const declared = candidates.filter((entry) => entry.id.startsWith('declared:'));
+    expect(declared).toHaveLength(2);
+    expect(declared.every((entry) => entry.quota === null)).toBe(true);
+    expect(
+      declared.every((entry) =>
+        entry.qualificationActions.some((action) =>
+          action.startsWith('Quota attribution is ambiguous: 2 routing.executors[] entries'),
+        ),
+      ),
+    ).toBe(true);
+    // The unbound stream stays visible as an observed-only candidate rather than disappearing.
+    expect(candidates.filter((entry) => entry.id.startsWith('observed:'))).toHaveLength(1);
+    expect(run(candidates).result.chosenCandidateId).toBeNull();
+  });
+
+  test('a declaration bound to another project does not authorize this session', () => {
+    const forbiddenTarget = only(
+      qualify({
+        declarations: [declaration({ targets: [{ kind: 'project', projectLabel: 'alpha' }] })],
+        target: { ...TARGET, projectLabel: 'beta' },
+      }),
+    );
+    expect(forbiddenTarget.authorizedTarget).toBeNull();
+    expect(forbiddenTarget.qualificationActions).toEqual([
+      "Declared targets do not admit this session (project 'beta'): add {kind:'project', projectLabel:'beta'} or {kind:'any-local-session'} to routing.executors[] for claude:personal",
+    ]);
+    const forbiddenRun = run([forbiddenTarget]);
+    expect(forbiddenRun.result.chosenCandidateId).toBeNull();
+    expect(forbiddenRun.recommendation.kind).toBe('none');
+
+    const admitted = only(
+      qualify({
+        declarations: [declaration({ targets: [{ kind: 'project', projectLabel: 'alpha' }] })],
+        target: { ...TARGET, projectLabel: 'alpha' },
+      }),
+    );
+    expect(admitted.authorizedTarget).toEqual({ ...TARGET, projectLabel: 'alpha' });
+    expect(run([admitted]).recommendation.kind).toBe('real');
+
+    const unselected = only(qualify({ target: null }));
+    expect(unselected.authorizedTarget).toBeNull();
+    expect(unselected.qualificationActions).toEqual([
+      'Select a session with a machine and native identity to bind the authorization to a target',
+    ]);
+  });
+
+  test('declared API billing, a forbidden declaration and a forced forbidden candidate never qualify', () => {
+    const api = only(qualify({ declarations: [declaration({ subscription: 'api' })] }));
+    expect(api.qualificationActions[0]).toContain("Declared subscription 'api'");
+    expect(excluded(run([api]).result, api.id)).toContain('API billing');
+
+    const forbidden = only(qualify({ declarations: [declaration({ authorization: 'forbidden' })] }));
+    expect(forbidden.qualificationActions).toEqual([]);
+    const forced = run([forbidden], { forcedCandidateId: forbidden.id });
+    expect(forced.result.chosenCandidateId).toBeNull();
+    expect(forced.result.reasons.join(' ')).toContain('cannot bypass constraints');
+    expect(forced.recommendation.kind).toBe('none');
+  });
+
+  test("a declaration for another machine cannot review this machine's session", () => {
+    const elsewhere = only(
+      qualify({
+        declarations: [declaration({ machineId: 'machine-b' })],
+        executorObservations: [observation({ machineId: 'machine-b' })],
+        providers: [bareQuota('claude', { machineId: 'machine-b' })],
+      }),
+    );
+    expect(elsewhere.availability).toBe('available');
+    const result = run([elsewhere]).result;
+    expect(result.chosenCandidateId).toBeNull();
+    expect(excluded(result, elsewhere.id)).toContain('cannot access this machine-scoped session');
+  });
+
+  test('the observed plan is carried as evidence beside the declaration, never as verification', () => {
+    const candidates = qualify({
+      declarations: [],
+      executorObservations: [],
+      providers: [bareQuota('claude', { plan: 'max' })],
+    });
+    const observed = only(candidates);
+    expect(observed.quota?.plan).toBe('max');
+    expect(observed.subscription).toBe('unverified');
+    expect(observed.provenance.subscription).toBe('unknown');
+  });
+
+  test('rejects a non-canonical reference time instead of guessing freshness', () => {
+    expect(() => qualify({ now: 'now' })).toThrow(RangeError);
   });
 });
