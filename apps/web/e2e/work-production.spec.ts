@@ -10,7 +10,9 @@ import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transpo
  * The Work resume surface on the production path. The disposable HOME carries a native Claude
  * Desktop session registry (`seedHarnessHome` with `claudeDesktopSessions: 'representative'`: 24
  * roots, 17 children, one unsupported file); the supervised engine collects it through
- * `claude.desktop-sessions` into `claude_desktop_sessions`; `report-data` reads it back for the
+ * `claude.desktop-sessions` into `claude_desktop_sessions`, then observes the pull requests the
+ * registry declared through the fixture's `gh` (`github.pull-requests`) and the checkouts it named
+ * through `git status` (`checkouts.status`); `report-data` reads it all back for the
  * `work.attention` procedure; the browser renders what the procedure answered. Every business
  * assertion below rests on a value that crossed that chain. The server runs in live mode, so the
  * synthetic datasets of the demo and e2e runtimes are never consulted.
@@ -18,14 +20,26 @@ import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transpo
  * Titles, questions and ids are the generator's
  * (`packages/report-core/src/claude-desktop-sessions.test-fixture.ts`); ages read against the pinned
  * production clock (2026-07-03T12:00Z), which the registry epoch is aligned with, in Europe/Paris.
+ * The fixture `gh` answers OPEN / REVIEW_REQUIRED / no checks for every number, so each declared
+ * pull request (#117, #118, #90) is observed awaiting review; the seeded repository is a clean
+ * checkout and the worktree the blocked root named does not exist on disk.
  */
 
 const CAPTURES_DIRECTORY_ENV = 'AI_USAGE_WORK_CAPTURES_DIR';
+const DEFAULT_ORIGIN = 'http://127.0.0.1:4175';
 const DESKTOP_COLLECTION_TIMEOUT_MS = 60_000;
+const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
+const FACT_SOURCE_IDS = ['github.pull-requests', 'checkouts.status'] as const;
 /** The registry seeds 24 roots; the three whose family had no activity in the 30-day window stay out. */
 const ROOTS_IN_WINDOW = 21;
 const MINIMUM_ROOTS = 20;
+const NEEDS_YOU_ROOTS = 4;
+const WAITING_ROOTS = 3;
+const LEAD_ROOTS = 1;
 const FOLDED_ROOTS = 10;
+const RESTING_ROOTS = ROOTS_IN_WINDOW - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
+/** The registry declares three distinct pull requests (#117, #118, #90); the fixture gh answers each. */
+const DECLARED_PULL_REQUESTS = 3;
 const REGISTRY_FILES = 41;
 const PARSED_FILES = 40;
 const BLOCKED_ROOT_ID = 'local_fixture-blocked-root';
@@ -33,11 +47,18 @@ const BLOCKED_TITLE = 'Fixture: investigate checkout 3';
 const BLOCKED_QUESTION = 'Confirm whether the fixture should keep checkout 3 or delete it.';
 const BLOCKED_CHILD_TITLES = ['Fixture: child two', 'Fixture: grandchild of checkout 3'];
 const BLOCKED_DECLARED_AT = 'Jul 03, 2026, 13:00 GMT+2';
+const MISSING_WORKTREE_PATTERN = /Checkout checkout-3 could not be read at \S+ \(missing\)\./;
 const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_CHILD_TITLE = 'Fixture: open the collector pull request';
 const SATISFIED_INTERPRETATION =
-  'Asked to act on a pull request; the same family of sessions later declared fixture/ai-usage#117 (OPEN).';
+  'Asked to act on a pull request; the same family of sessions later declared fixture/ai-usage#117 (OPEN) and GitHub showed fixture/ai-usage#117 (OPEN) at ';
+const MERGED_BEFORE_TITLE = 'Fixture: push the merged fix';
+const MERGED_BEFORE_INTERPRETATION = 'Asked to act on a pull request; GitHub showed fixture/ai-usage#90 (OPEN) at ';
+const COMPLETED_ROOT_ID = 'local_fixture-completed-root';
+const COMPLETED_TITLE = 'Fixture: ship the collector';
+const COMPLETED_INTERPRETATION =
+  'fixture/ai-usage#118 is open and awaiting review (REVIEW_REQUIRED; checks unknown) as of ';
 const PROPOSAL_ROOT_ID = 'local_fixture-proposal-root';
 const PROPOSAL_TITLE = 'Fixture: proposals pending';
 const UNSUPPORTED_ROOT_ID = 'local_fixture-unsupported';
@@ -54,7 +75,8 @@ const NO_DECLARATION_TEXT =
 const DECLARE_ACTION_PATTERN = /Add routing\.executors\[\] for claude:<accountScope> with authorization 'allowed'/;
 const EVIDENCE_COUNT_PATTERN = /Candidate evidence \((\d+)\)/;
 const SESSION_DETAIL_PATTERN = /^\/sessions\//;
-const WAITING_CHIP_PATTERN = /^Waiting on others/;
+const PULL_REQUESTS_OBSERVED_PATTERN = /Pull requests: [1-9]\d*\s+observed/;
+const CHECKOUTS_OBSERVED_PATTERN = /Checkouts: [1-9]\d*\s+observed/;
 const RPC_PATH_PREFIX = '/rpc/';
 const WORK_ATTENTION_PATH = '/rpc/work/attention';
 
@@ -65,6 +87,8 @@ const waitForHydratedWork = async (page: Page): Promise<void> => {
 };
 const rowNamed = (page: Page, title: string): Locator =>
   page.locator('[data-work-root]').filter({ has: page.getByText(title, { exact: true }) });
+const sectionRows = (page: Page, kind: string): Locator =>
+  page.getByRole('main').locator(`[data-work-section="${kind}"] [data-work-root]`);
 const expectNoOverflow = async (page: Page): Promise<void> => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 };
@@ -108,11 +132,33 @@ const trackRequests = (page: Page, origin: string): TrackedRequests => {
 };
 
 /**
+ * The operator's "Run now" for the two fact producers. They learn which pull requests and
+ * checkouts to observe from the Desktop registry in the store, but at engine start they run a few
+ * milliseconds before `claude.desktop-sessions` has imported anything (catalogue order), observe
+ * nothing, and nothing wakes them before their 10- and 5-minute cadence. Sending the command once
+ * the registry is stored is what an operator would do from /sources; the facts still come from the
+ * fixture `gh` and from `git status` through the engine and the store.
+ */
+const runFactSourcesNow = async (request: APIRequestContext, origin: string): Promise<void> => {
+  for (const sourceId of FACT_SOURCE_IDS) {
+    const response = await request.post(SOURCE_CONTROL_COMMAND_PATH, {
+      data: { command: 'run-now', sourceId },
+      headers: { origin },
+    });
+    if (!response.ok()) {
+      throw new Error(`run-now ${sourceId} answered ${response.status()}`);
+    }
+  }
+};
+
+/**
  * The engine runs `claude.desktop-sessions` at startup and publishes the first served revision
  * right after its first collection cycle; the join of the blocked root to its transcript needs
- * both. Polling the production procedure itself keeps the gate on the same path the page reads.
+ * both, and the external facts need the producers to have run after the registry landed. Polling
+ * the production procedure itself keeps the gate on the same path the page reads.
  */
-const waitForDesktopCollection = async (request: APIRequestContext): Promise<void> => {
+const waitForCollectedWork = async (request: APIRequestContext, origin: string): Promise<void> => {
+  let factRunRequested = false;
   await expect
     .poll(
       async () => {
@@ -127,18 +173,26 @@ const waitForDesktopCollection = async (request: APIRequestContext): Promise<voi
         if (!output.ok) {
           return { error: output.error.tag };
         }
+        const { coverage } = output.data;
+        const collected = coverage.desktopSessions.collectedAt !== null;
+        if (collected && !factRunRequested && coverage.pullRequests.observed < DECLARED_PULL_REQUESTS) {
+          factRunRequested = true;
+          await runFactSourcesNow(request, origin);
+        }
         return {
-          collected: output.data.coverage.desktopSessions.collectedAt !== null,
-          joined: output.data.coverage.sessions.revision !== null,
+          checkoutsObserved: coverage.checkouts.lastRunAt !== null && coverage.checkouts.observed >= 1,
+          collected,
+          joined: coverage.sessions.revision !== null,
+          pullRequestsObserved: coverage.pullRequests.observed >= DECLARED_PULL_REQUESTS,
           roots: output.data.roots.length >= MINIMUM_ROOTS,
         };
       },
       {
-        message: 'The engine must collect the seeded Desktop registry and publish a served revision',
+        message: 'The engine must collect the seeded registry, publish a revision and observe the declared facts',
         timeout: DESKTOP_COLLECTION_TIMEOUT_MS,
       },
     )
-    .toEqual({ collected: true, joined: true, roots: true });
+    .toEqual({ checkoutsObserved: true, collected: true, joined: true, pullRequestsObserved: true, roots: true });
 };
 
 const openWorkRoot = async (page: Page, rootId: string): Promise<Locator> => {
@@ -149,41 +203,45 @@ const openWorkRoot = async (page: Page, rootId: string): Promise<Locator> => {
   return aside;
 };
 
-test('renders the collected Desktop registry as a resume surface, searchable, with history-safe detail and routing', async ({
+test('renders the collected registry and its observed facts as a resume surface, searchable, with history-safe detail and routing', async ({
   baseURL,
   page,
   request,
 }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  const tracked = trackRequests(page, new URL(baseURL ?? 'http://127.0.0.1:4175').origin);
-  await waitForDesktopCollection(request);
+  const origin = new URL(baseURL ?? DEFAULT_ORIGIN).origin;
+  const tracked = trackRequests(page, origin);
+  await waitForCollectedWork(request, origin);
   await page.goto('/work');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
 
-  // Coverage is the collector's own completeness: 41 files seen, 40 parsed, 1 unsupported shape.
+  // Coverage is the producers' own completeness: 41 registry files seen, 40 parsed, 1 unsupported;
+  // the declared pull requests observed through gh; the named checkouts read with git.
   const coverage = main.locator('[data-work-coverage]');
   await expect(coverage).toContainText('Desktop sessions: collected');
   await expect(coverage).toContainText(`${PARSED_FILES} of ${REGISTRY_FILES} files parsed · 1 unsupported`);
+  await expect(coverage).toContainText(PULL_REQUESTS_OBSERVED_PATTERN);
+  await expect(coverage).toContainText(CHECKOUTS_OBSERVED_PATTERN);
+  await expect(coverage).not.toContainText('observation disabled');
   await expect(coverage).not.toContainText('Synthetic dataset');
   await expect(main.getByText('Declared outcomes are unavailable')).toHaveCount(0);
 
-  // Sections: a section renders only with roots. No pull request was observed on GitHub in this
-  // fixture, so "Waiting on others" exists as a zero-count filter, not as a list.
-  for (const name of ['Needs you', 'Leads', 'Recent, nothing pending']) {
+  // The four sections: requests nobody answered, pull requests GitHub showed awaiting review,
+  // open proposals, and the rest.
+  for (const name of ['Needs you', 'Waiting on others', 'Leads', 'Recent, nothing pending']) {
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
-  const filters = main.locator('[data-work-filters]');
-  await expect(filters.getByRole('button', { name: WAITING_CHIP_PATTERN })).toContainText('0');
   await expect(
     main.getByRole('status').filter({ hasText: `${ROOTS_IN_WINDOW} of ${ROOTS_IN_WINDOW} roots shown` }),
   ).toBeVisible();
-  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(5);
-  await expect(main.locator('[data-work-section="optional-lead"] [data-work-root]')).toHaveCount(1);
-  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(FOLDED_ROOTS);
+  await expect(sectionRows(page, 'human-request')).toHaveCount(NEEDS_YOU_ROOTS);
+  await expect(sectionRows(page, 'external-wait')).toHaveCount(WAITING_ROOTS);
+  await expect(sectionRows(page, 'optional-lead')).toHaveCount(LEAD_ROOTS);
+  await expect(sectionRows(page, 'none')).toHaveCount(FOLDED_ROOTS);
   await capture(page, 'work-prod-1440-arrival.png', { fullPage: true });
-  await main.locator('[data-work-section="none"] button', { hasText: `Show all ${ROOTS_IN_WINDOW - 6}` }).click();
+  await main.locator('[data-work-section="none"] button', { hasText: `Show all ${RESTING_ROOTS}` }).click();
   const rows = main.locator('[data-work-root]');
   await expect(rows).toHaveCount(ROOTS_IN_WINDOW);
   expect(await rows.count()).toBeGreaterThanOrEqual(MINIMUM_ROOTS);
@@ -201,11 +259,21 @@ test('renders the collected Desktop registry as a resume surface, searchable, wi
   await expect(blocked).toContainText('blocked · 1 h ago');
   await expect(blocked).toContainText('children 3');
 
-  // A request a later declared pull request answered leaves "Needs you"; a proposal is a lead.
-  const satisfied = rowNamed(page, SATISFIED_TITLE);
-  await expect(main.locator('[data-work-section="none"]').locator(satisfied)).toHaveCount(1);
-  await expect(main.locator('[data-work-section="human-request"]').locator(satisfied)).toHaveCount(0);
-  await expect(satisfied).toContainText('PR #117 open (declared)');
+  // Every pull request the registry declared was observed on GitHub awaiting review: the roots
+  // whose family declared one wait on others, with the observed state as their chip. The request
+  // a declared pull request answered therefore leaves "Needs you".
+  for (const [title, number] of [
+    [COMPLETED_TITLE, 118],
+    [SATISFIED_TITLE, 117],
+    [MERGED_BEFORE_TITLE, 90],
+  ] as const) {
+    const row = rowNamed(page, title);
+    await expect(main.locator('[data-work-section="external-wait"]').locator(row)).toHaveCount(1);
+    await expect(row).toContainText(`PR #${number} review required`);
+  }
+  await expect(
+    main.locator('[data-work-section="human-request"]').locator(rowNamed(page, SATISFIED_TITLE)),
+  ).toHaveCount(0);
   await expect(main.locator('[data-work-section="optional-lead"]').locator(rowNamed(page, PROPOSAL_TITLE))).toHaveCount(
     1,
   );
@@ -218,8 +286,9 @@ test('renders the collected Desktop registry as a resume surface, searchable, wi
   await expect.poll(() => searchParam(page, 'q')).toBe('investigate');
   await expect(blocked).toHaveCount(1);
 
-  // The detail: the declaration with its exact local date, facts grouped by source, the folded
-  // children, the joined transcript and the routing simulation bound to that transcript.
+  // The detail: the declaration with its exact local date, facts grouped by source (the Desktop
+  // metadata and what git found on the paths the family named), the folded children, the joined
+  // transcript and the routing simulation bound to that transcript.
   await blocked.click();
   await expect.poll(() => searchParam(page, 'root')).toBe(BLOCKED_ROOT_ID);
   const aside = main.locator('[data-work-aside]');
@@ -229,10 +298,14 @@ test('renders the collected Desktop registry as a resume surface, searchable, wi
     `Declared by the session at ${BLOCKED_DECLARED_AT}; its current state is unobserved.`,
   );
   await expect(aside).toContainText(`The session stopped on a question: ${BLOCKED_QUESTION}`);
+  await expect(aside).toContainText(MISSING_WORKTREE_PATTERN);
   await expect(aside.getByRole('heading', { level: 3, name: 'Facts by source' })).toBeVisible();
   await expect(aside.getByRole('heading', { level: 4, name: 'Claude Desktop metadata' })).toBeVisible();
+  await expect(aside.getByRole('heading', { level: 4, name: 'Local checkout' })).toBeVisible();
   await expect(aside).toContainText('Declared blocked: Stopped at a question the fixture cannot answer alone.');
   await expect(aside).toContainText('Wrote branch fixture/checkout-3');
+  await expect(aside).toContainText('/work/fixture on fixture-main: clean');
+  await expect(aside).toContainText('/.claude/worktrees/checkout-3: missing');
   await expect(aside).toContainText('3 child sessions · 0 blocked · 1 review ready · 2 completed');
   for (const title of BLOCKED_CHILD_TITLES) {
     await expect(aside.getByText(title, { exact: true })).toBeVisible();
@@ -283,25 +356,57 @@ test('renders the collected Desktop registry as a resume surface, searchable, wi
   expect(tracked.posts.filter((pathname) => !pathname.startsWith(RPC_PATH_PREFIX))).toEqual([]);
 });
 
-test('confronts each seeded declaration with the facts and coverage the chain collected', async ({ page, request }) => {
+test('confronts each seeded declaration with the facts and coverage the chain collected', async ({
+  baseURL,
+  page,
+  request,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await waitForDesktopCollection(request);
+  await waitForCollectedWork(request, new URL(baseURL ?? DEFAULT_ORIGIN).origin);
   const main = page.getByRole('main');
 
-  // Asked for a pull request; its child later declared one: the interpretation says so, out of "Needs you".
+  // Asked for a pull request; its child declared one and GitHub showed it open: the request is
+  // answered, and the open pull request now waits on others.
   const satisfied = await openWorkRoot(page, SATISFIED_ROOT_ID);
   await expect(satisfied.getByRole('heading', { level: 2, name: SATISFIED_TITLE })).toBeVisible();
   await expect(satisfied).toContainText(SATISFIED_INTERPRETATION);
+  await expect(satisfied).toContainText(
+    'The link rests on a pull request observed on GitHub for the PR this session family declared',
+  );
+  await expect(satisfied).toContainText(
+    'fixture/ai-usage#117 is open and awaiting review (REVIEW_REQUIRED; checks unknown) as of ',
+  );
   await expect(satisfied).toContainText('Declared PR #117 open on fixture/ai-usage (fixture/pr-117)');
+  await expect(satisfied.getByRole('heading', { level: 4, name: 'GitHub' })).toBeVisible();
+  await expect(satisfied).toContainText('PR #117 open, checks unknown, review required');
   await expect(satisfied.getByText(SATISFIED_CHILD_TITLE, { exact: true })).toBeVisible();
-  await expect(main.locator('[data-work-section="none"] [data-work-root][aria-current="true"]')).toHaveCount(1);
+  await expect(main.locator('[data-work-section="external-wait"] [data-work-root][aria-current="true"]')).toHaveCount(
+    1,
+  );
+
+  // A completed root whose declared pull request GitHub shows awaiting review.
+  const completed = await openWorkRoot(page, COMPLETED_ROOT_ID);
+  await expect(completed.getByRole('heading', { level: 2, name: COMPLETED_TITLE })).toBeVisible();
+  await expect(completed).toContainText(COMPLETED_INTERPRETATION);
+  await expect(completed).toContainText('Declared PR #118 open on fixture/ai-usage (fixture/pr-118)');
+  await expect(completed).toContainText('PR #118 open, checks unknown, review required');
+  await expect(completed).toContainText(TRANSCRIPT_GAP);
+
+  // The fixture gh shows the pull request a child declared merged as still open, after the
+  // request that asked to merge it: GitHub's word answers the request and the root waits on others.
+  const mergedBefore = rowNamed(page, MERGED_BEFORE_TITLE);
+  await expect(main.locator('[data-work-section="external-wait"]').locator(mergedBefore)).toHaveCount(1);
+  await mergedBefore.click();
+  await expect(main.locator('[data-work-aside]')).toContainText(MERGED_BEFORE_INTERPRETATION);
+  await expect(main.locator('[data-work-aside]')).toContainText(
+    'Declared PR #90 merged on fixture/ai-usage (fixture/pr-90)',
+  );
 
   // A registry file this reader does not support keeps its identity and says what was not read.
   const unsupported = await openWorkRoot(page, UNSUPPORTED_ROOT_ID);
   await expect(unsupported.getByRole('heading', { level: 2, name: UNSUPPORTED_TITLE })).toBeVisible();
   await expect(unsupported).toContainText('No turn declaration was collected for this root.');
   await expect(unsupported).toContainText(UNSUPPORTED_INTERPRETATION);
-  await expect(unsupported).toContainText('No dated fact was collected for this root.');
 
   // A transcript the report never collected: the gap is named, nothing is opened or simulated.
   const noTranscript = await openWorkRoot(page, NO_TRANSCRIPT_ROOT_ID);
@@ -322,9 +427,9 @@ test('confronts each seeded declaration with the facts and coverage the chain co
   await expectAxeClean(page);
 });
 
-test('lists the Desktop registry as a detected source whose last run succeeded', async ({ page, request }) => {
+test('lists the Desktop registry as a detected source whose last run succeeded', async ({ baseURL, page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await waitForDesktopCollection(request);
+  await waitForCollectedWork(request, new URL(baseURL ?? DEFAULT_ORIGIN).origin);
   await page.goto('/sources');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   const healthy = page.locator('[data-healthy-source-summary]');
@@ -348,9 +453,9 @@ test('lists the Desktop registry as a detected source whose last run succeeded',
   );
 });
 
-test('opens the collected root as a drawer at 390px without overflow', async ({ page, request }) => {
+test('opens the collected root as a drawer at 390px without overflow', async ({ baseURL, page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await waitForDesktopCollection(request);
+  await waitForCollectedWork(request, new URL(baseURL ?? DEFAULT_ORIGIN).origin);
   await page.goto('/work');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
