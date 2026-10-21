@@ -12,9 +12,9 @@ import { demoReportPayload } from '../../../report-data';
 import { createHydratedWebQueryClient } from '../../query/client';
 import { retainedCampaignOptions } from '../../query/options/campaigns';
 import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
+import { WORK_PAGE_SIZE, workRequest, workSessionsOptions } from '../../query/options/work';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { loadWorkPageData } from './work-load';
-import { WORK_PAGE_SIZE, workRequest, workSessionsOptions } from './work-query';
 import { WORK_DEMO_REVISION } from './work-synthetic';
 
 const revision = 'work-ssr-fixture';

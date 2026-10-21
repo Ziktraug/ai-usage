@@ -11,17 +11,17 @@
   } from '@tanstack/svelte-query';
   import { tick, untrack } from 'svelte';
   import { browser } from '$app/environment';
-  import { retainedCampaignOptions } from '../../query/options/campaigns';
+  import { loadNextCampaignPage, retainedCampaignOptions } from '../../query/options/campaigns';
   import { quotaRailQueryOptions } from '../../query/options/quota';
   import { reportBootstrapQueryOptions } from '../../query/options/report';
   import { SessionRevisionExpiredError } from '../../query/options/session-window';
+  import { workSessionsOptions } from '../../query/options/work';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createReportClient } from '../../rpc/report-client';
   import { createSessionClientAdapter } from '../../rpc/session-client';
   import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import type { WorkPageData } from './work-load';
-  import { workSessionsOptions } from './work-query';
   import WorkRouting from './work-routing.svelte';
   import WorkSession from './work-session.svelte';
   import WorkSources from './work-sources.svelte';
@@ -163,7 +163,7 @@
         <button
           class={workButton}
           disabled={sessions.isFetching}
-          onclick={() => sessions.fetchNextPage()}
+          onclick={() => loadNextCampaignPage(sessions)}
           type="button"
         >
           Load more observed sessions

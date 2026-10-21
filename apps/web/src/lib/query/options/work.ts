@@ -1,6 +1,6 @@
 import { parseSessionQueryRequest } from '@ai-usage/report-core/session-query';
-import { sessionPagesInfiniteOptions } from '../../query/options/session-window';
 import type { SessionClientAdapter } from '../../rpc/session-client';
+import { sessionPagesInfiniteOptions } from './session-window';
 
 export const WORK_PAGE_SIZE = 25;
 export const workRequest = (revision: string) =>
