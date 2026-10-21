@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
 import { ORPCError } from '@orpc/client';
 import { createWorkRoutingClient, type WorkRoutingRpcTransport } from './work-routing-client';
 
-const context = {
+const context: WorkRoutingContext = {
   configPath: null,
   declarationErrors: [],
   declarations: [],
@@ -10,7 +11,7 @@ const context = {
   generatedAt: '2026-10-21T21:05:00.000Z',
   machineId: null,
   observationRead: { skipped: 0, truncated: false },
-} as const;
+};
 
 describe('Work routing browser client', () => {
   test('validates output, forwards the caller signal and turns typed errors into data', async () => {

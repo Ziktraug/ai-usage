@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
 import { ORPCError } from '@orpc/client';
 import { call } from '@orpc/server';
 import { createWorkRoutingRpcRouter, type WorkRoutingRpcDependencies } from './work-routing';
 
-const context = {
+const context: WorkRoutingContext = {
   configPath: '/home/operator/.config/ai-usage/config.json',
   declarationErrors: [],
   declarations: [],
@@ -11,7 +12,7 @@ const context = {
   generatedAt: '2026-10-21T21:05:00.000Z',
   machineId: 'machine-a',
   observationRead: { skipped: 0, truncated: false },
-} as const;
+};
 
 const router = (dependencies: Partial<WorkRoutingRpcDependencies>) =>
   createWorkRoutingRpcRouter({

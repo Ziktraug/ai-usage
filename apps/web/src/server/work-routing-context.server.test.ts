@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
+import type { ExecutorDeclarationWire } from '@ai-usage/web-contract/work-routing';
 import { e2eWorkRoutingContext, getWorkRoutingContextForServer } from './work-routing-context.server';
 
-const declaration = {
+const declaration: ExecutorDeclarationWire = {
   accountScope: 'personal',
   authorization: 'allowed',
   capabilities: ['read-only-review'],
@@ -14,7 +15,7 @@ const declaration = {
   quality: 'review-capable',
   subscription: 'verified',
   targets: [{ kind: 'any-local-session' }],
-} as const;
+};
 
 describe('Work routing context server read', () => {
   test('joins declarations and the latest observations for this machine with located issues', async () => {
