@@ -1022,6 +1022,8 @@ describe('work fact sources', () => {
       };
       const registry = await createRegistry(home, {
         ghAvailable: () => true,
+        // One instant for both batches: the reader then orders the stored rows by key, not by clock.
+        now: () => new Date('2026-10-21T21:00:00.000Z'),
         workFactInputs: {
           linkedPullRequests: () =>
             Effect.succeed([
@@ -1052,4 +1054,140 @@ describe('work fact sources', () => {
       rmSync(home, { force: true, recursive: true });
     }
   });
+
+  test('observes the checkouts and pull requests active Desktop sessions declared, ahead of injected ones', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-desktop-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const checkoutPath = path.join(home, 'projects', 'example');
+      const worktreePath = path.join(checkoutPath, '.claude', 'worktrees', 'wt-1');
+      const oldPath = path.join(home, 'projects', 'old');
+      const injectedPath = path.join(home, 'projects', 'injected');
+      for (const directory of [worktreePath, oldPath, injectedPath]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeClaudeDesktopWorkRegistry(home, { checkoutPath, now, oldPath, worktreePath });
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        ghAvailable: () => true,
+        gitAvailable: () => true,
+        now: () => now,
+        workFactInputs: {
+          candidateCheckoutPaths: () => Effect.succeed([injectedPath, checkoutPath]),
+          linkedPullRequests: () => Effect.succeed([{ host: 'github.com', number: 70, repository: 'fixture/project' }]),
+        },
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      // The registry reaches the store through the Desktop source itself, as in the engine.
+      const imported = await Effect.runPromise(
+        registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(imported).toMatchObject({ inputCount: 3, outputCount: 3 });
+
+      const checkouts = await Effect.runPromise(
+        registry.get('checkouts.status')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      // Child (30 min ago) before root (1 h ago), the old session outside the window; the injected
+      // duplicate of the child's checkout is one path; `git` runs status and log per checkout.
+      expect(checkouts).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      const gitPaths = calls.filter(({ command }) => command === 'git').map(({ args }) => args[args.indexOf('-C') + 1]);
+      expect(gitPaths).toEqual([checkoutPath, checkoutPath, worktreePath, worktreePath, injectedPath, injectedPath]);
+      expect(gitPaths).not.toContain(oldPath);
+
+      calls.length = 0;
+      const pullRequests = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(pullRequests).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      expect(calls.map(({ args }) => [args[0], args[1], args[2], args[4]])).toEqual([
+        ['pr', 'view', '67', 'fixture/project'],
+        ['pr', 'view', '66', 'fixture/project'],
+        ['pr', 'view', '70', 'fixture/project'],
+      ]);
+      const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => latest.number).sort((left, right) => left - right)).toEqual([66, 67, 70]);
+      expect(JSON.stringify(stored)).not.toContain('#99');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
 });
+
+/**
+ * Three Desktop registry files for the fact sources: a root working in a worktree that declared
+ * pull request 66, its child in the main checkout that declared 67, and a session last active
+ * twenty days ago that declared 99 in a third checkout, which the fourteen-day window leaves out.
+ */
+const writeClaudeDesktopWorkRegistry = (
+  home: string,
+  input: { readonly checkoutPath: string; readonly now: Date; readonly oldPath: string; readonly worktreePath: string },
+): void => {
+  const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+  mkdirSync(directory, { recursive: true });
+  const hour = 3_600_000;
+  const pullRequest = (number: number) => ({
+    autoFix: false,
+    baseRef: 'main',
+    branch: `feat/pr-${String(number)}`,
+    host: 'github.com',
+    own: true,
+    prNumber: number,
+    provider: 'github',
+    repo: 'fixture/project',
+    state: 'OPEN',
+    url: `https://github.com/fixture/project/pull/${String(number)}`,
+  });
+  const document = (spec: {
+    readonly cwd: string;
+    readonly hoursAgo: number;
+    readonly id: string;
+    readonly pullRequestNumber: number;
+    readonly spawnedFrom?: string;
+    readonly worktreePath?: string;
+  }) => {
+    const lastActivityAt = input.now.getTime() - spec.hoursAgo * hour;
+    return {
+      cliSessionId: `cli-${spec.id}`,
+      createdAt: lastActivityAt - hour,
+      cwd: spec.cwd,
+      isArchived: false,
+      lastActivityAt,
+      postTurnSummary: {
+        needs_action: '',
+        status_category: 'completed',
+        status_detail: 'Done.',
+        summarizes_uuid: `uuid-${spec.id}`,
+      },
+      prs: [pullRequest(spec.pullRequestNumber)],
+      sessionId: `local_${spec.id}`,
+      title: `Fixture: ${spec.id}`,
+      titleSource: 'auto',
+      ...(spec.spawnedFrom === undefined
+        ? {}
+        : { spawnedFrom: { sessionId: spec.spawnedFrom, taskId: 'task_1', title: 'spawn' } }),
+      ...(spec.worktreePath === undefined
+        ? {}
+        : { branch: 'feat/wt-1', worktreeName: path.basename(spec.worktreePath), worktreePath: spec.worktreePath }),
+    };
+  };
+  const documents = [
+    document({
+      cwd: input.checkoutPath,
+      hoursAgo: 1,
+      id: 'desktop-work-root',
+      pullRequestNumber: 66,
+      worktreePath: input.worktreePath,
+    }),
+    document({
+      cwd: input.checkoutPath,
+      hoursAgo: 0.5,
+      id: 'desktop-work-child',
+      pullRequestNumber: 67,
+      spawnedFrom: 'local_desktop-work-root',
+    }),
+    document({ cwd: input.oldPath, hoursAgo: 20 * 24, id: 'desktop-work-old', pullRequestNumber: 99 }),
+  ];
+  for (const entry of documents) {
+    writeFileSync(path.join(directory, `${entry.sessionId}.json`), JSON.stringify(entry));
+  }
+};
