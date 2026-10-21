@@ -38,12 +38,15 @@ interface SchemaObject {
 }
 
 const durableTables = [
+  'checkout_status_observations',
   'provider_quota_observations',
+  'pull_request_observations',
   'served_report_revisions',
   'skill_observation_collection_state',
   'skill_observations',
   'usage_local_machine',
   'usage_rows',
+  'work_fact_run_state',
 ] as const;
 
 const readUserVersion = (db: Database): number =>
