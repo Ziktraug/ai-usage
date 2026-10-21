@@ -12,6 +12,8 @@ export const collectionSourceIds = [
   'claude.usage-limits',
   'rtk.savings',
   'cursor.commit-attribution',
+  'checkouts.status',
+  'github.pull-requests',
 ] as const;
 
 export type CollectionSourceId = (typeof collectionSourceIds)[number];
@@ -40,6 +42,7 @@ export interface CollectionSourceDefinition {
 
 const oneMinuteMs = 60_000;
 const fiveMinutesMs = 5 * oneMinuteMs;
+const tenMinutesMs = 10 * oneMinuteMs;
 
 export const collectionSourceDefinitions = [
   {
@@ -113,6 +116,25 @@ export const collectionSourceDefinitions = [
     id: 'cursor.commit-attribution',
     kind: 'dataset-producer',
     label: 'Cursor commit attribution',
+  },
+  // The two fact producers of the Work view (ADR 0051) spawn one read-only process per known
+  // checkout or linked pull request, so they poll more slowly than the file-based sources. Their
+  // facts stay outside the served revision; a run never marks the report dirty.
+  {
+    cadenceMs: fiveMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'checkouts.status',
+    kind: 'producer',
+    label: 'Checkout status',
+  },
+  {
+    cadenceMs: tenMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'github.pull-requests',
+    kind: 'producer',
+    label: 'GitHub pull requests',
   },
 ] as const satisfies readonly CollectionSourceDefinition[];
 

@@ -65,9 +65,14 @@ describe('collection source contracts', () => {
         .filter(({ group }) => group === 'provider-usage')
         .every(({ cadenceMs }) => cadenceMs === 300_000),
     ).toBe(true);
+    // The fact producers spawn one process per checkout or pull request, so they poll more slowly still.
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'checkouts.status')?.cadenceMs).toBe(300_000);
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'github.pull-requests')?.cadenceMs).toBe(600_000);
     expect(
       collectionSourceDefinitions
-        .filter(({ group }) => group !== 'provider-usage')
+        .filter(
+          ({ group, id }) => group !== 'provider-usage' && id !== 'checkouts.status' && id !== 'github.pull-requests',
+        )
         .every(({ cadenceMs }) => cadenceMs === 60_000),
     ).toBe(true);
   });

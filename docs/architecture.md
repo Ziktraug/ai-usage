@@ -992,6 +992,10 @@ admission, cadence, dependencies, or publication ordering here.
   `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`,
   and `cursor.commit-attribution`. `claude.usage-limits` is an eighth,
   default-enabled experimental source whose upstream API may change.
+  `checkouts.status` and `github.pull-requests` (ADR 0051) are two further
+  default-enabled producers that read known checkouts and explicitly linked
+  pull requests for the Work view; their facts stay outside the served
+  revision and never mark the report dirty.
 - Sparse source-policy overrides are read only from user-home config. Repository
   config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, outcome, and progress are independent.

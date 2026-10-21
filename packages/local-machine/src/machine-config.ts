@@ -6,7 +6,11 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { isCampaignLabelOverrides } from '@ai-usage/report-core/campaign-label';
-import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
+import type {
+  AiUsageConfig,
+  AiUsageGitHubAccountConfig,
+  AiUsageGitHubConfig,
+} from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { isSourcePolicyOverrides } from '@ai-usage/report-core/source-control';
@@ -225,6 +229,39 @@ const isUsageMachine = (value: unknown): value is UsageMachine => {
   return typeof record.id === 'string' && record.id.length > 0 && typeof record.label === 'string';
 };
 
+const GITHUB_CONFIG_KEYS = new Set(['accounts', 'enabled']);
+const GITHUB_ACCOUNT_KEYS = new Set(['ghUser', 'host', 'owner']);
+const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+
+const isGitHubAccountConfig = (value: unknown): value is AiUsageGitHubAccountConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => GITHUB_ACCOUNT_KEYS.has(key)) &&
+    record.host === 'github.com' &&
+    typeof record.owner === 'string' &&
+    GITHUB_OWNER_PATTERN.test(record.owner) &&
+    typeof record.ghUser === 'string' &&
+    record.ghUser.trim().length > 0 &&
+    record.ghUser.length <= 256
+  );
+};
+
+/** Strict: unknown keys, a non-boolean flag or a malformed account make the whole config invalid. */
+const isGitHubConfig = (value: unknown): value is AiUsageGitHubConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => GITHUB_CONFIG_KEYS.has(key)) &&
+    (record.enabled === undefined || typeof record.enabled === 'boolean') &&
+    (record.accounts === undefined || (Array.isArray(record.accounts) && record.accounts.every(isGitHubAccountConfig)))
+  );
+};
+
 const isSkillManagementConfig = (value: unknown): value is SkillManagementConfig => {
   try {
     parseSkillConfigInput(value);
@@ -361,6 +398,11 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   if (sourcePolicies !== undefined && !isSourcePolicyOverrides(sourcePolicies)) {
     return false;
   }
+
+  const github = config.github;
+  if (github !== undefined && !isGitHubConfig(github)) {
+    return false;
+  }
   return true;
 };
 
@@ -454,7 +496,7 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
       (module as { default?: unknown; config?: unknown }).config;
     const homeOnlyField =
       typeof exportedConfig === 'object' && exportedConfig !== null
-        ? ['campaignLabelOverrides', 'sourcePolicies'].find((field) => Object.hasOwn(exportedConfig, field))
+        ? ['campaignLabelOverrides', 'github', 'sourcePolicies'].find((field) => Object.hasOwn(exportedConfig, field))
         : undefined;
     if (homeOnlyField) {
       return yield* Effect.fail(
