@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./checkout-status": "./src/checkout-status.ts",
     "./codex-history": "./src/codex-history.ts",
+    "./github-pull-requests": "./src/github-pull-requests.ts",
     "./collectors": "./src/collectors/index.ts",
     "./datasets": "./src/datasets.ts",
     "./facets": "./src/facets.ts",
