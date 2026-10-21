@@ -183,7 +183,11 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<Auth
   };
 };
 
-/** `codex login status`: exit 0 and "Logged in" on stdout means signed in; a non-zero exit means not. */
+/**
+ * `codex login status`: the exit code is the contract (0 signed in, non-zero not). The CLI writes
+ * its "Logged in using …" line to stderr, which the bounded runner discards, so a stdout mention is
+ * recorded as extra evidence when present but never required.
+ */
 const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthProbe> => {
   let result: BoundedRunResult;
   try {
@@ -206,10 +210,10 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthP
   }
   const mentionsLoggedIn = CODEX_LOGGED_IN_PATTERN.test(result.stdout);
   return {
-    authState: mentionsLoggedIn ? 'logged-in' : 'unknown',
+    authState: 'logged-in',
     evidence: mentionsLoggedIn
       ? 'codex login status exit 0 (output mentions "Logged in")'
-      : 'codex login status exit 0 without a recognised status line',
+      : 'codex login status exit 0',
     outcome: 'observed',
   };
 };

@@ -151,10 +151,13 @@ describe('observeExecutors', () => {
       authState: 'logged-out',
       outcome: 'observed',
     });
-    const unrecognised = scripted({ 'codex --version': ok('codex-cli 0.163.0'), 'codex login status': ok('ok') });
-    expect((await observe(unrecognised.run, bothPresent, ['codex']))[0]).toMatchObject({
-      authEvidence: 'codex login status exit 0 without a recognised status line',
-      authState: 'unknown',
+    // The real CLI writes "Logged in using …" to stderr, which the runner discards: exit 0 alone
+    // is the signed-in signal, and a stdout mention is only extra evidence.
+    const silentStdout = scripted({ 'codex --version': ok('codex-cli 0.163.0'), 'codex login status': ok('') });
+    expect((await observe(silentStdout.run, bothPresent, ['codex']))[0]).toMatchObject({
+      authEvidence: 'codex login status exit 0',
+      authState: 'logged-in',
+      outcome: 'observed',
     });
   });
 
