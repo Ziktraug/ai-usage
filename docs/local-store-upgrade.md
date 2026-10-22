@@ -88,6 +88,21 @@ method word the CLI reports, such as `claude.ai` or `api-key`). A store whose
 table predates it receives `ALTER TABLE … ADD COLUMN` on the next open, under
 the same `user_version`; existing rows read as "no method recorded".
 
+2026-10-22 (ADR 0057): the table gained a nullable `account_fingerprint`
+column (the 16-character hexadecimal hash of the account `claude auth status`
+reports; the organization id and email themselves are never stored). Same rule
+as `auth_method`: a store whose table predates it receives
+`ALTER TABLE … ADD COLUMN` on the next engine open, under the same
+`user_version`, with no backfill and no store-generation change; existing rows
+read as "no identity reported", so a pinned declaration stays conditional
+until the next executor observation. The query-only Web and CLI readers cannot
+add the column: against a store the engine has not reopened since, they detect
+its absence (`PRAGMA table_info`) and read every row as carrying no
+fingerprint. An older binary opens the upgraded store and ignores the column.
+There is no downgrade path: back up before the first start with the new code
+(see [Backup](#backup)); rollback means restoring that backup together with the
+code that wrote it.
+
 ### Additive tables under usage version 4 (2026-10-21, external and local facts)
 
 The Work view's external and local fact family (ADR 0051) adds three tables to

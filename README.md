@@ -313,6 +313,22 @@ candidate shows where it came from (`declared <date>`, `observed-now`,
   `model:<name>` in the quota feed, for example `model:Fable` on a Claude Max
   plan today); the declared name must equal `<name>` exactly, otherwise those
   windows cannot be attributed and the candidate stays excluded.
+- `alternateModels` (optional, requires `model`): further models of the same
+  account, in preference order, at most 8 and none repeated (for example
+  `["Opus"]` after `"model": "Fable"`). Each becomes its own candidate on the
+  same account and the same quota reading, never an extra reserve: a window
+  scoped to one model (`model:Fable`) excludes only that model, while an
+  exhausted all-models window excludes every model of the account.
+- `accountFingerprint` (optional, Claude Code): pins the route to the account
+  the CLI is signed in to (ADR 0057). The engine keeps only a 16-character
+  lowercase hexadecimal hash of the organization and email that
+  `claude auth status` reports, never the identifiers, and reads no credential
+  file. While the CLI reports an account and the entry pins none, the
+  candidate stays conditional and the Work view shows the exact line to add
+  (`"accountFingerprint": "<16 hex>"`): pinning is a one-time act per machine.
+  A later sign-in to another account then excludes the route until you sign
+  back in or re-declare. Codex exposes no account outside its credential
+  file, so a Codex entry has nothing to pin.
 - `declaredAt`: required RFC 3339 date-time; the declaration is a dated
   statement, not a current observation.
 
