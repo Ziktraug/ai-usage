@@ -165,6 +165,18 @@ describe('review attempt store', () => {
         }),
       ),
     ).toEqual({ applied: true });
+    // A step out of `requested` is refused once the harness reported `running`: no step back.
+    expect(
+      await run(
+        transitionReviewAttempt({
+          at: LATER,
+          attemptId: 'attempt-1',
+          dbPath,
+          fromStates: ['requested'],
+          patch: { pid: 4243, state: 'starting' },
+        }),
+      ),
+    ).toEqual({ applied: false });
     // A heartbeat is an empty patch from a live state.
     expect(
       await run(transitionReviewAttempt({ at: '2026-10-22T10:00:30.000Z', attemptId: 'attempt-1', dbPath, patch: {} })),
