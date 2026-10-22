@@ -34,6 +34,7 @@ import {
  */
 export type ReviewScopeFailureKind =
   | 'binary-only'
+  | 'blob-not-local'
   | 'empty'
   | 'git-failed'
   | 'moved'
@@ -73,7 +74,10 @@ export interface PrepareReviewScopeOptions {
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_PATCH_TIMEOUT_MS = 30_000;
 const GIT_SMALL_OUTPUT_BYTES = 1024 * 1024;
-/** Global options of every call: no pager, no optional lock, raw non-ASCII paths, no fsmonitor, no colour. */
+/**
+ * Global options of every call: no pager, no optional lock, raw non-ASCII paths, no fsmonitor, no
+ * colour, and no automatic maintenance or garbage collection started in the operator's repository.
+ */
 const GIT_GLOBAL_OPTIONS = [
   '--no-pager',
   '--no-optional-locks',
@@ -83,7 +87,22 @@ const GIT_GLOBAL_OPTIONS = [
   'core.fsmonitor=false',
   '-c',
   'color.ui=never',
+  '-c',
+  'maintenance.auto=false',
+  '-c',
+  'gc.auto=0',
 ] as const;
+/**
+ * Forced on every call: no prompt, no optional lock, and no lazy fetch. In a partial clone a
+ * missing object would otherwise be fetched from the promisor remote (network, credential
+ * helpers, a new pack in `.git/objects`); with `GIT_NO_LAZY_FETCH` the read fails instead and the
+ * scope is refused as `blob-not-local`.
+ */
+const GIT_SCOPE_ENVIRONMENT = {
+  GIT_NO_LAZY_FETCH: '1',
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_TERMINAL_PROMPT: '0',
+} as const;
 /** The patch options, explicit so no repository or user configuration changes what is reviewed. */
 export const REVIEW_DIFF_TREE_OPTIONS = [
   'diff-tree',
@@ -370,6 +389,61 @@ const runGit = async (
   }
 };
 
+const RAW_DIFF_ENTRY = /^:\d{6} \d{6} ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) /u;
+const NULL_OBJECT = /^0+$/u;
+/** Objects checked in one `rev-list` call; a larger comparison is checked on its first ones only. */
+const MAX_CHECKED_OBJECTS = 4096;
+
+/**
+ * How many blobs the comparison needs that the object store does not hold, without fetching
+ * any: the raw comparison reads trees only, and `rev-list --missing=print` names each absent
+ * object with a leading `?`. Zero when the answer cannot be read (the caller then reports the
+ * comparison as failed, not as a missing blob).
+ */
+const missingObjects = async (
+  checkoutPath: string,
+  environment: Readonly<Record<string, string>>,
+  baseSha: string,
+  headSha: string,
+): Promise<number> => {
+  try {
+    const raw = await runGit(
+      checkoutPath,
+      ['diff-tree', '-r', '--raw', '--no-renames', '--no-commit-id', '--end-of-options', baseSha, headSha],
+      environment,
+      GIT_SMALL_OUTPUT_BYTES,
+    );
+    if (raw.exitCode !== 0) {
+      return 0;
+    }
+    const blobs = new Set<string>();
+    for (const line of raw.stdout.split('\n')) {
+      const entry = RAW_DIFF_ENTRY.exec(line);
+      for (const sha of entry === null ? [] : [entry[1], entry[2]]) {
+        if (sha !== undefined && !NULL_OBJECT.test(sha) && blobs.size < MAX_CHECKED_OBJECTS) {
+          blobs.add(sha);
+        }
+      }
+    }
+    if (blobs.size === 0) {
+      return 0;
+    }
+    const listed = await runGit(
+      checkoutPath,
+      ['rev-list', '--objects', '--missing=print', '--no-walk', ...blobs],
+      environment,
+      GIT_SMALL_OUTPUT_BYTES,
+    );
+    return listed.exitCode === 0 ? listed.stdout.split('\n').filter((line) => line.startsWith('?')).length : 0;
+  } catch (error) {
+    // The check is a diagnosis of a failure already known; it never replaces that failure.
+    if (error instanceof ReviewScopeError) {
+      return 0;
+    }
+    throw error;
+  }
+};
+
 const resolveHead = async (checkoutPath: string, environment: Readonly<Record<string, string>>): Promise<string> => {
   const answer = await runGit(
     checkoutPath,
@@ -421,8 +495,7 @@ export const prepareReviewScope = async (
   };
   const environment = {
     ...boundedProcessEnvironment({}, options.env ?? process.env),
-    GIT_OPTIONAL_LOCKS: '0',
-    GIT_TERMINAL_PROMPT: '0',
+    ...GIT_SCOPE_ENVIRONMENT,
   };
   const headSha = await resolveHead(checkoutPath, environment);
   const prefix = await runGit(checkoutPath, ['rev-parse', '--show-prefix'], environment, 8192);
@@ -458,6 +531,13 @@ export const prepareReviewScope = async (
     throw error;
   }
   if (patch.exitCode !== 0) {
+    const absent = await missingObjects(checkoutPath, environment, baseSha, headSha);
+    if (absent > 0) {
+      throw new ReviewScopeError(
+        'blob-not-local',
+        `blob-not-local: ${absent} blob${absent === 1 ? '' : 's'} of commit ${headSha} or its base ${absent === 1 ? 'is' : 'are'} not in the local object store (partial clone); the review never fetches: fetch them yourself (git fetch) or review another checkout`,
+      );
+    }
     throw new ReviewScopeError('git-failed', `git diff-tree could not compare ${baseSha} and ${headSha}`);
   }
   const bounded = boundReviewPatch(patch.stdout, limits);

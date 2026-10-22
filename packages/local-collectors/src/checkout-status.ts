@@ -181,12 +181,23 @@ export interface CheckoutStatusObservationBatch {
 
 /** Only PATH, locale and XDG variables are inherited; these are forced on top for every call. */
 const GIT_ENVIRONMENT: Readonly<Record<string, string>> = {
+  // In a partial clone a missing object fails the read instead of being fetched from the remote.
+  GIT_NO_LAZY_FETCH: '1',
   GIT_OPTIONAL_LOCKS: '0',
   GIT_TERMINAL_PROMPT: '0',
   LC_ALL: 'C',
 };
 
-const GIT_GLOBAL_ARGUMENTS = ['--no-optional-locks', '-c', 'core.fsmonitor=false'] as const;
+/** No fsmonitor, and no automatic maintenance or garbage collection started by an observation. */
+const GIT_GLOBAL_ARGUMENTS = [
+  '--no-optional-locks',
+  '-c',
+  'core.fsmonitor=false',
+  '-c',
+  'maintenance.auto=false',
+  '-c',
+  'gc.auto=0',
+] as const;
 const NOT_A_REPOSITORY_EXIT_CODE = 128;
 
 const usableCheckoutPath = (value: string): boolean =>

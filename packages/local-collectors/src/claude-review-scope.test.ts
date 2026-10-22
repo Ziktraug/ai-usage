@@ -223,6 +223,38 @@ describe('review scope: one commit, resolved first, compared with its first pare
     });
   });
 
+  test('in a blobless partial clone a missing blob is refused as not local, never fetched', async () => {
+    const { git, root } = await repository();
+    await writeFile(path.join(root, 'a.txt'), 'one\n');
+    await git('add', 'a.txt');
+    await git('commit', '-q', '-m', 'first');
+    await writeFile(path.join(root, 'a.txt'), 'one\ntwo\n');
+    await git('commit', '-q', '-am', 'second');
+    const bare = `${root}-bare.git`;
+    const clone = `${root}-blobless`;
+    roots.push(bare, clone);
+    await git('clone', '-q', '--bare', root, bare);
+    await gitIn(bare)('config', 'uploadpack.allowFilter', 'true');
+    // The checkout fetches HEAD's blobs only; the first commit's version of a.txt stays remote.
+    await git('clone', '-q', '--filter=blob:none', `file://${bare}`, clone);
+    const cloned = gitIn(clone);
+    const objects = async () => (await cloned('count-objects', '-v')).split('\n').filter(Boolean).sort();
+    const missing = async () =>
+      (await cloned('rev-list', '--objects', '--missing=print', 'HEAD'))
+        .split('\n')
+        .filter((line) => line.startsWith('?'));
+    const before = { missing: await missing(), objects: await objects() };
+    expect(before.missing).toHaveLength(1);
+
+    const error = await prepareReviewScope(clone).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ReviewScopeError);
+    expect(error).toMatchObject({ kind: 'blob-not-local' });
+    expect((error as Error).message).toContain('never fetches');
+    // Nothing was fetched: the same object store, the same missing blob, no new pack.
+    expect(await objects()).toEqual(before.objects);
+    expect(await missing()).toEqual(before.missing);
+  });
+
   test('never runs a diff driver, a text conversion or a pager the repository configures', async () => {
     const { git, root } = await repository();
     const marker = path.join(root, '..', `${path.basename(root)}-driver-ran`);

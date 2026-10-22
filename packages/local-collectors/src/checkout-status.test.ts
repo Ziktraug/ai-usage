@@ -226,10 +226,19 @@ describe('observeCheckoutStatus with an injected runner', () => {
     expect(logMissing).toMatchObject({ branch: 'main', dirty: false, headSha: SHA, lastCommitAt: null });
     for (const call of calls) {
       expect(call.command).toBe('git');
-      expect(call.args.slice(0, 3)).toEqual(['--no-optional-locks', '-c', 'core.fsmonitor=false']);
+      expect(call.args.slice(0, 7)).toEqual([
+        '--no-optional-locks',
+        '-c',
+        'core.fsmonitor=false',
+        '-c',
+        'maintenance.auto=false',
+        '-c',
+        'gc.auto=0',
+      ]);
       const subcommand = call.args[call.args.indexOf('-C') + 2];
       expect(['status', 'log']).toContain(subcommand ?? '');
-      expect(call.env).toMatchObject({ GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' });
+      // A partial clone never fetches a missing object on behalf of an observation.
+      expect(call.env).toMatchObject({ GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' });
       expect(call.timeoutMs).toBe(5000);
       expect(call.maximumOutputBytes).toBe(1024 * 1024);
     }
