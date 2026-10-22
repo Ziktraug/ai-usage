@@ -31,7 +31,7 @@ explicitly declared information.
 | M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE, integrated (`599fa303`) |
 | K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
 | L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE, integrated (`9bbbd9fa`) |
-| N | Work context for harness sessions (ADR 0058): one bounded read-only projection of the Work attention read per checkout or project label (waits, settled decisions with evidence, linked facts, coverage), as `ai-usage work context` and the local MCP tool `work.context`; no registration | `feat/work-resume-cockpit-n-context` | DONE on the lot branch (`4d238986`, `f34566fb`, `b58e0ef0`); package-boundary allowance proposed to the integrator |
+| N | Work context for harness sessions (ADR 0058): one bounded read-only projection of the Work attention read per checkout or project label (waits, settled decisions with evidence, linked facts, coverage), as `ai-usage work context` and the local MCP tool `work.context`; no registration | `feat/work-resume-cockpit-n-context` | DONE, integrated (`03439fd9`) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -472,3 +472,21 @@ pull requests, 4 checkout statuses and 0 decisions (one sweep cannot date a repl
 unchanged. Not done: real data, Codex sessions (not represented by design), `bun.lock` lines for the
 two new `apps/mcp` dependencies, `docs/public-package-interfaces.md` and
 `docs/memory-search-and-mcp.md` (out of the lot's scope; handed over).
+
+### 2026-10-22 13:50 — lot N integrated (`03439fd9`)
+
+`03439fd9` merges lot N (`4d238986`…`e0998f3d`, ADR 0058) with `--no-ff`, no conflict. Checked
+against the code first: `readWorkContext` runs the one `queryWorkAttention` read through the
+`query_only` reader and starts no engine (the CLI test hashes the store bytes and finds no WAL,
+lock or rendezvous); every list has a count bound and the encoding a 64 KiB ceiling; turn reports,
+notes and proposals are cited by id and date only (a sentinel test); failures are typed and
+path-free; the coverage always carries "Only Claude Desktop sessions are represented"; nothing is
+registered with a harness (`mcp:register:codex` stays opt-in). Integration commits: the package
+boundary guard allows the CLI `@ai-usage/report-data/work-context-read`, whose closure is
+report-core, `usage-store/reader` and effect (`3119fa06`, guard test extended); the lockfile,
+regenerated with Bun 1.3.13, records apps/mcp's `report-data` and `usage-store` and drops a stale
+`local-collectors` entry for apps/web that its package.json no longer declares (`58c23b0d`);
+public-package-interfaces and memory-search-and-mcp name the facade and the conditional
+`work.context` tool (`69810b35`). Verified: `bun run check` 1622 files clean, `bun run lint` rc 0,
+`bun run typecheck` 58/58; report-data 76, mcp-adapter 12, apps/mcp 2, apps/cli 115 pass, 0 fail;
+`bun run test:tools` 145 pass (197 s, Bun 1.3.13). The full gate waits for lot C.
