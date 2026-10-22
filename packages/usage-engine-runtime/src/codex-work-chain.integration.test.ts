@@ -8,7 +8,7 @@ import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-
 import { assembleReport } from '@ai-usage/report-data';
 import { queryWorkAttention } from '@ai-usage/report-data/work-attention-read';
 import { queryWorkContext } from '@ai-usage/report-data/work-context-read';
-import { queryCodexWorkObservations, queryReportRows } from '@ai-usage/usage-store/reader';
+import { queryCodexWorkObservations, queryReportRows } from '@ai-usage/usage-store/testing';
 import { publishServedReportRevision, updateUsageMachineLabel, usageStorePath } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import { createScheduledSourceRegistry } from './source-adapters';

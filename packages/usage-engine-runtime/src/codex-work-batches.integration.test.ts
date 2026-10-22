@@ -6,7 +6,7 @@ import path from 'node:path';
 import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
-import { queryCodexWorkObservations } from '@ai-usage/usage-store/reader';
+import { queryCodexWorkObservations } from '@ai-usage/usage-store/testing';
 import { importCodexWorkObservations, initializeUsageStore, usageStorePath } from '@ai-usage/usage-store/writer';
 import { Cause, Effect, Exit } from 'effect';
 import { createScheduledSourceRegistry } from './source-adapters';
