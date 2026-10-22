@@ -56,7 +56,8 @@ import { Effect } from 'effect';
  *
  * - a `pull-request` observation joins a root when a member of its family (root or child)
  *   declared that pull request (`host`, `repository`, `number`), on the same machine; a branch
- *   name or a nearby date never links one;
+ *   name or a nearby date never links one. A child's own listing is a fact of the family only
+ *   when it does not mirror the root's checkout (`childDeclaredPullRequestFacts`);
  * - a `checkout-status` observation joins a root when `worktreePath ?? cwd` of a family member
  *   is that path, on the same machine; several roots may share one checkout and each then
  *   receives the fact with the sharing named in its interpretation;
@@ -369,6 +370,33 @@ const externalFactsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[]
 };
 
 /**
+ * A child's declared pull requests, less the ones that only mirror the root's own checkout: the
+ * desktop app fills `prs[]` from the branch of the checkout a session sits in, so a child in the
+ * root's checkout (`worktreePath ?? cwd`) lists what the root lists, and a pull request the root
+ * lists itself is the root's standing whoever repeats it. Neither is a later answer to the root's
+ * question; the root's own `prs[]` stays listed as such and never answers either. GitHub is still
+ * asked about every link the family declared (`familyPullRequestLinks`).
+ */
+const childDeclaredPullRequestFacts = (group: RootGroup): WorkFact[] => {
+  const { root } = group;
+  const rootCheckout = checkoutPathOf(root);
+  const rootLinks = new Set(
+    root.declaredPullRequests.map((pullRequest) =>
+      pullRequestKey(root.machineId, pullRequest.host, pullRequest.repository, pullRequest.number),
+    ),
+  );
+  return group.children.flatMap((child) =>
+    checkoutPathOf(child) === rootCheckout
+      ? []
+      : declaredPullRequestFacts(child, 'child').filter(
+          (fact) =>
+            fact.kind === 'declared-pull-request' &&
+            !rootLinks.has(pullRequestKey(child.machineId, fact.host, fact.repository, fact.number)),
+        ),
+  );
+};
+
+/**
  * The facts a root carries, in the order they read: the declaration and its reports first, then
  * what the family declared about pull requests and what GitHub and the disk showed, then
  * proposals, branches, notes and spawn origin.
@@ -409,7 +437,7 @@ const factsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
   }
   facts.push(
     ...declaredPullRequestFacts(root, 'root'),
-    ...group.children.flatMap((child) => declaredPullRequestFacts(child, 'child')),
+    ...childDeclaredPullRequestFacts(group),
     ...externalFactsOf(group, index),
   );
   for (const suggestion of root.openSuggestions) {

@@ -40,7 +40,7 @@ export interface SeededClaudeDesktopSessionIds {
   /** Completed with open proposals and resolved ones (`started_notified`, `dismissed`). */
   readonly proposalRoot: string | null;
   readonly reviewReadyRoot: string | null;
-  /** The child of `satisfiedRoot` that declared the pull request the root asked for. */
+  /** The child of `satisfiedRoot` that declared, from a worktree of its own, the pull request the root asked for. */
   readonly satisfiedChild: string | null;
   /** Blocked asking to open a pull request, which `satisfiedChild` later declared OPEN. */
   readonly satisfiedRoot: string | null;
@@ -109,7 +109,8 @@ interface SessionSpec {
   readonly status?: TurnStatus;
   readonly title: string;
   readonly unsupportedShape?: boolean;
-  readonly worktree?: boolean;
+  /** `true` sits the session in the shared `checkout-3` worktree; a string names a worktree of its own. */
+  readonly worktree?: boolean | string;
   readonly wrapUp?: boolean;
   readonly writtenBranches?: readonly string[];
 }
@@ -201,6 +202,8 @@ const representativeSpecs = (cliSessionIdWithTranscript: string): readonly Sessi
           pullRequests: [{ number: 117, state: 'OPEN' }],
           status: 'completed',
           title: 'Fixture: open the collector pull request',
+          // In a worktree of its own: a listing from the root's checkout would only mirror it.
+          worktree: 'collector-pr',
           writtenBranches: ['fixture/collector-pr'],
         },
       ],
@@ -321,7 +324,7 @@ const registryDocument = (
   const lastActivityAt = input.epochMs - spec.ageHours * HOUR_MS;
   const createdAt = lastActivityAt - 2 * HOUR_MS;
   const cliSessionId = spec.cliSessionId ?? `cli-fixture-${spec.id.slice('local_fixture-'.length)}`;
-  const worktreeName = 'checkout-3';
+  const worktreeName = typeof spec.worktree === 'string' ? spec.worktree : 'checkout-3';
   const worktreePath = `${input.repository}/.claude/worktrees/${worktreeName}`;
   const summarizesUuid = `assistant-${ordinal}`;
   const status: TurnStatus = spec.status ?? 'completed';

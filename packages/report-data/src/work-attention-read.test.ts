@@ -731,6 +731,60 @@ describe('assembleWorkAttention with external facts', () => {
     }
   });
 
+  test('a child listing that mirrors the root’s checkout never answers; a child in another checkout can', () => {
+    const asks = {
+      lastActivityHoursAgo: 5,
+      needsAction: 'Open the pull request for the collector branch.',
+      status: 'blocked',
+    } as const;
+    const sideSession = session({
+      id: 'r1',
+      lastActivityHoursAgo: 3,
+      pullRequestState: 'OPEN',
+      spawnedFromId: 'local_r',
+      status: 'completed',
+      title: 'R side session',
+      worktree: true,
+    });
+    // The root sits in the worktree and lists #117 itself; a side session in the same worktree
+    // lists the same #117: both are the checkout's own standing.
+    const mirrored = assemble(NO_EXTERNAL_FACTS, [
+      session({ ...asks, id: 'r', pullRequestState: 'OPEN', title: 'R', worktree: true }),
+      sideSession,
+    ]);
+    const r = rootOf(mirrored, 'local_r');
+    expect(r.attention).toBe('human-request');
+    expect(r.reconsidered).toBe(false);
+    expect(r.interpretations.map(({ kind }) => kind)).toEqual(['request-open']);
+    expect(r.facts.filter((fact) => fact.kind === 'declared-pull-request').map((fact) => fact.declaredBy)).toEqual([
+      'root',
+    ]);
+    // The same side session with the root listing nothing: still the checkout's mirror.
+    const sameCheckout = rootOf(
+      assemble(NO_EXTERNAL_FACTS, [session({ ...asks, id: 'r', title: 'R', worktree: true }), sideSession]),
+      'local_r',
+    );
+    expect(sameCheckout.reconsidered).toBe(false);
+    expect(sameCheckout.facts.some((fact) => fact.kind === 'declared-pull-request')).toBe(false);
+    // A child in another checkout listing a pull request the root does not list: a possible answer.
+    const elsewhere = rootOf(
+      assemble(NO_EXTERNAL_FACTS, [
+        session({ ...asks, id: 'r', title: 'R', worktree: true }),
+        session({
+          id: 'r2',
+          lastActivityHoursAgo: 3,
+          pullRequestState: 'OPEN',
+          spawnedFromId: 'local_r',
+          status: 'completed',
+          title: 'R child elsewhere',
+        }),
+      ]),
+      'local_r',
+    );
+    expect(elsewhere.reconsidered).toBe(true);
+    expect(elsewhere.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-satisfied-elsewhere']);
+  });
+
   test('a draft pull request, or an approved one, is not an external wait', () => {
     // Root P declared nothing pending; its external wait depends on the observation alone.
     const completed = session({
