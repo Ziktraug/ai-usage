@@ -28,6 +28,7 @@ explicitly declared information.
 | C | `/work` recomposed around the dataset: needs-you / waiting-on-others / leads, folded children, search and filters in the URL, detail panel, local-time dates, routing simulation attached to one root | `feat/work-resume-cockpit-c-ui` | IN PROGRESS |
 | R | Declared executors (`routing.executors[]`, home-only config), observed executor availability, per-field provenance, qualification actions, real/conditional recommendation | `feat/work-resume-cockpit-r-routing` | IN PROGRESS |
 | E | First read-only review attempt launched from the product (Claude Code only, isolated checkout) | — | NOT STARTED (depends on A, C, R) |
+| K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE (2026-10-22) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -249,3 +250,37 @@ the merged head below.
 `bun run verify` PASS (323 s); package suites 1886 pass, 0 fail; `bun run test:e2e` 249 passed
 (1.6 min, visual snapshots unchanged); production suite 17/17; opt-in review attempt spec 1/1;
 `bun run test:web-production` PASS. The slice is frozen at this head.
+
+### 2026-10-22 10:06 — lot K: review attempt reservation, scope and hook guarantee (ADR 0055)
+
+From base `759daec1`, on `feat/work-resume-cockpit-k-review`. Three statically found defects,
+each reproduced by a test before the fix. A: a `lost` row now keeps the identity's reservation
+(new partial unique index over live and unreleased lost rows, old index dropped, first-version
+lost rows released as `recorded-before-reservations`); the engine records a UUID before the spawn
+and passes it as `--session-id`, then looks for it in `/proc/*/cmdline`; a release names
+`process-absent` or `outcome-recorded-late`; otherwise `attempt-unresolved`. Tests: a double click
+and a second client launch once; a restart with the fake process alive refuses and leaves the
+process running; a late heartbeat changes nothing; a late result is recorded and releases; no
+readable process table keeps it held; two store connections race into one row. B: the scope is
+`HEAD` resolved once, diffed against the first parent or the empty tree with `git diff-tree` and
+safe options, cut to 64 KiB / 2 000 lines with per-file coverage, hashed, stored; merge, root,
+rename, deletion, binary, dirty tree, truncation, moved `HEAD`, empty and oversized commits and a
+repository-configured diff driver are covered. C: `--setting-sources ""`, `--safe-mode`,
+`--tools Read Grep Glob`; the CLI is qualified from `--version` and `--help`; managed settings are
+declared; a fake that loads settings like the CLI proves a checkout `PreToolUse`/`SessionStart`
+hook does not run under the launch argv and does without it. One real probe (`claude` 2.1.306,
+`--model opus`, `--max-turns 1`, disposable two-commit repository): the full argv was accepted
+under the subscription sign-in, the init session id equalled the engine's `--session-id`, the run
+ended `error_max_turns`, the repository stayed unchanged. The probe's hook fixture was not run:
+writing a `.claude/settings.json` hook file was refused by the permission system. D: shutdown
+records the stop with the partial output; no product stop command (it needs `work-routing.svelte`).
+Bundle: attempt states and refusal reasons moved to the import-free
+`work-attempts-vocabulary.ts`; the first-load gzip closure went from 312 370 B to 305 459 B.
+The attempt's guarantee also records the launched `--model` and `--effort`, so the per-candidate
+model of lot M is a one-line swap in `launchFor`. Verified on the branch: `bun run typecheck`
+58/58, `bun run check` and `bun run lint` clean; package suites report-core 482, usage-store 264,
+local-collectors 272, usage-engine-runtime 217, usage-engine-control 61, web-contract 81 pass
+(one unrelated `index.test.ts` heartbeat test timed out once under load and passes alone); web
+1551 pass; opt-in production attempt spec 1/1 under `nix develop` (Bun 1.3.13); bundle closure
+305 459 B (the branch keeps the base's 305 000 B ceiling, so `test:web-bundle` reports the ceiling
+until it meets the integration head's).
