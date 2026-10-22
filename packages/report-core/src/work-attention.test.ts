@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  describeCheckoutState,
   parseCheckoutStatusObservation,
   parseClaudeDesktopSessionObservation,
   parseJiraIssueObservation,
@@ -255,5 +256,44 @@ describe('parseCheckoutStatusObservation', () => {
   test('rejects negative counts and unknown outcomes', () => {
     expect(parseCheckoutStatusObservation({ ...observed, modifiedCount: -1 })).toBeNull();
     expect(parseCheckoutStatusObservation({ ...observed, outcome: 'clean' })).toBeNull();
+  });
+});
+
+describe('describeCheckoutState', () => {
+  const counts = {
+    ahead: null,
+    behind: null,
+    dirty: false,
+    modifiedCount: 0,
+    stagedCount: 0,
+    untrackedCount: 0,
+  };
+  test('names every kind of change git reported, never a zero for a kind it did not see', () => {
+    // The shapes the first live run met: staged work with one untracked file, untracked files only.
+    expect(
+      describeCheckoutState({ ...counts, ahead: 2, behind: 0, dirty: true, stagedCount: 28, untrackedCount: 1 }),
+    ).toBe('28 staged · 1 untracked · 2 ahead');
+    expect(describeCheckoutState({ ...counts, ahead: 0, behind: 0, dirty: true, untrackedCount: 2 })).toBe(
+      '2 untracked',
+    );
+    expect(describeCheckoutState({ ...counts, dirty: true, modifiedCount: 4, stagedCount: 2 })).toBe(
+      '2 staged · 4 modified',
+    );
+    expect(describeCheckoutState({ ...counts, dirty: true, modifiedCount: 5, untrackedCount: 1 })).toBe(
+      '5 modified · 1 untracked',
+    );
+  });
+  test('a clean checkout says clean, and still names commits it does not share with its upstream', () => {
+    expect(describeCheckoutState(counts)).toBe('clean');
+    expect(describeCheckoutState({ ...counts, ahead: 0, behind: 0 })).toBe('clean');
+    expect(describeCheckoutState({ ...counts, ahead: 1, behind: 0 })).toBe('clean · 1 ahead');
+    expect(
+      describeCheckoutState({ ...counts, ahead: 13, behind: 1, dirty: true, stagedCount: 884, untrackedCount: 1 }),
+    ).toBe('884 staged · 1 untracked · 13 ahead · 1 behind');
+  });
+  test('says when git reported a dirty checkout without its counts, or no state at all', () => {
+    const unreported = { ahead: null, behind: null, modifiedCount: null, stagedCount: null, untrackedCount: null };
+    expect(describeCheckoutState({ ...unreported, dirty: true })).toBe('uncommitted changes, counts not reported');
+    expect(describeCheckoutState({ ...unreported, dirty: null })).toBe('state not reported');
   });
 });

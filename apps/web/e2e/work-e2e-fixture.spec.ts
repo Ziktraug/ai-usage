@@ -53,7 +53,7 @@ const BLOCKED_QUESTION = 'Confirm whether the fixture should keep checkout 3 or 
 const BLOCKED_CHILD_TITLES = ['Fixture: child two', 'Fixture: grandchild of checkout 3'];
 const BLOCKED_DECLARED_AT = 'Oct 20, 2026, 11:00 UTC';
 const DIRTY_WORKTREE_INTERPRETATION =
-  '2 modified, 1 untracked observed at 2026-10-20T11:20:00.000Z on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 5 roots.';
+  '2 modified · 1 untracked · 1 ahead, observed at 2026-10-20T11:20:00.000Z on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 5 roots.';
 const STALE_TITLE = 'Fixture: stale declaration';
 const COMPLETED_TITLE = 'Fixture: ship the collector';
 const COMPLETED_INTERPRETATION =
@@ -203,7 +203,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   await expect(main.locator('[data-work-section="human-request"]').locator(blocked)).toHaveCount(1);
   await expect(blocked).toContainText(BLOCKED_QUESTION);
   await expect(blocked).toContainText('blocked · 1 h ago');
-  await expect(blocked).toContainText('checkout dirty (2 modified) · observed 40 min ago');
+  await expect(blocked).toContainText('checkout 2 modified · 1 untracked · 1 ahead · observed 40 min ago');
   await expect(blocked).not.toContainText('auto title');
   await expect(main.locator('[data-work-section="optional-lead"]').locator(rowNamed(page, PROPOSAL_TITLE))).toHaveCount(
     1,
@@ -434,7 +434,7 @@ test('shows Codex sessions apart: wait unknown, never folded under a Desktop roo
   const worktree = rowNamed(page, CODEX_WORKTREE_TITLE);
   // Codex records the directory alone: the row is labelled by it, no origin checkout is inferred.
   await expect(worktree).toContainText('checkout-3 · fixture/checkout-3');
-  await expect(worktree).toContainText('checkout dirty (2 modified) · observed 40 min ago');
+  await expect(worktree).toContainText('checkout 2 modified · 1 untracked · 1 ahead · observed 40 min ago');
   await expect(main.locator('[data-work-section="human-request"]').locator(worktree)).toHaveCount(0);
   await expect(rowNamed(page, CODEX_ROOT_TITLE)).toContainText('children 2');
   await capture(page, 'work-e2e-1440-codex-section.png');

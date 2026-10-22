@@ -112,8 +112,10 @@ describe('fact builders', () => {
       modifiedCount: 2,
       outcome: 'observed',
       provenance: { coverage: 'complete', machineId: 'machine-a', observedAt: FRESH, source: 'local-checkout' },
+      stagedCount: 0,
       untrackedCount: 3,
     });
+    expect(checkoutStatusFact(checkout({ stagedCount: 28 }), 'co-1').stagedCount).toBe(28);
     expect(checkoutStatusFact(checkout({ outcome: 'timeout' }), 'co-2').provenance.coverage).toBe('partial');
   });
 });
@@ -156,7 +158,7 @@ describe('interpretExternalFacts', () => {
       {
         evidence: ['co-1'],
         kind: 'local-changes-unvalidated',
-        text: `2 modified, 3 untracked observed at ${FRESH} on feat/work-view in example; since when is unknown; validation and delivery unobserved.`,
+        text: `2 modified · 3 untracked · 1 ahead, observed at ${FRESH} on feat/work-view in example; since when is unknown; validation and delivery unobserved.`,
         uncertainty:
           'The first dirty observation does not date the changes; whether they were tested, committed or pushed elsewhere is not visible.',
       },
@@ -164,6 +166,15 @@ describe('interpretExternalFacts', () => {
     expect(
       interpret([checkoutStatusFact(checkout({ dirty: false, modifiedCount: 0, untrackedCount: 0 }), 'co-1')]),
     ).toEqual([]);
+  });
+
+  test('names staged changes: a checkout with nothing modified in its worktree is not "0 modified"', () => {
+    const staged = checkout({ ahead: 2, modifiedCount: 0, stagedCount: 28, untrackedCount: 1 });
+    expect(interpret([checkoutStatusFact(staged, 'co-1')])[0]?.text).toBe(
+      `28 staged · 1 untracked · 2 ahead, observed at ${FRESH} on feat/work-view in example; since when is unknown; validation and delivery unobserved.`,
+    );
+    const untracked = checkout({ ahead: 0, modifiedCount: 0, untrackedCount: 2 });
+    expect(interpret([checkoutStatusFact(untracked, 'co-1')])[0]?.text).toStartWith('2 untracked, observed at');
   });
 
   test('names a checkout several roots share, and keeps the statement tied to the observation', () => {

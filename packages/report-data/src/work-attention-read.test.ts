@@ -876,8 +876,8 @@ describe('assembleWorkAttention with external facts', () => {
     ]);
     const aChanges = a.interpretations.filter(({ kind }) => kind === 'local-changes-unvalidated');
     expect(aChanges.map(({ text }) => text)).toEqual([
-      `5 modified, 1 untracked observed at ${hoursAgo(0.5)} on fixture/worktree in wt-1; since when is unknown; validation and delivery unobserved.`,
-      `2 modified, 1 untracked observed at ${hoursAgo(0.5)} on fixture/worktree in project; since when is unknown; validation and delivery unobserved. Checkout shared by 6 roots.`,
+      `5 modified · 1 untracked · 1 ahead, observed at ${hoursAgo(0.5)} on fixture/worktree in wt-1; since when is unknown; validation and delivery unobserved.`,
+      `2 modified · 1 untracked · 1 ahead, observed at ${hoursAgo(0.5)} on fixture/worktree in project; since when is unknown; validation and delivery unobserved. Checkout shared by 6 roots.`,
     ]);
     for (const root of dataset.roots) {
       const projectFacts = root.facts.filter(

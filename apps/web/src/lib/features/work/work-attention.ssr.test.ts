@@ -130,7 +130,8 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('archived');
     expect(body).toContain('PR #71 checks pending');
     expect(body).toContain('· observed 40 min ago');
-    expect(body).toContain('checkout dirty (3 modified)');
+    expect(body).toContain('checkout 3 modified · 1 untracked · 2 ahead');
+    expect(body).not.toContain('checkout dirty');
     expect(body).toContain('Jira XLB-2090 · In Progress · 2 new replies');
   });
   test('says per harness what was read and keeps a Codex row apart from nothing pending (ADR 0059)', () => {
@@ -207,6 +208,52 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(
       withJira({ disabled: false, failed: 2, lastRunAt: dataset.coverage.jira.lastRunAt, observed: 3, reason: null }),
     ).toContain('Jira: 3 observed, 2 failed');
+  });
+  test('a checkout reads the same counts in the row and in the detail: staged, untracked, clean', () => {
+    const base = dataset.roots.find((root) => root.title === 'Recover Claude history');
+    const fact = base?.facts.find((candidate) => candidate.kind === 'checkout-status');
+    if (base === undefined || fact?.kind !== 'checkout-status') {
+      throw new Error('Synthetic root must carry a checkout fact');
+    }
+    const rendered = (counts: Partial<typeof fact>): string => {
+      const root = { ...base, facts: [{ ...fact, ...counts }] };
+      return withoutMarkers(
+        render(fixture, {
+          props: {
+            board: {
+              dataset: { ...dataset, roots: dataset.roots.map((entry) => (entry === base ? root : entry)) },
+              onFocusRow: noop,
+              onSearch: noop,
+              onSelect: noop,
+              search: EMPTY_WORK_ATTENTION_SEARCH,
+              selectedId: workRootId(root),
+            },
+            detail: {
+              loadedRows: [],
+              mode: 'demo',
+              onClose: noop,
+              providers: [],
+              quotaUnavailable: true,
+              reference: dataset.generatedAt,
+              revision: WORK_DEMO_REVISION,
+              root,
+              sessionClient,
+            },
+          },
+        }).body.replaceAll(/\s+/g, ' '),
+      );
+    };
+    const where = `Checkout ${fact.checkoutPath} on ${fact.branch}`;
+    const staged = rendered({ ahead: 2, modifiedCount: 0, stagedCount: 28, untrackedCount: 1 });
+    expect(staged).toContain('checkout 28 staged · 1 untracked · 2 ahead');
+    expect(staged).toContain(`${where}: 28 staged · 1 untracked · 2 ahead`);
+    expect(staged).not.toContain('0 modified');
+    const untracked = rendered({ ahead: 0, modifiedCount: 0, stagedCount: 0, untrackedCount: 2 });
+    expect(untracked).toContain('checkout 2 untracked');
+    expect(untracked).toContain(`${where}: 2 untracked`);
+    const clean = rendered({ ahead: 0, dirty: false, modifiedCount: 0, stagedCount: 0, untrackedCount: 0 });
+    expect(clean).toContain(`${where}: clean`);
+    expect(clean).not.toContain('checkout clean');
   });
   test('the detail names an automatic title once, where the row does not', () => {
     const body = html(EMPTY_WORK_ATTENTION_SEARCH, 'desk-enquete-retention');

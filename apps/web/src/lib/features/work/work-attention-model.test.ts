@@ -278,13 +278,47 @@ describe('Work attention dates and fact chips', () => {
     const observed = mobile.facts.find((fact) => fact.kind === 'pull-request');
     expect(chips[0]).toMatchObject({ instant: observed?.provenance.observedAt, instantLabel: 'observed' });
     const dirty = workRootFactChips(rootNamed('Recover Claude history'));
-    expect(dirty.map((chip) => chip.label)).toEqual(['checkout dirty (3 modified)', 'children 2 · 1 blocked']);
+    expect(dirty.map((chip) => chip.label)).toEqual([
+      'checkout 3 modified · 1 untracked · 2 ahead',
+      'children 2 · 1 blocked',
+    ]);
     expect(dirty.map((chip) => chip.tone)).toEqual(['warn', 'warn']);
     expect(dirty[0]?.instantLabel).toBe('observed');
     const failed = workRootFactChips(rootNamed('Platform runtime review follow-ups'));
     expect(failed.map((chip) => chip.label)).toEqual(['PR #53 read failed (unauthenticated)']);
     const leads = workRootFactChips(rootNamed('Overview composition pass'));
     expect(leads.map((chip) => chip.label)).toEqual(['proposals 2 open / 1 resolved']);
+  });
+  test('a checkout chip and its detail line name every count git reported, the same words in both', () => {
+    const base = rootNamed('Recover Claude history');
+    const fact = base.facts.find((candidate) => candidate.kind === 'checkout-status');
+    if (fact?.kind !== 'checkout-status') {
+      throw new Error('Synthetic root must carry a checkout fact');
+    }
+    const withCheckout = (counts: Partial<typeof fact>) => {
+      const changed = { ...fact, ...counts };
+      return {
+        chips: workRootFactChips({ ...base, children: { ...base.children, count: 0 }, facts: [changed] }),
+        summary: workFactSummary(changed, base),
+      };
+    };
+    const where = `Checkout ${fact.checkoutPath} on ${fact.branch}`;
+    // Staged work with one untracked file: never "0 modified".
+    const staged = withCheckout({ ahead: 2, modifiedCount: 0, stagedCount: 28, untrackedCount: 1 });
+    expect(staged.chips.map(({ label, tone }) => [label, tone])).toEqual([
+      ['checkout 28 staged · 1 untracked · 2 ahead', 'warn'],
+    ]);
+    expect(staged.summary).toBe(`${where}: 28 staged · 1 untracked · 2 ahead`);
+    const untracked = withCheckout({ ahead: 0, modifiedCount: 0, stagedCount: 0, untrackedCount: 2 });
+    expect(untracked.chips.map((chip) => chip.label)).toEqual(['checkout 2 untracked']);
+    expect(untracked.summary).toBe(`${where}: 2 untracked`);
+    // Clean: no chip in the row, "clean" in the detail; commits not pushed still show, neutrally.
+    const clean = withCheckout({ ahead: 0, dirty: false, modifiedCount: 0, stagedCount: 0, untrackedCount: 0 });
+    expect(clean.chips).toEqual([]);
+    expect(clean.summary).toBe(`${where}: clean`);
+    const ahead = withCheckout({ ahead: 2, dirty: false, modifiedCount: 0, stagedCount: 0, untrackedCount: 0 });
+    expect(ahead.chips.map(({ label, tone }) => [label, tone])).toEqual([['checkout clean · 2 ahead', 'neutral']]);
+    expect(ahead.summary).toBe(`${where}: clean · 2 ahead`);
   });
   test('a declared-only pull request chip is dated by the session file that listed it', () => {
     const mobile = rootNamed('Fix mobile navigation label overlap');

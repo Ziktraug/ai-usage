@@ -765,6 +765,44 @@ export const parseCheckoutStatusObservation = (value: unknown): CheckoutStatusOb
   };
 };
 
+export type CheckoutStateCounts = Pick<
+  CheckoutStatusObservation,
+  'ahead' | 'behind' | 'dirty' | 'modifiedCount' | 'stagedCount' | 'untrackedCount'
+>;
+
+const countedParts = (entries: readonly (readonly [number | null, string])[]): string[] =>
+  entries.flatMap(([count, label]) => (count !== null && count > 0 ? [`${String(count)} ${label}`] : []));
+
+/**
+ * What an observed checkout held, in the counts git reported: "28 staged · 1 untracked",
+ * "2 untracked", "clean", then the commits it does not share with its upstream ("2 ahead",
+ * "1 behind"). One phrase for the Work row, its detail, the interpretations and `work.context`,
+ * so no surface reports one count in place of the others. A kind git did not report is left out,
+ * never shown as zero; a dirty checkout without any count says so.
+ */
+export const describeCheckoutState = (counts: CheckoutStateCounts): string => {
+  const changes = countedParts([
+    [counts.stagedCount, 'staged'],
+    [counts.modifiedCount, 'modified'],
+    [counts.untrackedCount, 'untracked'],
+  ]);
+  const upstream = countedParts([
+    [counts.ahead, 'ahead'],
+    [counts.behind, 'behind'],
+  ]);
+  let state: string;
+  if (changes.length > 0) {
+    state = changes.join(' · ');
+  } else if (counts.dirty === true) {
+    state = 'uncommitted changes, counts not reported';
+  } else if (counts.dirty === false) {
+    state = 'clean';
+  } else {
+    state = 'state not reported';
+  }
+  return [state, ...upstream].join(' · ');
+};
+
 // ---------------------------------------------------------------------------------------------
 // Fact family 3 — Jira issues a session explicitly linked, read through the operator's `acli`
 // ---------------------------------------------------------------------------------------------
@@ -991,6 +1029,8 @@ export type WorkFact = WorkFactBase &
         readonly lastCommitAt: CanonicalInstant | null;
         readonly modifiedCount: number | null;
         readonly outcome: CheckoutStatusOutcome;
+        /** Files with staged changes; a checkout can be dirty with nothing modified in its worktree. */
+        readonly stagedCount: number | null;
         readonly untrackedCount: number | null;
       }
     | {

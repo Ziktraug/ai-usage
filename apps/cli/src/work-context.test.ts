@@ -2,13 +2,14 @@ import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { claudeDesktopFixtureRegistry } from '@ai-usage/report-core/test-fixtures/claude-desktop-sessions';
 import type { ClaudeDesktopSessionObservation } from '@ai-usage/report-core/work-attention';
 import { parseClaudeDesktopSessionFile } from '@ai-usage/report-core/work-attention-native';
 import { importClaudeDesktopSessions, initializeUsageStore } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { withCliSandbox } from './test-support/run-cli';
-import { WORK_CONTEXT_RETRIEVED_DATA_NOTICE } from './work-context';
+import { WORK_CONTEXT_RETRIEVED_DATA_NOTICE, workContextCheckoutLine } from './work-context';
 
 const MACHINE = 'machine-cli-work-context';
 const TEST_TIMEOUT_MS = 30_000;
@@ -147,3 +148,37 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+test('a checkout line names the counts git reported, never one count for all of them', () => {
+  const observedAt = parseCanonicalInstant('2026-10-22T16:20:00.000Z');
+  const checkout = (counts: {
+    readonly ahead: number | null;
+    readonly dirty: boolean;
+    readonly modifiedCount: number;
+    readonly stagedCount: number;
+    readonly untrackedCount: number;
+  }) =>
+    workContextCheckoutLine({
+      fact: {
+        ...counts,
+        behind: 0,
+        branch: 'fixture/branch',
+        checkoutPath: '/fixture/checkout',
+        id: 'checkout-1',
+        kind: 'checkout-status',
+        lastCommitAt: null,
+        outcome: 'observed',
+        provenance: { coverage: 'complete', machineId: MACHINE, observedAt, source: 'local-checkout' },
+      },
+      roots: [],
+    });
+  expect(checkout({ ahead: 2, dirty: true, modifiedCount: 0, stagedCount: 28, untrackedCount: 1 })).toBe(
+    `  - /fixture/checkout fixture/branch 28 staged · 1 untracked · 2 ahead (observed ${observedAt})`,
+  );
+  expect(checkout({ ahead: 0, dirty: true, modifiedCount: 0, stagedCount: 0, untrackedCount: 2 })).toBe(
+    `  - /fixture/checkout fixture/branch 2 untracked (observed ${observedAt})`,
+  );
+  expect(checkout({ ahead: null, dirty: false, modifiedCount: 0, stagedCount: 0, untrackedCount: 0 })).toBe(
+    `  - /fixture/checkout fixture/branch clean (observed ${observedAt})`,
+  );
+});

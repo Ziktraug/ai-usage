@@ -260,6 +260,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
       const lastCommitAt = optionalInstant(value.lastCommitAt);
       const modifiedCount = optionalCount(value.modifiedCount);
       const outcome = oneOf(CHECKOUT_STATUS_OUTCOMES, value.outcome);
+      const stagedCount = optionalCount(value.stagedCount);
       const untrackedCount = optionalCount(value.untrackedCount);
       if (
         ahead === undefined ||
@@ -270,6 +271,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
         lastCommitAt === undefined ||
         modifiedCount === undefined ||
         outcome === undefined ||
+        stagedCount === undefined ||
         untrackedCount === undefined
       ) {
         return;
@@ -284,6 +286,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
         lastCommitAt,
         modifiedCount,
         outcome,
+        stagedCount,
         untrackedCount,
       };
     }

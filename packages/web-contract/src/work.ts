@@ -136,6 +136,7 @@ export const workFactSchema = variant('kind', [
     lastCommitAt: nullable(instantSchema),
     modifiedCount: nullable(countSchema),
     outcome: picklist(CHECKOUT_STATUS_OUTCOMES),
+    stagedCount: nullable(countSchema),
     untrackedCount: nullable(countSchema),
   }),
   strictObject({

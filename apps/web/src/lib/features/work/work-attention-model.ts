@@ -1,5 +1,6 @@
 import {
   type ClaudeDesktopTurnStatus,
+  describeCheckoutState,
   WORK_ATTENTION_KINDS,
   type WorkAttentionDataset,
   type WorkAttentionKind,
@@ -716,13 +717,14 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
   }
   chips.push(...pullRequestChips(root), ...jiraChips(root));
   for (const fact of root.facts) {
-    if (fact.kind === 'checkout-status' && fact.dirty === true) {
+    // A clean checkout level with its upstream says nothing to resume; commits not pushed do.
+    if (fact.kind === 'checkout-status' && (fact.dirty === true || (fact.ahead ?? 0) > 0)) {
       chips.push({
         id: fact.id,
         instant: fact.provenance.observedAt,
         instantLabel: 'observed',
-        label: `checkout dirty (${fact.modifiedCount ?? '?'} modified)`,
-        tone: 'warn',
+        label: `checkout ${describeCheckoutState(fact)}`,
+        tone: fact.dirty === true ? 'warn' : 'neutral',
       });
     }
   }
@@ -800,7 +802,7 @@ export const workFactSummary = (fact: WorkFact, root?: WorkRoot): string => {
         : `PR #${fact.number} read failed: ${fact.outcome}`;
     case 'checkout-status':
       return fact.outcome === 'observed'
-        ? `Checkout ${fact.checkoutPath}${fact.branch ? ` on ${fact.branch}` : ''}: ${fact.dirty ? `dirty, ${fact.modifiedCount ?? '?'} modified, ${fact.untrackedCount ?? '?'} untracked` : 'clean'}${fact.ahead ? `, ${fact.ahead} ahead` : ''}${fact.behind ? `, ${fact.behind} behind` : ''}`
+        ? `Checkout ${fact.checkoutPath}${fact.branch ? ` on ${fact.branch}` : ''}: ${describeCheckoutState(fact)}`
         : `Checkout ${fact.checkoutPath}: ${fact.outcome}`;
     case 'jira-issue':
       return fact.outcome === 'observed'

@@ -77,7 +77,7 @@ describe('work attention e2e fixture', () => {
     expect(blocked?.attention).toBe('human-request');
     expect(kindsOf(blocked)).toEqual(['request-open', 'local-changes-unvalidated']);
     expect(blocked?.interpretations[1]?.text).toBe(
-      `2 modified, 1 untracked observed at ${hoursBefore(40 / 60)} on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 5 roots.`,
+      `2 modified · 1 untracked · 1 ahead, observed at ${hoursBefore(40 / 60)} on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 5 roots.`,
     );
     const sharing = result.data.roots.filter((root) =>
       root.facts.some((fact) => fact.kind === 'checkout-status' && fact.checkoutPath === WORK_ATTENTION_E2E_WORKTREE),

@@ -228,6 +228,7 @@ const checkoutStatus = (id: string, path: string, branch: string, dirty: boolean
   modifiedCount: modified,
   outcome: 'observed',
   provenance: checkout(),
+  stagedCount: 0,
   untrackedCount: dirty ? 1 : 0,
 });
 

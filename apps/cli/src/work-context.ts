@@ -1,3 +1,4 @@
+import { describeCheckoutState } from '@ai-usage/report-core/work-attention';
 import type { WorkContextDataset, WorkContextLinked } from '@ai-usage/report-data/work-context-read';
 
 export const WORK_CONTEXT_RETRIEVED_DATA_NOTICE =
@@ -11,11 +12,9 @@ const pullRequestLine = ({ fact }: WorkContextLinked['pullRequests'][number]): s
     ? `  - ${fact.repository}#${String(fact.number)} ${fact.state ?? fact.outcome} (GitHub, observed ${fact.provenance.observedAt})`
     : `  - ${fact.repository}#${String(fact.number)} ${fact.state} (declared by the ${fact.declaredBy} session, ${fact.lastActivityAt})`;
 
-const checkoutLine = ({ fact }: WorkContextLinked['checkouts'][number]): string => {
-  let state: string = fact.outcome;
-  if (fact.dirty !== null) {
-    state = fact.dirty ? 'uncommitted changes' : 'clean';
-  }
+/** One linked checkout: the counts git reported, in the words the Work view uses. */
+export const workContextCheckoutLine = ({ fact }: WorkContextLinked['checkouts'][number]): string => {
+  const state = fact.outcome === 'observed' ? describeCheckoutState(fact) : fact.outcome;
   return `  - ${fact.checkoutPath} ${fact.branch ?? '(no branch)'} ${state} (observed ${fact.provenance.observedAt})`;
 };
 
@@ -64,7 +63,7 @@ export const renderWorkContext = (context: WorkContextDataset, json: boolean): s
     counted('Pull requests', context.linked.pullRequests.length, omitted.pullRequests),
     ...orNone(context.linked.pullRequests.map(pullRequestLine)),
     counted('Checkouts', context.linked.checkouts.length, omitted.checkouts),
-    ...orNone(context.linked.checkouts.map(checkoutLine)),
+    ...orNone(context.linked.checkouts.map(workContextCheckoutLine)),
     counted('Jira issues', context.linked.jiraIssues.length, omitted.jiraIssues),
     ...orNone(context.linked.jiraIssues.map(jiraLine)),
     `Coverage: ${String(roots.inScope)} of ${String(roots.read)} roots read are in scope (${String(roots.total)} in the Work read${roots.unscopedPaths > 0 ? `; ${String(roots.unscopedPaths)} with a non-absolute recorded path not compared` : ''}); Desktop registry collected ${attention.desktopSessions.collectedAt ?? 'never'}; window ${String(attention.window.sinceDays)} days.`,

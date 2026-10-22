@@ -3,6 +3,7 @@ import { type CanonicalInstant, canonicalInstantEpochMs } from './canonical-inst
 import {
   type CheckoutStatusObservation,
   type ClaudeDesktopSessionObservation,
+  describeCheckoutState,
   JIRA_ISSUE_KEY_PATTERN,
   type JiraIssueObservation,
   type PullRequestObservation,
@@ -69,6 +70,7 @@ export const checkoutStatusFact = (observation: CheckoutStatusObservation, factI
     observedAt: observation.observedAt,
     source: 'local-checkout',
   },
+  stagedCount: observation.stagedCount,
   untrackedCount: observation.untrackedCount,
 });
 
@@ -186,7 +188,7 @@ const interpretCheckout = (
   return interpretation(
     'local-changes-unvalidated',
     [fact.id],
-    `${String(fact.modifiedCount ?? 0)} modified, ${String(fact.untrackedCount ?? 0)} untracked observed at ${observedAt} on ${fact.branch ?? 'a detached HEAD'} in ${label}; since when is unknown; validation and delivery unobserved.${shared}`,
+    `${describeCheckoutState(fact)}, observed at ${observedAt} on ${fact.branch ?? 'a detached HEAD'} in ${label}; since when is unknown; validation and delivery unobserved.${shared}`,
     `The first dirty observation does not date the changes; whether they were tested, committed or pushed elsewhere is not visible.${sharedRoots > 1 ? ' The changes may belong to any of the roots sharing this checkout.' : ''}`,
   );
 };
