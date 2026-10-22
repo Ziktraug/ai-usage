@@ -219,6 +219,28 @@ describe('CLI command parsing', () => {
     );
   });
 
+  test('parses work context with exactly one scope and rejects anything else', () => {
+    expect(Effect.runSync(parseCommand(['work', 'context', '--checkout', '.', '--json']))).toEqual({
+      _tag: 'WorkContext',
+      args: { json: true, scope: { checkoutPath: '.', kind: 'checkout' } },
+    });
+    expect(Effect.runSync(parseCommand(['work', 'context', '--project-label', 'ai-usage']))).toEqual({
+      _tag: 'WorkContext',
+      args: { json: false, scope: { kind: 'project-label', projectLabel: 'ai-usage' } },
+    });
+    const failure = (argv: string[]) => Effect.runSync(Effect.flip(parseCommand(argv))).message;
+    expect(failure(['work', 'context'])).toBe('work context expects exactly one of --checkout or --project-label');
+    expect(failure(['work', 'context', '--checkout', '/a', '--project-label', 'b'])).toBe(
+      'work context expects exactly one of --checkout or --project-label',
+    );
+    expect(failure(['work', 'context', '--checkout'])).toBe('--checkout expects a value');
+    expect(failure(['work', 'context', '--checkout', '/a', '--refresh'])).toBe(
+      'Unknown option for work context: --refresh',
+    );
+    expect(failure(['work', 'attention'])).toBe('Unknown work subcommand: attention');
+    expect(failure(['work'])).toBe('Unknown work subcommand:');
+  });
+
   test('parses setup with file inputs and local collection', () => {
     expect(Effect.runSync(parseCommand(['setup', 'mac.json', 'team.json']))).toEqual({
       _tag: 'Setup',
