@@ -8,6 +8,7 @@
     "./analytics": "./src/analytics.ts",
     "./auth": "./src/auth.ts",
     "./canonical-instant": "./src/canonical-instant.ts",
+    "./codex-work-observation": "./src/codex-work-observation.ts",
     "./campaign-label": "./src/campaign-label.ts",
     "./campaign-map": "./src/campaign-map.ts",
     "./csv": "./src/csv.ts",
