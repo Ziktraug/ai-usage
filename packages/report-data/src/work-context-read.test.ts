@@ -491,7 +491,7 @@ describe('projectWorkContext with Codex sessions in scope (ADR 0059)', () => {
     expect(context.waiting.length).toBeGreaterThan(0);
     expect(context.coverage.harnesses).toEqual({
       claudeDesktop: { inScope: context.coverage.roots.inScope - 1, reads: 'declared-waits' },
-      codex: { campaignsInWindow: 5, campaignsRead: 2, cutByPage: 0, inScope: 1, reads: 'sessions-only' },
+      codex: { campaignsInWindow: 5, campaignsRead: 2, cutByPage: 0, inScope: 1, reads: 'native-requests' },
     });
 
     // Desktop roots fill the page: the Codex roots are cut before scoping, and the context says so
@@ -519,14 +519,14 @@ describe('projectWorkContext with Codex sessions in scope (ADR 0059)', () => {
       campaignsRead: 2,
       cutByPage: 2,
       inScope: 0,
-      reads: 'sessions-only',
+      reads: 'native-requests',
     });
     expect(cut.truncation.dataset).toBe(true);
     const notes = context.coverage.notes.map(({ code }) => code);
     expect(notes).toContain('desktop-waits-codex-sessions');
     expect(notes).not.toContain('claude-desktop-only');
     expect(context.coverage.notes.find(({ code }) => code === 'desktop-waits-codex-sessions')?.text).toContain(
-      'Codex declares no wait',
+      'Codex sessions include supported native structured requests',
     );
 
     // Without any Codex campaign read, the sentence stays the Claude Desktop one.
@@ -547,7 +547,7 @@ describe('projectWorkContext with Codex sessions in scope (ADR 0059)', () => {
       campaignsRead: 0,
       cutByPage: 0,
       inScope: 0,
-      reads: 'sessions-only',
+      reads: 'native-requests',
     });
   });
 });

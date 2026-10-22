@@ -88,7 +88,7 @@ export const renderWorkContext = (context: WorkContextDataset, json: boolean): s
     counted('Jira issues', context.linked.jiraIssues.length, omitted.jiraIssues),
     ...orNone(context.linked.jiraIssues.map(jiraLine)),
     `Coverage: ${String(roots.inScope)} of ${String(roots.read)} roots read are in scope (${String(roots.total)} in the Work read${roots.unscopedPaths > 0 ? `; ${String(roots.unscopedPaths)} with a non-absolute recorded path not compared` : ''}); Desktop registry collected ${attention.desktopSessions.collectedAt ?? 'never'}; window ${String(attention.window.sinceDays)} days.`,
-    `Harnesses: Claude Desktop ${String(context.coverage.harnesses.claudeDesktop.inScope)} in scope (declared waits) · Codex ${String(context.coverage.harnesses.codex.inScope)} in scope (sessions only; ${String(context.coverage.harnesses.codex.campaignsRead)} of ${String(context.coverage.harnesses.codex.campaignsInWindow)} recent campaigns read${context.coverage.harnesses.codex.cutByPage > 0 ? `; ${String(context.coverage.harnesses.codex.cutByPage)} scoped campaigns cut by the page limit` : ''}).`,
+    `Harnesses: Claude Desktop ${String(context.coverage.harnesses.claudeDesktop.inScope)} in scope (declared waits) · Codex ${String(context.coverage.harnesses.codex.inScope)} in scope (native structured requests; general status unknown; ${String(context.coverage.harnesses.codex.campaignsRead)} of ${String(context.coverage.harnesses.codex.campaignsInWindow)} recent campaigns read${context.coverage.harnesses.codex.cutByPage > 0 ? `; ${String(context.coverage.harnesses.codex.cutByPage)} scoped campaigns cut by the page limit` : ''}).`,
     ...context.coverage.notes.map((note) => `  · ${note.text}`),
     ...(context.truncated
       ? [

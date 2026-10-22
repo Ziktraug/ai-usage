@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import { parseCodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import { createCodexSessionParser } from './codex-history';
 
-const at = (second: number) => new Date(Date.UTC(2026, 9, 22, 10, 0, second)).toISOString();
+const at = (second: number) => canonicalInstantFromDate(new Date(Date.UTC(2026, 9, 22, 10, 0, second)));
 const event = (second: number, type: string, payload: Record<string, unknown>) =>
   JSON.stringify({ timestamp: at(second), type, payload });
 const meta = (extra: Record<string, unknown> = {}) =>

@@ -73,7 +73,7 @@ export const WORK_CONTEXT_COVERAGE_NOTES = [
   },
   {
     code: 'declarations-not-transcripts',
-    text: 'A declaration is what a session stated at its last turn end, as the Claude Desktop registry recorded it, dated by the session; no transcript is read.',
+    text: 'A declaration is what a session stated at its last turn end, as the Claude Desktop registry recorded it, dated by the session. Codex contributes bounded native structured input requests and exact response identities, not a general transcript or inferred turn status.',
   },
   {
     code: 'declared-links-only',
@@ -85,7 +85,7 @@ export const WORK_CONTEXT_COVERAGE_NOTES = [
   },
   {
     code: 'activity-window',
-    text: 'Roots with nothing pending and no activity within coverage.attention.window.sinceDays are left out; a request or an external wait is kept at any age.',
+    text: 'Desktop roots with nothing pending and no activity within coverage.attention.window.sinceDays are left out; their requests and external waits are kept at any age. Codex request evidence covers only the selected served campaigns and bounded members in that activity window; older or omitted requests may remain pending.',
   },
   {
     code: 'literal-paths',
@@ -95,16 +95,16 @@ export const WORK_CONTEXT_COVERAGE_NOTES = [
 
 /**
  * Replaces the `claude-desktop-only` note when the read included Codex campaigns (ADR 0059): their
- * sessions are in the context, as sessions only.
+ * sessions may carry bounded native request evidence, without a general turn declaration.
  */
 export const WORK_CONTEXT_CODEX_NOTE = {
   code: 'desktop-waits-codex-sessions',
-  text: 'Claude Desktop sessions carry their declared waits. Codex sessions are included as sessions only: Codex declares no wait, so none is derived and none appears in waiting (coverage.harnesses.codex counts the recent campaigns read). Claude Code sessions started outside Claude Desktop, and OpenCode and Cursor sessions, are not represented.',
+  text: 'Claude Desktop sessions carry their declared waits. Codex sessions include supported native structured requests: acceptance is not a human answer, and only an exact linked response settles its questions. General turn status and runtime approvals remain unknown. Coverage is limited to the selected served campaign members; older or omitted requests may remain pending. Claude Code outside Desktop, OpenCode and Cursor are not represented.',
 } as const;
 
 export type WorkContextCoverageNote = (typeof WORK_CONTEXT_COVERAGE_NOTES)[number] | typeof WORK_CONTEXT_CODEX_NOTE;
 
-/** What each harness contributes to the context: declared waits, or sessions only. */
+/** What each harness contributes to the context: declared waits, or native structured requests. */
 export interface WorkContextHarnessCoverage {
   readonly claudeDesktop: { readonly inScope: number; readonly reads: 'declared-waits' };
   readonly codex: {
@@ -116,7 +116,7 @@ export interface WorkContextHarnessCoverage {
      */
     readonly cutByPage: number;
     readonly inScope: number;
-    readonly reads: 'sessions-only';
+    readonly reads: 'native-requests';
   };
 }
 
@@ -357,6 +357,10 @@ const referenceOf = (root: WorkRoot): WorkContextRootReference => ({
 /** The date a fact carries for itself; provenance keeps when and where it was observed. */
 const factDate = (fact: WorkFact): CanonicalInstant | null => {
   switch (fact.kind) {
+    case 'codex-user-request':
+      return fact.request.askedAt;
+    case 'codex-session-context':
+      return fact.provenance.observedAt;
     case 'declared-turn':
       return fact.declaredAt;
     case 'declared-pull-request':
@@ -606,7 +610,7 @@ export const projectWorkContext = (
         0,
       ),
       inScope: codexInScope,
-      reads: 'sessions-only',
+      reads: 'native-requests',
     },
   };
   const notes: readonly WorkContextCoverageNote[] =
