@@ -28,7 +28,7 @@ explicitly declared information.
 | C | `/work` recomposed around the dataset: needs-you / waiting-on-others / leads, folded children, search and filters in the URL, detail panel, local-time dates, routing simulation attached to one root | `feat/work-resume-cockpit-c-ui` | IN PROGRESS |
 | R | Declared executors (`routing.executors[]`, home-only config), observed executor availability, per-field provenance, qualification actions, real/conditional recommendation | `feat/work-resume-cockpit-r-routing` | IN PROGRESS |
 | E | First read-only review attempt launched from the product (Claude Code only, isolated checkout) | — | NOT STARTED (depends on A, C, R) |
-| M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE in the worker branch (not integrated) |
+| M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE, integrated (`599fa303`) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -274,3 +274,24 @@ reported → conditional on the pin; pinned with Fable then Opus → real, launc
 account switched → contradicted, gate closed. Not done here: the launch still resolves the
 declaration by its primary id and launches `declaration.model` (lot K files; diff in the worker
 report); the operator's real unpinned declaration will read conditional until pinned.
+
+### 2026-10-22 10:20 — lot M integrated (`599fa303`)
+
+`599fa303` merges lot M (`9d799429`…`c9ff29fc`) with `--no-ff`, no conflict. Checked against the
+code before merging: the diff reads no credential file (the only `auth.json` mention is ADR 0057's
+rejected alternative), the store keeps the 16-hex fingerprint only, the five identity states, the
+Fable-exhausted/Opus-real case, the exhausted all-models window and the shared quota reading of
+`alternateModels` candidates are tested, `workRouting.qualify` is in the allow-list (45/49), and
+the panel names the exact `"accountFingerprint": "<16 hex>"` to add. Integration commits:
+README section 7 documents `alternateModels` and `accountFingerprint`, the upgrade notes record the
+`account_fingerprint` column (`07689000`); `test:e2e-production` now also runs
+`work-production.spec.ts` and, in its own invocation with `AI_USAGE_WORK_ATTEMPT_E2E=1`,
+`work-attempt-production.spec.ts`, so CI's existing step covers both (`b83699f0`); `.agent-bin/`
+is ignored (`2c08135e`). Verified on the merged tree: `bun run check` 1608 files clean;
+`bun run typecheck` PASS (turbo `check` 58/58 with `--force`, 0 cached); local-collectors 260,
+local-machine 217, report-core 513, usage-engine-control 62, usage-engine-runtime 217, usage-store
+261, web-contract 93 pass, 0 fail (system Bun 1.4.2); under `nix develop` (Bun 1.3.13) web unit
+1556 pass, production build PASS, `work-production.spec.ts` 4/4, opt-in
+`work-attempt-production.spec.ts` 1/1. Not run here: lint, the tools suite, `test:e2e`, the full
+`test:e2e-production` script and `test:web-production`; the launch still resolves the declaration
+by its primary id and launches `declaration.model` until lot K's files are swapped.
