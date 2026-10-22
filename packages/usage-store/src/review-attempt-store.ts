@@ -163,6 +163,7 @@ export interface QueryReviewAttemptsResult {
 
 export interface QueryReviewTargetResolutionInput {
   readonly dbPath: string;
+  /** When given, the Desktop row must carry both this id and `sourceSessionId`; a mismatch resolves no Desktop session. */
   readonly desktopSessionId?: string | null;
   readonly harness: string;
   readonly machineId: string;
@@ -170,7 +171,10 @@ export interface QueryReviewTargetResolutionInput {
 }
 
 export interface ReviewTargetResolutionFacts {
-  /** The Claude Desktop session that declared this transcript (by desktop id, else by transcript id). */
+  /**
+   * The Claude Desktop session that declared this transcript (`cli_session_id`), and the one the
+   * command named when it named one; `null` for another harness or when no row matches both.
+   */
   readonly desktop: {
     readonly cwd: string | null;
     readonly desktopSessionId: string;
@@ -553,22 +557,20 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
       Effect.try({
         try: () => {
           const desktopSessionId = input.desktopSessionId ?? null;
+          // Only the Claude Desktop registry knows transcripts. The row must declare this very
+          // transcript, and when the command names a Desktop session it must be that row: a
+          // desktop id alone would let a command borrow another session's checkout.
           const desktopRecord =
-            input.harness === 'claude' || desktopSessionId !== null
+            input.harness === 'claude'
               ? (db
                   .query(`
                     SELECT desktop_session_id, cwd, worktree_path, title
                     FROM claude_desktop_sessions
-                    WHERE machine_id = ? AND (desktop_session_id = ? OR cli_session_id = ?)
-                    ORDER BY (desktop_session_id = ?) DESC, last_activity_at DESC, id DESC
+                    WHERE machine_id = ? AND cli_session_id = ? AND (? IS NULL OR desktop_session_id = ?)
+                    ORDER BY last_activity_at DESC, id DESC
                     LIMIT 1
                   `)
-                  .get(
-                    input.machineId,
-                    desktopSessionId ?? '',
-                    input.harness === 'claude' ? input.sourceSessionId : '',
-                    desktopSessionId ?? '',
-                  ) as {
+                  .get(input.machineId, input.sourceSessionId, desktopSessionId, desktopSessionId) as {
                   cwd: string | null;
                   desktop_session_id: string;
                   title: string | null;

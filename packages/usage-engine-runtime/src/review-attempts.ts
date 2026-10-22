@@ -281,7 +281,8 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     const target: ReviewAttemptTarget = {
       checkoutOrigin: checkout?.origin ?? null,
       checkoutPath: checkout?.checkoutPath ?? null,
-      desktopSessionId: command.target.desktopSessionId ?? read.facts.desktop?.desktopSessionId ?? null,
+      // The resolved row's id only: a named id that matched no row of this transcript is not recorded.
+      desktopSessionId: read.facts.desktop?.desktopSessionId ?? null,
       harness: command.target.harness,
       projectLabel: bounded(read.facts.session?.projectLabel, 256),
       sessionTitle: bounded(read.facts.desktop?.title ?? read.facts.session?.name, 256),
