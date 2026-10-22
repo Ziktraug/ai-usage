@@ -77,7 +77,7 @@ import {
   revalidatePrivateStoreForConfirmation,
 } from './private-storage';
 import { createProviderQuotaStore, MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-store';
-import { createReviewAttemptStore, REVIEW_ATTEMPT_TABLES, reviewAttemptSchemaSql } from './review-attempt-store';
+import { createReviewAttemptStore, migrateReviewAttemptSchema, REVIEW_ATTEMPT_TABLES } from './review-attempt-store';
 import type { ServedRevisionQueryKind } from './served-query-catalog';
 import { createServedReportStore } from './served-report-store';
 import {
@@ -1772,7 +1772,11 @@ const migrate = (db: SqliteDatabase): boolean => {
       schemaChanged = true;
       db.exec('ALTER TABLE executor_observations ADD COLUMN account_fingerprint TEXT');
     }
-    db.exec(reviewAttemptSchemaSql);
+    // Review attempts gain the reservation, scope and guarantee columns and the reserving unique
+    // index additively (ADR 0055); the helper reports whether it changed anything.
+    if (migrateReviewAttemptSchema(db)) {
+      schemaChanged = true;
+    }
     if (skillObservationCollectionStateMissing) {
       // Stores written by the first implementation have observation/session
       // rows but no durable producer bound. The lost answer cannot be
@@ -4424,6 +4428,7 @@ export const {
   markReviewAttemptsLost,
   queryReviewAttempts,
   queryReviewTargetResolution,
+  releaseReviewAttemptReservation,
   requestReviewAttempt,
   transitionReviewAttempt,
 } = createReviewAttemptStore({

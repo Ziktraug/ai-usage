@@ -26,12 +26,9 @@ import {
   type SourceControlView,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
-import {
-  REVIEW_ATTEMPT_STATES,
-  REVIEW_LAUNCH_REFUSAL_REASONS,
-  type ReviewAttemptState,
-  type ReviewLaunchRefusalReason,
-} from '@ai-usage/report-core/work-attempts';
+// The import-free vocabulary module: the shell closure must not pull the launch policy with two arrays.
+import type { ReviewAttemptState, ReviewLaunchRefusalReason } from '@ai-usage/report-core/work-attempts-vocabulary';
+import { REVIEW_ATTEMPT_STATES, REVIEW_LAUNCH_REFUSAL_REASONS } from '@ai-usage/report-core/work-attempts-vocabulary';
 import { parseRoutingQualification, type RoutingQualification } from '@ai-usage/report-core/work-routing';
 
 declare const usageEngineBrand: unique symbol;

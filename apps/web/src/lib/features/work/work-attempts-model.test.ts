@@ -4,9 +4,12 @@ import type { WorkAttemptsListOutput, WorkAttemptWire } from '@ai-usage/web-cont
 import {
   checkoutOriginLabel,
   formatDurationSeconds,
+  guaranteeSummary,
   launchGate,
   liveAttemptOf,
+  reservationNotice,
   reviewAttemptStateLabel,
+  scopeSummary,
   shortAttemptId,
 } from './work-attempts-model';
 
@@ -106,5 +109,101 @@ describe('launch gate', () => {
     expect(formatDurationSeconds(null)).toBeNull();
     expect(liveAttemptOf(list([attempt('finished'), attempt('starting')], null))?.attemptId).toBe('attempt-starting');
     expect(liveAttemptOf(null)).toBeNull();
+  });
+});
+
+describe('reservation, scope and guarantee texts', () => {
+  const scope = {
+    base: 'first-parent',
+    baseSha: 'c'.repeat(40),
+    fileCount: 4,
+    files: [
+      { additions: 3, coverage: 'complete', deletions: 1, path: 'a.ts', previousPath: null, status: 'modified' },
+      { additions: 9, coverage: 'partial', deletions: 0, path: 'b.ts', previousPath: null, status: 'added' },
+      { additions: 0, coverage: 'omitted', deletions: 2, path: 'c.ts', previousPath: null, status: 'deleted' },
+    ],
+    headSha: 'b'.repeat(40),
+    includedBytes: 2048,
+    includedLines: 60,
+    kind: 'commit',
+    parentCount: 2,
+    patchBytes: 5120,
+    patchLines: 140,
+    patchSha256: 'd'.repeat(64),
+    repositoryPrefix: '',
+    subject: 'merge: side',
+    truncated: true,
+    workingTreeDirty: false,
+  } satisfies NonNullable<WorkAttemptWire['scope']>;
+
+  test('a lost attempt that still holds the target keeps the launch, and says what the engine will check', () => {
+    const held = { reservation: { held: true, releaseEvidence: null, releasedAt: null }, state: 'lost' } as const;
+    expect(reservationNotice(held)).toContain('still reserves this target');
+    expect(reservationNotice(held)).toContain('never adopts or stops that process');
+    expect(
+      reservationNotice({
+        reservation: { held: false, releaseEvidence: 'process-absent', releasedAt: '2026-10-22T10:05:00.000Z' },
+        state: 'lost',
+      }),
+    ).toBe('Reservation released: no process on this machine carried its launch marker any more.');
+    expect(reservationNotice({ ...held, state: 'finished' })).toBeNull();
+    // The button stays: a click is the explicit request for the engine's process check.
+    expect(
+      launchGate({
+        attempts: list([{ ...attempt('lost'), reservation: held.reservation }], admitted),
+        attemptsPending: false,
+        chosen,
+        recommendation: real,
+        reviewTargetsDeclared: 1,
+      }).kind,
+    ).toBe('open');
+  });
+
+  test('the scope names one commit, its base, what was cut and the patch hash', () => {
+    expect(scopeSummary(scope)).toBe(
+      `Reviewed commit bbbbbbbbbbbb "merge: side" against its first parent cccccccccccc (a merge, first parent only), one revision only. Patch partial: 2 KB of 5 KB, 60 of 140 lines; 4 files (1 complete, 1 partial, 1 omitted, 1 not listed); sha256 dddddddddddd.`,
+    );
+    expect(
+      scopeSummary({
+        ...scope,
+        base: 'empty-tree',
+        files: scope.files.slice(0, 1),
+        includedBytes: 900,
+        includedLines: 1,
+        parentCount: 0,
+        patchBytes: 900,
+        patchLines: 1,
+        subject: null,
+        truncated: false,
+        fileCount: 1,
+      }),
+    ).toBe(
+      'Reviewed commit bbbbbbbbbbbb against the empty tree (a root commit), one revision only. Patch complete: 900 B, 1 line; 1 file (1 complete); sha256 dddddddddddd.',
+    );
+  });
+
+  test('the guarantee states the excluded sources, the managed policy and the limits of read-only', () => {
+    const guarantee = {
+      cliVersion: '2.1.306',
+      effort: null,
+      model: 'opus',
+      managedSettings: 'absent',
+      safeMode: true,
+      settingSources: [],
+      tools: ['Read', 'Grep', 'Glob'],
+    } satisfies NonNullable<WorkAttemptWire['guarantee']>;
+    const text = guaranteeSummary(guarantee);
+    expect(text).toContain(
+      'Ran under Claude Code 2.1.306: settings loaded none (user, project and local settings, and their hooks, were not loaded)',
+    );
+    expect(text).toContain('safe mode on; tools Read, Grep, Glob; model opus;');
+    expect(guaranteeSummary({ ...guarantee, effort: 'high', model: null })).toContain(
+      'model not passed (CLI default), effort high;',
+    );
+    expect(text).toContain('policy delivered by an organization is not observable here');
+    expect(text).toContain('no OS sandbox is claimed');
+    expect(guaranteeSummary({ ...guarantee, managedSettings: 'present' })).toContain(
+      'cannot be excluded: its hooks, if any, still ran',
+    );
   });
 });

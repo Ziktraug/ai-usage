@@ -49,6 +49,7 @@
     "./work-attention-interpretation": "./src/work-attention-interpretation.ts",
     "./work-attention-native": "./src/work-attention-native.ts",
     "./work-attempts": "./src/work-attempts.ts",
+    "./work-attempts-vocabulary": "./src/work-attempts-vocabulary.ts",
     "./work-executors": "./src/work-executors.ts",
     "./work-routing": "./src/work-routing.ts"
   },

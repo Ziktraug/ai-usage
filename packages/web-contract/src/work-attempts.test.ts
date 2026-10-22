@@ -21,13 +21,41 @@ const attempt: WorkAttemptWire = {
   executorHarness: 'claude-code',
   exitCode: 0,
   failureReason: null,
+  guarantee: {
+    cliVersion: '2.1.306',
+    effort: null,
+    model: 'opus',
+    managedSettings: 'absent',
+    safeMode: true,
+    settingSources: [],
+    tools: ['Read', 'Grep', 'Glob'],
+  },
   machineId: 'machine-a',
   nativeSessionId: 'native-1',
   nativeSessionRowId: 'row-1',
   numTurns: 3,
   requestedAt: '2026-10-22T10:00:00.000Z',
+  reservation: { held: false, releaseEvidence: null, releasedAt: null },
   resultExcerpt: 'Finding 1: src/a.ts:12 (medium)\nA null path reaches the launcher.',
   resultKind: 'review',
+  scope: {
+    base: 'first-parent',
+    baseSha: 'c'.repeat(40),
+    fileCount: 1,
+    files: [{ additions: 1, coverage: 'complete', deletions: 0, path: 'a.ts', previousPath: null, status: 'modified' }],
+    headSha: 'b'.repeat(40),
+    includedBytes: 90,
+    includedLines: 7,
+    kind: 'commit',
+    parentCount: 1,
+    patchBytes: 90,
+    patchLines: 7,
+    patchSha256: 'd'.repeat(64),
+    repositoryPrefix: '',
+    subject: 'fix: one',
+    truncated: false,
+    workingTreeDirty: false,
+  },
   startedAt: '2026-10-22T10:00:01.000Z',
   state: 'finished',
   target: {
@@ -103,6 +131,39 @@ describe('Work attempts Web contract', () => {
       parseWorkAttemptsListOutput({ data: { ...listData, attempts: [{ ...attempt, state: 'done' }] }, ok: true }),
     ).toThrow();
     expect(() => parseWorkAttemptsListOutput({ error: { message: 'x', tag: 'Refused' }, ok: false })).toThrow();
+    // The scope and guarantee are strict too: a launch session id, a pull-request scope or a write tool never pass.
+    expect(() =>
+      parseWorkAttemptsListOutput({
+        data: { ...listData, attempts: [{ ...attempt, launchSessionId: 'x' }] },
+        ok: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      parseWorkAttemptsListOutput({
+        data: { ...listData, attempts: [{ ...attempt, scope: { ...attempt.scope, kind: 'pull-request' } }] },
+        ok: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      parseWorkAttemptsListOutput({
+        data: { ...listData, attempts: [{ ...attempt, guarantee: { ...attempt.guarantee, tools: ['Bash'] } }] },
+        ok: true,
+      }),
+    ).toThrow();
+    const held = {
+      ...attempt,
+      reservation: { held: true, releaseEvidence: null, releasedAt: null },
+      state: 'lost' as const,
+    };
+    expect(parseWorkAttemptsListOutput({ data: { ...listData, attempts: [held] }, ok: true })).toMatchObject({
+      ok: true,
+    });
+    expect(
+      parseWorkAttemptsStartOutput({
+        error: { message: 'attempt a lost contact', reason: 'attempt-unresolved', tag: 'Refused' },
+        ok: false,
+      }),
+    ).toMatchObject({ error: { reason: 'attempt-unresolved' } });
 
     expect(
       parseWorkAttemptsStartOutput({ data: { attemptId: 'a', reused: true, state: 'running' }, ok: true }),

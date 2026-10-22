@@ -6,8 +6,8 @@ import type { APIRequestContext, Page } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transport';
 import {
+  WORK_ATTEMPT_FIXTURE_COMMIT_SUBJECT,
   WORK_ATTEMPT_FIXTURE_ENVIRONMENT_KEY,
-  WORK_ATTEMPT_FIXTURE_NATIVE_SESSION_ID,
   workAttemptFixtureCandidateId,
 } from './work-attempt-fixture';
 
@@ -36,6 +36,13 @@ const ATTEMPT_TIMEOUT_MS = 45_000;
 const START_LABEL = 'Start read-only review (Claude Code)';
 const STARTED_STATUS = /Review attempt [0-9a-f]{8} started/u;
 const ATTEMPT_ID = /^[0-9a-f-]{36}$/u;
+// The real CLI reports the `--session-id` the engine chose; the instrumented fake does the same.
+const NATIVE_SESSION = /Native session: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/u;
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const REVIEWED_COMMIT = new RegExp(
+  `Reviewed commit [0-9a-f]{12} "${WORK_ATTEMPT_FIXTURE_COMMIT_SUBJECT}" against its first parent [0-9a-f]{12}, one revision only\\. Patch complete`,
+  'u',
+);
 
 const waitForHydratedWork = async (page: Page): Promise<void> => {
   await expect(page.locator('main[data-route-shell="work"][data-work-hydrated="true"]')).toBeVisible({
@@ -164,7 +171,12 @@ test('launches one read-only review from the cockpit, follows it to its result a
   await expect(item).toContainText('finished · attempt');
   await expect(item).toContainText('Finding 1: packages/fixture/a.ts:1 (low) The fixture change has no test.');
   await expect(item).toContainText('Result (review) · 2 turns · 2.5 s · exit 0:');
-  await expect(item).toContainText(`Native session: ${WORK_ATTEMPT_FIXTURE_NATIVE_SESSION_ID}`);
+  await expect(item).toContainText(NATIVE_SESSION);
+  // The review was given one commit with its patch, and ran with no settings source in safe mode.
+  await expect(item.locator('[data-work-attempt-scope]')).toContainText(REVIEWED_COMMIT);
+  await expect(item.locator('[data-work-attempt-guarantee]')).toContainText(
+    'Ran under Claude Code 2.1.306: settings loaded none (user, project and local settings, and their hooks, were not loaded); safe mode on; tools Read, Grep, Glob',
+  );
   await expect(item).toContainText('not collected yet');
   await expect(item).toContainText('Launched with account fixture · model unknown · effort unknown.');
   await expect(item).toContainText('Checkout: ');
@@ -191,6 +203,17 @@ test('launches one read-only review from the cockpit, follows it to its result a
   expect(listOutput.ok && listOutput.data.attempts.map((attempt) => [attempt.attemptId, attempt.state])).toEqual([
     [attemptId, 'finished'],
   ]);
-  expect(listOutput.ok && listOutput.data.attempts[0]?.nativeSessionId).toBe(WORK_ATTEMPT_FIXTURE_NATIVE_SESSION_ID);
+  expect(listOutput.ok && listOutput.data.attempts[0]?.nativeSessionId).toMatch(SESSION_ID);
+  expect(listOutput.ok && listOutput.data.attempts[0]?.scope).toMatchObject({
+    base: 'first-parent',
+    kind: 'commit',
+    subject: WORK_ATTEMPT_FIXTURE_COMMIT_SUBJECT,
+    truncated: false,
+  });
+  expect(listOutput.ok && listOutput.data.attempts[0]?.reservation).toEqual({
+    held: false,
+    releaseEvidence: null,
+    releasedAt: null,
+  });
   expect(listOutput.ok && listOutput.data.target).toMatchObject({ admitted: true, checkoutOrigin: 'desktop-worktree' });
 });

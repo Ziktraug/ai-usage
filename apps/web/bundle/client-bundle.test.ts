@@ -41,9 +41,8 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// feat/work-resume-cockpit at a7fd4905: Work cockpit sources, routers and Query families; local
-// production build on Bun 1.3.13 (CI run 39735055775 measured 312 363 B).
-const RECORDED_GZIP_CLOSURE_BYTES = 312_372;
+// Lot K on 759daec1 (312 370 B before): attempt states and refusal reasons now come from an import-free module, so the shell closure no longer pulls the Work policy chunk.
+const RECORDED_GZIP_CLOSURE_BYTES = 305_459;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */

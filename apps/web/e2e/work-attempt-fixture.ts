@@ -10,19 +10,24 @@ import { Effect } from 'effect';
  * `AI_USAGE_WORK_ATTEMPT_E2E=1` so the default production profile keeps its golden counters:
  *
  * - a fake `claude` first on the engine's PATH: answers `--version` and `auth status` (so the
- *   `executors.capabilities` source observes a signed-in Claude Code) and `-p … --output-format
- *   stream-json` with one `system/init` line, a pause, and one `result` line; any other invocation
+ *   `executors.capabilities` source observes a signed-in Claude Code), `--help` with the options
+ *   the launcher qualifies (ADR 0055), and `-p … --output-format stream-json` with one
+ *   `system/init` line, a pause, and one `result` line, both carrying the `--session-id` it was
+ *   given, as the real CLI does. It exits non-zero unless the launch excluded every settings
+ *   source, ran in safe mode with only Read, Grep and Glob, in plan mode; any other invocation
  *   fails. The Claude quota source is untouched: the Agent SDK runs its own bundled CLI, never PATH.
  * - the disposable home config: one `routing.executors[]` declaration for Claude Code and one
  *   `routing.reviewTargets[]` entry naming the seeded fixture repository, so the blocked root's
  *   worktree (a descendant) is admitted;
- * - the worktree directory the blocked Desktop root declares as `cwd`, so the harness can start there;
+ * - the worktree directory the blocked Desktop root declares as `cwd`, a git repository with two
+ *   commits, so the harness starts there and the review's scope is the second commit;
  * - one stored Claude quota observation dated at the pinned clock, because a `real`
  *   recommendation needs fresh quota and the isolated home has no Claude credentials to read any.
  */
 export const WORK_ATTEMPT_FIXTURE_ENVIRONMENT_KEY = 'AI_USAGE_WORK_ATTEMPT_E2E';
 export const WORK_ATTEMPT_FIXTURE_ACCOUNT = 'fixture';
-export const WORK_ATTEMPT_FIXTURE_NATIVE_SESSION_ID = 'fixture-review-session-0001';
+/** The subject of the commit the review is given (the worktree's HEAD). */
+export const WORK_ATTEMPT_FIXTURE_COMMIT_SUBJECT = 'fixture: change the review target';
 export const WORK_ATTEMPT_FIXTURE_RESULT =
   'Finding 1: packages/fixture/a.ts:1 (low) The fixture change has no test.\nFinding 2: README.md:3 (info) Wording only.';
 /** The fake harness pauses this long between init and result, so a second request lands on a live attempt. */
@@ -46,6 +51,53 @@ export interface SeedWorkAttemptFixtureInput {
   readonly repository: string;
 }
 
+/** What `claude --help` must name for the launcher to qualify the CLI (claude-review-cli.ts). */
+const FAKE_HELP_OPTIONS = [
+  '  --allowedTools, --allowed-tools <tools...>',
+  '  --disallowedTools, --disallowed-tools <tools...>',
+  '  --effort <level>',
+  '  --model <model>',
+  '  --output-format <format>',
+  '  --permission-mode <mode>',
+  '  -p, --print',
+  '  --safe-mode',
+  '  --session-id <uuid>',
+  '  --setting-sources <sources>',
+  '  --strict-mcp-config',
+  '  --tools <tools...>',
+  '  --verbose',
+] as const;
+
+const FIXTURE_GIT_ENVIRONMENT = {
+  GIT_AUTHOR_DATE: '2026-07-01T08:00:00Z',
+  GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+  GIT_AUTHOR_NAME: 'Fixture',
+  GIT_COMMITTER_DATE: '2026-07-01T08:00:00Z',
+  GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+  GIT_COMMITTER_NAME: 'Fixture',
+} as const;
+
+/** A two-commit repository at the worktree, so the review has one commit and a first parent to compare it with. */
+const seedReviewedCheckout = async (checkout: string): Promise<void> => {
+  const git = async (...args: string[]): Promise<void> => {
+    const run = Bun.spawn(['git', '-c', 'core.hooksPath=/dev/null', ...args], {
+      cwd: checkout,
+      env: { HOME: checkout, PATH: process.env.PATH ?? '', ...FIXTURE_GIT_ENVIRONMENT },
+      stderr: 'ignore',
+      stdout: 'ignore',
+    });
+    if ((await run.exited) !== 0) {
+      throw new Error(`git ${args[0]} failed while seeding the review fixture checkout`);
+    }
+  };
+  await git('init', '-q', '-b', 'main');
+  await writeFile(path.join(checkout, 'a.ts'), 'export const value = 1;\n');
+  await git('add', 'a.ts');
+  await git('commit', '-q', '-m', 'fixture: first');
+  await writeFile(path.join(checkout, 'a.ts'), 'export const value = 2;\n');
+  await git('commit', '-q', '-am', WORK_ATTEMPT_FIXTURE_COMMIT_SUBJECT);
+};
+
 const fakeClaudeSource = (): string =>
   [
     '#!/usr/bin/env bun',
@@ -60,12 +112,21 @@ const fakeClaudeSource = (): string =>
     '  write({ authMethod: "claude.ai", loggedIn: true });',
     '  process.exit(0);',
     '}',
+    'if (args[0] === "--help") {',
+    `  process.stdout.write(${JSON.stringify(`${FAKE_HELP_OPTIONS.join('\n')}\n`)});`,
+    '  process.exit(0);',
+    '}',
     'if (args[0] === "-p") {',
-    '  const mode = args[args.indexOf("--permission-mode") + 1];',
-    '  if (mode !== "plan" || args.includes("--dangerously-skip-permissions")) { process.exit(7); }',
-    `  write({ session_id: ${JSON.stringify(WORK_ATTEMPT_FIXTURE_NATIVE_SESSION_ID)}, subtype: "init", tools: ["Read", "Grep", "Glob"], type: "system" });`,
+    '  const value = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);',
+    '  if (value("--permission-mode") !== "plan" || args.includes("--dangerously-skip-permissions")) { process.exit(7); }',
+    '  if (value("--setting-sources") !== "" || !args.includes("--safe-mode")) { process.exit(6); }',
+    '  const tools = args.slice(args.indexOf("--tools") + 1, args.indexOf("--strict-mcp-config"));',
+    '  if (tools.join(",") !== "Read,Grep,Glob") { process.exit(5); }',
+    '  const sessionId = value("--session-id") ?? "";',
+    '  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(sessionId)) { process.exit(4); }',
+    '  write({ session_id: sessionId, subtype: "init", tools: ["Read", "Grep", "Glob"], type: "system" });',
     `  await new Promise((resolve) => setTimeout(resolve, ${WORK_ATTEMPT_FIXTURE_RUN_MS}));`,
-    `  write({ duration_ms: ${WORK_ATTEMPT_FIXTURE_RUN_MS}, is_error: false, num_turns: 2, result: ${JSON.stringify(WORK_ATTEMPT_FIXTURE_RESULT)}, session_id: ${JSON.stringify(WORK_ATTEMPT_FIXTURE_NATIVE_SESSION_ID)}, subtype: "success", type: "result" });`,
+    `  write({ duration_ms: ${WORK_ATTEMPT_FIXTURE_RUN_MS}, is_error: false, num_turns: 2, result: ${JSON.stringify(WORK_ATTEMPT_FIXTURE_RESULT)}, session_id: sessionId, subtype: "success", type: "result" });`,
     '  process.exit(0);',
     '}',
     'process.exit(1);',
@@ -109,7 +170,9 @@ export const seedWorkAttemptFixture = async (input: SeedWorkAttemptFixtureInput)
   );
 
   // The blocked root declares a worktree under the repository as its cwd; the harness starts there.
-  await mkdir(path.join(input.repository, ...WORK_ATTEMPT_FIXTURE_WORKTREE), { recursive: true });
+  const worktree = path.join(input.repository, ...WORK_ATTEMPT_FIXTURE_WORKTREE);
+  await mkdir(worktree, { recursive: true });
+  await seedReviewedCheckout(worktree);
 
   await mkdir(path.dirname(input.databasePath), { mode: 0o700, recursive: true });
   await Effect.runPromise(initializeUsageStore({ dbPath: input.databasePath }));

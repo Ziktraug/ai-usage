@@ -5,6 +5,11 @@ import {
   REVIEW_ATTEMPT_STATES,
   REVIEW_CHECKOUT_ORIGINS,
   REVIEW_LAUNCH_REFUSAL_REASONS,
+  REVIEW_READ_ONLY_TOOLS,
+  REVIEW_RESERVATION_RELEASE_EVIDENCE,
+  REVIEW_SCOPE_FILE_COVERAGES,
+  REVIEW_SCOPE_FILE_STATUSES,
+  REVIEW_SETTING_SOURCES,
 } from '@ai-usage/report-core/work-attempts';
 import { type ContractRouterClient, oc } from '@orpc/contract';
 import {
@@ -23,6 +28,7 @@ import {
   parse,
   picklist,
   pipe,
+  regex,
   safeInteger,
   strictObject,
   string,
@@ -63,6 +69,53 @@ export const workAttemptTargetSchema = strictObject({
   sourceSessionId: idSchema,
 });
 
+const objectIdSchema = pipe(string(), regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u, 'Expected a git object id.'));
+const scopePathSchema = pipe(string(), minLength(1), maxLength(REVIEW_ATTEMPT_BOUNDS.maxScopePath));
+
+/** The one commit a review was given and how much of its patch it received (ADR 0055). */
+export const workAttemptScopeSchema = strictObject({
+  base: picklist(['empty-tree', 'first-parent']),
+  baseSha: objectIdSchema,
+  fileCount: countSchema,
+  files: pipe(
+    array(
+      strictObject({
+        additions: countSchema,
+        coverage: picklist(REVIEW_SCOPE_FILE_COVERAGES),
+        deletions: countSchema,
+        path: scopePathSchema,
+        previousPath: nullable(scopePathSchema),
+        status: picklist(REVIEW_SCOPE_FILE_STATUSES),
+      }),
+    ),
+    maxLength(REVIEW_ATTEMPT_BOUNDS.maxScopeFiles),
+  ),
+  headSha: objectIdSchema,
+  includedBytes: countSchema,
+  includedLines: countSchema,
+  kind: literal('commit'),
+  parentCount: countSchema,
+  patchBytes: countSchema,
+  patchLines: countSchema,
+  patchSha256: pipe(string(), regex(/^[0-9a-f]{64}$/u, 'Expected a SHA-256 digest.')),
+  repositoryPrefix: pipe(string(), maxLength(REVIEW_ATTEMPT_BOUNDS.maxPath)),
+  subject: nullable(shortTextSchema),
+  truncated: boolean(),
+  workingTreeDirty: boolean(),
+});
+
+/** What the launched harness was configured with: the guarantee "read-only" rests on (ADR 0055). */
+export const workAttemptGuaranteeSchema = strictObject({
+  cliVersion: shortTextSchema,
+  effort: nullable(shortTextSchema),
+  managedSettings: picklist(['absent', 'present']),
+  /** The model the launch passed (the launched candidate's); `null` when the CLI default applied. */
+  model: nullable(shortTextSchema),
+  safeMode: boolean(),
+  settingSources: pipe(array(picklist(REVIEW_SETTING_SOURCES)), maxLength(REVIEW_SETTING_SOURCES.length)),
+  tools: pipe(array(picklist(REVIEW_READ_ONLY_TOOLS)), minLength(1), maxLength(REVIEW_READ_ONLY_TOOLS.length)),
+});
+
 export const workAttemptSchema = strictObject({
   /** Human acceptance, distinct from the result; always `pending` in this version (no mutation exists). */
   acceptance: picklist(REVIEW_ATTEMPT_ACCEPTANCES),
@@ -81,14 +134,27 @@ export const workAttemptSchema = strictObject({
   executorHarness: picklist(['claude-code', 'codex']),
   exitCode: nullable(pipe(number(), safeInteger())),
   failureReason: nullable(pipe(string(), minLength(1), maxLength(REVIEW_ATTEMPT_BOUNDS.maxFailureReason))),
+  /** The harness configuration the launch rested on; `null` before a launch and for a refusal. */
+  guarantee: nullable(workAttemptGuaranteeSchema),
   machineId: shortTextSchema,
   nativeSessionId: nullable(idSchema),
   /** The served Session row for the native session once the report collected it; the link target of "Open session detail". */
   nativeSessionRowId: nullable(idSchema),
   numTurns: nullable(countSchema),
   requestedAt: timestampSchema,
+  /**
+   * Whether the attempt still blocks a new launch on its identity: a live attempt, or a lost one
+   * the engine has not released with evidence. A release names its evidence; age never releases.
+   */
+  reservation: strictObject({
+    held: boolean(),
+    releaseEvidence: nullable(picklist(REVIEW_RESERVATION_RELEASE_EVIDENCE)),
+    releasedAt: nullable(timestampSchema),
+  }),
   resultExcerpt: nullable(pipe(string(), minLength(1), maxLength(REVIEW_ATTEMPT_BOUNDS.maxExcerpt))),
   resultKind: nullable(picklist(REVIEW_ATTEMPT_RESULT_KINDS)),
+  /** The commit the review was given; `null` when no scope was prepared (refusal, failure before the launch). */
+  scope: nullable(workAttemptScopeSchema),
   startedAt: nullable(timestampSchema),
   state: picklist(REVIEW_ATTEMPT_STATES),
   target: workAttemptTargetSchema,
@@ -171,6 +237,8 @@ export const workAttemptsStartOutputSchema = pipe(
 );
 
 export type WorkAttemptWire = InferOutput<typeof workAttemptSchema>;
+export type WorkAttemptScopeWire = InferOutput<typeof workAttemptScopeSchema>;
+export type WorkAttemptGuaranteeWire = InferOutput<typeof workAttemptGuaranteeSchema>;
 export type WorkAttemptsListInput = InferOutput<typeof workAttemptsListInputSchema>;
 export type WorkAttemptsListData = InferOutput<typeof workAttemptsListDataSchema>;
 export type WorkAttemptsListOutput = InferOutput<typeof workAttemptsListOutputSchema>;

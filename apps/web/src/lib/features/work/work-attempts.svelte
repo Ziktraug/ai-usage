@@ -4,8 +4,12 @@
   import { sessionRoutePathname } from '../sessions/detail/session-route';
   import {
     checkoutOriginLabel,
-    formatDurationSeconds,
+    DIRTY_TREE_TEXT,
+    guaranteeSummary,
+    reservationNotice,
+    resultHeading,
     reviewAttemptStateLabel,
+    scopeSummary,
     shortAttemptId,
   } from './work-attempts-model';
   import { formatExactInstant, formatRelativeAge } from './work-attention-model';
@@ -38,6 +42,7 @@
     <ul class={workFactList}>
       {#each attempts.data.attempts as attempt (attempt.attemptId)}
         {@const live = isLiveReviewAttemptState(attempt.state)}
+        {@const notice = reservationNotice(attempt)}
         <li class={workPanel} data-work-attempt={attempt.attemptId} data-work-attempt-state={attempt.state}>
           <p class={workHeading}>
             {reviewAttemptStateLabel(attempt.state)}
@@ -71,15 +76,23 @@
           </p>
           {#if attempt.state === 'lost'}
             <p class={workMuted}>Contact lost; verify in the harness. The engine never relaunches an attempt.</p>
+            {#if notice}
+              <p class={workMuted} data-work-attempt-reservation={attempt.reservation.held ? 'held' : 'released'}>
+                {notice}
+              </p>
+            {/if}
+          {/if}
+          {#if attempt.scope}
+            <p class={workMuted} data-work-attempt-scope>{scopeSummary(attempt.scope)}</p>
+            {#if attempt.scope.workingTreeDirty}
+              <p class={workMuted}>{DIRTY_TREE_TEXT}</p>
+            {/if}
+          {/if}
+          {#if attempt.guarantee}
+            <p class={workMuted} data-work-attempt-guarantee>{guaranteeSummary(attempt.guarantee)}</p>
           {/if}
           {#if attempt.resultExcerpt}
-            <p class={workMuted}>
-              Result ({attempt.resultKind ?? 'unknown'}){attempt.numTurns === null ? '' : ` · ${attempt.numTurns} turns`}{formatDurationSeconds(
-                attempt.durationMs,
-              )
-                ? ` · ${formatDurationSeconds(attempt.durationMs)}`
-                : ''}{attempt.exitCode === null ? '' : ` · exit ${attempt.exitCode}`}:
-            </p>
+            <p class={workMuted}>{resultHeading(attempt)}</p>
             <pre class={workExcerpt} data-work-attempt-excerpt>{attempt.resultExcerpt}</pre>
           {/if}
           {#if attempt.failureReason}

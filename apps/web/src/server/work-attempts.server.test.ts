@@ -33,14 +33,44 @@ const attempt: ReviewAttempt = {
   executorHarness: 'claude-code',
   exitCode: 0,
   failureReason: null,
+  guarantee: {
+    cliVersion: '2.1.306',
+    effort: null,
+    model: 'opus',
+    managedSettings: 'absent',
+    safeMode: true,
+    settingSources: [],
+    tools: ['Read', 'Grep', 'Glob'],
+  },
   idempotencyKey: 'k'.repeat(64),
+  launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
   machineId: 'machine-a',
   nativeSessionId: 'native-1',
   numTurns: 2,
   pid: 4242,
+  releaseEvidence: null,
+  releasedAt: null,
   requestedAt: '2026-10-22T10:00:00.000Z',
   resultExcerpt: 'Finding 1',
   resultKind: 'review',
+  scope: {
+    base: 'first-parent',
+    baseSha: 'c'.repeat(40),
+    fileCount: 1,
+    files: [{ additions: 1, coverage: 'complete', deletions: 0, path: 'a.ts', previousPath: null, status: 'modified' }],
+    headSha: 'b'.repeat(40),
+    includedBytes: 90,
+    includedLines: 7,
+    kind: 'commit',
+    parentCount: 1,
+    patchBytes: 90,
+    patchLines: 7,
+    patchSha256: 'd'.repeat(64),
+    repositoryPrefix: '',
+    subject: 'fix: one',
+    truncated: false,
+    workingTreeDirty: false,
+  },
   startedAt: '2026-10-22T10:00:01.000Z',
   state: 'finished',
   target: {
@@ -95,6 +125,16 @@ describe('Work attempts server', () => {
     expect(wire).not.toHaveProperty('pid');
     expect(wire).not.toHaveProperty('idempotencyKey');
     expect(wire).not.toHaveProperty('declaration');
+    expect(wire).not.toHaveProperty('launchSessionId');
+    expect(wire.reservation).toEqual({ held: false, releaseEvidence: null, releasedAt: null });
+    expect(wire.scope as unknown).toEqual(attempt.scope);
+    expect(wire.guarantee as unknown).toEqual(attempt.guarantee);
+    // A lost attempt not released with evidence still holds the target.
+    expect(toWorkAttemptWire({ ...attempt, state: 'lost' }).reservation.held).toBe(true);
+    expect(
+      toWorkAttemptWire({ ...attempt, releaseEvidence: 'process-absent', releasedAt: attempt.updatedAt, state: 'lost' })
+        .reservation,
+    ).toEqual({ held: false, releaseEvidence: 'process-absent', releasedAt: attempt.updatedAt });
     expect(wire.declared).toEqual({ accountScope: 'personal', effort: 'high', model: 'opus' });
     expect(wire.nativeSessionRowId).toBe('row-native-1');
     expect(toWorkAttemptWire(attempt).nativeSessionRowId).toBeNull();

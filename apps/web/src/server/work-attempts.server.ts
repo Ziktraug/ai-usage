@@ -1,5 +1,6 @@
 import { readLocalRoutingDeclarations } from '@ai-usage/local-machine/routing-config';
 import {
+  holdsReviewReservation,
   isCheckoutPathAdmitted,
   REVIEW_ATTEMPT_BOUNDS,
   type ReviewAttempt,
@@ -147,7 +148,11 @@ export const createWorkAttemptsServerReaders = (
 const nativeHarnessKey = (executorHarness: ReviewAttempt['executorHarness']): string =>
   executorHarness === 'claude-code' ? 'claude' : 'codex';
 
-/** The wire shape: no pid, no idempotency key, no declaration snapshot; the declared account, model and effort stay. */
+/**
+ * The wire shape: no pid, no idempotency key, no launch session id, no declaration snapshot; the
+ * declared account, model and effort stay, with the reviewed scope, the harness guarantee and
+ * whether the attempt still holds its identity's reservation.
+ */
 export const toWorkAttemptWire = (
   attempt: ReviewAttempt,
   nativeSessionRowId: string | null = null,
@@ -168,13 +173,27 @@ export const toWorkAttemptWire = (
   executorHarness: attempt.executorHarness,
   exitCode: attempt.exitCode,
   failureReason: attempt.failureReason,
+  guarantee:
+    attempt.guarantee === null
+      ? null
+      : {
+          ...attempt.guarantee,
+          settingSources: [...attempt.guarantee.settingSources],
+          tools: [...attempt.guarantee.tools],
+        },
   machineId: attempt.machineId,
   nativeSessionId: attempt.nativeSessionId,
   nativeSessionRowId,
   numTurns: attempt.numTurns,
   requestedAt: attempt.requestedAt,
+  reservation: {
+    held: holdsReviewReservation(attempt),
+    releaseEvidence: attempt.releaseEvidence,
+    releasedAt: attempt.releasedAt,
+  },
   resultExcerpt: attempt.resultExcerpt,
   resultKind: attempt.resultKind,
+  scope: attempt.scope === null ? null : { ...attempt.scope, files: attempt.scope.files.map((file) => ({ ...file })) },
   startedAt: attempt.startedAt,
   state: attempt.state,
   target: attempt.target,
