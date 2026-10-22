@@ -212,6 +212,13 @@ export const WORK_ATTENTION_SECTIONS: readonly WorkAttentionSection[] = [
     note: 'Completed, undeclared or unsupported outcomes. Nothing pending was read here; that is not proof that nothing is pending.',
     title: 'Recent · no pending declaration read',
   },
+  {
+    // ADR 0059: a harness that declares no turn status. Unknown is not "nothing pending".
+    collapseBeyond: 10,
+    kind: 'not-observable',
+    note: 'Codex records no turn status: these sessions show their checkout, branch and last activity only. Whether one waits on you is unknown — not declared by this harness, which is not the same as nothing pending.',
+    title: 'Codex · no declared wait read',
+  },
 ];
 
 export const workAttentionSectionFor = (kind: WorkAttentionKind): WorkAttentionSection =>
@@ -339,6 +346,17 @@ const HARNESS_LABELS: Readonly<Record<string, string>> = {
 
 export const workHarnessLabel = (harness: string): string => HARNESS_LABELS[harness] ?? harness;
 
+/**
+ * What a row says in place of a declaration it has none of: a Claude Desktop root that declared
+ * nothing, a root of a harness that declares nothing at all (ADR 0059), or bare activity.
+ */
+export const workUndeclaredSituation = (root: WorkRoot): string => {
+  if (root.attention === 'not-observable') {
+    return `wait unknown · not declared by ${workHarnessLabel(root.key.harness)}`;
+  }
+  return root.key.harness === 'claude' ? 'no declaration' : 'activity only';
+};
+
 // ---------------------------------------------------------------------------------------------
 // Standing of a root's request (ADR 0056): read from the interpretations, never recomputed here
 // ---------------------------------------------------------------------------------------------
@@ -346,9 +364,10 @@ export const workHarnessLabel = (harness: string): string => HARNESS_LABELS[harn
 /**
  * Where a root's request stands. `current` is a confirmed block nothing later touches;
  * `reconsider` an older declaration something later may have answered without proof; `answered`,
- * `handled` and `archived` name a dated native record that it no longer waits; `none` asks nothing.
+ * `handled` and `archived` name a dated native record that it no longer waits; `none` asks nothing;
+ * `not-declared` is a root of a harness that declares no turn status, whose standing is unknown.
  */
-export type WorkRootStanding = 'answered' | 'archived' | 'current' | 'handled' | 'none' | 'reconsider';
+export type WorkRootStanding = 'answered' | 'archived' | 'current' | 'handled' | 'none' | 'not-declared' | 'reconsider';
 
 const CLOSING_STANDINGS: Partial<Record<WorkInterpretationKind, WorkRootStanding>> = {
   'request-answered': 'answered',
@@ -366,7 +385,7 @@ export const workRootStanding = (root: WorkRoot): WorkRootStanding => {
   if (root.attention === 'human-request') {
     return root.reconsidered ? 'reconsider' : 'current';
   }
-  return 'none';
+  return root.attention === 'not-observable' ? 'not-declared' : 'none';
 };
 
 export const WORK_STANDING_LABELS: Readonly<Record<WorkRootStanding, string>> = {
@@ -375,6 +394,7 @@ export const WORK_STANDING_LABELS: Readonly<Record<WorkRootStanding, string>> = 
   current: 'Current block',
   handled: 'Handled in a linked session',
   none: 'Nothing asked',
+  'not-declared': 'Unknown — not declared by this harness',
   reconsider: 'Older declaration to reconsider',
 };
 
@@ -484,6 +504,8 @@ export const workRootNextAction = (root: WorkRoot): string | null => {
       return 'Nothing asked of you since your message.';
     case 'handled':
       return 'Nothing asked of you; the linked session’s outcome is in the detail.';
+    case 'not-declared':
+      return `Check the session in ${workHarnessLabel(root.key.harness)}; this view cannot tell whether it waits on you.`;
     default:
       break;
   }
@@ -494,6 +516,22 @@ export const workRootNextAction = (root: WorkRoot): string | null => {
     return 'Optional: start or dismiss the proposal in Claude Desktop.';
   }
   return null;
+};
+
+/**
+ * What the read took from Codex, for the coverage line (ADR 0059): sessions only, from the served
+ * report, never a declared wait. Counts the Codex roots the dataset carries, so it says "shown"; a
+ * family the page left out is counted by the search coverage beside it.
+ */
+export const workCodexCoverage = (dataset: Pick<WorkAttentionDataset, 'coverage' | 'roots'>): string => {
+  const shown = dataset.roots.filter((root) => root.key.harness === 'codex').length;
+  const { sinceDays } = dataset.coverage.window;
+  if (shown > 0) {
+    return `${shown} ${shown === 1 ? 'session' : 'sessions'} shown, active in the last ${sinceDays} days (served report)`;
+  }
+  return dataset.coverage.sessions.revision === null
+    ? 'not read: no served report revision yet'
+    : `no session active in the last ${sinceDays} days`;
 };
 
 /**

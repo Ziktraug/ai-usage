@@ -257,6 +257,7 @@
           <WorkCoverageLine
             coverage={dataset.coverage}
             reference={dataset.generatedAt}
+            roots={dataset.roots}
             synthetic={data.mode === 'demo'}
           />
         {/if}

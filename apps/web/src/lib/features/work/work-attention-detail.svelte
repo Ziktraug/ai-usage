@@ -202,6 +202,21 @@
       <p class={workMuted}>
         Declared by the session at {formatExactInstant(root.declared.at)}; its current state is unobserved.
       </p>
+    {:else if root.attention === 'not-observable'}
+      <!-- ADR 0059: the harness declares nothing, so nothing is presented as pending or as settled. -->
+      <p class={workMuted} data-work-not-declared-detail>
+        {workHarnessLabel(root.key.harness)}
+        records no turn declaration for its sessions: whether this one waits on you is unknown — not declared by this
+        harness. Last activity
+        {#if root.age.lastActivityAt}
+          <time datetime={root.age.lastActivityAt} title={formatExactInstant(root.age.lastActivityAt)}
+            >{formatRelativeAge(root.age.lastActivityAt, reference)}</time
+          >
+          ({formatExactInstant(root.age.lastActivityAt)}).
+        {:else}
+          is undated.
+        {/if}
+      </p>
     {:else}
       <p class={workMuted}>
         No turn declaration was collected for this root. Last activity
@@ -267,9 +282,13 @@
       <p class={workDetailText}>
         {root.children.count}
         child {root.children.count === 1 ? 'session' : 'sessions'}
-        · {root.children.blocked} blocked · {root.children.reviewReady} review ready ·
-        {root.children.completed}
-        completed
+        {#if root.attention === 'not-observable'}
+          · linked by their declared parent in {workHarnessLabel(root.key.harness)}; their outcomes are not declared
+        {:else}
+          · {root.children.blocked} blocked · {root.children.reviewReady} review ready ·
+          {root.children.completed}
+          completed
+        {/if}
       </p>
       {#if root.children.titles.length > 0}
         <ul class={workFactList}>

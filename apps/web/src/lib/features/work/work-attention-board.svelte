@@ -266,7 +266,7 @@
             <span class={workSectionCount}>{group.roots.length}</span>
             <p class={workSectionNote}>
               {group.section.note}
-              {#if group.section.kind !== 'none'}
+              {#if group.section.kind !== 'none' && group.section.kind !== 'not-observable'}
                 Declared by the session; current state unobserved.
               {/if}
             </p>

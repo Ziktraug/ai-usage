@@ -91,9 +91,15 @@ const rowsIn = (body: string, section: string): number => {
 };
 
 describe('Work resume surface server rendering from the synthetic dataset', () => {
-  test('renders the four sections, the coverage line and compact rows without any acquisition', () => {
+  test('renders the five sections, the coverage line and compact rows without any acquisition', () => {
     const body = html(EMPTY_WORK_ATTENTION_SEARCH);
-    for (const heading of ['Needs you', 'Waiting on others', 'Leads', 'Recent · no pending declaration read']) {
+    for (const heading of [
+      'Needs you',
+      'Waiting on others',
+      'Leads',
+      'Recent · no pending declaration read',
+      'Codex · no declared wait read',
+    ]) {
       expect(body).toContain(heading);
     }
     expect(body).toContain('Nothing pending was read here; that is not proof that nothing is pending.');
@@ -110,7 +116,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(occurrences(body, 'Declared by the session; current state unobserved.')).toBe(3);
     expect(rowsIn(body, 'human-request')).toBe(8);
     expect(rowsIn(body, 'none')).toBe(10);
-    expect(body).toContain('Show all 13 in Recent · no pending declaration read');
+    expect(body).toContain('Show all 12 in Recent · no pending declaration read');
     expect(body).toContain('possibly answered · PR #61');
     expect(body).toContain('Confirm whether the Codex quota window should be dated by its last confirmation');
     expect(body).toContain('blocked · <time datetime="2026-06-11T09:00:00.000Z"');
@@ -126,6 +132,41 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('· observed 40 min ago');
     expect(body).toContain('checkout dirty (3 modified)');
     expect(body).toContain('Jira XLB-2090 · In Progress · 2 new replies');
+  });
+  test('says per harness what was read and keeps a Codex row apart from nothing pending (ADR 0059)', () => {
+    const body = withoutMarkers(html(EMPTY_WORK_ATTENTION_SEARCH));
+    expect(body).toContain('Claude Desktop registry · declared waits: collected');
+    expect(body).toContain(
+      'Codex · sessions only, no declared waits: 1 session shown, active in the last 30 days (served report)',
+    );
+    expect(body).toContain('Other harnesses: not read here');
+    expect(body).not.toContain('Declarations: Claude Desktop only');
+    expect(rowsIn(body, 'not-observable')).toBe(1);
+    const start = body.indexOf('data-work-section="not-observable"');
+    const codexSection = body.slice(start, body.indexOf('</section>', start));
+    expect(codexSection).toContain('Build report UI');
+    expect(codexSection).toContain('wait unknown · not declared by Codex');
+    expect(codexSection).toContain('wait not declared');
+    expect(codexSection).toContain('data-work-standing="not-declared"');
+    expect(codexSection).toContain('Next: Check the session in Codex; this view cannot tell whether it waits on you.');
+    expect(codexSection).toContain('Whether one waits on you is unknown — not declared by this harness');
+    // Never "declared by the session": Codex declared nothing.
+    expect(codexSection).not.toContain('Declared by the session; current state unobserved.');
+    expect(rowsIn(body, 'none')).toBe(10);
+  });
+  test('a Codex detail names the unknown standing and does not count undeclared child statuses', () => {
+    const codex = dataset.roots.find((root) => root.key.harness === 'codex');
+    const body = withoutMarkers(html(EMPTY_WORK_ATTENTION_SEARCH, workRootId(codex!)));
+    expect(body).toContain('Request · Unknown — not declared by this harness');
+    expect(body).toContain(
+      'Codex records no turn declaration for its sessions: whether this one waits on you is unknown — not declared by this harness.',
+    );
+    expect(body).toContain(
+      '2 child sessions · linked by their declared parent in Codex; their outcomes are not declared',
+    );
+    expect(body).not.toContain('0 blocked · 0 review ready');
+    expect(body).toContain('Codex records no turn status: whether this session waits on you is unknown');
+    expect(body).toContain('Open session detail');
   });
   test('a root with a Jira fact lists it under its own source with the arrival named and its uncertainty', () => {
     const withJira = dataset.roots.find((root) => root.facts.some((fact) => fact.kind === 'jira-issue'));

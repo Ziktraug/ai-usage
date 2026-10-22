@@ -20,8 +20,11 @@ import {
 import {
   assembleWorkAttention,
   NO_SERVED_REVISION,
+  WORK_UNDECLARED_HARNESS,
   type WorkAttentionExternalFacts,
+  type WorkHarnessSessions,
 } from '@ai-usage/report-data/work-attention-read';
+import type { ServedHarnessSessionMember } from '@ai-usage/usage-store/reader';
 import type { WorkAttentionInput } from '@ai-usage/web-contract/work';
 import type { WorkAttentionServerResult } from './work-attention.server';
 
@@ -38,6 +41,12 @@ import type { WorkAttentionServerResult } from './work-attention.server';
  * changes, a pull request GitHub refused to read with an older successful read behind it, and
  * three Jira tickets (ADR 0054): a reply that arrived after the family's last activity, a ticket
  * still To Do beside a merged pull request, and a read Jira refused with an older success.
+ *
+ * Codex sessions (ADR 0059) arrive as the served families `queryRecentServedHarnessSessions`
+ * returns, shaped by hand because the web app may not run the collector: a root in the seeded
+ * repository with a delegated child and an automated review, a session in the shared dirty
+ * worktree, and a delegated session whose parent was never collected. None of them declares a
+ * wait; the production path (`work-production.spec.ts`) carries real seeded rollouts.
  */
 
 /** The id the other e2e fixtures use for the current machine, so a machine filter matches. */
@@ -57,8 +66,15 @@ export const WORK_ATTENTION_E2E_JIRA_REPLY_KEY = 'XLB-2090';
 export const WORK_ATTENTION_E2E_JIRA_TODO_KEY = 'XLB-2101';
 /** The ticket Jira refused to read, with an older successful read behind it. */
 export const WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY = 'XLB-1998';
+/** The served revision the e2e Codex families are said to come from. */
+export const WORK_ATTENTION_E2E_CODEX_REVISION = 'e2e-codex-revision';
+export const WORK_ATTENTION_E2E_CODEX_ROOT_TITLE = 'Fixture Codex: refactor the collector';
+export const WORK_ATTENTION_E2E_CODEX_WORKTREE_TITLE = 'Fixture Codex: checkout 3 follow-up';
+export const WORK_ATTENTION_E2E_CODEX_ORPHAN_TITLE = 'Fixture Codex: orphaned delegate';
 
 interface E2EWorkAttentionSource {
+  /** The recent served Codex families, as the store read returns them. */
+  readonly codexSessions: WorkHarnessSessions;
   readonly completeness: ClaudeDesktopCollectionCompleteness;
   /** The declaration history the store would have recorded over the earlier sweeps and the last one. */
   readonly declarations: readonly ClaudeDesktopTurnDeclaration[];
@@ -286,6 +302,104 @@ const buildExternalFacts = (): WorkAttentionExternalFacts => {
   };
 };
 
+const codexMember = (spec: {
+  readonly activeHoursAgo: number;
+  readonly branch?: string;
+  readonly campaignRoot?: boolean;
+  readonly checkoutPath?: string;
+  readonly id: string;
+  readonly origin: 'classifier' | 'human' | 'subagent';
+  readonly parent?: string;
+  readonly title: string;
+}): ServedHarnessSessionMember => {
+  const checkoutPath = spec.checkoutPath ?? WORK_ATTENTION_E2E_REPOSITORY;
+  return {
+    activeAt: WORK_ATTENTION_E2E_NOW.getTime() - spec.activeHoursAgo * 3_600_000,
+    branch: spec.branch ?? null,
+    campaignRoot: spec.campaignRoot ?? false,
+    checkoutPath,
+    machineId: WORK_ATTENTION_E2E_MACHINE_ID,
+    origin: spec.origin,
+    parentSourceSessionId: spec.parent ?? null,
+    projectLabel: checkoutPath.split('/').at(-1) ?? checkoutPath,
+    rowId: `e2e-codex-row-${spec.id}`,
+    sourceSessionId: spec.id,
+    startedAt: hoursBefore(spec.activeHoursAgo + 1),
+    title: spec.title,
+  };
+};
+
+const codexFamily = (members: readonly ServedHarnessSessionMember[]) => {
+  const [root] = members;
+  if (root === undefined) {
+    throw new Error('An e2e Codex family needs a root.');
+  }
+  return {
+    campaignKey: `${WORK_ATTENTION_E2E_MACHINE_ID}:codex:${root.sourceSessionId}`,
+    lastActiveAt: Math.max(...members.map((member) => member.activeAt ?? 0)),
+    memberCount: members.length,
+    members,
+  };
+};
+
+const buildCodexSessions = (): WorkHarnessSessions => {
+  const families = [
+    codexFamily([
+      codexMember({
+        activeHoursAgo: 3,
+        branch: 'fixture/main',
+        campaignRoot: true,
+        id: 'codex-e2e-root',
+        origin: 'human',
+        title: WORK_ATTENTION_E2E_CODEX_ROOT_TITLE,
+      }),
+      codexMember({
+        activeHoursAgo: 2,
+        id: 'codex-e2e-child',
+        origin: 'subagent',
+        parent: 'codex-e2e-root',
+        title: 'Fixture Codex: delegated slice',
+      }),
+      codexMember({
+        activeHoursAgo: 2.5,
+        id: 'codex-e2e-review',
+        origin: 'classifier',
+        title: 'Fixture Codex: review',
+      }),
+    ]),
+    // In the shared dirty worktree: the checkout fact attaches by its exact path, no wait follows.
+    codexFamily([
+      codexMember({
+        activeHoursAgo: 1.5,
+        branch: 'fixture/checkout-3',
+        campaignRoot: true,
+        checkoutPath: WORK_ATTENTION_E2E_WORKTREE,
+        id: 'codex-e2e-worktree',
+        origin: 'human',
+        title: WORK_ATTENTION_E2E_CODEX_WORKTREE_TITLE,
+      }),
+    ]),
+    codexFamily([
+      codexMember({
+        activeHoursAgo: 5,
+        campaignRoot: true,
+        id: 'codex-e2e-orphan',
+        origin: 'subagent',
+        parent: 'codex-e2e-gone',
+        title: WORK_ATTENTION_E2E_CODEX_ORPHAN_TITLE,
+      }),
+    ]),
+  ];
+  return {
+    families,
+    familiesInWindow: families.length,
+    generatedAt: hoursBefore(0.25),
+    harness: WORK_UNDECLARED_HARNESS,
+    refusedRows: 0,
+    revision: WORK_ATTENTION_E2E_CODEX_REVISION,
+  };
+};
+
 const buildSource = (): E2EWorkAttentionSource => {
   const registry = claudeDesktopFixtureRegistry({
     cliSessionIdWithTranscript: E2E_TRANSCRIPT_ID,
@@ -338,7 +452,13 @@ const buildSource = (): E2EWorkAttentionSource => {
       throw new Error('The e2e Desktop registry names an account outside its pairs.');
     }
   }
-  return { completeness, declarations, externalFacts: buildExternalFacts(), observations };
+  return {
+    codexSessions: buildCodexSessions(),
+    completeness,
+    declarations,
+    externalFacts: buildExternalFacts(),
+    observations,
+  };
 };
 
 const getSource = (): E2EWorkAttentionSource => {
@@ -347,13 +467,14 @@ const getSource = (): E2EWorkAttentionSource => {
 };
 
 export const readE2EWorkAttention = (request: WorkAttentionInput): Promise<WorkAttentionServerResult> => {
-  const { completeness, declarations, externalFacts, observations } = getSource();
+  const { codexSessions, completeness, declarations, externalFacts, observations } = getSource();
   const data: WorkAttentionDataset = assembleWorkAttention({
     collectionStates: [
       { collectedAt: WORK_ATTENTION_E2E_NOW.toISOString(), completeness, machineId: WORK_ATTENTION_E2E_MACHINE_ID },
     ],
     declarations,
     externalFacts,
+    harnessSessions: codexSessions,
     ...(request.limit === undefined ? {} : { limit: request.limit }),
     ...(request.machineId === undefined || request.machineId === null ? {} : { machineId: request.machineId }),
     now: WORK_ATTENTION_E2E_NOW,

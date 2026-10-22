@@ -13,6 +13,7 @@ import {
   sortWorkRoots,
   toggleListValue,
   WORK_ATTENTION_SECTIONS,
+  workCodexCoverage,
   workFactSummary,
   workFilterOptions,
   workRootFactChips,
@@ -22,6 +23,7 @@ import {
   workRootPastProposalIds,
   workRootStanding,
   workSearchCoverage,
+  workUndeclaredSituation,
   writeWorkAttentionSearch,
 } from './work-attention-model';
 import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
@@ -45,6 +47,7 @@ describe('Work attention grouping and ordering', () => {
       'external-wait',
       'optional-lead',
       'none',
+      'not-observable',
     ]);
     expect(groups.reduce((total, group) => total + group.roots.length, 0)).toBe(roots.length);
     for (const group of groups) {
@@ -89,8 +92,8 @@ describe('Work attention grouping and ordering', () => {
     const sorted = sortWorkRoots([undated, second!, first!]);
     expect(sorted.at(-1)?.title).toBe('zzz');
   });
-  test('the recent section is the only one that collapses, beyond ten rows', () => {
-    expect(WORK_ATTENTION_SECTIONS.map((section) => section.collapseBeyond)).toEqual([null, null, null, 10]);
+  test('the recent and the Codex sections are the only ones that collapse, beyond ten rows', () => {
+    expect(WORK_ATTENTION_SECTIONS.map((section) => section.collapseBeyond)).toEqual([null, null, null, 10, 10]);
   });
   test('the recent section claims only what was read, never that nothing is pending', () => {
     expect(WORK_ATTENTION_SECTIONS[3]).toEqual({
@@ -104,7 +107,46 @@ describe('Work attention grouping and ordering', () => {
       'Waiting on others',
       'Leads',
       'Recent · no pending declaration read',
+      'Codex · no declared wait read',
     ]);
+  });
+  test('the Codex section says its wait is unknown, apart from nothing pending (ADR 0059)', () => {
+    expect(WORK_ATTENTION_SECTIONS[4]).toEqual({
+      collapseBeyond: 10,
+      kind: 'not-observable',
+      note: 'Codex records no turn status: these sessions show their checkout, branch and last activity only. Whether one waits on you is unknown — not declared by this harness, which is not the same as nothing pending.',
+      title: 'Codex · no declared wait read',
+    });
+    const codex = rootNamed('Build report UI');
+    expect(codex.attention).toBe('not-observable');
+    expect(groupWorkRoots(roots)[4]?.roots).toEqual([codex]);
+    expect(groupWorkRoots(roots)[3]?.roots.some((root) => root.key.harness === 'codex')).toBe(false);
+  });
+});
+
+describe('Work attention for a harness that declares no wait (ADR 0059)', () => {
+  const codex = rootNamed('Build report UI');
+  test('reads as unknown, never as nothing asked, with the harness named', () => {
+    expect(workRootStanding(codex)).toBe('not-declared');
+    expect(workUndeclaredSituation(codex)).toBe('wait unknown · not declared by Codex');
+    expect(workRootNextAction(codex)).toBe(
+      'Check the session in Codex; this view cannot tell whether it waits on you.',
+    );
+    expect(workRootLastDecision(codex)).toBeNull();
+    // A Claude root without a declaration and a bare activity row keep their own words.
+    expect(workUndeclaredSituation(rootNamed('Headless Chrome CDP driving'))).toBe('no declaration');
+    expect(workUndeclaredSituation({ ...codex, attention: 'none' })).toBe('activity only');
+  });
+  test('the coverage line says what Codex contributed: sessions shown, or why none were', () => {
+    expect(workCodexCoverage(dataset)).toBe('1 session shown, active in the last 30 days (served report)');
+    const withoutCodex = { ...dataset, roots: roots.filter((root) => root.key.harness !== 'codex') };
+    expect(workCodexCoverage(withoutCodex)).toBe('no session active in the last 30 days');
+    expect(
+      workCodexCoverage({
+        ...withoutCodex,
+        coverage: { ...dataset.coverage, sessions: { ...dataset.coverage.sessions, revision: null } },
+      }),
+    ).toBe('not read: no served report revision yet');
   });
 });
 
@@ -123,8 +165,8 @@ describe('Work attention search and filters', () => {
     expect(blocked.length).toBe(8);
     expect(blocked.every((root) => root.attention === 'human-request')).toBe(true);
     const codex = filterWorkRoots(roots, { ...EMPTY_WORK_ATTENTION_SEARCH, harness: ['codex'] });
-    expect(codex.length).toBeGreaterThanOrEqual(3);
-    expect(codex.every((root) => root.declared === null)).toBe(true);
+    expect(codex.map((root) => root.title)).toEqual(['Build report UI']);
+    expect(codex.every((root) => root.declared === null && root.attention === 'not-observable')).toBe(true);
     const secondary = filterWorkRoots(roots, {
       ...EMPTY_WORK_ATTENTION_SEARCH,
       machine: ['fixture-machine-secondary'],
@@ -140,6 +182,7 @@ describe('Work attention search and filters', () => {
       'external-wait',
       'optional-lead',
       'none',
+      'not-observable',
     ]);
     expect(options.harness.reduce((total, option) => total + option.count, 0)).toBe(roots.length);
     expect(options.machine.map((option) => option.value)).toEqual(['fixture-machine', 'fixture-machine-secondary']);

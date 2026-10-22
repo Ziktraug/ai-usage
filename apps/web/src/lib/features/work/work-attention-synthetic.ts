@@ -725,33 +725,28 @@ const seeds = (): readonly RootSeed[] => [
     project: 'ai-usage',
     title: 'Design-system barrel cost',
   },
-  // Recent, nothing pending ----------------------------------------------------------------
+  // Codex declares no turn status (ADR 0059): a served Codex campaign, its wait unknown -----
   {
-    attention: 'none',
+    attention: 'not-observable',
     branch: 'feat/report-ui',
-    facts: [
-      checkoutStatus('campaign-root', '~/Projects/ai-usage', 'feat/report-ui', false),
-      {
-        branch: 'feat/report-ui',
-        id: 'campaign-root:branch',
-        kind: 'written-branch',
-        provenance: provenance('claude-transcript', COLLECTED_AT, 'partial'),
-      },
-    ],
+    // The demo report's own campaign: a delegated child and an automated review.
+    children: { count: 2, titles: ['Review analytics model', 'Tune collector fixtures'] },
+    facts: [checkoutStatus('campaign-root', '~/Projects/ai-usage', 'feat/report-ui', false)],
     harness: 'codex',
     id: 'campaign-root',
     interpretations: [
       interpretation(
         'coverage-gap',
-        'Codex declares no turn outcome; whether this work is finished is unobserved.',
-        'Only the transcript and the checkout are read for Codex sessions.',
-        ['campaign-root:checkout'],
+        'Codex records no turn status: whether this session waits on you is unknown — not declared by this harness.',
+        'No question, approval or review request is read from Codex sessions; only the session, its checkout and its branch are shown. Unknown is not "nothing pending".',
+        [],
       ),
     ],
     lastActivityHoursAgo: 1,
     project: 'ai-usage',
     title: 'Build report UI',
   },
+  // Recent, nothing pending ----------------------------------------------------------------
   {
     attention: 'none',
     branch: 'fix/quota-timer',
@@ -1094,17 +1089,9 @@ const seeds = (): readonly RootSeed[] => [
   {
     attention: 'none',
     branch: 'main',
+    // A Desktop session that declared nothing: no pending declaration read, not proof of none.
     facts: [checkoutStatus('cdp-driving', '~/Projects/ai-usage', 'main', false)],
-    harness: 'codex',
     id: 'cdp-driving',
-    interpretations: [
-      interpretation(
-        'coverage-gap',
-        'Codex declares no turn outcome; whether this work is finished is unobserved.',
-        'Only the transcript and the checkout are read for Codex sessions.',
-        ['cdp-driving:checkout'],
-      ),
-    ],
     lastActivityHoursAgo: 28 * 24,
     machineId: SECONDARY_MACHINE,
     project: 'ai-usage',
@@ -1175,16 +1162,7 @@ const seeds = (): readonly RootSeed[] => [
     attention: 'none',
     branch: 'main',
     facts: [checkoutStatus('quota-sources', '~/Projects/ai-usage', 'main', false)],
-    harness: 'codex',
     id: 'quota-sources',
-    interpretations: [
-      interpretation(
-        'coverage-gap',
-        'Codex declares no turn outcome; whether this work is finished is unobserved.',
-        'Only the transcript and the checkout are read for Codex sessions.',
-        ['quota-sources:checkout'],
-      ),
-    ],
     lastActivityHoursAgo: 37 * 24,
     project: 'ai-usage',
     title: 'Provider quota sources',

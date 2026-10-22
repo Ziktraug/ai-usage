@@ -15,7 +15,12 @@
 </script>
 
 <WebQueryProvider>
-  <WorkCoverageLine coverage={board.dataset.coverage} reference={board.dataset.generatedAt} synthetic />
+  <WorkCoverageLine
+    coverage={board.dataset.coverage}
+    reference={board.dataset.generatedAt}
+    roots={board.dataset.roots}
+    synthetic
+  />
   <WorkAttentionBoard {...board} />
   {#if detail}
     <WorkAttentionDetail {...detail} />
