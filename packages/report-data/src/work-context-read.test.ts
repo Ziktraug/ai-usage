@@ -260,6 +260,14 @@ describe('queryWorkContext', () => {
     expect(new TextEncoder().encode(encoded).byteLength).toBeLessThanOrEqual(WORK_CONTEXT_BOUNDS.maxOutputBytes);
     expect(encoded).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
     expect(encoded).not.toContain('Fixture child report');
+    // Proposals are cited by id and date only, never by title (ADR 0058).
+    for (const proposalTitle of [
+      'Fixture: offer before your message',
+      'Fixture: expired offer',
+      'Fixture: latest offer',
+    ]) {
+      expect(encoded).not.toContain(proposalTitle);
+    }
     expect(encoded).not.toContain(OTHER_REPOSITORY);
   });
 
@@ -347,6 +355,46 @@ describe('readWorkContext', () => {
       signal: controller.signal,
     });
     expect(cancelled.kind === 'error' && cancelled.failure.code).toBe('cancelled');
+  });
+});
+
+describe('projectWorkContext proposals', () => {
+  test('a waiting root cites its superseded or expired proposals by id, date and kind, never by title', () => {
+    const registry = registryOf(REPOSITORY, 'minimal');
+    const template = parse(registry.documents[0] as ClaudeDesktopFixtureDocument, MACHINE);
+    if (template === null) {
+      throw new Error('the minimal blocked root must parse');
+    }
+    const secretTitle = 'Fixture proposal title sentinel 7f3c';
+    const blocked: ClaudeDesktopSessionObservation = {
+      ...template,
+      latestUserFrameAt: null,
+      openSuggestions: [
+        {
+          createdAt: hoursBefore(400),
+          expiresAt: hoursBefore(200),
+          id: 'suggestion-expired',
+          title: secretTitle,
+          tldr: `Synopsis of ${secretTitle}`,
+        },
+      ],
+    };
+    const dataset = assembleWorkAttention({
+      collectionStates: [],
+      externalFacts: NO_EXTERNAL_FACTS,
+      limit: 200,
+      now: EPOCH,
+      observations: [blocked],
+      sessions: NO_SERVED_REVISION,
+    });
+    // The browser dataset carries the title inside its sentence; the context must not.
+    expect(JSON.stringify(dataset)).toContain(secretTitle);
+    const context = projectWorkContext(dataset, { checkoutPath: REPOSITORY, kind: 'checkout' });
+    const wait = context.waiting.find(({ root }) => root.title === blocked.title);
+    const expired = wait?.readings.find(({ kind }) => kind === 'proposal-expired');
+    expect(expired?.evidence.map(({ kind }) => kind)).toEqual(['proposal']);
+    expect(expired?.evidence[0]?.at).not.toBeNull();
+    expect(JSON.stringify(context)).not.toContain(secretTitle);
   });
 });
 

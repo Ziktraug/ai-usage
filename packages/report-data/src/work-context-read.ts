@@ -320,6 +320,26 @@ const factDate = (fact: WorkFact): CanonicalInstant | null => {
   }
 };
 
+const proposalCount = (count: number): string => (count === 1 ? 'One proposal' : `${count} proposals`);
+
+/**
+ * The dataset's proposal sentences name each proposal's title; the context cites proposals by id,
+ * date and kind only (ADR 0058), so their reading text is rebuilt from the count alone.
+ */
+const proposalText = (interpretation: WorkInterpretation): string | null => {
+  const count = interpretation.evidence.length;
+  switch (interpretation.kind) {
+    case 'proposal-open':
+      return `${proposalCount(count)} open and unanswered (cited by id).`;
+    case 'proposal-superseded':
+      return `${proposalCount(count)} offered before a later message from you, no longer presented as pending (cited by id).`;
+    case 'proposal-expired':
+      return `${proposalCount(count)} expired in Claude Desktop (cited by id).`;
+    default:
+      return null;
+  }
+};
+
 const readingOf = (interpretation: WorkInterpretation, facts: ReadonlyMap<string, WorkFact>): WorkContextReading => {
   const cited = interpretation.evidence.slice(0, WORK_CONTEXT_BOUNDS.maxEvidencePerReading);
   return {
@@ -331,7 +351,7 @@ const readingOf = (interpretation: WorkInterpretation, facts: ReadonlyMap<string
     }),
     evidenceOmitted: interpretation.evidence.length - cited.length,
     kind: interpretation.kind,
-    text: interpretation.text,
+    text: proposalText(interpretation) ?? interpretation.text,
     uncertainty: interpretation.uncertainty,
   };
 };
