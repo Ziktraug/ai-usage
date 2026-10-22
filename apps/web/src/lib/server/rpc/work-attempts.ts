@@ -5,10 +5,13 @@ import {
   type WorkAttemptsReleaseOutput,
   type WorkAttemptsStartInput,
   type WorkAttemptsStartOutput,
+  type WorkAttemptsStopInput,
+  type WorkAttemptsStopOutput,
   workAttemptsContract,
   workAttemptsListOutputSchema,
   workAttemptsReleaseOutputSchema,
   workAttemptsStartOutputSchema,
+  workAttemptsStopOutputSchema,
 } from '@ai-usage/web-contract/work-attempts';
 import { implement } from '@orpc/server';
 import { parse } from 'valibot';
@@ -20,6 +23,7 @@ export interface WorkAttemptsRpcDependencies {
   readonly release: (input: WorkAttemptsReleaseInput, signal: AbortSignal | undefined) => Promise<unknown>;
   /** Forwards the engine command; returns the contract envelope or throws. */
   readonly start: (input: WorkAttemptsStartInput, signal: AbortSignal | undefined) => Promise<unknown>;
+  readonly stop: (input: WorkAttemptsStopInput, signal: AbortSignal | undefined) => Promise<unknown>;
 }
 
 const isAbortError = (error: unknown, signal: AbortSignal | undefined): boolean =>
@@ -31,6 +35,10 @@ const listUnavailable: WorkAttemptsListOutput = {
 };
 const releaseUnavailable: WorkAttemptsReleaseOutput = {
   error: { message: 'The release could not be recorded.', tag: 'Unavailable' },
+  ok: false,
+};
+const stopUnavailable: WorkAttemptsStopOutput = {
+  error: { message: 'The stop request did not complete.', tag: 'Unavailable' },
   ok: false,
 };
 const startUnavailable: WorkAttemptsStartOutput = {
@@ -46,6 +54,17 @@ const startUnavailable: WorkAttemptsStartOutput = {
 export const createWorkAttemptsRpcRouter = (dependencies: WorkAttemptsRpcDependencies) => {
   const workAttempts = implement(workAttemptsContract);
   return {
+    stop: workAttempts.stop.handler(async ({ input, signal }): Promise<WorkAttemptsStopOutput> => {
+      try {
+        return parse(workAttemptsStopOutputSchema, await dependencies.stop(input, signal));
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (isAbortError(error, signal)) {
+          throw error;
+        }
+        return stopUnavailable;
+      }
+    }),
     list: workAttempts.list.handler(async ({ input, signal }): Promise<WorkAttemptsListOutput> => {
       try {
         return parse(workAttemptsListOutputSchema, await dependencies.list(input, signal));

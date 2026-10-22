@@ -416,6 +416,11 @@ const createWorkDependencies = (): WebRpcRouterDependencies['work'] => ({
 });
 
 const createWorkAttemptsDependencies = (request: Request): WebRpcRouterDependencies['workAttempts'] => ({
+  stop: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attempts.server');
+      return await server.stopWorkAttemptFromRequestForServer(request, input);
+    }),
   list: async (input, signal) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/work-attempts.server');

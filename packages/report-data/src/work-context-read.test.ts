@@ -187,7 +187,7 @@ describe('queryWorkContext', () => {
     expect(context.coverage.roots.inScope).toBe(context.coverage.roots.read);
     expect(context.waiting.every(({ root }) => root.project.label === 'fixture')).toBe(true);
     expect(titles(context.waiting)).toContain('Fixture: stale declaration');
-    expect(titles(context.waiting)).not.toContain('Fixture: export column wording');
+    expect(titles(context.waiting)).toContain('Fixture: export column wording');
 
     // A current request carries its own declaration, dated, with the registry file as provenance.
     const blocked = context.waiting.find(({ root }) => root.title === 'Fixture: investigate checkout 3');
@@ -204,25 +204,18 @@ describe('queryWorkContext', () => {
     expect(titles(context.waiting)).not.toContain('Fixture: proposals pending');
     expect(context.waiting.map(({ attention }) => attention as string)).not.toContain('optional-lead');
 
-    // Settled decisions: an answered earlier question with dated evidence, an answered request,
-    // a request handled in a session started from it. None of them is listed as waiting.
+    // Activity after a request and a linked child's completion are observations, not answers.
     const kinds = new Set(context.decisions.map(({ kind }) => kind));
-    expect(kinds.has('earlier-request-answered')).toBe(true);
-    expect(kinds.has('request-answered')).toBe(true);
-    expect(kinds.has('request-handled-elsewhere')).toBe(true);
+    expect(kinds.has('earlier-request-answered')).toBe(false);
+    expect(kinds.has('request-answered')).toBe(false);
+    expect(kinds.has('request-handled-elsewhere')).toBe(false);
     expect(
       context.decisions.every(({ kind }) => (WORK_CONTEXT_DECISION_KINDS as readonly string[]).includes(kind)),
     ).toBe(true);
-    const earlier = context.decisions.find(({ kind }) => kind === 'earlier-request-answered');
-    expect(earlier?.root.title).toBe('Fixture: settle the layout');
-    expect(earlier?.text).toContain('Keep the compact layout or the airy one?');
-    expect(earlier?.evidence.length).toBeGreaterThan(0);
-    expect(earlier?.evidence.every(({ kind, provenance }) => kind !== null && provenance !== null)).toBe(true);
-    expect(earlier?.evidence.map(({ at }) => at)).toContain(hoursBefore(5));
-    const sortedActivity = context.decisions.map(({ root }) => root.title);
-    expect(sortedActivity.indexOf('Fixture: export column wording')).toBeLessThan(
-      sortedActivity.indexOf('Fixture: settle the layout'),
-    );
+    const wording = context.waiting.find(({ root }) => root.title === 'Fixture: export column wording');
+    expect(wording?.readings.map(({ kind }) => kind)).toContain('request-message-observed');
+    expect(wording?.reconsidered).toBe(true);
+    expect(wording?.readings.some(({ kind }) => kind === 'request-answered')).toBe(false);
     for (const wait of context.waiting) {
       expect(wait.readings.some(({ kind }) => (WORK_CONTEXT_DECISION_KINDS as readonly string[]).includes(kind))).toBe(
         false,

@@ -50,6 +50,7 @@ export const rpcPathByOperation = {
   qualifyWorkRouting: '/workRouting/qualify',
   listWorkAttempts: '/workAttempts/list',
   startWorkAttempt: '/workAttempts/start',
+  stopWorkAttempt: '/workAttempts/stop',
   releaseWorkAttemptReservation: '/workAttempts/release',
   previewReconcileAllManagedSkills: '/skills/previewReconcileAll',
   reconcileAllManagedSkills: '/skills/reconcileAll',

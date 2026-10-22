@@ -45,7 +45,7 @@ const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(rendererModule);
 
 /** Svelte leaves a hydration marker between the id and the suffix; the words are what matter. */
-const NOT_COLLECTED_YET = /Native session: native-2 (?:<!--[^>]*-->)?· not collected yet/u;
+const NOT_COLLECTED_YET = /Native session: native-2 (?:<!--[^>]*-->\s*)*· not collected yet/u;
 
 const attempt = (overrides: Partial<WorkAttemptWire>): WorkAttemptWire => ({
   acceptance: 'pending',
@@ -94,6 +94,34 @@ const html = (props: Record<string, unknown>): string =>
     .replaceAll('&lt;', '<');
 
 describe('Work attempts Svelte rendering', () => {
+  test('offers owned Codex stop and keeps partial output, native turn and target context', () => {
+    const body = html({
+      attempts: list([
+        attempt({ executorHarness: 'codex', state: 'running', nativeTurnId: 'turn-native', endedAt: null }),
+      ]),
+      pending: false,
+      onStop: async () => 'requested',
+    });
+    expect(body).toContain('Request stop (Codex)');
+    expect(body).toContain('turn turn-native');
+    expect(body).toContain('Finding 1: src/a.ts:12');
+    expect(body).toContain('Investigate checkout 3');
+    const pending = html({
+      attempts: list([
+        attempt({ executorHarness: 'codex', state: 'running', stopRequestedAt: '2026-10-22T10:04:00.000Z' }),
+      ]),
+      pending: false,
+      onStop: async () => 'requested',
+    });
+    expect(pending).toContain('awaiting native confirmation');
+    expect(pending).not.toContain('data-work-attempt-stop=');
+    const confirmed = html({
+      attempts: list([attempt({ executorHarness: 'codex', stopConfirmedAt: '2026-10-22T10:04:10.000Z' })]),
+      pending: false,
+    });
+    expect(confirmed).toContain('stopped (native turn confirmed)');
+    expect(confirmed).toContain('descendant processes are not confirmed stopped');
+  });
   test('renders a finished attempt with its excerpt, dates, validations and acceptance, and links a collected session', () => {
     const body = html({
       attempts: list([

@@ -3,13 +3,14 @@
   import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
   import { sessionRoutePathname } from '../sessions/detail/session-route';
   import {
+    attemptProgressLabel,
+    canRequestStop,
     checkoutOriginLabel,
     DIRTY_TREE_TEXT,
     guaranteeSummary,
     REVIEW_RESERVATION_RELEASE_ACTION,
     reservationNotice,
     resultHeading,
-    reviewAttemptStateLabel,
     scopeSummary,
     shortAttemptId,
   } from './work-attempts-model';
@@ -28,6 +29,7 @@
   let {
     attempts,
     onRelease,
+    onStop,
     pending,
   }: {
     /** The list envelope; `null` when it could not be read at all. */
@@ -37,6 +39,7 @@
      * engine did. Absent where no engine can answer; then no release is offered.
      */
     onRelease?: (attemptId: string) => Promise<string>;
+    onStop?: (attemptId: string) => Promise<string>;
     pending: boolean;
   } = $props();
   let releases = $state<Record<string, { readonly message: string | null; readonly pending: boolean }>>({});
@@ -47,6 +50,15 @@
     releases = { ...releases, [attemptId]: { message: 'Recording your declaration…', pending: true } };
     const message = await onRelease(attemptId);
     releases = { ...releases, [attemptId]: { message, pending: false } };
+  };
+  let stops = $state<Record<string, { readonly message: string; readonly pending: boolean }>>({});
+  const stop = async (attemptId: string): Promise<void> => {
+    if (!onStop || stops[attemptId]?.pending) {
+      return;
+    }
+    stops = { ...stops, [attemptId]: { message: 'Requesting a stop…', pending: true } };
+    const message = await onStop(attemptId);
+    stops = { ...stops, [attemptId]: { message, pending: false } };
   };
   const reference = $derived(attempts?.ok ? attempts.data.generatedAt : new Date().toISOString());
   const detailHref = (rowId: string) => `${sessionRoutePathname({ kind: 'session', rowId })}?tab=sessions&range=all`;
@@ -69,16 +81,40 @@
         {@const live = isLiveReviewAttemptState(attempt.state)}
         {@const notice = reservationNotice(attempt)}
         <li class={workPanel} data-work-attempt={attempt.attemptId} data-work-attempt-state={attempt.state}>
-          <p class={workHeading}>
-            {reviewAttemptStateLabel(attempt.state)}
-            · attempt {shortAttemptId(attempt.attemptId)}
-          </p>
+          <p class={workHeading}>{attemptProgressLabel(attempt)} · attempt {shortAttemptId(attempt.attemptId)}</p>
           <p class={workMuted}>
             Requested {when(attempt.requestedAt)}{attempt.startedAt ? ` · started ${when(attempt.startedAt)}` : ''}
             {attempt.endedAt
               ? ` · ended ${when(attempt.endedAt)}`
               : ''}{live ? ` · last heartbeat ${formatRelativeAge(attempt.updatedAt, reference)}` : ''}.
           </p>
+          <p class={workMuted}>
+            {attempt.executorHarness === 'codex' ? 'Codex' : 'Claude Code'}
+            review · {attempt.target.sessionTitle ?? attempt.target.sourceSessionId}
+          </p>
+          {#if attempt.stopRequestedAt}
+            <p class={workMuted} data-work-stop-requested>Stop requested {when(attempt.stopRequestedAt)}.</p>
+          {/if}
+          {#if attempt.stopConfirmedAt}
+            <p class={workMuted} data-work-stop-confirmed>
+              Native turn stopped {when(attempt.stopConfirmedAt)}. Partial output is kept; descendant processes are not
+              confirmed stopped.
+            </p>
+          {/if}
+          {#if canRequestStop(attempt) && onStop}
+            <button
+              class={workButton}
+              data-work-attempt-stop={attempt.attemptId}
+              disabled={stops[attempt.attemptId]?.pending === true}
+              onclick={() => stop(attempt.attemptId)}
+              type="button"
+            >
+              Request stop (Codex)
+            </button>
+          {/if}
+          {#if stops[attempt.attemptId]?.message}
+            <p class={workMuted} role="status">{stops[attempt.attemptId]?.message}</p>
+          {/if}
           {#if attempt.declared}
             <p class={workMuted}>
               Launched with account {attempt.declared.accountScope} · model {attempt.declared.model ?? 'unknown'} ·
@@ -93,6 +129,9 @@
           </p>
           <p class={workMuted}>
             Native session: {attempt.nativeSessionId ?? 'not reported yet'}
+            {#if attempt.nativeTurnId}
+              · turn {attempt.nativeTurnId}
+            {/if}
             {#if attempt.nativeSessionRowId}
               · <a class={workLink} href={detailHref(attempt.nativeSessionRowId)}>Open session detail</a>
             {:else if attempt.nativeSessionId}
