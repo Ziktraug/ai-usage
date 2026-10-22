@@ -391,6 +391,19 @@ const SELECT_COLUMNS = `
   released_at, release_evidence, scope_json, guarantee_json
 `;
 
+const SELECTED_COLUMN_NAMES = SELECT_COLUMNS.split(',').map((name) => name.trim());
+
+/**
+ * The query-only readers cannot migrate: a table the engine has not upgraded since the reservation
+ * columns (ADR 0055) is reported as typed `schema-too-old`, never as a raw storage failure.
+ */
+const missingReviewAttemptColumns = (db: { query(sql: string): { all(): unknown[] } }): readonly string[] => {
+  const present = new Set(
+    (db.query('PRAGMA table_info(review_attempts)').all() as { name?: unknown }[]).map((column) => column.name),
+  );
+  return SELECTED_COLUMN_NAMES.filter((name) => !present.has(name));
+};
+
 const parseJsonOrNull = (text: string | null): unknown => {
   if (text === null) {
     return null;
@@ -692,6 +705,15 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
+          const missing = missingReviewAttemptColumns(db);
+          if (missing.length > 0) {
+            throw usageStoreError(
+              'queryReviewAttempts',
+              input.dbPath,
+              `The usage store has not been upgraded for review attempts yet (missing ${missing.slice(0, 3).join(', ')}); it is upgraded at the next engine start`,
+              'schema-too-old',
+            );
+          }
           const clauses: string[] = [];
           const params: unknown[] = [];
           if (input.machineId !== undefined) {

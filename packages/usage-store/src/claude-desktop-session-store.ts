@@ -880,6 +880,20 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
           if (ids.length === 0) {
             return { declarations: [], skipped: 0 };
           }
+          // The query-only reader cannot create the table (ADR 0056): a store the engine has not
+          // reopened since is reported as typed `schema-too-old`, never as a raw storage failure.
+          if (
+            db
+              .query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_turn_declarations'")
+              .get() === null
+          ) {
+            throw usageStoreError(
+              'queryClaudeDesktopTurnDeclarations',
+              input.dbPath,
+              'The usage store has not been upgraded for the declaration history yet; it is upgraded at the next engine start',
+              'schema-too-old',
+            );
+          }
           const clauses = [`desktop_session_id IN (${ids.map(() => '?').join(', ')})`];
           const params: unknown[] = [...ids];
           if (input.machineId !== undefined) {

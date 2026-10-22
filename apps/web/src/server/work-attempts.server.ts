@@ -100,6 +100,9 @@ export interface WorkAttemptsServerOptions {
 
 const DEFAULT_LIST_LIMIT = 20;
 const INCOMPATIBLE_STORE_REASONS = new Set(['corrupt', 'schema-too-new', 'schema-too-old']);
+/** A store older than this version: the query-only reader cannot upgrade it, the engine does at its start. */
+export const STORE_NOT_UPGRADED_MESSAGE =
+  'The usage store has not been upgraded for this version yet; the engine upgrades it when it next starts.';
 const EMPTY_READ = { attempts: [], skipped: 0, truncated: false } as const;
 
 export const createWorkAttemptsServerReaders = (
@@ -309,6 +312,9 @@ export const listWorkAttemptsForServer = async (
   } catch (error) {
     options.signal?.throwIfAborted();
     const reason = usageStoreErrorReasonFrom(error);
+    if (reason === 'schema-too-old') {
+      return listFailure('IncompatibleStore', STORE_NOT_UPGRADED_MESSAGE);
+    }
     if (reason !== undefined && INCOMPATIBLE_STORE_REASONS.has(reason)) {
       return listFailure(
         'IncompatibleStore',

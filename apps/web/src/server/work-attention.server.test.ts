@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -122,6 +123,24 @@ describe('work attention server', () => {
     expect(corrupt.ok).toBe(false);
     expect(!corrupt.ok && ['IncompatibleStore', 'Unavailable'].includes(corrupt.error.tag)).toBe(true);
     expect(JSON.stringify(corrupt)).not.toContain(root);
+  });
+
+  test('a store the engine has not upgraded since the declaration history reads as typed, not as a storage failure', async () => {
+    const dbPath = await seededStore();
+    const db = new Database(dbPath);
+    try {
+      db.exec('DROP TABLE claude_desktop_turn_declarations');
+    } finally {
+      db.close();
+    }
+    expect(await readWorkAttentionForServer({ machineId: MACHINE }, { dbPath, mode: 'live', now: () => NOW })).toEqual({
+      error: {
+        message:
+          'The usage store has not been upgraded for this version yet; the engine upgrades it when it next starts.',
+        tag: 'IncompatibleStore',
+      },
+      ok: false,
+    });
   });
 
   test('serves the representative fixture through the same assembly in e2e mode', async () => {

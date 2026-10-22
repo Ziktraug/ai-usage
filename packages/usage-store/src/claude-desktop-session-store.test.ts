@@ -224,6 +224,21 @@ describe('claude desktop session store', () => {
     ).toBe('invalid-input');
   });
 
+  test('a store the engine has not reopened since the declaration history reads as not upgraded yet, typed', async () => {
+    const dbPath = await createStore('desktop-unmigrated');
+    const db = new Database(dbPath);
+    try {
+      db.exec('DROP TABLE claude_desktop_turn_declarations');
+    } finally {
+      db.close();
+    }
+    const error = await Effect.runPromise(
+      Effect.flip(queryClaudeDesktopTurnDeclarations({ dbPath, desktopSessionIds: ['local_a'] })),
+    );
+    expect(error).toMatchObject({ reason: 'schema-too-old' });
+    expect(error.message).toContain('next engine start');
+  });
+
   test('never carries a prompt column', async () => {
     const dbPath = await createStore('desktop-columns');
     const db = new Database(dbPath, { readonly: true });

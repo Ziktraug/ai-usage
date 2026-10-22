@@ -64,6 +64,12 @@ export const readWorkAttentionFromStore = async (input: {
     return { data: result.right, ok: true };
   }
   const reason = usageStoreErrorReasonFrom(result.left);
+  if (reason === 'schema-too-old') {
+    return failure(
+      'IncompatibleStore',
+      'The usage store has not been upgraded for this version yet; the engine upgrades it when it next starts.',
+    );
+  }
   if (reason !== undefined && INCOMPATIBLE_STORE_REASONS.has(reason)) {
     return failure('IncompatibleStore', 'The usage store is not compatible with this version of the application.');
   }

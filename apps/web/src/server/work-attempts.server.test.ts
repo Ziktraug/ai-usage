@@ -224,6 +224,21 @@ describe('Work attempts server', () => {
         { mode: 'live', readers: readers({ readAttempts: () => Promise.reject(incompatible) }) },
       ),
     ).toMatchObject({ error: { tag: 'IncompatibleStore' }, ok: false });
+    // Not yet upgraded by the engine: typed, and it says what upgrades it.
+    const older = new UsageStoreError({ message: 'columns', operation: 'read', reason: 'schema-too-old' });
+    expect(
+      await listWorkAttemptsForServer(
+        {},
+        { mode: 'live', readers: readers({ readAttempts: () => Promise.reject(older) }) },
+      ),
+    ).toEqual({
+      error: {
+        message:
+          'The usage store has not been upgraded for this version yet; the engine upgrades it when it next starts.',
+        tag: 'IncompatibleStore',
+      },
+      ok: false,
+    });
     const privatePath = '/private/usage.sqlite';
     const failed = await listWorkAttemptsForServer(
       {},

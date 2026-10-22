@@ -200,6 +200,13 @@ stays reserved until that declaration or a process check releases it. A binary
 from before the rebuild opens the store and reads an operator-released row as a
 row it refuses on re-validation, counted, never shown.
 
+Until the engine has reopened an upgraded store, the query-only Web reads of
+`review_attempts` (missing reservation columns) and of
+`claude_desktop_turn_declarations` (missing table) cannot add them: they answer
+a typed `schema-too-old`, shown on the Work view as "not upgraded for this
+version yet; the engine upgrades it when it next starts", never as a raw
+storage failure.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

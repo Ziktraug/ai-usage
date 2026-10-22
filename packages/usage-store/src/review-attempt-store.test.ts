@@ -262,6 +262,30 @@ describe('review attempt store', () => {
     }
   });
 
+  test('a store whose review attempts predate the reservation columns reads as not upgraded yet, typed', async () => {
+    const dbPath = await createStore();
+    const db = new Database(dbPath);
+    try {
+      db.exec(`
+        DROP TABLE review_attempts;
+        CREATE TABLE review_attempts (
+          attempt_id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, action TEXT NOT NULL,
+          target_harness TEXT NOT NULL, source_session_id TEXT NOT NULL, desktop_session_id TEXT, checkout_path TEXT,
+          checkout_origin TEXT, project_label TEXT, session_title TEXT, candidate_id TEXT NOT NULL,
+          executor_harness TEXT NOT NULL, declaration_json TEXT, state TEXT NOT NULL, requested_at TEXT NOT NULL,
+          started_at TEXT, ended_at TEXT, updated_at TEXT NOT NULL, native_session_id TEXT, pid INTEGER, exit_code INTEGER,
+          result_kind TEXT, result_excerpt TEXT, num_turns INTEGER, duration_ms INTEGER,
+          validations_json TEXT NOT NULL DEFAULT '[]', acceptance TEXT NOT NULL DEFAULT 'pending', failure_reason TEXT
+        );
+      `);
+    } finally {
+      db.close();
+    }
+    const error = await Effect.runPromise(Effect.flip(queryReviewAttempts({ dbPath })));
+    expect(error).toMatchObject({ reason: 'schema-too-old' });
+    expect(error.message).toContain('next engine start');
+  });
+
   test('inserts one live attempt per identity and returns the existing one to a second request', async () => {
     const dbPath = await createStore();
     const first = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-1' }), dbPath }));
