@@ -34,8 +34,11 @@ those declared links only.
 - A harness that declares no turn status contributes Work roots of its own:
   one per served campaign of that harness active in the activity window, read
   from the current served revision (`queryRecentServedHarnessSessions`), at
-  most one page of roots, the most recently active first, the others counted.
-  Codex is the one such harness today.
+  most `WORK_ATTENTION_BOUNDS.maxCodexRoots` (20) roots, the most recently
+  active first, the others counted (`coverage.codexSessions`, "N of M Codex
+  campaigns shown"; amended at integration so these rows can neither crowd
+  Desktop roots out of a page nor inflate the payload). Codex is the one such
+  harness today.
 - Their attention is `not-observable`: whether the session waits on someone is
   unknown, which is not "nothing pending". No human request and no external
   wait is ever derived for such a root, whatever its facts show; it ranks after

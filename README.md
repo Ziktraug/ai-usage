@@ -429,10 +429,12 @@ The answer (`schemaVersion` 1) has `waiting` (human requests and external
 waits, each with the session's own declaration, its date and provenance),
 `decisions` (requests answered, handled elsewhere, archived or superseded,
 newest first, each with its evidence), `linked` (pull request, checkout and
-Jira facts) and `coverage`. Coverage always states what is not covered: only
-Claude Desktop sessions are represented (Codex, OpenCode, Cursor and Claude
-Code sessions started outside Claude Desktop are not), no transcript is read,
-and quiet roots older than the window are left out. Lists are bounded (at most
+Jira facts) and `coverage`. Coverage states per harness what was read: Claude
+Desktop sessions with their declared waits, and the recent Codex sessions as
+sessions only (Codex declares no wait, so none appears in `waiting`; at most 20
+Codex campaigns, counted against those in the window). OpenCode, Cursor and
+Claude Code sessions started outside Claude Desktop are not represented, no
+transcript is read, and quiet roots older than the window are left out. Lists are bounded (at most
 20 waits and 20 decisions) and the whole answer stays under 64 KiB of JSON;
 `truncation` says what was left out. A missing or not-yet-upgraded store is an
 error (exit 1, or an MCP error such as `store-missing`), never an empty answer.

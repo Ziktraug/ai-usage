@@ -32,7 +32,11 @@ data (ADR 0009).
   request, checkout and Jira facts of those roots) and `coverage` (the Work
   read's own coverage, root counts and fixed notes on what is not covered:
   Claude Desktop sessions only, no transcript, declared links only, the
-  activity window, literal paths).
+  activity window, literal paths). Amended with ADR 0059: `coverage.harnesses`
+  says per harness what is read (Claude Desktop: declared waits; Codex:
+  sessions only, campaigns read of those in the window), and when Codex
+  campaigns were read the first note names both instead of "Claude Desktop
+  sessions only"; a Codex root never enters `waiting`.
 - It copies less than the dataset exposes: turn reports, wrap-ups,
   side-session notes and proposals are cited by id and date only. Every list
   has a count bound and the compact JSON encoding a 64 KiB ceiling; lists are
