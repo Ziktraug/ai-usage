@@ -33,6 +33,8 @@ This package imports no other `@ai-usage/*` package.
 - `./analytics`: analytics summary and grouping.
 - `./auth`: authentication/session provenance helpers.
 - `./csv`: usage-row CSV serialization.
+- `./codex-work-observation`: bounded local native request, acknowledgement,
+  exact-answer and provenance contracts; never portable usage-row content.
 - `./datasets`: typed report datasets.
 - `./focused-report-query`: strict bounded support, Overview, and Breakdown
   contracts.
@@ -206,6 +208,10 @@ restricted exactly to `@ai-usage/local-machine/campaign-label-config`,
 
 - `.`: collection orchestration and Codex app-server/quota batch collection.
 - `./codex-history`: collector-side Codex rollout/cache writer and conversion.
+- `./codex-app-server-client`: bounded native stdio transport and account identity
+  qualification shared by quota observation and owned Codex review.
+- `./codex-review-launcher`: one fixed-patch review with explicit account, capacity,
+  model and policy qualification; owned interruption and partial-result evidence.
 - `./collectors`: per-harness normalized collectors.
 - `./datasets`: collected report datasets.
 - `./facets`: Cursor commit-attribution collection.
