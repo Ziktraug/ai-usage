@@ -34,7 +34,29 @@ export const workAttentionQueryOptions = (
     enabled: context.browser && context.enabled,
     queryFn: async ({ signal }) =>
       unwrapWorkAttentionResult(
-        await client.attention({ limit: identity.limit, machineId: identity.machineId }, { signal }),
+        await client.attention(
+          {
+            limit: identity.limit,
+            machineId: identity.machineId,
+            ...(identity.scope === undefined ? {} : { scope: identity.scope }),
+            ...(identity.sinceDays === undefined ? {} : { sinceDays: identity.sinceDays }),
+          },
+          { signal },
+        ),
       ),
     queryKey: workAttentionKey(identity),
   });
+
+/** Exact project scope is applied before the root budget; exploration never raises that budget. */
+export const workAttentionRequestFromSearch = (params: URLSearchParams): WorkAttentionIdentity => {
+  const project = params.get('context-project')?.trim();
+  const parsedDays = Number(params.get('context-days') ?? 30);
+  const sinceDays = Number.isInteger(parsedDays) && parsedDays >= 1 && parsedDays <= 3650 ? parsedDays : 30;
+  return {
+    ...workAttentionRequest(),
+    ...(project && !project.includes('/') && project !== '.' && project !== '..'
+      ? { scope: { kind: 'project-label' as const, projectLabel: project } }
+      : {}),
+    ...(sinceDays === 30 ? {} : { sinceDays }),
+  };
+};

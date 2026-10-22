@@ -22,7 +22,7 @@
   import {
     WorkAttentionQueryError,
     workAttentionQueryOptions,
-    workAttentionRequest,
+    workAttentionRequestFromSearch,
   } from '../../query/options/work-attention';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createReportClient } from '../../rpc/report-client';
@@ -49,6 +49,7 @@
     workButton,
     workDrawerBody,
     workHeading,
+    workInput,
     workLayout,
     workMuted,
     workPanel,
@@ -79,7 +80,10 @@
 
   // --- Declared outcomes (the resume surface) ---------------------------------------------------
   const attentionQuery = createQuery(() =>
-    workAttentionQueryOptions(clients.attention, workAttentionRequest(), { browser, enabled: true }),
+    workAttentionQueryOptions(clients.attention, workAttentionRequestFromSearch(page.url.searchParams), {
+      browser,
+      enabled: true,
+    }),
   );
   const dataset = $derived(attentionQuery.data ?? null);
   const attentionError = $derived.by(() => {
@@ -107,6 +111,25 @@
     shellNavigation.goto(next, { keepFocus: true, noScroll: true, replaceState: replace });
   const updateSearch = (patch: Partial<WorkAttentionSearch>): void => {
     navigate(writeWorkAttentionSearch(new URL(page.url), { ...search, ...patch }), true);
+  };
+  const exploreContext = (event: SubmitEvent): void => {
+    event.preventDefault();
+    if (!(event.currentTarget instanceof HTMLFormElement)) {
+      return;
+    }
+    const fields = new FormData(event.currentTarget);
+    const next = new URL(page.url);
+    for (const name of ['context-project', 'context-days']) {
+      const value = String(fields.get(name) ?? '').trim();
+      if (value && value !== '30') {
+        next.searchParams.set(name, value);
+      } else {
+        next.searchParams.delete(name);
+      }
+    }
+    next.searchParams.delete('root');
+    next.searchParams.delete('project');
+    navigate(next, true);
   };
   const select = (id: string): void => {
     lastFocusedId = id;
@@ -268,6 +291,41 @@
         <p class={workMuted}>
           Synthetic demonstration · no local history is read. Declared outcomes, facts and routing eligibility are
           fixture data.
+        </p>
+      {/if}
+      <details class={workPanel} data-work-project-context>
+        <summary class={workHeading}>Explore a project context</summary>
+        <form class={workStack} onsubmit={exploreContext}>
+          <label class={workMuted}
+            >Exact project label
+            <input
+              class={workInput}
+              name="context-project"
+              placeholder="For example: ai-usage"
+              value={page.url.searchParams.get('context-project') ?? ''}
+            >
+          </label>
+          <label class={workMuted}
+            >History window
+            <select class={workInput} name="context-days" value={page.url.searchParams.get('context-days') ?? '30'}>
+              <option value="30">30 days</option>
+              <option value="180">180 days</option>
+              <option value="365">365 days</option>
+              <option value="3650">10 years</option>
+            </select>
+          </label>
+          <button class={workButton} type="submit">Read project context</button>
+          <p class={workMuted}>
+            The exact project label is matched before the root limit, including its recorded worktrees. An empty label
+            reads all projects. The history window is explicit; open Desktop questions are retained at any age.
+          </p>
+        </form>
+      </details>
+      {#if page.url.searchParams.has('context-project') || page.url.searchParams.has('context-days')}
+        <p class={workMuted} role="status">
+          Context: {page.url.searchParams.get('context-project') || 'all projects'} ·
+          {workAttentionRequestFromSearch(page.url.searchParams).sinceDays ?? 30}
+          days · at most 100 ranked roots.
         </p>
       {/if}
       <WorkSources {generatedAt} mode={data.mode} support={bootstrap?.bootstrap ?? null} />

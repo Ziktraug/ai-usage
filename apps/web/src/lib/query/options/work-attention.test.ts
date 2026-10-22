@@ -10,11 +10,50 @@ import {
   workAttentionKey,
   workAttentionQueryOptions,
   workAttentionRequest,
+  workAttentionRequestFromSearch,
 } from './work-attention';
 
 const dataset = syntheticWorkAttentionDataset();
 
 describe('Work attention Query identity and policy', () => {
+  test('reads an exact project and explicit older window from the address with no default budget increase', () => {
+    expect(workAttentionRequestFromSearch(new URLSearchParams('context-project=ai-usage&context-days=180'))).toEqual({
+      limit: 100,
+      machineId: null,
+      scope: { kind: 'project-label', projectLabel: 'ai-usage' },
+      sinceDays: 180,
+    });
+    expect(workAttentionRequestFromSearch(new URLSearchParams('context-days=Infinity'))).toEqual(
+      workAttentionRequest(),
+    );
+    expect(workAttentionRequestFromSearch(new URLSearchParams())).toEqual(workAttentionRequest());
+  });
+  test('keeps scoped historical context distinct from the global page', async () => {
+    const identity = {
+      limit: 20,
+      machineId: null,
+      scope: { kind: 'checkouts' as const, checkoutPaths: ['/src/a', '/src/b'] },
+      sinceDays: 180,
+    };
+    const seen: unknown[] = [];
+    const client: WorkAttentionClient = {
+      attention: (input) => {
+        seen.push(input);
+        return Promise.resolve({ data: dataset, ok: true });
+      },
+    };
+    const queryClient = createHydratedWebQueryClient({ dehydratedState: { mutations: [], queries: [] } });
+    try {
+      await queryClient.fetchQuery(workAttentionQueryOptions(client, identity, { browser: true, enabled: true }));
+      expect(seen).toEqual([identity]);
+      expect(workAttentionKey(identity)).not.toEqual(workAttentionKey({ limit: 20, machineId: null }));
+      expect(workAttentionKey(identity)).toEqual(
+        workAttentionKey({ ...identity, scope: { kind: 'checkouts', checkoutPaths: ['/src/b', '/src/a'] } }),
+      );
+    } finally {
+      queryClient.clear();
+    }
+  });
   test('lives on the collection cadence prefix with scalar identity parts', () => {
     expect(workAttentionKey(workAttentionRequest())).toEqual([
       'web',

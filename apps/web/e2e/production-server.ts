@@ -11,13 +11,16 @@ import { CONTINUITY_HOME_RECORD_ENV, seedCampaignContinuity } from './campaign-c
 import { CLOCK_EPOCH_ENVIRONMENT_KEY } from './production-clock';
 import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
 import { seedWorkAttemptFixture, workAttemptFixtureEnabled } from './work-attempt-fixture';
+import { CODEX_JOURNEY_ENV, seedCodexJourneyFixture } from './work-codex-fixture';
+import { CODEX_NATIVE_ENV, seedCodexNativeRefusalFixture } from './work-codex-native-fixture';
 
 const DEFAULT_CODEX_SESSION_COUNT = 205;
 const DEFAULT_LISTENER_PORT = '4175';
 const SCALE_FIXTURE_ENVIRONMENT_KEY = 'AI_USAGE_SESSION_SCALE_E2E';
 const LISTENER_PORT_ENVIRONMENT_KEY = 'AI_USAGE_PRODUCTION_E2E_PORT';
 const LISTENER_PORT_PATTERN = /^\d{1,5}$/;
-const PRODUCTION_FIXTURE_EPOCH = '2026-07-03T12:00:00.000Z';
+const PRODUCTION_FIXTURE_EPOCH =
+  process.env[CODEX_NATIVE_ENV] === '1' ? new Date().toISOString() : '2026-07-03T12:00:00.000Z';
 const rootDirectory = path.resolve(import.meta.dirname, '../../..');
 const productionClockUrl = pathToFileURL(path.join(import.meta.dirname, 'production-clock.ts')).href;
 const scaleFixture = process.env[SCALE_FIXTURE_ENVIRONMENT_KEY] === '1';
@@ -115,7 +118,7 @@ try {
   if (defaultProfile && workAttemptFixtureEnabled()) {
     // Opt-in only (ADR 0053): a fake `claude`, a declared route and review target, and one fresh
     // quota reading, so the Work view can launch and follow one read-only review in the browser.
-    await seedWorkAttemptFixture({
+    const workFixture = {
       databasePath,
       epoch: new Date(PRODUCTION_FIXTURE_EPOCH),
       fixtureBinDirectory,
@@ -123,7 +126,14 @@ try {
       machineId: 'production-e2e-machine',
       machineLabel: 'Production fixture machine',
       repository: seeded.paths.repository,
-    });
+    };
+    await seedWorkAttemptFixture(workFixture);
+    if (process.env[CODEX_JOURNEY_ENV] === '1') {
+      await seedCodexJourneyFixture(workFixture);
+    }
+    if (process.env[CODEX_NATIVE_ENV] === '1') {
+      await seedCodexNativeRefusalFixture(workFixture);
+    }
   }
   const child = Bun.spawn(['bun', '--no-env-file', 'run', 'start'], {
     cwd: rootDirectory,

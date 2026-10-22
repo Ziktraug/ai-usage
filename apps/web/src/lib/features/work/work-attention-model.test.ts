@@ -22,7 +22,9 @@ import {
   workRootFactChips,
   workRootId,
   workRootLastDecision,
+  workRootNativeQuestion,
   workRootNextAction,
+  workRootObservedActivity,
   workRootPastProposalIds,
   workRootRowTitle,
   workRootStanding,
@@ -31,6 +33,7 @@ import {
   writeWorkAttentionSearch,
 } from './work-attention-model';
 import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
+import { nativeQuestionRoot } from './work-native.fixture';
 import { WORK_DEMO_TIME } from './work-synthetic';
 
 const dataset = syntheticWorkAttentionDataset();
@@ -77,12 +80,13 @@ describe('Work attention grouping and ordering', () => {
     const needsYou = groupWorkRoots(roots)[0]!.roots;
     // The older declarations to reconsider close the section, after every current block, most
     // recent first: a later link, then a week without activity.
-    expect(needsYou.slice(-3).map((root) => root.title)).toEqual([
+    expect(needsYou.slice(-4).map((root) => root.title)).toEqual([
+      'Release checklist',
       'Toolbar refresh',
       'Scan resource optimization',
       'Session distillation worker redaction',
     ]);
-    expect(needsYou.slice(0, -3).every((root) => !root.reconsidered)).toBe(true);
+    expect(needsYou.slice(0, -4).every((root) => !root.reconsidered)).toBe(true);
     // Older than every other request, it would rank first by date alone; the flag sorts it last.
     expect(workRootFactChips(reconsidered).map((chip) => chip.label)).toEqual([
       'possibly answered · PR #61',
@@ -223,7 +227,7 @@ describe('Work attention search and filters', () => {
   });
   test('attention, harness, machine and project chips narrow the list independently', () => {
     const blocked = filterWorkRoots(roots, { ...EMPTY_WORK_ATTENTION_SEARCH, attention: ['human-request'] });
-    expect(blocked.length).toBe(8);
+    expect(blocked.length).toBe(9);
     expect(blocked.every((root) => root.attention === 'human-request')).toBe(true);
     const codex = filterWorkRoots(roots, { ...EMPTY_WORK_ATTENTION_SEARCH, harness: ['codex'] });
     expect(codex.map((root) => root.title)).toEqual(['Build report UI']);
@@ -493,15 +497,17 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
     expect(workRootStanding(rootNamed('Fix mobile navigation label overlap'))).toBe('current');
     expect(workRootStanding(rootNamed('Scan resource optimization'))).toBe('reconsider');
     expect(workRootStanding(rootNamed('Toolbar refresh'))).toBe('reconsider');
-    expect(workRootStanding(rootNamed('Release checklist'))).toBe('handled');
+    expect(workRootStanding(rootNamed('Release checklist'))).toBe('reconsider');
     expect(workRootStanding(rootNamed('Viz lineage exploration'))).toBe('none');
   });
 
-  test('an earlier question answered in the harness is the row’s last decision, dated by its own fact', () => {
+  test('an earlier question replaced by a later declaration stays dated without an inferred answer, dated by its own fact', () => {
     const root = rootNamed('Sources label');
     expect(workRootStanding(root)).toBe('current');
     const decision = workRootLastDecision(root);
-    expect(decision?.text).toBe('Earlier “Call the rail entry “Inputs” or “Collectors”?” answered in Claude Desktop');
+    expect(decision?.text).toBe(
+      'Earlier “Call the rail entry “Inputs” or “Collectors”?” replaced by a later declaration',
+    );
     expect(decision?.instantLabel).toBe('asked');
     const earlier = root.facts.find((fact) => fact.id === 'sources-label:declared-earlier');
     expect(String(earlier?.kind === 'declared-turn' ? earlier.declaredAt : null)).toBe(String(decision?.instant));
@@ -510,13 +516,11 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
     expect(matchesWorkAttentionSearch(root, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'collectors' })).toBe(true);
   });
 
-  test('a handled request names the linked session’s completion and asks nothing', () => {
+  test('a linked completion does not settle the parent request', () => {
     const root = rootNamed('Release checklist');
-    expect(workRootLastDecision(root)).toMatchObject({
-      instantLabel: 'completed',
-      text: 'Handled in a session started from it',
-    });
-    expect(workRootNextAction(root)).toBe('Nothing asked of you; the linked session’s outcome is in the detail.');
+    expect(workRootLastDecision(root)).toBeNull();
+    expect(root.attention).toBe('human-request');
+    expect(workRootNextAction(root)).toContain('Check what followed');
     expect(workFactSummary(root.facts[1]!, root)).toBe(
       'Linked session declared completed: The export test is stable again.',
     );
@@ -648,5 +652,42 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
     expect(workSearchCoverage(one, 1, true)).toBe(
       '1 of 22 roots match, searched among the 22 shown · not searched: 1 older root hidden (30-day window) · 1 Codex campaign beyond the 20-campaign Codex budget.',
     );
+  });
+});
+
+describe('Native question presentation', () => {
+  test('keeps the unanswered question visible and does not invent a Desktop state or decision', () => {
+    const root = nativeQuestionRoot();
+    expect(workRootNativeQuestion(root)).toBe('Which review model should run?');
+    expect(workRootStanding(root)).toBe('current');
+    expect(
+      workRootLastDecision({
+        ...root,
+        interpretations: [
+          {
+            kind: 'request-answered',
+            text: 'First question answered',
+            uncertainty: 'Second pending',
+            evidence: ['native-question'],
+          },
+        ],
+      }),
+    ).toBeNull();
+    expect(workUndeclaredSituation(root)).toBe('native question observed');
+    expect(matchesWorkAttentionSearch(root, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'bounded context' })).toBe(true);
+    expect(workFactSummary(root.facts[0]!)).toContain('no attributable answer observed');
+    expect(
+      workRootObservedActivity({
+        ...root,
+        interpretations: [
+          {
+            kind: 'request-message-observed',
+            text: 'Message observed at 2026-06-11T11:00:00.000Z; no attributable answer.',
+            uncertainty: 'Not an answer',
+            evidence: [],
+          },
+        ],
+      }),
+    ).toContain('2026-06-11T11:00:00.000Z');
   });
 });

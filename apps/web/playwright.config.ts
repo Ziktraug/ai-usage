@@ -21,6 +21,8 @@ export default defineConfig({
     'demo-isolation.spec.ts',
     'production-report.spec.ts',
     'work-attempt-production.spec.ts',
+    'work-codex-production.spec.ts',
+    'work-codex-native.spec.ts',
     'work-production.spec.ts',
   ],
   use: {

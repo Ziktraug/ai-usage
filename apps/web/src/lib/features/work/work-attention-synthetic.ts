@@ -878,9 +878,9 @@ const seeds = (): readonly RootSeed[] => [
         ['sources-label:declared'],
       ),
       interpretation(
-        'earlier-request-answered',
-        `Answered in Claude Desktop: the question “Call the rail entry “Inputs” or “Collectors”?” (asked ${hoursAgo(8)}); you wrote to the session at ${hoursAgo(7)} and it declared again at ${hoursAgo(5)}.`,
-        'Read from Claude Desktop’s own record; the message itself is not read. It answers this request only: no proposal, other question or authorization follows from it.',
+        'earlier-request-superseded',
+        `Replaced by a later declaration: the question “Call the rail entry “Inputs” or “Collectors”?” (asked ${hoursAgo(8)}); you wrote to the session at ${hoursAgo(7)} and it declared again at ${hoursAgo(5)}.`,
+        'A later message and declaration do not establish an answer to this earlier question.',
         ['sources-label:declared-earlier', 'sources-label:declared'],
       ),
     ],
@@ -932,7 +932,8 @@ const seeds = (): readonly RootSeed[] => [
     title: 'Toolbar refresh',
   },
   {
-    attention: 'none',
+    attention: 'human-request',
+    reconsidered: true,
     branch: 'release/0.9',
     children: { completed: 1, count: 1, titles: ['Fix the flaky export test'] },
     declared: {
@@ -957,9 +958,9 @@ const seeds = (): readonly RootSeed[] => [
     id: 'release-checklist',
     interpretations: [
       interpretation(
-        'request-handled-elsewhere',
-        `Handled in “Fix the flaky export test”: started from this session at ${hoursAgo(6.8)}, after the question “Fix the flaky export test before the release, or skip it?” (asked ${hoursAgo(7)}), and declared completed at ${hoursAgo(6)}.`,
-        'Claude Desktop attests the link and the completion; what that session did is its own declaration, not read further.',
+        'request-continued-elsewhere',
+        `Work continued in “Fix the flaky export test”: started from this session at ${hoursAgo(6.8)}, after the question “Fix the flaky export test before the release, or skip it?” (asked ${hoursAgo(7)}), and declared completed at ${hoursAgo(6)}.`,
+        'Claude Desktop attests the link and completion; this does not settle the parent question.',
         ['release-checklist:declared', 'desk-release-flaky-fix:declared-turn'],
       ),
     ],

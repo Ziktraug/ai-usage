@@ -117,6 +117,73 @@ const dataset = (roots: readonly WorkRootWire[] = [root()]): WorkAttentionDatase
 });
 
 describe('Work contract', () => {
+  test('carries bounded native questions without answer content or a fabricated declaration', () => {
+    const fact = {
+      id: 'codex-question',
+      kind: 'codex-user-request',
+      sourceSessionId: 'native-thread',
+      provenance: { source: 'codex-rollout', coverage: 'complete', machineId: 'machine-a', observedAt: AT },
+      request: {
+        callId: 'call-1',
+        tool: 'request_user_input_async',
+        askedAt: AT,
+        acknowledgedAt: AT,
+        rejectedAt: null,
+        questions: [{ id: null, text: 'Keep the current branch?', textTruncated: false, answeredAt: null }],
+      },
+    } as const;
+    const value = { data: dataset([root({ declared: null, desktopSessionId: null, facts: [fact] })]), ok: true };
+    expect(parseWorkAttentionOutput(value)).toEqual(value);
+    expect(
+      safeParse(workAttentionOutputSchema, {
+        ...value,
+        data: {
+          ...value.data,
+          roots: [
+            { ...value.data.roots[0], facts: [{ ...fact, request: { ...fact.request, answer: 'private content' } }] },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(workAttentionOutputSchema, {
+        ...value,
+        data: {
+          ...value.data,
+          roots: [
+            {
+              ...value.data.roots[0],
+              facts: [
+                {
+                  ...fact,
+                  request: { ...fact.request, questions: Array.from({ length: 4 }, () => fact.request.questions[0]) },
+                },
+              ],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+  });
+  test('admits bounded explicit project history and rejects accidental unbounded reads', () => {
+    expect(
+      safeParse(workAttentionInputSchema, {
+        scope: { kind: 'checkouts', checkoutPaths: ['/src/repo', '/src/repo-review'] },
+        sinceDays: 180,
+      }).success,
+    ).toBe(true);
+    expect(
+      safeParse(workAttentionInputSchema, { scope: { kind: 'project-label', projectLabel: 'ai-usage' } }).success,
+    ).toBe(true);
+    for (const scope of [
+      { kind: 'checkouts', checkoutPaths: ['relative'] },
+      { kind: 'checkouts', checkoutPaths: Array.from({ length: 11 }, (_, i) => `/src/${i}`) },
+      { kind: 'project-label', projectLabel: '/repo' },
+    ]) {
+      expect(safeParse(workAttentionInputSchema, { scope }).success).toBe(false);
+    }
+    expect(safeParse(workAttentionInputSchema, { sinceDays: 3651 }).success).toBe(false);
+  });
   test('declares one POST procedure', () => {
     expect(workContract.attention['~orpc'].route).toEqual({ method: 'POST', path: '/work/attention' });
   });
@@ -204,6 +271,6 @@ describe('Work contract', () => {
     expect(safeParse(workAttentionInputSchema, { limit: 201 }).success).toBe(false);
     expect(safeParse(workAttentionInputSchema, { limit: 1.5 }).success).toBe(false);
     expect(safeParse(workAttentionInputSchema, { machineId: '' }).success).toBe(false);
-    expect(safeParse(workAttentionInputSchema, { sinceDays: 30 }).success).toBe(false);
+    expect(safeParse(workAttentionInputSchema, { unknownField: 30 }).success).toBe(false);
   });
 });

@@ -15,7 +15,11 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
   // The review attempt spec needs the fixture that production-server.ts seeds only under this flag.
-  testIgnore: process.env.AI_USAGE_WORK_ATTEMPT_E2E === '1' ? [] : ['work-attempt-production.spec.ts'],
+  testIgnore: [
+    'work-codex-production.spec.ts',
+    'work-codex-native.spec.ts',
+    ...(process.env.AI_USAGE_WORK_ATTEMPT_E2E === '1' ? [] : ['work-attempt-production.spec.ts']),
+  ],
   timeout: 120_000,
   use: {
     baseURL: 'http://127.0.0.1:4175',

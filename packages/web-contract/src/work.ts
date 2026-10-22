@@ -1,4 +1,5 @@
 import { isCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import { CODEX_WORK_BOUNDS } from '@ai-usage/report-core/codex-work-observation';
 import {
   CHECKOUT_STATUS_OUTCOMES,
   CLAUDE_DESKTOP_SUGGESTION_RESOLUTIONS,
@@ -87,7 +88,44 @@ const provenanceSchema = strictObject({
 
 const factBase = { id: identifierSchema, provenance: provenanceSchema } as const;
 
+const codexTextSchema = pipe(string(), minLength(1), maxLength(CODEX_WORK_BOUNDS.maxText));
+const codexIdSchema = pipe(string(), minLength(1), maxLength(CODEX_WORK_BOUNDS.maxId));
+const codexRequestSchema = strictObject({
+  callId: codexIdSchema,
+  tool: picklist(['request_user_input', 'request_user_input_async']),
+  askedAt: instantSchema,
+  acknowledgedAt: nullable(instantSchema),
+  rejectedAt: nullable(instantSchema),
+  questions: pipe(
+    array(
+      strictObject({
+        id: nullable(codexIdSchema),
+        text: codexTextSchema,
+        textTruncated: boolean(),
+        answeredAt: nullable(instantSchema),
+      }),
+    ),
+    minLength(1),
+    maxLength(CODEX_WORK_BOUNDS.maxQuestions),
+  ),
+});
+
 export const workFactSchema = variant('kind', [
+  strictObject({
+    ...factBase,
+    kind: literal('codex-user-request'),
+    sourceSessionId: codexIdSchema,
+    request: codexRequestSchema,
+  }),
+  strictObject({
+    ...factBase,
+    kind: literal('codex-session-context'),
+    sourceSessionId: codexIdSchema,
+    originator: nullable(codexIdSchema),
+    executionSource: nullable(codexIdSchema),
+    threadSource: nullable(codexIdSchema),
+    forkedFromId: nullable(codexIdSchema),
+  }),
   strictObject({
     ...factBase,
     declaredAt: instantSchema,
@@ -276,7 +314,36 @@ export const workAttentionDatasetSchema = strictObject({
 export const workAttentionErrorTags = ['ForbiddenDemo', 'IncompatibleStore', 'Unavailable'] as const;
 export type WorkAttentionErrorTag = (typeof workAttentionErrorTags)[number];
 
+const workAttentionScopeSchema = variant('kind', [
+  strictObject({
+    kind: literal('checkouts'),
+    checkoutPaths: pipe(
+      array(
+        pipe(
+          string(),
+          minLength(1),
+          maxLength(maxPath),
+          check((value) => value.startsWith('/'), 'An absolute checkout path is required.'),
+        ),
+      ),
+      minLength(1),
+      maxLength(10),
+    ),
+  }),
+  strictObject({
+    kind: literal('project-label'),
+    projectLabel: pipe(
+      string(),
+      minLength(1),
+      maxLength(maxPath),
+      check((value) => !value.includes('/') && value !== '.' && value !== '..', 'Use an exact project label.'),
+    ),
+  }),
+]);
+
 export const workAttentionInputSchema = strictObject({
+  scope: optional(workAttentionScopeSchema),
+  sinceDays: optional(pipe(number(), finite(), safeInteger(), minValue(1), maxValue(3650))),
   limit: optional(pipe(number(), finite(), safeInteger(), minValue(1), maxValue(maxRoots))),
   machineId: optional(nullable(identifierSchema)),
 });

@@ -197,6 +197,9 @@ const searchableText = (root: WorkRoot): string =>
         ? [fact.needsAction]
         : [],
     ),
+    ...root.facts.flatMap((fact) =>
+      fact.kind === 'codex-user-request' ? fact.request.questions.map((question) => question.text) : [],
+    ),
     ...pullRequestFacts(root).flatMap((fact) => [`#${fact.number}`, fact.repository]),
     ...jiraFacts(root).map((fact) => fact.key),
   ]
@@ -421,6 +424,9 @@ export const workHarnessLabel = (harness: string): string => HARNESS_LABELS[harn
  * nothing, a root of a harness that declares nothing at all (ADR 0059), or bare activity.
  */
 export const workUndeclaredSituation = (root: WorkRoot): string => {
+  if (root.key.harness === 'codex' && root.attention === 'human-request') {
+    return 'native question observed';
+  }
   if (root.attention === 'not-observable') {
     return `wait unknown · not declared by ${workHarnessLabel(root.key.harness)}`;
   }
@@ -446,6 +452,9 @@ const CLOSING_STANDINGS: Partial<Record<WorkInterpretationKind, WorkRootStanding
 };
 
 export const workRootStanding = (root: WorkRoot): WorkRootStanding => {
+  if (root.key.harness === 'codex') {
+    return root.attention === 'human-request' ? 'current' : 'not-declared';
+  }
   for (const entry of root.interpretations) {
     const standing = CLOSING_STANDINGS[entry.kind];
     if (standing !== undefined) {
@@ -563,6 +572,9 @@ const DECISION_ORDER: readonly WorkInterpretationKind[] = [
 ];
 
 export const workRootLastDecision = (root: WorkRoot): WorkRootDecision | null => {
+  if (root.key.harness === 'codex') {
+    return null;
+  }
   for (const kind of DECISION_ORDER) {
     const entry = root.interpretations.find((candidate) => candidate.kind === kind);
     if (entry !== undefined) {
@@ -582,6 +594,9 @@ export const workRootPastProposalIds = (root: WorkRoot): ReadonlySet<string> =>
 
 /** What the person can do next, in one line; `null` when nothing is asked of them. */
 export const workRootNextAction = (root: WorkRoot): string | null => {
+  if (root.key.harness === 'codex' && root.attention === 'human-request') {
+    return 'Open the question in Codex and answer there; this view only observes its evidence.';
+  }
   switch (workRootStanding(root)) {
     case 'current':
       if (root.declared?.status === 'review_ready') {
@@ -619,6 +634,12 @@ export const workRootNextAction = (root: WorkRoot): string | null => {
  */
 export const workCodexCoverage = (dataset: Pick<WorkAttentionDataset, 'coverage' | 'roots'>): string => {
   const shown = dataset.roots.filter((root) => root.key.harness === 'codex').length;
+  const requests = dataset.roots
+    .flatMap((root) => root.facts)
+    .filter((fact) => fact.kind === 'codex-user-request').length;
+  if (requests > 0) {
+    return `Codex: ${shown} roots shown · ${requests} native requests observed in selected sessions; omitted sessions and runtime approvals remain unknown.`;
+  }
   const { sinceDays } = dataset.coverage.window;
   // Codex rows have their own budget (ADR 0059) and the page limit cuts them first: say how many.
   const inWindow = Math.max(dataset.coverage.codexSessions.campaignsInWindow, shown);
@@ -908,6 +929,7 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
 };
 
 export const WORK_FACT_SOURCE_LABELS: Readonly<Record<WorkFactSource, string>> = {
+  'codex-rollout': 'Codex native rollout',
   'claude-desktop': 'Claude Desktop metadata',
   'claude-transcript': 'Claude transcript',
   github: 'GitHub',
@@ -936,6 +958,20 @@ export const groupWorkFactsBySource = (facts: readonly WorkFact[]): readonly Wor
 /** One line per fact for the detail panel; the provenance is rendered beside it, not inside it. */
 export const workFactSummary = (fact: WorkFact, root?: WorkRoot): string => {
   switch (fact.kind) {
+    case 'codex-user-request': {
+      const questions = fact.request.questions.map((question) => {
+        let status = 'no attributable answer observed';
+        if (question.answeredAt) {
+          status = `answer attributed ${formatExactInstant(question.answeredAt)}`;
+        } else if (fact.request.rejectedAt) {
+          status = 'delivery rejected';
+        }
+        return `${question.text}${question.textTruncated ? ' [text truncated]' : ''} (${status})`;
+      });
+      return `Native ${fact.request.tool} request ${fact.request.callId} in ${fact.sourceSessionId}: ${questions.join('; ')}`;
+    }
+    case 'codex-session-context':
+      return `Native session ${fact.sourceSessionId}: originator ${fact.originator ?? 'unknown'}; source ${fact.executionSource ?? 'unknown'}; thread source ${fact.threadSource ?? 'unknown'}; forked from ${fact.forkedFromId ?? 'not reported'}. These are native metadata, not inferred roles.`;
     case 'declared-turn':
       if (root !== undefined && fact.desktopSessionId !== root.desktopSessionId) {
         return `Linked session declared ${workDeclaredStatusLabel(fact.status)}: ${fact.needsAction ?? fact.detail}`;
@@ -977,6 +1013,8 @@ export const workFactSummary = (fact: WorkFact, root?: WorkRoot): string => {
 
 export const workFactInstant = (fact: WorkFact): string => {
   switch (fact.kind) {
+    case 'codex-user-request':
+      return fact.request.askedAt;
     case 'declared-turn':
       return fact.declaredAt;
     case 'wrap-up':
@@ -992,4 +1030,22 @@ export const workFactInstant = (fact: WorkFact): string => {
     default:
       return fact.provenance.observedAt;
   }
+};
+
+export const workRootObservedActivity = (root: WorkRoot): string | null =>
+  root.interpretations.find((entry) => entry.kind === 'request-message-observed')?.text ?? null;
+
+export const workRootNativeRequests = (root: WorkRoot) =>
+  root.facts.filter(
+    (fact): fact is Extract<WorkFact, { kind: 'codex-user-request' }> => fact.kind === 'codex-user-request',
+  );
+
+export const workRootNativeQuestion = (root: WorkRoot): string | null => {
+  const pending = workRootNativeRequests(root).flatMap((fact) =>
+    fact.request.rejectedAt === null ? fact.request.questions.filter((question) => question.answeredAt === null) : [],
+  );
+  const question = pending[0];
+  return question
+    ? `${question.text}${question.textTruncated ? ' [text truncated]' : ''}${pending.length > 1 ? ` (+${pending.length - 1} pending native questions)` : ''}`
+    : null;
 };
