@@ -18,8 +18,8 @@ is reachable independently of other projects' page occupancy.
 | --- | --- | --- |
 | L1 | Request and proposal attribution, counterexamples before fixes | Integrated; broader verification pending |
 | L2 | Subscription-qualified Codex app-server execution and lifecycle | Integrated; live no-credit qualification blocked |
-| L3 | Existing Codex parser/cache to attention and context | In progress |
-| L4 | Scoped bounded reads and campaign member query cost | Integrated; browser parity pending |
+| L3 | Existing Codex parser/cache to attention and context | Integrated; native async trace checked read-only |
+| L4 | Scoped bounded reads and campaign member query cost | Integrated; browser parity verified on fixtures |
 | L5 | Product integration, browser journeys, independent review and frozen gate | In progress |
 
 The coordinator owns shared contracts, store schema, integration and final
@@ -104,3 +104,42 @@ investigation and explicitly continued review of the integrated adapter.
 The store hash was unchanged. This proves agent use of the reader, not recall
 from daily history. Independent review, native-observation browser integration
 and the frozen gate remain in progress.
+
+### 2026-10-22 — native requests, review corrections and product journey
+
+The existing Codex parser now emits bounded request observations without another
+scanner. Cache version 27 invalidates previous observations. Exact synchronous
+answer identities affect only their own questions; an asynchronous `accepted`
+output, later user message or completed turn cannot supply an answer. Owned
+recognized events with invalid timestamps mark coverage incomplete. Source
+imports batch beyond 10,000 observations and remain cancellable between batches.
+The source/store/publication/Work/context chain is covered by synthetic native
+files. A bounded read-only sample from the installed 0.163.0 CLI contained one
+accepted asynchronous request and no attributable answer; the final parser
+preserved that distinction. No daily store or source cache was changed.
+
+Independent adversarial review found four defects during integration: native
+quota denials lost by numeric normalization, an oversized source import batch,
+undated request evidence silently omitted, and invalid project scope falling
+back to all projects (including a valid project named `30`). Each was reproduced
+and assigned a regression test. The first three corrections were independently
+verified; the final scope correction is under its narrow independent recheck.
+
+The production browser journey selects two Codex model variants on one account,
+deduplicates a double click, reloads a persisted result, interrupts an owned turn
+while retaining partial output, and follows a native request through its scoped
+project to a third review result. Historical exploration at 180 days and invalid
+scope refusal are included. Desktop and 390-pixel captures were inspected by
+both author and coordinator; result text now precedes expandable execution
+evidence. This successful lifecycle uses an explicitly synthetic app-server.
+
+A separate production browser profile used fresh metadata from the installed
+native CLI, with the selected `gpt-6-astra` / `xhigh` settings, on a disposable
+AI Usage store and target. Clicking Start persisted the precise no-credit
+qualification failure. Method-only evidence records account and rate-limit
+reads, zero `thread/start`, zero `turn/start`, and an inactive final guard.
+This proves the real product refusal path, not successful native generation.
+No account setting, reset, credit balance or daily AI Usage store was changed.
+
+Final integrated checks will run on an identified detached head. Worker and
+preliminary browser results above do not substitute for that gate.
