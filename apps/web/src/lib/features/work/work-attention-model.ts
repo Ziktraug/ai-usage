@@ -6,6 +6,7 @@ import {
   describeCheckoutState,
   isCheckoutReadFailure,
   WORK_ATTENTION_KINDS,
+  WORK_REQUEST_DORMANT_AFTER_MS,
   type WorkAttentionDataset,
   type WorkAttentionKind,
   type WorkFact,
@@ -192,11 +193,14 @@ export interface WorkAttentionSection {
   readonly title: string;
 }
 
+/** The age tier of ADR 0056, in days, for the words that name it. */
+const DORMANT_DAYS = WORK_REQUEST_DORMANT_AFTER_MS / 86_400_000;
+
 export const WORK_ATTENTION_SECTIONS: readonly WorkAttentionSection[] = [
   {
     collapseBeyond: null,
     kind: 'human-request',
-    note: 'Questions and review requests nothing recorded since has answered. Older declarations to reconsider follow: something later may have answered them, without proof.',
+    note: `Questions and review requests nothing recorded since has answered. Older declarations to reconsider follow: something later may have answered them, without proof, or nothing happened in their session for over ${DORMANT_DAYS} days.`,
     title: 'Needs you',
   },
   {
@@ -412,6 +416,28 @@ const declaredAtOf = (fact: WorkFact | undefined): string | null =>
 const quoted = (fact: WorkFact | undefined): string =>
   fact?.kind === 'declared-turn' && fact.needsAction !== null ? `“${fact.needsAction}”` : 'the review request';
 
+/** A request nothing touched for more than the age tier of ADR 0056: set apart, never settled. */
+const isDormant = (root: WorkRoot): boolean => root.interpretations.some(({ kind }) => kind === 'request-dormant');
+
+/**
+ * What a request set apart by its age says after its date in the row ("blocked · 9 d ago, no
+ * activity since"); `null` for any other root. "No activity since" is claimed only for a root
+ * without children whose last activity is its declaration: a family's later activity is not on
+ * the row, so the note then claims only the week of silence the interpretation established.
+ */
+export const workRootDormantNote = (root: WorkRoot): string | null => {
+  if (!isDormant(root)) {
+    return null;
+  }
+  const declaredAt = root.declared?.at ?? null;
+  const lastActivity = root.age.lastActivityAt;
+  const quietSinceDeclared =
+    root.children.count === 0 &&
+    declaredAt !== null &&
+    (lastActivity === null || Date.parse(lastActivity) <= Date.parse(declaredAt));
+  return quietSinceDeclared ? 'no activity since' : `no activity in over ${DORMANT_DAYS} d`;
+};
+
 /** The latest decision recorded about the root's requests, for the row: what was settled, dated by a fact. */
 export interface WorkRootDecision {
   readonly instant: string | null;
@@ -504,7 +530,9 @@ export const workRootNextAction = (root: WorkRoot): string | null => {
         ? 'Answer in Claude Desktop.'
         : 'Read the new Jira reply, then resume the session.';
     case 'reconsider':
-      return 'Check what followed; answer or archive the session in Claude Desktop to settle it.';
+      return isDormant(root)
+        ? `Nothing happened in it for over ${DORMANT_DAYS} days; answer or archive the session in Claude Desktop to settle it.`
+        : 'Check what followed; answer or archive the session in Claude Desktop to settle it.';
     case 'answered':
       return 'Nothing asked of you since your message.';
     case 'handled':
@@ -725,7 +753,9 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
   if (root.reconsidered) {
     const number = reconsideredPullRequestNumber(root);
     const continued = root.interpretations.some(({ kind }) => kind === 'request-continued-elsewhere');
-    if (number !== null || !continued) {
+    const satisfied = root.interpretations.some(({ kind }) => kind === 'request-satisfied-elsewhere');
+    // A request set apart by its age alone was answered by nothing: its row says so by its date.
+    if (number !== null || satisfied || !(continued || isDormant(root))) {
       chips.push({
         id: `${workRootId(root)}:reconsidered`,
         instant: null,

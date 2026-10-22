@@ -59,12 +59,13 @@ const CODEX_COVERAGE = `Codex · sessions only, no declared waits: ${CODEX_ROOTS
 const CODEX_CHIP_PATTERN = new RegExp(`^Codex\\s*${CODEX_ROOTS_SHOWN}$`);
 const MINIMUM_ROOTS = 20;
 /**
- * Ten current blocks and two older declarations to reconsider. A single sweep sees only the final
- * registry files: the replied root, whose reply only an earlier sweep can date, stays a current
- * block here (ADR 0056); the e2e fixture and the history chain test replay the earlier sweep.
+ * Seven current blocks and five older declarations to reconsider: two something later may have
+ * answered, three untouched for more than a week (ADR 0056 age tier). A single sweep sees only the
+ * final registry files: the replied root, whose reply only an earlier sweep can date, stays a
+ * current block here (ADR 0056); the e2e fixture and the history chain test replay the earlier sweep.
  */
 const NEEDS_YOU_ROOTS = 12;
-const RECONSIDER_ROOTS = 2;
+const RECONSIDER_ROOTS = 5;
 const WAITING_ROOTS = 1;
 const LEAD_ROOTS = 2;
 const FOLDED_ROOTS = 10;
@@ -87,6 +88,7 @@ const BLOCKED_CHILD_TITLES = ['Fixture: child two', 'Fixture: grandchild of chec
 const BLOCKED_DECLARED_AT = 'Jul 03, 2026, 13:00 GMT+2';
 // A worktree removed since its session is a fact about that session, stated in words, never a failed read.
 const MISSING_WORKTREE = '/.claude/worktrees/checkout-3: no longer on disk (removed since the session)';
+const CHECKOUTS_FAILED_PATTERN = /Checkouts: .* failed/;
 const CHECKOUTS_UNREAD_PATTERN =
   /Checkouts: [1-9]\d* observed, [1-9]\d* not read .* · of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
 const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
@@ -250,7 +252,7 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(coverage).toContainText(PULL_REQUESTS_OBSERVED_PATTERN);
   await expect(coverage).toContainText(CHECKOUTS_OBSERVED_PATTERN);
   await expect(coverage).toContainText(CHECKOUTS_UNREAD_PATTERN);
-  await expect(coverage).not.toContainText(/Checkouts: .* failed/);
+  await expect(coverage).not.toContainText(CHECKOUTS_FAILED_PATTERN);
   await expect(coverage.locator('[data-work-jira-coverage]')).toContainText('Jira: not observed');
   await expect(coverage.locator('[data-work-window]')).toContainText(
     `${HIDDEN_ROOTS} older root without pending declarations hidden (30-day window)`,
@@ -265,7 +267,7 @@ test('renders the collected registry and its observed facts as a resume surface,
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
   await expect(main.locator('[data-work-section="human-request"] header')).toContainText(
-    'Older declarations to reconsider follow: something later may have answered them, without proof.',
+    'Older declarations to reconsider follow: something later may have answered them, without proof, or nothing happened in their session for over 7 days.',
   );
   await expect(main.locator('[data-work-section="none"] header')).toContainText(
     'Nothing pending was read here; that is not proof that nothing is pending.',
@@ -327,7 +329,9 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(toReconsider.first()).toContainText(SATISFIED_TITLE);
   await expect(toReconsider.first()).toContainText('possibly answered · PR #117');
   await expect(toReconsider.first()).toContainText('PR #117 review required · observed');
-  await expect(needsYou.last()).toContainText(CONTINUED_TITLE);
+  await expect(toReconsider.nth(1)).toContainText(CONTINUED_TITLE);
+  // Untouched for more than a week: dated, last, still a question.
+  await expect(needsYou.last()).toContainText(STALE_TITLE);
   const mergedBefore = rowNamed(page, MERGED_BEFORE_TITLE);
   await expect(main.locator('[data-work-section="human-request"]').locator(mergedBefore)).toHaveCount(1);
   await expect(mergedBefore).toContainText('PR #90 review required · observed');
@@ -335,10 +339,12 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(
     main.locator('[data-work-section="external-wait"]').locator(rowNamed(page, SATISFIED_TITLE)),
   ).toHaveCount(0);
-  // A 40-day-old question stays visible past the window; the older completed root is hidden.
+  // A 40-day-old question stays visible past the window, set apart and dated; the older completed
+  // root is hidden.
   const stale = rowNamed(page, STALE_TITLE);
   await expect(main.locator('[data-work-section="human-request"]').locator(stale)).toHaveCount(1);
-  await expect(stale).toContainText('blocked · 40 d ago');
+  await expect(main.locator('[data-work-reconsider]').locator(stale)).toHaveCount(1);
+  await expect(stale).toContainText('blocked · 40 d ago, no activity since');
   await expect(main.locator('[data-work-section="optional-lead"]').locator(rowNamed(page, PROPOSAL_TITLE))).toHaveCount(
     1,
   );

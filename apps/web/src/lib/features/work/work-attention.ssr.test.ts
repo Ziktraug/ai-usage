@@ -352,14 +352,24 @@ describe('Work resume surface server rendering of request standings (ADR 0056)',
       body.indexOf('data-work-section="human-request"'),
       body.indexOf('data-work-section="external-wait"'),
     );
-    const heading = section.indexOf('Older declarations to reconsider · 2');
+    const heading = section.indexOf('Older declarations to reconsider · 3');
     expect(heading).toBeGreaterThan(0);
     // Every current block is rendered before the heading, every row to reconsider after it.
-    expect(occurrences(section.slice(0, heading), 'data-work-standing="current"')).toBe(6);
+    expect(occurrences(section.slice(0, heading), 'data-work-standing="current"')).toBe(5);
     expect(occurrences(section.slice(0, heading), 'data-work-standing="reconsider"')).toBe(0);
-    expect(occurrences(section.slice(heading), 'data-work-standing="reconsider"')).toBe(2);
+    expect(occurrences(section.slice(heading), 'data-work-standing="reconsider"')).toBe(3);
     // The marker is words, not only a style.
-    expect(occurrences(section, '>Older declaration to reconsider<')).toBe(2);
+    expect(occurrences(section, '>Older declaration to reconsider<')).toBe(3);
+    // A request untouched for over a week (ADR 0056 age tier) is dated, still asked, never hidden.
+    const dormant = withoutMarkers(section.slice(section.indexOf('Session distillation worker redaction')));
+    expect(dormant).toContain('The redaction fixed-point test needs a real sample');
+    expect(dormant).toContain('blocked · <time datetime="2026-06-02T12:00:00.000Z"');
+    expect(dormant).toContain('9 d ago</time>, no activity since');
+    expect(dormant).toContain(
+      'Next: Nothing happened in it for over 7 days; answer or archive the session in Claude Desktop to settle it.',
+    );
+    expect(dormant).toContain('checkout 28 staged · 1 untracked · 2 ahead');
+    expect(section).toContain('or nothing happened in their session for over 7 days.');
     expect(body).toContain('data-work-standing="handled"');
     expect(body).toContain('Handled in a linked session');
     expect(body).toContain('Next: Answer in Claude Desktop.');

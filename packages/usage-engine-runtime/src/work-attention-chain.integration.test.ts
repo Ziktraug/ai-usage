@@ -173,8 +173,11 @@ describe('work attention chain', () => {
     expect(proposal?.interpretations.map(({ kind }) => kind)).toEqual(['proposal-open', 'proposal-resolved']);
 
     expect(byId.get(ids.reviewReadyRoot ?? '')?.attention).toBe('human-request');
+    // Forty days without activity (ADR 0056, age tier): an older declaration to reconsider, still a request.
+    expect(byId.get(ids.staleRoot ?? '')?.reconsidered).toBe(true);
     expect(byId.get(ids.staleRoot ?? '')?.interpretations.map(({ kind }) => kind)).toEqual([
       'request-open',
+      'request-dormant',
       'declared-status-stale',
     ]);
     expect(byId.get(ids.archivedRoot ?? '')?.archived).toBe(true);

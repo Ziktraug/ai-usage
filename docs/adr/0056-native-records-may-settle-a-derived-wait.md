@@ -53,6 +53,19 @@ summary history, so an earlier question survives only if the collector kept it.
   parents it names, so a question is not lost to the bound and a recent child is
   not shown as an orphan; what the read and a filter did not cover is stated.
 
+## Amendment: an age tier for requests nothing touched (2026-10-22)
+
+The first run on real history listed fourteen requests in "Needs you", eleven of
+them declared three to fifteen days earlier with nothing since. A request with no
+activity in its session family for more than `WORK_REQUEST_DORMANT_AFTER_MS`
+(one week, one named constant in `report-core/work-attention.ts`) — no later
+turn, no message from the person, no linked session started, reporting or
+active — is read `request-dormant`: it joins the older declarations to
+reconsider, ranked after the current blocks and dated ("blocked · 14 d ago, no
+activity since"). It closes nothing: the attention stays a human request, the
+row stays searchable and filterable, and an activity the read does not know
+never ages a request.
+
 ## Consequences
 
 - An answer given in Claude Desktop settles the root without any action in this

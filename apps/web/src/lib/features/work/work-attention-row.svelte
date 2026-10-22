@@ -9,6 +9,7 @@
     WORK_STANDING_LABELS,
     workDeclaredStatusLabel,
     workHarnessLabel,
+    workRootDormantNote,
     workRootFactChips,
     workRootId,
     workRootLastDecision,
@@ -55,6 +56,8 @@
   const standing = $derived(workRootStanding(root));
   const decision = $derived(workRootLastDecision(root));
   const next = $derived(workRootNextAction(root));
+  // ADR 0056 age tier: the request is dated, then said to be untouched since.
+  const dormant = $derived(workRootDormantNote(root));
   const settled = $derived(standing === 'answered' || standing === 'handled' || standing === 'archived');
   // One complete class per standing: layered atoms would resolve by stylesheet order, not by intent.
   const questionClass = $derived.by(() => {
@@ -114,7 +117,7 @@
         ·
         <time datetime={instant ?? undefined} title={formatExactInstant(instant)}
           >{formatRelativeAge(instant, reference)}</time
-        ></span
+        >{dormant ? `, ${dormant}` : ''}</span
       >
     </span>
     {#if decision}

@@ -373,18 +373,20 @@ const linkedSessionsOf = (
 
 /** The root's harness context for the interpreter: what Claude Desktop recorded around its declaration. */
 const harnessContextOf = (
-  root: ClaudeDesktopSessionObservation,
+  group: RootGroup,
   earlier: readonly WorkEarlierDeclaration[],
   linked: readonly WorkLinkedSession[],
 ): WorkRootHarnessInput => ({
-  archived: root.archived,
+  archived: group.root.archived,
   earlierDeclarations: earlier,
-  latestUserFrameAt: root.latestUserFrameAt,
+  // The whole family's activity: a child busy yesterday keeps an old question among the current ones.
+  familyLastActivityAt: latestActivity(group),
+  latestUserFrameAt: group.root.latestUserFrameAt,
   linkedSessions: linked,
-  openProposals: root.openSuggestions.map((suggestion) => ({
+  openProposals: group.root.openSuggestions.map((suggestion) => ({
     createdAt: suggestion.createdAt,
     expiresAt: suggestion.expiresAt,
-    factId: `${root.desktopSessionId}:proposal:${suggestion.id}`,
+    factId: `${group.root.desktopSessionId}:proposal:${suggestion.id}`,
     title: suggestion.title,
   })),
 });
@@ -824,6 +826,7 @@ const factsCutInterpretation = (cut: number): WorkInterpretation => ({
 const DECLARATION_INTERPRETATION_KINDS = new Set<WorkInterpretation['kind']>([
   'request-open',
   'request-satisfied-elsewhere',
+  'request-dormant',
   'review-ready',
 ]);
 
@@ -1034,7 +1037,7 @@ const buildRoot = (
     },
     declaration: declared,
     facts,
-    harness: harnessContextOf(root, earlier.inputs, linked.inputs),
+    harness: harnessContextOf(group, earlier.inputs, linked.inputs),
     now,
     ...(staleAfterMs === undefined ? {} : { staleAfterMs }),
   });

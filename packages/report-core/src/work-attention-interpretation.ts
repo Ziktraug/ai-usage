@@ -3,6 +3,7 @@ import { normalizeIsoTimestamp } from './provider-status';
 import {
   type ClaudeDesktopTurnStatus,
   WORK_ATTENTION_BOUNDS,
+  WORK_REQUEST_DORMANT_AFTER_MS,
   type WorkAttentionKind,
   type WorkFact,
   type WorkInterpretation,
@@ -32,6 +33,9 @@ import {
  *   narrow rule below), work continued in a session started from this one, or a report a session
  *   sent to it after the question: the attention stays `human-request`, the root is marked
  *   `reconsidered`, and the question stays the person's.
+ * - **So does a week of silence** (`request-dormant`): no later turn, no message from the person
+ *   and no activity in the session family for more than `WORK_REQUEST_DORMANT_AFTER_MS`. It ranks
+ *   the request after the current blocks and closes nothing; an unknown activity never ages one.
  * - **Everything else leaves it a current confirmed block**, however much else happened in the
  *   family: an unrelated pull request, a child that finished work it was given before the question.
  *
@@ -41,6 +45,8 @@ import {
  */
 
 export const WORK_ATTENTION_STALE_AFTER_MS = 7 * 86_400_000;
+
+export { WORK_REQUEST_DORMANT_AFTER_MS } from './work-attention';
 
 export interface WorkRootCoverageInput {
   /** `spawnedFrom` named a session the registry does not contain; this root may be someone's child. */
@@ -99,6 +105,12 @@ export interface WorkRootHarnessInput {
   readonly archived: boolean;
   /** Oldest first. */
   readonly earlierDeclarations: readonly WorkEarlierDeclaration[];
+  /**
+   * The latest activity of the root session and of every session folded under it (its children),
+   * whenever they were started; `null` when the read does not know it, and then no request is
+   * ever read as dormant.
+   */
+  readonly familyLastActivityAt: CanonicalInstant | null;
   /** `latestUserFrameAt` of the root. */
   readonly latestUserFrameAt: CanonicalInstant | null;
   readonly linkedSessions: readonly WorkLinkedSession[];
@@ -108,6 +120,7 @@ export interface WorkRootHarnessInput {
 export const NO_HARNESS_CONTEXT: WorkRootHarnessInput = {
   archived: false,
   earlierDeclarations: [],
+  familyLastActivityAt: null,
   latestUserFrameAt: null,
   linkedSessions: [],
   openProposals: [],
@@ -420,6 +433,47 @@ const earlierRequestInterpretations = (
       };
     });
 
+const DORMANT_DAYS = WORK_REQUEST_DORMANT_AFTER_MS / 86_400_000;
+
+/**
+ * The last sign of life after a request, when there has been none for more than
+ * `WORK_REQUEST_DORMANT_AFTER_MS`: no later turn or activity in the session family, no message
+ * from the person, no linked session started, reporting or declaring. `null` when something
+ * happened within the week, or when the family's activity is unknown: an unknown is never silence.
+ */
+const dormantSince = (
+  askedAt: CanonicalInstant,
+  harness: WorkRootHarnessInput,
+  now: CanonicalInstant,
+): CanonicalInstant | null => {
+  if (harness.familyLastActivityAt === null) {
+    return null;
+  }
+  const signs = [
+    askedAt,
+    harness.familyLastActivityAt,
+    harness.latestUserFrameAt,
+    ...harness.linkedSessions.flatMap((session) => [session.linkedAt, session.declaration?.at ?? null]),
+  ].filter((instant): instant is CanonicalInstant => instant !== null);
+  const latest = signs.reduce((left, right) => (Date.parse(right) > Date.parse(left) ? right : left));
+  return Date.parse(now) - Date.parse(latest) > WORK_REQUEST_DORMANT_AFTER_MS ? latest : null;
+};
+
+const dormantRequest = (
+  label: string,
+  askedAt: CanonicalInstant,
+  since: CanonicalInstant,
+  evidence: readonly string[],
+): WorkInterpretation => ({
+  evidence: [...evidence],
+  kind: 'request-dormant',
+  text:
+    Date.parse(since) > Date.parse(askedAt)
+      ? `Older declaration to reconsider: ${label} (asked ${askedAt}) has had no session activity since ${since}, more than ${DORMANT_DAYS} days ago: no later turn, no message from you, no linked session active.`
+      : `Older declaration to reconsider: ${label} (asked ${askedAt}) has no session activity since: no later turn, no message from you, no linked session active, for more than ${DORMANT_DAYS} days.`,
+  uncertainty: 'Nothing closed it either: it stays yours until you answer or archive the session in Claude Desktop.',
+});
+
 interface RequestResult {
   readonly attention: WorkAttentionKind;
   readonly interpretations: WorkInterpretation[];
@@ -432,6 +486,7 @@ const interpretCurrentRequest = (
   facts: readonly WorkFact[],
   harness: WorkRootHarnessInput,
   evidence: readonly string[],
+  now: CanonicalInstant,
 ): RequestResult => {
   const askedAt = declaration.at;
   const label = requestLabel(declaration.status, declaration.needsAction);
@@ -488,10 +543,22 @@ const interpretCurrentRequest = (
   const observed = asksPullRequest ? answeringObservedPullRequests(facts, askedAt, declared) : [];
   const continued = continuedIn(harness.linkedSessions, askedAt);
   const pullRequestLater = declared.length + observed.length > 0;
-  const reconsidered = pullRequestLater || continued.length > 0;
-  const reconsideredBecause = pullRequestLater
-    ? 'a later pull request may be the answer, but nothing confirms it.'
-    : 'work continued in a linked session after it, but nothing confirms it settled the question.';
+  // A week of silence sets a request apart only when no later link already does.
+  const dormant = pullRequestLater || continued.length > 0 ? null : dormantSince(askedAt, harness, now);
+  const reconsidered = pullRequestLater || continued.length > 0 || dormant !== null;
+  let reconsideredBecause = `nothing happened in the session since, for more than ${DORMANT_DAYS} days, but nothing closed it either.`;
+  if (pullRequestLater) {
+    reconsideredBecause = 'a later pull request may be the answer, but nothing confirms it.';
+  } else if (continued.length > 0) {
+    reconsideredBecause = 'work continued in a linked session after it, but nothing confirms it settled the question.';
+  }
+  let reviewUncertainty = 'Declared by the session; no review outcome has been observed.';
+  if (dormant !== null) {
+    reviewUncertainty =
+      'Declared by the session; nothing happened in the session since, and no review outcome has been observed.';
+  } else if (reconsidered) {
+    reviewUncertainty = 'Declared by the session; something later may be the outcome, but nothing confirms it.';
+  }
   const repeated = harness.earlierDeclarations.findLast(
     (earlier) => earlier.repliedAt !== null && sameQuestion(earlier.needsAction, needsAction),
   );
@@ -504,9 +571,7 @@ const interpretCurrentRequest = (
           evidence: [...evidence],
           kind: 'review-ready',
           text: 'The session declared its change ready for a review.',
-          uncertainty: reconsidered
-            ? 'Declared by the session; something later may be the outcome, but nothing confirms it.'
-            : 'Declared by the session; no review outcome has been observed.',
+          uncertainty: reviewUncertainty,
         }
       : {
           evidence: [...evidence],
@@ -522,6 +587,9 @@ const interpretCurrentRequest = (
   }
   if (continued.length > 0) {
     interpretations.push(continuedElsewhere(continued));
+  }
+  if (dormant !== null) {
+    interpretations.push(dormantRequest(label, askedAt, dormant, evidence));
   }
   return { attention: 'human-request', interpretations, reconsidered };
 };
@@ -545,7 +613,7 @@ export const interpretWorkRoot = (input: InterpretWorkRootInput): WorkRootInterp
     .map((fact) => fact.id);
 
   if (declaration !== null && isRequest(declaration.status, declaration.needsAction)) {
-    const request = interpretCurrentRequest(declaration, input.facts, harness, declaredTurnEvidence);
+    const request = interpretCurrentRequest(declaration, input.facts, harness, declaredTurnEvidence, now);
     attention = request.attention;
     reconsidered = request.reconsidered;
     interpretations.push(...request.interpretations);

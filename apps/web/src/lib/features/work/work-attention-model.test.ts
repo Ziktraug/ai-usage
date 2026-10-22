@@ -18,6 +18,7 @@ import {
   workCodexCoverage,
   workFactSummary,
   workFilterOptions,
+  workRootDormantNote,
   workRootFactChips,
   workRootId,
   workRootLastDecision,
@@ -73,10 +74,14 @@ describe('Work attention grouping and ordering', () => {
       'request-satisfied-elsewhere',
     ]);
     const needsYou = groupWorkRoots(roots)[0]!.roots;
-    expect(needsYou.at(-1)?.title).toBe('Scan resource optimization');
-    // The older declarations to reconsider close the section, after every current block.
-    expect(needsYou.slice(-2).map((root) => root.title)).toEqual(['Toolbar refresh', 'Scan resource optimization']);
-    expect(needsYou.slice(0, -2).every((root) => !root.reconsidered)).toBe(true);
+    // The older declarations to reconsider close the section, after every current block, most
+    // recent first: a later link, then a week without activity.
+    expect(needsYou.slice(-3).map((root) => root.title)).toEqual([
+      'Toolbar refresh',
+      'Scan resource optimization',
+      'Session distillation worker redaction',
+    ]);
+    expect(needsYou.slice(0, -3).every((root) => !root.reconsidered)).toBe(true);
     // Older than every other request, it would rank first by date alone; the flag sorts it last.
     expect(workRootFactChips(reconsidered).map((chip) => chip.label)).toEqual([
       'possibly answered · PR #61',
@@ -481,6 +486,32 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
     expect(workFactSummary(root.facts[0]!, root)).toStartWith('Declared blocked:');
   });
 
+  test('a request untouched for over a week is an older declaration, dated, still asked and searchable', () => {
+    const dormant = rootNamed('Session distillation worker redaction');
+    expect(dormant.attention).toBe('human-request');
+    expect(workRootStanding(dormant)).toBe('reconsider');
+    expect(workRootDormantNote(dormant)).toBe('no activity since');
+    // Nothing later may have answered it: no "possibly answered" chip, the next action says why.
+    expect(workRootFactChips(dormant).map((chip) => chip.label)).not.toContain('possibly answered');
+    expect(workRootNextAction(dormant)).toBe(
+      'Nothing happened in it for over 7 days; answer or archive the session in Claude Desktop to settle it.',
+    );
+    expect(matchesWorkAttentionSearch(dormant, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'redaction sample' })).toBe(
+      true,
+    );
+    expect(matchesWorkAttentionSearch(dormant, { ...EMPTY_WORK_ATTENTION_SEARCH, attention: ['human-request'] })).toBe(
+      true,
+    );
+    // A family with children may have been active after the question: the note only claims the week.
+    expect(workRootDormantNote({ ...dormant, children: { ...dormant.children, count: 1 } })).toBe(
+      'no activity in over 7 d',
+    );
+    expect(workRootDormantNote(rootNamed('Fix mobile navigation label overlap'))).toBeNull();
+    expect(workRootDormantNote(rootNamed('Toolbar refresh'))).toBeNull();
+  });
+  test('the Needs you note names both reasons a declaration is set apart', () => {
+    expect(WORK_ATTENTION_SECTIONS[0]?.note).toContain('nothing happened in their session for over 7 days');
+  });
   test('an older declaration to reconsider says so in its chips and next action', () => {
     const root = rootNamed('Toolbar refresh');
     expect(workRootFactChips(root).map((chip) => chip.label)).toContain('work continued in a linked session');

@@ -216,7 +216,14 @@ const jiraIssue = (id: string, key: string, fields: Partial<Extract<WorkFact, { 
   ...fields,
 });
 
-const checkoutStatus = (id: string, path: string, branch: string, dirty: boolean, modified = 0): WorkFact => ({
+const checkoutStatus = (
+  id: string,
+  path: string,
+  branch: string,
+  dirty: boolean,
+  modified = 0,
+  staged = 0,
+): WorkFact => ({
   ahead: dirty ? 2 : 0,
   behind: 0,
   branch,
@@ -228,7 +235,7 @@ const checkoutStatus = (id: string, path: string, branch: string, dirty: boolean
   modifiedCount: modified,
   outcome: 'observed',
   provenance: checkout(),
-  stagedCount: 0,
+  stagedCount: staged,
   untrackedCount: dirty ? 1 : 0,
 });
 
@@ -406,7 +413,7 @@ const seeds = (): readonly RootSeed[] => [
     attention: 'human-request',
     branch: 'fix/distillation-redaction',
     declared: {
-      at: daysAgo(5),
+      at: daysAgo(9),
       detail: 'Quote re-redaction rejects already-redacted authorization markers; a fixed-point test is drafted.',
       needsAction: 'The redaction fixed-point test needs a real sample; can you provide one from the scratch store?',
       status: 'blocked',
@@ -415,29 +422,37 @@ const seeds = (): readonly RootSeed[] => [
       declaredTurn(
         'distillation-redaction',
         'blocked',
-        daysAgo(5),
+        daysAgo(9),
         'Quote re-redaction rejects already-redacted authorization markers; a fixed-point test is drafted.',
         'The redaction fixed-point test needs a real sample; can you provide one from the scratch store?',
       ),
-      checkoutStatus('distillation-redaction', '~/Projects/ai-usage', 'fix/distillation-redaction', true, 1),
+      // Staged work beside one untracked file: the shape that once read "dirty (0 modified)".
+      checkoutStatus('distillation-redaction', '~/Projects/ai-usage', 'fix/distillation-redaction', true, 0, 28),
     ],
     id: 'distillation-redaction',
     interpretations: [
       interpretation(
         'request-open',
-        'A sample was requested 5 days ago; no later fact shows it was provided.',
-        'The sample may have been handed over outside any observed source.',
+        'The session stopped on a question: the redaction fixed-point test needs a real sample.',
+        'This is the session’s own last declaration; nothing happened in the session since, for more than 7 days, but nothing closed it either.',
+        ['distillation-redaction:declared'],
+      ),
+      interpretation(
+        'request-dormant',
+        'Older declaration to reconsider: the sample was asked 9 days ago and the session has no activity since: no later turn, no message from you, no linked session active, for more than 7 days.',
+        'Nothing closed it either: it stays yours until you answer or archive the session in Claude Desktop.',
         ['distillation-redaction:declared'],
       ),
       interpretation(
         'declared-status-stale',
-        'The declaration is 5 days old and the checkout still carries one modified file.',
+        'The declaration is 9 days old and the checkout still carries 28 staged files.',
         'Age alone does not mean the request was abandoned.',
         ['distillation-redaction:declared', 'distillation-redaction:checkout'],
       ),
     ],
-    lastActivityHoursAgo: 5 * 24,
+    lastActivityHoursAgo: 9 * 24,
     project: 'ai-usage',
+    reconsidered: true,
     title: 'Session distillation worker redaction',
   },
   {

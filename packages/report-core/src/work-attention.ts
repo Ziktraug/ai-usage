@@ -45,6 +45,13 @@ export const WORK_ATTENTION_BOUNDS = {
   maxSideSessionNotes: 20,
 } as const;
 
+/**
+ * How long a request may go without any activity in its session family before it moves from the
+ * current blocks to the older declarations to reconsider (ADR 0056). One week: a block older than
+ * that with nothing since is rarely the next thing to do, and it is never hidden or settled.
+ */
+export const WORK_REQUEST_DORMANT_AFTER_MS = 7 * 86_400_000;
+
 export interface WorkSessionKey {
   readonly harness: string;
   readonly machineId: string;
@@ -1103,7 +1110,8 @@ export type WorkFactKind = WorkFact['kind'];
  * What an interpretation names. The request kinds read one declaration against what followed it
  * (ADR 0056): `request-open` is a current confirmed block; `request-satisfied-elsewhere` and
  * `request-continued-elsewhere` make it an older declaration to reconsider (an unproven link, the
- * question stays the person's); `request-answered`, `request-handled-elsewhere` and
+ * question stays the person's), and so does `request-dormant` (no activity in its session family
+ * for more than `WORK_REQUEST_DORMANT_AFTER_MS`, which closes nothing); `request-answered`, `request-handled-elsewhere` and
  * `request-archived` name a dated, explicit native record that it is no longer waiting; the
  * `earlier-request-*` kinds read declarations a later turn replaced.
  */
@@ -1111,6 +1119,7 @@ export const WORK_INTERPRETATION_KINDS = [
   'request-open',
   'request-satisfied-elsewhere',
   'request-continued-elsewhere',
+  'request-dormant',
   'request-answered',
   'request-handled-elsewhere',
   'request-archived',

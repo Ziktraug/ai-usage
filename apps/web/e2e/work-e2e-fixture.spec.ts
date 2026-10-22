@@ -33,9 +33,13 @@ const CODEX_ROOTS = 3;
 const ROOTS_SHOWN = DESKTOP_ROOTS_SHOWN + CODEX_ROOTS;
 const HIDDEN_ROOTS = 1;
 const MINIMUM_ROOTS = 20;
-/** Eight current blocks and three older declarations to reconsider; the answered and handled roots rest. */
+/**
+ * Five current blocks and six older declarations to reconsider: three something later may have
+ * answered, three untouched for more than a week (ADR 0056 age tier). The answered and handled
+ * roots rest.
+ */
 const NEEDS_YOU_ROOTS = 11;
-const RECONSIDER_ROOTS = 3;
+const RECONSIDER_ROOTS = 6;
 const WAITING_ROOTS = 1;
 const LEAD_ROOTS = 2;
 const RESTING_ROOTS = DESKTOP_ROOTS_SHOWN - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
@@ -154,7 +158,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   // Hydrated and rendered from the server's answer: the browser has not read the dataset again.
   expect(browserReads).toEqual([]);
   await expect(main.locator('[data-work-section="human-request"] header')).toContainText(
-    'Older declarations to reconsider follow: something later may have answered them, without proof.',
+    'Older declarations to reconsider follow: something later may have answered them, without proof, or nothing happened in their session for over 7 days.',
   );
   await expect(main.locator('[data-work-section="none"] header')).toContainText(
     'Nothing pending was read here; that is not proof that nothing is pending.',
@@ -172,25 +176,31 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   }
 
   // A question is never demoted: the requests something later may have answered stay in "Needs
-  // you", under their own heading after the current blocks; a 40-day-old question is kept.
+  // you", under their own heading after the current blocks, and so do the ones nothing touched for
+  // more than a week, dated; a 40-day-old question is kept, last.
   const needsYou = sectionRows(page, 'human-request');
   await expect(main.locator('[data-work-reconsider] [data-work-root]')).toHaveCount(RECONSIDER_ROOTS);
   await expect(main.locator('[data-work-reconsider-heading]')).toHaveText(
     `Older declarations to reconsider · ${RECONSIDER_ROOTS}`,
   );
-  await expect(needsYou.last()).toContainText(CONTINUED_TITLE);
-  await expect(needsYou.last()).toContainText('work continued in a linked session');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 3)).toContainText(SATISFIED_TITLE);
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 3)).toContainText('possibly answered · PR #117');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 3)).toContainText(
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 4)).toContainText(CONTINUED_TITLE);
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 4)).toContainText('work continued in a linked session');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 6)).toContainText(SATISFIED_TITLE);
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 6)).toContainText('possibly answered · PR #117');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 6)).toContainText(
     'PR #117 read failed (unauthenticated) · observed 30 min ago',
   );
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText(MERGED_BEFORE_TITLE);
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText('possibly answered · PR #90');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText('PR #90 merged · observed 1 h ago');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText('Jira XLB-2101 · To Do · observed 1 h ago');
-  await expect(main.locator('[data-work-section="human-request"]').locator(rowNamed(page, STALE_TITLE))).toHaveCount(1);
-  await expect(rowNamed(page, STALE_TITLE)).toContainText('blocked · 40 d ago');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText(MERGED_BEFORE_TITLE);
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText('possibly answered · PR #90');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText('PR #90 merged · observed 1 h ago');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText('Jira XLB-2101 · To Do · observed 1 h ago');
+  await expect(main.locator('[data-work-reconsider]').locator(rowNamed(page, STALE_TITLE))).toHaveCount(1);
+  await expect(needsYou.last()).toContainText(STALE_TITLE);
+  await expect(rowNamed(page, STALE_TITLE)).toContainText('blocked · 40 d ago, no activity since');
+  await expect(rowNamed(page, STALE_TITLE)).toContainText(
+    'Next: Nothing happened in it for over 7 days; answer or archive the session in Claude Desktop to settle it.',
+  );
+  await expect(rowNamed(page, STALE_TITLE)).not.toContainText('possibly answered');
   await expect(rowNamed(page, REVIEW_READY_TITLE)).toContainText(
     'Jira XLB-2090 · In Progress · 1 new reply · newest reply 6 h ago',
   );

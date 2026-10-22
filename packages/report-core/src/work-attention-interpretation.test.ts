@@ -4,6 +4,7 @@ import type { WorkFact, WorkFactProvenance, WorkRootDeclaration } from './work-a
 import {
   interpretWorkRoot,
   NO_HARNESS_CONTEXT,
+  WORK_REQUEST_DORMANT_AFTER_MS,
   type WorkLinkedSession,
   type WorkRootCoverageInput,
   type WorkRootHarnessInput,
@@ -667,5 +668,116 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     expect(result.attention).toBe('human-request');
     expect(result.reconsidered).toBe(false);
     expect(kinds(result)).toEqual(['request-open']);
+  });
+});
+
+describe('a request nothing has touched for more than a week (ADR 0056, age tier)', () => {
+  const DAY_HOURS = 24;
+  const askedDaysAgo = (days: number): WorkRootDeclaration =>
+    blocked('Keep checkout 3 or delete it?', days * DAY_HOURS);
+  /** The root's family was last active when it declared, unless `activeDaysAgo` says otherwise. */
+  const tiered = (
+    declaration: WorkRootDeclaration,
+    harness: Partial<WorkRootHarnessInput> = {},
+    activeDaysAgo?: number,
+  ) =>
+    interpretWorkRoot({
+      coverage: covered,
+      declaration,
+      facts: [declaredTurn(declaration)],
+      harness: {
+        ...NO_HARNESS_CONTEXT,
+        familyLastActivityAt: activeDaysAgo === undefined ? declaration.at : iso(activeDaysAgo * DAY_HOURS),
+        ...harness,
+      },
+      now: NOW,
+    });
+
+  test('the threshold is one named week', () => {
+    expect(WORK_REQUEST_DORMANT_AFTER_MS).toBe(7 * DAY_HOURS * 3_600_000);
+  });
+
+  test('at 6 days without activity a block is current; at 8 days it is an older declaration, still a request', () => {
+    const recent = tiered(askedDaysAgo(6));
+    expect(recent.attention).toBe('human-request');
+    expect(recent.reconsidered).toBe(false);
+    expect(kinds(recent)).toEqual(['request-open']);
+
+    const declaration = askedDaysAgo(8);
+    const dormant = tiered(declaration);
+    // Never settled: the attention stays a human request and the question stays the person's.
+    expect(dormant.attention).toBe('human-request');
+    expect(dormant.reconsidered).toBe(true);
+    expect(kinds(dormant)).toEqual(['request-open', 'request-dormant', 'declared-status-stale']);
+    expect(dormant.interpretations[0]?.uncertainty).toContain('nothing happened in the session since');
+    expect(dormant.interpretations[1]).toEqual({
+      evidence: ['local_root:declared-turn'],
+      kind: 'request-dormant',
+      text: `Older declaration to reconsider: the question “Keep checkout 3 or delete it?” (asked ${declaration.at}) has no session activity since: no later turn, no message from you, no linked session active, for more than 7 days.`,
+      uncertainty:
+        'Nothing closed it either: it stays yours until you answer or archive the session in Claude Desktop.',
+    });
+  });
+
+  test('a review request ages the same way', () => {
+    const review: WorkRootDeclaration = {
+      at: iso(8 * DAY_HOURS),
+      detail: 'Ready.',
+      needsAction: null,
+      status: 'review_ready',
+    };
+    const result = tiered(review);
+    expect(result.reconsidered).toBe(true);
+    expect(kinds(result)).toEqual(['review-ready', 'request-dormant', 'declared-status-stale']);
+    expect(result.interpretations[0]?.uncertainty).toBe(
+      'Declared by the session; nothing happened in the session since, and no review outcome has been observed.',
+    );
+    expect(result.interpretations[1]?.text).toContain('the review request (asked');
+  });
+
+  test('a message you wrote after the question answers it; one written before it changes nothing', () => {
+    const declaration = askedDaysAgo(8);
+    const answered = tiered(declaration, { latestUserFrameAt: iso(7.5 * DAY_HOURS) });
+    expect(answered.attention).toBe('none');
+    expect(kinds(answered)).toEqual(['request-answered', 'declared-status-stale']);
+    const before = tiered(declaration, { latestUserFrameAt: iso(9 * DAY_HOURS) });
+    expect(before.reconsidered).toBe(true);
+    expect(kinds(before)).toContain('request-dormant');
+  });
+
+  test('a session of the family active within the week keeps the block current, however old the question', () => {
+    // A child started before the question is not a link that answers it; its activity still says
+    // the work is alive, so the question is not set apart.
+    const activeChild = tiered(askedDaysAgo(14), {}, 2);
+    expect(activeChild.reconsidered).toBe(false);
+    expect(kinds(activeChild)).toEqual(['request-open', 'declared-status-stale']);
+    // Activity eight days ago, after a fourteen-day-old question, is still more than a week ago.
+    expect(kinds(tiered(askedDaysAgo(14), {}, 8))).toContain('request-dormant');
+  });
+
+  test('a link after the question keeps its own reason; an unknown activity never ages a request', () => {
+    const declaration = askedDaysAgo(10);
+    const continued = tiered(declaration, {
+      linkedSessions: [
+        {
+          declaration: null,
+          desktopSessionId: 'local_child',
+          link: 'spawned-from',
+          linkedAt: iso(9 * DAY_HOURS),
+          linkFactId: null,
+          title: 'Fixture child',
+        },
+      ],
+    });
+    expect(continued.reconsidered).toBe(true);
+    expect(kinds(continued)).toEqual(['request-open', 'request-continued-elsewhere', 'declared-status-stale']);
+    const unknown = interpretWorkRoot({
+      coverage: covered,
+      declaration,
+      facts: [declaredTurn(declaration)],
+      now: NOW,
+    });
+    expect(unknown.reconsidered).toBe(false);
+    expect(kinds(unknown)).toEqual(['request-open', 'declared-status-stale']);
   });
 });

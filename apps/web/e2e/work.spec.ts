@@ -67,10 +67,14 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
   await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(8);
-  // A question a later pull request may have answered stays in "Needs you", ranked last and marked.
-  const reconsidered = main.locator('[data-work-section="human-request"] [data-work-root]').last();
-  await expect(reconsidered).toContainText('Scan resource optimization');
-  await expect(reconsidered).toContainText('possibly answered');
+  // A question a later pull request may have answered stays in "Needs you", after the current
+  // blocks and marked; one untouched for more than a week follows it, dated (ADR 0056 age tier).
+  const toReconsider = main.locator('[data-work-section="human-request"] [data-work-reconsider] [data-work-root]');
+  await expect(toReconsider).toHaveCount(3);
+  await expect(toReconsider.nth(1)).toContainText('Scan resource optimization');
+  await expect(toReconsider.nth(1)).toContainText('possibly answered');
+  await expect(toReconsider.last()).toContainText('Session distillation worker redaction');
+  await expect(toReconsider.last()).toContainText('blocked · 9 d ago, no activity since');
   await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(10);
   await expect(main.locator('[data-work-section="not-observable"] [data-work-root]')).toHaveCount(1);
   await expect(main.getByText(KNOWN_WAITS_PATTERN)).toHaveCount(0);

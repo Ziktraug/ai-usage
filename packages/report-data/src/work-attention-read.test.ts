@@ -450,9 +450,15 @@ describe('queryWorkAttention', () => {
       ['local_oldq', 'human-request'],
       ['local_recent', 'none'],
     ]);
+    // Untouched for more than a week: older declarations to reconsider, never hidden by the window.
     expect(rootOf(assembled, 'local_oldq').interpretations.map(({ kind }) => kind)).toEqual([
       'request-open',
+      'request-dormant',
       'declared-status-stale',
+    ]);
+    expect(assembled.roots.filter((root) => root.reconsidered).map((root) => root.desktopSessionId)).toEqual([
+      'local_oldr',
+      'local_oldq',
     ]);
     expect(assembled.totalRoots).toBe(4);
     expect(assembled.truncated).toBe(false);
@@ -1705,5 +1711,56 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     });
     expect(dataset.coverage.desktopSessions.truncated).toBe(true);
     expect(dataset.truncated).toBe(true);
+  });
+});
+
+describe('assembleWorkAttention: requests nothing touched for more than a week (ADR 0056, age tier)', () => {
+  test('rank after the current blocks, stay requests, and a family active within the week stays current', () => {
+    const days = (count: number) => count * 24;
+    const observations = [
+      session({
+        id: 'fresh',
+        lastActivityHoursAgo: days(2),
+        needsAction: 'Fresh question?',
+        status: 'blocked',
+        title: 'Fresh',
+      }),
+      session({
+        id: 'quiet',
+        lastActivityHoursAgo: days(10),
+        needsAction: 'Quiet question?',
+        status: 'blocked',
+        title: 'Quiet',
+      }),
+      session({ id: 'six', lastActivityHoursAgo: days(6), status: 'review_ready', title: 'Six days' }),
+      session({ id: 'eight', lastActivityHoursAgo: days(8), status: 'review_ready', title: 'Eight days' }),
+      session({
+        id: 'busy',
+        lastActivityHoursAgo: days(12),
+        needsAction: 'Busy question?',
+        status: 'blocked',
+        title: 'Busy',
+      }),
+      // Started before the question, so not a link that answers it; active yesterday.
+      {
+        ...session({ id: 'busy-child', lastActivityHoursAgo: 24, spawnedFromId: 'local_busy', title: 'Busy child' }),
+        createdAt: hoursAgo(days(13)),
+      },
+    ];
+    const dataset = assemble(NO_EXTERNAL_FACTS, observations);
+    const needsYou = dataset.roots.filter((root) => root.attention === 'human-request');
+    expect(needsYou.map((root) => [root.desktopSessionId, root.reconsidered])).toEqual([
+      ['local_fresh', false],
+      ['local_six', false],
+      ['local_busy', false],
+      ['local_eight', true],
+      ['local_quiet', true],
+    ]);
+    expect(rootOf(dataset, 'local_quiet').interpretations.map(({ kind }) => kind)).toEqual([
+      'request-open',
+      'request-dormant',
+      'declared-status-stale',
+    ]);
+    expect(rootOf(dataset, 'local_busy').interpretations.map(({ kind }) => kind)).not.toContain('request-dormant');
   });
 });
