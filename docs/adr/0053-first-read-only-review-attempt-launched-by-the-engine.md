@@ -65,9 +65,13 @@ late write from a finished process cannot resurrect a row. A heartbeat stamps
 
 **The harness runs read-only, bounded, with the operator's own sign-in.**
 `claude -p <prompt> --output-format stream-json --verbose --permission-mode
-plan --allowedTools Read Grep Glob --disallowedTools Edit Write MultiEdit
-NotebookEdit Bash WebFetch WebSearch --max-turns 8`, plus `--model` and
-`--effort` when declared; no shell; `cwd` is the admitted checkout; the
+plan --strict-mcp-config --allowedTools Read Grep Glob --disallowedTools Edit
+Write MultiEdit NotebookEdit Bash WebFetch WebSearch Agent Task TodoWrite
+Skill --max-turns 8`, plus `--model` and `--effort` when declared
+(`--strict-mcp-config` with no `--mcp-config` inherits no MCP server from the
+operator's or the checkout's settings; the delegating, planning and skill
+tools are denied so the review cannot fan out); no shell; `cwd` is the
+admitted checkout; the
 environment is the shared runner's allow-list (PATH, HOME, locale, XDG, and
 `CLAUDE_CONFIG_DIR` when set), so the operator's Claude Code credentials are
 used by the CLI and never read or stored by the product; stdout is read line
@@ -76,7 +80,9 @@ SIGTERM then SIGKILL. Only `system/init` (the native session id) and `result`
 (the final message, bounded to 4 000 characters, turns, duration, error flag)
 are retained. The prompt is generic and bounded: the instruction, the target's
 title, `git log -1` and `git diff --stat HEAD~1..HEAD` read by the engine.
-`AI_USAGE_CLAUDE_EXECUTABLE` names another executable for fixtures.
+`AI_USAGE_CLAUDE_EXECUTABLE` names another executable for fixtures: an
+absolute path or a bare name on the allow-listed PATH; a relative path is
+refused (`executor-unavailable`) rather than resolved against the checkout.
 
 **Loss of contact is a state, never a relaunch.** At engine startup every row
 still `requested`, `starting` or `running` becomes `lost` ("verify in the
@@ -116,6 +122,13 @@ available in the demo."
 ## Limits
 
 - Claude Code only. Codex stays at simulation for this campaign.
+- The flags bound the model's tools and the MCP servers, not the hooks: a
+  `PreToolUse`, `PostToolUse` or `Stop` hook the operator configured in their
+  user settings, or that the checkout configured in its project settings,
+  still runs inside the launched session with the operator's rights. The
+  product does not pass `--safe-mode` or `--setting-sources` in this version;
+  an operator who needs a hook-free review declares a checkout without hooks
+  or runs under a `CLAUDE_CONFIG_DIR` kept for reviews.
 - No acceptance mutation, no cancellation command, no retry: the first
   execution proves the chain and its guards, not a workflow.
 - The browser-side gate repeats the engine's rules to explain itself; it is

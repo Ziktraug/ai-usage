@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { ClaudeReviewOutcome } from '@ai-usage/local-collectors/claude-review-launcher';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
@@ -19,7 +20,7 @@ import {
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
-import { createReviewAttemptService } from './review-attempts';
+import { createReviewAttemptService, type ReviewLauncher } from './review-attempts';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -229,6 +230,43 @@ const service = (fixture: Fixture, executable: string, extra: { readonly timeout
 };
 
 describe('engine review attempts', () => {
+  test('a harness that reports init before the launch returns never steps the attempt back to starting', async () => {
+    const fixture = await createFixture();
+    let settle: (outcome: ClaudeReviewOutcome) => void = () => undefined;
+    const outcome = new Promise<ClaudeReviewOutcome>((resolve) => {
+      settle = resolve;
+    });
+    // The init line is read, and `running` written, before the launcher hands the launch back.
+    const launcher: ReviewLauncher = async (_spec, events) => {
+      await events.onInit?.('native-early');
+      return { args: [], outcome, pid: process.pid, prompt: 'PROMPT', terminate: () => undefined };
+    };
+    const engine = createReviewAttemptService({
+      dbPath: fixture.dbPath,
+      launcher,
+      machine: () => machine,
+      now: () => NOW,
+      storage: fixture.storage,
+    });
+    const started = await engine.start(command());
+    expect(started.attempt).toMatchObject({ reused: false, state: 'running' });
+    let attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
+    expect(attempt).toMatchObject({ nativeSessionId: 'native-early', pid: process.pid, state: 'running' });
+    settle({
+      durationMs: 10,
+      exitCode: 0,
+      failureReason: null,
+      kind: 'finished',
+      nativeSessionId: 'native-early',
+      numTurns: 1,
+      resultExcerpt: 'Finding 1: none.',
+      resultKind: 'review',
+    });
+    await engine.settle();
+    attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
+    expect(attempt).toMatchObject({ resultExcerpt: 'Finding 1: none.', state: 'finished' });
+  });
+
   test('decides, records, launches the fake harness and finishes with an excerpt; a second command reuses', async () => {
     const fixture = await createFixture();
     const executable = await fixture.executable(

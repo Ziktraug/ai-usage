@@ -177,6 +177,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
       const branch = optionalText(value.branch, maxShortText);
       const declaredBy = oneOf(['root', 'child'] as const, value.declaredBy);
       const host = requiredText(value.host, maxShortText);
+      const lastActivityAt = instant(value.lastActivityAt);
       const number = positiveInteger(value.number);
       const repository = requiredText(value.repository, maxShortText);
       const state = requiredText(value.state, maxShortText);
@@ -185,6 +186,7 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
         branch === undefined ||
         declaredBy === undefined ||
         host === undefined ||
+        lastActivityAt === undefined ||
         number === undefined ||
         repository === undefined ||
         state === undefined ||
@@ -192,7 +194,17 @@ const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined
       ) {
         return;
       }
-      return { branch, declaredBy, host, kind: 'declared-pull-request', number, repository, state, url };
+      return {
+        branch,
+        declaredBy,
+        host,
+        kind: 'declared-pull-request',
+        lastActivityAt,
+        number,
+        repository,
+        state,
+        url,
+      };
     }
     case 'pull-request': {
       const accountLabel = optionalText(value.accountLabel, maxShortText);
@@ -426,6 +438,7 @@ const parseRoot = (value: unknown): WorkRoot | undefined => {
     branch: optionalText(value.project.branch, maxShortText),
     checkoutPath: optionalText(value.project.checkoutPath, maxPath),
     label: text(value.project.label, maxShortText),
+    servedLabel: optionalText(value.project.servedLabel, maxShortText),
     worktreeName: optionalText(value.project.worktreeName, maxShortText),
   };
   const declared = parseDeclaration(value.declared);

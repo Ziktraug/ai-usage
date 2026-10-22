@@ -329,9 +329,11 @@ every 10 minutes, the Jira tickets your Claude Desktop sessions linked
 written branches, its own branch, or the branch of a pull request it declared.
 Keys in titles, prompts or paths never link; `XLB-0` is ignored as the
 "no ticket" placeholder. The Work view then shows the ticket's dated status
-and, when comments arrived after the session family's last activity, "N new
-replies" as a request for you, without claiming you have not read them
-elsewhere. Only `acli jira workitem view` is ever run; nothing is written to
+and, when comments arrived after the latest activity on that key across your
+sessions, "N new replies" as a request for you on the session family that was
+last active on the key (an older family on the same key is only told which
+family carries it), without claiming you have not read them elsewhere. Only
+`acli jira workitem view` is ever run; nothing is written to
 Jira. The engine never reads or stores a Jira token: `acli`'s own sign-in
 answers, and a signed-out CLI is reported as `unauthenticated` with the last
 successful read kept beside it.

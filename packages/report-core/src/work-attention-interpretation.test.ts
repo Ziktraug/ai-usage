@@ -24,19 +24,21 @@ const declaredTurn = (declaration: WorkRootDeclaration): WorkFact => ({
   status: declaration.status,
 });
 
+/** `hoursAgo` dates the session's activity and, unless `fileHoursAgo` says otherwise, its file. */
 const declaredPullRequest = (
   id: string,
   state: string,
   hoursAgo: number,
-  options: { readonly declaredBy?: 'root' | 'child'; readonly number?: number } = {},
+  options: { readonly declaredBy?: 'root' | 'child'; readonly fileHoursAgo?: number; readonly number?: number } = {},
 ): WorkFact => ({
   branch: 'fixture/branch',
   declaredBy: options.declaredBy ?? 'child',
   host: 'github.com',
   id,
   kind: 'declared-pull-request',
+  lastActivityAt: iso(hoursAgo),
   number: options.number ?? 117,
-  provenance: provenance(hoursAgo),
+  provenance: provenance(options.fileHoursAgo ?? hoursAgo),
   repository: 'fixture/ai-usage',
   state,
   url: null,
@@ -145,7 +147,7 @@ describe('interpretWorkRoot', () => {
     expect(result.interpretations[1]).toEqual({
       evidence: ['child:pr'],
       kind: 'request-satisfied-elsewhere',
-      text: `Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) declared by a child session at ${iso(3)}, after the question.`,
+      text: `Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) listed by a child session (last active at ${iso(3)}), after the question.`,
       uncertainty: STAYS_YOURS,
     });
     // Vocabulary variants and a MERGED state are read the same way.
@@ -155,6 +157,23 @@ describe('interpretWorkRoot', () => {
       expect(read.attention).toBe('human-request');
       expect(read.reconsidered).toBe(true);
     }
+  });
+
+  test('probe F4: a child file rewritten after the question is not a listing after it; the child’s activity is', () => {
+    const declaration = blocked('Open the pull request for the collector branch.');
+    // The child was last active 8 h ago, before the question; the app rewrote its file 2 h ago.
+    const rewritten = declaredPullRequest('child:pr', 'OPEN', 8, { fileHoursAgo: 2 });
+    const stale = interpret(declaration, [declaredTurn(declaration), rewritten]);
+    expect(stale.attention).toBe('human-request');
+    expect(stale.reconsidered).toBe(false);
+    expect(kinds(stale)).toEqual(['request-open']);
+    // Active after the question: the listing counts, whatever the file's modification time says.
+    const active = declaredPullRequest('child:pr', 'OPEN', 3, { fileHoursAgo: 2 });
+    const result = interpret(declaration, [declaredTurn(declaration), active]);
+    expect(result.reconsidered).toBe(true);
+    expect(result.interpretations[1]?.text).toBe(
+      `Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) listed by a child session (last active at ${iso(3)}), after the question.`,
+    );
   });
 
   test('probe A: the root’s own declared pull request never answers its own question', () => {
@@ -215,7 +234,7 @@ describe('interpretWorkRoot', () => {
     expect(both.attention).toBe('human-request');
     expect(both.reconsidered).toBe(true);
     expect(both.interpretations[1]?.evidence).toEqual(['child:pr', 'gh:66']);
-    expect(both.interpretations[1]?.text).toContain('declared by a child session');
+    expect(both.interpretations[1]?.text).toContain('listed by a child session');
     expect(both.interpretations[1]?.text).toContain('observed on GitHub');
     // A draft, or an open pull request GitHub never dated, is not an answer even with the child.
     const draft = observedPullRequest('gh:66', { draft: true, number: 66, state: 'OPEN', updatedAtHoursAgo: 1 }, 0.5);
@@ -269,7 +288,7 @@ describe('interpretWorkRoot', () => {
     ]);
     expect(both.interpretations[1]?.evidence).toEqual(['child:new', 'gh:90']);
     expect(both.interpretations[1]?.text).toContain(
-      `fixture/ai-usage#117 (OPEN) declared by a child session at ${iso(3)}; fixture/ai-usage#90 (MERGED`,
+      `fixture/ai-usage#117 (OPEN) listed by a child session (last active at ${iso(3)}); fixture/ai-usage#90 (MERGED`,
     );
   });
 

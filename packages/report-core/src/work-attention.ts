@@ -857,6 +857,12 @@ export type WorkFact = WorkFactBase &
          */
         readonly declaredBy: 'root' | 'child';
         readonly host: string;
+        /**
+         * The declaring session's last activity. A listing is dated by it when confronted with a
+         * question; `provenance.observedAt` is the registry file's modification time, which a
+         * rewrite moves without any activity.
+         */
+        readonly lastActivityAt: CanonicalInstant;
         readonly number: number;
         readonly repository: string;
         readonly state: string;
@@ -893,7 +899,11 @@ export type WorkFact = WorkFactBase &
         readonly kind: 'jira-issue';
         readonly commentCount: number | null;
         readonly key: string;
-        /** Comments created after the family's last activity; `null` when the read failed. */
+        /**
+         * Comments created after the latest activity on this key, across every session family that
+         * wrote it in a branch name; `null` when the read failed. A family that relayed the key
+         * later than this one therefore counts for this root too: a reply it saw is not new.
+         */
         readonly newCommentsSince: number | null;
         readonly newestCommentAt: CanonicalInstant | null;
         readonly outcome: JiraIssueObservationOutcome;
@@ -939,6 +949,7 @@ export const WORK_INTERPRETATION_KINDS = [
   'pull-request-merged',
   'local-changes-unvalidated',
   'jira-reply-arrived',
+  'jira-reply-elsewhere',
   'jira-status-differs',
   'proposal-open',
   'proposal-resolved',
@@ -958,7 +969,18 @@ export interface WorkInterpretation {
 export interface WorkRootProject {
   readonly branch: string | null;
   readonly checkoutPath: string | null;
+  /**
+   * The project directory's name, by one rule for every root: the origin checkout of a worktree
+   * session, else its cwd. The served report never overrides it, because the report labels a
+   * worktree session by the worktree directory it ran in.
+   */
   readonly label: string;
+  /**
+   * The project label the served report gives the joined Session, when one is joined; `null`
+   * otherwise. Secondary information for the detail, never a filter: it differs from `label`
+   * for a session run in a worktree.
+   */
+  readonly servedLabel: string | null;
   readonly worktreeName: string | null;
 }
 
@@ -1003,15 +1025,15 @@ export interface WorkRoot {
   readonly key: WorkSessionKey;
   readonly project: WorkRootProject;
   /**
-   * A later pull request (declared by a child session, or merged on GitHub after the request)
+   * A later pull request (listed by a child session active after the request, or merged on GitHub after it)
    * may have answered this root's request. The attention is unchanged: the question stays the
    * operator's until confirmed; the view ranks such roots after the unreconsidered requests.
    */
   readonly reconsidered: boolean;
   /**
    * The served Session row this root joins to, when the current revision carries one for
-   * `key`; the Work view opens session detail through it. `null` also means `project.label`
-   * was derived from the Desktop `cwd` rather than read from the report.
+   * `key`; the Work view opens session detail through it and `project.servedLabel` carries its
+   * project label. `null` means no served row was found at the current revision.
    */
   readonly session: WorkRootSession | null;
   readonly title: string;

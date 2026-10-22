@@ -56,6 +56,7 @@ describe('claude review launcher', () => {
       '--verbose',
       '--permission-mode',
       'plan',
+      '--strict-mcp-config',
       '--allowedTools',
       'Read',
       'Grep',
@@ -68,6 +69,10 @@ describe('claude review launcher', () => {
       'Bash',
       'WebFetch',
       'WebSearch',
+      'Agent',
+      'Task',
+      'TodoWrite',
+      'Skill',
       '--max-turns',
       '6',
       '--model',
@@ -76,7 +81,7 @@ describe('claude review launcher', () => {
       'high',
     ]);
     expect(claudeReviewArguments({ effort: null, model: null }, 'P')).toEqual(
-      expect.not.arrayContaining(['--model', '--effort', '--dangerously-skip-permissions']),
+      expect.not.arrayContaining(['--model', '--effort', '--dangerously-skip-permissions', '--mcp-config']),
     );
     expect(claudeReviewArguments({ effort: null, model: null }, 'P')).toContain('8');
   });
@@ -244,6 +249,26 @@ describe('claude review launcher', () => {
       { env: { [CLAUDE_EXECUTABLE_ENVIRONMENT_KEY]: executable, HOME: process.env.HOME, PATH: process.env.PATH } },
     );
     expect((await launch.outcome).kind).toBe('finished');
+  });
+
+  test('refuses a relative executable path instead of resolving it against the checkout', async () => {
+    const { checkout } = await fakeClaude(emit(INIT_LINE, RESULT_LINE));
+    // A `bin/claude` under the checkout would otherwise be what `./bin/claude` runs.
+    await mkdir(path.join(checkout, 'bin'), { recursive: true });
+    await writeFile(path.join(checkout, 'bin', 'claude'), `#!${process.execPath}\nprocess.exit(3);\n`);
+    await chmod(path.join(checkout, 'bin', 'claude'), 0o700);
+    for (const relative of ['./bin/claude', 'bin/claude', '../checkout/bin/claude']) {
+      const refused = await launchClaudeReview(
+        { checkoutPath: checkout, effort: null, model: null, sessionTitle: null },
+        {},
+        { env: { [CLAUDE_EXECUTABLE_ENVIRONMENT_KEY]: relative, HOME: process.env.HOME, PATH: process.env.PATH } },
+      ).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ClaudeReviewLaunchError);
+      expect(refused).toMatchObject({
+        kind: 'executable-invalid',
+        message: `${CLAUDE_EXECUTABLE_ENVIRONMENT_KEY} must be an absolute path or a bare command name; got "${relative}"`,
+      });
+    }
   });
 
   test('reads the git summaries of a real checkout and degrades outside one', async () => {

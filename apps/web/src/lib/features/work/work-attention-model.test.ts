@@ -272,7 +272,7 @@ describe('Work attention dates and fact chips', () => {
       throw new Error('expected a Jira fact');
     }
     expect(workFactSummary(fact)).toBe(
-      "Jira XLB-2090 In Progress, 2 comments, 2 new replies since the family's last activity",
+      'Jira XLB-2090 In Progress, 2 comments, 2 new replies since the latest activity on this key',
     );
     const failed = { ...fact, newCommentsSince: null, outcome: 'unauthenticated' as const, status: null };
     expect(workFactSummary(failed)).toBe('Jira XLB-2090 read failed: unauthenticated');

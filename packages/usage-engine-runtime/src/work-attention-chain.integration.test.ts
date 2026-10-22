@@ -161,7 +161,7 @@ describe('work attention chain', () => {
     expect(satisfied?.reconsidered).toBe(true);
     expect(satisfied?.declared?.status).toBe('blocked');
     expect(satisfied?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-satisfied-elsewhere']);
-    expect(satisfied?.interpretations[1]?.text).toContain('declared by a child session');
+    expect(satisfied?.interpretations[1]?.text).toContain('listed by a child session');
 
     const mergedBefore = byId.get(ids.mergedBeforeRoot ?? '');
     expect(mergedBefore?.attention).toBe('human-request');

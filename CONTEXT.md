@@ -143,7 +143,12 @@ facts gathered around it and names its own uncertainty, such as "request open"
 or "possibly answered elsewhere". It is never persisted and never shown as a
 fact; a changed rule re-reads the same facts differently. An interpretation
 never closes a request: a later pull request can mark a root reconsidered, and
-the question stays the operator's until they confirm.
+the question stays the operator's until they confirm. What may reconsider a
+request is narrow: a pull request a child session listed from another
+checkout while active after the question, or a GitHub observation showing a
+pull request merged after it. The root's own listed pull request mirrors the
+branch of the checkout it sits in and counts only through such a GitHub
+observation dated after the question, never through the listing itself.
 _Avoid_: fact, inferred state, conclusion, task status
 
 **Proposal**:

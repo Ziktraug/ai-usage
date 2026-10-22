@@ -15,6 +15,7 @@ import {
   REVIEW_ATTEMPT_ACTION,
   REVIEW_ATTEMPT_LIVE_STATES,
   type ReviewAttempt,
+  type ReviewAttemptState,
   type ReviewAttemptTarget,
   type ReviewLaunchDecision,
   resolveReviewCheckoutPath,
@@ -132,13 +133,26 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
   const gated = <Value>(operation: () => Promise<Value>, signal?: AbortSignal): Promise<Value> =>
     runWithWriter(operation, signal);
 
+  /** Applies a patch from the live states, or from `fromStates` only when given; `false` when the row was elsewhere. */
   const transition = async (
     attemptId: string,
     patch: ReviewAttemptPatch,
     at: string = now().toISOString(),
+    fromStates?: readonly ReviewAttemptState[],
   ): Promise<boolean> =>
-    (await gated(() => Effect.runPromise(transitionReviewAttempt({ at, attemptId, dbPath: options.dbPath, patch }))))
-      .applied;
+    (
+      await gated(() =>
+        Effect.runPromise(
+          transitionReviewAttempt({
+            at,
+            attemptId,
+            dbPath: options.dbPath,
+            patch,
+            ...(fromStates === undefined ? {} : { fromStates }),
+          }),
+        ),
+      )
+    ).applied;
 
   const readFacts = async (machineId: string, command: StartReviewAttemptCommand, signal?: AbortSignal) => {
     signal?.throwIfAborted();
@@ -281,7 +295,8 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     const target: ReviewAttemptTarget = {
       checkoutOrigin: checkout?.origin ?? null,
       checkoutPath: checkout?.checkoutPath ?? null,
-      desktopSessionId: command.target.desktopSessionId ?? read.facts.desktop?.desktopSessionId ?? null,
+      // The resolved row's id only: a named id that matched no row of this transcript is not recorded.
+      desktopSessionId: read.facts.desktop?.desktopSessionId ?? null,
       harness: command.target.harness,
       projectLabel: bounded(read.facts.session?.projectLabel, 256),
       sessionTitle: bounded(read.facts.desktop?.title ?? read.facts.session?.name, 256),
@@ -364,14 +379,39 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
       };
     }
     const startedAt = now().toISOString();
-    await transition(attempt.attemptId, { pid: launch.pid, startedAt, state: 'starting' }, startedAt);
+    // `starting` is a step out of `requested` only. The harness may already have reported its
+    // init (`running`) or ended before this write lands; then the process identity is recorded
+    // from whatever live state the row is in, and the state is never stepped back.
+    const starting = await transition(attempt.attemptId, { pid: launch.pid, startedAt, state: 'starting' }, startedAt, [
+      'requested',
+    ]);
+    if (!starting) {
+      await transition(attempt.attemptId, { pid: launch.pid, startedAt }, startedAt);
+    }
     track(attempt, launch);
-    report(`usage-engine review-attempt=starting attempt=${attempt.attemptId} pid=${launch.pid}`);
+    const state = starting ? 'starting' : await recordedState(machineId, attempt);
+    report(`usage-engine review-attempt=${state} attempt=${attempt.attemptId} pid=${launch.pid}`);
     return {
-      attempt: { attemptId: attempt.attemptId, reused: false, state: 'starting' },
+      attempt: { attemptId: attempt.attemptId, reused: false, state },
       kind: 'review-attempt',
       refusal: null,
     };
+  };
+
+  /** The state the store holds for an attempt this command inserted; read when a write did not apply. */
+  const recordedState = async (machineId: string, attempt: ReviewAttempt): Promise<ReviewAttemptState> => {
+    const listed = await Effect.runPromise(
+      queryReviewAttempts({
+        dbPath: options.dbPath,
+        machineId,
+        target: { harness: attempt.target.harness, sourceSessionId: attempt.target.sourceSessionId },
+      }),
+    );
+    const row = listed.attempts.find((candidate) => candidate.attemptId === attempt.attemptId);
+    if (row === undefined) {
+      throw new Error(`review attempt ${attempt.attemptId} is no longer readable after its launch`);
+    }
+    return row.state;
   };
 
   const recoverLost: ReviewAttemptService['recoverLost'] = async () => {

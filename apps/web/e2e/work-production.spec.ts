@@ -22,8 +22,10 @@ import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transpo
  * production clock (2026-07-03T12:00Z), which the registry epoch is aligned with, in Europe/Paris.
  * The fixture `gh` answers OPEN / REVIEW_REQUIRED / no checks for every number, so each declared
  * pull request (#117, #118, #90) is observed awaiting review; the seeded repository is a clean
- * checkout and the worktree the blocked root named does not exist on disk. No Jira tooling is on
- * the fixture's PATH, so the Jira producer observes nothing.
+ * checkout and none of the worktrees the registry names (`checkout-3`, the children's own) exists
+ * on disk. No Jira tooling is on the fixture's PATH, so the Jira producer observes nothing. Every
+ * root is labelled by the repository directory, joined or not; the one joined root shows the
+ * report's own, machine-qualified label apart ("report project: …") and nowhere else.
  */
 
 const CAPTURES_DIRECTORY_ENV = 'AI_USAGE_WORK_CAPTURES_DIR';
@@ -47,6 +49,12 @@ const DECLARED_PULL_REQUESTS = 3;
 const REGISTRY_FILES = 41;
 const PARSED_FILES = 40;
 const BLOCKED_ROOT_ID = 'local_fixture-blocked-root';
+/** Every registry session sits in the seeded repository (`…/work/fixture`) or a worktree under it. */
+const PROJECT_LABEL = 'fixture';
+/** The served report's own label for the seeded transcript the blocked root joins to. */
+const SERVED_PROJECT_LABEL = 'fixture — Production fixture machine';
+/** The project chip a worktree directory used to produce; no root is labelled by its worktree any more. */
+const WORKTREE_PROJECT_CHIP_PATTERN = /^checkout-3 \d+$/;
 const BLOCKED_TITLE = 'Fixture: investigate checkout 3';
 const BLOCKED_QUESTION = 'Confirm whether the fixture should keep checkout 3 or delete it.';
 const BLOCKED_CHILD_TITLES = ['Fixture: child two', 'Fixture: grandchild of checkout 3'];
@@ -56,7 +64,7 @@ const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_CHILD_TITLE = 'Fixture: open the collector pull request';
 const SATISFIED_INTERPRETATION =
-  'Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) declared by a child session at 2026-07-03T09:01:00.000Z; fixture/ai-usage#117 (OPEN) observed on GitHub at ';
+  'Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) listed by a child session (last active at 2026-07-03T09:00:00.000Z); fixture/ai-usage#117 (OPEN) observed on GitHub at ';
 const RECONSIDERED_UNCERTAINTY = 'This does not prove it is the same work; the question stays yours until you confirm.';
 const MERGED_BEFORE_TITLE = 'Fixture: push the merged fix';
 const MERGED_BEFORE_INTERPRETATION =
@@ -247,14 +255,19 @@ test('renders the collected registry and its observed facts as a resume surface,
     await expect(rowNamed(page, title)).toHaveCount(0);
   }
 
-  // The blocked root carries its own question in the row, dated by the pinned clock.
+  // The blocked root carries its own question in the row, dated by the pinned clock. It ran in a
+  // worktree and is the one root joined to a transcript, yet its project is the repository like
+  // every other root's: the project filter, shown only when labels differ, does not appear.
   const blocked = rowNamed(page, BLOCKED_TITLE);
   await expect(blocked).toHaveCount(1);
   await expect(main.locator('[data-work-section="human-request"]').locator(blocked)).toHaveCount(1);
   await expect(blocked).toContainText(BLOCKED_QUESTION);
+  await expect(blocked).toContainText(`${PROJECT_LABEL} · fixture/checkout-3 (checkout-3)`);
   await expect(blocked).toContainText('blocked · 1 h ago');
   await expect(blocked).toContainText('children 3');
   await expect(blocked).not.toContainText('auto title');
+  await expect(main.getByText('Project', { exact: true })).toHaveCount(0);
+  await expect(main.getByRole('button', { name: WORKTREE_PROJECT_CHIP_PATTERN })).toHaveCount(0);
 
   // Every pull request the registry declared was observed on GitHub awaiting review, dated by the
   // observation. The completed root's pull request waits on others; the two blocked roots keep
@@ -298,6 +311,11 @@ test('renders the collected registry and its observed facts as a resume surface,
   const aside = main.locator('[data-work-aside]');
   await expect(aside.locator('[data-work-detail]')).toHaveAttribute('data-work-detail', BLOCKED_ROOT_ID);
   await expect(aside.getByText('title: automatic', { exact: true })).toBeVisible();
+  // The report has its own label for the joined transcript (the project as the production
+  // fixture publishes it, machine-qualified); the detail shows it apart from the project, and
+  // only there: the row, the filter and the search never read it.
+  await expect(aside).toContainText(`${PROJECT_LABEL} · fixture/checkout-3 (worktree checkout-3)`);
+  await expect(aside.locator('[data-work-served-label]')).toHaveText(`report project: ${SERVED_PROJECT_LABEL}`);
   await expect(aside.locator('[data-work-question]')).toHaveText(BLOCKED_QUESTION);
   await expect(aside).toContainText(
     `Declared by the session at ${BLOCKED_DECLARED_AT}; its current state is unobserved.`,
@@ -382,6 +400,10 @@ test('confronts each seeded declaration with the facts and coverage the chain co
   await expect(satisfied.getByRole('heading', { level: 4, name: 'GitHub' })).toBeVisible();
   await expect(satisfied).toContainText('PR #117 open, checks unknown, review required');
   await expect(satisfied.getByText(SATISFIED_CHILD_TITLE, { exact: true })).toBeVisible();
+  // Not joined to a transcript: the project is the repository and no report label is shown.
+  await expect(satisfied).toContainText(`${PROJECT_LABEL} · `);
+  await expect(satisfied.locator('[data-work-served-label]')).toHaveCount(0);
+  await expect(satisfied).toContainText(TRANSCRIPT_GAP);
   await expect(main.locator('[data-work-section="human-request"] [data-work-root][aria-current="true"]')).toHaveCount(
     1,
   );

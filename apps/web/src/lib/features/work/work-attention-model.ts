@@ -537,7 +537,7 @@ export const workFactSummary = (fact: WorkFact): string => {
         : `Checkout ${fact.checkoutPath}: ${fact.outcome}`;
     case 'jira-issue':
       return fact.outcome === 'observed'
-        ? `Jira ${fact.key} ${fact.status ?? 'status unknown'}${fact.commentCount === null ? '' : `, ${fact.commentCount} comment${fact.commentCount === 1 ? '' : 's'}`}${fact.newCommentsSince ? `, ${replies(fact.newCommentsSince)} since the family's last activity` : ''}`
+        ? `Jira ${fact.key} ${fact.status ?? 'status unknown'}${fact.commentCount === null ? '' : `, ${fact.commentCount} comment${fact.commentCount === 1 ? '' : 's'}`}${fact.newCommentsSince ? `, ${replies(fact.newCommentsSince)} since the latest activity on this key` : ''}`
         : `Jira ${fact.key} read failed: ${fact.outcome}`;
     case 'proposal':
       return `Proposal ${fact.resolution === 'open' ? 'open' : fact.resolution.replace('_', ' ')}: ${fact.title}${fact.tldr ? ` — ${fact.tldr}` : ''}`;

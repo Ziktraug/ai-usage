@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { boundedProcessEnvironment, executeBoundedProcess } from '@ai-usage/local-machine/bounded-process';
 import {
   boundReviewExcerpt,
@@ -12,9 +13,12 @@ import {
  * Launches one read-only Claude Code review (ADR 0053) and reads its `stream-json` output line by
  * line. This is the only place the product starts a harness, and it is deliberately narrow:
  *
- * - `claude -p <prompt> --output-format stream-json --verbose --permission-mode plan`, with the
- *   read-only tools allowed and every writing or network tool disallowed, a turn cap, and the
- *   declared model and effort when the operator declared them. No bypass flag, no API fallback.
+ * - `claude -p <prompt> --output-format stream-json --verbose --permission-mode plan
+ *   --strict-mcp-config`, with the read-only tools allowed and every writing, network, delegating
+ *   (Agent, Task), planning (TodoWrite) and skill tool disallowed, no MCP server inherited from
+ *   the operator's or the checkout's configuration, a turn cap, and the declared model and effort
+ *   when the operator declared them. No bypass flag, no API fallback. Hooks the operator or the
+ *   checkout configured are not neutralized by these flags; ADR 0053 records that limit.
  * - No shell; `cwd` is the admitted checkout; the environment is the bounded allow-list of the
  *   shared runner (PATH, HOME, locale, XDG) plus `CLAUDE_CONFIG_DIR` when the operator set it, so
  *   the operator's own Claude Code sign-in is used and no credential is ever read or stored here.
@@ -23,8 +27,10 @@ import {
  *   the transcript itself is never kept.
  *
  * The executable is `claude` on the allow-listed PATH, or the one named by
- * `AI_USAGE_CLAUDE_EXECUTABLE` (an absolute path or a bare name); fixtures use it to substitute a
- * fake harness without touching the operator's PATH.
+ * `AI_USAGE_CLAUDE_EXECUTABLE`: an absolute path, or a bare name looked up on that PATH. A
+ * relative path is refused rather than resolved against the target checkout, where a file of
+ * that name would be run in the operator's name. Fixtures use the variable to substitute a fake
+ * harness without touching the operator's PATH.
  */
 export const CLAUDE_EXECUTABLE_ENVIRONMENT_KEY = 'AI_USAGE_CLAUDE_EXECUTABLE';
 const CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY = 'CLAUDE_CONFIG_DIR';
@@ -40,9 +46,13 @@ export const CLAUDE_REVIEW_DISALLOWED_TOOLS = [
   'Bash',
   'WebFetch',
   'WebSearch',
+  'Agent',
+  'Task',
+  'TodoWrite',
+  'Skill',
 ] as const;
 
-export type ClaudeReviewLaunchFailureKind = 'executable-missing' | 'spawn-failed';
+export type ClaudeReviewLaunchFailureKind = 'executable-invalid' | 'executable-missing' | 'spawn-failed';
 
 export class ClaudeReviewLaunchError extends Error {
   readonly kind: ClaudeReviewLaunchFailureKind;
@@ -115,6 +125,8 @@ export const claudeReviewArguments = (
   '--verbose',
   '--permission-mode',
   'plan',
+  // No MCP server from user, project or local settings: only `--mcp-config` would add one, and none is passed.
+  '--strict-mcp-config',
   '--allowedTools',
   ...CLAUDE_REVIEW_ALLOWED_TOOLS,
   '--disallowedTools',
@@ -174,6 +186,12 @@ const resolveExecutable = (
 ): string => {
   const named = options.executable ?? env[CLAUDE_EXECUTABLE_ENVIRONMENT_KEY] ?? 'claude';
   if (named.includes('/')) {
+    if (!path.isAbsolute(named)) {
+      throw new ClaudeReviewLaunchError(
+        'executable-invalid',
+        `${CLAUDE_EXECUTABLE_ENVIRONMENT_KEY} must be an absolute path or a bare command name; got "${named}"`,
+      );
+    }
     return named;
   }
   const resolved = Bun.which(named, { PATH: environment.PATH ?? '' });

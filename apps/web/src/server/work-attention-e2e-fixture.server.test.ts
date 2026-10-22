@@ -85,7 +85,7 @@ describe('work attention e2e fixture', () => {
     expect(satisfied?.attention).toBe('human-request');
     expect(satisfied?.reconsidered).toBe(true);
     expect(kindsOf(satisfied)).toEqual(['request-open', 'request-satisfied-elsewhere', 'coverage-gap', 'coverage-gap']);
-    expect(satisfied?.interpretations[1]?.text).toContain('declared by a child session');
+    expect(satisfied?.interpretations[1]?.text).toContain('listed by a child session');
     expect(
       satisfied?.facts
         .filter((fact) => fact.kind === 'pull-request')

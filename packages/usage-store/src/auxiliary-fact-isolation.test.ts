@@ -7,34 +7,45 @@ import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import type { CheckoutStatusObservation, PullRequestObservation } from '@ai-usage/report-core/work-attention';
+import type {
+  CheckoutStatusObservation,
+  JiraIssueObservation,
+  PullRequestObservation,
+} from '@ai-usage/report-core/work-attention';
 import type { ExecutorObservation } from '@ai-usage/report-core/work-executors';
 import { Effect } from 'effect';
 import {
   queryLatestCheckoutStatusObservations,
   queryLatestExecutorObservations,
+  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryLocalMergeBundle,
+  queryReviewAttempts,
   queryUsageStoreGeneration,
   queryWorkFactRunStates,
 } from './reader';
+import type { NewReviewAttempt } from './review-attempt-store';
 import {
   exportLocalMergeBundle,
   importCheckoutStatusObservations,
   importExecutorObservations,
+  importJiraIssueObservations,
   importLocalRows,
   importPullRequestObservations,
   initializeUsageStore,
   publishServedReportRevision,
   recordWorkFactRun,
+  requestReviewAttempt,
+  transitionReviewAttempt,
   updateUsageMachineLabel,
 } from './writer';
 
 /**
- * The Work view's auxiliary fact tables describe this machine only. This proves that none of
- * them leaks into what leaves it or what the report serves: the served revision, the merge
- * bundle (export and local read) and the replication outbox, and that importing them never
- * moves the store generation.
+ * The Work view's auxiliary fact tables describe this machine only: pull requests, checkouts,
+ * producer runs, executor observations, Jira issues (ADR 0054) and review attempts (ADR 0053).
+ * This proves that none of them leaks into what leaves it or what the report serves: the served
+ * revision, the merge bundle (export and local read) and the replication outbox, and that
+ * writing them never moves the store generation.
  */
 
 const temporaryRoots: string[] = [];
@@ -49,11 +60,62 @@ const SENTINELS = {
   authMethod: 'PRIVATE_AUTH_METHOD_SENTINEL',
   binaryPath: '/private/PRIVATE_EXECUTOR_PATH_SENTINEL/claude',
   checkoutPath: '/home/private/PRIVATE_CHECKOUT_PATH_SENTINEL',
+  jiraComment: 'PRIVATE_JIRA_COMMENT_EXCERPT_SENTINEL',
+  jiraOutcomeMessage: 'PRIVATE_JIRA_OUTCOME_SENTINEL',
+  jiraSummary: 'PRIVATE_JIRA_SUMMARY_SENTINEL',
   outcomeMessage: 'PRIVATE_PR_OUTCOME_SENTINEL',
   pullRequestTitle: 'PRIVATE_PR_TITLE_SENTINEL',
   pullRequestUrl: 'https://github.example/PRIVATE_PR_URL_SENTINEL/pull/1',
+  reviewCheckoutPath: '/home/private/PRIVATE_REVIEW_CHECKOUT_SENTINEL',
+  reviewExcerpt: 'PRIVATE_REVIEW_EXCERPT_SENTINEL',
+  reviewFailureReason: 'PRIVATE_REVIEW_FAILURE_SENTINEL',
+  reviewSessionTitle: 'PRIVATE_REVIEW_TITLE_SENTINEL',
   runMessage: 'PRIVATE_RUN_MESSAGE_SENTINEL',
 } as const;
+
+const jiraIssue: JiraIssueObservation = {
+  assigneeLabel: 'Alex',
+  commentCount: 1,
+  comments: [
+    {
+      authorLabel: 'Sam',
+      createdAt: parseCanonicalInstant('2026-10-21T19:30:00.000Z'),
+      excerpt: SENTINELS.jiraComment,
+      id: '1',
+    },
+  ],
+  key: 'PRV-1',
+  machineId: MACHINE,
+  observedAt: parseCanonicalInstant('2026-10-21T20:00:00.000Z'),
+  outcome: 'observed',
+  outcomeMessage: SENTINELS.jiraOutcomeMessage,
+  parentKey: null,
+  sprint: null,
+  status: 'In Progress',
+  statusCategory: 'in-progress',
+  summary: SENTINELS.jiraSummary,
+  updatedAt: parseCanonicalInstant('2026-10-21T19:30:00.000Z'),
+};
+
+const reviewAttempt: NewReviewAttempt = {
+  attemptId: 'attempt-private-1',
+  candidateId: `declared:${JSON.stringify([MACHINE, 'claude-code', 'personal'])}`,
+  declaration: null,
+  executorHarness: 'claude-code',
+  idempotencyKey: 'k'.repeat(64),
+  machineId: MACHINE,
+  requestedAt: '2026-10-21T20:00:00.000Z',
+  state: 'requested',
+  target: {
+    checkoutOrigin: 'desktop-cwd',
+    checkoutPath: SENTINELS.reviewCheckoutPath,
+    desktopSessionId: 'local_private',
+    harness: 'claude',
+    projectLabel: 'project',
+    sessionTitle: SENTINELS.reviewSessionTitle,
+    sourceSessionId: 'cli-1',
+  },
+};
 
 const createStore = async (): Promise<string> => {
   const root = await mkdtemp(path.join(tmpdir(), 'usage-store-aux-isolation-'));
@@ -186,7 +248,7 @@ const support = (machineLabel: string): FocusedReportSupport => ({
 });
 
 describe('auxiliary fact tables stay local', () => {
-  test('pull request, checkout, run state and executor rows never reach the served revision, the bundle or the outbox', async () => {
+  test('pull request, checkout, run state, executor, Jira issue and review attempt rows never reach the served revision, the bundle or the outbox', async () => {
     const dbPath = await createStore();
     const machine = { id: MACHINE, label: 'Aux Machine' };
     await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
@@ -231,7 +293,36 @@ describe('auxiliary fact tables stay local', () => {
       }),
     );
     await Effect.runPromise(importExecutorObservations({ dbPath, observations: [executor] }));
-    // The four tables hold the rows, with their private text, for the local Work view.
+    await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue] }));
+    await Effect.runPromise(requestReviewAttempt({ attempt: reviewAttempt, dbPath }));
+    await Effect.runPromise(
+      transitionReviewAttempt({
+        at: '2026-10-21T20:05:00.000Z',
+        attemptId: reviewAttempt.attemptId ?? '',
+        dbPath,
+        patch: {
+          endedAt: '2026-10-21T20:05:00.000Z',
+          failureReason: SENTINELS.reviewFailureReason,
+          resultExcerpt: SENTINELS.reviewExcerpt,
+          resultKind: 'error',
+          state: 'failed',
+        },
+      }),
+    );
+    // The six tables hold the rows, with their private text, for the local Work view.
+    expect(
+      (
+        await Effect.runPromise(
+          queryLatestJiraIssueObservations({ dbPath, keys: ['PRV-1'], limit: 10, machineId: MACHINE }),
+        )
+      ).items[0]?.latest,
+    ).toMatchObject({ comments: [{ excerpt: SENTINELS.jiraComment }], summary: SENTINELS.jiraSummary });
+    expect((await Effect.runPromise(queryReviewAttempts({ dbPath, machineId: MACHINE }))).attempts[0]).toMatchObject({
+      failureReason: SENTINELS.reviewFailureReason,
+      resultExcerpt: SENTINELS.reviewExcerpt,
+      state: 'failed',
+      target: { checkoutPath: SENTINELS.reviewCheckoutPath, sessionTitle: SENTINELS.reviewSessionTitle },
+    });
     expect(
       (await Effect.runPromise(queryLatestPullRequestObservations({ dbPath, machineId: MACHINE }))).items[0]?.latest
         .title,

@@ -204,7 +204,7 @@ const createStore = async (observations: readonly ClaudeDesktopSessionObservatio
   return dbPath;
 };
 
-const publishServedSession = async (dbPath: string): Promise<void> => {
+const publishServedSession = async (dbPath: string, projectLabel = 'Served project'): Promise<void> => {
   const machine = { id: MACHINE, label: 'Work Machine' };
   await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
   const row: SerializedRow = {
@@ -224,7 +224,7 @@ const publishServedSession = async (dbPath: string): Promise<void> => {
     linesDeleted: 0,
     model: 'claude-fixture',
     name: 'Served session',
-    project: 'Served project',
+    project: projectLabel,
     provider: 'Claude sub',
     sessionLabel: 'Served session',
     source: {
@@ -349,7 +349,7 @@ describe('queryWorkAttention', () => {
     ]);
     expect(a?.interpretations[1]?.evidence).toEqual(['local_a1:pr:github.com/fixture/project#117']);
     expect(a?.interpretations[1]?.text).toBe(
-      `Possibly answered elsewhere: fixture/project#117 (OPEN) declared by a child session at ${hoursAgo(3)}, after the question.`,
+      `Possibly answered elsewhere: fixture/project#117 (OPEN) listed by a child session (last active at ${hoursAgo(3)}), after the question.`,
     );
     expect(a?.facts.map(({ kind }) => kind)).toEqual([
       'declared-turn',
@@ -363,6 +363,7 @@ describe('queryWorkAttention', () => {
       branch: 'fixture/worktree',
       checkoutPath: '/home/fixture/work/project/.claude/worktrees/wt-1',
       label: 'project',
+      servedLabel: null,
       worktreeName: 'wt-1',
     });
     expect(a?.session).toBeNull();
@@ -376,7 +377,8 @@ describe('queryWorkAttention', () => {
 
     const b = byId.get('local_b');
     expect(b?.session?.rowId).toEqual(expect.any(String));
-    expect(b?.project.label).toBe('Served project');
+    // The join never renames the project; the report's own label travels apart.
+    expect(b?.project).toMatchObject({ label: 'project', servedLabel: 'Served project', worktreeName: null });
     expect(b?.interpretations.map(({ kind }) => kind)).toEqual(['request-open']);
 
     const c = byId.get('local_c');
@@ -514,6 +516,34 @@ describe('queryWorkAttention', () => {
     expect(dataset.coverage.checkouts).toEqual({ failed: 0, lastRunAt: hoursAgo(0.25), observed: 1 });
   });
 
+  test('a joined worktree root keeps its origin project as label; the served worktree label is carried apart', async () => {
+    const worktreeRoot = session({
+      cliSessionId: 'cli-served',
+      id: 'w',
+      lastActivityHoursAgo: 1,
+      status: 'completed',
+      title: 'Fixture: W in a worktree',
+      worktree: true,
+    });
+    const dbPath = await createStore([worktreeRoot, session({ id: 'x', lastActivityHoursAgo: 2, title: 'X' })]);
+    // The report labels the transcript by the directory it ran in: the worktree, not the project.
+    await publishServedSession(dbPath, 'wt-1');
+
+    const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: NOW }));
+    const w = dataset.roots.find((root) => root.desktopSessionId === 'local_w');
+    expect(w?.session?.rowId).toEqual(expect.any(String));
+    expect(w?.project).toEqual({
+      branch: 'fixture/worktree',
+      checkoutPath: '/home/fixture/work/project/.claude/worktrees/wt-1',
+      label: 'project',
+      servedLabel: 'wt-1',
+      worktreeName: 'wt-1',
+    });
+    const x = dataset.roots.find((root) => root.desktopSessionId === 'local_x');
+    expect(x?.session).toBeNull();
+    expect(x?.project).toMatchObject({ label: 'project', servedLabel: null, worktreeName: null });
+  });
+
   test('without a served revision the join is reported as unavailable, not as a gap per root', async () => {
     const dbPath = await createStore();
     const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, now: NOW, sinceDays: 60 }));
@@ -626,7 +656,7 @@ const runInput = (sourceId: WorkFactRunState['sourceId'], counts: { failed: numb
   ...counts,
 });
 
-const assemble = (externalFacts: WorkAttentionExternalFacts, observations = sessions) =>
+const assemble = (externalFacts: WorkAttentionExternalFacts, observations = sessions, sinceDays?: number) =>
   assembleWorkAttention({
     collectionStates: [],
     externalFacts,
@@ -634,6 +664,7 @@ const assemble = (externalFacts: WorkAttentionExternalFacts, observations = sess
     now: NOW,
     observations,
     sessions: NO_SERVED_REVISION,
+    ...(sinceDays === undefined ? {} : { sinceDays }),
   });
 
 const rootOf = (dataset: ReturnType<typeof assemble>, desktopSessionId: string) => {
@@ -698,6 +729,60 @@ describe('assembleWorkAttention with external facts', () => {
     for (const root of dataset.roots.filter((candidate) => candidate.desktopSessionId !== 'local_a')) {
       expect(root.facts.some((fact) => fact.kind === 'pull-request')).toBe(false);
     }
+  });
+
+  test('a child listing that mirrors the root’s checkout never answers; a child in another checkout can', () => {
+    const asks = {
+      lastActivityHoursAgo: 5,
+      needsAction: 'Open the pull request for the collector branch.',
+      status: 'blocked',
+    } as const;
+    const sideSession = session({
+      id: 'r1',
+      lastActivityHoursAgo: 3,
+      pullRequestState: 'OPEN',
+      spawnedFromId: 'local_r',
+      status: 'completed',
+      title: 'R side session',
+      worktree: true,
+    });
+    // The root sits in the worktree and lists #117 itself; a side session in the same worktree
+    // lists the same #117: both are the checkout's own standing.
+    const mirrored = assemble(NO_EXTERNAL_FACTS, [
+      session({ ...asks, id: 'r', pullRequestState: 'OPEN', title: 'R', worktree: true }),
+      sideSession,
+    ]);
+    const r = rootOf(mirrored, 'local_r');
+    expect(r.attention).toBe('human-request');
+    expect(r.reconsidered).toBe(false);
+    expect(r.interpretations.map(({ kind }) => kind)).toEqual(['request-open']);
+    expect(r.facts.filter((fact) => fact.kind === 'declared-pull-request').map((fact) => fact.declaredBy)).toEqual([
+      'root',
+    ]);
+    // The same side session with the root listing nothing: still the checkout's mirror.
+    const sameCheckout = rootOf(
+      assemble(NO_EXTERNAL_FACTS, [session({ ...asks, id: 'r', title: 'R', worktree: true }), sideSession]),
+      'local_r',
+    );
+    expect(sameCheckout.reconsidered).toBe(false);
+    expect(sameCheckout.facts.some((fact) => fact.kind === 'declared-pull-request')).toBe(false);
+    // A child in another checkout listing a pull request the root does not list: a possible answer.
+    const elsewhere = rootOf(
+      assemble(NO_EXTERNAL_FACTS, [
+        session({ ...asks, id: 'r', title: 'R', worktree: true }),
+        session({
+          id: 'r2',
+          lastActivityHoursAgo: 3,
+          pullRequestState: 'OPEN',
+          spawnedFromId: 'local_r',
+          status: 'completed',
+          title: 'R child elsewhere',
+        }),
+      ]),
+      'local_r',
+    );
+    expect(elsewhere.reconsidered).toBe(true);
+    expect(elsewhere.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-satisfied-elsewhere']);
   });
 
   test('a draft pull request, or an approved one, is not an external wait', () => {
@@ -1034,6 +1119,69 @@ describe('assembleWorkAttention with Jira facts', () => {
         .filter((root) => root.desktopSessionId !== 'local_j1')
         .every((root) => !root.facts.some((fact) => fact.kind === 'jira-issue')),
     ).toBe(true);
+  });
+
+  test('a key relayed by a later family: a reply is new only after the latest activity on the key, and asked of that family alone', () => {
+    // KA wrote XLB-3000 sixty days ago and completed; KB relayed the key two days ago.
+    const relay = [
+      session({
+        id: 'ka',
+        lastActivityHoursAgo: 60 * 24,
+        status: 'completed',
+        title: 'Fixture: KA first on XLB-3000',
+        writtenBranches: ['feat/XLB-3000/first'],
+      }),
+      session({
+        id: 'kb',
+        lastActivityHoursAgo: 2 * 24,
+        status: 'completed',
+        title: 'Fixture: KB relayed XLB-3000',
+        writtenBranches: ['fix/XLB-3000/relay'],
+      }),
+    ];
+    const commented = (hours: number) =>
+      jiraObservation({
+        comments: [{ authorLabel: 'Sam', createdAt: hoursAgo(hours), excerpt: 'Reply.', id: '1' }],
+        key: 'XLB-3000',
+        updatedAt: hoursAgo(hours),
+      });
+    const relayed = (observation: JiraIssueObservation, sinceDays?: number) =>
+      assemble(
+        { ...NO_EXTERNAL_FACTS, jiraIssues: [{ latest: observation, latestObserved: observation }] },
+        relay,
+        sinceDays,
+      );
+
+    // A comment ten days ago came before KB relayed the key: nothing is new for anyone. KA's only
+    // statement is the age of its declaration.
+    const beforeRelay = relayed(commented(10 * 24), 90);
+    for (const [id, kinds] of [
+      ['local_ka', ['declared-status-stale']],
+      ['local_kb', []],
+    ] as const) {
+      const root = rootOf(beforeRelay, id);
+      expect(root.attention).toBe('none');
+      expect(root.interpretations.map(({ kind }) => kind)).toEqual([...kinds]);
+      expect(root.facts.filter((fact) => fact.kind === 'jira-issue').map((fact) => fact.newCommentsSince)).toEqual([0]);
+    }
+
+    // A comment yesterday is new for the key: KB, last active on it, is asked; KA is only told.
+    const afterRelay = relayed(commented(24), 90);
+    const kb = rootOf(afterRelay, 'local_kb');
+    expect(kb.attention).toBe('human-request');
+    expect(kb.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-arrived']);
+    expect(kb.interpretations[0]?.text).toContain(`after this session family's last activity (${hoursAgo(2 * 24)})`);
+    const ka = rootOf(afterRelay, 'local_ka');
+    expect(ka.attention).toBe('none');
+    expect(ka.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-elsewhere', 'declared-status-stale']);
+    expect(ka.interpretations[0]?.text).toBe(
+      `1 comment arrived on XLB-3000 after the latest activity on this key (${hoursAgo(2 * 24)}); the most recent family on this key is “Fixture: KB relayed XLB-3000”, which carries the request.`,
+    );
+    expect(afterRelay.roots.map((root) => root.desktopSessionId)).toEqual(['local_kb', 'local_ka']);
+    // Under the default window KA, with nothing pending, is hidden like any other old root.
+    const windowed = relayed(commented(24));
+    expect(windowed.roots.map((root) => root.desktopSessionId)).toEqual(['local_kb']);
+    expect(windowed.coverage.window.excludedRoots).toBe(1);
   });
 
   test('a To Do ticket beside a merged pull request is a difference; an unauthenticated read keeps the dated success', () => {

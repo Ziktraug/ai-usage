@@ -165,6 +165,18 @@ describe('review attempt store', () => {
         }),
       ),
     ).toEqual({ applied: true });
+    // A step out of `requested` is refused once the harness reported `running`: no step back.
+    expect(
+      await run(
+        transitionReviewAttempt({
+          at: LATER,
+          attemptId: 'attempt-1',
+          dbPath,
+          fromStates: ['requested'],
+          patch: { pid: 4243, state: 'starting' },
+        }),
+      ),
+    ).toEqual({ applied: false });
     // A heartbeat is an empty patch from a live state.
     expect(
       await run(transitionReviewAttempt({ at: '2026-10-22T10:00:30.000Z', attemptId: 'attempt-1', dbPath, patch: {} })),
@@ -311,7 +323,7 @@ describe('review attempt store', () => {
     const dbPath = await createStore();
     const machine = { id: MACHINE, label: 'Attempt Machine' };
     await run(updateUsageMachineLabel({ dbPath, machine }));
-    const desktop = parseClaudeDesktopSessionObservation({
+    const desktopInput = {
       accountDirectory: 'account-a',
       archived: false,
       branch: null,
@@ -345,16 +357,26 @@ describe('review attempt store', () => {
       worktreePath: '/home/fixture/work/project/.claude/worktrees/w1',
       wrapUpDescription: null,
       writtenBranches: [],
+    };
+    const desktop = parseClaudeDesktopSessionObservation(desktopInput);
+    // Another Desktop session of the same machine, on another transcript.
+    const otherDesktop = parseClaudeDesktopSessionObservation({
+      ...desktopInput,
+      cliSessionId: 'cli-2',
+      desktopSessionId: 'local_two',
+      filePath: '.config/Claude/claude-code-sessions/account-a/org-a/local_two.json',
+      title: 'Fixture: another desktop session',
+      worktreePath: null,
     });
-    if (desktop === null) {
+    if (desktop === null || otherDesktop === null) {
       throw new Error('fixture must parse');
     }
     await run(
       importClaudeDesktopSessions({
-        completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+        completeness: { filesParsed: 2, filesSeen: 2, rejected: 0, truncated: false, unsupported: 0 },
         dbPath,
         machineId: MACHINE,
-        observations: [desktop],
+        observations: [desktop, otherDesktop],
       }),
     );
     const beforeRevision = await run(
@@ -465,7 +487,24 @@ describe('review attempt store', () => {
       projectLabel: 'project',
       sourcePath: '/home/fixture/work/project',
     });
-    // Another harness never joins the Desktop registry; an unknown session resolves to nothing.
+    // A named Desktop session must be the one that declared this transcript: another session's
+    // id resolves no Desktop checkout, whatever it names.
+    const named = (desktopSessionId: string, sourceSessionId = 'cli-1') =>
+      run(
+        queryReviewTargetResolution({
+          dbPath,
+          desktopSessionId,
+          harness: 'claude',
+          machineId: MACHINE,
+          sourceSessionId,
+        }),
+      );
+    expect((await named('local_one')).desktop?.desktopSessionId).toBe('local_one');
+    expect((await named('local_two')).desktop).toBeNull();
+    expect((await named('local_two')).session?.name).toBe('Served session');
+    expect((await named('local_two', 'cli-2')).desktop?.desktopSessionId).toBe('local_two');
+    // Another harness never joins the Desktop registry, even when a desktop id is named; an
+    // unknown session resolves to nothing.
     expect(
       await run(
         queryReviewTargetResolution({ dbPath, harness: 'codex', machineId: MACHINE, sourceSessionId: 'cli-1' }),
@@ -481,6 +520,6 @@ describe('review attempt store', () => {
           sourceSessionId: 'other',
         }),
       ),
-    ).toMatchObject({ desktop: { desktopSessionId: 'local_one' }, session: null });
+    ).toEqual({ desktop: null, session: null });
   });
 });
