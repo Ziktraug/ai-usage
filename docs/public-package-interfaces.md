@@ -224,6 +224,10 @@ not belong here.
   observations, folded and clamped to the caller's response caps.
 - `./served-revision-query`: strict bounded support/focused/Session query
   validation and direct revision-keyed execution through the read-only store.
+- `./work-context-read`: the bounded Work context for one checkout or project
+  label (ADR 0058), a projection of the Work attention read through the
+  read-only store, shared by `ai-usage work context` and the `work.context`
+  MCP tool; typed, path-free failures.
 
 There are no collection, scheduler, source-adapter, one-shot writer, artifact,
 lease, or subprocess exports. Production `report-data` code may import only
@@ -345,7 +349,9 @@ portable corpus and ranking contracts.
 
 Only this package imports the MCP SDK. It may consume Memory/authorization/
 identity contracts and Skills projection locking, but no SQLite or PostgreSQL
-adapter.
+adapter. The read-only `work.context` tool is registered only when the
+composition passes a Work context reader; the adapter owns its schema, the
+one-scope rule, the response bound and sanitized errors, never the store.
 
 ## `@ai-usage/usage-engine-control`
 
@@ -444,8 +450,10 @@ access.
 ## `@ai-usage/mcp`
 
 Executable-only local stdio composition. It imports the MCP adapter, Memory
-loopback client, and runtime-path contracts; it exports no in-process domain or
-storage API.
+loopback client, runtime-path contracts, and, for `work.context`,
+`@ai-usage/report-data/work-context-read` with the `usage-store/reader` store
+path (read-only `query_only`; it never starts or contacts an engine); it
+exports no in-process domain or storage API.
 
 ## `@ai-usage/web-contract`
 
@@ -497,7 +505,8 @@ platform account contracts.
   reach the authorization implementation or `project-application`.
 - `apps/cli` may import effect-runtime, Memory-service client/search contracts,
   platform-core, report-core,
-  `@ai-usage/report-data/portable-report`, usage-engine-control,
+  `@ai-usage/report-data/portable-report`,
+  `@ai-usage/report-data/work-context-read`, usage-engine-control,
   `usage-store/reader`, and `@ai-usage/usage-engine/main` for a bounded
   foreground process. The executable is a terminal process boundary, not an
   in-process runtime dependency. CLI must not import collectors,

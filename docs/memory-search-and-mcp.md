@@ -167,13 +167,16 @@ falls back to a different local corpus.
 
 ## MCP tools and retrieved-content safety
 
-`@ai-usage/mcp-adapter` registers exactly three read-only tools:
+`@ai-usage/mcp-adapter` registers three read-only Memory tools, and a fourth
+read-only tool, `work.context`, when the composition provides a Work context
+reader (the local stdio server does; ADR 0058):
 
 | Tool | Input | Output |
 | --- | --- | --- |
 | `memory.search` | bounded search fields: `query`, `limit`, optional cursor/mode/Project/kind/status/trust | revision-pinned cards, total/cursor, rank, match explanation, provenance |
 | `memory.get` | `itemId` UUID and optional exact `revisionId` UUID | exact authorized current or historical item/revision card |
 | `memory.project_context` | Project UUID and limit (default 16, max 32) | deterministic active constraints, decisions, pitfalls, and commands |
+| `work.context` | exactly one scope: absolute `checkoutPath` or `projectLabel` | bounded Work context (waits, decisions, linked facts, coverage), Claude Desktop sessions only, from the read-only store |
 
 `memory.latest_work_handoff`, `work_handoff.get`, and
 `work_thread.get_context` are reserved names, not registered placeholder tools.
