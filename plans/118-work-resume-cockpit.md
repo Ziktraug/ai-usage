@@ -555,3 +555,28 @@ load 305 869 B; `bun run test:e2e` through the retry wrapper 252 passed, no retr
 report 13/13, `work-production.spec.ts` 6/6, `work-attempt-production.spec.ts` 1/1, session scroll
 and campaign map 7/7, campaign continuity 31/31. Not run: the real hook probe, CI on this head;
 the payload size with the Codex budget was not re-measured.
+
+### 2026-10-22 15:05 — review 2 fixes; targeted gate at `4e98ae13`
+
+Review 2 of `d820c2f8..40d34b55` (P0 0, P1 0, P2 5) confirmed the earlier P1 fixes still in
+place. Four P2s fixed test-first, one commit each: the Codex coverage line no longer claims
+absence when Desktop roots filled the page ("0 of N Codex campaigns shown: the page limit left them
+out"), and the Work context counts `harnesses.codex.cutByPage` (`b9bfc270`); proposal readings in
+`work.context` carry a count-only sentence, so a proposal is cited by id, date and kind only, as
+ADR 0058 says (`f0c0a61f`, title sentinel test); a recorded checkout path that is not absolute is
+never resolved against the reader's working directory and is counted in
+`coverage.roots.unscopedPaths` (`e7aa1074`, relative and Windows-style paths); the CLI and MCP
+answer `store-not-upgraded` on a store without the declaration table, through the reader guard of
+`349563ee` (`4e98ae13`, tests at both edges; the CLI one fails with the guard removed).
+
+Targeted gate in the detached gate worktree at `4e98ae13` under `nix develop` (Bun 1.3.13): frozen
+install; `bun run check` 1625 files clean; `bun run lint` rc 0; typecheck PASS (turbo `check`
+58/58 with `--force`); report-data 88, report-core 542, usage-store 273, mcp-adapter 12, apps/mcp
+3, apps/cli 116 pass, 0 fail; web unit 1 581 pass; build PASS; `test:web-bundle` 4/4;
+`work.spec.ts` + `work-e2e-fixture.spec.ts` 12/12 (retry wrapper); `work-production.spec.ts` 6/6.
+
+Open items: the Codex member query does work in proportion to campaign size rather than to its
+member bound (review 2 P2-4: `json_extract` and window functions over every row of the chosen
+campaigns; about 25 ms at today's census, 332 ms for a 20 000-row campaign); select the root and
+the latest five members through the campaign index and take the count from
+`campaign_total_count`. Also still open: the real hook probe, CI on this head.
