@@ -149,9 +149,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   );
   // The e2e composition is the served read model, not the demo's synthetic dataset.
   await expect(coverage).not.toContainText('Synthetic dataset');
-  await expect(
-    main.getByRole('status').filter({ hasText: `${ROOTS_SHOWN} of ${ROOTS_SHOWN} roots shown` }),
-  ).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `${ROOTS_SHOWN} roots shown` })).toBeVisible();
   for (const name of ['Needs you', 'Waiting on others', 'Leads', RESTING_TITLE, CODEX_TITLE]) {
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
@@ -455,7 +453,7 @@ test('shows Codex sessions apart: wait unknown, never folded under a Desktop roo
   await expect.poll(() => searchParam(page, 'harness')).toBe('codex');
   await expect(main.locator('[data-work-root]')).toHaveCount(CODEX_ROOTS);
   await expect(main.locator('[data-work-search-coverage]')).toContainText(
-    `${CODEX_ROOTS} of ${ROOTS_SHOWN} roots match.`,
+    `${CODEX_ROOTS} of ${ROOTS_SHOWN} roots match,`,
   );
 
   // The detail: unknown standing, the children Codex linked, the gap of a parent never collected.
@@ -490,15 +488,13 @@ test('a search covers the ranking and says what it did not search; earlier quest
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const status = main.locator('[data-work-search-coverage]');
-  await expect(status).toHaveText(
-    `${ROOTS_SHOWN} of ${ROOTS_SHOWN} roots shown; not shown: ${HIDDEN_ROOTS} older root without a pending declaration (30-day window).`,
-  );
+  await expect(status).toHaveText(`${ROOTS_SHOWN} roots shown · ${HIDDEN_ROOTS} older root hidden (30-day window).`);
 
   // The old subject sits behind the window: the empty result is a statement about the ranking.
   await page.getByRole('searchbox').fill(OLD_SUBJECT_QUERY);
   await expect.poll(() => searchParam(page, 'q')).toBe(OLD_SUBJECT_QUERY);
   await expect(status).toHaveText(
-    `0 of ${ROOTS_SHOWN} roots match. Searched the ${ROOTS_SHOWN} roots in this ranking; not searched: ${HIDDEN_ROOTS} older root without a pending declaration (30-day window).`,
+    `0 of ${ROOTS_SHOWN} roots match, searched among the ${ROOTS_SHOWN} shown · not searched: ${HIDDEN_ROOTS} older root hidden (30-day window).`,
   );
   await expect(
     main.getByText('No root in this ranking matches these filters; what was not searched is listed above.'),
@@ -507,12 +503,12 @@ test('a search covers the ranking and says what it did not search; earlier quest
 
   // A question answered in the harness is still found by its own words, and the address keeps it.
   await page.getByRole('searchbox').fill('compact layout');
-  await expect(status).toContainText(`1 of ${ROOTS_SHOWN} roots match.`);
+  await expect(status).toContainText(`1 of ${ROOTS_SHOWN} roots match,`);
   await expect(rowNamed(page, ANSWERED_TITLE)).toHaveCount(1);
 
   // Keyboard: from the last current block, ArrowDown continues into the roots to reconsider.
   await page.getByRole('searchbox').fill('');
-  await expect(status).toContainText(`${ROOTS_SHOWN} of ${ROOTS_SHOWN} roots shown`);
+  await expect(status).toContainText(`${ROOTS_SHOWN} roots shown`);
   const current = main.locator('[data-work-section="human-request"] [data-work-standing="current"]');
   await current.last().focus();
   await page.keyboard.press('ArrowDown');

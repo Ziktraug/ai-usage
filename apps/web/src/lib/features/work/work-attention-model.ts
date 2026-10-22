@@ -5,6 +5,7 @@ import {
   describeCheckoutOutcome,
   describeCheckoutState,
   isCheckoutReadFailure,
+  WORK_ATTENTION_BOUNDS,
   WORK_ATTENTION_KINDS,
   WORK_REQUEST_DORMANT_AFTER_MS,
   type WorkAttentionDataset,
@@ -636,7 +637,9 @@ export const workCodexCoverage = (dataset: Pick<WorkAttentionDataset, 'coverage'
 
 /**
  * What a search or a filter covered, said plainly: the ranking is a selection of the read, so a
- * filter over it is never presented as a search of everything collected.
+ * filter over it is never presented as a search of everything collected. What was left out is
+ * named by the bound that left it out, so the counts add up: the activity window, the Codex
+ * budget (`WORK_ATTENTION_BOUNDS.maxCodexRoots`, ADR 0059), the page limit, the session read bound.
  */
 export const workSearchCoverage = (
   dataset: Pick<WorkAttentionDataset, 'coverage' | 'roots' | 'totalRoots'>,
@@ -645,15 +648,23 @@ export const workSearchCoverage = (
 ): string => {
   const shown = dataset.roots.length;
   const windowed = dataset.coverage.window.excludedRoots;
-  const beyondRanking = Math.max(dataset.totalRoots - shown - windowed, 0);
+  const { campaignsInWindow, campaignsRead } = dataset.coverage.codexSessions;
+  const beyondCodexBudget = Math.max(campaignsInWindow - campaignsRead, 0);
+  // Read, kept by the window and within every budget, yet after the page's last row.
+  const beyondPage = Math.max(dataset.totalRoots - shown - windowed - beyondCodexBudget, 0);
   const left: string[] = [];
   if (windowed > 0) {
     left.push(
-      `${windowed} older ${windowed === 1 ? 'root' : 'roots'} without a pending declaration (${dataset.coverage.window.sinceDays}-day window)`,
+      `${windowed} older ${windowed === 1 ? 'root' : 'roots'} hidden (${dataset.coverage.window.sinceDays}-day window)`,
     );
   }
-  if (beyondRanking > 0) {
-    left.push(`${beyondRanking} beyond the ranking limit`);
+  if (beyondCodexBudget > 0) {
+    left.push(
+      `${beyondCodexBudget} Codex ${beyondCodexBudget === 1 ? 'campaign' : 'campaigns'} beyond the ${WORK_ATTENTION_BOUNDS.maxCodexRoots}-campaign Codex budget`,
+    );
+  }
+  if (beyondPage > 0) {
+    left.push(`${beyondPage} beyond the page limit`);
   }
   const { sessionsRead, sessionsStored, truncated } = dataset.coverage.desktopSessions;
   if (sessionsRead < sessionsStored) {
@@ -662,13 +673,11 @@ export const workSearchCoverage = (
   } else if (truncated) {
     left.push('sessions the registry listing left unread');
   }
-  const head = filtered
-    ? `${matched} of ${shown} roots match. Searched the ${shown} roots in this ranking`
-    : `${matched} of ${shown} roots shown`;
-  if (left.length === 0) {
-    return `${head}${filtered ? '; nothing else was read.' : '.'}`;
+  if (!filtered) {
+    return `${[`${shown} roots shown`, ...left].join(' · ')}.`;
   }
-  return `${head}; not ${filtered ? 'searched' : 'shown'}: ${left.join(', ')}.`;
+  const head = `${matched} of ${shown} roots match, searched among the ${shown} shown`;
+  return left.length === 0 ? `${head} · nothing else was read.` : `${head} · not searched: ${left.join(' · ')}.`;
 };
 
 export type WorkFactChipTone = 'neutral' | 'ok' | 'warn';

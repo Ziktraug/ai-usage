@@ -584,10 +584,10 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
 
   test('a search over the ranking says what it did not search', () => {
     expect(workSearchCoverage(dataset, 2, true)).toBe(
-      `2 of ${dataset.roots.length} roots match. Searched the ${dataset.roots.length} roots in this ranking; not searched: 4 older roots without a pending declaration (30-day window), 9 beyond the ranking limit.`,
+      `2 of ${dataset.roots.length} roots match, searched among the ${dataset.roots.length} shown · not searched: 4 older roots hidden (30-day window) · 9 beyond the page limit.`,
     );
     expect(workSearchCoverage(dataset, dataset.roots.length, false)).toBe(
-      `${dataset.roots.length} of ${dataset.roots.length} roots shown; not shown: 4 older roots without a pending declaration (30-day window), 9 beyond the ranking limit.`,
+      `${dataset.roots.length} roots shown · 4 older roots hidden (30-day window) · 9 beyond the page limit.`,
     );
     const whole = {
       ...dataset,
@@ -595,8 +595,9 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
       totalRoots: dataset.roots.length,
     };
     expect(workSearchCoverage(whole, 0, true)).toBe(
-      `0 of ${dataset.roots.length} roots match. Searched the ${dataset.roots.length} roots in this ranking; nothing else was read.`,
+      `0 of ${dataset.roots.length} roots match, searched among the ${dataset.roots.length} shown · nothing else was read.`,
     );
+    expect(workSearchCoverage(whole, dataset.roots.length, false)).toBe(`${dataset.roots.length} roots shown.`);
     const bounded = {
       ...whole,
       coverage: {
@@ -612,5 +613,40 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
       coverage: { ...whole.coverage, desktopSessions: { ...whole.coverage.desktopSessions, truncated: true } },
     };
     expect(workSearchCoverage(listing, 0, true)).toContain('not searched: sessions the registry listing left unread.');
+  });
+  test('the count line splits what was left out by the budget that left it out', () => {
+    // The first live run: 59 roots shown, 11 behind the window, 49 Codex campaigns beyond the
+    // 20-campaign Codex budget, none cut by the page limit. It once read "59 of 59 roots shown;
+    // not shown: … 49 beyond the ranking limit".
+    const codex = rootNamed('Build report UI');
+    const desktop = roots.filter((root) => root.key.harness !== 'codex').slice(0, 2);
+    const live = {
+      coverage: {
+        ...dataset.coverage,
+        codexSessions: { campaignsInWindow: 69, campaignsRead: 20 },
+        window: { excludedRoots: 11, sinceDays: 30 },
+      },
+      roots: [...desktop, ...Array.from({ length: 20 }, () => codex)],
+      totalRoots: 2 + 11 + 69,
+    };
+    expect(workSearchCoverage(live, 22, false)).toBe(
+      '22 roots shown · 11 older roots hidden (30-day window) · 49 Codex campaigns beyond the 20-campaign Codex budget.',
+    );
+    // The page limit cut five more roots: named apart from the Codex budget.
+    expect(workSearchCoverage({ ...live, totalRoots: live.totalRoots + 5 }, 22, false)).toBe(
+      '22 roots shown · 11 older roots hidden (30-day window) · 49 Codex campaigns beyond the 20-campaign Codex budget · 5 beyond the page limit.',
+    );
+    const one = {
+      ...live,
+      coverage: {
+        ...live.coverage,
+        codexSessions: { campaignsInWindow: 21, campaignsRead: 20 },
+        window: { excludedRoots: 1, sinceDays: 30 },
+      },
+      totalRoots: 2 + 1 + 21,
+    };
+    expect(workSearchCoverage(one, 1, true)).toBe(
+      '1 of 22 roots match, searched among the 22 shown · not searched: 1 older root hidden (30-day window) · 1 Codex campaign beyond the 20-campaign Codex budget.',
+    );
   });
 });

@@ -81,16 +81,14 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   await expect(main.getByRole('button', { name: 'Simulate review assignment' })).toHaveCount(0);
   await expect(main.getByRole('button', { name: 'Run simulation' })).toHaveCount(0);
   await expect(main.getByText('Declared by the session; current state unobserved.')).toHaveCount(3);
-  await expect(
-    main.getByRole('status').filter({ hasText: `${SYNTHETIC_ROOTS} of ${SYNTHETIC_ROOTS} roots shown` }),
-  ).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `${SYNTHETIC_ROOTS} roots shown` })).toBeVisible();
   await expect(main.locator('summary').filter({ hasText: 'Sources and limits' })).toBeVisible();
   await expect(main.locator('details[data-work-sources]')).not.toHaveAttribute('open', '');
   await expect(main.locator('details[data-work-served-roots]')).not.toHaveAttribute('open', '');
 
   // Search narrows the sections and lands in the address.
   await page.getByRole('searchbox').fill('mobile navigation');
-  await expect(main.getByRole('status').filter({ hasText: `1 of ${SYNTHETIC_ROOTS} roots match.` })).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `1 of ${SYNTHETIC_ROOTS} roots match,` })).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('mobile navigation');
   const blocked = rowNamed(page, BLOCKED_TITLE);
   await expect(blocked).toHaveCount(1);
@@ -122,9 +120,7 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
 
   // Keyboard: arrows move between rows, Enter opens, Escape closes and restores focus.
   await page.getByRole('searchbox').fill('');
-  await expect(
-    main.getByRole('status').filter({ hasText: `${SYNTHETIC_ROOTS} of ${SYNTHETIC_ROOTS} roots shown` }),
-  ).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `${SYNTHETIC_ROOTS} roots shown` })).toBeVisible();
   const first = main.locator('[data-work-section="human-request"] [data-work-root]').nth(0);
   const second = main.locator('[data-work-section="human-request"] [data-work-root]').nth(1);
   await first.focus();

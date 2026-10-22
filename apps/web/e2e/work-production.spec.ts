@@ -52,7 +52,8 @@ const ROOTS_SHOWN = DESKTOP_ROOTS_SHOWN + CODEX_ROOTS_SHOWN;
 /** 203 standalone Codex sessions and the root family, all active in the window. */
 const CODEX_FAMILIES = 204;
 const DESKTOP_ROOTS = DESKTOP_ROOTS_SHOWN + HIDDEN_ROOTS;
-const BEYOND_RANKING = DESKTOP_ROOTS + CODEX_FAMILIES - ROOTS_SHOWN - HIDDEN_ROOTS;
+/** Every campaign the Codex budget left out: the page limit itself cuts nothing here. */
+const CODEX_BEYOND_BUDGET = CODEX_FAMILIES - CODEX_ROOTS_SHOWN;
 const CODEX_TITLE = 'Codex · no declared wait read';
 const CODEX_PROJECT_LABEL = 'fixture-pagination';
 const CODEX_COVERAGE = `Codex · sessions only, no declared waits: ${CODEX_ROOTS_SHOWN} of ${CODEX_FAMILIES} Codex campaigns shown, active in the last 30 days (served report)`;
@@ -273,7 +274,7 @@ test('renders the collected registry and its observed facts as a resume surface,
     'Nothing pending was read here; that is not proof that nothing is pending.',
   );
   await expect(main.locator('[data-work-search-coverage]')).toHaveText(
-    `${ROOTS_SHOWN} of ${ROOTS_SHOWN} roots shown; not shown: ${HIDDEN_ROOTS} older root without a pending declaration (30-day window), ${BEYOND_RANKING} beyond the ranking limit.`,
+    `${ROOTS_SHOWN} roots shown · ${HIDDEN_ROOTS} older root hidden (30-day window) · ${CODEX_BEYOND_BUDGET} Codex campaigns beyond the ${CODEX_ROOTS_SHOWN}-campaign Codex budget.`,
   );
   await expect(sectionRows(page, 'human-request')).toHaveCount(NEEDS_YOU_ROOTS);
   await expect(sectionRows(page, 'external-wait')).toHaveCount(WAITING_ROOTS);
@@ -353,7 +354,7 @@ test('renders the collected registry and its observed facts as a resume surface,
 
   // Search narrows the sections and lands in the address.
   await page.getByRole('searchbox').fill('investigate');
-  await expect(main.getByRole('status').filter({ hasText: `1 of ${ROOTS_SHOWN} roots match.` })).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `1 of ${ROOTS_SHOWN} roots match,` })).toBeVisible();
   await expect.poll(() => searchParam(page, 'q')).toBe('investigate');
   await expect(blocked).toHaveCount(1);
 
@@ -508,7 +509,7 @@ test('shows the collected Codex sessions apart, wait unknown, each opening its o
   await main.locator('[data-work-filters]').getByRole('button', { name: CODEX_CHIP_PATTERN }).click();
   await expect.poll(() => searchParam(page, 'harness')).toBe('codex');
   await expect(main.locator('[data-work-search-coverage]')).toContainText(
-    `${CODEX_ROOTS_SHOWN} of ${ROOTS_SHOWN} roots match.`,
+    `${CODEX_ROOTS_SHOWN} of ${ROOTS_SHOWN} roots match,`,
   );
 
   // The served Session it opens is the Codex session the report collected.

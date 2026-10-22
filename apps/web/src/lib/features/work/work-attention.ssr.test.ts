@@ -109,7 +109,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('4 older roots without pending declarations hidden (30-day window)');
     expect(withoutMarkers(body)).toContain('Jira: 1 observed');
     expect(body).toContain(
-      `${dataset.roots.length} of ${dataset.roots.length} roots shown; not shown: 4 older roots without a pending declaration (30-day window), 9 beyond the ranking limit.`,
+      `${dataset.roots.length} roots shown · 4 older roots hidden (30-day window) · 9 beyond the page limit.`,
     );
     expect(body).not.toContain('Known waits');
     expect(body).not.toContain('Simulate review assignment');
@@ -350,7 +350,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     const body = html({ ...EMPTY_WORK_ATTENTION_SEARCH, query: 'mobile navigation' });
     expect(occurrences(body, 'data-work-root=')).toBe(1);
     expect(body).toContain(
-      `1 of ${dataset.roots.length} roots match. Searched the ${dataset.roots.length} roots in this ranking; not searched:`,
+      `1 of ${dataset.roots.length} roots match, searched among the ${dataset.roots.length} shown · not searched:`,
     );
     expect(body).toContain('aria-pressed="false"');
     const chips = html({ ...EMPTY_WORK_ATTENTION_SEARCH, attention: ['optional-lead'], harness: ['claude'] });
