@@ -22,6 +22,8 @@ import { normalizeIsoTimestamp } from './provider-status';
  */
 export const WORK_ATTENTION_BOUNDS = {
   maxChildrenTitles: 5,
+  /** Distinct turn declarations kept per desktop session (ADR 0056); the newest survive. */
+  maxDeclarationsPerSession: 8,
   maxDetailText: 512,
   maxFacts: 64,
   maxId: 512,
@@ -122,6 +124,11 @@ export interface ClaudeDesktopSessionObservation {
   readonly format: ClaudeDesktopSessionFormat;
   readonly lastActivityAt: CanonicalInstant;
   readonly lastTurnReport: string | null;
+  /**
+   * `latestUserFrameAt`: when Claude Desktop last recorded a message from the person (a typed or
+   * queued prompt; side-session wakes are counted apart by the app). `null` when the file has none.
+   */
+  readonly latestUserFrameAt: CanonicalInstant | null;
   readonly machineId: string;
   readonly model: string | null;
   /** Collection time; distinct from `fileModifiedAt` and from `lastActivityAt`. */
@@ -396,6 +403,7 @@ export const parseClaudeDesktopSessionObservation = (value: unknown): ClaudeDesk
   const turnSummary = parseTurnSummary(value.turnSummary);
   const wrapUpDescription = optionalText(value.wrapUpDescription, maxReportText);
   const lastTurnReport = optionalText(value.lastTurnReport, maxReportText);
+  const latestUserFrameAt = optionalInstant(value.latestUserFrameAt);
   const spawnedFrom = parseSpawnOrigin(value.spawnedFrom);
   const openSuggestions = list(value.openSuggestions, maxListItems, parseSuggestion);
   const resolvedSuggestions = parseResolvedSuggestions(value.resolvedSuggestions);
@@ -430,6 +438,7 @@ export const parseClaudeDesktopSessionObservation = (value: unknown): ClaudeDesk
     turnSummary === undefined ||
     wrapUpDescription === undefined ||
     lastTurnReport === undefined ||
+    latestUserFrameAt === undefined ||
     spawnedFrom === undefined ||
     openSuggestions === undefined ||
     resolvedSuggestions === undefined ||
@@ -454,6 +463,7 @@ export const parseClaudeDesktopSessionObservation = (value: unknown): ClaudeDesk
     format,
     lastActivityAt,
     lastTurnReport,
+    latestUserFrameAt,
     machineId,
     model,
     observedAt,
@@ -472,6 +482,79 @@ export const parseClaudeDesktopSessionObservation = (value: unknown): ClaudeDesk
     worktreePath,
     wrapUpDescription,
     writtenBranches,
+  };
+};
+
+/**
+ * One distinct turn declaration a desktop session made, as successive sweeps of the registry saw
+ * it (ADR 0056). The registry file keeps only the latest `postTurnSummary`; this row is what lets a
+ * question that a later turn replaced still be read, with the dates that confront it:
+ *
+ * - `declaredAt` is the session's `lastActivityAt` on the first sweep that saw the declaration;
+ * - `repliedAt` is a `latestUserFrameAt` later than `declaredAt`, recorded while the declaration was
+ *   current or by the sweep that saw it replaced (and then no later than the next declaration):
+ *   the harness's own record that the person wrote to the session after the question;
+ * - `supersededAt` is the next declaration's `declaredAt`, and `supersededByKey` its key.
+ *
+ * The key is the summary's `summarizes_uuid`, or a digest of its content when it names none.
+ */
+export interface ClaudeDesktopTurnDeclaration {
+  readonly declarationKey: string;
+  readonly declaredAt: CanonicalInstant;
+  readonly desktopSessionId: string;
+  readonly detail: string;
+  readonly firstObservedAt: CanonicalInstant;
+  readonly machineId: string;
+  readonly needsAction: string | null;
+  readonly repliedAt: CanonicalInstant | null;
+  readonly status: ClaudeDesktopTurnStatus;
+  readonly supersededAt: CanonicalInstant | null;
+  readonly supersededByKey: string | null;
+}
+
+export const parseClaudeDesktopTurnDeclaration = (value: unknown): ClaudeDesktopTurnDeclaration | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const machineId = requiredText(value.machineId, maxId);
+  const desktopSessionId = requiredText(value.desktopSessionId, maxId);
+  const declarationKey = requiredText(value.declarationKey, maxId);
+  const status = oneOf(CLAUDE_DESKTOP_TURN_STATUSES, value.status);
+  const detail = text(value.detail, maxDetailText);
+  const needsAction = optionalText(value.needsAction, maxDetailText);
+  const declaredAt = normalizeIsoTimestamp(value.declaredAt);
+  const firstObservedAt = normalizeIsoTimestamp(value.firstObservedAt);
+  const repliedAt = optionalInstant(value.repliedAt);
+  const supersededAt = optionalInstant(value.supersededAt);
+  const supersededByKey = optionalText(value.supersededByKey, maxId);
+  if (
+    machineId === null ||
+    desktopSessionId === null ||
+    declarationKey === null ||
+    status === undefined ||
+    detail === null ||
+    needsAction === undefined ||
+    declaredAt === null ||
+    firstObservedAt === null ||
+    repliedAt === undefined ||
+    supersededAt === undefined ||
+    supersededByKey === undefined ||
+    (supersededAt === null) !== (supersededByKey === null)
+  ) {
+    return null;
+  }
+  return {
+    declarationKey,
+    declaredAt,
+    desktopSessionId,
+    detail,
+    firstObservedAt,
+    machineId,
+    needsAction,
+    repliedAt,
+    status,
+    supersededAt,
+    supersededByKey,
   };
 };
 
@@ -941,9 +1024,23 @@ export type WorkFact = WorkFactBase &
 
 export type WorkFactKind = WorkFact['kind'];
 
+/**
+ * What an interpretation names. The request kinds read one declaration against what followed it
+ * (ADR 0056): `request-open` is a current confirmed block; `request-satisfied-elsewhere` and
+ * `request-continued-elsewhere` make it an older declaration to reconsider (an unproven link, the
+ * question stays the person's); `request-answered`, `request-handled-elsewhere` and
+ * `request-archived` name a dated, explicit native record that it is no longer waiting; the
+ * `earlier-request-*` kinds read declarations a later turn replaced.
+ */
 export const WORK_INTERPRETATION_KINDS = [
   'request-open',
   'request-satisfied-elsewhere',
+  'request-continued-elsewhere',
+  'request-answered',
+  'request-handled-elsewhere',
+  'request-archived',
+  'earlier-request-answered',
+  'earlier-request-superseded',
   'review-ready',
   'external-review-pending',
   'pull-request-merged',
@@ -952,6 +1049,8 @@ export const WORK_INTERPRETATION_KINDS = [
   'jira-reply-elsewhere',
   'jira-status-differs',
   'proposal-open',
+  'proposal-superseded',
+  'proposal-expired',
   'proposal-resolved',
   'declared-status-stale',
   'coverage-gap',
@@ -1025,9 +1124,11 @@ export interface WorkRoot {
   readonly key: WorkSessionKey;
   readonly project: WorkRootProject;
   /**
-   * A later pull request (listed by a child session active after the request, or merged on GitHub after it)
-   * may have answered this root's request. The attention is unchanged: the question stays the
-   * operator's until confirmed; the view ranks such roots after the unreconsidered requests.
+   * An older declaration to reconsider: something later may have answered this root's request
+   * without a link that proves it (a pull request listed by a child session active after the
+   * request or merged on GitHub after it, work continued in a session started from this one, a
+   * report sent to it). The attention is unchanged: the question stays the operator's; the view
+   * ranks such roots after the current confirmed blocks and marks them apart.
    */
   readonly reconsidered: boolean;
   /**

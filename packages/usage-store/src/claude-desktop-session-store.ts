@@ -4,8 +4,15 @@ import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
   type ClaudeDesktopCollectionCompleteness,
   type ClaudeDesktopSessionObservation,
+  type ClaudeDesktopTurnDeclaration,
   parseClaudeDesktopSessionObservation,
+  parseClaudeDesktopTurnDeclaration,
+  WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
+import {
+  advanceClaudeDesktopDeclarationHistory,
+  claudeDesktopDeclarationKey,
+} from '@ai-usage/report-core/work-attention-native';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 
@@ -24,6 +31,11 @@ import { UsageStoreError, type UsageStoreErrorReason } from './errors';
  *   view of a session and is rewritten on every turn; keeping each rewrite would be history the
  *   product has not asked for. `file_modified_at` plus a hash of the normalized content decide
  *   whether a re-import changed anything.
+ *   The one exception is the turn declaration (ADR 0056): the file keeps only the latest
+ *   `postTurnSummary`, so each distinct declaration is kept in `claude_desktop_turn_declarations`,
+ *   at most `maxDeclarationsPerSession` per session, with the dates that let a later read say a
+ *   question was answered in the harness or replaced. The history is advanced by the same pure
+ *   function the e2e composition uses (`advanceClaudeDesktopDeclarationHistory`).
  * - **Text is already bounded and a proposal's prompt never arrived.** The collector clamps to
  *   `WORK_ATTENTION_BOUNDS`; the contract parser refuses anything above them, on import and on read.
  */
@@ -31,7 +43,11 @@ import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 /** Matches the collector's file bound: one sweep can never produce more rows than this. */
 export const MAX_CLAUDE_DESKTOP_SESSION_BATCH = 2000;
 export const MAX_CLAUDE_DESKTOP_SESSION_READ = 500;
+/** Session ids one history or by-id read accepts. */
+export const MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER = 500;
 const MAX_COLLECTION_STATES = 64;
+/** The statuses that ask something of the person; the read keeps them beyond its recency bound. */
+const PENDING_STATUS_CATEGORIES = ['blocked', 'review_ready'] as const;
 
 export const claudeDesktopSessionSchemaSql = `
   -- Collection completeness per machine: what the last sweep of the Desktop registry saw.
@@ -93,7 +109,9 @@ export const claudeDesktopSessionSchemaSql = `
     declared_pull_requests_json TEXT NOT NULL,
     side_session_notes_json TEXT NOT NULL,
     first_imported_at TEXT NOT NULL,
-    last_imported_at TEXT NOT NULL
+    last_imported_at TEXT NOT NULL,
+    -- Added under the same user_version (ADR 0056); a table from before it gains the column on open.
+    latest_user_frame_at TEXT
   );
 
   CREATE UNIQUE INDEX IF NOT EXISTS idx_claude_desktop_sessions_identity
@@ -104,7 +122,32 @@ export const claudeDesktopSessionSchemaSql = `
   -- The join to the collected Session: (machine, harness 'claude', sourceSessionId = cli_session_id).
   CREATE INDEX IF NOT EXISTS idx_claude_desktop_sessions_cli
     ON claude_desktop_sessions(machine_id, cli_session_id);
+
+  -- One row per distinct turn declaration of a desktop session (ADR 0056), newest kept per
+  -- session. Dates are the session's own (declared_at, superseded_at) or the harness's record of a
+  -- message after the declaration (replied_at); first_observed_at is the sweep that first saw it.
+  CREATE TABLE IF NOT EXISTS claude_desktop_turn_declarations (
+    machine_id TEXT NOT NULL,
+    desktop_session_id TEXT NOT NULL,
+    declaration_key TEXT NOT NULL,
+    status_category TEXT NOT NULL,
+    status_detail TEXT NOT NULL,
+    needs_action TEXT,
+    declared_at TEXT NOT NULL,
+    first_observed_at TEXT NOT NULL,
+    replied_at TEXT,
+    superseded_at TEXT,
+    superseded_by_key TEXT,
+    PRIMARY KEY (machine_id, desktop_session_id, declaration_key)
+  ) WITHOUT ROWID;
 `;
+
+/** The tables this family owns; their absence is the additive-migration signal. */
+export const CLAUDE_DESKTOP_SESSION_TABLES = [
+  'claude_desktop_collection_state',
+  'claude_desktop_sessions',
+  'claude_desktop_turn_declarations',
+] as const;
 
 interface SqliteStatement {
   all(...params: unknown[]): unknown[];
@@ -159,9 +202,15 @@ export interface ClaudeDesktopSessionImportResult {
 
 export interface QueryClaudeDesktopSessionsInput {
   readonly dbPath: string;
+  /** Only these sessions (at most `MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER`); an empty list reads nothing. */
+  readonly desktopSessionIds?: readonly string[];
   /** Rows returned at most; defaults to and may not exceed `MAX_CLAUDE_DESKTOP_SESSION_READ`. */
   readonly limit?: number;
   readonly machineId?: string;
+  /** ISO upper bound on `lastActivityAt`, exclusive: the page after an earlier one. */
+  readonly olderThanLastActivityAt?: string;
+  /** Only sessions whose current declaration asks something of the person (blocked, review ready). */
+  readonly pendingOnly?: boolean;
   /** ISO lower bound on `lastActivityAt`, inclusive. */
   readonly sinceLastActivityAt?: string;
   readonly trace?: (query: { readonly params: readonly unknown[]; readonly sql: string }) => void;
@@ -173,6 +222,20 @@ export interface QueryClaudeDesktopSessionsResult {
   readonly skipped: number;
   /** More rows matched than `limit`; the page is a selection, not the whole. */
   readonly truncated: boolean;
+}
+
+export interface QueryClaudeDesktopTurnDeclarationsInput {
+  readonly dbPath: string;
+  /** At most `MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER`; an empty list reads nothing. */
+  readonly desktopSessionIds: readonly string[];
+  readonly machineId?: string;
+}
+
+export interface QueryClaudeDesktopTurnDeclarationsResult {
+  /** Oldest first within each session. */
+  readonly declarations: readonly ClaudeDesktopTurnDeclaration[];
+  /** Persisted rows the contract parser refused on the way out. */
+  readonly skipped: number;
 }
 
 export interface ClaudeDesktopCollectionState {
@@ -208,6 +271,8 @@ interface ClaudeDesktopSessionRecord {
   id: number;
   last_activity_at: string;
   last_turn_report: string | null;
+  /** Absent on a table the engine has not reopened since ADR 0056 added it. */
+  latest_user_frame_at?: string | null;
   machine_id: string;
   model: string | null;
   needs_action: string | null;
@@ -248,6 +313,52 @@ interface StoredIdentityRecord {
   content_hash: string;
   file_modified_at: string;
 }
+
+interface ClaudeDesktopTurnDeclarationRecord {
+  declaration_key: string;
+  declared_at: string;
+  desktop_session_id: string;
+  first_observed_at: string;
+  machine_id: string;
+  needs_action: string | null;
+  replied_at: string | null;
+  status_category: string;
+  status_detail: string;
+  superseded_at: string | null;
+  superseded_by_key: string | null;
+}
+
+const declarationFromRecord = (record: ClaudeDesktopTurnDeclarationRecord): ClaudeDesktopTurnDeclaration | null =>
+  parseClaudeDesktopTurnDeclaration({
+    declarationKey: record.declaration_key,
+    declaredAt: record.declared_at,
+    desktopSessionId: record.desktop_session_id,
+    detail: record.status_detail,
+    firstObservedAt: record.first_observed_at,
+    machineId: record.machine_id,
+    needsAction: record.needs_action,
+    repliedAt: record.replied_at,
+    status: record.status_category,
+    supersededAt: record.superseded_at,
+    supersededByKey: record.superseded_by_key,
+  });
+
+const DECLARATION_FIELDS = [
+  'declarationKey',
+  'declaredAt',
+  'desktopSessionId',
+  'detail',
+  'firstObservedAt',
+  'machineId',
+  'needsAction',
+  'repliedAt',
+  'status',
+  'supersededAt',
+  'supersededByKey',
+] as const satisfies readonly (keyof ClaudeDesktopTurnDeclaration)[];
+
+const sameDeclaration = (left: ClaudeDesktopTurnDeclaration, right: ClaudeDesktopTurnDeclaration): boolean =>
+  DECLARATION_FIELDS.every((field) => left[field] === right[field]);
 
 const booleanColumn = (value: boolean | null): number | null => {
   if (value === null) {
@@ -320,6 +431,7 @@ const observationFromRecord = (record: ClaudeDesktopSessionRecord): ClaudeDeskto
     format: record.format,
     lastActivityAt: record.last_activity_at,
     lastTurnReport: record.last_turn_report,
+    latestUserFrameAt: record.latest_user_frame_at ?? null,
     machineId: record.machine_id,
     model: record.model,
     observedAt: record.observed_at,
@@ -413,10 +525,11 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
                 status_detail, needs_action, summarizes_uuid, wrap_up_description, last_turn_report,
                 spawned_from_session_id, spawned_from_task_id, spawned_from_title,
                 spawned_from_side_session, open_suggestions_json, resolved_suggestions_json,
-                declared_pull_requests_json, side_session_notes_json, first_imported_at, last_imported_at
+                declared_pull_requests_json, side_session_notes_json, first_imported_at, last_imported_at,
+                latest_user_frame_at
               ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
               )
               ON CONFLICT(machine_id, desktop_session_id) DO UPDATE SET
                 account_directory = excluded.account_directory,
@@ -457,8 +570,83 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
                 resolved_suggestions_json = excluded.resolved_suggestions_json,
                 declared_pull_requests_json = excluded.declared_pull_requests_json,
                 side_session_notes_json = excluded.side_session_notes_json,
-                last_imported_at = excluded.last_imported_at
+                last_imported_at = excluded.last_imported_at,
+                latest_user_frame_at = excluded.latest_user_frame_at
             `);
+            const currentDeclaration = db.query(`
+              SELECT 1 AS present FROM claude_desktop_turn_declarations
+              WHERE machine_id = ? AND desktop_session_id = ? AND declaration_key = ? AND superseded_at IS NULL
+            `);
+            const sessionDeclarations = db.query(`
+              SELECT machine_id, desktop_session_id, declaration_key, status_category, status_detail, needs_action,
+                declared_at, first_observed_at, replied_at, superseded_at, superseded_by_key
+              FROM claude_desktop_turn_declarations
+              WHERE machine_id = ? AND desktop_session_id = ?
+            `);
+            const upsertDeclaration = db.query(`
+              INSERT INTO claude_desktop_turn_declarations (
+                machine_id, desktop_session_id, declaration_key, status_category, status_detail, needs_action,
+                declared_at, first_observed_at, replied_at, superseded_at, superseded_by_key
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(machine_id, desktop_session_id, declaration_key) DO UPDATE SET
+                status_category = excluded.status_category,
+                status_detail = excluded.status_detail,
+                needs_action = excluded.needs_action,
+                declared_at = excluded.declared_at,
+                first_observed_at = excluded.first_observed_at,
+                replied_at = excluded.replied_at,
+                superseded_at = excluded.superseded_at,
+                superseded_by_key = excluded.superseded_by_key
+            `);
+            const deleteDeclaration = db.query(`
+              DELETE FROM claude_desktop_turn_declarations
+              WHERE machine_id = ? AND desktop_session_id = ? AND declaration_key = ?
+            `);
+            /**
+             * Advances the session's declaration history with this sweep and writes only the rows
+             * that moved. A stored row the contract refuses is not read into the history; the read
+             * counts it as refused, and this sweep's own observation replaces it only when it names
+             * the same declaration.
+             */
+            const recordDeclarationHistory = (observation: ClaudeDesktopSessionObservation): void => {
+              const records = sessionDeclarations.all(
+                observation.machineId,
+                observation.desktopSessionId,
+              ) as ClaudeDesktopTurnDeclarationRecord[];
+              const stored = new Map<string, ClaudeDesktopTurnDeclaration>();
+              for (const record of records) {
+                const declaration = declarationFromRecord(record);
+                if (declaration !== null) {
+                  stored.set(declaration.declarationKey, declaration);
+                }
+              }
+              const next = advanceClaudeDesktopDeclarationHistory([...stored.values()], observation);
+              const kept = new Set(next.map((row) => row.declarationKey));
+              for (const key of stored.keys()) {
+                if (!kept.has(key)) {
+                  deleteDeclaration.run(observation.machineId, observation.desktopSessionId, key);
+                }
+              }
+              for (const row of next) {
+                const previous = stored.get(row.declarationKey);
+                if (previous !== undefined && sameDeclaration(previous, row)) {
+                  continue;
+                }
+                upsertDeclaration.run(
+                  row.machineId,
+                  row.desktopSessionId,
+                  row.declarationKey,
+                  row.status,
+                  row.detail,
+                  row.needsAction,
+                  row.declaredAt,
+                  row.firstObservedAt,
+                  row.repliedAt,
+                  row.supersededAt,
+                  row.supersededByKey,
+                );
+              }
+            };
             for (const candidate of input.observations) {
               const observation = parseClaudeDesktopSessionObservation(candidate);
               if (observation === null || observation.machineId !== input.machineId) {
@@ -475,6 +663,18 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
                 stored.file_modified_at === observation.fileModifiedAt
               ) {
                 result.unchanged++;
+                // An unchanged file changes no declaration, unless its current one was never recorded
+                // (a store from before the history existed): then the history starts from this sweep.
+                if (
+                  observation.turnSummary !== null &&
+                  currentDeclaration.get(
+                    input.machineId,
+                    observation.desktopSessionId,
+                    claudeDesktopDeclarationKey(observation.turnSummary),
+                  ) === null
+                ) {
+                  recordDeclarationHistory(observation);
+                }
                 continue;
               }
               upsert.run(
@@ -520,12 +720,14 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
                 JSON.stringify(observation.sideSessionNotes),
                 importedAt,
                 importedAt,
+                observation.latestUserFrameAt,
               );
               if (stored === null) {
                 result.inserted++;
               } else {
                 result.updated++;
               }
+              recordDeclarationHistory(observation);
             }
             db.query(`
               INSERT INTO claude_desktop_collection_state (
@@ -575,9 +777,17 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
           const limit = input.limit ?? MAX_CLAUDE_DESKTOP_SESSION_READ;
           const since =
             input.sinceLastActivityAt === undefined ? undefined : normalizeIsoTimestamp(input.sinceLastActivityAt);
+          const olderThan =
+            input.olderThanLastActivityAt === undefined
+              ? undefined
+              : normalizeIsoTimestamp(input.olderThanLastActivityAt);
+          const ids = input.desktopSessionIds;
           if (
             !(Number.isSafeInteger(limit) && limit > 0 && limit <= MAX_CLAUDE_DESKTOP_SESSION_READ) ||
             since === null ||
+            olderThan === null ||
+            (ids !== undefined &&
+              (ids.length > MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER || ids.some((id) => id.trim().length === 0))) ||
             (input.machineId !== undefined && input.machineId.trim().length === 0)
           ) {
             throw usageStoreError(
@@ -586,6 +796,10 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
               'Claude Desktop session query bounds are invalid',
               'invalid-input',
             );
+          }
+          if (ids !== undefined && ids.length === 0) {
+            // An empty id filter selects nothing; it never widens into "every session".
+            return { observations: [], skipped: 0, truncated: false };
           }
           const clauses: string[] = [];
           const params: unknown[] = [];
@@ -596,6 +810,18 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
           if (since !== undefined) {
             clauses.push('last_activity_at >= ?');
             params.push(since);
+          }
+          if (olderThan !== undefined) {
+            clauses.push('last_activity_at < ?');
+            params.push(olderThan);
+          }
+          if (input.pendingOnly === true) {
+            clauses.push(`status_category IN (${PENDING_STATUS_CATEGORIES.map(() => '?').join(', ')})`);
+            params.push(...PENDING_STATUS_CATEGORIES);
+          }
+          if (ids !== undefined) {
+            clauses.push(`desktop_session_id IN (${ids.map(() => '?').join(', ')})`);
+            params.push(...ids);
           }
           const sql = `
             SELECT * FROM claude_desktop_sessions
@@ -622,6 +848,67 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
       }),
     );
 
+  /**
+   * The recorded declarations of the named sessions, oldest first within each session. Bounded by
+   * the id filter and by `maxDeclarationsPerSession` per session, which the import enforces.
+   */
+  const queryClaudeDesktopTurnDeclarations = (
+    input: QueryClaudeDesktopTurnDeclarationsInput,
+  ): Effect.Effect<QueryClaudeDesktopTurnDeclarationsResult, UsageStoreError> =>
+    withUsageStoreReader(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          const ids = input.desktopSessionIds;
+          if (
+            ids.length > MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER ||
+            ids.some((id) => id.trim().length === 0) ||
+            (input.machineId !== undefined && input.machineId.trim().length === 0)
+          ) {
+            throw usageStoreError(
+              'queryClaudeDesktopTurnDeclarations',
+              input.dbPath,
+              'Claude Desktop declaration query bounds are invalid',
+              'invalid-input',
+            );
+          }
+          if (ids.length === 0) {
+            return { declarations: [], skipped: 0 };
+          }
+          const clauses = [`desktop_session_id IN (${ids.map(() => '?').join(', ')})`];
+          const params: unknown[] = [...ids];
+          if (input.machineId !== undefined) {
+            clauses.push('machine_id = ?');
+            params.push(input.machineId);
+          }
+          const rows = db
+            .query(`
+              SELECT machine_id, desktop_session_id, declaration_key, status_category, status_detail, needs_action,
+                declared_at, first_observed_at, replied_at, superseded_at, superseded_by_key
+              FROM claude_desktop_turn_declarations
+              WHERE ${clauses.join(' AND ')}
+              ORDER BY machine_id, desktop_session_id, declared_at, declaration_key
+              LIMIT ?
+            `)
+            .all(
+              ...params,
+              ids.length * WORK_ATTENTION_BOUNDS.maxDeclarationsPerSession,
+            ) as ClaudeDesktopTurnDeclarationRecord[];
+          const declarations: ClaudeDesktopTurnDeclaration[] = [];
+          let skipped = 0;
+          for (const row of rows) {
+            const declaration = declarationFromRecord(row);
+            if (declaration === null) {
+              skipped++;
+            } else {
+              declarations.push(declaration);
+            }
+          }
+          return { declarations, skipped };
+        },
+        catch: (cause) => usageStoreReadError('queryClaudeDesktopTurnDeclarations', input.dbPath, cause),
+      }),
+    );
+
   const queryClaudeDesktopCollectionState = (
     input: QueryClaudeDesktopCollectionStateInput,
   ): Effect.Effect<QueryClaudeDesktopCollectionStateResult, UsageStoreError> =>
@@ -644,5 +931,10 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
       }),
     );
 
-  return { importClaudeDesktopSessions, queryClaudeDesktopCollectionState, queryClaudeDesktopSessions };
+  return {
+    importClaudeDesktopSessions,
+    queryClaudeDesktopCollectionState,
+    queryClaudeDesktopSessions,
+    queryClaudeDesktopTurnDeclarations,
+  };
 };

@@ -13,7 +13,13 @@ import {
   parseClaudeDesktopSessionObservation,
   WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
-import { type UsageStoreError, usageStoreErrorReasonFrom, type WorkFactRunState } from '@ai-usage/usage-store/reader';
+import { parseClaudeDesktopSessionFile } from '@ai-usage/report-core/work-attention-native';
+import {
+  MAX_CLAUDE_DESKTOP_SESSION_READ,
+  type UsageStoreError,
+  usageStoreErrorReasonFrom,
+  type WorkFactRunState,
+} from '@ai-usage/usage-store/reader';
 import {
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
@@ -1276,5 +1282,385 @@ describe('assembleWorkAttention with Jira facts', () => {
       observed: 2,
       reason: null,
     });
+  });
+});
+
+describe('queryWorkAttention against what Claude Desktop recorded after a request (ADR 0056)', () => {
+  const ms = (hours: number) => NOW.getTime() - hours * 3_600_000;
+  /** One registry file as Claude Desktop writes it (millisecond epochs), every value synthetic. */
+  const nativeDocument = (spec: {
+    readonly activityHoursAgo: number;
+    readonly createdHoursAgo?: number;
+    readonly frameHoursAgo?: number;
+    readonly id: string;
+    readonly needsAction?: string;
+    readonly parent?: string;
+    readonly proposals?: readonly {
+      readonly createdHoursAgo: number;
+      readonly expiresHoursAgo?: number;
+      readonly id: string;
+    }[];
+    readonly status: 'blocked' | 'completed' | 'review_ready';
+    readonly summarizes: string;
+    readonly title: string;
+  }): Record<string, unknown> => ({
+    cliSessionId: `cli-${spec.id}`,
+    createdAt: ms(spec.createdHoursAgo ?? spec.activityHoursAgo + 2),
+    cwd: '/home/fixture/work/project',
+    isArchived: false,
+    lastActivityAt: ms(spec.activityHoursAgo),
+    lastAssistantUuid: spec.summarizes,
+    ...(spec.frameHoursAgo === undefined ? {} : { latestUserFrameAt: ms(spec.frameHoursAgo) }),
+    postTurnSummary: {
+      needs_action: spec.needsAction ?? '',
+      status_category: spec.status,
+      status_detail: `Declared ${spec.status}.`,
+      summarizes_uuid: spec.summarizes,
+    },
+    sessionId: `local_${spec.id}`,
+    title: spec.title,
+    titleSource: 'auto',
+    ...(spec.parent === undefined
+      ? {}
+      : { spawnedFrom: { sessionId: `local_${spec.parent}`, taskId: null, title: null } }),
+    ...(spec.proposals === undefined
+      ? {}
+      : {
+          backgroundTaskSuggestions: spec.proposals.map((proposal) => ({
+            createdAt: ms(proposal.createdHoursAgo),
+            ...(proposal.expiresHoursAgo === undefined ? {} : { expiresAt: ms(proposal.expiresHoursAgo) }),
+            id: proposal.id,
+            prompt: 'PRIVATE_PROMPT_NEVER_READ',
+            title: `Offer ${proposal.id}`,
+            tldr: 'Synopsis.',
+          })),
+        }),
+  });
+  const parse = (document: Record<string, unknown>, sweepHoursAgo: number): ClaudeDesktopSessionObservation => {
+    const result = parseClaudeDesktopSessionFile(document, {
+      accountDirectory: 'account',
+      fileModifiedAt: new Date(ms(sweepHoursAgo)).toISOString(),
+      machineId: MACHINE,
+      observedAt: new Date(ms(sweepHoursAgo)).toISOString(),
+      organizationDirectory: 'org',
+      relativeFilePath: `.config/Claude/claude-code-sessions/account/org/${String(document.sessionId)}.json`,
+    });
+    if (result.kind !== 'observation') {
+      throw new Error(`the native fixture must parse: ${result.kind}`);
+    }
+    return result.observation;
+  };
+  const sweep = (dbPath: string, documents: readonly Record<string, unknown>[], sweepHoursAgo: number) =>
+    Effect.runPromise(
+      importClaudeDesktopSessions({
+        collectedAt: new Date(ms(sweepHoursAgo)),
+        completeness: {
+          filesParsed: documents.length,
+          filesSeen: documents.length,
+          rejected: 0,
+          truncated: false,
+          unsupported: 0,
+        },
+        dbPath,
+        machineId: MACHINE,
+        observations: documents.map((document) => parse(document, sweepHoursAgo)),
+      }),
+    );
+  const emptyStore = async (): Promise<string> => {
+    const root = await mkdtemp(path.join(tmpdir(), 'work-attention-history-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    return dbPath;
+  };
+  const read = async (dbPath: string) =>
+    await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: NOW }));
+  const factIds = (root: { readonly facts: readonly { readonly id: string }[] }) =>
+    new Set(root.facts.map(({ id }) => id));
+
+  test('Q1, then a message in the harness, then Q2: Q1 reads answered with dated evidence, Q2 stays the request', async () => {
+    const dbPath = await emptyStore();
+    const asked = { id: 'q', status: 'blocked' as const, title: 'Fixture: two questions' };
+    await sweep(
+      dbPath,
+      [
+        nativeDocument({
+          ...asked,
+          activityHoursAgo: 6,
+          frameHoursAgo: 6.5,
+          needsAction: 'Q1: keep checkout 3?',
+          summarizes: 'u1',
+        }),
+      ],
+      5.9,
+    );
+    await sweep(
+      dbPath,
+      [
+        nativeDocument({
+          ...asked,
+          activityHoursAgo: 5,
+          frameHoursAgo: 5.5,
+          needsAction: 'Q1: keep checkout 3?',
+          summarizes: 'u1',
+        }),
+      ],
+      4.9,
+    );
+    await sweep(
+      dbPath,
+      [
+        nativeDocument({
+          ...asked,
+          activityHoursAgo: 4,
+          frameHoursAgo: 5.5,
+          needsAction: 'Q2: delete branch b?',
+          summarizes: 'u2',
+        }),
+      ],
+      3.9,
+    );
+
+    const root = (await read(dbPath)).roots.find((candidate) => candidate.desktopSessionId === 'local_q');
+    expect(root?.attention).toBe('human-request');
+    expect(root?.reconsidered).toBe(false);
+    expect(root?.declared).toMatchObject({ at: hoursAgo(4), needsAction: 'Q2: delete branch b?' });
+    expect(root?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'earlier-request-answered']);
+    const answered = root?.interpretations[1];
+    expect(answered?.text).toBe(
+      `Answered in Claude Desktop: the question “Q1: keep checkout 3?” (asked ${hoursAgo(6)}); you wrote to the session at ${hoursAgo(5.5)} and it declared again at ${hoursAgo(4)}.`,
+    );
+    // Every piece of evidence resolves to a fact of the root, each dated by the session.
+    const ids = factIds(root ?? { facts: [] });
+    expect(answered?.evidence.every((id) => ids.has(id))).toBe(true);
+    const earlierFact = root?.facts.find((fact) => fact.id === answered?.evidence[0]);
+    expect(earlierFact).toMatchObject({
+      declaredAt: hoursAgo(6),
+      kind: 'declared-turn',
+      needsAction: 'Q1: keep checkout 3?',
+    });
+  });
+
+  test('a message recorded after the current question answers it without any confirmation here', async () => {
+    const dbPath = await emptyStore();
+    const asked = {
+      id: 'r',
+      needsAction: 'Which layout?',
+      status: 'blocked' as const,
+      summarizes: 'u1',
+      title: 'Fixture: replied',
+    };
+    await sweep(dbPath, [nativeDocument({ ...asked, activityHoursAgo: 3, frameHoursAgo: 3.5 })], 2.9);
+    // The person answered; the session is working, so its activity moved and its summary has not.
+    await sweep(dbPath, [nativeDocument({ ...asked, activityHoursAgo: 2, frameHoursAgo: 2.5 })], 1.9);
+    const root = (await read(dbPath)).roots.find((candidate) => candidate.desktopSessionId === 'local_r');
+    expect(root?.attention).toBe('none');
+    expect(root?.declared?.at).toBe(hoursAgo(3));
+    expect(root?.interpretations.map(({ kind }) => kind)).toEqual(['request-answered']);
+    expect(root?.interpretations[0]?.text).toContain(`you wrote to the session at ${hoursAgo(2.5)}`);
+  });
+
+  test('a single sweep cannot date a reply it did not see: the question stays open', async () => {
+    const dbPath = await emptyStore();
+    await sweep(
+      dbPath,
+      [
+        nativeDocument({
+          activityHoursAgo: 2,
+          frameHoursAgo: 2.5,
+          id: 's',
+          needsAction: 'Which?',
+          status: 'blocked',
+          summarizes: 'u1',
+          title: 'Fixture: one sweep',
+        }),
+      ],
+      1.9,
+    );
+    const root = (await read(dbPath)).roots.find((candidate) => candidate.desktopSessionId === 'local_s');
+    expect(root?.attention).toBe('human-request');
+  });
+
+  test('a session started from the root after its question and completed handles it; one still running is to reconsider', async () => {
+    const dbPath = await emptyStore();
+    await sweep(
+      dbPath,
+      [
+        nativeDocument({
+          activityHoursAgo: 8,
+          id: 'h',
+          needsAction: 'Fix the flaky test?',
+          status: 'blocked',
+          summarizes: 'h1',
+          title: 'Fixture: handled',
+        }),
+        nativeDocument({
+          activityHoursAgo: 6,
+          createdHoursAgo: 7.5,
+          id: 'h-child',
+          parent: 'h',
+          status: 'completed',
+          summarizes: 'h2',
+          title: 'Fixture: fix it',
+        }),
+        nativeDocument({
+          activityHoursAgo: 8,
+          id: 'k',
+          needsAction: 'Pick a name?',
+          status: 'blocked',
+          summarizes: 'k1',
+          title: 'Fixture: continued',
+        }),
+        nativeDocument({
+          activityHoursAgo: 6,
+          createdHoursAgo: 7.5,
+          id: 'k-child',
+          parent: 'k',
+          status: 'review_ready',
+          summarizes: 'k2',
+          title: 'Fixture: naming',
+        }),
+        nativeDocument({
+          activityHoursAgo: 8,
+          id: 'm',
+          needsAction: 'Ship it?',
+          status: 'blocked',
+          summarizes: 'm1',
+          title: 'Fixture: older child',
+        }),
+        nativeDocument({
+          activityHoursAgo: 6,
+          createdHoursAgo: 9,
+          id: 'm-child',
+          parent: 'm',
+          status: 'completed',
+          summarizes: 'm2',
+          title: 'Fixture: earlier work',
+        }),
+      ],
+      5.9,
+    );
+    const dataset = await read(dbPath);
+    const byId = new Map(dataset.roots.map((root) => [root.desktopSessionId, root]));
+    const handled = byId.get('local_h');
+    expect(handled?.attention).toBe('none');
+    expect(handled?.interpretations.map(({ kind }) => kind)).toEqual(['request-handled-elsewhere']);
+    expect(handled?.interpretations[0]?.text).toContain('Handled in “Fixture: fix it”: started from this session at');
+    expect(handled?.interpretations[0]?.evidence.every((id) => factIds(handled).has(id))).toBe(true);
+    const continued = byId.get('local_k');
+    expect(continued?.attention).toBe('human-request');
+    expect(continued?.reconsidered).toBe(true);
+    expect(continued?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-continued-elsewhere']);
+    // A child that existed before the question proves nothing about it: a current confirmed block.
+    const older = byId.get('local_m');
+    expect(older?.attention).toBe('human-request');
+    expect(older?.reconsidered).toBe(false);
+    // Ranking: the current confirmed block before the older declaration to reconsider.
+    expect(dataset.roots.map((root) => root.desktopSessionId).indexOf('local_m')).toBeLessThan(
+      dataset.roots.map((root) => root.desktopSessionId).indexOf('local_k'),
+    );
+  });
+
+  test('proposals offered before a later message or past their expiry are no lead; the last offer is', async () => {
+    const dbPath = await emptyStore();
+    await sweep(
+      dbPath,
+      [
+        nativeDocument({
+          activityHoursAgo: 2,
+          frameHoursAgo: 3,
+          id: 'p',
+          proposals: [
+            { createdHoursAgo: 4, expiresHoursAgo: -160, id: 'task_before' },
+            { createdHoursAgo: 2.1, expiresHoursAgo: -166, id: 'task_last' },
+            { createdHoursAgo: 200, expiresHoursAgo: 32, id: 'task_expired' },
+          ],
+          status: 'completed',
+          summarizes: 'p1',
+          title: 'Fixture: offers',
+        }),
+        nativeDocument({
+          activityHoursAgo: 2,
+          frameHoursAgo: 2.5,
+          id: 'p2',
+          proposals: [{ createdHoursAgo: 3, expiresHoursAgo: -160, id: 'task_old' }],
+          status: 'completed',
+          summarizes: 'p2',
+          title: 'Fixture: superseded offer',
+        }),
+      ],
+      1.9,
+    );
+    const byId = new Map((await read(dbPath)).roots.map((root) => [root.desktopSessionId, root]));
+    const offers = byId.get('local_p');
+    expect(offers?.attention).toBe('optional-lead');
+    const kinds = new Map(offers?.interpretations.map((entry) => [entry.kind, entry.evidence]));
+    expect(kinds.get('proposal-open')).toEqual(['local_p:proposal:task_last']);
+    expect(kinds.get('proposal-superseded')).toEqual(['local_p:proposal:task_before']);
+    expect(kinds.get('proposal-expired')).toEqual(['local_p:proposal:task_expired']);
+    expect(byId.get('local_p2')?.attention).toBe('none');
+    expect(JSON.stringify([...byId.values()])).not.toContain('PRIVATE_PROMPT_NEVER_READ');
+  });
+
+  test('beyond the recency bound, a pending session and the old parent of a recent child are still read', async () => {
+    const dbPath = await emptyStore();
+    const recent = Array.from({ length: MAX_CLAUDE_DESKTOP_SESSION_READ }, (_value, index) =>
+      nativeDocument({
+        activityHoursAgo: 1 + index / 100,
+        id: `recent-${index}`,
+        status: 'completed',
+        summarizes: `r${index}`,
+        title: `Fixture: recent ${index}`,
+      }),
+    );
+    await sweep(
+      dbPath,
+      [
+        ...recent,
+        // Older than every recent session and still asking: beyond the page, never beyond the read.
+        nativeDocument({
+          activityHoursAgo: 90 * 24,
+          id: 'ancient',
+          needsAction: 'Still wanted?',
+          status: 'blocked',
+          summarizes: 'a1',
+          title: 'Fixture: ancient question',
+        }),
+        // A recent child of an old root that asks nothing: the root is fetched, the child folds.
+        nativeDocument({
+          activityHoursAgo: 80 * 24,
+          id: 'old-root',
+          status: 'completed',
+          summarizes: 'o1',
+          title: 'Fixture: old root',
+        }),
+        nativeDocument({
+          activityHoursAgo: 0.5,
+          id: 'fresh-child',
+          parent: 'old-root',
+          status: 'completed',
+          summarizes: 'f1',
+          title: 'Fixture: fresh child',
+        }),
+      ],
+      0.4,
+    );
+    const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, limit: 200, machineId: MACHINE, now: NOW }));
+    const ancient = dataset.roots.find((root) => root.desktopSessionId === 'local_ancient');
+    expect(ancient?.attention).toBe('human-request');
+    // The fresh child folds under its fetched root; as an orphan it would rank first among the rest.
+    expect(dataset.roots.some((root) => root.desktopSessionId === 'local_fresh-child')).toBe(false);
+    expect(
+      dataset.roots.some((root) =>
+        root.interpretations.some((entry) => entry.text.includes('registry does not contain')),
+      ),
+    ).toBe(false);
+    // The page holds the fresh child and 499 recent roots; the oldest recent root, asking nothing, is
+    // beyond it. The pending root and the fetched parent come on top.
+    expect(dataset.totalRoots).toBe(MAX_CLAUDE_DESKTOP_SESSION_READ - 1 + 2);
+    expect(dataset.roots.some((root) => root.desktopSessionId === 'local_recent-499')).toBe(false);
+    // Older sessions with nothing pending were not read: the dataset says it is a selection.
+    expect(dataset.coverage.desktopSessions.truncated).toBe(true);
+    expect(dataset.truncated).toBe(true);
   });
 });

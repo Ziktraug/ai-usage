@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { CanonicalInstant } from './canonical-instant';
 import { isRecord } from './datasets';
 import { normalizeIsoTimestamp } from './provider-status';
@@ -11,6 +12,7 @@ import {
   type ClaudeDesktopSuggestion,
   type ClaudeDesktopSuggestionResolution,
   type ClaudeDesktopTitleSource,
+  type ClaudeDesktopTurnDeclaration,
   type ClaudeDesktopTurnSummary,
   parseClaudeDesktopSessionObservation,
   WORK_ATTENTION_BOUNDS,
@@ -518,6 +520,7 @@ const identityOnlyObservation = (
     format: 'unsupported',
     lastActivityAt: fields.lastActivityAt,
     lastTurnReport: null,
+    latestUserFrameAt: null,
     machineId: context.machineId,
     model: null,
     observedAt: context.observedAt,
@@ -587,6 +590,7 @@ export const parseClaudeDesktopSessionFile = (
     format: CLAUDE_DESKTOP_SESSION_FORMAT_V1,
     lastActivityAt: fields.lastActivityAt,
     lastTurnReport: optionalClampedText(raw.lastTurnReport, maxReportText, 'lastTurnReport', issues),
+    latestUserFrameAt: optionalInstant(raw.latestUserFrameAt, 'latestUserFrameAt', issues),
     machineId: context.machineId,
     model: optionalClampedText(raw.model, maxShortText, 'model', issues),
     observedAt: context.observedAt,
@@ -629,4 +633,96 @@ export const parseClaudeDesktopSessionFile = (
     return { kind: 'rejected', reason: 'The normalized observation does not satisfy the Work attention contract.' };
   }
   return { clampedFields: issues.clamped, kind: 'observation', observation };
+};
+
+// ---------------------------------------------------------------------------------------------
+// Declaration history (ADR 0056): what successive sweeps saw of one session's turn declarations
+// ---------------------------------------------------------------------------------------------
+
+const DIGEST_LENGTH = 32;
+
+/** A stable key for a summary that names no `summarizes_uuid`. */
+const contentDigest = (value: string): string =>
+  createHash('sha256').update(value).digest('hex').slice(0, DIGEST_LENGTH);
+
+/** The identity of one turn declaration: the turn it summarizes, else a digest of what it says. */
+export const claudeDesktopDeclarationKey = (summary: ClaudeDesktopTurnSummary): string =>
+  summary.summarizesUuid ??
+  `content:${contentDigest(JSON.stringify([summary.status, summary.needsAction, summary.detail]))}`;
+
+const laterThan = (instant: CanonicalInstant | null, reference: CanonicalInstant): CanonicalInstant | null =>
+  instant !== null && instant > reference ? instant : null;
+
+/**
+ * Advances one session's declaration history with one sweep's observation and returns the
+ * session's rows, oldest first, within `maxDeclarationsPerSession` (the current one always kept).
+ * Pure, so the store import and the e2e composition record the same history from the same sweeps.
+ *
+ * - A declaration seen for the first time is dated by the session's `lastActivityAt` of that sweep.
+ *   A sweep that first sees it after the session moved on dates it late, which can only hide a
+ *   reply, never invent one.
+ * - The declaration it replaces is marked superseded at that date. A `latestUserFrameAt` after the
+ *   replaced declaration and no later than the new one is recorded as its reply: the harness's own
+ *   record that the person wrote to the session in between. A later frame says nothing about it.
+ * - While a declaration stays current, the first frame seen after it is recorded as its reply.
+ * - An observation without a supported declaration leaves the history as it was.
+ */
+export const advanceClaudeDesktopDeclarationHistory = (
+  history: readonly ClaudeDesktopTurnDeclaration[],
+  observation: ClaudeDesktopSessionObservation,
+): readonly ClaudeDesktopTurnDeclaration[] => {
+  const own = history.filter(
+    (row) => row.machineId === observation.machineId && row.desktopSessionId === observation.desktopSessionId,
+  );
+  const summary = observation.turnSummary;
+  if (observation.format !== CLAUDE_DESKTOP_SESSION_FORMAT_V1 || summary === null) {
+    return own;
+  }
+  const key = claudeDesktopDeclarationKey(summary);
+  const frame = observation.latestUserFrameAt;
+  const sweepAt = observation.lastActivityAt;
+  const existing = own.find((row) => row.declarationKey === key);
+  const others = own
+    .filter((row) => row !== existing)
+    .map((row): ClaudeDesktopTurnDeclaration => {
+      if (row.supersededAt !== null) {
+        return row;
+      }
+      const reply = frame !== null && frame > row.declaredAt && frame <= sweepAt ? frame : null;
+      return { ...row, repliedAt: row.repliedAt ?? reply, supersededAt: sweepAt, supersededByKey: key };
+    });
+  const current: ClaudeDesktopTurnDeclaration =
+    existing === undefined
+      ? {
+          declarationKey: key,
+          declaredAt: sweepAt,
+          desktopSessionId: observation.desktopSessionId,
+          detail: summary.detail,
+          firstObservedAt: observation.observedAt,
+          machineId: observation.machineId,
+          needsAction: summary.needsAction,
+          repliedAt: laterThan(frame, sweepAt),
+          status: summary.status,
+          supersededAt: null,
+          supersededByKey: null,
+        }
+      : {
+          // A summary of the same turn may be rewritten: its latest wording is kept, its date is not moved.
+          ...existing,
+          detail: summary.detail,
+          needsAction: summary.needsAction,
+          repliedAt: existing.repliedAt ?? laterThan(frame, existing.declaredAt),
+          status: summary.status,
+          supersededAt: null,
+          supersededByKey: null,
+        };
+  const kept = [...others]
+    .sort((left, right) => (left.declaredAt < right.declaredAt ? 1 : -1))
+    .slice(0, WORK_ATTENTION_BOUNDS.maxDeclarationsPerSession - 1);
+  return [...kept, current].sort((left, right) => {
+    if (left.declaredAt !== right.declaredAt) {
+      return left.declaredAt < right.declaredAt ? -1 : 1;
+    }
+    return left.supersededAt === null ? 1 : -1;
+  });
 };

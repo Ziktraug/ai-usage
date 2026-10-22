@@ -67,7 +67,11 @@ import type {
   PullRequestObservation,
 } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
-import { claudeDesktopSessionSchemaSql, createClaudeDesktopSessionStore } from './claude-desktop-session-store';
+import {
+  CLAUDE_DESKTOP_SESSION_TABLES,
+  claudeDesktopSessionSchemaSql,
+  createClaudeDesktopSessionStore,
+} from './claude-desktop-session-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import { createExecutorObservationStore } from './executor-observation-store';
 import {
@@ -1455,10 +1459,9 @@ const migrate = (db: SqliteDatabase): boolean => {
   schemaChanged ||= workFactTablesMissing;
   // Same precedent for the Claude Desktop session family (ADR 0050): additive tables under the
   // current user_version, so presence is the only signal.
-  const claudeDesktopSessionsMissing =
-    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_sessions'").get() === null ||
-    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_collection_state'").get() ===
-      null;
+  const claudeDesktopSessionsMissing = CLAUDE_DESKTOP_SESSION_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
   schemaChanged ||= claudeDesktopSessionsMissing;
   // Review attempts (ADR 0053) follow the same additive rule: presence of the table is the signal.
   const reviewAttemptsMissing = REVIEW_ATTEMPT_TABLES.some(
@@ -1799,6 +1802,13 @@ const migrate = (db: SqliteDatabase): boolean => {
       }
     }
     db.exec(claudeDesktopSessionSchemaSql);
+    // Additive under the same user_version (ADR 0056): a claude_desktop_sessions table created before
+    // the harness's message time was recorded gains the nullable column; older rows read as "none".
+    const desktopColumns = db.query('PRAGMA table_info(claude_desktop_sessions)').all() as Array<{ name?: unknown }>;
+    if (!desktopColumns.some((column) => column.name === 'latest_user_frame_at')) {
+      schemaChanged = true;
+      db.exec('ALTER TABLE claude_desktop_sessions ADD COLUMN latest_user_frame_at TEXT');
+    }
     db.exec(replicationOutboxSchemaSql);
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
@@ -4407,13 +4417,17 @@ export const {
   withUsageStoreWriter,
 });
 export { WORK_FACT_SOURCE_IDS, type WorkFactSourceId } from './work-fact-store';
-export const { importClaudeDesktopSessions, queryClaudeDesktopCollectionState, queryClaudeDesktopSessions } =
-  createClaudeDesktopSessionStore({
-    usageStoreError,
-    usageStoreReadError,
-    withUsageStoreReader,
-    withUsageStoreWriter,
-  });
+export const {
+  importClaudeDesktopSessions,
+  queryClaudeDesktopCollectionState,
+  queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
+} = createClaudeDesktopSessionStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
 export const {
   markReviewAttemptsLost,
   queryReviewAttempts,
