@@ -195,3 +195,13 @@ checkout unchanged. Integration: five append conflicts (README sections 8/9, ADR
 notes, store exports), E's observation fixtures gained lot F's `authMethod` field and the API-key
 helper tolerates an absent method. Verified at `562178bb`: typecheck 58/58, check clean, package
 suites 1347 pass, web 1547 pass.
+
+### 2026-10-22 05:15 — gate at `562178bb` and final e2e realignment
+
+`bun run verify` PASS in 299 s and the package suites 1879 pass, 0 fail, on the committed tree at
+`562178bb` (lot E). The third e2e pass (`cacf1805`) realigns the browser proofs with the review
+fixes, the Jira facts and the activity window, and removes the run-now workaround: wide events on the
+production runtime show `claude.desktop-sessions` (41 files) running first, then `checkouts.status`
+(2 inputs) and `github.pull-requests` (3 inputs) within 600 ms, without any operator command.
+Worker evidence at `cacf1805` on `e77f3a29`: production 17/17, default-config 51/51. The suites are
+run again on the merged head below.
