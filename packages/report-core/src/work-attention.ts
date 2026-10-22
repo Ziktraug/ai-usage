@@ -1,4 +1,5 @@
 import type { CanonicalInstant } from './canonical-instant';
+import type { CodexWorkRequest } from './codex-work-observation';
 import { isRecord } from './datasets';
 import { normalizeIsoTimestamp } from './provider-status';
 
@@ -986,7 +987,14 @@ export const WORK_ATTENTION_KINDS = [
 ] as const;
 export type WorkAttentionKind = (typeof WORK_ATTENTION_KINDS)[number];
 
-export const WORK_FACT_SOURCES = ['claude-desktop', 'claude-transcript', 'github', 'local-checkout', 'jira'] as const;
+export const WORK_FACT_SOURCES = [
+  'claude-desktop',
+  'claude-transcript',
+  'codex-rollout',
+  'github',
+  'local-checkout',
+  'jira',
+] as const;
 export type WorkFactSource = (typeof WORK_FACT_SOURCES)[number];
 
 export interface WorkFactProvenance {
@@ -1003,6 +1011,19 @@ interface WorkFactBase {
 
 export type WorkFact = WorkFactBase &
   (
+    | {
+        readonly kind: 'codex-user-request';
+        readonly sourceSessionId: string;
+        readonly request: CodexWorkRequest;
+      }
+    | {
+        readonly kind: 'codex-session-context';
+        readonly sourceSessionId: string;
+        readonly originator: string | null;
+        readonly executionSource: string | null;
+        readonly threadSource: string | null;
+        readonly forkedFromId: string | null;
+      }
     | {
         readonly kind: 'declared-turn';
         readonly declaredAt: CanonicalInstant;

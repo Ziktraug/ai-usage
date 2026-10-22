@@ -102,6 +102,7 @@ const parseRequest = (value: unknown): CodexWorkRequest | null => {
   if (
     new Set(ids).size !== ids.length ||
     (value.tool === 'request_user_input' && ids.length !== questions.length) ||
+    (value.tool === 'request_user_input_async' && ids.length !== 0) ||
     (rejectedAt !== null && validQuestions.some((question) => question.answeredAt !== null))
   ) {
     return null;

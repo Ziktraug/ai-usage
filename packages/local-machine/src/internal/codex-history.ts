@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type {
   LocalSessionAnalysis,
@@ -48,6 +49,7 @@ import { parseNonNegativeSafeInteger } from '../metric-validation';
 import { resolvePaths } from '../platform-paths';
 import { deriveSessionLabelFromPrompt } from '../session-label';
 import { safeJSON, usablePrompt } from '../text';
+import { createCodexWorkObserver } from './codex-work-evidence';
 
 type CodexSubagent =
   | { kind: 'guardian' }
@@ -100,6 +102,7 @@ export interface CodexSession {
   tout: number;
   turns: number;
   vcs?: SessionVcsContext;
+  workObservation: CodexWorkObservation | null;
 }
 
 export interface CodexSessionPhase {
@@ -467,6 +470,7 @@ export const codexThreadMetadataFromRow = (
 };
 
 const emptySession = (): CodexSession => ({
+  workObservation: null,
   activeDurationMs: null,
   classifierParent: null,
   id: null,
@@ -785,6 +789,7 @@ interface PendingCodexCatalogueSignal {
 }
 
 export const createCodexSessionParser = (captureDetail = false, evidenceOnly = false) => {
+  const workObserver = createCodexWorkObserver();
   const session = emptySession();
   const completedTasks: (MutableCodexTask & { durationMs: number; end: Date })[] = [];
   const observedTaskIntervals: CodexTaskInterval[] = [];
@@ -1221,7 +1226,14 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     // rejected line is not skill evidence to begin with. What a line that is
     // admitted and then fails to parse costs, and to which channel, is decided
     // below by shape rather than by admission.
-    if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix) || skillCatalogueLine)) {
+    if (
+      !(
+        shouldParseCodexPrefix(prefix) ||
+        isCodexToolCallPrefix(prefix) ||
+        skillCatalogueLine ||
+        workObserver.acceptsOutput(prefix)
+      )
+    ) {
       skippedLines++;
       return;
     }
@@ -1356,6 +1368,12 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       }
     }
     const userText = userTextFromPayload(payload);
+    const workMetadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+      ? payload.internal_chat_message_metadata_passthrough
+      : null;
+    const workTurnId = nonEmpty(workMetadata?.turn_id);
+    const workTask = workTurnId ? openTasks.get(workTurnId) : latestOpenTask();
+    workObserver.visit(event, date, !childRollout || Boolean(workTask?.hasContext && !workTask.replayed));
     if (userText) {
       if (session.subagentKind === 'guardian' && !session.classifierParent) {
         session.classifierParent = guardianParentSessionId(userText);
@@ -1815,6 +1833,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     evidenceTurnIndexes: () => new Map(detailTasks().map((task, index) => [task.turnId, index])),
     finish: (): CodexSessionParseResult => {
       finalize();
+      session.workObservation = workObserver.snapshot();
       return {
         lines,
         parseMs: Date.now() - parseStartedAt,

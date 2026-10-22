@@ -32,6 +32,7 @@ import {
 } from '@ai-usage/local-machine/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
+import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import type { AiUsageGitHubConfig } from '@ai-usage/report-core/project-alias';
 import { projectSourcePathFromId } from '@ai-usage/report-core/project-group';
 import {
@@ -58,6 +59,7 @@ import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
 import {
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importCodexWorkObservations,
   importExecutorObservations,
   importJiraIssueObservations,
   importLocalRows,
@@ -289,6 +291,7 @@ const collectHarness = (
   adapter: HarnessAdapter,
 ): Effect.Effect<
   {
+    workObservations?: readonly CodexWorkObservation[];
     // Optional, and deliberately so: a harness that cannot observe skills
     // (Cursor) omits this rather than reporting an empty list, which would be
     // indistinguishable from having observed nothing (ADR 0022).
@@ -458,6 +461,20 @@ const createSessionSource = (input: {
               minimumExposureObservedAt,
               observations: preparedObservations.observations,
             }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      const importedWork =
+        collection.workObservations === undefined
+          ? { changed: 0, rejected: 0 }
+          : yield* importCodexWorkObservations({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              observedAt: input.now().toISOString(),
+              observations: collection.workObservations,
+            }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      if (importedWork.rejected > 0) {
+        return yield* Effect.fail(
+          sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
+        );
+      }
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
         changed:
@@ -465,6 +482,7 @@ const createSessionSource = (input: {
           imported.updated > 0 ||
           importedObservations.inserted > 0 ||
           importedObservations.updated > 0 ||
+          importedWork.changed > 0 ||
           importedObservations.stateChanged,
         inputCount: collection.rows.length,
         outputCount: rows.length,

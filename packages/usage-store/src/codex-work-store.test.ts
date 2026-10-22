@@ -52,6 +52,20 @@ const fixture = () => {
 };
 
 describe('local Codex request evidence', () => {
+  test('a legacy store missing the local evidence table fails with schema-too-old', async () => {
+    const store = fixture();
+    try {
+      store.db.exec('DROP TABLE codex_work_observations');
+      const result = await Effect.runPromise(
+        Effect.either(
+          store.queryCodexWorkObservations({ dbPath: ':memory:', machineId: 'a', sourceSessionIds: ['session'] }),
+        ),
+      );
+      expect(result._tag === 'Left' ? result.left.reason : null).toBe('schema-too-old');
+    } finally {
+      store.db.close();
+    }
+  });
   test('strict contract refuses impossible answers, duplicates, excess bounds and unknown fields', () => {
     const base = observation();
     expect(parseCodexWorkObservation(base)).toEqual(base);
@@ -60,6 +74,12 @@ describe('local Codex request evidence', () => {
       parseCodexWorkObservation({ ...base, requests: Array.from({ length: 17 }, () => base.requests[0]) }),
     ).toBeNull();
     expect(parseCodexWorkObservation({ ...base, requests: [base.requests[0], base.requests[0]] })).toBeNull();
+    expect(
+      parseCodexWorkObservation({
+        ...base,
+        requests: [{ ...base.requests[0], questions: [{ ...base.requests[0]?.questions[0], id: 'invented-id' }] }],
+      }),
+    ).toBeNull();
     expect(
       parseCodexWorkObservation({
         ...base,

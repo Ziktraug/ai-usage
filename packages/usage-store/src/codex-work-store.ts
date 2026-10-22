@@ -7,7 +7,7 @@ import {
 import { isRecord } from '@ai-usage/report-core/datasets';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import { Effect } from 'effect';
-import type { UsageStoreError, UsageStoreErrorReason } from './errors';
+import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 
 export const MAX_CODEX_WORK_BATCH = 10_000;
 export const MAX_CODEX_WORK_SESSION_FILTER = 500;
@@ -173,6 +173,16 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
+          if (
+            !db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'codex_work_observations'").get()
+          ) {
+            throw usageStoreError(
+              'queryCodexWorkObservations',
+              input.dbPath,
+              'Codex request evidence requires the current store schema',
+              'schema-too-old',
+            );
+          }
           const ids = [...new Set(input.sourceSessionIds)];
           const rows = db
             .query(`SELECT source_session_id, observed_at, observation_json FROM codex_work_observations
@@ -205,7 +215,10 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
           }
           return { observations, skipped };
         },
-        catch: (cause) => usageStoreReadError('queryCodexWorkObservations', input.dbPath, cause),
+        catch: (cause) =>
+          cause instanceof UsageStoreError
+            ? cause
+            : usageStoreReadError('queryCodexWorkObservations', input.dbPath, cause),
       }),
     );
   };
