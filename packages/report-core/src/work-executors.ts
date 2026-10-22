@@ -96,6 +96,8 @@ export interface ExecutorDeclarationInput {
  */
 export interface RoutingConfig {
   readonly executors: readonly unknown[];
+  /** Checkouts a launched review may run in (ADR 0053); entries are parsed by `parseReviewTargetDeclarations`. */
+  readonly reviewTargets?: readonly unknown[];
 }
 
 export interface ExecutorDeclarationIssue {
@@ -190,9 +192,15 @@ export const executorDeclarationKey = (
   declaration: Pick<ExecutorDeclaration, 'accountScope' | 'harness' | 'machineId'>,
 ): string => JSON.stringify([declaration.machineId, declaration.harness, declaration.accountScope]);
 
-/** The config section must be an object whose only key is an `executors` array; entries are checked later. */
+/**
+ * The config section must be an object with an `executors` array and, optionally, a `reviewTargets`
+ * array; entries of both are checked later by their own parsers.
+ */
 export const isRoutingConfigShape = (value: unknown): value is RoutingConfig =>
-  isRecord(value) && hasOnlyKeys(value, new Set(['executors'])).length === 0 && Array.isArray(value.executors);
+  isRecord(value) &&
+  hasOnlyKeys(value, new Set(['executors', 'reviewTargets'])).length === 0 &&
+  Array.isArray(value.executors) &&
+  (value.reviewTargets === undefined || Array.isArray(value.reviewTargets));
 
 const parseDeclaredAt = (value: unknown): string | null => {
   // Operators write this by hand, so any RFC 3339 date-time is accepted and stored canonically;
@@ -397,7 +405,10 @@ export const parseExecutorDeclarations = (
     return { declarations: [], issues: [] };
   }
   if (!isRoutingConfigShape(value)) {
-    return { declarations: [], issues: [{ path, reason: 'must be an object whose only key is an executors array' }] };
+    return {
+      declarations: [],
+      issues: [{ path, reason: 'must be an object with an executors array and an optional reviewTargets array' }],
+    };
   }
   const issues: ExecutorDeclarationIssue[] = [];
   const declarations: ExecutorDeclaration[] = [];
@@ -434,7 +445,7 @@ const API_KEY_AUTH_METHODS: ReadonlySet<string> = new Set(['api-key', 'apikey', 
  * known words, or any method naming the API. `null` (no method reported) means nothing.
  */
 export const executorAuthMethodIndicatesApiKey = (authMethod: string | null): boolean => {
-  if (authMethod === null) {
+  if (typeof authMethod !== 'string') {
     return false;
   }
   const method = authMethod.trim().toLowerCase();

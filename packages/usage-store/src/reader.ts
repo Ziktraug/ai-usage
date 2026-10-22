@@ -88,6 +88,8 @@ export {
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
   queryReportRows,
+  queryReviewAttempts,
+  queryReviewTargetResolution,
   queryServedReportRevisionLocalSnapshot,
   queryServedReportRevisionPortableConfig,
   queryServedReportRevisionRows,
@@ -107,6 +109,12 @@ export {
   USAGE_STORE_SCHEMA_VERSION,
   usageStorePath,
 } from './index';
+export type {
+  QueryReviewAttemptsInput,
+  QueryReviewAttemptsResult,
+  QueryReviewTargetResolutionInput,
+  ReviewTargetResolutionFacts,
+} from './review-attempt-store';
 export type { ServedRevisionQueryKind, ServedRevisionQueryResult } from './served-query-catalog';
 export type { ServedRevisionQueryTrace } from './served-revision';
 export type {

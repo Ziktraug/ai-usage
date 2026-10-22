@@ -36,6 +36,7 @@ const dependencies = (): WebRpcRouterDependencies => ({
   },
   sync: unavailableServices<WebRpcRouterDependencies['sync']>(),
   work: unavailableServices<WebRpcRouterDependencies['work']>(),
+  workAttempts: unavailableServices<WebRpcRouterDependencies['workAttempts']>(),
   workRouting: unavailableServices<WebRpcRouterDependencies['workRouting']>(),
 });
 
@@ -98,8 +99,8 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(42);
-    expect(dependencyAcquisitions).toBe(42);
+    expect(observed).toHaveLength(44);
+    expect(dependencyAcquisitions).toBe(44);
   });
   test('serves opaque project identity through the real Skills RPC routes only in an injected extended context', async () => {
     const capability = await createE2ESkillsCapability('extended');

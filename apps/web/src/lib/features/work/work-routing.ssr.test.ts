@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { projectSessionPage } from '@ai-usage/report-core/session-query';
+import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
 import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
@@ -146,6 +147,38 @@ describe('Work routing Svelte rendering from a supplied context', () => {
     expect(body).not.toContain('To qualify this candidate');
     expect(body).not.toContain('Routing result');
     expect(body).not.toContain('Synthetic evidence examples');
+  });
+
+  test('renders the supplied attempts beside the simulation and keeps execution out of the demo', () => {
+    const attempts: WorkAttemptsListOutput = {
+      data: {
+        attempts: [],
+        generatedAt: new Date().toISOString(),
+        skipped: 0,
+        target: {
+          admitted: false,
+          checkoutOrigin: 'desktop-cwd',
+          checkoutPath: '/home/operator/src/ai-usage',
+          harness: 'claude',
+          sourceSessionId: 'root-session',
+        },
+        truncated: false,
+      },
+      ok: true,
+    };
+    const body = html({ attempts, context, mode: 'live', providers, quotaUnavailable: false, target });
+    expect(body).toContain('Review attempts');
+    expect(body).toContain('No review attempt for this session yet.');
+    // The button exists only after a simulation, which is a browser interaction; nothing renders it server-side.
+    expect(body).not.toContain('Start read-only review');
+    expect(body).not.toContain('Execution is not available in the demo.');
+
+    const unavailable = html({ attempts: null, context, mode: 'live', providers, quotaUnavailable: false, target });
+    expect(unavailable).toContain('Review attempts are unavailable.');
+
+    const demo = html({ mode: 'demo', providers: [], quotaUnavailable: false, target });
+    expect(demo).toContain('Execution is not available in the demo.');
+    expect(demo).not.toContain('Review attempts');
   });
 
   test('names the missing declaration for an observed-only Codex and states an unavailable context', () => {

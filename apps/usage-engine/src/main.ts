@@ -92,6 +92,9 @@ const createProductionDependencies = (
       operatorCwd: paths.operatorCwd,
       readReplicationStatus: async () => readReplicationStatus(),
       storage: createLocalHistoryStorage(paths.homeDirectory),
+      reportReviewAttempt: (line) => {
+        process.stderr.write(`${line}\n`);
+      },
       reportRecovery: ({
         deletedBytes,
         deletedEntries,

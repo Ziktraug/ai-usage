@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./checkout-status": "./src/checkout-status.ts",
     "./claude-desktop-sessions": "./src/claude-desktop-sessions.ts",
+    "./claude-review-launcher": "./src/claude-review-launcher.ts",
     "./codex-history": "./src/codex-history.ts",
     "./github-pull-requests": "./src/github-pull-requests.ts",
     "./jira-issues": "./src/jira-issues.ts",

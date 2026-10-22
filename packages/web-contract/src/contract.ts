@@ -7,6 +7,7 @@ import { sessionContract } from './session';
 import { skillsContract } from './skills';
 import { syncContract } from './sync';
 import { workContract } from './work';
+import { workAttemptsContract } from './work-attempts';
 import { workRoutingContract } from './work-routing';
 
 export const webContract = {
@@ -18,6 +19,7 @@ export const webContract = {
   skills: skillsContract,
   sync: syncContract,
   work: workContract,
+  workAttempts: workAttemptsContract,
   workRouting: workRoutingContract,
 } as const;
 

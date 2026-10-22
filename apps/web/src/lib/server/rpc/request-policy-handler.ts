@@ -47,6 +47,8 @@ export const rpcPathByOperation = {
   getSyncFleet: '/sync/fleet',
   getWorkAttention: '/work/attention',
   getWorkRoutingContext: '/workRouting/context',
+  listWorkAttempts: '/workAttempts/list',
+  startWorkAttempt: '/workAttempts/start',
   previewReconcileAllManagedSkills: '/skills/previewReconcileAll',
   reconcileAllManagedSkills: '/skills/reconcileAll',
   reconcileManagedSkill: '/skills/reconcileOne',

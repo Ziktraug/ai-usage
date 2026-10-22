@@ -260,6 +260,21 @@ export const workFactItem = css({
   color: 'ink',
   overflowWrap: 'anywhere',
 });
+/** A bounded harness result: wrapped, scrollable past 240px, never a wall. */
+export const workExcerpt = css({
+  m: 0,
+  p: '8px',
+  maxH: '240px',
+  overflow: 'auto',
+  whiteSpace: 'pre-wrap',
+  overflowWrap: 'anywhere',
+  fontSize: '12px',
+  lineHeight: 1.5,
+  color: 'ink',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+});
 export const workInterpretation = css({
   display: 'grid',
   gap: '2px',

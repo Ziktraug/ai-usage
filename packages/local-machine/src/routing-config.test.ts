@@ -37,7 +37,10 @@ const declaration = {
 test('reads declarations from the home config and defaults their machine to machine.json', async () => {
   const { configPath, homePath } = await writeHome({
     'config.json': {
-      routing: { executors: [declaration, { ...declaration, harness: 'codex', authorization: 'maybe' }] },
+      routing: {
+        executors: [declaration, { ...declaration, harness: 'codex', authorization: 'maybe' }],
+        reviewTargets: [{ checkoutPath: '/home/operator/src/ai-usage/', label: 'main' }, { checkoutPath: 'relative' }],
+      },
       sourcePolicies: { 'rtk.savings': { enabled: false } },
     },
     'machine.json': { id: 'machine-from-file', label: 'Workstation' },
@@ -50,6 +53,8 @@ test('reads declarations from the home config and defaults their machine to mach
   expect(result.issues).toEqual([
     { path: 'routing.executors[1].authorization', reason: "must be 'allowed' or 'forbidden'" },
   ]);
+  expect(result.reviewTargets).toEqual([{ checkoutPath: '/home/operator/src/ai-usage', label: 'main' }]);
+  expect(result.reviewTargetIssues.map((issue) => issue.path)).toEqual(['routing.reviewTargets[1].checkoutPath']);
 });
 
 test('reports a missing machine identity instead of inventing one and never creates machine.json', async () => {
@@ -72,6 +77,8 @@ test('is empty when no home config exists', async () => {
     declarations: [],
     issues: [],
     machineId: null,
+    reviewTargetIssues: [],
+    reviewTargets: [],
   });
 });
 

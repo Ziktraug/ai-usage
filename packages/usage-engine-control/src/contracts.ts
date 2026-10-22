@@ -26,6 +26,12 @@ import {
   type SourceControlView,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
+import {
+  REVIEW_ATTEMPT_STATES,
+  REVIEW_LAUNCH_REFUSAL_REASONS,
+  type ReviewAttemptState,
+  type ReviewLaunchRefusalReason,
+} from '@ai-usage/report-core/work-attempts';
 
 declare const usageEngineBrand: unique symbol;
 
@@ -48,6 +54,10 @@ export const USAGE_ENGINE_PROTOCOL_VERSION = 3 as UsageEngineProtocolVersion;
 
 const kibibyte = 1024;
 const maxOpaqueIdBytes = 160;
+/** Native session ids, candidate ids and attempt ids (report-core `REVIEW_ATTEMPT_BOUNDS.maxId`). */
+const maxReviewIdentityBytes = 512;
+/** A refusal message names a checkout path, so it is allowed more than one status message. */
+const maxReviewMessageBytes = 1024;
 const maxCommandCompletionEventBytes = sourceControlBounds.maxSnapshotBytes;
 const maxStatusBytes = sourceControlBounds.maxSnapshotBytes + 32 * kibibyte;
 const maxForegroundEnvelopeBytes = 4 * kibibyte;
@@ -289,6 +299,12 @@ export type UsageEngineCommand =
     }
   | { readonly command: 'set-machine-label'; readonly label: string }
   | ({ readonly command: 'set-campaign-label-override' } & CampaignLabelOverrideMutation)
+  | {
+      readonly action: 'read-only-review';
+      readonly candidateId: string;
+      readonly command: 'start-review-attempt';
+      readonly target: UsageEngineReviewAttemptTarget;
+    }
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
   | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
@@ -555,6 +571,23 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         return fail('Usage engine replace-project-aliases command contains unknown fields.');
       }
       return { command: 'replace-project-aliases', projectAliases: parseProjectAliases(command.projectAliases) };
+    case 'start-review-attempt':
+      if (!hasExactKeys(command, ['action', 'candidateId', 'command', 'target'])) {
+        return fail('Usage engine start-review-attempt command contains unknown fields.');
+      }
+      if (command.action !== 'read-only-review') {
+        return fail('Usage engine review attempt action is unsupported.');
+      }
+      return {
+        action: 'read-only-review',
+        candidateId: parseBoundedString(
+          command.candidateId,
+          maxReviewIdentityBytes,
+          'Usage engine review candidate id',
+        ),
+        command: 'start-review-attempt',
+        target: parseReviewAttemptTarget(command.target),
+      };
     case 'set-machine-label':
       if (!hasExactKeys(command, ['command', 'label'])) {
         return fail('Usage engine set-machine-label command contains unknown fields.');
@@ -848,6 +881,25 @@ export interface UsageEngineMachineOutput {
   readonly machine: { readonly id: string; readonly label: string };
 }
 
+export interface UsageEngineReviewAttemptTarget {
+  /** The Claude Desktop session that declared the transcript, when the cockpit knows it. */
+  readonly desktopSessionId: string | null;
+  /** The target session's harness key (`claude`, `codex`, ...). */
+  readonly harness: string;
+  readonly sourceSessionId: string;
+}
+
+/**
+ * What a `start-review-attempt` command answers: the attempt row the engine created or reused, and
+ * the typed refusal when the policy launched nothing. A refusal is a decision, not an engine failure,
+ * so it travels in a succeeded completion.
+ */
+export interface UsageEngineReviewAttemptOutput {
+  readonly attempt: { readonly attemptId: string; readonly reused: boolean; readonly state: ReviewAttemptState };
+  readonly kind: 'review-attempt';
+  readonly refusal: { readonly message: string; readonly reason: ReviewLaunchRefusalReason } | null;
+}
+
 export interface UsageEnginePublicationOutput {
   readonly kind: 'publication';
   readonly publication: UsageEngineCurrentPublication;
@@ -947,6 +999,11 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
+      readonly command: 'start-review-attempt';
+      readonly output: UsageEngineReviewAttemptOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
       readonly command: Exclude<
         UsageEngineCommandName,
         | 'collect-fresh-quota'
@@ -956,6 +1013,7 @@ export type UsageEngineCommandCompletion =
         | 'publish'
         | 'replication-status'
         | 'set-machine-label'
+        | 'start-review-attempt'
       >;
       readonly output: { readonly kind: 'none' };
       readonly state: 'succeeded';
@@ -983,6 +1041,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'set-campaign-label-override',
   'set-machine-label',
   'set-source-enabled',
+  'start-review-attempt',
 ]);
 
 const parseUsageEngineCommandName = (value: unknown): UsageEngineCommandName => {
@@ -1198,6 +1257,73 @@ export const parseUsageEnginePublicationOutput = (value: unknown): UsageEnginePu
   return { kind: 'publication', publication: parseRequiredPublication(value.publication) };
 };
 
+const parseReviewAttemptTarget = (value: unknown): UsageEngineReviewAttemptTarget => {
+  if (
+    !(
+      isRecord(value) &&
+      (hasExactKeys(value, ['harness', 'sourceSessionId']) ||
+        hasExactKeys(value, ['desktopSessionId', 'harness', 'sourceSessionId']))
+    )
+  ) {
+    return fail('Usage engine review attempt target is invalid.');
+  }
+  return {
+    desktopSessionId:
+      value.desktopSessionId === undefined || value.desktopSessionId === null
+        ? null
+        : parseBoundedString(value.desktopSessionId, maxReviewIdentityBytes, 'Usage engine review desktop session id'),
+    harness: parseBoundedString(value.harness, usageEngineControlBounds.maxMessageBytes, 'Usage engine review harness'),
+    sourceSessionId: parseBoundedString(
+      value.sourceSessionId,
+      maxReviewIdentityBytes,
+      'Usage engine review session id',
+    ),
+  };
+};
+
+export const parseUsageEngineReviewAttemptOutput = (value: unknown): UsageEngineReviewAttemptOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['attempt', 'kind', 'refusal']) &&
+      value.kind === 'review-attempt' &&
+      isRecord(value.attempt) &&
+      hasExactKeys(value.attempt, ['attemptId', 'reused', 'state']) &&
+      typeof value.attempt.reused === 'boolean' &&
+      typeof value.attempt.state === 'string' &&
+      (REVIEW_ATTEMPT_STATES as readonly string[]).includes(value.attempt.state)
+    )
+  ) {
+    return fail('Usage engine review attempt output is invalid.');
+  }
+  let refusal: UsageEngineReviewAttemptOutput['refusal'] = null;
+  if (value.refusal !== null) {
+    if (
+      !(
+        isRecord(value.refusal) &&
+        hasExactKeys(value.refusal, ['message', 'reason']) &&
+        typeof value.refusal.reason === 'string' &&
+        (REVIEW_LAUNCH_REFUSAL_REASONS as readonly string[]).includes(value.refusal.reason)
+      )
+    ) {
+      return fail('Usage engine review attempt refusal is invalid.');
+    }
+    refusal = {
+      message: parseBoundedString(value.refusal.message, maxReviewMessageBytes, 'Usage engine review refusal message'),
+      reason: value.refusal.reason as ReviewLaunchRefusalReason,
+    };
+  }
+  return {
+    attempt: {
+      attemptId: parseBoundedString(value.attempt.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+      reused: value.attempt.reused,
+      state: value.attempt.state as ReviewAttemptState,
+    },
+    kind: 'review-attempt',
+    refusal,
+  };
+};
+
 const replicationDiagnosticCodes = new Set<UsageEngineReplicationDiagnosticCode>([
   'acknowledged',
   'blocked',
@@ -1409,6 +1535,9 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
   }
   if (command === 'set-machine-label') {
     return { ...base, command, output: parseUsageEngineMachineOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'start-review-attempt') {
+    return { ...base, command, output: parseUsageEngineReviewAttemptOutput(value.output), state: 'succeeded' };
   }
   if (command === 'publish') {
     return { ...base, command, output: parseUsageEnginePublicationOutput(value.output), state: 'succeeded' };

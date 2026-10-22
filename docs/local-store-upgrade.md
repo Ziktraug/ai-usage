@@ -119,6 +119,21 @@ as skipped, never shown), retention of five rows per issue plus the newest
 success, outside the served revision, the export and the replication outbox.
 A binary from before this change ignores the table; a binary from after it
 reads an older store with no Jira rows as "not observed".
+### Additive table under usage version 4 (2026-10-22, review attempts)
+
+The first execution launched by the product (ADR 0053) adds one table,
+`review_attempts`, without changing `user_version`: one row per attempt the
+engine recorded (identity, target, checkout, the declaration it rested on,
+state, timestamps, pid, native session id, bounded result excerpt, executed
+validations, acceptance, failure reason), with a partial unique index that
+keeps one live attempt per idempotency key. The engine creates it on its next
+start when it is absent, the way the executor-observation table was added;
+nothing is backfilled and the store generation does not move. Rows are
+re-validated on read with the shared parser. At every engine start, rows still
+`requested`, `starting` or `running` are marked `lost`: a restarted engine
+holds no pipe to a process the previous one started, and nothing is relaunched.
+The table is outside the served revision, the export and the replication
+outbox; an older binary opens the store normally and ignores it.
 
 ## Backup
 

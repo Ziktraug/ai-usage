@@ -11,27 +11,38 @@
     type ReviewTarget,
     simulateWorkReviewRouting,
   } from '@ai-usage/report-core/work-routing';
+  import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
   import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
-  import { createQuery } from '@tanstack/svelte-query';
+  import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/environment';
   import type { RuntimeMode } from '../../../runtime-mode';
+  import { workAttemptsKey, workAttemptsQueryOptions } from '../../query/options/work-attempts';
   import { workRoutingContextQueryOptions } from '../../query/options/work-routing';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
+  import { createWorkAttemptsClient } from '../../rpc/work-attempts-client';
   import { createWorkRoutingClient } from '../../rpc/work-routing-client';
+  import WorkAttempts from './work-attempts.svelte';
+  import { DEMO_EXECUTION_TEXT, launchGate, START_REVIEW_LABEL } from './work-attempts-model';
   import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
   import { projectWorkEvidence } from './work-evidence';
   import { workButton, workHeading, workInput, workMuted, workPanel, workRow, workStack } from './work-styles';
   import { WORK_DEMO_TIME } from './work-synthetic';
 
   let {
+    attempts,
     context,
     mode,
     providers,
     quotaUnavailable,
     target,
   }: {
+    /**
+     * The review attempts of this target and its resolved checkout. Omit it and the component reads
+     * them itself in live mode; pass `null` to state that they are unavailable.
+     */
+    attempts?: WorkAttemptsListOutput | null;
     /**
      * The declared executors and executor observations. Omit it and the component reads the
      * context itself in live mode; pass `null` to state that it is unavailable.
@@ -43,10 +54,16 @@
     target: SessionPresentationRow;
   } = $props();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
+  const queryClient = useQueryClient();
   const routingClient = untrack(() =>
     browser && rpc
       ? createWorkRoutingClient(rpc.workRouting)
       : ssrUnavailableClient<ReturnType<typeof createWorkRoutingClient>>('Work routing context'),
+  );
+  const attemptsClient = untrack(() =>
+    browser && rpc
+      ? createWorkAttemptsClient(rpc.workAttempts)
+      : ssrUnavailableClient<ReturnType<typeof createWorkAttemptsClient>>('Work attempts'),
   );
   const contextQuery = createQuery(() =>
     workRoutingContextQueryOptions(routingClient, {
@@ -107,6 +124,62 @@
   const alternatives = $derived(
     result ? result.evaluations.filter((evaluation) => evaluation.candidateId !== result?.chosenCandidateId) : [],
   );
+  // Execution (ADR 0053): the list of attempts for this target and its resolved checkout come from
+  // the store through `workAttempts.list`; the button only asks the engine, which re-decides.
+  const attemptsTarget = $derived(
+    reviewTarget ? { harness: reviewTarget.harness, sourceSessionId: reviewTarget.sourceSessionId } : null,
+  );
+  const attemptsQuery = createQuery(() =>
+    workAttemptsQueryOptions(attemptsClient, attemptsTarget ?? { harness: 'none', sourceSessionId: 'none' }, {
+      browser,
+      enabled: mode === 'live' && attempts === undefined && attemptsTarget !== null,
+    }),
+  );
+  const resolvedAttempts = $derived.by<WorkAttemptsListOutput | null>(() => {
+    if (attempts !== undefined) {
+      return attempts;
+    }
+    if (attemptsQuery.data) {
+      return attemptsQuery.data;
+    }
+    return attemptsQuery.error
+      ? { error: { message: 'The request did not complete.', tag: 'Unavailable' }, ok: false }
+      : null;
+  });
+  const attemptsPending = $derived(attempts === undefined && mode === 'live' && attemptsQuery.isPending);
+  const gate = $derived(
+    launchGate({
+      attempts: resolvedAttempts,
+      attemptsPending,
+      chosen,
+      recommendation,
+      reviewTargetsDeclared: resolvedContext?.reviewTargets?.length ?? 0,
+    }),
+  );
+  let launch = $state<{ readonly message: string | null; readonly pending: boolean }>({
+    message: null,
+    pending: false,
+  });
+  const startReview = async (): Promise<void> => {
+    if (!(reviewTarget && chosen) || launch.pending || gate.kind !== 'open') {
+      return;
+    }
+    launch = { message: 'Starting the review…', pending: true };
+    const output = await attemptsClient.start({
+      action: 'read-only-review',
+      candidateId: chosen.id,
+      target: { desktopSessionId: null, harness: reviewTarget.harness, sourceSessionId: reviewTarget.sourceSessionId },
+    });
+    launch = {
+      message: output.ok
+        ? `Review attempt ${output.data.attemptId.slice(0, 8)} ${output.data.reused ? 'was already live' : 'started'} (${output.data.state}); follow it below.`
+        : `Not started: ${output.error.message}`,
+      pending: false,
+    };
+    if (attemptsTarget) {
+      await queryClient.invalidateQueries({ queryKey: workAttemptsKey(attemptsTarget) });
+    }
+  };
   const resetResult = (_input: unknown): void => {
     result = null;
     if (mode === 'live') {
@@ -328,6 +401,33 @@
         </div>
       {/each}
     </section>
+  {/if}
+  {#if mode !== 'live'}
+    <p class={workMuted} data-work-launch="demo">{DEMO_EXECUTION_TEXT}</p>
+  {:else if reviewTarget}
+    {#if result}
+      <div class={workPanel} data-work-launch={gate.kind}>
+        <h4 class={workHeading}>Execution</h4>
+        {#if gate.kind === 'open'}
+          <div class={workRow}>
+            <button class={workButton} disabled={launch.pending} onclick={startReview} type="button">
+              {START_REVIEW_LABEL}
+            </button>
+          </div>
+          <p class={workMuted}>
+            Runs `claude -p` in plan mode with read-only tools in {gate.checkoutPath}. The engine re-checks the
+            declaration, the target and the recommendation before starting anything; a second click returns the same
+            attempt.
+          </p>
+        {:else}
+          <p class={workMuted}>Launch is not possible: {gate.reason}</p>
+        {/if}
+        {#if launch.message}
+          <p class={workMuted} role="status">{launch.message}</p>
+        {/if}
+      </div>
+    {/if}
+    <WorkAttempts attempts={resolvedAttempts} pending={attemptsPending} />
   {/if}
   <details>
     <summary class={workHeading}>Candidate evidence ({candidates.length})</summary>

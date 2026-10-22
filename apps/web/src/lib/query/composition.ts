@@ -49,6 +49,7 @@ export interface WebQueryOwnership {
     | 'skills'
     | 'sources'
     | 'sync'
+    | 'work-attempts'
     | 'work-attention'
     | 'work-routing';
   readonly policy: WebQueryPolicyName;
@@ -133,6 +134,14 @@ export const webQueryOwnership = [
     // Routing declarations are read from the home config and executor observations from the store;
     // the panel reads them in the browser when a root is selected.
     family: 'work-routing',
+    policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
+  {
+    // Review attempts are written by the engine when the operator launches one; the list polls
+    // every five seconds exactly while an attempt is live (requested, starting, running), and stops.
+    family: 'work-attempts',
     policy: 'finite-swr',
     publication: 'none',
     rendering: 'browser-only',

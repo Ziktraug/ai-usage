@@ -20,6 +20,7 @@ import {
   type UsageEngineInstanceId,
   type UsageEngineMergePreviewOutput,
   type UsageEngineReplicationStatusOutput,
+  type UsageEngineReviewAttemptOutput,
   type UsageEngineStatus,
 } from '@ai-usage/usage-engine-control';
 import { createRuntimeCommandCoordinator, type RuntimeCommandCoordinator } from './runtime-command-coordinator';
@@ -106,6 +107,16 @@ export interface UsageEngineMutationPort {
   readonly setMachineLabel: (label: string, signal?: AbortSignal) => Promise<UsageMachine>;
 }
 
+type StartReviewAttemptCommand = Extract<UsageEngineCommand, { readonly command: 'start-review-attempt' }>;
+
+export interface UsageEngineReviewAttemptPort {
+  /**
+   * Decides, records and spawns; resolves once the attempt row exists (reused, refused, or spawned).
+   * The signal bounds the decision and the spawn only: an abort never kills a started review.
+   */
+  readonly start: (command: StartReviewAttemptCommand, signal?: AbortSignal) => Promise<UsageEngineReviewAttemptOutput>;
+}
+
 export interface UsageEngineRuntimeDependencies {
   readonly acquireWriterLease: () => Promise<UsageEngineWriterLease>;
   readonly initializeStore: () => Promise<number>;
@@ -121,6 +132,8 @@ export interface UsageEngineRuntimeDependencies {
   readonly quiesceStore: () => Promise<void>;
   readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly recover: () => Promise<void>;
+  /** The review launcher (ADR 0053); absent in compositions that cannot execute anything. */
+  readonly reviewAttempts?: UsageEngineReviewAttemptPort;
   readonly sourceControl: Omit<UsageEngineSourceControlPort, 'runSource' | 'setSourceEnabled'> & {
     readonly runSource: (sourceId: RunSourceCommand['sourceId'], signal?: AbortSignal) => Promise<SourceControlView>;
     readonly setSourceEnabled: (
