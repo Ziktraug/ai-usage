@@ -32,6 +32,7 @@ explicitly declared information.
 | K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
 | L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE, integrated (`9bbbd9fa`) |
 | N | Work context for harness sessions (ADR 0058): one bounded read-only projection of the Work attention read per checkout or project label (waits, settled decisions with evidence, linked facts, coverage), as `ai-usage work context` and the local MCP tool `work.context`; no registration | `feat/work-resume-cockpit-n-context` | DONE, integrated (`03439fd9`) |
+| R2 | Defects of the first isolated run on real native data: a checkout's staged, modified and untracked counts in one phrase; unread checkouts explained, a removed worktree stated as a past fact; a one-week age tier for requests nothing touched (ADR 0056 amendment); plain Codex row titles and the originator gap (ADR 0059 amendment); a count line split by the bound that left roots out | `feat/work-resume-cockpit-r2-real` | DONE on the lot branch, not integrated |
 | C (Codex) | Native Codex sessions on `/work` (ADR 0059): one root per recent served Codex campaign, attention `not-observable` (never a derived request or wait, never folded under a Desktop root), checkout facts by exact path, ranked after every Desktop root, a section and a per-harness coverage line of their own | `feat/work-resume-cockpit-c-codex` | DONE, integrated (`c58df3e2`) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
@@ -599,3 +600,41 @@ repository. CLI `claude` 2.1.306, `--model opus`.
 This closes the open "real hook probe" item for Linux and CLI 2.1.306. Still not exercised: the
 isolated runtime on real native data (`campaign-runtime.sh start real` is refused to agents by the
 permission classifier; operator command in the campaign state).
+
+### 2026-10-22 19:10 — lot R2: defects of the first real-data run (`40e58089`…`16eada2a`, base `ad26c0e9`)
+
+The isolated runtime on real native data (store disposable, native trees read-only) showed five
+defects; each is fixed test-first in its own commit, verified on synthetic fixtures only.
+
+1. `40e58089` — the checkout fact carries `stagedCount` (wire contract and client mirror included:
+   outside the lot's file ownership, needed because the contract is a strict object);
+   `describeCheckoutState` names what git reported ("28 staged · 1 untracked · 2 ahead",
+   "2 untracked", "clean") in the row chip, the detail, the local-changes interpretation and
+   `work.context`. A clean checkout with commits not on its upstream gets a neutral chip.
+2. `927931f0` — `describeCheckoutOutcome`: a removed worktree ("no longer on disk (removed since
+   the session)") or a non-repository path is a neutral fact with complete provenance and no
+   coverage-gap interpretation; timeout, denial and unreadable status stay warnings. The coverage
+   line says "N not read" and counts the kinds over the checkouts the shown roots name.
+3. `e5762ff4` — `request-dormant` (ADR 0056 amendment): no later turn, no message and no family
+   activity for more than `WORK_REQUEST_DORMANT_AFTER_MS` (one week) moves a request to the older
+   declarations to reconsider, ranked after the current blocks and dated ("blocked · 14 d ago, no
+   activity since"); never settled or hidden; an unknown activity never ages a request. The engine
+   chain test (outside ownership) now expects its 40-day-old root dormant.
+4. `3f1148e5` — Codex rows show a plain title (marks dropped, whitespace collapsed, long local paths
+   reduced, first sentence or ~90 characters); the detail and the search keep the prompt. The
+   session originator (`codex_exec` vs interactive) is in the rollouts but neither parsed nor
+   served: no row can say "automated run" without a parser change and a Codex cache bump (gap
+   recorded in ADR 0059).
+5. `9d4477a4` — the count line names each bound: "59 roots shown · 11 older roots hidden (30-day
+   window) · 49 Codex campaigns beyond the 20-campaign Codex budget", then the page limit and the
+   session read bound when they cut anything.
+
+`16eada2a` aligns two e2e assertions. Evidence: report-core 554, report-data 89, web-contract 95,
+CLI 118, usage-engine-runtime 233, usage-store 273, mcp-adapter 12, apps/mcp 3, tools 145, web unit
+1 591 pass, 0 fail; typecheck 58/58; `bun run check` and `bun run lint` clean; under `nix develop`
+(Bun 1.3.13) `bun run build` green, work.spec + work-e2e-fixture 12/12 and work-production 6/6.
+Read-only counts on the real disposable store: 16 of 45 observed checkouts were dirty with nothing
+modified (3 staged, 13 untracked only); latest checkout outcomes 45 observed, 43 missing, 4 not a
+repository; roughly 10 of 16 root requests untouched for over a week; 68 Codex campaigns in the
+window (48 beyond the budget), 23 of their titles with markdown marks. The isolated runtime was not
+restarted, so the fixes are not yet seen on it.
