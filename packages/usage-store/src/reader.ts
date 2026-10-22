@@ -11,6 +11,7 @@ export {
   MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
 } from './claude-desktop-session-store';
+export type { CodexWorkQueryResult, QueryCodexWorkObservationsInput } from './codex-work-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type {
@@ -79,6 +80,7 @@ export {
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,

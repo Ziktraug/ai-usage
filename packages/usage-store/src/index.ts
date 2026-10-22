@@ -72,6 +72,7 @@ import {
   claudeDesktopSessionSchemaSql,
   createClaudeDesktopSessionStore,
 } from './claude-desktop-session-store';
+import { CODEX_WORK_TABLES, codexWorkSchemaSql, createCodexWorkStore } from './codex-work-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import { createExecutorObservationStore } from './executor-observation-store';
 import {
@@ -1463,6 +1464,10 @@ const migrate = (db: SqliteDatabase): boolean => {
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
   schemaChanged ||= claudeDesktopSessionsMissing;
+  const codexWorkMissing = CODEX_WORK_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= codexWorkMissing;
   // Review attempts (ADR 0053) follow the same additive rule: presence of the table is the signal.
   const reviewAttemptsMissing = REVIEW_ATTEMPT_TABLES.some(
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
@@ -1812,6 +1817,7 @@ const migrate = (db: SqliteDatabase): boolean => {
       }
     }
     db.exec(claudeDesktopSessionSchemaSql);
+    db.exec(codexWorkSchemaSql);
     // Additive under the same user_version (ADR 0056): a claude_desktop_sessions table created before
     // the harness's message time was recorded gains the nullable column; older rows read as "none".
     const desktopColumns = db.query('PRAGMA table_info(claude_desktop_sessions)').all() as Array<{ name?: unknown }>;
@@ -4447,6 +4453,13 @@ export const {
   requestReviewAttempt,
   transitionReviewAttempt,
 } = createReviewAttemptStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+
+export const { importCodexWorkObservations, queryCodexWorkObservations } = createCodexWorkStore({
   usageStoreError,
   usageStoreReadError,
   withUsageStoreReader,

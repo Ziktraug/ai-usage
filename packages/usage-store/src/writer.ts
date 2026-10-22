@@ -3,6 +3,12 @@ export type {
   ImportClaudeDesktopSessionsInput,
 } from './claude-desktop-session-store';
 export { MAX_CLAUDE_DESKTOP_SESSION_BATCH, MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
+export type {
+  CodexWorkImportResult,
+  CodexWorkQueryResult,
+  ImportCodexWorkObservationsInput,
+  QueryCodexWorkObservationsInput,
+} from './codex-work-store';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 export type {
@@ -98,6 +104,7 @@ export {
   exportLocalMergeBundle,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importCodexWorkObservations,
   importExecutorObservations,
   importJiraIssueObservations,
   importLocalRows,
@@ -114,6 +121,7 @@ export {
   publishServedReportRevision,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
   queryLatestCheckoutStatusObservations,
