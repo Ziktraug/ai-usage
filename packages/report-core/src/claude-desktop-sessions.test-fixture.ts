@@ -31,7 +31,7 @@ export interface SeededClaudeDesktopSessionIds {
   readonly blockedRoot: string;
   /** Completed with an OPEN declared pull request and written branches. */
   readonly completedRoot: string;
-  /** Blocked asking to push; its child declared a MERGED pull request *before* the declaration. */
+  /** Blocked asking to push; its child declared, from a worktree of its own, a MERGED pull request *before* the declaration. */
   readonly mergedBeforeRoot: string | null;
   /** Completed; its `cliSessionId` has no transcript anywhere. */
   readonly noTranscriptRoot: string | null;
@@ -223,6 +223,8 @@ const representativeSpecs = (cliSessionIdWithTranscript: string): readonly Sessi
           pullRequests: [{ number: 90, state: 'MERGED' }],
           status: 'completed',
           title: 'Fixture: earlier merged fix',
+          // In a worktree of its own, so the listing is the child's and only its timing rules it out.
+          worktree: 'earlier-fix',
         },
       ],
       id: id('merged-before-root'),
