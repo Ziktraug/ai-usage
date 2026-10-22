@@ -67,6 +67,9 @@ const reviewAttemptColumnsSql = `
     ended_at TEXT,
     updated_at TEXT NOT NULL,
     native_session_id TEXT,
+    native_turn_id TEXT,
+    stop_requested_at TEXT,
+    stop_confirmed_at TEXT,
     pid INTEGER,
     exit_code INTEGER,
     result_kind TEXT CHECK (result_kind IS NULL OR result_kind IN ('review', 'error', 'timeout')),
@@ -103,6 +106,9 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ],
   ['scope_json', 'scope_json TEXT'],
   ['guarantee_json', 'guarantee_json TEXT'],
+  ['native_turn_id', 'native_turn_id TEXT'],
+  ['stop_requested_at', 'stop_requested_at TEXT'],
+  ['stop_confirmed_at', 'stop_confirmed_at TEXT'],
 ];
 
 interface MigrationDatabase {
@@ -219,6 +225,7 @@ export interface ReviewAttemptPatch {
   readonly failureReason?: string | null;
   readonly guarantee?: ReviewHarnessGuarantee | null;
   readonly nativeSessionId?: string | null;
+  readonly nativeTurnId?: string | null;
   readonly numTurns?: number | null;
   readonly pid?: number | null;
   readonly resultExcerpt?: string | null;
@@ -226,6 +233,8 @@ export interface ReviewAttemptPatch {
   readonly scope?: ReviewAttemptScope | null;
   readonly startedAt?: string | null;
   readonly state?: ReviewAttemptState;
+  readonly stopConfirmedAt?: string | null;
+  readonly stopRequestedAt?: string | null;
   readonly validations?: readonly string[];
 }
 
@@ -365,6 +374,7 @@ interface ReviewAttemptRecord {
   launch_session_id: string | null;
   machine_id: string;
   native_session_id: string | null;
+  native_turn_id: string | null;
   num_turns: number | null;
   pid: number | null;
   project_label: string | null;
@@ -378,6 +388,8 @@ interface ReviewAttemptRecord {
   source_session_id: string;
   started_at: string | null;
   state: string;
+  stop_confirmed_at: string | null;
+  stop_requested_at: string | null;
   target_harness: string;
   updated_at: string;
   validations_json: string;
@@ -388,7 +400,7 @@ const SELECT_COLUMNS = `
   checkout_path, checkout_origin, project_label, session_title, candidate_id, executor_harness, declaration_json,
   state, requested_at, started_at, ended_at, updated_at, native_session_id, pid, exit_code, result_kind,
   result_excerpt, num_turns, duration_ms, validations_json, acceptance, failure_reason, launch_session_id,
-  released_at, release_evidence, scope_json, guarantee_json
+  released_at, release_evidence, scope_json, guarantee_json, native_turn_id, stop_requested_at, stop_confirmed_at
 `;
 
 const SELECTED_COLUMN_NAMES = SELECT_COLUMNS.split(',').map((name) => name.trim());
@@ -442,6 +454,7 @@ const attemptFromRecord = (record: ReviewAttemptRecord): ReviewAttempt | null =>
     launchSessionId: record.launch_session_id,
     machineId: record.machine_id,
     nativeSessionId: record.native_session_id,
+    nativeTurnId: record.native_turn_id,
     numTurns: record.num_turns,
     pid: record.pid,
     releaseEvidence: record.release_evidence,
@@ -451,6 +464,8 @@ const attemptFromRecord = (record: ReviewAttemptRecord): ReviewAttempt | null =>
     resultKind: record.result_kind,
     scope: parseJsonOrNull(record.scope_json),
     startedAt: record.started_at,
+    stopRequestedAt: record.stop_requested_at,
+    stopConfirmedAt: record.stop_confirmed_at,
     state: record.state,
     target: {
       checkoutOrigin: record.checkout_origin,
@@ -483,12 +498,15 @@ const PATCH_COLUMNS: Readonly<Record<keyof ReviewAttemptPatch, string>> = {
   failureReason: 'failure_reason',
   guarantee: 'guarantee_json',
   nativeSessionId: 'native_session_id',
+  nativeTurnId: 'native_turn_id',
   numTurns: 'num_turns',
   pid: 'pid',
   resultExcerpt: 'result_excerpt',
   resultKind: 'result_kind',
   scope: 'scope_json',
   startedAt: 'started_at',
+  stopRequestedAt: 'stop_requested_at',
+  stopConfirmedAt: 'stop_confirmed_at',
   state: 'state',
   validations: 'validations_json',
 };

@@ -76,6 +76,80 @@ const createStore = async (): Promise<string> => {
 const run = <Value>(effect: Effect.Effect<Value, UsageStoreError>): Promise<Value> => Effect.runPromise(effect);
 
 describe('review attempt store', () => {
+  test('persists the native turn and separate stop observations without releasing a running attempt', async () => {
+    const dbPath = await createStore();
+    const created = await run(requestReviewAttempt({ dbPath, attempt: newAttempt({ executorHarness: 'codex' }) }));
+    const attemptId = created.attempt.attemptId;
+    await run(
+      transitionReviewAttempt({
+        dbPath,
+        attemptId,
+        at: LATER,
+        patch: {
+          state: 'running',
+          nativeSessionId: 'native-thread',
+          nativeTurnId: 'native-turn',
+          stopRequestedAt: LATER,
+        },
+      }),
+    );
+    const running = await run(queryReviewAttempts({ dbPath, reserving: true }));
+    expect(running.attempts[0]).toMatchObject({
+      attemptId,
+      state: 'running',
+      nativeSessionId: 'native-thread',
+      nativeTurnId: 'native-turn',
+      stopRequestedAt: LATER,
+      stopConfirmedAt: null,
+    });
+    const duplicate = await run(requestReviewAttempt({ dbPath, attempt: newAttempt({ executorHarness: 'codex' }) }));
+    expect(duplicate.reused).toBe(true);
+    expect(duplicate.attempt.attemptId).toBe(attemptId);
+    await run(
+      transitionReviewAttempt({
+        dbPath,
+        attemptId,
+        at: '2026-10-22T10:00:30.000Z',
+        patch: {
+          state: 'failed',
+          stopConfirmedAt: '2026-10-22T10:00:30.000Z',
+          resultExcerpt: 'Partial review retained',
+          resultKind: 'error',
+        },
+      }),
+    );
+    const ended = await run(queryReviewAttempts({ dbPath }));
+    expect(ended.attempts[0]).toMatchObject({
+      stopRequestedAt: LATER,
+      stopConfirmedAt: '2026-10-22T10:00:30.000Z',
+      resultExcerpt: 'Partial review retained',
+    });
+    expect((await run(queryReviewAttempts({ dbPath, reserving: true }))).attempts).toHaveLength(0);
+  });
+
+  test('upgrades legacy review attempts with unknown stop evidence while retaining the reservation', async () => {
+    const dbPath = await createStore();
+    const created = await run(requestReviewAttempt({ dbPath, attempt: newAttempt() }));
+    const db = new Database(dbPath);
+    try {
+      for (const column of ['native_turn_id', 'stop_requested_at', 'stop_confirmed_at']) {
+        db.exec(`ALTER TABLE review_attempts DROP COLUMN ${column}`);
+      }
+    } finally {
+      db.close();
+    }
+    const readBeforeUpgrade = await Effect.runPromiseExit(queryReviewAttempts({ dbPath }));
+    expect(readBeforeUpgrade._tag).toBe('Failure');
+    await run(initializeUsageStore({ dbPath }));
+    const upgraded = await run(queryReviewAttempts({ dbPath, reserving: true }));
+    expect(upgraded.attempts[0]).toMatchObject({
+      attemptId: created.attempt.attemptId,
+      nativeTurnId: null,
+      stopRequestedAt: null,
+      stopConfirmedAt: null,
+    });
+  });
+
   test('creates the additive table on open without touching user_version', async () => {
     const dbPath = await createStore();
     const db = new Database(dbPath, { readonly: true });
