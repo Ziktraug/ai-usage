@@ -9,6 +9,7 @@ import {
   ClaudeReviewLaunchError,
   claudeReviewArguments,
   launchClaudeReview,
+  spawnFailureDetail,
 } from './claude-review-launcher';
 
 const roots: string[] = [];
@@ -123,6 +124,17 @@ const spec = (checkout: string, overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('claude review launcher', () => {
+  test('describes a spawn failure by its class and code only, never by the argument vector it quotes', () => {
+    const prompt = 'Read-only review of one commit, c3b6 with the session title "private"';
+    const bunError = Object.assign(
+      new TypeError(`The argument 'args[2]' must be a string without null bytes. Received "${prompt}"`),
+      { code: 'ERR_INVALID_ARG_VALUE' },
+    );
+    expect(spawnFailureDetail(bunError)).toBe('TypeError ERR_INVALID_ARG_VALUE');
+    expect(spawnFailureDetail(new Error(prompt))).toBe('Error');
+    expect(spawnFailureDetail(prompt)).toBe('unknown error');
+  });
+
   test('states the exact read-only argument vector, settings and hooks excluded', () => {
     const args = claudeReviewArguments(
       { effort: 'high', launchSessionId: LAUNCH_SESSION_ID, maxTurns: 6, model: 'opus' },

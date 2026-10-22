@@ -280,6 +280,20 @@ describe('review scope: one commit, resolved first, compared with its first pare
     expect((killed as Error).message).not.toContain('UTF-8');
   });
 
+  test('refuses a patch carrying a NUL byte before anything is spawned with it', async () => {
+    const { git, root } = await repository();
+    await writeFile(path.join(root, 'late-nul.txt'), 'start\n');
+    await git('add', 'late-nul.txt');
+    await git('commit', '-q', '-m', 'first');
+    // git reads a file as text when its first NUL comes after 8000 bytes, so the patch carries it.
+    await writeFile(path.join(root, 'late-nul.txt'), `${'x'.repeat(9000)}\n\0tail\n`);
+    await git('commit', '-q', '-am', 'late nul');
+    const error = await prepareReviewScope(root).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ kind: 'not-text' });
+    expect((error as Error).message).toContain('NUL');
+    expect((error as Error).message).not.toContain('xxxx');
+  });
+
   test('a dirty file with a non-UTF-8 name elsewhere marks the tree dirty, never refuses a clean UTF-8 commit', async () => {
     const { git, root } = await repository();
     const latinName = Buffer.concat([Buffer.from(`${root}/caf`), Buffer.from([0xe9]), Buffer.from('.txt')]);

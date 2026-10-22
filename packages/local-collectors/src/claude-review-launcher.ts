@@ -181,6 +181,21 @@ const launcherEnvironment = (env: Readonly<Record<string, string | undefined>>):
   );
 };
 
+/**
+ * A spawn error by its class and code only. The runtime's own message quotes the offending
+ * argument, which is the prompt (commit SHAs, subject, session title); a stored failure reason
+ * must never carry it.
+ */
+const ERROR_CODE = /^[A-Z0-9_]{1,64}$/u;
+
+export const spawnFailureDetail = (error: unknown): string => {
+  if (!(error instanceof Error)) {
+    return 'unknown error';
+  }
+  const code = 'code' in error && typeof error.code === 'string' && ERROR_CODE.test(error.code) ? error.code : null;
+  return code === null ? error.name : `${error.name} ${code}`;
+};
+
 const resolveExecutable = (
   options: ClaudeReviewLaunchOptions,
   env: Readonly<Record<string, string | undefined>>,
@@ -273,7 +288,7 @@ export const launchClaudeReview = async (
   } catch (error) {
     throw new ClaudeReviewLaunchError(
       'spawn-failed',
-      `claude could not be started in the checkout: ${error instanceof Error ? error.message : String(error)}`,
+      `claude could not be started in the checkout: ${spawnFailureDetail(error)}`,
     );
   }
   const startedAt = performance.now();

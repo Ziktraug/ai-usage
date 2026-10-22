@@ -543,6 +543,14 @@ export const prepareReviewScope = async (
     }
     throw new ReviewScopeError('git-failed', `git diff-tree could not compare ${baseSha} and ${headSha}`);
   }
+  // git reads a file as text when its first NUL comes late, so the patch can carry one; an argument
+  // vector cannot. Refused here, before anything is spawned with it.
+  if (patch.stdout.includes('\0')) {
+    throw new ReviewScopeError(
+      'not-text',
+      `the patch of commit ${headSha} contains a NUL byte; it cannot be passed to the review as text`,
+    );
+  }
   const bounded = boundReviewPatch(patch.stdout, limits);
   if (bounded.files.length === 0) {
     throw new ReviewScopeError('empty', `commit ${headSha} changes no file against its base; nothing to review`);

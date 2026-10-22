@@ -147,7 +147,8 @@ const launchFailureReason = (error: unknown): string => {
       ? `scope-unavailable: ${error.message}`
       : `executor-unavailable: ${error.message}`;
   }
-  return `executor-unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  // An unexpected error is named by its class only: its message may quote the prompt.
+  return `executor-unavailable: ${error instanceof Error ? error.name : 'unknown error'}`;
 };
 
 export const createReviewAttemptService = (options: ReviewAttemptServiceOptions): ReviewAttemptService => {
