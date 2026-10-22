@@ -857,6 +857,12 @@ export type WorkFact = WorkFactBase &
          */
         readonly declaredBy: 'root' | 'child';
         readonly host: string;
+        /**
+         * The declaring session's last activity. A listing is dated by it when confronted with a
+         * question; `provenance.observedAt` is the registry file's modification time, which a
+         * rewrite moves without any activity.
+         */
+        readonly lastActivityAt: CanonicalInstant;
         readonly number: number;
         readonly repository: string;
         readonly state: string;
@@ -1019,7 +1025,7 @@ export interface WorkRoot {
   readonly key: WorkSessionKey;
   readonly project: WorkRootProject;
   /**
-   * A later pull request (declared by a child session, or merged on GitHub after the request)
+   * A later pull request (listed by a child session active after the request, or merged on GitHub after it)
    * may have answered this root's request. The attention is unchanged: the question stays the
    * operator's until confirmed; the view ranks such roots after the unreconsidered requests.
    */

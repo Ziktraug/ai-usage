@@ -35,6 +35,7 @@ const root = (overrides: Partial<WorkRootWire> = {}): WorkRootWire => ({
       host: 'github.com',
       id: 'local_child:pr:github.com/fixture/project#117',
       kind: 'declared-pull-request',
+      lastActivityAt: AT,
       number: 117,
       provenance: { coverage: 'complete', machineId: 'machine-a', observedAt: AT, source: 'claude-desktop' },
       repository: 'fixture/project',

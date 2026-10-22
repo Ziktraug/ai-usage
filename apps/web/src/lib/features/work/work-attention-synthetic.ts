@@ -167,6 +167,7 @@ const declaredPullRequest = (
   host: 'github.example',
   id: `${id}:declared-pr-${number}`,
   kind: 'declared-pull-request',
+  lastActivityAt: COLLECTED_AT,
   number,
   provenance: desktop(),
   repository: 'demo/ai-usage',
@@ -818,7 +819,7 @@ const seeds = (): readonly RootSeed[] => [
       ),
       interpretation(
         'request-satisfied-elsewhere',
-        `Possibly answered elsewhere: demo/ai-usage#61 (MERGED) declared by a child session at ${COLLECTED_AT}; demo/ai-usage#61 (MERGED, merged at ${hoursAgo(20)}) observed on GitHub at ${OBSERVED_AT}, after the question.`,
+        `Possibly answered elsewhere: demo/ai-usage#61 (MERGED) listed by a child session (last active at ${COLLECTED_AT}); demo/ai-usage#61 (MERGED, merged at ${hoursAgo(20)}) observed on GitHub at ${OBSERVED_AT}, after the question.`,
         'This does not prove it is the same work; the question stays yours until you confirm.',
         ['scan-resources:declared-pr-61', 'scan-resources:pr-61'],
       ),

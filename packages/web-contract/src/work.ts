@@ -103,6 +103,7 @@ export const workFactSchema = variant('kind', [
     declaredBy: picklist(['root', 'child']),
     host: shortTextSchema,
     kind: literal('declared-pull-request'),
+    lastActivityAt: instantSchema,
     number: positiveIntegerSchema,
     repository: shortTextSchema,
     state: shortTextSchema,

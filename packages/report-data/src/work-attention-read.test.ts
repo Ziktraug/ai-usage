@@ -349,7 +349,7 @@ describe('queryWorkAttention', () => {
     ]);
     expect(a?.interpretations[1]?.evidence).toEqual(['local_a1:pr:github.com/fixture/project#117']);
     expect(a?.interpretations[1]?.text).toBe(
-      `Possibly answered elsewhere: fixture/project#117 (OPEN) declared by a child session at ${hoursAgo(3)}, after the question.`,
+      `Possibly answered elsewhere: fixture/project#117 (OPEN) listed by a child session (last active at ${hoursAgo(3)}), after the question.`,
     );
     expect(a?.facts.map(({ kind }) => kind)).toEqual([
       'declared-turn',

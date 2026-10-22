@@ -492,6 +492,7 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
       id: 'decl-1',
       declaredBy: 'child',
       kind: 'declared-pull-request',
+      lastActivityAt: FRESH,
       number: 66,
       provenance: { coverage: 'complete', machineId: 'machine-a', observedAt: FRESH, source: 'claude-desktop' },
       repository: 'fixture/project',

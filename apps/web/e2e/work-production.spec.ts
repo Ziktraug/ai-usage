@@ -56,7 +56,7 @@ const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_CHILD_TITLE = 'Fixture: open the collector pull request';
 const SATISFIED_INTERPRETATION =
-  'Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) declared by a child session at 2026-07-03T09:01:00.000Z; fixture/ai-usage#117 (OPEN) observed on GitHub at ';
+  'Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) listed by a child session (last active at 2026-07-03T09:00:00.000Z); fixture/ai-usage#117 (OPEN) observed on GitHub at ';
 const RECONSIDERED_UNCERTAINTY = 'This does not prove it is the same work; the question stays yours until you confirm.';
 const MERGED_BEFORE_TITLE = 'Fixture: push the merged fix';
 const MERGED_BEFORE_INTERPRETATION =

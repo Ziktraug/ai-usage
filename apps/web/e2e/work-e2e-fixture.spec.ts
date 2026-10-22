@@ -54,7 +54,7 @@ const JIRA_DIFFERS_INTERPRETATION =
   'XLB-2101 is still To Do (Jira status To Do, observed 2026-10-20T11:00:00.000Z) while fixture/ai-usage#90 is MERGED (GitHub 2026-10-20T10:00:00.000Z); a different status is not automatically an error.';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_INTERPRETATION =
-  'Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) declared by a child session at 2026-10-20T09:01:00.000Z, after the question.';
+  'Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) listed by a child session (last active at 2026-10-20T09:00:00.000Z), after the question.';
 const REVIEW_READY_ROOT_ID = 'local_fixture-review-ready-root';
 const REVIEW_READY_TITLE = 'Fixture: review the store migration';
 const JIRA_REPLY_INTERPRETATION =

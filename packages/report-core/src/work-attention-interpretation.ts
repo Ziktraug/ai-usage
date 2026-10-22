@@ -93,9 +93,12 @@ const sameLink = (left: PullRequestLinkFact, right: PullRequestLinkFact): boolea
   left.number === right.number;
 
 /**
- * Pull requests a child session declared open or merged, listed at or after the request. The
- * root's own `prs[]` never counts: the desktop app fills it from the checkout branch, so it
- * mirrors where the session sits, not what answered its question.
+ * Pull requests a child session declared open or merged, listed at or after the request. "After"
+ * reads the child's own last activity, never the registry file's modification time: the desktop
+ * app rewrites a session file without any activity in it. The root's own `prs[]` never counts:
+ * the desktop app fills it from the checkout branch, so it mirrors where the session sits, not
+ * what answered its question; the read model also leaves out a child's listing that mirrors the
+ * root's checkout.
  */
 const childDeclaredPullRequests = (
   facts: readonly WorkFact[],
@@ -106,7 +109,7 @@ const childDeclaredPullRequests = (
       fact.kind === 'declared-pull-request' &&
       fact.declaredBy === 'child' &&
       ANSWERING_DECLARED_STATES.has(fact.state.toUpperCase()) &&
-      fact.provenance.observedAt >= declaredAt,
+      fact.lastActivityAt >= declaredAt,
   );
 
 /**
@@ -135,7 +138,7 @@ const answeringObservedPullRequests = (
 
 const pullRequestEvidence = (fact: PullRequestLinkFact): string =>
   fact.kind === 'declared-pull-request'
-    ? `${fact.repository}#${fact.number} (${fact.state.toUpperCase()}) declared by a child session at ${fact.provenance.observedAt}`
+    ? `${fact.repository}#${fact.number} (${fact.state.toUpperCase()}) listed by a child session (last active at ${fact.lastActivityAt})`
     : `${fact.repository}#${fact.number} (${fact.state ?? 'unknown'}${
         fact.state === 'MERGED' && fact.mergedAt !== null ? `, merged at ${fact.mergedAt}` : ''
       }) observed on GitHub at ${fact.provenance.observedAt}`;

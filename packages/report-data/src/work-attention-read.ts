@@ -175,6 +175,7 @@ const declaredPullRequestFacts = (
     host: pullRequest.host,
     id: `${observation.desktopSessionId}:pr:${pullRequest.host}/${pullRequest.repository}#${pullRequest.number}`,
     kind: 'declared-pull-request',
+    lastActivityAt: observation.lastActivityAt,
     number: pullRequest.number,
     provenance: provenanceOf(observation),
     repository: pullRequest.repository,
