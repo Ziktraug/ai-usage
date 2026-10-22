@@ -54,6 +54,14 @@ upgraded instead of adding columns. Only the engine applies the additive upgrade
 The campaign validates this on disposable databases; it does not authorize or
 prove an upgrade of the operator's daily stores.
 
+The same continuation adds `codex_work_observations` for bounded native request
+and client-provenance evidence (ADR 0061). Only the engine creates it, under
+usage version 4. The table is excluded from usage rows, served revisions,
+merge bundles and replication; importing observations does not advance report
+generations. Readers of an older store report that it has not been upgraded.
+The Codex parser cache is versioned separately so a warm cache cannot silently
+omit the new evidence. Campaign verification uses disposable stores only.
+
 The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
 and `claude_desktop_collection_state` to the usage store without changing
 `user_version`, following the `skill_observations` precedent: the engine

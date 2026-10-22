@@ -3,6 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-10-22
 - **Extends**: 0016, 0050, 0056
+- **Amended by**: [0061](0061-local-codex-request-observations.md), which adds local native request evidence without inventing a turn status.
 
 ## Context
 

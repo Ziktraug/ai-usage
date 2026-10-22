@@ -3,6 +3,7 @@
 - **Status**: Accepted; amended by [ADR 0055](0055-review-attempt-reservation-scope-and-harness-guarantee.md) (loss of contact, prompt and flags, the hooks limit)
 - **Date**: 2026-10-22
 - **Extends**: 0009, 0050, 0052
+- **Amended by**: [0062](0062-owned-codex-review-through-app-server.md), which adds a qualified Codex executor and owned interruption.
 
 ## Context
 
