@@ -117,6 +117,9 @@ describe('fact builders', () => {
     });
     expect(checkoutStatusFact(checkout({ stagedCount: 28 }), 'co-1').stagedCount).toBe(28);
     expect(checkoutStatusFact(checkout({ outcome: 'timeout' }), 'co-2').provenance.coverage).toBe('partial');
+    // A path that no longer exists is completely observed: there is nothing more to read there.
+    expect(checkoutStatusFact(checkout({ outcome: 'missing' }), 'co-3').provenance.coverage).toBe('complete');
+    expect(checkoutStatusFact(checkout({ outcome: 'not-a-repository' }), 'co-4').provenance.coverage).toBe('complete');
   });
 });
 
@@ -294,7 +297,24 @@ describe('interpretExternalFacts', () => {
       {
         evidence: ['co-1'],
         kind: 'coverage-gap',
-        text: `Checkout example could not be read at ${FRESH} (denied).`,
+        text: `Checkout example could not be read at ${FRESH}: permission denied.`,
+        uncertainty: 'Local changes, if any, are unknown from this observation.',
+      },
+    ]);
+  });
+
+  test('a checkout removed since its session, or never a repository, is a fact about the session, not a gap', () => {
+    const unread = (outcome: CheckoutStatusObservation['outcome']) =>
+      checkoutStatusFact(
+        checkout({ ahead: null, behind: null, dirty: null, modifiedCount: null, outcome, untrackedCount: null }),
+        `co-${outcome}`,
+      );
+    expect(interpret([unread('missing'), unread('not-a-repository')])).toEqual([]);
+    expect(interpret([unread('timeout')])).toEqual([
+      {
+        evidence: ['co-timeout'],
+        kind: 'coverage-gap',
+        text: `Checkout example could not be read at ${FRESH}: git timed out.`,
         uncertainty: 'Local changes, if any, are unknown from this observation.',
       },
     ]);

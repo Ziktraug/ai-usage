@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  CHECKOUT_STATUS_OUTCOMES,
+  describeCheckoutOutcome,
   describeCheckoutState,
+  isCheckoutReadFailure,
   parseCheckoutStatusObservation,
   parseClaudeDesktopSessionObservation,
   parseJiraIssueObservation,
@@ -295,5 +298,26 @@ describe('describeCheckoutState', () => {
     const unreported = { ahead: null, behind: null, modifiedCount: null, stagedCount: null, untrackedCount: null };
     expect(describeCheckoutState({ ...unreported, dirty: true })).toBe('uncommitted changes, counts not reported');
     expect(describeCheckoutState({ ...unreported, dirty: null })).toBe('state not reported');
+  });
+});
+
+describe('describeCheckoutOutcome', () => {
+  test('names why a checkout has no git status in plain words, and which kinds are failures of the read', () => {
+    expect(
+      CHECKOUT_STATUS_OUTCOMES.map((outcome) => [
+        outcome,
+        describeCheckoutOutcome(outcome),
+        isCheckoutReadFailure(outcome),
+      ]),
+    ).toEqual([
+      ['observed', 'observed', false],
+      // A worktree removed after its session, or a session run outside any repository: facts about
+      // where the session worked, not a read that went wrong.
+      ['missing', 'no longer on disk (removed since the session)', false],
+      ['not-a-repository', 'not a git repository', false],
+      ['timeout', 'git timed out', true],
+      ['denied', 'permission denied', true],
+      ['invalid', 'git status unreadable', true],
+    ]);
   });
 });

@@ -1,4 +1,8 @@
-import { describeCheckoutState } from '@ai-usage/report-core/work-attention';
+import {
+  describeCheckoutOutcome,
+  describeCheckoutState,
+  isCheckoutReadFailure,
+} from '@ai-usage/report-core/work-attention';
 import type { WorkContextDataset, WorkContextLinked } from '@ai-usage/report-data/work-context-read';
 
 export const WORK_CONTEXT_RETRIEVED_DATA_NOTICE =
@@ -14,7 +18,13 @@ const pullRequestLine = ({ fact }: WorkContextLinked['pullRequests'][number]): s
 
 /** One linked checkout: the counts git reported, in the words the Work view uses. */
 export const workContextCheckoutLine = ({ fact }: WorkContextLinked['checkouts'][number]): string => {
-  const state = fact.outcome === 'observed' ? describeCheckoutState(fact) : fact.outcome;
+  let state = describeCheckoutState(fact);
+  if (fact.outcome !== 'observed') {
+    // A removed worktree is a fact about the session; only a failed read is called one.
+    state = isCheckoutReadFailure(fact.outcome)
+      ? `not read (${describeCheckoutOutcome(fact.outcome)})`
+      : describeCheckoutOutcome(fact.outcome);
+  }
   return `  - ${fact.checkoutPath} ${fact.branch ?? '(no branch)'} ${state} (observed ${fact.provenance.observedAt})`;
 };
 

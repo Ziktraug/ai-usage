@@ -85,7 +85,10 @@ const BLOCKED_TITLE = 'Fixture: investigate checkout 3';
 const BLOCKED_QUESTION = 'Confirm whether the fixture should keep checkout 3 or delete it.';
 const BLOCKED_CHILD_TITLES = ['Fixture: child two', 'Fixture: grandchild of checkout 3'];
 const BLOCKED_DECLARED_AT = 'Jul 03, 2026, 13:00 GMT+2';
-const MISSING_WORKTREE_PATTERN = /Checkout checkout-3 could not be read at \S+ \(missing\)\./;
+// A worktree removed since its session is a fact about that session, stated in words, never a failed read.
+const MISSING_WORKTREE = '/.claude/worktrees/checkout-3: no longer on disk (removed since the session)';
+const CHECKOUTS_UNREAD_PATTERN =
+  /Checkouts: [1-9]\d* observed, [1-9]\d* not read .* · of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
 const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_CHILD_TITLE = 'Fixture: open the collector pull request';
@@ -246,6 +249,8 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(coverage.locator('[data-work-harness-coverage="other"]')).toHaveText('Other harnesses: not read here');
   await expect(coverage).toContainText(PULL_REQUESTS_OBSERVED_PATTERN);
   await expect(coverage).toContainText(CHECKOUTS_OBSERVED_PATTERN);
+  await expect(coverage).toContainText(CHECKOUTS_UNREAD_PATTERN);
+  await expect(coverage).not.toContainText(/Checkouts: .* failed/);
   await expect(coverage.locator('[data-work-jira-coverage]')).toContainText('Jira: not observed');
   await expect(coverage.locator('[data-work-window]')).toContainText(
     `${HIDDEN_ROOTS} older root without pending declarations hidden (30-day window)`,
@@ -298,6 +303,7 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(blocked).toContainText(`${PROJECT_LABEL} · fixture/checkout-3 (checkout-3)`);
   await expect(blocked).toContainText('blocked · 1 h ago');
   await expect(blocked).toContainText('children 3');
+  await expect(blocked).toContainText('checkout no longer on disk (removed since the session)');
   await expect(blocked).not.toContainText('auto title');
   const filters = main.locator('[data-work-filters]');
   await expect(
@@ -363,14 +369,14 @@ test('renders the collected registry and its observed facts as a resume surface,
     `Declared by the session at ${BLOCKED_DECLARED_AT}; its current state is unobserved.`,
   );
   await expect(aside).toContainText(`The session stopped on a question: ${BLOCKED_QUESTION}`);
-  await expect(aside).toContainText(MISSING_WORKTREE_PATTERN);
+  await expect(aside).not.toContainText('Checkout checkout-3 could not be read');
   await expect(aside.getByRole('heading', { level: 3, name: 'Facts by source' })).toBeVisible();
   await expect(aside.getByRole('heading', { level: 4, name: 'Claude Desktop metadata' })).toBeVisible();
   await expect(aside.getByRole('heading', { level: 4, name: 'Local checkout' })).toBeVisible();
   await expect(aside).toContainText('Declared blocked: Stopped at a question the fixture cannot answer alone.');
   await expect(aside).toContainText('Wrote branch fixture/checkout-3');
   await expect(aside).toContainText('/work/fixture on fixture-main: clean');
-  await expect(aside).toContainText('/.claude/worktrees/checkout-3: missing');
+  await expect(aside).toContainText(MISSING_WORKTREE);
   await expect(aside).toContainText('3 child sessions · 0 blocked · 1 review ready · 2 completed');
   for (const title of BLOCKED_CHILD_TITLES) {
     await expect(aside.getByText(title, { exact: true })).toBeVisible();

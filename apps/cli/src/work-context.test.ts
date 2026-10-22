@@ -182,3 +182,33 @@ test('a checkout line names the counts git reported, never one count for all of 
     `  - /fixture/checkout fixture/branch clean (observed ${observedAt})`,
   );
 });
+
+test('a checkout without a git status says why in plain words: gone since the session, or a failed read', () => {
+  const observedAt = parseCanonicalInstant('2026-10-22T16:20:00.000Z');
+  const unread = (outcome: 'missing' | 'not-a-repository' | 'timeout') =>
+    workContextCheckoutLine({
+      fact: {
+        ahead: null,
+        behind: null,
+        branch: null,
+        checkoutPath: '/fixture/worktree',
+        dirty: null,
+        id: 'checkout-1',
+        kind: 'checkout-status',
+        lastCommitAt: null,
+        modifiedCount: null,
+        outcome,
+        provenance: { coverage: 'complete', machineId: MACHINE, observedAt, source: 'local-checkout' },
+        stagedCount: null,
+        untrackedCount: null,
+      },
+      roots: [],
+    });
+  expect(unread('missing')).toBe(
+    `  - /fixture/worktree (no branch) no longer on disk (removed since the session) (observed ${observedAt})`,
+  );
+  expect(unread('not-a-repository')).toBe(
+    `  - /fixture/worktree (no branch) not a git repository (observed ${observedAt})`,
+  );
+  expect(unread('timeout')).toBe(`  - /fixture/worktree (no branch) not read (git timed out) (observed ${observedAt})`);
+});

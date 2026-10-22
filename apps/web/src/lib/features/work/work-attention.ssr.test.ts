@@ -255,6 +255,53 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(clean).toContain(`${where}: clean`);
     expect(clean).not.toContain('checkout clean');
   });
+  test('the coverage line says why checkouts were not read, and a removed checkout reads as a past fact', () => {
+    const base = dataset.roots.find((root) => root.title === 'Recover Claude history');
+    const fact = base?.facts.find((candidate) => candidate.kind === 'checkout-status');
+    if (base === undefined || fact?.kind !== 'checkout-status') {
+      throw new Error('Synthetic root must carry a checkout fact');
+    }
+    const gone = { ...fact, dirty: null, modifiedCount: null, outcome: 'missing' as const, stagedCount: null };
+    const notRepository = { ...gone, checkoutPath: '/fixture/home', id: 'home', outcome: 'not-a-repository' as const };
+    const root = { ...base, facts: [gone, notRepository] };
+    const body = withoutMarkers(
+      render(fixture, {
+        props: {
+          board: {
+            dataset: {
+              ...dataset,
+              coverage: { ...dataset.coverage, checkouts: { ...dataset.coverage.checkouts, failed: 11, observed: 10 } },
+              roots: dataset.roots.map((entry) => (entry === base ? root : entry)),
+            },
+            onFocusRow: noop,
+            onSearch: noop,
+            onSelect: noop,
+            search: EMPTY_WORK_ATTENTION_SEARCH,
+            selectedId: workRootId(root),
+          },
+          detail: {
+            loadedRows: [],
+            mode: 'demo',
+            onClose: noop,
+            providers: [],
+            quotaUnavailable: true,
+            reference: dataset.generatedAt,
+            revision: WORK_DEMO_REVISION,
+            root,
+            sessionClient,
+          },
+        },
+      }).body.replaceAll(/\s+/g, ' '),
+    );
+    expect(body).toContain('Checkouts: 10 observed, 11 not read');
+    expect(body).not.toContain('11 failed');
+    expect(body).toContain(
+      'of the checkouts the roots shown name: 1 no longer on disk (removed since the session), 1 not a git repository',
+    );
+    expect(body).toContain('checkout no longer on disk (removed since the session)');
+    expect(body).toContain(`Checkout ${fact.checkoutPath}: no longer on disk (removed since the session)`);
+    expect(body).toContain('Checkout /fixture/home: not a git repository');
+  });
   test('the detail names an automatic title once, where the row does not', () => {
     const body = html(EMPTY_WORK_ATTENTION_SEARCH, 'desk-enquete-retention');
     expect(occurrences(body, 'title: automatic')).toBe(1);

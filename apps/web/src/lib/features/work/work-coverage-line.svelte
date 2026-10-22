@@ -1,6 +1,11 @@
 <script lang="ts">
   import type { WorkAttentionCoverage, WorkRoot } from '@ai-usage/report-core/work-attention';
-  import { formatExactInstant, formatRelativeAge, workCodexCoverage } from './work-attention-model';
+  import {
+    formatExactInstant,
+    formatRelativeAge,
+    workCheckoutUnreadSummary,
+    workCodexCoverage,
+  } from './work-attention-model';
   import { workCoverageLine } from './work-styles';
 
   let {
@@ -14,6 +19,8 @@
   const desktop = $derived(coverage.desktopSessions);
   const pulls = $derived(coverage.pullRequests);
   const checkouts = $derived(coverage.checkouts);
+  // The run counts what it could not read without the kinds; the shown roots' facts carry them.
+  const checkoutsUnread = $derived(workCheckoutUnreadSummary(roots));
   const jira = $derived(coverage.jira);
   const hidden = $derived(coverage.window.excludedRoots);
   // What the read left out, counted: the bound keeps every session that may carry a wait.
@@ -68,10 +75,10 @@
     Checkouts:
     {#if checkouts.lastRunAt}
       {checkouts.observed}
-      observed{checkouts.failed > 0 ? `, ${checkouts.failed} failed` : ''}
+      observed{checkouts.failed > 0 ? `, ${checkouts.failed} not read` : ''}
       <time datetime={checkouts.lastRunAt} title={formatExactInstant(checkouts.lastRunAt)}
         >{formatRelativeAge(checkouts.lastRunAt, reference)}</time
-      >
+      >{checkoutsUnread === null ? '' : ` · ${checkoutsUnread}`}
     {:else}
       not observed
     {/if}

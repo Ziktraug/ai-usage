@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import type { WorkRoot } from '@ai-usage/report-core/work-attention';
 import {
   EMPTY_WORK_ATTENTION_SEARCH,
@@ -13,6 +14,7 @@ import {
   sortWorkRoots,
   toggleListValue,
   WORK_ATTENTION_SECTIONS,
+  workCheckoutUnreadSummary,
   workCodexCoverage,
   workFactSummary,
   workFilterOptions,
@@ -319,6 +321,62 @@ describe('Work attention dates and fact chips', () => {
     const ahead = withCheckout({ ahead: 2, dirty: false, modifiedCount: 0, stagedCount: 0, untrackedCount: 0 });
     expect(ahead.chips.map(({ label, tone }) => [label, tone])).toEqual([['checkout clean · 2 ahead', 'neutral']]);
     expect(ahead.summary).toBe(`${where}: clean · 2 ahead`);
+  });
+  test('a checkout without a git status names why, and only a failed read is a warning', () => {
+    const base = rootNamed('Recover Claude history');
+    const fact = base.facts.find((candidate) => candidate.kind === 'checkout-status');
+    if (fact?.kind !== 'checkout-status') {
+      throw new Error('Synthetic root must carry a checkout fact');
+    }
+    const unread = (outcome: typeof fact.outcome) => ({
+      ...fact,
+      ahead: null,
+      behind: null,
+      dirty: null,
+      modifiedCount: null,
+      outcome,
+      stagedCount: null,
+      untrackedCount: null,
+    });
+    const chipsOf = (outcome: typeof fact.outcome) =>
+      workRootFactChips({ ...base, children: { ...base.children, count: 0 }, facts: [unread(outcome)] }).map(
+        ({ label, tone }) => [label, tone],
+      );
+    // A worktree removed after its session is a fact about the past session, not an alarm.
+    expect(chipsOf('missing')).toEqual([['checkout no longer on disk (removed since the session)', 'neutral']]);
+    expect(chipsOf('not-a-repository')).toEqual([['checkout not a git repository', 'neutral']]);
+    expect(chipsOf('timeout')).toEqual([['checkout not read (git timed out)', 'warn']]);
+    expect(workFactSummary(unread('missing'))).toBe(
+      `Checkout ${fact.checkoutPath}: no longer on disk (removed since the session)`,
+    );
+    expect(workFactSummary(unread('denied'))).toBe(`Checkout ${fact.checkoutPath}: not read, permission denied`);
+  });
+  test('the coverage line counts why the checkouts of the shown roots were not read, once per checkout', () => {
+    const base = rootNamed('Recover Claude history');
+    const fact = base.facts.find((candidate) => candidate.kind === 'checkout-status');
+    if (fact?.kind !== 'checkout-status') {
+      throw new Error('Synthetic root must carry a checkout fact');
+    }
+    const at = (outcome: typeof fact.outcome, checkoutPath: string, observedAt = fact.provenance.observedAt) => ({
+      ...fact,
+      checkoutPath,
+      id: `${checkoutPath}@${observedAt}`,
+      outcome,
+      provenance: { ...fact.provenance, observedAt },
+    });
+    const earlier = canonicalInstantFromDate(new Date(Date.parse(fact.provenance.observedAt) - 86_400_000));
+    const withFacts = (facts: WorkRoot['facts']) => ({ ...base, facts });
+    expect(workCheckoutUnreadSummary(roots)).toBeNull();
+    expect(
+      workCheckoutUnreadSummary([
+        withFacts([at('missing', '/wt/a'), at('missing', '/wt/b'), at('not-a-repository', '/home')]),
+        // The same checkout under a second root counts once; its latest observation decides.
+        withFacts([at('missing', '/wt/a'), at('observed', '/wt/c', earlier), at('timeout', '/wt/c')]),
+        withFacts([at('missing', '/wt/d', earlier), at('observed', '/wt/d')]),
+      ]),
+    ).toBe(
+      'of the checkouts the roots shown name: 2 no longer on disk (removed since the session), 1 not a git repository, 1 not read (git timed out)',
+    );
   });
   test('a declared-only pull request chip is dated by the session file that listed it', () => {
     const mobile = rootNamed('Fix mobile navigation label overlap');

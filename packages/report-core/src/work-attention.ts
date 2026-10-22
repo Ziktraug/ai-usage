@@ -765,6 +765,26 @@ export const parseCheckoutStatusObservation = (value: unknown): CheckoutStatusOb
   };
 };
 
+const CHECKOUT_OUTCOME_WORDS: Readonly<Record<CheckoutStatusOutcome, string>> = {
+  denied: 'permission denied',
+  invalid: 'git status unreadable',
+  missing: 'no longer on disk (removed since the session)',
+  'not-a-repository': 'not a git repository',
+  observed: 'observed',
+  timeout: 'git timed out',
+};
+
+/**
+ * Why a checkout has a git status or not, in plain words, the same on every surface. A path that
+ * no longer exists (a worktree removed after its session) or that is not a repository is a fact
+ * about where the session worked, not a failed read: `isCheckoutReadFailure` is false for both.
+ */
+export const describeCheckoutOutcome = (outcome: CheckoutStatusOutcome): string => CHECKOUT_OUTCOME_WORDS[outcome];
+
+/** Whether git could not tell what the checkout holds although the path was there to read. */
+export const isCheckoutReadFailure = (outcome: CheckoutStatusOutcome): boolean =>
+  outcome === 'timeout' || outcome === 'denied' || outcome === 'invalid';
+
 export type CheckoutStateCounts = Pick<
   CheckoutStatusObservation,
   'ahead' | 'behind' | 'dirty' | 'modifiedCount' | 'stagedCount' | 'untrackedCount'

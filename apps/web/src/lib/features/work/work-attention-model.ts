@@ -1,6 +1,10 @@
 import {
+  CHECKOUT_STATUS_OUTCOMES,
+  type CheckoutStatusOutcome,
   type ClaudeDesktopTurnStatus,
+  describeCheckoutOutcome,
   describeCheckoutState,
+  isCheckoutReadFailure,
   WORK_ATTENTION_KINDS,
   type WorkAttentionDataset,
   type WorkAttentionKind,
@@ -638,6 +642,41 @@ const pullRequestChips = (root: WorkRoot): readonly WorkFactChip[] => {
 
 const replies = (count: number): string => `${count} new ${count === 1 ? 'reply' : 'replies'}`;
 
+/** Why a checkout has no git status: a failed read says so, a removed or non-repository path is stated as such. */
+const checkoutUnreadWords = (outcome: CheckoutStatusOutcome): string =>
+  isCheckoutReadFailure(outcome) ? `not read (${describeCheckoutOutcome(outcome)})` : describeCheckoutOutcome(outcome);
+
+/**
+ * Why the checkouts of the shown roots have no git status, by kind and in plain words, for the
+ * coverage line: the producer's run counts its failures without their kinds, the facts carry them.
+ * Each checkout (machine and path) counts once, by its latest observation; `null` when every one
+ * of them was read.
+ */
+export const workCheckoutUnreadSummary = (roots: readonly WorkRoot[]): string | null => {
+  const latest = new Map<string, Extract<WorkFact, { kind: 'checkout-status' }>>();
+  for (const fact of roots.flatMap((root) => root.facts)) {
+    if (fact.kind !== 'checkout-status') {
+      continue;
+    }
+    const key = JSON.stringify([fact.provenance.machineId, fact.checkoutPath]);
+    const known = latest.get(key);
+    if (known === undefined || Date.parse(known.provenance.observedAt) < Date.parse(fact.provenance.observedAt)) {
+      latest.set(key, fact);
+    }
+  }
+  const counts = new Map<CheckoutStatusOutcome, number>();
+  for (const { outcome } of latest.values()) {
+    if (outcome !== 'observed') {
+      counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+    }
+  }
+  const parts = CHECKOUT_STATUS_OUTCOMES.flatMap((outcome) => {
+    const count = counts.get(outcome);
+    return count === undefined ? [] : [`${count} ${checkoutUnreadWords(outcome)}`];
+  });
+  return parts.length === 0 ? null : `of the checkouts the roots shown name: ${parts.join(', ')}`;
+};
+
 /**
  * One chip per issue key; as for pull requests, a later failed read replaces the older success in
  * the row. Dated by the newest reply when one arrived, else by the observation.
@@ -717,8 +756,20 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
   }
   chips.push(...pullRequestChips(root), ...jiraChips(root));
   for (const fact of root.facts) {
-    // A clean checkout level with its upstream says nothing to resume; commits not pushed do.
-    if (fact.kind === 'checkout-status' && (fact.dirty === true || (fact.ahead ?? 0) > 0)) {
+    if (fact.kind !== 'checkout-status') {
+      continue;
+    }
+    if (fact.outcome !== 'observed') {
+      chips.push({
+        id: fact.id,
+        instant: fact.provenance.observedAt,
+        instantLabel: 'observed',
+        label: `checkout ${checkoutUnreadWords(fact.outcome)}`,
+        // Gone since the session, or never a repository: a fact about the session, not an alarm.
+        tone: isCheckoutReadFailure(fact.outcome) ? 'warn' : 'neutral',
+      });
+    } else if (fact.dirty === true || (fact.ahead ?? 0) > 0) {
+      // A clean checkout level with its upstream says nothing to resume; commits not pushed do.
       chips.push({
         id: fact.id,
         instant: fact.provenance.observedAt,
@@ -803,7 +854,7 @@ export const workFactSummary = (fact: WorkFact, root?: WorkRoot): string => {
     case 'checkout-status':
       return fact.outcome === 'observed'
         ? `Checkout ${fact.checkoutPath}${fact.branch ? ` on ${fact.branch}` : ''}: ${describeCheckoutState(fact)}`
-        : `Checkout ${fact.checkoutPath}: ${fact.outcome}`;
+        : `Checkout ${fact.checkoutPath}: ${isCheckoutReadFailure(fact.outcome) ? `not read, ${describeCheckoutOutcome(fact.outcome)}` : describeCheckoutOutcome(fact.outcome)}`;
     case 'jira-issue':
       return fact.outcome === 'observed'
         ? `Jira ${fact.key} ${fact.status ?? 'status unknown'}${fact.commentCount === null ? '' : `, ${fact.commentCount} comment${fact.commentCount === 1 ? '' : 's'}`}${fact.newCommentsSince ? `, ${replies(fact.newCommentsSince)} since the latest activity on this key` : ''}`

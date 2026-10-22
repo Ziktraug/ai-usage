@@ -3,7 +3,9 @@ import { type CanonicalInstant, canonicalInstantEpochMs } from './canonical-inst
 import {
   type CheckoutStatusObservation,
   type ClaudeDesktopSessionObservation,
+  describeCheckoutOutcome,
   describeCheckoutState,
+  isCheckoutReadFailure,
   JIRA_ISSUE_KEY_PATTERN,
   type JiraIssueObservation,
   type PullRequestObservation,
@@ -65,7 +67,8 @@ export const checkoutStatusFact = (observation: CheckoutStatusObservation, factI
   modifiedCount: observation.modifiedCount,
   outcome: observation.outcome,
   provenance: {
-    coverage: observation.outcome === 'observed' ? 'complete' : 'partial',
+    // A path that is gone, or not a repository, is completely observed: nothing more is there to read.
+    coverage: isCheckoutReadFailure(observation.outcome) ? 'partial' : 'complete',
     machineId: observation.machineId,
     observedAt: observation.observedAt,
     source: 'local-checkout',
@@ -165,13 +168,17 @@ const interpretCheckout = (
 ): WorkInterpretation | null => {
   const label = path.basename(fact.checkoutPath) || fact.checkoutPath;
   const { observedAt } = fact.provenance;
-  if (fact.outcome !== 'observed') {
+  if (isCheckoutReadFailure(fact.outcome)) {
     return interpretation(
       'coverage-gap',
       [fact.id],
-      `Checkout ${label} could not be read at ${observedAt} (${fact.outcome}).`,
+      `Checkout ${label} could not be read at ${observedAt}: ${describeCheckoutOutcome(fact.outcome)}.`,
       'Local changes, if any, are unknown from this observation.',
     );
+  }
+  if (fact.outcome !== 'observed') {
+    // Removed since the session, or never a repository: the fact says so; there is no gap to name.
+    return null;
   }
   if (fact.dirty !== true) {
     return null;
