@@ -99,8 +99,15 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(46);
-    expect(dependencyAcquisitions).toBe(46);
+    expect(observed).toHaveLength(47);
+    expect(dependencyAcquisitions).toBe(47);
+    expect(rpcOperationPolicies.find(({ operation }) => operation === 'stopWorkAttempt')).toMatchObject({
+      method: 'POST',
+      target: 'workAttempts.stop',
+      transport: 'mutation',
+      requestSize: 'bounded-rpc-json',
+      responseSize: 'bounded-json',
+    });
   });
   test('serves opaque project identity through the real Skills RPC routes only in an injected extended context', async () => {
     const capability = await createE2ESkillsCapability('extended');

@@ -74,6 +74,20 @@ describe('work rpc router', () => {
     });
   });
 
+  test('passes both valid history window boundaries to the dependency', async () => {
+    const inputs: unknown[] = [];
+    const router = createWorkRpcRouter({
+      readAttention: (input) => {
+        inputs.push(input);
+        return Promise.resolve({ data: dataset, ok: true });
+      },
+    });
+    for (const sinceDays of [1, 3650]) {
+      expect(await call(router.attention, { sinceDays }, { context: {} })).toEqual({ data: dataset, ok: true });
+    }
+    expect(inputs).toEqual([{ sinceDays: 1 }, { sinceDays: 3650 }]);
+  });
+
   test('rejects an input outside the contract before reaching the dependency', async () => {
     let reached = false;
     const router = createWorkRpcRouter({
@@ -82,8 +96,9 @@ describe('work rpc router', () => {
         return Promise.resolve({ data: dataset, ok: true });
       },
     });
-    await expect(call(router.attention, { limit: 0 } as never, { context: {} })).rejects.toThrow();
-    await expect(call(router.attention, { sinceDays: 1 } as never, { context: {} })).rejects.toThrow();
+    await expect(call(router.attention, { limit: 0 }, { context: {} })).rejects.toThrow();
+    await expect(call(router.attention, { sinceDays: 0 }, { context: {} })).rejects.toThrow();
+    await expect(call(router.attention, { sinceDays: 3661 }, { context: {} })).rejects.toThrow();
     expect(reached).toBe(false);
   });
 });

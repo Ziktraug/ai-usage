@@ -253,21 +253,26 @@ describe('work attention e2e fixture', () => {
 });
 
 describe('work attention e2e fixture against what Claude Desktop recorded after a request (ADR 0056)', () => {
-  test('replays the earlier file states, so an answered question and a reply read as the store would read them', async () => {
+  test('replays dated messages and declaration replacements without inferring answers or settled parent work', async () => {
     const result = await readFixture();
     const byId = new Map(result.data.roots.map((root) => [root.desktopSessionId, root]));
 
     const answered = byId.get(ids.answeredRoot);
     expect(answered?.attention).toBe('human-request');
     expect(answered?.declared?.needsAction).toBe('Delete the superseded layout branch now?');
-    expect(kindsOf(answered)).toEqual(['request-open', 'earlier-request-answered']);
+    expect(kindsOf(answered)).toEqual(['request-open', 'earlier-request-superseded']);
     expect(answered?.interpretations[1]?.text).toBe(
-      `Answered in Claude Desktop: the question “Keep the compact layout or the airy one?” (asked ${hoursBefore(5)}); you wrote to the session at ${hoursBefore(4)} and it declared again at ${hoursBefore(3)}.`,
+      `Declaration replaced: the question “Keep the compact layout or the airy one?” (asked ${hoursBefore(5)}) was replaced by the session’s declaration at ${hoursBefore(3)}.`,
     );
 
+    expect(answered?.interpretations[1]?.uncertainty).toContain(`A message from you was observed at ${hoursBefore(4)}`);
+    expect(kindsOf(answered)).not.toContain('earlier-request-answered');
+
     const replied = byId.get(ids.repliedRoot);
-    expect(replied?.attention).toBe('none');
-    expect(kindsOf(replied)).toEqual(['request-answered']);
+    expect(replied?.attention).toBe('human-request');
+    expect(kindsOf(replied)).toEqual(['request-open', 'request-message-observed']);
+    expect(replied?.interpretations[1]?.uncertainty).toContain('Whether it answers this question is unknown');
+    expect(kindsOf(replied)).not.toContain('request-answered');
 
     // GitHub shows #131 merged after the question; the question asks for no pull request.
     const unrelated = byId.get(ids.unrelatedPullRequestRoot);
@@ -277,10 +282,12 @@ describe('work attention e2e fixture against what Claude Desktop recorded after 
 
     const offers = byId.get(ids.laterOfferRoot);
     expect(offers?.attention).toBe('optional-lead');
-    expect(kindsOf(offers)).toEqual(['proposal-open', 'proposal-superseded', 'proposal-expired']);
+    expect(kindsOf(offers)).toEqual(['proposal-open', 'proposal-expired']);
 
-    expect(kindsOf(byId.get(ids.handledRoot))).toEqual(['request-handled-elsewhere']);
-    expect(byId.get(ids.handledRoot)?.attention).toBe('none');
+    expect(kindsOf(byId.get(ids.handledRoot))).toEqual(['request-open', 'request-continued-elsewhere']);
+    expect(byId.get(ids.handledRoot)?.attention).toBe('human-request');
+    expect(byId.get(ids.handledRoot)?.reconsidered).toBe(true);
+    expect(kindsOf(byId.get(ids.handledRoot))).not.toContain('request-handled-elsewhere');
     expect(byId.get(ids.continuedRoot)?.reconsidered).toBe(true);
     expect(kindsOf(byId.get(ids.continuedRoot))).toEqual(['request-open', 'request-continued-elsewhere']);
     // The new interpretation kinds cross the wire contract.
