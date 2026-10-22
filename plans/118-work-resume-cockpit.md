@@ -174,3 +174,24 @@ producers and a Desktop run that inserted rows wakes them once (real-scheduler i
 which removes the empty first cycle found by the production spec. Verified at `7e6aa072`: `bun run
 check` and `lint` clean, `bun run --cwd apps/web test` 1530 pass; worker evidence: typecheck 58/58,
 package suites 1233 pass. The e2e specs encode the previous texts and counts and are being realigned.
+
+### 2026-10-22 04:35 — lot E integrated (`562178bb`)
+
+Lot E (`71585abf`…`3aae0a20`, ADR 0053): the first execution launched by the product. An attempt is
+a row in the additive `review_attempts` table (identity, target, checkout, declaration snapshot,
+state, timestamps, pid, native session id, bounded result excerpt, executed validations, acceptance);
+the engine command `start-review-attempt` re-decides at launch (a `routing.executors[]` declaration,
+a checkout equal to or under a declared `routing.reviewTargets` entry, a recomputed real
+recommendation, an observed available executor; Codex refused), spawns `claude -p` in plan mode with
+read-only tools, `--max-turns 8`, a 10-minute timeout, a 2 MiB output cap and a 15-second heartbeat,
+and records starting/running/finished/failed; one live attempt per idempotency key (a second request
+returns it), live rows become `lost` at engine start or shutdown and are never relaunched. The Work
+routing panel gains an "Execution" section and an attempts list where the result, the executed
+validations and the human acceptance stay distinct. Proof: unit suites, an opt-in production spec
+with a fake `claude` (click → attempt → finished → reused on repeat → survives reload → axe), and
+one real launch of the launcher alone (`claude` 2.1.306, subscription sign-in) against a finished
+campaign worktree: finished, native session id captured, 2 704-character excerpt, 40 s, target
+checkout unchanged. Integration: five append conflicts (README sections 8/9, ADR index, upgrade
+notes, store exports), E's observation fixtures gained lot F's `authMethod` field and the API-key
+helper tolerates an absent method. Verified at `562178bb`: typecheck 58/58, check clean, package
+suites 1347 pass, web 1547 pass.
