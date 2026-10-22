@@ -56,6 +56,7 @@ describe('claude review launcher', () => {
       '--verbose',
       '--permission-mode',
       'plan',
+      '--strict-mcp-config',
       '--allowedTools',
       'Read',
       'Grep',
@@ -68,6 +69,10 @@ describe('claude review launcher', () => {
       'Bash',
       'WebFetch',
       'WebSearch',
+      'Agent',
+      'Task',
+      'TodoWrite',
+      'Skill',
       '--max-turns',
       '6',
       '--model',
@@ -76,7 +81,7 @@ describe('claude review launcher', () => {
       'high',
     ]);
     expect(claudeReviewArguments({ effort: null, model: null }, 'P')).toEqual(
-      expect.not.arrayContaining(['--model', '--effort', '--dangerously-skip-permissions']),
+      expect.not.arrayContaining(['--model', '--effort', '--dangerously-skip-permissions', '--mcp-config']),
     );
     expect(claudeReviewArguments({ effort: null, model: null }, 'P')).toContain('8');
   });

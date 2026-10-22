@@ -13,9 +13,12 @@ import {
  * Launches one read-only Claude Code review (ADR 0053) and reads its `stream-json` output line by
  * line. This is the only place the product starts a harness, and it is deliberately narrow:
  *
- * - `claude -p <prompt> --output-format stream-json --verbose --permission-mode plan`, with the
- *   read-only tools allowed and every writing or network tool disallowed, a turn cap, and the
- *   declared model and effort when the operator declared them. No bypass flag, no API fallback.
+ * - `claude -p <prompt> --output-format stream-json --verbose --permission-mode plan
+ *   --strict-mcp-config`, with the read-only tools allowed and every writing, network, delegating
+ *   (Agent, Task), planning (TodoWrite) and skill tool disallowed, no MCP server inherited from
+ *   the operator's or the checkout's configuration, a turn cap, and the declared model and effort
+ *   when the operator declared them. No bypass flag, no API fallback. Hooks the operator or the
+ *   checkout configured are not neutralized by these flags; ADR 0053 records that limit.
  * - No shell; `cwd` is the admitted checkout; the environment is the bounded allow-list of the
  *   shared runner (PATH, HOME, locale, XDG) plus `CLAUDE_CONFIG_DIR` when the operator set it, so
  *   the operator's own Claude Code sign-in is used and no credential is ever read or stored here.
@@ -43,6 +46,10 @@ export const CLAUDE_REVIEW_DISALLOWED_TOOLS = [
   'Bash',
   'WebFetch',
   'WebSearch',
+  'Agent',
+  'Task',
+  'TodoWrite',
+  'Skill',
 ] as const;
 
 export type ClaudeReviewLaunchFailureKind = 'executable-invalid' | 'executable-missing' | 'spawn-failed';
@@ -118,6 +125,8 @@ export const claudeReviewArguments = (
   '--verbose',
   '--permission-mode',
   'plan',
+  // No MCP server from user, project or local settings: only `--mcp-config` would add one, and none is passed.
+  '--strict-mcp-config',
   '--allowedTools',
   ...CLAUDE_REVIEW_ALLOWED_TOOLS,
   '--disallowedTools',
