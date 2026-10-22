@@ -411,3 +411,35 @@ and 31/31 (one different test each time: a Session drawer `getResponseBody` prot
 500 on `/rpc/campaign/labelOverrides`; both pass alone; the base `3402c046` passed 31/31 once
 under the same load). Not verified: the real hook probe (operator steps prepared), CI on this
 head, and whether the two continuity failures are load-only flakes.
+
+### 2026-10-22 13:05 — independent review fixes; gate at `28467583`
+
+An adversarial review of `3402c046..7c6c1b55` (P0 0, P1 4, P2 9) was checked against the code and
+its four P1 and four cheap P2 findings fixed test-first, one commit each. P1-1 (`b735df70`): in a
+blobless partial clone the scope fetched the base blob, wrote a pack and started maintenance; every
+scope and checkout-status git call now runs with `GIT_NO_LAZY_FETCH=1`, `maintenance.auto=false`
+and `gc.auto=0`, and a missing blob refuses the scope as `blob-not-local` (real
+`--filter=blob:none` clone, object store unchanged). P1-2 (`338a1404`): a reservation without a
+launch marker or without `/proc` was held forever; the scan falls back to `ps -axww`, claims an
+absence only when it sees the engine itself, and "Declare the review ended"
+(`release-review-reservation`, `workAttempts.release`, request policy 46/50) releases with
+`process-absent` or `operator-declared-ended`, never over a process still carrying the marker; the
+table is rebuilt once for the new evidence. P1-3 (`049ea67f`): only a session started from the
+root closes its request; a completed report keeps it to reconsider. P1-4 (`b050502e`): the probe,
+the qualification and the launch share `claudeCommandFor` (executable and `CLAUDE_CONFIG_DIR`), and
+a pinned route is re-probed at start (`identity-changed`). P2s: a git killed by a signal is no
+longer `not-text` and a dirty non-UTF-8 name no longer refuses a clean commit (`e1c1aecd`); a NUL
+patch is refused before spawn and failure reasons never quote the prompt (`54594926`); an
+unmigrated store reads as typed `schema-too-old` (`349563ee`); ADR 0012 names
+`collection-facts-swr` (`28467583`). Left for follow-up as directed: git status filter drivers,
+the patch in argv, Windows managed settings, started proposals; the PID-namespace case is closed
+only where the engine cannot see itself.
+
+Gate in the detached gate worktree at `28467583` under `nix develop` (Bun 1.3.13): frozen install;
+`bun run check` 1618 files clean; `bun run lint` PASS; typecheck PASS (turbo `check` 58/58 with
+`--force`); package suites 56 tasks, 2 736 pass, 0 fail (223 s); web unit 1 575 pass (55 s); build
+PASS; client manifest PASS; `test:web-bundle` 4/4, first load 305 868 B; `bun run test:e2e` through
+the retry wrapper 251 passed, no retry (130 s); `bun run test:e2e-production` PASS (364 s):
+production report 13/13, `work-production.spec.ts` 5/5, `work-attempt-production.spec.ts` 1/1,
+session scroll and campaign map 7/7, campaign continuity 31/31. Not run: `test:tools` and
+`test:web-production` (nothing they cover changed), the real hook probe, CI on this head.
