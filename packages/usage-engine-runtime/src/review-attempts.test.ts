@@ -51,6 +51,8 @@ const emit = (...lines: string[]): string =>
 const FAKE_HELP = [
   '--allowedTools',
   '--disallowedTools',
+  '--effort',
+  '--model',
   '--output-format',
   '--permission-mode',
   '--print',
@@ -142,7 +144,14 @@ interface Fixture {
 }
 
 interface FixtureOptions {
+  /** Fields merged into the one `routing.executors[]` entry (a model and its alternates, say). */
+  readonly declaration?: Readonly<Record<string, unknown>>;
   readonly quota?: boolean;
+  /** Quota windows added to the all-models 5-hour one, under the given provider state. */
+  readonly quotaWindows?: {
+    readonly state: ProviderQuotaObservation['state'];
+    readonly windows: ProviderQuotaObservation['windows'];
+  };
   readonly reviewTargets?: readonly unknown[];
 }
 
@@ -195,6 +204,7 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
             quality: 'review-capable',
             subscription: 'verified',
             targets: [{ kind: 'any-local-session' }],
+            ...options.declaration,
           },
         ],
         reviewTargets: options.reviewTargets ?? [{ checkoutPath: path.join(root, 'work'), label: 'fixture' }],
@@ -227,8 +237,9 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
       providerKey: 'claude',
       providerLabel: 'Claude',
       source: { confidence: 'authoritative', key: 'fixture-quota', mode: 'poll' },
-      state: 'ok',
+      state: options.quotaWindows?.state ?? 'ok',
       windows: [
+        ...(options.quotaWindows?.windows ?? []),
         {
           blocked: false,
           group: '5h',
@@ -546,6 +557,52 @@ describe('engine review attempts', () => {
     const failed = await attemptById(fixture.dbPath, unscoped.attempt.attemptId);
     expect(failed).toMatchObject({ pid: null, resultKind: 'error', scope: null, state: 'failed' });
     expect(failed.failureReason).toContain('scope-unavailable: the checkout has no commit to review');
+  });
+
+  test('an alternate-model candidate launches with its own model, and the guarantee records it (ADR 0057)', async () => {
+    // The case of the day: the Fable window is exhausted, the all-models window is not, Opus is
+    // declared after Fable on the same account. Opus is the real candidate; the launch must pass
+    // `--model Opus`, never the declaration's primary model.
+    const fixture = await createFixture({
+      declaration: { alternateModels: ['Opus'], model: 'Fable' },
+      quotaWindows: {
+        state: 'partial',
+        windows: [
+          {
+            blocked: true,
+            group: 'weekly',
+            id: 'model:Fable',
+            label: 'Fable · Weekly',
+            limitSeconds: null,
+            remainingPercent: 0,
+            resetsAt: '2026-10-24T05:00:00.000Z',
+            scope: 'model',
+            usedPercent: 100,
+          },
+        ],
+      },
+    });
+    const opus = `${CANDIDATE_ID}:model:1:Opus`;
+    const executable = await fixture.executable(
+      [
+        'const model = process.argv[process.argv.indexOf("--model") + 1];',
+        'if (model !== "Opus") process.exit(7);',
+        emit(INIT_LINE, RESULT_LINE),
+      ].join('\n'),
+    );
+    const engine = service(fixture, executable);
+
+    const primary = await engine.start(command());
+    expect(primary.refusal?.reason).toBe('recommendation-not-real');
+
+    const started = await engine.start(command({ candidateId: opus }));
+    expect(started.refusal).toBeNull();
+    await engine.settle();
+    const attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
+    expect(attempt).toMatchObject({ candidateId: opus, exitCode: 0, state: 'finished' });
+    expect(attempt.guarantee?.model).toBe('Opus');
+    // The snapshot keeps the declaration as written; the guarantee names the model that ran.
+    expect(attempt.declaration).toMatchObject({ alternateModels: ['Opus'], model: 'Fable' });
   });
 
   test('a double click and a second client on the same target launch one review', async () => {

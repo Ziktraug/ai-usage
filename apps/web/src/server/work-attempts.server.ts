@@ -7,6 +7,7 @@ import {
   type ReviewTargetDeclaration,
   resolveReviewCheckoutPath,
 } from '@ai-usage/report-core/work-attempts';
+import { declarationForReviewCandidate } from '@ai-usage/report-core/work-routing';
 import {
   parseWebUsageEngineCommand,
   type UsageEngineCommandCompletion,
@@ -150,8 +151,8 @@ const nativeHarnessKey = (executorHarness: ReviewAttempt['executorHarness']): st
 
 /**
  * The wire shape: no pid, no idempotency key, no launch session id, no declaration snapshot; the
- * declared account, model and effort stay, with the reviewed scope, the harness guarantee and
- * whether the attempt still holds its identity's reservation.
+ * declared account and effort and the launched candidate's model stay, with the reviewed scope,
+ * the harness guarantee and whether the attempt still holds its identity's reservation.
  */
 export const toWorkAttemptWire = (
   attempt: ReviewAttempt,
@@ -166,7 +167,9 @@ export const toWorkAttemptWire = (
       : {
           accountScope: attempt.declaration.accountScope,
           effort: attempt.declaration.effort,
-          model: attempt.declaration.model,
+          // The candidate's model, not the declaration's primary one: an alternate-model candidate
+          // (ADR 0057) shares its declaration. A candidate id the snapshot does not produce names none.
+          model: declarationForReviewCandidate([attempt.declaration], attempt.candidateId)?.model ?? null,
         },
   durationMs: attempt.durationMs,
   endedAt: attempt.endedAt,

@@ -278,6 +278,37 @@ describe('launch decision', () => {
     }
   });
 
+  test('allows an alternate-model candidate of one declaration and carries its own model (ADR 0057)', () => {
+    const fable = { ...declaration, alternateModels: ['Opus'], model: 'Fable' };
+    const opus = `${CANDIDATE_ID}:model:1:Opus`;
+    const fableExhausted: ProviderStatus = {
+      ...quota,
+      state: 'partial',
+      windows: [
+        ...quota.windows,
+        {
+          blocked: true,
+          group: 'weekly',
+          id: 'model:Fable',
+          label: 'Fable · Weekly',
+          limitSeconds: null,
+          remainingPercent: 0,
+          resetsAt: '2026-10-24T05:00:00.000Z',
+          scope: 'model',
+          usedPercent: 100,
+        },
+      ],
+    };
+    const input = { ...allowedInput, declarations: [fable], providers: [fableExhausted] };
+    const decision = decideReviewLaunch({ ...input, candidateId: opus });
+    expect(decision.kind).toBe('allowed');
+    if (decision.kind === 'allowed') {
+      expect(decision.candidate).toMatchObject({ id: opus, model: 'Opus' });
+      expect(decision.declaration).toEqual(fable);
+    }
+    expect(decideReviewLaunch(input)).toMatchObject({ kind: 'refused', reason: 'recommendation-not-real' });
+  });
+
   test('refuses another live attempt on the target before anything else', () => {
     const decision = decideReviewLaunch({ ...allowedInput, otherLiveAttempt: { attemptId: 'attempt-1' } });
     expect(decision).toMatchObject({ kind: 'refused', reason: 'attempt-already-live' });

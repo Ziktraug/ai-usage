@@ -136,6 +136,15 @@ describe('Work attempts server', () => {
         .reservation,
     ).toEqual({ held: false, releaseEvidence: 'process-absent', releasedAt: attempt.updatedAt });
     expect(wire.declared).toEqual({ accountScope: 'personal', effort: 'high', model: 'opus' });
+    // An alternate-model candidate (ADR 0057) shares the declaration; the model it launched is its own.
+    const alternate = toWorkAttemptWire({
+      ...attempt,
+      candidateId: `${attempt.candidateId}:model:1:Fable`,
+      declaration: { ...attempt.declaration!, alternateModels: ['Fable'] },
+    });
+    expect(alternate.declared).toEqual({ accountScope: 'personal', effort: 'high', model: 'Fable' });
+    // A candidate id the snapshot does not produce names no model rather than the primary one.
+    expect(toWorkAttemptWire({ ...attempt, candidateId: 'declared:unknown' }).declared?.model).toBeNull();
     expect(wire.nativeSessionRowId).toBe('row-native-1');
     expect(toWorkAttemptWire(attempt).nativeSessionRowId).toBeNull();
 

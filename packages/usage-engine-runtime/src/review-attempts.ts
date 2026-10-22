@@ -317,9 +317,10 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
       checkoutPath: decision.checkout.checkoutPath,
       effort: decision.declaration.effort,
       launchSessionId: attempt.launchSessionId,
-      // The launched model; the launcher records it in the guarantee beside the scope, so the
-      // result names the model that produced it.
-      model: decision.declaration.model,
+      // The launched model is the candidate's: an alternate-model candidate (ADR 0057) shares its
+      // declaration but not its primary model. The launcher records it in the guarantee beside the
+      // scope, so the result names the model that produced it.
+      model: decision.candidate.model,
       sessionTitle: attempt.target.sessionTitle,
       ...options.runLimits,
     };

@@ -28,10 +28,10 @@ import {
   type ExecutorDeclaration,
   type ExecutorHarness,
   type ExecutorObservation,
-  executorDeclarationKey,
 } from './work-executors';
 import {
   assessReviewRecommendation,
+  declarationForReviewCandidate,
   qualifyReviewCandidates,
   type ReviewCandidate,
   type ReviewTarget,
@@ -1017,9 +1017,8 @@ export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaun
       `no routing.executors[] declaration exists for machine ${input.target.machineId}; add one before launching`,
     );
   }
-  const declaration = input.declarations.find(
-    (entry) => `declared:${executorDeclarationKey(entry)}` === input.candidateId,
-  );
+  // An alternate-model candidate (ADR 0057) shares its declaration; the id names both.
+  const declaration = declarationForReviewCandidate(input.declarations, input.candidateId)?.declaration;
   if (!(candidate && declaration) || candidate.provenance.authorization !== 'declared') {
     return refusal(
       'no-declaration',
