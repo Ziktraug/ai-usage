@@ -257,7 +257,7 @@ bun run cli -- projects list --paths ./mac-usage.json --local
 
 ### 7. Declare which local harness may run a read-only review
 
-The Work view simulates assigning a read-only review of a session to a local
+The Work view qualifies a read-only review of a session for a local
 harness (Claude Code or Codex). History and quota never prove that a harness is
 *allowed* to act, so authorization is declared once, by you, in the home config
 (`~/.config/ai-usage/config.json`, section `routing`; repository config cannot
@@ -266,7 +266,8 @@ declare it). The engine observes the rest on a 15-minute cadence
 version, and the sign-in state that `claude auth status` / `codex login status`
 report. Quota comes from the existing usage-limit sources. Each field of a
 candidate shows where it came from (`declared <date>`, `observed-now`,
-`stale <date>`, `unknown`) and the simulation never starts anything.
+`stale <date>`, `unknown`). Qualification starts no review; a separate launch
+action uses the declared checkout authorization in section 9.
 
 ```json
 {
@@ -295,6 +296,9 @@ candidate shows where it came from (`declared <date>`, `observed-now`,
   `ai-usage quota --stored --json`), use that suffix; when the key is bare
   (`claude`, the usual case today), any stable name you choose binds the
   declaration to that machine's single quota stream for the family.
+  Native Codex quota is scoped by the observed account fingerprint: copy that
+  exact suffix into `accountScope` and pin the same observed identity below.
+  A previous human-readable Codex alias needs explicit requalification.
 - `machineId` (optional): defaults to this machine
   (`~/.config/ai-usage/machine.json`). Set it only to declare a route on another
   machine's behalf.
@@ -306,29 +310,31 @@ candidate shows where it came from (`declared <date>`, `observed-now`,
   or `api` (metered API billing, excluded by the subscription-only policy).
   Nothing verifies billing for you: the observed plan is shown beside your
   declaration, never used to infer it.
-- `capabilities` (`read-only-review`), `quality` (`review-capable`): the only
-  values the current simulation understands.
+- `capabilities` (`read-only-review`), `quality` (`review-capable`): the current
+  review qualification values.
 - `model`, `effort` (optional): the model and effort the review would run with.
   Declare `model` when the provider reports model-scoped quota windows (ids
   `model:<name>` in the quota feed, for example `model:Fable` on a Claude Max
   plan today); the declared name must equal `<name>` exactly, otherwise those
   windows cannot be attributed and the candidate stays excluded.
+  Codex launch requires an explicit model and preserves the selected effort;
+  a native model substitution is refused.
 - `alternateModels` (optional, requires `model`): further models of the same
   account, in preference order, at most 8 and none repeated (for example
   `["Opus"]` after `"model": "Fable"`). Each becomes its own candidate on the
   same account and the same quota reading, never an extra reserve: a window
   scoped to one model (`model:Fable`) excludes only that model, while an
   exhausted all-models window excludes every model of the account.
-- `accountFingerprint` (optional, Claude Code): pins the route to the account
-  the CLI is signed in to (ADR 0057). The engine keeps only a 16-character
-  lowercase hexadecimal hash of the organization and email that
-  `claude auth status` reports, never the identifiers, and reads no credential
-  file. While the CLI reports an account and the entry pins none, the
+- `accountFingerprint`: pins the route to the account the CLI is signed in to
+  (ADR 0057/0062). The engine keeps a 16-character domain-separated hash of
+  identity reported by the CLI's supported account interface, never the raw
+  identifiers, and reads no credential file. Codex uses `account/read` and
+  `account/rateLimits/read` on its own app-server connection. While the CLI
+  reports an account and the entry pins none, the
   candidate stays conditional and the Work view shows the exact line to add
   (`"accountFingerprint": "<16 hex>"`): pinning is a one-time act per machine.
   A later sign-in to another account then excludes the route until you sign
-  back in or re-declare. Codex exposes no account outside its credential
-  file, so a Codex entry has nothing to pin.
+  back in or re-declare. A Codex launch requires a confirmed pin.
 - `declaredAt`: required RFC 3339 date-time; the declaration is a dated
   statement, not a current observation.
 
@@ -377,9 +383,10 @@ recorded as `invalid`, never as a fact.
 
 ### 9. Declare which checkouts a launched review may run in
 
-A `real` recommendation for Claude Code can become one execution (ADR 0053):
-the engine runs `claude -p` in plan mode with read-only tools, in the
-session's checkout, with your own Claude Code sign-in, and records the attempt.
+A qualified recommendation for Claude Code or Codex can become one execution
+(ADR 0053/0062). The engine uses the selected harness's own subscription sign-in
+and records the attempt. Claude uses its existing read-only launcher; Codex
+uses an owned app-server turn with verified model, policy and capacity.
 It does so only when that checkout is equal to, or below, an entry you
 declared under `routing.reviewTargets` in the same home config:
 
@@ -404,8 +411,18 @@ declaration, the executor observation, the quota and the checkout at launch
 time; the browser never decides. One attempt is live per target at a time: a
 second click, a retry or a reload returns the existing one. An attempt the
 engine lost contact with (restart, shutdown) is shown as "contact lost; verify
-in the harness" and is never relaunched. Only Claude Code launches in this
-version; Codex stays at simulation.
+in the harness" and retains its reservation. The result remains attached to
+that attempt after navigation or reload. Owned Codex attempts expose a stop
+request separately from native interruption confirmation; neither a timeout
+nor turn interruption proves every descendant has stopped.
+
+The review covers one fixed commit and its bounded patch, with binary files,
+omissions and dirty working-tree limits stated. Codex checks the same account
+again at launch and sends the patch through the protocol. API authentication,
+unknown capacity, explicit quota denials and unverified execution policy are
+refused. Enabled or unknown credits also refuse generation: the qualified CLI
+0.163.0 exposes no per-turn no-credit guarantee. The app does not change credit
+settings, activate resets or silently choose another model or account.
 
 ### 10. Give a harness session the Work context of its checkout
 
@@ -417,22 +434,28 @@ Both forms read the usage store read-only, start no engine and never write:
 ```sh
 bun run cli -- work context --checkout "$PWD" --json   # this checkout and paths inside it
 bun run cli -- work context --project-label ai-usage   # the project directory's name, exact
+bun run cli -- work context --checkout /src/project --checkout /src/known-worktree --since-days 180 --json
 ```
 
 The local stdio MCP server (`bun run mcp`) exposes the same read as the
-read-only tool `work.context`, with exactly one of `checkoutPath` (absolute)
-or `projectLabel`. Adding the tool registers nothing: the server is still
+read-only tool `work.context`, with exactly one of `checkoutPath` (absolute),
+`checkoutPaths` (up to ten explicitly known worktrees) or `projectLabel`.
+`sinceDays` accepts 1–3650, default 30. Scope is applied before the bounded
+selection, so unrelated projects cannot occupy the requested project's page.
+Adding the tool registers nothing: the server is still
 registered only by your explicit `bun run mcp:register:codex` (or your own
 harness configuration).
 
 The answer (`schemaVersion` 1) has `waiting` (human requests and external
-waits, each with the session's own declaration, its date and provenance),
-`decisions` (requests answered, handled elsewhere, archived or superseded,
-newest first, each with its evidence), `linked` (pull request, checkout and
-Jira facts) and `coverage`. Coverage states per harness what was read: Claude
-Desktop sessions with their declared waits, and the recent Codex sessions as
-sessions only (Codex declares no wait, so none appears in `waiting`; at most 20
-Codex campaigns, counted against those in the window). OpenCode, Cursor and
+waits with dated declarations or supported native request evidence),
+`decisions` (attributable native outcomes, each with its evidence), `linked`
+(pull request, checkout and Jira facts), bounded `sessions` references and
+`coverage`. A later message or completed child alone never answers a request.
+Coverage states per harness what was read: Claude Desktop declarations and
+supported Codex structured requests from selected sessions (at most twenty
+Codex campaigns, with selected members and omissions counted). An asynchronous
+tool acknowledgement is not a human answer; general Codex turn status and
+unrecorded requests remain unknown. OpenCode, Cursor and
 Claude Code sessions started outside Claude Desktop are not represented, no
 transcript is read, and quiet roots older than the window are left out. Lists are bounded (at most
 20 waits and 20 decisions) and the whole answer stays under 64 KiB of JSON;
