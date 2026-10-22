@@ -3,6 +3,8 @@ import { safeParse } from 'valibot';
 import {
   parseWorkAttentionOutput,
   type WorkAttentionDatasetWire,
+  type WorkAttentionOutput,
+  type WorkFactWire,
   type WorkRootWire,
   workAttentionInputSchema,
   workAttentionOutputSchema,
@@ -118,7 +120,7 @@ const dataset = (roots: readonly WorkRootWire[] = [root()]): WorkAttentionDatase
 
 describe('Work contract', () => {
   test('carries bounded native questions without answer content or a fabricated declaration', () => {
-    const fact = {
+    const fact: Extract<WorkFactWire, { kind: 'codex-user-request' }> = {
       id: 'codex-question',
       kind: 'codex-user-request',
       sourceSessionId: 'native-thread',
@@ -131,8 +133,11 @@ describe('Work contract', () => {
         rejectedAt: null,
         questions: [{ id: null, text: 'Keep the current branch?', textTruncated: false, answeredAt: null }],
       },
-    } as const;
-    const value = { data: dataset([root({ declared: null, desktopSessionId: null, facts: [fact] })]), ok: true };
+    };
+    const value: Extract<WorkAttentionOutput, { ok: true }> = {
+      data: dataset([root({ declared: null, desktopSessionId: null, facts: [fact] })]),
+      ok: true,
+    };
     expect(parseWorkAttentionOutput(value)).toEqual(value);
     expect(
       safeParse(workAttentionOutputSchema, {
