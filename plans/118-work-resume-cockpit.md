@@ -29,7 +29,7 @@ explicitly declared information.
 | R | Declared executors (`routing.executors[]`, home-only config), observed executor availability, per-field provenance, qualification actions, real/conditional recommendation | `feat/work-resume-cockpit-r-routing` | IN PROGRESS |
 | E | First read-only review attempt launched from the product (Claude Code only, isolated checkout) | — | NOT STARTED (depends on A, C, R) |
 | M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE, integrated (`599fa303`) |
-| K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE (2026-10-22) |
+| K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -330,3 +330,28 @@ local-machine 217, report-core 513, usage-engine-control 62, usage-engine-runtim
 `work-attempt-production.spec.ts` 1/1. Not run here: lint, the tools suite, `test:e2e`, the full
 `test:e2e-production` script and `test:web-production`; the launch still resolves the declaration
 by its primary id and launches `declaration.model` until lot K's files are swapped.
+
+### 2026-10-22 10:45 — lots M and K integrated (`516617cf`)
+
+`516617cf` merges lot K (`a4aebf55`, `9009fffe`) with `--no-ff`. Checked against the code first:
+the reservation (double click, second client, restart with the process alive, late heartbeat, late
+result, no process table), the scope (first parent or empty tree, 64 KiB / 2 000 lines, SHA-256,
+moved `HEAD`, empty, binary-only, over 8 MiB) and the guarantee (`--setting-sources ""`,
+`--safe-mode`, `--tools Read Grep Glob`, `--version`/`--help` qualification, managed settings) are
+tested; the engine only terminates processes it holds a handle to and never signals a scanned pid.
+Not tested: the non-UTF-8 refusal (`not-text` is mapped from any bounded-runner `failed`, which also
+covers a git killed by a signal). Conflicts: the control contract keeps K's vocabulary imports and
+M's qualification parser; the usage-store migration keeps M's `account_fingerprint` and K's
+`migrateReviewAttemptSchema`; K's recorded bundle value; both plan rows and records. Integration
+commits: an alternate-model candidate is resolved with `declarationForReviewCandidate`, launched
+with its own model and served with it (`49a651c0`, engine, policy and wire tests); M's parser had
+put the routing policy back in the first load (313 709 B), so the transported qualification moved
+to the import-light `report-core/work-routing-vocabulary` (`348969d6`); the first load measures
+305 759 B, the ceiling returns to 310 000 B (`45aa7a2b`); ADR 0055 indexed, 0053 marked amended,
+upgrade notes for the `review_attempts` columns and index swap (`fcb9adad`). Verified at
+`fcb9adad`: `bun run check` 1614 files clean, `bun run lint` PASS, `bun run typecheck` 58/58;
+report-core 518, usage-store 265, usage-engine-runtime 223, usage-engine-control 62,
+local-collectors 273, web-contract 93 pass, 0 fail; under `nix develop`: web unit 1560 pass, build
+PASS, `test:web-bundle` 4/4, `work-production.spec.ts` 4/4 (three runs; one printed an engine
+`startup-failure` diagnostic after the last test), opt-in `work-attempt-production.spec.ts` 1/1.
+Not run: the real hook probe (steps for the operator in the integrator's notes), the full gate.
