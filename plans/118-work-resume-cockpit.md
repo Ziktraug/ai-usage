@@ -1,8 +1,10 @@
 # 118 — Work as a resume space: native outcomes, external facts, qualified routing
 
-Status: IN PROGRESS — integration branch `feat/work-resume-cockpit` on top of PR #66
-(`65f7d5c4`), started 2026-10-21 22:05 Europe/Paris. This file is the execution record;
-it is updated at each integrated milestone and never rewritten after the fact.
+Status: DONE locally at `a7fd4905` (integration branch `feat/work-resume-cockpit` on top of PR #66
+`65f7d5c4`), 2026-10-22 07:20 Europe/Paris. Not pushed; no PR opened; no real store migrated. Jira
+stays contract-only (the Atlassian CLI is absent on the build machine); the first execution was
+exercised once for real through the launcher alone. This file is the execution record; it is
+updated at each integrated milestone and never rewritten after the fact.
 Authorization: local implementation, isolated verification and local commits only.
 No push, no merge, no real-store migration, no harness execution, no account change.
 
@@ -241,3 +243,9 @@ only; the production-only attempt spec is excluded by the production config unle
 rule requires. Worker evidence: typecheck 58/58, lint and check clean, web 1547 pass, packages
 1271 pass, production 17/17, attempt 1/1, default-config 51/51. The complete gate runs again on
 the merged head below.
+
+### 2026-10-22 07:20 — complete gate on the frozen head (`a7fd4905`, detached gate worktree)
+
+`bun run verify` PASS (323 s); package suites 1886 pass, 0 fail; `bun run test:e2e` 249 passed
+(1.6 min, visual snapshots unchanged); production suite 17/17; opt-in review attempt spec 1/1;
+`bun run test:web-production` PASS. The slice is frozen at this head.
