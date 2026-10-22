@@ -181,3 +181,111 @@ test('fake Codex native process: choose model, review, retrieve context, interru
     'gpt-6-astra',
   ]);
 });
+
+// Delay real qualification responses, without replacing their body or invoking the command outside the UI.
+test('a delayed qualification cannot replace another selected root or a newer qualification', async ({
+  page,
+  request,
+}) => {
+  let serverNow = '';
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(
+          `/rpc/workRouting/context?data=${encodeURIComponent(encodeRpcResponseBody({}))}`,
+        );
+        const context = parseWorkRoutingContext(decodeRpcResponseBody(await response.text()));
+        serverNow = context.generatedAt;
+        return context.executorObservations.some(
+          (entry) => entry.harness === 'codex' && entry.authState === 'logged-in',
+        );
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(true);
+  await page.clock.install({ time: serverNow });
+  await page.goto('/work?context-project=fixture-pagination');
+  await expect(page.locator('main[data-work-hydrated="true"]')).toBeVisible();
+  const roots = page.locator('[data-work-root]');
+  await expect(roots).toHaveCount(10);
+  const first = roots.nth(0);
+  const second = roots.nth(1);
+  const firstId = await first.getAttribute('data-work-root');
+  const secondId = await second.getAttribute('data-work-root');
+  const lookups: string[] = [];
+  page.on('request', (sent) => {
+    if (sent.url().includes('/rpc/session/lookup')) {
+      lookups.push(sent.url());
+    }
+  });
+  await first.click();
+  const aside = page.locator('[data-work-aside]');
+  const qualify = aside.getByRole('button', { name: 'Qualify now with the engine' });
+  const simulated = aside.getByRole('region', { name: 'Routing result' });
+  await expect(qualify).toBeVisible();
+  // Both are among the served page's newest rows, so selection reuses the same WorkRouting component.
+  await second.click();
+  await expect(qualify).toBeVisible();
+  await first.click();
+  await expect(qualify).toBeVisible();
+  expect(lookups).toHaveLength(0);
+
+  const deferred: { release: () => void; finished: Promise<void> }[] = [];
+  await page.route('**/rpc/workRouting/qualify', async (route) => {
+    const response = await route.fetch();
+    const { promise: held, resolve: release } = Promise.withResolvers<void>();
+    const { promise: finished, resolve: finish } = Promise.withResolvers<void>();
+    deferred.push({ release, finished });
+    await held;
+    await route.fulfill({ response });
+    finish();
+  });
+  const settleResponse = async (index: number) => {
+    const pending = deferred[index];
+    if (!pending) {
+      throw new Error('Expected a real deferred qualification');
+    }
+    pending.release();
+    await pending.finished;
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+  };
+  try {
+    await qualify.click();
+    await expect.poll(() => deferred.length).toBe(1);
+    await second.click();
+    expect(new URL(page.url()).searchParams.get('root')).toBe(secondId);
+    await aside
+      .getByLabel('Review executor')
+      .selectOption({ label: `Codex · ${CODEX_JOURNEY_ACCOUNT} · gpt-6-sol · high` });
+    await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
+    await expect(simulated).toContainText('Chosen: Codex');
+    const selected = await aside.getByLabel('Review executor').inputValue();
+    await settleResponse(0);
+    await expect(simulated).toContainText('Chosen: Codex');
+    await expect(aside.getByLabel('Review executor')).toHaveValue(selected);
+    await expect(aside.getByRole('region', { name: 'Engine qualification', exact: true })).toHaveCount(0);
+
+    // A -> B -> A must invalidate the first A even though its identity matches again.
+    await first.click();
+    await qualify.click();
+    await expect.poll(() => deferred.length).toBe(2);
+    await second.click();
+    await first.click();
+    expect(new URL(page.url()).searchParams.get('root')).toBe(firstId);
+    await qualify.click();
+    await expect.poll(() => deferred.length).toBe(3);
+    await settleResponse(1);
+    await expect(qualify).toBeDisabled();
+    await expect(aside.getByRole('region', { name: 'Engine qualification', exact: true })).toHaveCount(0);
+    await settleResponse(2);
+    await expect(qualify).toBeEnabled();
+    await expect(aside.getByRole('region', { name: 'Engine qualification', exact: true })).toBeVisible();
+    expect(lookups).toHaveLength(0);
+  } finally {
+    for (const pending of deferred) {
+      pending.release();
+    }
+  }
+});

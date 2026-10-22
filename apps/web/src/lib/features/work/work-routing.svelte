@@ -149,26 +149,39 @@
     output: null,
     pending: false,
   });
+  let qualificationGeneration = 0;
   const resolvedQualification = $derived(qualification === undefined ? engine.output : qualification);
   const engineDecision = $derived(resolvedQualification?.ok ? resolvedQualification.data : null);
   const qualifyNow = async (): Promise<void> => {
     if (!reviewTarget || engine.pending || mode !== 'live') {
       return;
     }
+    const generation = ++qualificationGeneration;
+    const targetRowId = target.rowId;
     engine = { output: engine.output, pending: true };
     const output = await qualifyClient.qualify({
       target: { desktopSessionId: null, harness: reviewTarget.harness, sourceSessionId: reviewTarget.sourceSessionId },
     });
+    // A returned-to session is a new selection; identity alone cannot protect A → B → A.
+    if (generation !== qualificationGeneration || targetRowId !== target.rowId) {
+      return;
+    }
     engine = { output, pending: false };
     result = null;
     // The engine has just recorded a new executor observation: the summary above re-reads it.
     await queryClient.invalidateQueries({ queryKey: workRoutingContextKey() });
   };
   const resetEngine = (_target: string): void => {
+    qualificationGeneration += 1;
     engine = { output: null, pending: false };
     launch = { message: null, pending: false };
   };
-  $effect(() => resetEngine(target.rowId));
+  $effect(() => {
+    resetEngine(target.rowId);
+    return () => {
+      qualificationGeneration += 1;
+    };
+  });
   let preferred = $state<ReviewRoutingPolicy['preferredHarness']>('claude-code');
   let forcedCandidateId = $state<string | null>(null);
   let nearReset = $state(false);
