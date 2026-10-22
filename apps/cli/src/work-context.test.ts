@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -116,6 +117,32 @@ test(
       expect(invalid.stderr).toBe(
         'Error: The Work context scope is invalid: projectLabel is a directory name; pass a checkout path to scope by path.\n',
       );
+    });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'work context answers store-not-upgraded on a store the engine has not reopened since the declaration history',
+  async () => {
+    await withCliSandbox(async ({ environment, root, runCli }) => {
+      const dbPath = environment.AI_USAGE_DATABASE_PATH ?? '';
+      const repository = path.join(root, 'work', 'fixture');
+      await seedStore(dbPath, repository);
+      const db = new Database(dbPath);
+      try {
+        db.exec('DROP TABLE claude_desktop_turn_declarations');
+      } finally {
+        db.close();
+      }
+      const result = await runCli(['work', 'context', '--checkout', repository, '--json']);
+      expect(result).toMatchObject({
+        exitCode: 1,
+        stderr:
+          'Error: The usage store has not been upgraded for this version yet; the engine upgrades it when it next starts.\n',
+        stdout: '',
+      });
+      expect(result.stderr).not.toContain(dbPath);
     });
   },
   TEST_TIMEOUT_MS,

@@ -1,7 +1,13 @@
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { claudeDesktopFixtureRegistry } from '@ai-usage/report-core/test-fixtures/claude-desktop-sessions';
+import type { ClaudeDesktopSessionObservation } from '@ai-usage/report-core/work-attention';
+import { parseClaudeDesktopSessionFile } from '@ai-usage/report-core/work-attention-native';
+import { importClaudeDesktopSessions, initializeUsageStore } from '@ai-usage/usage-store/testing';
+import { Effect } from 'effect';
 import { createLocalWorkContextMcpReadService, runMemoryMcpProcess } from './main';
 
 const temporaryRoots: string[] = [];
@@ -51,5 +57,60 @@ describe('Memory MCP process composition', () => {
       kind: 'error',
     });
     expect(await readdir(root)).toEqual([]);
+  });
+
+  test('answers store-not-upgraded on a store the engine has not reopened since the declaration history', async () => {
+    const root = await temporaryRoot();
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    const machineId = 'machine-mcp-work-context';
+    const registry = claudeDesktopFixtureRegistry({
+      cliSessionIdWithTranscript: 'cli-fixture-transcript',
+      epoch: new Date(),
+      repository: path.join(root, 'work', 'fixture'),
+      variant: 'minimal',
+    });
+    const observations: ClaudeDesktopSessionObservation[] = [];
+    for (const entry of registry.documents) {
+      const result = parseClaudeDesktopSessionFile(entry.document, {
+        accountDirectory: entry.account,
+        fileModifiedAt: entry.modifiedAt.toISOString(),
+        machineId,
+        observedAt: entry.modifiedAt.toISOString(),
+        organizationDirectory: entry.organization,
+        relativeFilePath: `.config/Claude/claude-code-sessions/${entry.account}/${entry.organization}/${entry.fileName}`,
+      });
+      if (result.kind === 'observation') {
+        observations.push(result.observation);
+      }
+    }
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    await Effect.runPromise(
+      importClaudeDesktopSessions({
+        collectedAt: new Date(),
+        completeness: {
+          filesParsed: observations.length,
+          filesSeen: observations.length,
+          rejected: 0,
+          truncated: false,
+          unsupported: 0,
+        },
+        dbPath,
+        machineId,
+        observations,
+      }),
+    );
+    const db = new Database(dbPath);
+    try {
+      db.exec('DROP TABLE claude_desktop_turn_declarations');
+    } finally {
+      db.close();
+    }
+    const work = createLocalWorkContextMcpReadService(dbPath);
+    expect(
+      await work.readWorkContext(
+        { checkoutPath: path.join(root, 'work', 'fixture'), kind: 'checkout' },
+        new AbortController().signal,
+      ),
+    ).toEqual({ code: 'store-not-upgraded', kind: 'error' });
   });
 });
