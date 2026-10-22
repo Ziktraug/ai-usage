@@ -56,7 +56,7 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   await expect(page.locator('main[data-work-hydrated="true"]')).toBeVisible();
   const aside = page.locator('[data-work-aside]');
   const selection = aside.getByLabel('Review executor');
-  await selection.selectOption({ label: `Codex · ${CODEX_JOURNEY_ACCOUNT} · gpt-6-astra · high` });
+  await selection.selectOption({ label: `Codex · gpt-6-astra · high · ${CODEX_JOURNEY_ACCOUNT}` });
   await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
   await expect(aside.getByRole('region', { name: 'Routing result' })).toContainText('Chosen: Codex');
   await aside.getByRole('button', { name: 'Start read-only review (Codex)' }).dblclick();
@@ -77,7 +77,7 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 
   await writeFile(record.modePath, 'hold');
-  await selection.selectOption({ label: `Codex · ${CODEX_JOURNEY_ACCOUNT} · gpt-6-sol · high` });
+  await selection.selectOption({ label: `Codex · gpt-6-sol · high · ${CODEX_JOURNEY_ACCOUNT}` });
   await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
   await aside.getByRole('button', { name: 'Start read-only review (Codex)' }).click();
   await expect(attempts).toHaveCount(2, { timeout: 45_000 });
@@ -147,7 +147,7 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   );
   await page.screenshot({ path: testInfo.outputPath('native-question-desktop.png') });
   await writeFile(record.modePath, 'success');
-  await selection.selectOption({ label: `Codex · ${CODEX_JOURNEY_ACCOUNT} · gpt-6-astra · high` });
+  await selection.selectOption({ label: `Codex · gpt-6-astra · high · ${CODEX_JOURNEY_ACCOUNT}` });
   await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
   await aside.getByRole('button', { name: 'Start read-only review (Codex)' }).click();
   await expect(attempts).toHaveCount(1, { timeout: 45_000 });
@@ -168,6 +168,79 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   await page.reload();
   await drawer.locator('[data-work-attempt]').first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('native-context-result-390.png') });
+
+  const measureRouting = async (width: number) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    const surface = width === 390 ? drawer : aside;
+    await expect(surface).toBeVisible();
+    const executor = surface.getByLabel('Review executor');
+    await executor.selectOption({ label: `Codex · gpt-6-astra · high · ${CODEX_JOURNEY_ACCOUNT}` });
+    // Stress only native control sizing after the real fixture journey; this disabled option is never routed.
+    await executor.evaluate((element) => {
+      const option = document.createElement('option');
+      option.textContent =
+        'Codex · gpt-6-astra · high · account-with-a-long-namespaced-identity-and-an-explicit-project-qualification';
+      option.disabled = true;
+      element.append(option);
+    });
+    const geometry = await surface.evaluate((element) => {
+      const select = element.querySelector('select');
+      const paragraph = Array.from(element.querySelectorAll('p')).find((candidate) =>
+        candidate.textContent?.startsWith('Constraints first;'),
+      );
+      if (!(select?.form && paragraph)) {
+        throw new Error('Routing controls and constraints paragraph must be present');
+      }
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      const bounds = (node: Element) => {
+        const rect = node.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+          client: node.clientWidth,
+          scroll: node.scrollWidth,
+        };
+      };
+      const textMetrics = document.createElement('canvas').getContext('2d');
+      if (!textMetrics) {
+        throw new Error('Text measurement is unavailable');
+      }
+      textMetrics.font = getComputedStyle(select).font;
+      return {
+        viewport: window.innerWidth,
+        surface: bounds(element),
+        form: bounds(select.form),
+        select: bounds(select),
+        selectedLabel: select.selectedOptions[0]?.label,
+        selectedModelWidth: textMetrics.measureText('Codex · gpt-6-astra · high').width,
+        paragraph: bounds(paragraph),
+        text: Array.from(range.getClientRects(), (rect) => ({ left: rect.left, right: rect.right })),
+      };
+    });
+    await executor.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`routing-controls-${width}.png`) });
+    return geometry;
+  };
+  const routingGeometry = [await measureRouting(1440), await measureRouting(390)];
+  await writeFile(testInfo.outputPath('routing-geometry.json'), JSON.stringify(routingGeometry, null, 2));
+  for (const geometry of routingGeometry) {
+    expect(geometry.select.right, `executor control at ${geometry.viewport}px`).toBeLessThanOrEqual(
+      geometry.form.right,
+    );
+    expect(geometry.paragraph.right, `constraints box at ${geometry.viewport}px`).toBeLessThanOrEqual(
+      geometry.form.right,
+    );
+    expect(
+      Math.max(...geometry.text.map((rect) => rect.right)),
+      `constraints text at ${geometry.viewport}px`,
+    ).toBeLessThanOrEqual(geometry.form.right);
+    expect(geometry.form.scroll).toBe(geometry.form.client);
+    expect(geometry.selectedLabel).toBe(`Codex · gpt-6-astra · high · ${CODEX_JOURNEY_ACCOUNT}`);
+    // Leave space for the control's padding and native disclosure arrow before the account suffix truncates.
+    expect(geometry.selectedModelWidth).toBeLessThan(geometry.select.client - 40);
+  }
 
   const protocol = (await readFile(record.logPath, 'utf8'))
     .trim()
@@ -258,7 +331,7 @@ test('a delayed qualification cannot replace another selected root or a newer qu
     expect(new URL(page.url()).searchParams.get('root')).toBe(secondId);
     await aside
       .getByLabel('Review executor')
-      .selectOption({ label: `Codex · ${CODEX_JOURNEY_ACCOUNT} · gpt-6-sol · high` });
+      .selectOption({ label: `Codex · gpt-6-sol · high · ${CODEX_JOURNEY_ACCOUNT}` });
     await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
     await expect(simulated).toContainText('Chosen: Codex');
     const selected = await aside.getByLabel('Review executor').inputValue();

@@ -39,7 +39,16 @@
     qualificationHeadline,
     routingSummary,
   } from './work-routing-model';
-  import { workButton, workHeading, workInput, workMuted, workPanel, workRow, workStack } from './work-styles';
+  import {
+    workButton,
+    workHeading,
+    workInput,
+    workMuted,
+    workPanel,
+    workRoutingForm,
+    workRow,
+    workStack,
+  } from './work-styles';
   import { WORK_DEMO_TIME } from './work-synthetic';
 
   let {
@@ -534,7 +543,7 @@
       {/if}
     </section>
   {/if}
-  <form class={workStack} onsubmit={simulate}>
+  <form class={workRoutingForm} onsubmit={simulate}>
     {#if mode === 'live'}
       <p class={workMuted}>Local simulation from the read context, with optional preferences:</p>
     {/if}
@@ -545,8 +554,8 @@
         {#each candidates as candidate (candidate.id)}
           <option value={candidate.id}>
             {harnessLabel(candidate.harness)}
-            · {candidate.accountScope ?? 'account unknown'} · {candidate.model ?? 'model unknown'} ·
-            {candidate.effort ?? 'effort unknown'}
+            · {candidate.model ?? 'model unknown'} · {candidate.effort ?? 'effort unknown'} ·
+            {candidate.accountScope ?? 'account unknown'}
           </option>
         {/each}
       </select>
