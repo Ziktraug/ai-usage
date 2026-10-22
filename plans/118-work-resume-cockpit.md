@@ -205,3 +205,12 @@ production runtime show `claude.desktop-sessions` (41 files) running first, then
 (2 inputs) and `github.pull-requests` (3 inputs) within 600 ms, without any operator command.
 Worker evidence at `cacf1805` on `e77f3a29`: production 17/17, default-config 51/51. The suites are
 run again on the merged head below.
+
+### 2026-10-22 05:45 — final gates on the integrated head
+
+At `5cb0d8e3` in a detached gate worktree: production suite (`work-production.spec.ts` +
+`production-report.spec.ts`) 17/17, review attempt production spec 1/1 with
+`AI_USAGE_WORK_ATTEMPT_E2E=1`, `bun run test:web-production` PASS (both port-collision checks clean).
+The default suite reported 249 passed and one failure that was the production-only attempt spec
+picked up by the default config; `d5db87b7` excludes it there and makes it skip itself without its
+flag. The default suite is rerun at `d5db87b7` below.
