@@ -32,7 +32,7 @@ explicitly declared information.
 | K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
 | L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE, integrated (`9bbbd9fa`) |
 | N | Work context for harness sessions (ADR 0058): one bounded read-only projection of the Work attention read per checkout or project label (waits, settled decisions with evidence, linked facts, coverage), as `ai-usage work context` and the local MCP tool `work.context`; no registration | `feat/work-resume-cockpit-n-context` | DONE, integrated (`03439fd9`) |
-| C (Codex) | Native Codex sessions on `/work` (ADR 0059): one root per recent served Codex campaign, attention `not-observable` (never a derived request or wait, never folded under a Desktop root), checkout facts by exact path, ranked after every Desktop root, a section and a per-harness coverage line of their own | `feat/work-resume-cockpit-c-codex` | DONE on its lot branch (`a422f61e`), not integrated |
+| C (Codex) | Native Codex sessions on `/work` (ADR 0059): one root per recent served Codex campaign, attention `not-observable` (never a derived request or wait, never folded under a Desktop root), checkout facts by exact path, ranked after every Desktop root, a section and a per-harness coverage line of their own | `feat/work-resume-cockpit-c-codex` | DONE, integrated (`c58df3e2`) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -527,3 +527,31 @@ tests; `work.spec.ts`, `work-e2e-fixture.spec.ts` 12/12 and `work-production.spe
 PASS; web unit 1 581 pass; report-data 76, report-core 542, usage-store 273, web-contract 94
 pass. Not run: the full `verify` gate, `test:e2e` beyond the Work specs. No committed visual
 snapshot covers `/work`.
+
+### 2026-10-22 14:35 — lot C integrated, reconciled with lot N; gate at `29b7f03e`
+
+`c58df3e2` merges lot C (`a422f61e`, `38766dfc`, ADR 0059) with `--no-ff`; the only conflict was
+this plan. Checked against the code first: a Codex root is built with attention `not-observable`
+and no request or wait is derived for it whatever its facts show; its children are its own served
+campaign members and nothing folds it under a Desktop root; `not-observable` ranks after every
+other kind; the store read is bounded (families per read, five latest members each, the rest
+counted); the coverage line names per harness what was read. Integration commits: ADR 0059
+indexed (`28c22ad4`); Codex rows get their own budget, `WORK_ATTENTION_BOUNDS.maxCodexRoots` (20),
+the most recent first, with `coverage.codexSessions { campaignsInWindow, campaignsRead }` through
+the contract and the client and the line "N of M Codex campaigns shown" (`dcdf1d9c`; in the
+production fixture 20 of 204 instead of 71 rows of a 100-row page); the Work context carries
+`coverage.harnesses` and names both harnesses when Codex campaigns were read, a Codex root never
+enters `waiting`, the CLI prints the harness line and the MCP tool no longer says Claude Desktop
+only (`f2143fcc`); README section 10 and ADRs 0058/0059 amended (`29b7f03e`). The contract and
+the browser client take `not-observable` from the shared `WORK_ATTENTION_KINDS`; a contract test
+proves it.
+
+Gate in the detached gate worktree at `29b7f03e` under `nix develop` (Bun 1.3.13): frozen install;
+`bun run check` 1625 files clean; `bun run lint` rc 0; typecheck PASS (turbo `check` 58/58 with
+`--force`); package suites 56 tasks, 2 764 pass, 0 fail (228 s); web unit 1 581 pass (42 s);
+`test:tools` 145 pass (194 s); build PASS; client manifest PASS; `test:web-bundle` 4/4, first
+load 305 869 B; `bun run test:e2e` through the retry wrapper 252 passed, no retry (124 s);
+`bun run test:web-production` PASS (33 s); `bun run test:e2e-production` PASS (378 s): production
+report 13/13, `work-production.spec.ts` 6/6, `work-attempt-production.spec.ts` 1/1, session scroll
+and campaign map 7/7, campaign continuity 31/31. Not run: the real hook probe, CI on this head;
+the payload size with the Codex budget was not re-measured.
