@@ -3,9 +3,8 @@ import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './browser-test';
 
 /**
- * The Work resume surface reads the `work.attention` dataset. Until that procedure joins the web
- * contract, the e2e runtime answers a typed unavailability, so these regressions run the page in
- * the demo composition (synthetic dataset, no `/rpc`), which the server selects per request.
+ * These regressions exercise the synthetic Work demo without RPC reads.
+ * The replayed collector fixture and the production path have separate browser suites.
  */
 test.use({ extraHTTPHeaders: { 'x-ai-usage-sveltekit-mode': 'demo' } });
 
@@ -13,6 +12,8 @@ const SYNTHETIC_ROOTS = 28;
 const BLOCKED_TITLE = 'Fix mobile navigation label overlap';
 const BLOCKED_QUESTION = 'Which of the two 320px layouts do you prefer?';
 const JOINED_TITLE = 'Build report UI';
+const RETAINED_TITLE = 'Release checklist';
+const RETAINED_QUESTION = 'Fix the flaky export test before the release, or skip it?';
 const KNOWN_WAITS_PATTERN = /Known waits/;
 const NEEDS_YOU_CHIP_PATTERN = /^Needs you/;
 const CLAUDE_CHIP_PATTERN = /^Claude/;
@@ -66,13 +67,20 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   ]) {
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
-  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(8);
+  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(9);
   // A question a later pull request may have answered stays in "Needs you", after the current
   // blocks and marked; one untouched for more than a week follows it, dated (ADR 0056 age tier).
   const toReconsider = main.locator('[data-work-section="human-request"] [data-work-reconsider] [data-work-root]');
-  await expect(toReconsider).toHaveCount(3);
-  await expect(toReconsider.nth(1)).toContainText('Scan resource optimization');
-  await expect(toReconsider.nth(1)).toContainText('possibly answered');
+  await expect(toReconsider).toHaveCount(4);
+  // A completed child does not settle the parent's question: it remains first among older requests.
+  const retained = rowNamed(page, RETAINED_TITLE);
+  await expect(toReconsider.first()).toContainText(RETAINED_TITLE);
+  await expect(retained).toContainText(RETAINED_QUESTION);
+  await expect(retained).toHaveAttribute('data-work-standing', 'reconsider');
+  await expect(retained.locator('[data-work-decision]')).toHaveCount(0);
+  await expect(retained).not.toContainText('Handled in a linked session');
+  await expect(toReconsider.nth(2)).toContainText('Scan resource optimization');
+  await expect(toReconsider.nth(2)).toContainText('possibly answered');
   await expect(toReconsider.last()).toContainText('Session distillation worker redaction');
   await expect(toReconsider.last()).toContainText('blocked · 9 d ago, no activity since');
   await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(10);
@@ -135,8 +143,8 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   await expect(aside.locator('[data-work-detail]')).toHaveCount(0);
   await expect(first).toBeFocused();
 
-  await main.locator('[data-work-section="none"] button', { hasText: 'Show all 12' }).click();
-  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(12);
+  await main.locator('[data-work-section="none"] button', { hasText: 'Show all 11' }).click();
+  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(11);
 
   // The simulation belongs to one understood target: a root joined to a collected Session. The
   // joined demo root is a Codex session: its wait is unknown, and it is still a review target.
@@ -145,7 +153,7 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   await expect(joined).toContainText('wait unknown · not declared by Codex');
   await joined.click();
   await expect(aside).toContainText('Request · Unknown — not declared by this harness');
-  await expect(aside).toContainText(`Simulates a read-only review of “${JOINED_TITLE}”`);
+  await expect(aside).toContainText(`Choose an executor for a read-only review of “${JOINED_TITLE}”`);
   await expect(aside.getByRole('link', { name: 'Open session detail' })).toBeVisible();
   await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
   await expect(aside.getByRole('region', { name: 'Routing result' })).toContainText('Chosen: Claude Code');
@@ -165,12 +173,14 @@ test('a direct address restores the filters and the selected root, and the detai
   const filters = main.locator('[data-work-filters]');
   await expect(filters.getByRole('button', { name: NEEDS_YOU_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
   await expect(filters.getByRole('button', { name: CLAUDE_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
-  await expect(main.locator('[data-work-root]')).toHaveCount(8);
+  await expect(main.locator('[data-work-root]')).toHaveCount(9);
+  await expect(rowNamed(page, RETAINED_TITLE)).toContainText(RETAINED_QUESTION);
+  await expect(rowNamed(page, RETAINED_TITLE)).toHaveAttribute('data-work-standing', 'reconsider');
   await expect(main.locator('[data-work-aside] [data-work-question]')).toContainText(BLOCKED_QUESTION);
   await expect(rowNamed(page, BLOCKED_TITLE)).toHaveAttribute('aria-current', 'true');
   await main.getByRole('button', { name: 'Clear filters', exact: true }).click();
-  // Every section's rows, the recent one folded at ten: 15 + 10 + the one Codex row.
-  await expect(main.locator('[data-work-root]')).toHaveCount(26);
+  // The retained release question adds one visible request; Recent remains folded at ten.
+  await expect(main.locator('[data-work-root]')).toHaveCount(27);
   await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBe('desk-mobile-nav');
   await main.getByRole('button', { name: 'Close detail', exact: true }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBeNull();

@@ -396,7 +396,9 @@ test('renders the collected registry and its observed facts as a resume surface,
   // Routing: the disposable HOME declares no executor, so the panel can only name what would
   // qualify one; the simulation chooses nobody and starts nothing.
   await expect(aside.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
-  await expect(aside).toContainText(`Simulates a read-only review of “${BLOCKED_TITLE}” on its collected Session.`);
+  await expect(aside).toContainText(
+    `Choose an executor for a read-only review of “${BLOCKED_TITLE}”. The engine checks the target before launch.`,
+  );
   await expect(aside).toContainText(NO_DECLARATION_TEXT);
   const evidence = aside.locator('summary').filter({ hasText: EVIDENCE_COUNT_PATTERN });
   await expect(evidence).toBeVisible();
@@ -417,6 +419,8 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(result).not.toContainText('Real recommendation');
   await expect(result).not.toContainText('Conditional (missing');
   await expect(result).not.toContainText('Chosen:');
+  await expect(aside.getByRole('button', { name: 'Start read-only review (Codex)', exact: true })).toHaveCount(0);
+  await expect(aside.getByRole('button', { name: 'Start read-only review (Claude Code)', exact: true })).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expectAxeClean(page);
   await capture(page, 'work-prod-1440-detail-blocked.png', { fullPage: true });
