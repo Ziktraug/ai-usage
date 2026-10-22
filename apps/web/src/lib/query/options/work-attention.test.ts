@@ -3,7 +3,7 @@ import { QueryObserver } from '@tanstack/svelte-query';
 import { syntheticWorkAttentionDataset } from '../../features/work/work-attention-synthetic';
 import type { WorkAttentionClient } from '../../rpc/work-attention-client';
 import { createHydratedWebQueryClient } from '../client';
-import { COLLECTION_SWR_STALE_TIME_MS, webQueryPolicies } from '../policies';
+import { COLLECTION_FACTS_STALE_TIME_MS, webQueryPolicies } from '../policies';
 import {
   WORK_ATTENTION_LIMIT,
   WorkAttentionQueryError,
@@ -35,12 +35,12 @@ describe('Work attention Query identity and policy', () => {
       'laptop',
     ]);
   });
-  test('follows the named collection-swr policy and only runs in the browser when enabled', () => {
+  test('follows the named collection-facts-swr policy and only runs in the browser when enabled', () => {
     const client: WorkAttentionClient = { attention: () => Promise.resolve({ data: dataset, ok: true }) };
     const options = workAttentionQueryOptions(client, workAttentionRequest(), { browser: true, enabled: true });
-    expect(options.staleTime).toBe(COLLECTION_SWR_STALE_TIME_MS);
-    expect(options.refetchOnMount).toBe(webQueryPolicies.collectionSwr.refetchOnMount);
-    expect(options.refetchInterval).toBe(webQueryPolicies.collectionSwr.refetchInterval);
+    expect(options.staleTime).toBe(COLLECTION_FACTS_STALE_TIME_MS);
+    expect(options.refetchOnMount).toBe(true);
+    expect(options.refetchInterval).toBe(webQueryPolicies.collectionFactsSwr.refetchInterval);
     expect(options.refetchOnWindowFocus).toBe(true);
     expect(options.retry).toBe(false);
     expect(options.enabled).toBe(true);
@@ -103,6 +103,47 @@ describe('Work attention Query identity and policy', () => {
       expect(new WorkAttentionQueryError({ message: 'x', tag: 'Unavailable' }).tag).toBe('Unavailable');
     } finally {
       unsubscribe();
+      hydrated.clear();
+    }
+  });
+  test('a browser mount of the server-rendered answer reads once per page load; a stale one is read again', async () => {
+    const source = createHydratedWebQueryClient({ dehydratedState: { mutations: [], queries: [] } });
+    const server: WorkAttentionClient = { attention: () => Promise.resolve({ data: dataset, ok: true }) };
+    await source.fetchQuery(
+      workAttentionQueryOptions(server, workAttentionRequest(), { browser: true, enabled: true }),
+    );
+    const { dehydrate } = await import('@tanstack/svelte-query');
+    const hydrated = createHydratedWebQueryClient({ dehydratedState: dehydrate(source) });
+    source.clear();
+    let reads = 0;
+    const browser: WorkAttentionClient = {
+      attention: () => {
+        reads += 1;
+        return Promise.resolve({ data: dataset, ok: true });
+      },
+    };
+    const options = workAttentionQueryOptions(browser, workAttentionRequest(), { browser: true, enabled: true });
+    const mount = () => {
+      const observer = new QueryObserver(hydrated, options);
+      return { observer, unsubscribe: observer.subscribe(() => undefined) };
+    };
+    try {
+      // The SSR read is the page load's read: hydration and mount do not repeat it.
+      const first = mount();
+      expect(first.observer.getCurrentResult().isFetching).toBe(false);
+      first.unsubscribe();
+      expect(reads).toBe(0);
+
+      // Once the answer is older than the policy's stale time, the next mount reads it again.
+      hydrated.setQueryData(options.queryKey, dataset, {
+        updatedAt: Date.now() - COLLECTION_FACTS_STALE_TIME_MS - 1,
+      });
+      const second = mount();
+      await hydrated.fetchQuery({ ...options, staleTime: Number.POSITIVE_INFINITY });
+      await Bun.sleep(0);
+      second.unsubscribe();
+      expect(reads).toBe(1);
+    } finally {
       hydrated.clear();
     }
   });

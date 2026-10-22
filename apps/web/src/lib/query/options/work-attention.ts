@@ -19,9 +19,10 @@ export const workAttentionRequest = (machineId: string | null = null): WorkAtten
 });
 
 /**
- * The one query for the Work attention identity. Its only producer is the collection cycle, so it
- * follows the collection policy: revalidated on an interval, on focus and always on mount, which is
- * what a reader returning after hours needs without any browser-side freshness guess.
+ * The one query for the Work attention identity. Its only producer is the collection cycle and it
+ * carries no proof with a lifetime, so it follows the collection-facts policy: revalidated on an
+ * interval and on focus, and on mount only when stale. The server-rendered answer is the page
+ * load's one read; a reader returning after the stale time gets a new one.
  */
 export const workAttentionQueryOptions = (
   client: WorkAttentionClient,
@@ -29,7 +30,7 @@ export const workAttentionQueryOptions = (
   context: WorkAttentionQueryContext,
 ) =>
   queryOptions({
-    ...webQueryPolicies.collectionSwr,
+    ...webQueryPolicies.collectionFactsSwr,
     enabled: context.browser && context.enabled,
     queryFn: async ({ signal }) =>
       unwrapWorkAttentionResult(

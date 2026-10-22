@@ -124,9 +124,11 @@ export const webQueryOwnership = [
     // Declared outcomes, pull-request and checkout facts are written by the engine's collection
     // sources, so the family lives on the collection cadence. Its identity carries the request's
     // limit and machine, and publication invalidation is exact-key only, so the cycle does not sweep
-    // it: interval and focus revalidation of the collection-swr policy are its freshness path.
+    // it: interval and focus revalidation are its freshness path. It carries no proof with a
+    // lifetime, so its own policy refetches on mount only when stale: the SSR read is the page
+    // load's one read.
     family: 'work-attention',
-    policy: 'collection-swr',
+    policy: 'collection-facts-swr',
     publication: 'none',
     rendering: 'ssr-awaited',
   },

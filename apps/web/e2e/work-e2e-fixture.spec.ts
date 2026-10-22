@@ -5,7 +5,7 @@ import { parseWorkRoutingContext } from '@ai-usage/web-contract/work-routing';
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './browser-test';
-import { decodeRpcResponseBody } from './rpc-test-transport';
+import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transport';
 
 /**
  * The Work resume surface in the e2e runtime (no demo header): the page reads `work.attention`
@@ -89,18 +89,25 @@ const openWorkRoot = async (page: Page, rootId: string): Promise<Locator> => {
 
 test('reads the seeded registry through work.attention and renders its roots, facts, question and detail', async ({
   page,
+  request,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  // The collection policy revalidates on every mount, so the browser itself posts the request even
-  // though the server-rendered page already carried the dataset.
-  const attentionRequest = page.waitForRequest(
-    (request) => request.method() === 'POST' && new URL(request.url()).pathname === WORK_ATTENTION_PATH,
-  );
+  // The page load's one read is the server-rendered one: the collection-facts policy refetches on
+  // mount only a stale answer, so hydration does not post work.attention a second time.
+  const browserReads: string[] = [];
+  page.on('request', (sent) => {
+    if (sent.method() === 'POST' && new URL(sent.url()).pathname === WORK_ATTENTION_PATH) {
+      browserReads.push(sent.url());
+    }
+  });
   await page.goto('/work');
   await waitForHydratedWork(page);
-  const response = await (await attentionRequest).response();
-  expect(response?.status()).toBe(200);
-  const output = parseWorkAttentionOutput(decodeRpcResponseBody((await response?.text()) ?? ''));
+  const response = await request.post(WORK_ATTENTION_PATH, {
+    data: encodeRpcResponseBody({ limit: 100, machineId: null }),
+    headers: { 'content-type': 'application/json' },
+  });
+  expect(response.status()).toBe(200);
+  const output = parseWorkAttentionOutput(decodeRpcResponseBody(await response.text()));
   if (!output.ok) {
     throw new Error(`work.attention answered ${output.error.tag}: ${output.error.message}`);
   }
@@ -132,6 +139,8 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   for (const name of ['Needs you', 'Waiting on others', 'Leads', RESTING_TITLE]) {
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
+  // Hydrated and rendered from the server's answer: the browser has not read the dataset again.
+  expect(browserReads).toEqual([]);
   await expect(main.locator('[data-work-section="human-request"] header')).toContainText(
     'Older declarations to reconsider follow: something later may have answered them, without proof.',
   );

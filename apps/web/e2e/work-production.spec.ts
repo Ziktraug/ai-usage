@@ -383,9 +383,11 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(aside.locator('[data-work-detail]')).toHaveCount(0);
   await expect(blocked).toBeFocused();
 
-  // Nothing left the machine, and the dataset came through the contract procedure.
+  // Nothing left the machine. The page load's read of the dataset is the server-rendered one; the
+  // browser revalidates it at most once, and only because the fixture server's pinned clock makes
+  // the hydrated answer look stale to a browser on the real clock (collection-facts policy).
   expect(tracked.offsite).toEqual([]);
-  expect(tracked.posts).toContain(WORK_ATTENTION_PATH);
+  expect(tracked.posts.filter((pathname) => pathname === WORK_ATTENTION_PATH).length).toBeLessThanOrEqual(1);
   expect(tracked.posts.filter((pathname) => !pathname.startsWith(RPC_PATH_PREFIX))).toEqual([]);
 });
 
