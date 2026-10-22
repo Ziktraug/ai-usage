@@ -466,15 +466,22 @@ describe('claude desktop turn declaration history (ADR 0056)', () => {
         lastActivityAt: '2026-09-01T09:00:00.000Z',
       } as never),
       observation({
+        declaredPullRequests: [],
         desktopSessionId: 'local_old_done',
         lastActivityAt: '2026-09-02T09:00:00.000Z',
         turnSummary: turn('uuid-done', null, 'completed'),
+      } as never),
+      // Completed, but it declared a pull request: an observation may show it waiting on someone.
+      observation({
+        desktopSessionId: 'local_old_pr',
+        lastActivityAt: '2026-09-03T09:00:00.000Z',
+        turnSummary: turn('uuid-pr', null, 'completed'),
       } as never),
     ]);
     const older = await Effect.runPromise(
       queryClaudeDesktopSessions({ dbPath, olderThanLastActivityAt: '2026-10-20T09:00:00.000Z', pendingOnly: true }),
     );
-    expect(older.observations.map((row) => row.desktopSessionId)).toEqual(['local_old_blocked']);
+    expect(older.observations.map((row) => row.desktopSessionId)).toEqual(['local_old_pr', 'local_old_blocked']);
     const byId = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath, desktopSessionIds: ['local_old_done'] }));
     expect(byId.observations.map((row) => row.desktopSessionId)).toEqual(['local_old_done']);
     const none = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath, desktopSessionIds: [] }));

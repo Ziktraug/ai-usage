@@ -309,7 +309,7 @@ test('renders the collected registry and its observed facts as a resume surface,
 
   // Search narrows the sections and lands in the address.
   await page.getByRole('searchbox').fill('investigate');
-  await expect(main.getByRole('status').filter({ hasText: `1 of ${ROOTS_SHOWN} roots shown` })).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `1 of ${ROOTS_SHOWN} roots match.` })).toBeVisible();
   await expect.poll(() => searchParam(page, 'q')).toBe('investigate');
   await expect(blocked).toHaveCount(1);
 

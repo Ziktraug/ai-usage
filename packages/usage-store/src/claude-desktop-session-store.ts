@@ -46,7 +46,7 @@ export const MAX_CLAUDE_DESKTOP_SESSION_READ = 500;
 /** Session ids one history or by-id read accepts. */
 export const MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER = 500;
 const MAX_COLLECTION_STATES = 64;
-/** The statuses that ask something of the person; the read keeps them beyond its recency bound. */
+/** The statuses that ask something of the person; the Work read keeps them beyond its recency bound. */
 const PENDING_STATUS_CATEGORIES = ['blocked', 'review_ready'] as const;
 
 export const claudeDesktopSessionSchemaSql = `
@@ -209,7 +209,11 @@ export interface QueryClaudeDesktopSessionsInput {
   readonly machineId?: string;
   /** ISO upper bound on `lastActivityAt`, exclusive: the page after an earlier one. */
   readonly olderThanLastActivityAt?: string;
-  /** Only sessions whose current declaration asks something of the person (blocked, review ready). */
+  /**
+   * Only sessions that may carry a wait: a current declaration that asks something of the person
+   * (blocked, review ready), or a declared pull request, which an observation may show awaiting
+   * someone else. The Work read keeps these beyond its recency bound.
+   */
   readonly pendingOnly?: boolean;
   /** ISO lower bound on `lastActivityAt`, inclusive. */
   readonly sinceLastActivityAt?: string;
@@ -816,7 +820,9 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
             params.push(olderThan);
           }
           if (input.pendingOnly === true) {
-            clauses.push(`status_category IN (${PENDING_STATUS_CATEGORIES.map(() => '?').join(', ')})`);
+            clauses.push(
+              `(status_category IN (${PENDING_STATUS_CATEGORIES.map(() => '?').join(', ')}) OR declared_pull_requests_json <> '[]')`,
+            );
             params.push(...PENDING_STATUS_CATEGORIES);
           }
           if (ids !== undefined) {

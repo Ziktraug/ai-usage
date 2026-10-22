@@ -1266,8 +1266,10 @@ interface DesktopSessionRead {
 /**
  * The bounded registry read. First the `MAX_CLAUDE_DESKTOP_SESSION_READ` most recently active
  * sessions, so a child outside the window still folds under its root. When more exist, the older
- * sessions whose declaration asks something of the person are read too (one more bounded page):
- * a question stays a question at any age, and the recency bound must not hide it. Then the parents
+ * sessions that may carry a wait are read too (one more bounded page): a declaration that asks
+ * something of the person, or a declared pull request an observation may show awaiting someone
+ * else. A wait stays a wait at any age, and the recency bound must not hide it. A wait read only
+ * from Jira (a reply on a key an older session wrote) is not selected by this page. Then the parents
  * the read names but does not hold are fetched by id, level by level, so a child is never shown
  * as an orphan only because its root is older than the page. What still escapes the read (older
  * sessions with nothing pending, pending ones beyond the second page) leaves `truncated` set.

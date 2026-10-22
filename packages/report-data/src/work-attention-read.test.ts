@@ -1295,6 +1295,7 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     readonly id: string;
     readonly needsAction?: string;
     readonly parent?: string;
+    readonly pullRequest?: number;
     readonly proposals?: readonly {
       readonly createdHoursAgo: number;
       readonly expiresHoursAgo?: number;
@@ -1323,6 +1324,19 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     ...(spec.parent === undefined
       ? {}
       : { spawnedFrom: { sessionId: `local_${spec.parent}`, taskId: null, title: null } }),
+    ...(spec.pullRequest === undefined
+      ? {}
+      : {
+          prs: [
+            {
+              host: 'github.com',
+              prNumber: spec.pullRequest,
+              repo: 'fixture/project',
+              state: 'OPEN',
+              url: `https://github.com/fixture/project/pull/${spec.pullRequest}`,
+            },
+          ],
+        }),
     ...(spec.proposals === undefined
       ? {}
       : {
@@ -1626,6 +1640,15 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
           summarizes: 'a1',
           title: 'Fixture: ancient question',
         }),
+        // Older still, completed, with a pull request GitHub shows awaiting review: an external wait.
+        nativeDocument({
+          activityHoursAgo: 100 * 24,
+          id: 'ancient-pr',
+          pullRequest: 731,
+          status: 'completed',
+          summarizes: 'p1',
+          title: 'Fixture: ancient pull request',
+        }),
         // A recent child of an old root that asks nothing: the root is fetched, the child folds.
         nativeDocument({
           activityHoursAgo: 80 * 24,
@@ -1645,7 +1668,20 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
       ],
       0.4,
     );
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          pullRequestObservation({
+            number: 731,
+            observedAt: hoursAgo(1),
+            url: 'https://github.com/fixture/project/pull/731',
+          }),
+        ],
+      }),
+    );
     const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, limit: 200, machineId: MACHINE, now: NOW }));
+    expect(dataset.roots.find((root) => root.desktopSessionId === 'local_ancient-pr')?.attention).toBe('external-wait');
     const ancient = dataset.roots.find((root) => root.desktopSessionId === 'local_ancient');
     expect(ancient?.attention).toBe('human-request');
     // The fresh child folds under its fetched root; as an orphan it would rank first among the rest.
@@ -1656,8 +1692,8 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
       ),
     ).toBe(false);
     // The page holds the fresh child and 499 recent roots; the oldest recent root, asking nothing, is
-    // beyond it. The pending root and the fetched parent come on top.
-    expect(dataset.totalRoots).toBe(MAX_CLAUDE_DESKTOP_SESSION_READ - 1 + 2);
+    // beyond it. The two waiting roots and the fetched parent come on top.
+    expect(dataset.totalRoots).toBe(MAX_CLAUDE_DESKTOP_SESSION_READ - 1 + 3);
     expect(dataset.roots.some((root) => root.desktopSessionId === 'local_recent-499')).toBe(false);
     // Older sessions with nothing pending were not read: the dataset says it is a selection.
     expect(dataset.coverage.desktopSessions.truncated).toBe(true);
