@@ -28,6 +28,7 @@ explicitly declared information.
 | C | `/work` recomposed around the dataset: needs-you / waiting-on-others / leads, folded children, search and filters in the URL, detail panel, local-time dates, routing simulation attached to one root | `feat/work-resume-cockpit-c-ui` | IN PROGRESS |
 | R | Declared executors (`routing.executors[]`, home-only config), observed executor availability, per-field provenance, qualification actions, real/conditional recommendation | `feat/work-resume-cockpit-r-routing` | IN PROGRESS |
 | E | First read-only review attempt launched from the product (Claude Code only, isolated checkout) | — | NOT STARTED (depends on A, C, R) |
+| L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE (lot branch, awaiting integration) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -249,3 +250,26 @@ the merged head below.
 `bun run verify` PASS (323 s); package suites 1886 pass, 0 fail; `bun run test:e2e` 249 passed
 (1.6 min, visual snapshots unchanged); production suite 17/17; opt-in review attempt spec 1/1;
 `bun run test:web-production` PASS. The slice is frozen at this head.
+
+### 2026-10-22 10:20 — lot L: resolved waits, honest coverage (`375427a5`, `6dc6b3db`, `8b2691cf`, lot branch)
+
+Native facts checked read-only on the operator's registry (75 files): only the latest
+`postTurnSummary` is kept per file and the transcript holds no summary history, so the usage store
+now records a bounded declaration history (`claude_desktop_turn_declarations`, 8 per session) and
+`latestUserFrameAt` (new nullable column), additively under `user_version` 4 (ADR 0056). A message
+recorded after a question answers it without a confirmation in the product; an earlier question a
+later turn replaced reads as answered (dated, with its facts) while the new one stays the current
+request; a session started from the root after the question and completed handles it; work
+continued there without completion makes it an older declaration to reconsider, listed apart; an
+unrelated pull request still resolves nothing; offers past their native expiry or followed by a
+later message are no longer pending. No transcript is read. The Work read keeps sessions that may
+carry a wait (a request, a declared pull request) beyond its 500-session recency page and fetches
+missing parents; the search status says what a filter did not search. Rows and the detail read
+request → context → last decision → next action. Evidence: typecheck 58/58, `bun run lint` and
+`bun run check` clean; report-core 501, report-data 68 (incl. a 504-session store with the oldest
+roots pending), usage-store 265, usage-engine-runtime 213 (incl. a two-sweep collector → store →
+read chain), local-collectors 259, local-machine 216, web unit 1556 pass, 0 fail; e2e `work.spec.ts`
++ `work-e2e-fixture.spec.ts` 11/11; production `work-production.spec.ts` 5/5 under `nix develop`.
+Not done here: exact "N of S sessions read" counts need the wire mirrors (patch handed to the
+integrator); the hydration double read of `work.attention` comes from the shared `collection-swr`
+policy (`refetchOnMount: 'always'`), reported with its fix. Visual snapshot references untouched.
