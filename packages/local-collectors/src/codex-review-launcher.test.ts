@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -180,3 +180,74 @@ test('unconfirmed stop remains lost with its partial result and no invented term
   launch.terminate();
   expect(await launch.outcome).toMatchObject({ kind: 'lost', stopConfirmed: false, resultExcerpt: 'Partial review' });
 }, 10_000);
+
+describe('native quota denials before generation', () => {
+  test('refuses a reset crossed during thread qualification before consuming any turn', async () => {
+    const f = await fixture();
+    const now = Date.now();
+    const clock = spyOn(Date, 'now');
+    try {
+      await expect(
+        launchCodexReview(
+          f.spec,
+          {
+            onInit: () => {
+              clock.mockReturnValue(now + 48 * 60 * 60 * 1000);
+            },
+          },
+          f.options,
+        ),
+      ).rejects.toMatchObject({ kind: 'capacity-unavailable' });
+    } finally {
+      clock.mockRestore();
+    }
+    expect((await f.requests()).filter((request) => request.method === 'thread/start')).toHaveLength(1);
+    expect((await f.requests()).filter((request) => request.method === 'turn/start')).toHaveLength(0);
+  });
+  test.each([
+    'spend-denied',
+    'applicable-denied',
+    'spend-unknown',
+    'denial-unknown',
+    'unknown-alias',
+    'selected-unknown',
+    'expired-reset',
+    'other-credits',
+  ])('rejects %s before starting a thread', async (mode) => {
+    const f = await fixture(mode);
+    let failure: unknown;
+    try {
+      const launch = await launchCodexReview(f.spec, {}, f.options);
+      await launch.outcome;
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ kind: 'capacity-unavailable' });
+    expect(
+      (await f.requests()).filter((request) => request.method === 'thread/start' || request.method === 'turn/start'),
+    ).toHaveLength(0);
+  });
+  test('does not block the selected model for another exact native model denial', async () => {
+    const f = await fixture('other-denied');
+    const launch = await launchCodexReview(f.spec, {}, f.options);
+    expect(await launch.outcome).toMatchObject({ kind: 'finished' });
+    expect((await f.requests()).filter((request) => request.method === 'turn/start')).toHaveLength(1);
+  });
+  test.each([
+    'other-denied-update',
+    'selected-denied-update',
+    'other-credit-update',
+  ])('keeps native scope and credit guard on %s during the turn', async (mode) => {
+    const f = await fixture(mode);
+    const launch = await launchCodexReview(f.spec, {}, f.options);
+    const interrupted = mode !== 'other-denied-update';
+    expect(await launch.outcome).toMatchObject({
+      kind: interrupted ? 'failed' : 'finished',
+      stopConfirmed: interrupted,
+    });
+    expect((await f.requests()).filter((request) => request.method === 'turn/start')).toHaveLength(1);
+    expect((await f.requests()).filter((request) => request.method === 'turn/interrupt')).toHaveLength(
+      interrupted ? 1 : 0,
+    );
+  });
+});

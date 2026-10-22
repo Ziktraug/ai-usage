@@ -105,6 +105,161 @@ const nonEmptyString = (value: unknown): string | null =>
 const isTimestamp = (value: unknown): value is string =>
   typeof value === 'string' && normalizeIsoTimestamp(value) === value;
 
+const CODEX_MODEL_WINDOW_PREFIX = 'model:codex:';
+const CODEX_AVAILABILITY_PREFIX = 'availability:codex:';
+
+/** Exact native model identity, never a display-name or shared-word match. */
+export const codexQuotaWindowModel = (id: string): string | null => {
+  if (!id.startsWith(CODEX_MODEL_WINDOW_PREFIX)) {
+    return null;
+  }
+  const separator = id.indexOf(':', CODEX_MODEL_WINDOW_PREFIX.length);
+  if (separator <= CODEX_MODEL_WINDOW_PREFIX.length) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(id.slice(CODEX_MODEL_WINDOW_PREFIX.length, separator));
+  } catch {
+    return null;
+  }
+};
+
+export const isCodexQuotaAvailabilityWindow = (id: string): boolean =>
+  id.startsWith(CODEX_AVAILABILITY_PREFIX) || (codexQuotaWindowModel(id) !== null && id.endsWith(':availability'));
+
+type CodexQuotaScope = { readonly kind: 'global' | 'unknown' } | { readonly kind: 'model'; readonly model: string };
+const codexQuotaScope = (snapshot: Record<string, unknown>): CodexQuotaScope => {
+  const model = snapshot.normalModelSlug;
+  if (typeof model === 'string' && model.length > 0 && model === model.trim()) {
+    return { kind: 'model', model };
+  }
+  if (model === null && snapshot.limitId === 'codex') {
+    return { kind: 'global' };
+  }
+  return { kind: 'unknown' };
+};
+
+type CodexCapacityRefusal = 'credits' | 'included-usage' | 'unknown-alias' | 'denied' | 'unknown-capacity';
+export type CodexReviewCapacity =
+  | { readonly kind: 'available' }
+  | { readonly kind: 'unavailable'; readonly reason: CodexCapacityRefusal };
+
+const futureCodexReset = (value: unknown, now: number): boolean =>
+  typeof value === 'number' && normalizeUnixSecondsTimestamp(value) !== null && value * 1000 > now;
+
+const knownAvailableCodexWindow = (value: unknown, now: number): boolean =>
+  isRecord(value) &&
+  typeof value.usedPercent === 'number' &&
+  Number.isFinite(value.usedPercent) &&
+  value.usedPercent >= 0 &&
+  value.usedPercent < 100 &&
+  typeof value.windowDurationMins === 'number' &&
+  Number.isFinite(value.windowDurationMins * 60) &&
+  value.windowDurationMins > 0 &&
+  futureCodexReset(value.resetsAt, now);
+
+const codexSnapshotCapacityRefusal = (snapshot: Record<string, unknown>, now: number): CodexCapacityRefusal | null => {
+  if (snapshot.spendControlReached === true || snapshot.rateLimitReachedType != null) {
+    return 'denied';
+  }
+  if (snapshot.spendControlReached !== false || snapshot.rateLimitReachedType !== null) {
+    return 'unknown-capacity';
+  }
+  const windows = [snapshot.primary, snapshot.secondary];
+  if (
+    windows.some((window) => isRecord(window) && typeof window.usedPercent === 'number' && window.usedPercent >= 100)
+  ) {
+    return 'denied';
+  }
+  if (
+    windows.every((window) => window === null) ||
+    windows.some((window) => window !== null && !knownAvailableCodexWindow(window, now))
+  ) {
+    return 'unknown-capacity';
+  }
+  if (snapshot.individualLimit != null) {
+    const individual = snapshot.individualLimit;
+    if (
+      !(
+        isRecord(individual) &&
+        typeof individual.remainingPercent === 'number' &&
+        Number.isFinite(individual.remainingPercent) &&
+        individual.remainingPercent > 0 &&
+        individual.remainingPercent <= 100 &&
+        futureCodexReset(individual.resetsAt, now)
+      )
+    ) {
+      return 'unknown-capacity';
+    }
+  }
+  return null;
+};
+
+/**
+ * Launch authority uses complete native snapshots, before display projection loses null windows.
+ * The mandatory global capacity and each exact selected-model bucket must independently be known.
+ * A different native model is irrelevant; an unknown alias cannot be silently skipped.
+ */
+export const assessCodexReviewCapacity = (input: {
+  readonly result: unknown;
+  readonly model: string;
+  readonly now: number;
+}): CodexReviewCapacity => {
+  const unavailable = (reason: CodexCapacityRefusal): CodexReviewCapacity => ({ kind: 'unavailable', reason });
+  if (
+    !(isRecord(input.result) && isRecord(input.result.rateLimits) && Number.isFinite(input.now)) ||
+    nonEmptyString(input.model) === null
+  ) {
+    return unavailable('unknown-capacity');
+  }
+  const root = input.result.rateLimits;
+  if (!(isRecord(root.credits) && root.credits.hasCredits === false && root.credits.unlimited === false)) {
+    return unavailable('credits');
+  }
+  if (input.result.ordinaryUsageAllowed !== true) {
+    return unavailable('included-usage');
+  }
+  const byId = input.result.rateLimitsByLimitId;
+  if (!(byId === null || isRecord(byId))) {
+    return unavailable('unknown-capacity');
+  }
+  const snapshots: unknown[] = [root, ...(isRecord(byId) ? Object.values(byId) : [])];
+  let hasGlobal = false;
+  for (const snapshot of snapshots) {
+    if (!isRecord(snapshot)) {
+      return unavailable('unknown-capacity');
+    }
+    if (
+      snapshot.credits != null &&
+      !(isRecord(snapshot.credits) && snapshot.credits.hasCredits === false && snapshot.credits.unlimited === false)
+    ) {
+      return unavailable('credits');
+    }
+    const scope = codexQuotaScope(snapshot);
+    if (scope.kind === 'unknown') {
+      return unavailable('unknown-alias');
+    }
+    if (scope.kind === 'model' && scope.model !== input.model) {
+      continue;
+    }
+    hasGlobal ||= scope.kind === 'global';
+    const refusal = codexSnapshotCapacityRefusal(snapshot, input.now);
+    if (refusal !== null) {
+      return unavailable(refusal);
+    }
+  }
+  return hasGlobal ? { kind: 'available' } : unavailable('unknown-capacity');
+};
+
+const codexWindowId = (snapshot: Record<string, unknown>, slot: string): string => {
+  const limitId = nonEmptyString(snapshot.limitId) ?? 'root';
+  const scope = codexQuotaScope(snapshot);
+  if (scope.kind === 'model') {
+    return `${CODEX_MODEL_WINDOW_PREFIX}${encodeURIComponent(scope.model)}:${encodeURIComponent(limitId)}:${slot}`;
+  }
+  return slot === 'availability' ? `${CODEX_AVAILABILITY_PREFIX}${encodeURIComponent(limitId)}` : `${limitId}:${slot}`;
+};
+
 const appServerWindow = (
   raw: unknown,
   snapshot: Record<string, unknown>,
@@ -118,34 +273,57 @@ const appServerWindow = (
   if (usedPercent === null && limitSeconds === null && raw.resetsAt == null) {
     return null;
   }
-  const limitId = nonEmptyString(snapshot.limitId) ?? 'root';
   const limitName = nonEmptyString(snapshot.limitName);
   const durationLabel = labelForLimitWindow(limitSeconds, slot === 'primary' ? 'Primary' : 'Secondary');
   const label = limitName && limitName !== 'Codex' ? `${limitName} · ${durationLabel}` : durationLabel;
-  const blocked = snapshot.rateLimitReachedType != null || usedPercent === 100;
+  const blocked = snapshot.spendControlReached === true || snapshot.rateLimitReachedType != null || usedPercent === 100;
+  const model = nonEmptyString(snapshot.normalModelSlug);
   return {
     blocked,
     group: windowGroupForLimitSeconds(limitSeconds),
-    id: `${limitId}:${slot}`,
+    id: codexWindowId(snapshot, slot),
     label,
     limitSeconds,
     remainingPercent: remainingPercentFromUsed(usedPercent),
     resetsAt: normalizeUnixSecondsTimestamp(raw.resetsAt),
-    scope: 'provider',
+    scope: model === null ? 'provider' : 'model',
     usedPercent,
   };
 };
 
-const appendSnapshotWindows = (windows: Map<string, ProviderLimitWindow>, value: unknown): void => {
+const appendSnapshotWindows = (windows: Map<string, ProviderLimitWindow>, value: unknown, now: number): void => {
   if (!isRecord(value)) {
     return;
   }
   for (const slot of ['primary', 'secondary'] as const) {
     const window = appServerWindow(value[slot], value, slot);
-    if (window && !windows.has(window.id)) {
+    if (window && (!windows.has(window.id) || window.blocked)) {
       windows.set(window.id, window);
     }
   }
+  // Historical snapshots remain readable. Current native snapshots must retain denials and
+  // unknown availability even when no numeric window can be displayed.
+  if (!('normalModelSlug' in value || 'spendControlReached' in value)) {
+    return;
+  }
+  const scope = codexQuotaScope(value);
+  const refusal = scope.kind === 'unknown' ? 'unknown-alias' : codexSnapshotCapacityRefusal(value, now);
+  if (refusal === null) {
+    return;
+  }
+  const id = codexWindowId(value, 'availability');
+  const previous = windows.get(id);
+  windows.set(id, {
+    blocked: refusal === 'denied' || previous?.blocked === true,
+    group: null,
+    id,
+    label: `${nonEmptyString(value.limitName) ?? nonEmptyString(value.normalModelSlug) ?? 'Codex'} · ${refusal === 'denied' ? 'unavailable' : 'availability unknown'}`,
+    limitSeconds: null,
+    remainingPercent: null,
+    resetsAt: null,
+    scope: scope.kind === 'global' ? 'provider' : scope.kind,
+    usedPercent: null,
+  });
 };
 
 export const normalizeCodexAppServerQuotaObservation = (
@@ -163,10 +341,10 @@ export const normalizeCodexAppServerQuotaObservation = (
     return null;
   }
   const windows = new Map<string, ProviderLimitWindow>();
-  appendSnapshotWindows(windows, root);
+  appendSnapshotWindows(windows, root, Date.parse(observedAt));
   if (isRecord(input.result.rateLimitsByLimitId)) {
     for (const value of Object.values(input.result.rateLimitsByLimitId)) {
-      appendSnapshotWindows(windows, value);
+      appendSnapshotWindows(windows, value, Date.parse(observedAt));
     }
   }
   const normalizedWindows = [...windows.values()];
@@ -180,7 +358,11 @@ export const normalizeCodexAppServerQuotaObservation = (
     providerKey: 'codex',
     providerLabel: 'Codex',
     source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
-    state: normalizedWindows.length === 0 || normalizedWindows.some((window) => window.blocked) ? 'partial' : 'ok',
+    state:
+      normalizedWindows.length === 0 ||
+      normalizedWindows.some((window) => window.blocked || isCodexQuotaAvailabilityWindow(window.id))
+        ? 'partial'
+        : 'ok',
     windows: normalizedWindows,
   };
 };

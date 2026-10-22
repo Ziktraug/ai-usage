@@ -2,6 +2,7 @@ import { appendFileSync } from 'node:fs';
 
 const log = process.argv[2];
 const mode = process.argv[3] ?? 'success';
+const aliasModel = ['other-denied', 'other-credits'].includes(mode) ? 'gpt-6-mini' : 'gpt-6-astra';
 const send = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const threadId = 'native-thread-1';
 const turnId = 'native-turn-1';
@@ -62,6 +63,10 @@ process.stdin.on('data', (chunk: string) => {
           ordinaryUsageAllowed: mode !== 'capacity-denied',
           rateLimits: {
             limitId: 'codex',
+            normalModelSlug: null,
+            spendControlReached: mode === 'spend-unknown' ? null : mode === 'spend-denied',
+            rateLimitReachedType: mode === 'denial-unknown' ? undefined : null,
+            individualLimit: null,
             planType: 'pro',
             credits:
               mode === 'credits-unknown'
@@ -70,7 +75,7 @@ process.stdin.on('data', (chunk: string) => {
             primary: {
               usedPercent: mode === 'exhausted' ? 100 : 20,
               windowDurationMins: 300,
-              resetsAt: Math.floor(Date.now() / 1000) + 3600,
+              resetsAt: Math.floor(Date.now() / 1000) + (mode === 'expired-reset' ? -1 : 3600),
             },
             secondary: {
               usedPercent: 25,
@@ -78,7 +83,26 @@ process.stdin.on('data', (chunk: string) => {
               resetsAt: Math.floor(Date.now() / 1000) + 86_400,
             },
           },
-          rateLimitsByLimitId: null,
+          rateLimitsByLimitId: [
+            'applicable-denied',
+            'other-denied',
+            'unknown-alias',
+            'selected-unknown',
+            'other-credits',
+          ].includes(mode)
+            ? {
+                alias: {
+                  limitId: 'quota-alias',
+                  normalModelSlug: mode === 'unknown-alias' ? null : aliasModel,
+                  spendControlReached: false,
+                  rateLimitReachedType: mode === 'selected-unknown' ? null : 'rate_limit_reached',
+                  individualLimit: null,
+                  primary: null,
+                  secondary: null,
+                  credits: { hasCredits: mode === 'other-credits', unlimited: false, balance: null },
+                },
+              }
+            : null,
         });
         break;
       case 'config/read':
@@ -112,10 +136,24 @@ process.stdin.on('data', (chunk: string) => {
         if (mode === 'reroute') {
           send({ method: 'model/rerouted', params: { threadId, turnId, fromModel: 'gpt-6-astra', toModel: 'other' } });
         }
+        if (['other-denied-update', 'selected-denied-update', 'other-credit-update'].includes(mode)) {
+          send({
+            method: 'account/rateLimits/updated',
+            params: {
+              rateLimits: {
+                normalModelSlug: mode === 'selected-denied-update' ? 'gpt-6-astra' : 'gpt-6-mini',
+                rateLimitReachedType: 'rate_limit_reached',
+                primary: null,
+                secondary: null,
+                credits: { hasCredits: mode === 'other-credit-update', unlimited: false },
+              },
+            },
+          });
+        }
         if (mode === 'exit' || mode === 'lost-ack') {
           process.exit(0);
         }
-        if (mode === 'success') {
+        if (['success', 'spend-denied', 'applicable-denied', 'other-denied', 'other-denied-update'].includes(mode)) {
           setTimeout(() => {
             send({
               method: 'item/completed',

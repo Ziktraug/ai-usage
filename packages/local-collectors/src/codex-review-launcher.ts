@@ -1,6 +1,6 @@
 import { executeBoundedProcess } from '@ai-usage/local-machine/bounded-process';
 import { isRecord } from '@ai-usage/report-core/datasets';
-import { normalizeCodexAppServerQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { assessCodexReviewCapacity } from '@ai-usage/report-core/provider-quota';
 import {
   boundReviewExcerpt,
   buildReviewPrompt,
@@ -82,6 +82,19 @@ const assert = (condition: unknown, message: string): void => {
   }
 };
 
+const requireCurrentCapacity = (quota: unknown, model: string | null): void => {
+  const capacity = assessCodexReviewCapacity({ result: quota, model: model ?? '', now: Date.now() });
+  if (capacity.kind === 'unavailable') {
+    const message =
+      capacity.reason === 'credits'
+        ? 'Codex credits are enabled or unknown. This CLI exposes no per-turn no-credit guarantee; review was not generated. No account setting was changed.'
+        : 'Codex included usage is denied, unknown, stale or not attributable to the selected model (' +
+          capacity.reason +
+          '); review was not generated; no credits or retry used';
+    throw new CodexReviewLaunchError('capacity-unavailable', message);
+  }
+};
+
 const qualification = async (client: CodexAppServerClient, spec: CodexReviewLaunchSpec) => {
   const account = await readCodexAccount(client);
   if (account.authMethod !== 'chatgpt' || account.accountFingerprint !== spec.accountFingerprint) {
@@ -90,45 +103,7 @@ const qualification = async (client: CodexAppServerClient, spec: CodexReviewLaun
       'Codex ChatGPT account differs from the qualified route; qualify again',
     );
   }
-  const rootLimit = isRecord(account.quota) && isRecord(account.quota.rateLimits) ? account.quota.rateLimits : null;
-  if (
-    !(
-      rootLimit &&
-      isRecord(rootLimit.credits) &&
-      rootLimit.credits.hasCredits === false &&
-      rootLimit.credits.unlimited === false
-    )
-  ) {
-    throw new CodexReviewLaunchError(
-      'capacity-unavailable',
-      'Codex credits are enabled or unknown. This CLI exposes no per-turn no-credit guarantee; review was not generated. No account setting was changed.',
-    );
-  }
-  const quota = normalizeCodexAppServerQuotaObservation({
-    machineId: 'launch',
-    observedAt: new Date(),
-    result: account.quota,
-  });
-  if (
-    !(
-      isRecord(account.quota) &&
-      account.quota.ordinaryUsageAllowed === true &&
-      quota &&
-      quota.windows.length > 0 &&
-      quota.windows.every(
-        (window) =>
-          window.usedPercent !== null &&
-          !window.blocked &&
-          window.resetsAt !== null &&
-          Date.parse(window.resetsAt) > Date.now(),
-      )
-    )
-  ) {
-    throw new CodexReviewLaunchError(
-      'capacity-unavailable',
-      'Codex included usage is not currently authorized or a quota window is unknown, exhausted or expired; no credits or retry used',
-    );
-  }
+  requireCurrentCapacity(account.quota, spec.model);
   const response = await client.request('config/read', { cwd: spec.checkoutPath, includeLayers: false });
   assert(isRecord(response) && isRecord(response.config), 'Codex effective config could not be read');
   const config = isRecord(response) && isRecord(response.config) ? response.config : {};
@@ -242,6 +217,8 @@ export const launchCodexReview = async (
       'Codex still exposes an MCP server; external-tool isolation could not be qualified',
     );
     await events.onInit?.(nativeSessionId);
+    // Config/thread checks and the durable init callback may cross the observed reset.
+    requireCurrentCapacity(account.quota, spec.model);
     const guarantee: CodexReviewHarnessGuarantee = {
       kind: 'codex-app-server',
       cliVersion: version ?? 'unknown',
@@ -307,13 +284,21 @@ export const launchCodexReview = async (
     const unsubscribe = client.subscribe((method, params) => {
       if (method === 'account/rateLimits/updated' && isRecord(params) && isRecord(params.rateLimits)) {
         const limit = params.rateLimits;
+        const anotherModel =
+          typeof limit.normalModelSlug === 'string' &&
+          limit.normalModelSlug.length > 0 &&
+          limit.normalModelSlug === limit.normalModelSlug.trim() &&
+          limit.normalModelSlug !== spec.model;
+        const creditsChanged =
+          isRecord(limit.credits) && (limit.credits.hasCredits !== false || limit.credits.unlimited !== false);
         if (
-          limit.rateLimitReachedType != null ||
-          limit.spendControlReached === true ||
-          (isRecord(limit.credits) && (limit.credits.hasCredits !== false || limit.credits.unlimited !== false)) ||
-          [limit.primary, limit.secondary].some(
-            (window) => isRecord(window) && typeof window.usedPercent === 'number' && window.usedPercent >= 100,
-          )
+          creditsChanged ||
+          (!anotherModel &&
+            (limit.rateLimitReachedType != null ||
+              limit.spendControlReached === true ||
+              [limit.primary, limit.secondary].some(
+                (window) => isRecord(window) && typeof window.usedPercent === 'number' && window.usedPercent >= 100,
+              )))
         ) {
           policyFailure =
             'Codex quota or credit availability changed; interruption requested without retry or credit fallback';
