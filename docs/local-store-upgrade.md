@@ -150,6 +150,24 @@ holds no pipe to a process the previous one started, and nothing is relaunched.
 The table is outside the served revision, the export and the replication
 outbox; an older binary opens the store normally and ignores it.
 
+2026-10-22 (ADR 0055): the table gains five nullable columns,
+`launch_session_id`, `released_at`, `release_evidence` (`process-absent`,
+`outcome-recorded-late` or `recorded-before-reservations`), `scope_json` and
+`guarantee_json`, through `ALTER TABLE … ADD COLUMN` on the next engine open,
+under the same `user_version` and without moving the store generation. The
+same open drops the first version's live-only unique index
+`idx_review_attempts_live_identity` and creates
+`idx_review_attempts_reserved_identity`, which also covers `lost` rows not yet
+released, so a lost attempt keeps its target reserved. Rows the first version
+had marked `lost` were recorded under a rule that kept no reservation: the
+migration releases them as `recorded-before-reservations` at the instant they
+were marked lost, never with a process fact nobody observed. The migration is
+idempotent (column and index presence are the signals; a second open changes
+nothing). An older binary still opens the upgraded store, recreates its old
+index beside the new one and ignores the new columns, but a launch it attempts
+on a held identity fails visibly. There is no downgrade path: back up before
+the first start with the new code (see [Backup](#backup)).
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM
