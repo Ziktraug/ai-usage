@@ -28,6 +28,7 @@ import {
   type ExecutorDeclaration,
   type ExecutorHarness,
   type ExecutorObservation,
+  isExecutorAccountFingerprint,
 } from './work-executors';
 import {
   assessReviewRecommendation,
@@ -433,7 +434,7 @@ export interface ReviewAttemptScope {
  * which guarantee its "read-only" rests on. Read-only means: no repository write and no external
  * action by the review's tools. The harness still writes its own logs, and no OS sandbox is claimed.
  */
-export interface ReviewHarnessGuarantee {
+export interface ClaudeReviewHarnessGuarantee {
   /** Version `claude --version` answered before the launch. */
   readonly cliVersion: string;
   /** The `--effort` the launch passed; `null` when none was (the CLI default applied). */
@@ -455,6 +456,22 @@ export interface ReviewHarnessGuarantee {
   /** The only built-in tools the session had (`--tools`). */
   readonly tools: readonly ReviewReadOnlyTool[];
 }
+
+/** Codex controls are native app-server settings, never Claude safe-mode claims. */
+export interface CodexReviewHarnessGuarantee {
+  readonly accountFingerprint: string;
+  readonly approvalPolicy: 'never';
+  readonly cliVersion: string;
+  readonly effort: string | null;
+  readonly externalTools: 'disabled';
+  readonly kind: 'codex-app-server';
+  readonly managedPolicy: 'inherited';
+  readonly model: string;
+  readonly networkAccess: false;
+  readonly sandbox: 'read-only';
+}
+
+export type ReviewHarnessGuarantee = ClaudeReviewHarnessGuarantee | CodexReviewHarnessGuarantee;
 
 export interface ReviewAttempt {
   /** Human acceptance of the result, distinct from the result itself; always `pending` in this version. */
@@ -480,6 +497,7 @@ export interface ReviewAttempt {
   readonly machineId: string;
   /** The harness's own session id, read from its `system/init` message; the link to a later collected Session. */
   readonly nativeSessionId: string | null;
+  readonly nativeTurnId: string | null;
   readonly numTurns: number | null;
   readonly pid: number | null;
   readonly releasedAt: string | null;
@@ -492,6 +510,8 @@ export interface ReviewAttempt {
   readonly scope: ReviewAttemptScope | null;
   readonly startedAt: string | null;
   readonly state: ReviewAttemptState;
+  readonly stopConfirmedAt: string | null;
+  readonly stopRequestedAt: string | null;
   readonly target: ReviewAttemptTarget;
   /** Last heartbeat or transition. */
   readonly updatedAt: string;
@@ -515,6 +535,9 @@ const ATTEMPT_KEYS: ReadonlySet<string> = new Set([
   'launchSessionId',
   'machineId',
   'nativeSessionId',
+  'nativeTurnId',
+  'stopRequestedAt',
+  'stopConfirmedAt',
   'numTurns',
   'pid',
   'releaseEvidence',
@@ -777,6 +800,47 @@ const isUniqueSubset = <const Values extends readonly string[]>(
 
 /** Strict re-validation of a stored guarantee; a tool outside the read-only set is refused, not shown. */
 export const parseReviewHarnessGuarantee = (value: unknown): ReviewHarnessGuarantee | null => {
+  if (isRecord(value) && value.kind === 'codex-app-server') {
+    const keys = new Set([
+      'kind',
+      'cliVersion',
+      'model',
+      'effort',
+      'sandbox',
+      'approvalPolicy',
+      'networkAccess',
+      'accountFingerprint',
+      'externalTools',
+      'managedPolicy',
+    ]);
+    if (
+      hasOnlyKeys(value, keys).length > 0 ||
+      !isBoundedText(value.cliVersion, 256) ||
+      !isBoundedText(value.model, 256) ||
+      !(value.effort === null || isBoundedText(value.effort, 256)) ||
+      value.sandbox !== 'read-only' ||
+      value.approvalPolicy !== 'never' ||
+      value.networkAccess !== false ||
+      typeof value.accountFingerprint !== 'string' ||
+      !isExecutorAccountFingerprint(value.accountFingerprint) ||
+      value.externalTools !== 'disabled' ||
+      value.managedPolicy !== 'inherited'
+    ) {
+      return null;
+    }
+    return {
+      kind: 'codex-app-server',
+      cliVersion: value.cliVersion,
+      model: value.model,
+      effort: value.effort,
+      sandbox: 'read-only',
+      approvalPolicy: 'never',
+      networkAccess: false,
+      accountFingerprint: value.accountFingerprint,
+      externalTools: 'disabled',
+      managedPolicy: 'inherited',
+    };
+  }
   if (!isRecord(value) || hasOnlyKeys(value, GUARANTEE_KEYS).length > 0) {
     return null;
   }
@@ -847,6 +911,9 @@ export const parseReviewAttempt = (value: unknown): ReviewAttempt | null => {
   const startedAt = optionalInstant(value.startedAt);
   const endedAt = optionalInstant(value.endedAt);
   const nativeSessionId = optionalId(value.nativeSessionId);
+  const nativeTurnId = optionalId(value.nativeTurnId ?? null);
+  const stopRequestedAt = optionalInstant(value.stopRequestedAt ?? null);
+  const stopConfirmedAt = optionalInstant(value.stopConfirmedAt ?? null);
   const pid = optionalCount(value.pid);
   const exitCode = optionalExitCode(value.exitCode);
   const numTurns = optionalCount(value.numTurns);
@@ -878,6 +945,9 @@ export const parseReviewAttempt = (value: unknown): ReviewAttempt | null => {
     startedAt === undefined ||
     endedAt === undefined ||
     nativeSessionId === undefined ||
+    nativeTurnId === undefined ||
+    stopRequestedAt === undefined ||
+    stopConfirmedAt === undefined ||
     pid === undefined ||
     exitCode === undefined ||
     numTurns === undefined ||
@@ -905,6 +975,9 @@ export const parseReviewAttempt = (value: unknown): ReviewAttempt | null => {
     launchSessionId,
     machineId: value.machineId,
     nativeSessionId,
+    nativeTurnId,
+    stopRequestedAt,
+    stopConfirmedAt,
     numTurns,
     pid,
     releaseEvidence,
@@ -1033,10 +1106,11 @@ export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaun
       `candidate ${input.candidateId} is not a declared executor on machine ${input.target.machineId}`,
     );
   }
-  if (candidate.harness !== SUPPORTED_REVIEW_EXECUTOR) {
+  if (candidate.harness === 'codex' && (candidate.identity?.state !== 'confirmed' || candidate.model === null)) {
     return refusal(
-      'harness-unsupported',
-      `only Claude Code launches a review in this version; ${candidate.harness} is simulated, not executed`,
+      'executor-unavailable',
+      'Codex needs a confirmed account fingerprint and an explicit model before launch',
+      candidate.qualificationActions,
     );
   }
   if (input.checkout === null) {
@@ -1051,7 +1125,7 @@ export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaun
   if (candidate.availability !== 'available') {
     return refusal(
       'executor-unavailable',
-      `the Claude Code CLI is not observed available on machine ${input.target.machineId} (${candidate.availability})`,
+      `the ${candidate.harness} CLI is not observed available on machine ${input.target.machineId} (${candidate.availability})`,
       candidate.qualificationActions,
     );
   }
@@ -1061,7 +1135,7 @@ export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaun
       forcedCandidateId: input.candidateId,
       nearResetMinutes: 60,
       preferNearReset: false,
-      preferredHarness: SUPPORTED_REVIEW_EXECUTOR,
+      preferredHarness: candidate.harness,
     },
     referenceTime: input.now,
     request: {
