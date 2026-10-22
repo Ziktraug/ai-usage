@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { codexAccountFingerprint, codexProcessEnvironment } from './codex-app-server-client';
 import { launchCodexReview } from './codex-review-launcher';
 
@@ -50,7 +51,7 @@ const fixture = async (mode = 'success') => {
   };
   const options = {
     command: process.execPath,
-    args: [path.join(import.meta.dir, 'test-fixtures/fake-codex-review-app-server.ts'), log, mode],
+    args: [fileURLToPath(import.meta.resolve('@ai-usage/local-machine/testing/codex-review-app-server')), log, mode],
     timeoutMs: 1000,
   };
   return {

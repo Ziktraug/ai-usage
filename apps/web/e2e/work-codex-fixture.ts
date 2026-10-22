@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { appendFile, chmod, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type SeedWorkAttemptFixtureInput, WORK_ATTEMPT_FIXTURE_WORKTREE } from './work-attempt-fixture';
 
 /** Explicit fake-process profile: no real Codex binary, credential or provider is contacted. */
@@ -77,10 +78,7 @@ export const seedCodexJourneyFixture = async (input: SeedWorkAttemptFixtureInput
   const logPath = path.join(input.home, 'codex-fixture-protocol.jsonl');
   await writeFile(modePath, 'success');
   // Reuse the adapter's tested fake protocol as data, with a visible pause for the browser lifecycle.
-  const protocolPath = path.resolve(
-    import.meta.dirname,
-    '../../../packages/local-collectors/src/test-fixtures/fake-codex-review-app-server.ts',
-  );
+  const protocolPath = fileURLToPath(import.meta.resolve('@ai-usage/local-machine/testing/codex-review-app-server'));
   const fixturePath = path.join(input.fixtureBinDirectory, 'codex-protocol.ts');
   await writeFile(fixturePath, (await readFile(protocolPath, 'utf8')).replace('}, 25);', '}, 2500);'));
   const executable = path.join(input.fixtureBinDirectory, 'codex');

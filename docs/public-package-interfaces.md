@@ -189,6 +189,8 @@ This package owns no persistence and never resolves ambiguity by itself.
 - `./text`: bounded text helpers.
 - `./test-fixtures/skill-observation-transcripts`: deterministic synthetic
   Claude, Codex, and OpenCode observation transcripts for cross-package tests.
+- `./testing/codex-review-app-server`: executable fake Codex protocol for isolated
+  collector and browser tests; resolve its path without importing it into a production runtime.
 - `./testing/harness-home`: deterministic synthetic harness homes and mutation
   helpers for tests/E2E only.
 - `./testing/memory-storage`: in-memory local-history test adapter.

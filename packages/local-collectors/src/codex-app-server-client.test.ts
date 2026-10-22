@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { codexAccountFingerprint, openCodexAppServer, resolveCodexCommand } from './codex-app-server-client';
 
-const fixture = path.join(import.meta.dir, 'test-fixtures/fake-codex-review-app-server.ts');
+const fixture = fileURLToPath(import.meta.resolve('@ai-usage/local-machine/testing/codex-review-app-server'));
 describe('bounded Codex app-server transport', () => {
   test('rejects a relative executable before changing into the review checkout', () => {
     expect(() => resolveCodexCommand({ command: './codex' })).toThrow('must be absolute');
