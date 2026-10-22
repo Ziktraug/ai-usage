@@ -39,9 +39,9 @@ import { queryWorkContext } from './work-context-read';
 
 /**
  * Codex sessions on the Work read (ADR 0059): the served revision's recent `codex` campaigns
- * become roots of their own whose attention is `not-observable`. They carry the checkout, branch,
+ * become roots of their own whose attention without native request evidence is `not-observable`. They carry the checkout, branch,
  * activity and children Codex recorded, the checkout observation named by their exact path, and
- * never a request, a wait or a fold under a Desktop root, whatever they share with one.
+ * never a request inferred from checkout state or a fold under a Desktop root, whatever they share with one.
  */
 
 const temporaryRoots: string[] = [];
@@ -395,7 +395,7 @@ describe('Codex sessions on the Work read', () => {
     expect(codex.interpretations[0]).toMatchObject({
       evidence: [],
       kind: 'coverage-gap',
-      text: 'Codex records no turn status: whether this session waits on you is unknown — not declared by this harness.',
+      text: 'Codex records no general turn status: waits beyond the structured requests shown here are unknown — not declared by this harness.',
     });
     const local = codex.interpretations.find((entry) => entry.kind === 'local-changes-unvalidated');
     // Both Desktop roots and the Codex root worked in that checkout.
@@ -424,7 +424,7 @@ describe('Codex sessions on the Work read', () => {
     expect(dataset.coverage.window.excludedRoots).toBe(0);
   });
 
-  test('no Codex root ever carries a request or a wait, whatever its checkout shows', async () => {
+  test('checkout state alone never creates a Codex request or wait', async () => {
     const dbPath = await createStore([]);
     await publishCodexRows(dbPath, CODEX_ROWS);
     await observeCheckout(dbPath);

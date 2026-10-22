@@ -45,6 +45,7 @@ import {
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -1258,6 +1259,7 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
             family,
             generatedAt: harness.generatedAt,
             harness: harness.harness,
+            ...(harness.workObservations === undefined ? {} : { workObservations: harness.workObservations }),
             now,
             ...(rootsPerCheckout === undefined ? {} : { rootsPerCheckout }),
           });
@@ -1514,7 +1516,23 @@ export const queryWorkAttention = (
       limit: Math.min(input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT, WORK_ATTENTION_BOUNDS.maxCodexRoots),
       ...machineFilter,
     });
-    const harnessSessions: WorkHarnessSessions = { ...harnessRead, harness: WORK_UNDECLARED_HARNESS };
+    const workIdentities = new Map<string, string[]>();
+    for (const family of harnessRead.families) {
+      for (const member of family.members) {
+        const ids = workIdentities.get(member.machineId) ?? [];
+        ids.push(member.sourceSessionId);
+        workIdentities.set(member.machineId, ids);
+      }
+    }
+    const workReads = yield* Effect.forEach([...workIdentities], ([machineId, sourceSessionIds]) =>
+      queryCodexWorkObservations({ dbPath: input.dbPath, machineId, sourceSessionIds }),
+    );
+    const harnessSessions: WorkHarnessSessions = {
+      ...harnessRead,
+      harness: WORK_UNDECLARED_HARNESS,
+      workObservations: workReads.flatMap((result) => result.observations),
+      refusedRows: harnessRead.refusedRows + workReads.reduce((total, result) => total + result.skipped, 0),
+    };
     const externalFacts = yield* readExternalFacts(input, read.observations, harnessSessions.families);
     const history = yield* readDeclarationHistory(input.dbPath, read.observations, machineFilter);
     const sessionsStored = yield* countClaudeDesktopSessions({
