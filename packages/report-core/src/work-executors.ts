@@ -1,6 +1,10 @@
 import { isRecord } from './datasets';
 import { normalizeIsoTimestamp } from './provider-status';
 import { isPrintableSkillObservationText } from './skill-observation';
+import { ACCOUNT_FINGERPRINT_LENGTH, isExecutorAccountFingerprint } from './work-routing-vocabulary';
+
+// The fingerprint shape is shared with the transported qualification (ADR 0057).
+export { isExecutorAccountFingerprint } from './work-routing-vocabulary';
 
 /**
  * Review executors: the declared and observed facts that qualify a local harness for a read-only
@@ -38,7 +42,7 @@ export type ExecutorObservationOutcome = (typeof EXECUTOR_OBSERVATION_OUTCOMES)[
 
 export const EXECUTOR_BOUNDS = {
   /** `accountFingerprint`: lowercase hexadecimal characters of the truncated SHA-256 (ADR 0057). */
-  accountFingerprintLength: 16,
+  accountFingerprintLength: ACCOUNT_FINGERPRINT_LENGTH,
   /** `alternateModels` per entry: further models of the same account, in preference order. */
   maxAlternateModels: 8,
   /** `authMethod`: the sign-in method word a CLI reports ("claude.ai", "console", "api-key"). */
@@ -203,12 +207,6 @@ const isBoundedText = (value: unknown, maximum: number): value is string =>
   value.trim().length > 0 &&
   value.length <= maximum &&
   isPrintableSkillObservationText(value);
-
-const ACCOUNT_FINGERPRINT_PATTERN = new RegExp(`^[0-9a-f]{${EXECUTOR_BOUNDS.accountFingerprintLength}}$`, 'u');
-
-/** Exactly the collector's format: lowercase hexadecimal of the documented length. */
-export const isExecutorAccountFingerprint = (value: unknown): value is string =>
-  typeof value === 'string' && ACCOUNT_FINGERPRINT_PATTERN.test(value);
 
 const hasOnlyKeys = (record: Record<string, unknown>, keys: ReadonlySet<string>): string[] =>
   Object.keys(record).filter((key) => !keys.has(key));

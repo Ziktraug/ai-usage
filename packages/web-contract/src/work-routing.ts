@@ -1,6 +1,10 @@
 import { REVIEW_ATTEMPT_BOUNDS } from '@ai-usage/report-core/work-attempts';
-import { EXECUTOR_BOUNDS, isExecutorAccountFingerprint } from '@ai-usage/report-core/work-executors';
-import { CANDIDATE_IDENTITY_STATES, ROUTING_QUALIFICATION_BOUNDS } from '@ai-usage/report-core/work-routing';
+import { EXECUTOR_BOUNDS } from '@ai-usage/report-core/work-executors';
+import {
+  CANDIDATE_IDENTITY_STATES,
+  isExecutorAccountFingerprint,
+  ROUTING_QUALIFICATION_BOUNDS,
+} from '@ai-usage/report-core/work-routing-vocabulary';
 import { type ContractRouterClient, oc } from '@orpc/contract';
 import {
   array,
