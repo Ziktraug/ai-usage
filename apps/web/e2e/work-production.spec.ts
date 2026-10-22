@@ -91,7 +91,7 @@ const BLOCKED_DECLARED_AT = 'Jul 03, 2026, 13:00 GMT+2';
 const MISSING_WORKTREE = '/.claude/worktrees/checkout-3: no longer on disk (removed since the session)';
 const CHECKOUTS_FAILED_PATTERN = /Checkouts: .* failed/;
 const CHECKOUTS_UNREAD_PATTERN =
-  /Checkouts: [1-9]\d* observed, [1-9]\d* not read .* · of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
+  /Checkouts: [1-9]\d*\s+observed, [1-9]\d* not read\s[^·]*· of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
 const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_CHILD_TITLE = 'Fixture: open the collector pull request';

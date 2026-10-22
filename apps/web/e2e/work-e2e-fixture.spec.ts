@@ -233,7 +233,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   await expect(aside).toContainText(DIRTY_WORKTREE_INTERPRETATION);
   await expect(aside.getByRole('heading', { level: 4, name: 'Claude Desktop metadata' })).toBeVisible();
   await expect(aside.getByRole('heading', { level: 4, name: 'Local checkout' })).toBeVisible();
-  await expect(aside).toContainText('on fixture/checkout-3: dirty, 2 modified, 1 untracked, 1 ahead');
+  await expect(aside).toContainText('on fixture/checkout-3: 2 modified · 1 untracked · 1 ahead');
   await expect(aside).toContainText('3 child sessions · 0 blocked · 1 review ready · 2 completed');
   // This composition serves no revision, so no root joins a Session: the detail says so instead of
   // offering a transcript or a review target, and the routing simulation stays unreachable here.
