@@ -100,6 +100,22 @@ export const createCodexWorkObserver = () => {
     return callId !== undefined && Boolean(observation?.requests.some((request) => request.callId === callId));
   };
 
+  /** A recognizable native signal with no usable date is loss, not a dated request or answer. */
+  const rejectUndated = (event: Record<string, unknown>, owned: boolean): void => {
+    if (observation === null || !owned || event.type !== 'response_item' || !isRecord(event.payload)) {
+      return;
+    }
+    const payload = event.payload;
+    const request =
+      inputTool(payload.name) !== null && (payload.type === 'function_call' || payload.type === 'custom_tool_call');
+    const linkedOutput =
+      (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') &&
+      observation.requests.some((candidate) => candidate.callId === payload.call_id);
+    if (request || linkedOutput) {
+      observation = { ...observation, rejectedRecords: observation.rejectedRecords + 1 };
+    }
+  };
+
   const visit = (event: Record<string, unknown>, date: Date, owned: boolean): void => {
     const payload = isRecord(event.payload) ? event.payload : {};
     const at = canonicalInstantFromDate(date);
@@ -206,5 +222,5 @@ export const createCodexWorkObserver = () => {
       requests: observation.requests.map((candidate) => (candidate === request ? next : candidate)),
     };
   };
-  return { acceptsOutput, visit, snapshot: () => observation };
+  return { acceptsOutput, rejectUndated, visit, snapshot: () => observation };
 };

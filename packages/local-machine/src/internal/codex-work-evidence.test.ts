@@ -29,6 +29,7 @@ const output = (callId: string, second: number, value: unknown) =>
     call_id: callId,
     output: typeof value === 'string' ? value : JSON.stringify(value),
   });
+const withoutDate = (line: string): string => JSON.stringify({ ...JSON.parse(line), timestamp: 'invalid' });
 const parse = (lines: readonly string[]) => {
   const parser = createCodexSessionParser();
   for (const line of lines) {
@@ -42,6 +43,51 @@ const parse = (lines: readonly string[]) => {
 };
 
 describe('Codex native request attribution through the existing parser', () => {
+  test('invalid timestamps on recognized requests and linked outputs report evidence loss without fabricating dates', () => {
+    const missingRequest = parse([meta(), withoutDate(request('lost', 1, [{ id: 'q', question: 'Continue ?' }]))]);
+    expect(missingRequest).toMatchObject({ requests: [], rejectedRecords: 1, lastEventAt: at(0) });
+    const missingResponse = parse([
+      meta(),
+      request('q', 1, [{ id: 'q', question: 'Continue ?' }]),
+      withoutDate(output('q', 2, { answers: { q: { answers: ['yes'] } } })),
+    ]);
+    expect(missingResponse?.rejectedRecords).toBe(1);
+    expect(missingResponse?.requests[0]?.questions[0]?.answeredAt).toBeNull();
+    expect(missingResponse?.lastEventAt).toBe(at(1));
+  });
+
+  test('unrelated invalid events and proven replay do not claim lost owned request evidence', () => {
+    const invalidQuestion = withoutDate(request('lost', 1, [{ id: 'q', question: 'Continue ?' }]));
+    const result = parse([
+      meta({ forked_from_id: 'parent', thread_source: 'subagent' }),
+      event(1, 'event_msg', { type: 'task_started', turn_id: 'copied', started_at: Date.parse(at(-100)) / 1000 }),
+      event(2, 'turn_context', { turn_id: 'copied', model: 'gpt-5' }),
+      invalidQuestion,
+      event(3, 'event_msg', { type: 'task_complete', turn_id: 'copied' }),
+      event(4, 'event_msg', { type: 'task_started', turn_id: 'own', started_at: Date.parse(at(4)) / 1000 }),
+      event(5, 'turn_context', { turn_id: 'own', model: 'gpt-5' }),
+      withoutDate(
+        event(6, 'response_item', {
+          type: 'function_call',
+          name: 'exec_command',
+          call_id: 'unrelated',
+          arguments: '{}',
+        }),
+      ),
+      withoutDate(output('unknown-call', 7, { accepted: true })),
+      '{"type":"response_item","payload":',
+    ]);
+    expect(result?.rejectedRecords).toBe(0);
+    const owned = parse([
+      meta({ forked_from_id: 'parent', thread_source: 'subagent' }),
+      event(4, 'event_msg', { type: 'task_started', turn_id: 'own', started_at: Date.parse(at(4)) / 1000 }),
+      event(5, 'turn_context', { turn_id: 'own', model: 'gpt-5' }),
+      invalidQuestion,
+    ]);
+    expect(owned?.rejectedRecords).toBe(1);
+    expect(owned?.requests).toEqual([]);
+  });
+
   test('C01/C02: native async acceptance is a receipt; later dictated French message and completion answer nothing', () => {
     const result = parse([
       meta(),

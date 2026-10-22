@@ -33,6 +33,16 @@ test('C05: Codex request observations survive warm cache and an old parser versi
         type: 'response_item',
         payload: { type: 'function_call_output', call_id: 'q', output: JSON.stringify({ accepted: true }) },
       },
+      {
+        timestamp: 'invalid',
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          call_id: 'undated',
+          name: 'request_user_input_async',
+          arguments: JSON.stringify({ questions: [{ title: 'Lost undated question' }] }),
+        },
+      },
     ];
     writeFileSync(path.join(directory, 'fixture.jsonl'), events.map((event) => JSON.stringify(event)).join('\n'));
     const collect = () =>
@@ -42,6 +52,7 @@ test('C05: Codex request observations survive warm cache and an old parser versi
     const cold = await collect();
     const hot = await collect();
     expect(hot.workObservations).toEqual(cold.workObservations);
+    expect(hot.workObservations[0]?.rejectedRecords).toBe(1);
     expect(hot.workObservations[0]?.requests[0]).toMatchObject({
       acknowledgedAt: events[2]?.timestamp,
       questions: [{ answeredAt: null }],
@@ -54,6 +65,16 @@ test('C05: Codex request observations survive warm cache and an old parser versi
       );
     } finally {
       cache.close();
+    }
+    expect((await collect()).workObservations).toEqual(cold.workObservations);
+    const previousCache = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
+    try {
+      // v26 parsed the request tools but silently lost recognized records with invalid dates.
+      previousCache.exec(
+        "UPDATE codex_session_cache SET version = 26, session_json = json_set(session_json, '$.workObservation.rejectedRecords', 0)",
+      );
+    } finally {
+      previousCache.close();
     }
     expect((await collect()).workObservations).toEqual(cold.workObservations);
   } finally {

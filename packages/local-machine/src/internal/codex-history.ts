@@ -1214,6 +1214,18 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
   };
 
+  const ownsWorkEvent = (payload: Record<string, unknown>): boolean => {
+    if (!childRollout) {
+      return true;
+    }
+    const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+      ? payload.internal_chat_message_metadata_passthrough
+      : null;
+    const turnId = nonEmpty(metadata?.turn_id);
+    const task = turnId ? openTasks.get(turnId) : latestOpenTask();
+    return Boolean(task?.hasContext && !task.replayed);
+  };
+
   const visit = (line: string): void => {
     if (!line) {
       return;
@@ -1264,6 +1276,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : Number.NaN;
     const date = new Date(timestamp);
     if (!Number.isFinite(date.getTime())) {
+      workObserver.rejectUndated(event, ownsWorkEvent(payload));
       if (isCodexToolCallPrefix(prefix) && isCodexExecToolCall(payload)) {
         unplacedInvocationSignals += matchCodexSkillDocuments(codexToolCallCommandBlob(payload)).length;
       }
@@ -1368,12 +1381,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       }
     }
     const userText = userTextFromPayload(payload);
-    const workMetadata = isRecord(payload.internal_chat_message_metadata_passthrough)
-      ? payload.internal_chat_message_metadata_passthrough
-      : null;
-    const workTurnId = nonEmpty(workMetadata?.turn_id);
-    const workTask = workTurnId ? openTasks.get(workTurnId) : latestOpenTask();
-    workObserver.visit(event, date, !childRollout || Boolean(workTask?.hasContext && !workTask.replayed));
+    workObserver.visit(event, date, ownsWorkEvent(payload));
     if (userText) {
       if (session.subagentKind === 'guardian' && !session.classifierParent) {
         session.classifierParent = guardianParentSessionId(userText);

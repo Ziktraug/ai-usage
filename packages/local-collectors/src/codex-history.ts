@@ -166,8 +166,8 @@ interface SqliteDatabase {
 // Bumped to 25 because child token ownership now uses the declared session birth
 // and native task evidence instead of retaining inherited cumulative snapshots.
 // An unchanged rollout must also recover lost generations and partial status.
-// Version 26 retains bounded native requests and their exact response identities.
-const CODEX_SESSION_CACHE_VERSION = 26;
+// Version 27 also records loss from recognized native requests/outputs with invalid timestamps.
+const CODEX_SESSION_CACHE_VERSION = 27;
 
 // `Effect.yieldNow()` re-schedules within the Effect runtime but never reaches
 // the macrotask queue, so a cold pass over thousands of rollouts (each one a
