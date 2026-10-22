@@ -140,6 +140,17 @@ describe('bounded process runner', () => {
       timeoutMs: 5000,
     });
     expect(error.kind).toBe('failed');
+    expect(error.failure).toBe('undecodable');
+  });
+
+  test('tells a process killed by a signal it was not sent from undecodable output', async () => {
+    const error = await failure({
+      ...script('process.kill(process.pid, "SIGKILL")'),
+      maximumOutputBytes: 16,
+      timeoutMs: 5000,
+    });
+    expect(error.kind).toBe('failed');
+    expect(error.failure).toBe('signalled');
   });
 
   test('interrupts the effect and kills the child when the signal aborts', async () => {

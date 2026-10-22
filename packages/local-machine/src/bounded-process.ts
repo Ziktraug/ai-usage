@@ -19,13 +19,21 @@ import { Data, Effect } from 'effect';
  */
 export type BoundedProcessFailureKind = 'failed' | 'output-limit' | 'timed-out' | 'unavailable';
 
+/** Why a process `failed`: killed by a signal this runner did not send, or stdout not UTF-8. */
+export type BoundedProcessFailedCause = 'signalled' | 'undecodable';
+
 export class BoundedProcessError extends Data.TaggedError('BoundedProcessError')<{
+  /** Set for `failed` only. */
+  readonly failure?: BoundedProcessFailedCause;
   readonly kind: BoundedProcessFailureKind;
   readonly message: string;
 }> {}
 
 const boundedProcessError = (kind: BoundedProcessFailureKind): BoundedProcessError =>
   new BoundedProcessError({ kind, message: `Bounded process ${kind}` });
+
+const failedProcess = (failure: BoundedProcessFailedCause): BoundedProcessError =>
+  new BoundedProcessError({ failure, kind: 'failed', message: `Bounded process failed (${failure})` });
 
 export interface BoundedProcessOptions {
   readonly args: readonly string[];
@@ -152,7 +160,7 @@ export const executeBoundedProcess = async (options: BoundedProcessOptions): Pro
         finish(failure);
       } else if (code === null) {
         // Terminated by a signal this runner did not send.
-        finish(boundedProcessError('failed'));
+        finish(failedProcess('signalled'));
       } else {
         try {
           finish({
@@ -161,7 +169,7 @@ export const executeBoundedProcess = async (options: BoundedProcessOptions): Pro
             stdout: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)),
           });
         } catch {
-          finish(boundedProcessError('failed'));
+          finish(failedProcess('undecodable'));
         }
       }
     });

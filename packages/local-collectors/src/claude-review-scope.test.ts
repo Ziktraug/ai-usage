@@ -255,6 +255,46 @@ describe('review scope: one commit, resolved first, compared with its first pare
     expect(await missing()).toEqual(before.missing);
   });
 
+  test('refuses a patch that is not UTF-8 as not-text, and a git killed by a signal as a git failure', async () => {
+    const { git, root } = await repository();
+    await writeFile(path.join(root, 'latin.txt'), 'caf\n');
+    await git('add', 'latin.txt');
+    await git('commit', '-q', '-m', 'first');
+    await writeFile(path.join(root, 'latin.txt'), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+    await git('commit', '-q', '-am', 'latin-1 text');
+    await expect(prepareReviewScope(root)).rejects.toMatchObject({ kind: 'not-text' });
+
+    // A git that dies from a signal it was not sent (OOM killer, crash) answered nothing at all.
+    const bin = await mkdtemp(path.join(tmpdir(), 'claude-review-scope-bin-'));
+    roots.push(bin);
+    const realGit = Bun.which('git');
+    await writeFile(
+      path.join(bin, 'git'),
+      `#!/bin/sh\nfor arg in "$@"; do [ "$arg" = diff-tree ] && kill -9 $$; done\nexec ${JSON.stringify(realGit)} "$@"\n`,
+    );
+    await chmod(path.join(bin, 'git'), 0o700);
+    const killed = await prepareReviewScope(root, { env: { HOME: process.env.HOME, PATH: bin } }).catch(
+      (caught: unknown) => caught,
+    );
+    expect(killed).toMatchObject({ kind: 'git-failed' });
+    expect((killed as Error).message).not.toContain('UTF-8');
+  });
+
+  test('a dirty file with a non-UTF-8 name elsewhere marks the tree dirty, never refuses a clean UTF-8 commit', async () => {
+    const { git, root } = await repository();
+    const latinName = Buffer.concat([Buffer.from(`${root}/caf`), Buffer.from([0xe9]), Buffer.from('.txt')]);
+    await writeFile(latinName, 'one\n');
+    await writeFile(path.join(root, 'ok.txt'), 'ok\n');
+    await git('add', '-A');
+    await git('commit', '-q', '-m', 'first');
+    await writeFile(path.join(root, 'ok.txt'), 'ok\nmore\n');
+    await git('commit', '-q', '-am', 'change ok only');
+    await writeFile(latinName, 'two\n');
+    const { scope } = await prepareReviewScope(root);
+    expect(scope.files.map((file) => file.path)).toEqual(['ok.txt']);
+    expect(scope.workingTreeDirty).toBe(true);
+  });
+
   test('never runs a diff driver, a text conversion or a pager the repository configures', async () => {
     const { git, root } = await repository();
     const marker = path.join(root, '..', `${path.basename(root)}-driver-ran`);

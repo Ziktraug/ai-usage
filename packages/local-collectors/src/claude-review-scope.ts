@@ -380,8 +380,11 @@ const runGit = async (
       if (error.kind === 'output-limit') {
         throw new ReviewScopeError('too-large', `git ${args[0]} answered more than ${maximumOutputBytes} bytes`);
       }
-      if (error.kind === 'failed') {
+      if (error.kind === 'failed' && error.failure === 'undecodable') {
         throw new ReviewScopeError('not-text', `git ${args[0]} answered something that is not UTF-8 text`);
+      }
+      if (error.kind === 'failed') {
+        throw new ReviewScopeError('git-failed', `git ${args[0]} ended without an exit code (killed by a signal)`);
       }
       throw new ReviewScopeError('git-failed', `git ${args[0]} ${error.kind}`);
     }
@@ -563,8 +566,9 @@ export const prepareReviewScope = async (
     }
     workingTreeDirty = status.stdout.length > 0;
   } catch (error) {
-    // More status than the bound means changes exist; that is the only fact needed here.
-    if (error instanceof ReviewScopeError && error.kind === 'too-large') {
+    // More status than the bound means changes exist, and so does output that is not UTF-8 (a
+    // changed file whose name is not): emptiness is the only fact needed here.
+    if (error instanceof ReviewScopeError && (error.kind === 'too-large' || error.kind === 'not-text')) {
       workingTreeDirty = true;
     } else {
       throw error;
