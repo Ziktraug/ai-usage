@@ -308,6 +308,7 @@ const localMachineBoundedProcess = `${localMachinePackage}/bounded-process`;
 const localMachineTestingHarnessHome = `${localMachinePackage}/testing/harness-home`;
 const reportDataPackage = '@ai-usage/report-data';
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
+const reportDataWorkContextRead = `${reportDataPackage}/work-context-read`;
 
 const engineRuntimeAllowedWorkspaceDependencies = new Set([
   '@ai-usage/effect-runtime',
@@ -606,9 +607,10 @@ const targetImportReason = (
   if (
     packageName === '@ai-usage/cli' &&
     isPackageOrSubpath(specifier, reportDataPackage) &&
-    specifier !== reportDataPortableReport
+    specifier !== reportDataPortableReport &&
+    specifier !== reportDataWorkContextRead
   ) {
-    return 'CLI may import only the collector-free report-data portable-report facade.';
+    return 'CLI may import only the collector-free report-data portable-report and work-context-read facades.';
   }
   if (
     isPackageOrSubpath(specifier, usageStoreTesting) ||

@@ -619,7 +619,7 @@ describe('package boundary guard', () => {
     ]);
   });
 
-  test('allows CLI only the collector-free report-data portable facade', async () => {
+  test('allows CLI only the collector-free report-data portable and Work context facades', async () => {
     const root = await createFixture();
     await writePackage(
       root,
@@ -630,6 +630,7 @@ describe('package boundary guard', () => {
         `import '${reportDataPackage}';`,
         `import '${reportDataPackage}/served-revision-query';`,
         `import '${reportDataPortableReport}';`,
+        `import '${reportDataPackage}/work-context-read';`,
       ].join('\n'),
     );
 
