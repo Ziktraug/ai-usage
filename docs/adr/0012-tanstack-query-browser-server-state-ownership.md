@@ -52,6 +52,11 @@ Named policies define freshness rather than components:
   revalidation. Their server-provided proof deadline defines a data-aware stale
   time capped at one minute, and stale or in-flight retained data is qualified
   as provisional (ADR 0037);
+- collection facts without a proof lifetime (the Work attention dataset) use
+  one-minute `collection-facts-swr` revalidation on interval and focus, no
+  publication invalidation, and a mount refetch only when stale, so a
+  server-rendered answer is read once per page load (amended 2026-10-22,
+  plan 118);
 - bounded control snapshots use their short named policy;
 - exact report and Session values include immutable revision and canonical
   request identity, remain fresh indefinitely, and have bounded garbage
