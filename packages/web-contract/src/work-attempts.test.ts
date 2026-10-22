@@ -2,11 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { parse } from 'valibot';
 import {
   parseWorkAttemptsListOutput,
+  parseWorkAttemptsReleaseOutput,
   parseWorkAttemptsStartOutput,
   type WorkAttemptsListData,
   type WorkAttemptWire,
   workAttemptsContract,
   workAttemptsListInputSchema,
+  workAttemptsReleaseInputSchema,
   workAttemptsStartInputSchema,
 } from './work-attempts';
 import { parseWorkRoutingContext } from './work-routing';
@@ -108,6 +110,30 @@ describe('Work attempts Web contract', () => {
     });
     expect(() => parse(workAttemptsStartInputSchema, { ...start, action: 'write-review' })).toThrow();
     expect(() => parse(workAttemptsStartInputSchema, { ...start, force: true })).toThrow();
+  });
+
+  test('the operator release names one attempt and answers what the engine did (ADR 0055)', () => {
+    expect(workAttemptsContract.release['~orpc'].route).toMatchObject({
+      method: 'POST',
+      path: '/work/attempts/release',
+    });
+    expect(parse(workAttemptsReleaseInputSchema, { attemptId: 'a' })).toEqual({ attemptId: 'a' });
+    expect(() => parse(workAttemptsReleaseInputSchema, { attemptId: 'a', kill: true })).toThrow();
+    const released = {
+      data: {
+        attemptId: 'a',
+        evidence: 'operator-declared-ended',
+        pids: [],
+        releasedAt: '2026-10-22T10:00:00.000Z',
+        result: 'released',
+      },
+      ok: true,
+    } as const;
+    expect(parseWorkAttemptsReleaseOutput(released)).toEqual(released as never);
+    expect(() =>
+      parseWorkAttemptsReleaseOutput({ ...released, data: { ...released.data, evidence: 'age' } }),
+    ).toThrow();
+    expect(() => parseWorkAttemptsReleaseOutput({ error: { message: 'x', tag: 'Refused' }, ok: false })).toThrow();
   });
 
   test('accepts the list and start envelopes and refuses drift, oversize excerpts and foreign tags', () => {

@@ -24,7 +24,7 @@
   import { createWorkAttemptsClient } from '../../rpc/work-attempts-client';
   import { createWorkRoutingClient, createWorkRoutingQualifyClient } from '../../rpc/work-routing-client';
   import WorkAttempts from './work-attempts.svelte';
-  import { DEMO_EXECUTION_TEXT, launchGate, START_REVIEW_LABEL } from './work-attempts-model';
+  import { DEMO_EXECUTION_TEXT, launchGate, releaseOutcomeText, START_REVIEW_LABEL } from './work-attempts-model';
   import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
   import { projectWorkEvidence } from './work-evidence';
   import {
@@ -228,6 +228,14 @@
     if (attemptsTarget) {
       await queryClient.invalidateQueries({ queryKey: workAttemptsKey(attemptsTarget) });
     }
+  };
+  /** The operator's release of a held reservation (ADR 0055); the engine decides and stops nothing. */
+  const releaseReservation = async (attemptId: string): Promise<string> => {
+    const output = await attemptsClient.release({ attemptId });
+    if (attemptsTarget) {
+      await queryClient.invalidateQueries({ queryKey: workAttemptsKey(attemptsTarget) });
+    }
+    return releaseOutcomeText(output);
   };
   const resetResult = (_input: unknown): void => {
     result = null;
@@ -587,7 +595,11 @@
         {/if}
       </div>
     {/if}
-    <WorkAttempts attempts={resolvedAttempts} pending={attemptsPending} />
+    <WorkAttempts
+      attempts={resolvedAttempts}
+      pending={attemptsPending}
+      {...(mode === 'live' ? { onRelease: releaseReservation } : {})}
+    />
   {/if}
   <details>
     <summary class={workHeading}>Candidate evidence ({candidates.length})</summary>

@@ -75,14 +75,21 @@ export const REVIEW_ATTEMPT_RESERVING_STATES = [
  * - `outcome-recorded-late`: the engine that launched the process saw it end and recorded the
  *   outcome after the attempt had been marked lost;
  * - `recorded-before-reservations`: the attempt was marked lost by the earlier rule, which kept no
- *   reservation; the migration says so instead of inventing a process fact.
+ *   reservation; the migration says so instead of inventing a process fact;
+ * - `operator-declared-ended`: the operator declared, at `releasedAt`, that no such review is
+ *   still running, where the engine could not look (no launch marker, no readable process list).
+ *   It is the operator's statement, recorded as theirs; nothing was stopped or adopted.
  */
 export const REVIEW_RESERVATION_RELEASE_EVIDENCE = [
   'process-absent',
   'outcome-recorded-late',
   'recorded-before-reservations',
+  'operator-declared-ended',
 ] as const;
 export type ReviewReservationReleaseEvidence = (typeof REVIEW_RESERVATION_RELEASE_EVIDENCE)[number];
+
+/** The operator's release of a held reservation, as the Work view names it (refusals name it too). */
+export const REVIEW_RESERVATION_RELEASE_ACTION = 'Declare the review ended';
 
 /** Whether the attempt still blocks a new launch on its identity. */
 export const holdsReviewReservation = (attempt: {
@@ -954,12 +961,13 @@ export const describeUnresolvedReviewReservation = (reservation: UnresolvedRevie
   const marker =
     reservation.launchSessionId === null ? 'its launch marker' : `--session-id ${reservation.launchSessionId}`;
   let text: string;
+  const declare = `If no such review is still running, use “${REVIEW_RESERVATION_RELEASE_ACTION}” on that attempt in the Work view: the release is recorded as your declaration, with its time; nothing is stopped or adopted, and the engine never assumes an end from age.`;
   if (reservation.evidence === 'process-running') {
-    text = `${lost}, and a process carrying ${marker} still runs (pid ${reservation.pids.slice(0, 4).join(', ')}). The engine neither adopts nor stops a process it no longer owns. A review is accepted again once no process carries that marker, or once the attempt's outcome is recorded.`;
+    text = `${lost}, and a process carrying ${marker} still runs (pid ${reservation.pids.slice(0, 4).join(', ')}). The engine neither adopts nor stops a process it no longer owns: end that review in the harness; a review is accepted again once no process carries that marker.`;
   } else if (reservation.launchSessionId === null) {
-    text = `${lost}, and it was recorded before launch markers existed, so its harness process cannot be looked for. The reservation stays until its outcome is recorded; the engine never assumes an end from age.`;
+    text = `${lost}, and it was recorded before launch markers existed, so its harness process cannot be looked for. ${declare}`;
   } else {
-    text = `${lost}, and this machine offers no process listing the engine can read, so it cannot tell whether its harness process still runs. The reservation stays until its outcome is recorded; the engine never assumes an end from age.`;
+    text = `${lost}, and this machine offers no process listing the engine can read, so it cannot tell whether its harness process still runs. ${declare}`;
   }
   return text.slice(0, REVIEW_ATTEMPT_BOUNDS.maxFailureReason);
 };

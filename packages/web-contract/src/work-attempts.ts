@@ -236,6 +236,35 @@ export const workAttemptsStartOutputSchema = pipe(
   ]),
 );
 
+/** The operator's release of a held reservation (ADR 0055): the attempt, nothing else. */
+export const workAttemptsReleaseInputSchema = strictObject({ attemptId: idSchema });
+
+export const workAttemptsReleaseErrorTags = ['ForbiddenDemo', 'Unavailable'] as const;
+
+/**
+ * `released` with the evidence the engine recorded, `process-found` when a process still carries
+ * the attempt's launch marker (nothing is released, stopped or adopted), or `not-held`.
+ */
+export const workAttemptsReleaseOutputSchema = pipe(
+  jsonWireValueSchema,
+  variant('ok', [
+    strictObject({
+      data: strictObject({
+        attemptId: idSchema,
+        evidence: nullable(picklist(['operator-declared-ended', 'process-absent'])),
+        pids: pipe(array(pipe(number(), safeInteger(), minValue(1))), maxLength(16)),
+        releasedAt: nullable(timestampSchema),
+        result: picklist(['not-held', 'process-found', 'released']),
+      }),
+      ok: literal(true),
+    }),
+    strictObject({
+      error: strictObject({ message: publicMessageSchema, tag: picklist(workAttemptsReleaseErrorTags) }),
+      ok: literal(false),
+    }),
+  ]),
+);
+
 export type WorkAttemptWire = InferOutput<typeof workAttemptSchema>;
 export type WorkAttemptScopeWire = InferOutput<typeof workAttemptScopeSchema>;
 export type WorkAttemptGuaranteeWire = InferOutput<typeof workAttemptGuaranteeSchema>;
@@ -247,11 +276,15 @@ export type WorkAttemptsResolvedTarget = InferOutput<typeof workAttemptsResolved
 export type WorkAttemptsStartInput = InferOutput<typeof workAttemptsStartInputSchema>;
 export type WorkAttemptsStartOutput = InferOutput<typeof workAttemptsStartOutputSchema>;
 export type WorkAttemptsStartErrorTag = (typeof workAttemptsStartErrorTags)[number];
+export type WorkAttemptsReleaseInput = InferOutput<typeof workAttemptsReleaseInputSchema>;
+export type WorkAttemptsReleaseOutput = InferOutput<typeof workAttemptsReleaseOutputSchema>;
 
 export const parseWorkAttemptsListOutput = (value: unknown): WorkAttemptsListOutput =>
   parse(workAttemptsListOutputSchema, value);
 export const parseWorkAttemptsStartOutput = (value: unknown): WorkAttemptsStartOutput =>
   parse(workAttemptsStartOutputSchema, value);
+export const parseWorkAttemptsReleaseOutput = (value: unknown): WorkAttemptsReleaseOutput =>
+  parse(workAttemptsReleaseOutputSchema, value);
 
 export const workAttemptsContract = {
   list: oc
@@ -262,6 +295,10 @@ export const workAttemptsContract = {
     .route({ method: 'POST', path: '/work/attempts/start' })
     .input(workAttemptsStartInputSchema)
     .output(workAttemptsStartOutputSchema),
+  release: oc
+    .route({ method: 'POST', path: '/work/attempts/release' })
+    .input(workAttemptsReleaseInputSchema)
+    .output(workAttemptsReleaseOutputSchema),
 } as const;
 
 export type WorkAttemptsContractClient = ContractRouterClient<typeof workAttemptsContract>;

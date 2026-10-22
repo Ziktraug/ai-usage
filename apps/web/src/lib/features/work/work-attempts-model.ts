@@ -1,5 +1,6 @@
 import {
   isLiveReviewAttemptState,
+  REVIEW_RESERVATION_RELEASE_ACTION,
   type ReviewAttemptState,
   type ReviewCheckoutOrigin,
   type ReviewReservationReleaseEvidence,
@@ -10,6 +11,7 @@ import type {
   WorkAttemptGuaranteeWire,
   WorkAttemptScopeWire,
   WorkAttemptsListOutput,
+  WorkAttemptsReleaseOutput,
   WorkAttemptWire,
 } from '@ai-usage/web-contract/work-attempts';
 
@@ -114,6 +116,26 @@ const RELEASE_LABELS: Readonly<Record<ReviewReservationReleaseEvidence, string>>
   'outcome-recorded-late': 'the engine that launched it recorded its end after contact was lost',
   'process-absent': 'no process on this machine carried its launch marker any more',
   'recorded-before-reservations': 'it was lost under the earlier rule, which kept no reservation',
+  'operator-declared-ended': 'you declared that its review no longer runs; nothing was stopped',
+};
+
+export { REVIEW_RESERVATION_RELEASE_ACTION } from '@ai-usage/report-core/work-attempts';
+
+/** What the engine did with an operator release (ADR 0055); it never stops anything. */
+export const releaseOutcomeText = (output: WorkAttemptsReleaseOutput): string => {
+  if (!output.ok) {
+    return `Not released: ${output.error.message}`;
+  }
+  switch (output.data.result) {
+    case 'released':
+      return output.data.evidence === 'process-absent'
+        ? 'Reservation released: no process carries its launch marker any more. A review can start again.'
+        : 'Reservation released on your declaration; nothing was stopped. A review can start again.';
+    case 'process-found':
+      return `Not released: a process still carries its launch marker (pid ${output.data.pids.slice(0, 4).join(', ')}). End that review in the harness first; nothing was stopped.`;
+    default:
+      return 'Nothing to release: this attempt no longer reserves the target.';
+  }
 };
 
 /**
@@ -126,7 +148,7 @@ export const reservationNotice = (attempt: Pick<WorkAttemptWire, 'reservation' |
     return null;
   }
   if (attempt.reservation.held) {
-    return 'It still reserves this target: a new review is accepted here only once no process carries its launch marker or its result is recorded. Starting a review asks the engine to look first; it never adopts or stops that process.';
+    return `It still reserves this target: a new review is accepted here once no process carries its launch marker. Starting a review asks the engine to look first; it never adopts or stops that process. If no such review still runs and the engine cannot tell, use “${REVIEW_RESERVATION_RELEASE_ACTION}”.`;
   }
   const evidence = attempt.reservation.releaseEvidence;
   return evidence === null ? null : `Reservation released: ${RELEASE_LABELS[evidence]}.`;

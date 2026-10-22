@@ -421,6 +421,11 @@ const createWorkAttemptsDependencies = (request: Request): WebRpcRouterDependenc
       const server = await import('../../../server/work-attempts.server');
       return await server.listWorkAttemptsForServer(input, abortOptions(signal));
     }),
+  release: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attempts.server');
+      return await server.releaseWorkAttemptReservationFromRequestForServer(request, input);
+    }),
   start: async (input, signal) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/work-attempts.server');

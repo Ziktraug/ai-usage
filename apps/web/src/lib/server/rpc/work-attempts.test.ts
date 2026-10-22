@@ -11,6 +11,11 @@ const emptyList: WorkAttemptsListOutput = {
 const router = (dependencies: Partial<WorkAttemptsRpcDependencies>) =>
   createWorkAttemptsRpcRouter({
     list: () => Promise.resolve(emptyList),
+    release: () =>
+      Promise.resolve({
+        data: { attemptId: 'a', evidence: null, pids: [4242], releasedAt: null, result: 'process-found' },
+        ok: true,
+      }),
     start: () => Promise.resolve({ data: { attemptId: 'a', reused: false, state: 'starting' }, ok: true }),
     ...dependencies,
   });
@@ -22,6 +27,22 @@ const startInput = {
 };
 
 describe('Work attempts RPC server adapter', () => {
+  test('relays the release answer and turns a failure or a drifting answer into Unavailable', async () => {
+    expect(await call(router({}).release, { attemptId: 'a' })).toEqual({
+      data: { attemptId: 'a', evidence: null, pids: [4242], releasedAt: null, result: 'process-found' },
+      ok: true,
+    });
+    for (const release of [
+      () => Promise.reject(new Error('engine at /private/store.sqlite')),
+      () => Promise.resolve({ data: { attemptId: 'a', result: 'killed' }, ok: true }),
+    ]) {
+      expect(await call(router({ release }).release, { attemptId: 'a' })).toEqual({
+        error: { message: 'The release could not be recorded.', tag: 'Unavailable' },
+        ok: false,
+      });
+    }
+  });
+
   test('forwards inputs and cancellation and returns the exact envelopes', async () => {
     const controller = new AbortController();
     const seen: unknown[] = [];

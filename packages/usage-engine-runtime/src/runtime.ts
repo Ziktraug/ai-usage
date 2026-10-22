@@ -22,6 +22,7 @@ import {
   type UsageEngineMergePreviewOutput,
   type UsageEngineReplicationStatusOutput,
   type UsageEngineReviewAttemptOutput,
+  type UsageEngineReviewReservationReleaseOutput,
   type UsageEngineRoutingQualificationOutput,
   type UsageEngineStatus,
 } from '@ai-usage/usage-engine-control';
@@ -111,6 +112,7 @@ export interface UsageEngineMutationPort {
 
 type StartReviewAttemptCommand = Extract<UsageEngineCommand, { readonly command: 'start-review-attempt' }>;
 type QualifyReviewRoutingCommand = Extract<UsageEngineCommand, { readonly command: 'qualify-review-routing' }>;
+type ReleaseReviewReservationCommand = Extract<UsageEngineCommand, { readonly command: 'release-review-reservation' }>;
 
 /** The executor observation the engine ran for one qualification, as the source reported it. */
 export interface RoutingQualificationExecutorRun {
@@ -130,6 +132,14 @@ export interface UsageEngineRoutingQualificationPort {
 }
 
 export interface UsageEngineReviewAttemptPort {
+  /**
+   * Releases a lost attempt's held reservation on the operator's declaration that its review no
+   * longer runs (ADR 0055); a process still carrying the marker keeps it held. Never stops anything.
+   */
+  readonly releaseReservation: (
+    command: ReleaseReviewReservationCommand,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineReviewReservationReleaseOutput>;
   /**
    * Decides, records and spawns; resolves once the attempt row exists (reused, refused, or spawned).
    * The signal bounds the decision and the spawn only: an abort never kills a started review.

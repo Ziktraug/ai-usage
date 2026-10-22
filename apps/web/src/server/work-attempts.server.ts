@@ -22,9 +22,12 @@ import {
 } from '@ai-usage/usage-store/reader';
 import {
   parseWorkAttemptsListOutput,
+  parseWorkAttemptsReleaseOutput,
   parseWorkAttemptsStartOutput,
   type WorkAttemptsListInput,
   type WorkAttemptsListOutput,
+  type WorkAttemptsReleaseInput,
+  type WorkAttemptsReleaseOutput,
   type WorkAttemptsResolvedTarget,
   type WorkAttemptsStartInput,
   type WorkAttemptsStartOutput,
@@ -52,6 +55,16 @@ type StartReviewAttemptCommand = Extract<WebUsageEngineCommand, { readonly comma
 
 export type ExecuteStartReviewAttemptCommand = (
   command: StartReviewAttemptCommand,
+  options?: ExecuteUsageEngineCommandOptions,
+) => Promise<UsageEngineCommandCompletion>;
+
+type ReleaseReviewReservationCommand = Extract<
+  WebUsageEngineCommand,
+  { readonly command: 'release-review-reservation' }
+>;
+
+export type ExecuteReleaseReviewReservationCommand = (
+  command: ReleaseReviewReservationCommand,
   options?: ExecuteUsageEngineCommandOptions,
 ) => Promise<UsageEngineCommandCompletion>;
 
@@ -371,6 +384,74 @@ export const startWorkAttemptFromRequestForServer = async (
     throw trustFailure;
   }
   return await startWorkAttemptForServer(input, execute, {
+    ...(mode === undefined ? {} : { mode }),
+    signal: request.signal,
+  });
+};
+
+const releaseFailure = (tag: 'ForbiddenDemo' | 'Unavailable', message: string): WorkAttemptsReleaseOutput => ({
+  error: { message, tag },
+  ok: false,
+});
+
+const executeReleaseCommand: ExecuteReleaseReviewReservationCommand = async (command, options) => {
+  const control = await resolveUsageEngineControlClientForServer();
+  return await executeUsageEngineCommandToCompletion(control, command, options);
+};
+
+/**
+ * Forwards the operator's declaration that a lost attempt's review no longer runs (ADR 0055) and
+ * relays what the engine did: released (with its evidence), kept held because a process still
+ * carries the marker, or nothing held. The Web process decides nothing and stops nothing.
+ */
+export const releaseWorkAttemptReservationForServer = async (
+  input: WorkAttemptsReleaseInput,
+  execute: ExecuteReleaseReviewReservationCommand = executeReleaseCommand,
+  options: Omit<WorkAttemptsServerOptions, 'readers'> = {},
+): Promise<WorkAttemptsReleaseOutput> => {
+  const mode = options.mode ?? getServerRuntimeMode();
+  options.signal?.throwIfAborted();
+  if (mode === 'demo') {
+    return releaseFailure('ForbiddenDemo', 'Execution is not available in the demo.');
+  }
+  if (mode === 'e2e') {
+    return releaseFailure('Unavailable', 'Execution is not available in this runtime.');
+  }
+  const command = parseWebUsageEngineCommand({ attemptId: input.attemptId, command: 'release-review-reservation' });
+  if (command.command !== 'release-review-reservation') {
+    throw new Error('Expected a review reservation release command.');
+  }
+  let completion: UsageEngineCommandCompletion;
+  try {
+    completion = await execute(command, options.signal === undefined ? {} : { signal: options.signal });
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+    return releaseFailure('Unavailable', 'The engine could not record the release; it may be stopped or busy.');
+  }
+  if (completion.state !== 'succeeded' || completion.command !== 'release-review-reservation') {
+    return releaseFailure('Unavailable', 'The engine did not complete the release command.');
+  }
+  const { attemptId, evidence, pids, releasedAt, result } = completion.output;
+  return parseWorkAttemptsReleaseOutput({
+    data: { attemptId, evidence, pids: [...pids], releasedAt, result },
+    ok: true,
+  });
+};
+
+export const releaseWorkAttemptReservationFromRequestForServer = async (
+  request: Request,
+  input: WorkAttemptsReleaseInput,
+  execute?: ExecuteReleaseReviewReservationCommand,
+  mode?: RuntimeMode,
+): Promise<WorkAttemptsReleaseOutput> => {
+  const trustFailure = validateTrustedLocalRequest(request);
+  if (trustFailure) {
+    throw trustFailure;
+  }
+  return await releaseWorkAttemptReservationForServer(input, execute, {
     ...(mode === undefined ? {} : { mode }),
     signal: request.signal,
   });

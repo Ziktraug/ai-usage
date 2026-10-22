@@ -846,4 +846,106 @@ describe('engine review attempts', () => {
     expect(refused.refusal?.reason).toBe('attempt-unresolved');
     expect(refused.refusal?.message).toContain('cannot tell whether its harness process still runs');
   });
+
+  test('a row recorded before launch markers is released only by the operator declaration, then a review launches', async () => {
+    const fixture = await createFixture();
+    // The first version's live row, without a launch marker, as an unclean stop left it.
+    await Effect.runPromise(
+      requestReviewAttempt({
+        attempt: {
+          attemptId: 'attempt-legacy',
+          candidateId: CANDIDATE_ID,
+          declaration: null,
+          executorHarness: 'claude-code',
+          idempotencyKey: 'e'.repeat(64),
+          machineId: machine.id,
+          requestedAt: NOW.toISOString(),
+          state: 'requested',
+          target: {
+            checkoutOrigin: 'desktop-cwd',
+            checkoutPath: '/elsewhere',
+            desktopSessionId: null,
+            harness: 'claude',
+            projectLabel: null,
+            sessionTitle: null,
+            sourceSessionId: 'cli-1',
+          },
+        },
+        dbPath: fixture.dbPath,
+      }),
+    );
+    const engine = service(fixture, await fixture.executable(emit(INIT_LINE, RESULT_LINE)), {
+      findProcesses: async () => ({ kind: 'absent' }),
+    });
+    await engine.recoverLost();
+    const refused = await engine.start(command());
+    expect(refused.refusal?.reason).toBe('attempt-unresolved');
+    expect(refused.refusal?.message).toContain('recorded before launch markers existed');
+    expect(refused.refusal?.message).toContain('“Declare the review ended”');
+
+    const released = await engine.releaseReservation({
+      attemptId: 'attempt-legacy',
+      command: 'release-review-reservation',
+    });
+    expect(released).toEqual({
+      attemptId: 'attempt-legacy',
+      evidence: 'operator-declared-ended',
+      kind: 'review-reservation-release',
+      pids: [],
+      releasedAt: NOW.toISOString(),
+      result: 'released',
+    });
+    expect(await attemptById(fixture.dbPath, 'attempt-legacy')).toMatchObject({
+      releaseEvidence: 'operator-declared-ended',
+      releasedAt: NOW.toISOString(),
+      state: 'lost',
+    });
+    // Nothing left to release; the target accepts a review again.
+    expect(
+      (await engine.releaseReservation({ attemptId: 'attempt-legacy', command: 'release-review-reservation' })).result,
+    ).toBe('not-held');
+    const started = await engine.start(command());
+    expect(started.refusal).toBeNull();
+    await engine.settle();
+  });
+
+  test('a declared release never overrides a process that still carries the marker', async () => {
+    const fixture = await createFixture();
+    const marker = '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f';
+    await Effect.runPromise(
+      requestReviewAttempt({
+        attempt: {
+          attemptId: 'attempt-running-elsewhere',
+          candidateId: CANDIDATE_ID,
+          declaration: null,
+          executorHarness: 'claude-code',
+          idempotencyKey: 'd'.repeat(64),
+          launchSessionId: marker,
+          machineId: machine.id,
+          requestedAt: NOW.toISOString(),
+          state: 'requested',
+          target: {
+            checkoutOrigin: 'desktop-cwd',
+            checkoutPath: '/elsewhere',
+            desktopSessionId: null,
+            harness: 'claude',
+            projectLabel: null,
+            sessionTitle: null,
+            sourceSessionId: 'cli-1',
+          },
+        },
+        dbPath: fixture.dbPath,
+      }),
+    );
+    const engine = service(fixture, await fixture.executable(emit(INIT_LINE, RESULT_LINE)), {
+      findProcesses: scanFound,
+    });
+    await engine.recoverLost();
+    const answer = await engine.releaseReservation({
+      attemptId: 'attempt-running-elsewhere',
+      command: 'release-review-reservation',
+    });
+    expect(answer).toMatchObject({ evidence: null, pids: [4242], releasedAt: null, result: 'process-found' });
+    expect((await attemptById(fixture.dbPath, 'attempt-running-elsewhere')).releasedAt).toBeNull();
+  });
 });

@@ -4,6 +4,7 @@ import {
   REVIEW_ATTEMPT_ACTION,
   REVIEW_ATTEMPT_BOUNDS,
   REVIEW_ATTEMPT_LIVE_STATES,
+  REVIEW_RESERVATION_RELEASE_EVIDENCE,
   type ReviewAttempt,
   type ReviewAttemptResultKind,
   type ReviewAttemptScope,
@@ -42,8 +43,10 @@ export const REVIEW_ATTEMPT_TABLES = ['review_attempts'] as const;
 /** The reserving predicate, shared by the unique index and the reads that must agree with it. */
 const RESERVING_SQL = "(state IN ('requested', 'starting', 'running') OR (state = 'lost' AND released_at IS NULL))";
 
-const reviewAttemptTableSql = `
-  CREATE TABLE IF NOT EXISTS review_attempts (
+/** The release evidence the table accepts; a stored table that predates a value is rebuilt. */
+const RELEASE_EVIDENCE_SQL = `(${REVIEW_RESERVATION_RELEASE_EVIDENCE.map((evidence) => `'${evidence}'`).join(', ')})`;
+
+const reviewAttemptColumnsSql = `
     attempt_id TEXT PRIMARY KEY,
     machine_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
@@ -75,12 +78,19 @@ const reviewAttemptTableSql = `
     failure_reason TEXT,
     launch_session_id TEXT,
     released_at TEXT,
-    release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ('process-absent', 'outcome-recorded-late', 'recorded-before-reservations')),
+    release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ${RELEASE_EVIDENCE_SQL}),
     scope_json TEXT,
     guarantee_json TEXT
-  );
+`;
+
+const TARGET_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_review_attempts_target
     ON review_attempts(machine_id, target_harness, source_session_id, requested_at DESC);
+`;
+
+const reviewAttemptTableSql = `
+  CREATE TABLE IF NOT EXISTS review_attempts (${reviewAttemptColumnsSql});
+  ${TARGET_INDEX_SQL}
 `;
 
 /** Columns added after the first version of the table (ADR 0055), with their additive definitions. */
@@ -89,7 +99,7 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ['released_at', 'released_at TEXT'],
   [
     'release_evidence',
-    "release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ('process-absent', 'outcome-recorded-late', 'recorded-before-reservations'))",
+    `release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ${RELEASE_EVIDENCE_SQL})`,
   ],
   ['scope_json', 'scope_json TEXT'],
   ['guarantee_json', 'guarantee_json TEXT'],
@@ -99,6 +109,32 @@ interface MigrationDatabase {
   exec(sql: string): unknown;
   query(sql: string): { all(...params: unknown[]): unknown[]; get(...params: unknown[]): unknown };
 }
+
+/**
+ * A column check cannot be altered in SQLite. A table whose `release_evidence` check predates a
+ * value of `REVIEW_RESERVATION_RELEASE_EVIDENCE` (the operator declaration, ADR 0055) is rebuilt
+ * under the same name with every row copied, inside the caller's migration transaction; its
+ * indexes are recreated by the rest of the migration. `true` when a rebuild ran.
+ */
+const rebuildForReleaseEvidence = (db: MigrationDatabase): boolean => {
+  const stored = db.query("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'review_attempts'").get() as {
+    sql?: unknown;
+  } | null;
+  if (typeof stored?.sql !== 'string' || stored.sql.includes(RELEASE_EVIDENCE_SQL)) {
+    return false;
+  }
+  db.exec('DROP TABLE IF EXISTS review_attempts_rebuilt');
+  db.exec(`CREATE TABLE review_attempts_rebuilt (${reviewAttemptColumnsSql})`);
+  const names = (db.query('PRAGMA table_info(review_attempts_rebuilt)').all() as { name?: unknown }[])
+    .map((column) => column.name)
+    .filter((name): name is string => typeof name === 'string')
+    .join(', ');
+  db.exec(`INSERT INTO review_attempts_rebuilt (${names}) SELECT ${names} FROM review_attempts`);
+  db.exec('DROP TABLE review_attempts');
+  db.exec('ALTER TABLE review_attempts_rebuilt RENAME TO review_attempts');
+  db.exec(TARGET_INDEX_SQL);
+  return true;
+};
 
 /**
  * Creates or upgrades the table inside the caller's migration transaction; `true` when the schema
@@ -128,6 +164,9 @@ export const migrateReviewAttemptSchema = (db: MigrationDatabase): boolean => {
       SET released_at = COALESCE(ended_at, updated_at), release_evidence = 'recorded-before-reservations'
       WHERE state = 'lost' AND released_at IS NULL
     `);
+  }
+  if (rebuildForReleaseEvidence(db)) {
+    changed = true;
   }
   const hasIndex = (name: string): boolean =>
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = ?").get(name) !== null;

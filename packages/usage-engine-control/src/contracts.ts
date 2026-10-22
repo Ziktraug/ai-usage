@@ -305,6 +305,8 @@ export type UsageEngineCommand =
       readonly target: UsageEngineReviewAttemptTarget;
     }
   | { readonly command: 'qualify-review-routing'; readonly target: UsageEngineReviewAttemptTarget }
+  /** The operator declares that the lost attempt's review no longer runs (ADR 0055); nothing is stopped. */
+  | { readonly attemptId: string; readonly command: 'release-review-reservation' }
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
   | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
@@ -593,6 +595,14 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         return fail('Usage engine qualify-review-routing command contains unknown fields.');
       }
       return { command: 'qualify-review-routing', target: parseReviewAttemptTarget(command.target) };
+    case 'release-review-reservation':
+      if (!hasExactKeys(command, ['attemptId', 'command'])) {
+        return fail('Usage engine release-review-reservation command contains unknown fields.');
+      }
+      return {
+        attemptId: parseBoundedString(command.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+        command: 'release-review-reservation',
+      };
     case 'set-machine-label':
       if (!hasExactKeys(command, ['command', 'label'])) {
         return fail('Usage engine set-machine-label command contains unknown fields.');
@@ -915,6 +925,21 @@ export interface UsageEngineRoutingQualificationOutput {
   readonly qualification: RoutingQualification;
 }
 
+/**
+ * What a `release-review-reservation` command answers (ADR 0055): `released` with the evidence
+ * recorded (`process-absent` when the scan could look and found nothing, otherwise the operator's
+ * declaration), `process-found` when a process still carries the attempt's marker (nothing is
+ * released, stopped or adopted), or `not-held` when the attempt holds no reservation.
+ */
+export interface UsageEngineReviewReservationReleaseOutput {
+  readonly attemptId: string;
+  readonly evidence: 'operator-declared-ended' | 'process-absent' | null;
+  readonly kind: 'review-reservation-release';
+  readonly pids: readonly number[];
+  readonly releasedAt: string | null;
+  readonly result: 'not-held' | 'process-found' | 'released';
+}
+
 export interface UsageEnginePublicationOutput {
   readonly kind: 'publication';
   readonly publication: UsageEngineCurrentPublication;
@@ -1024,6 +1049,11 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
+      readonly command: 'release-review-reservation';
+      readonly output: UsageEngineReviewReservationReleaseOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
       readonly command: Exclude<
         UsageEngineCommandName,
         | 'collect-fresh-quota'
@@ -1035,6 +1065,7 @@ export type UsageEngineCommandCompletion =
         | 'set-machine-label'
         | 'start-review-attempt'
         | 'qualify-review-routing'
+        | 'release-review-reservation'
       >;
       readonly output: { readonly kind: 'none' };
       readonly state: 'succeeded';
@@ -1054,6 +1085,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'preview-merge',
   'publish',
   'qualify-review-routing',
+  'release-review-reservation',
   'replication-status',
   'replace-project-aliases',
   'replace-project-groups',
@@ -1357,6 +1389,41 @@ export const parseUsageEngineRoutingQualificationOutput = (value: unknown): Usag
   return { kind: 'routing-qualification', qualification };
 };
 
+const RESERVATION_RELEASE_RESULTS = ['not-held', 'process-found', 'released'] as const;
+const RESERVATION_RELEASE_EVIDENCE = ['operator-declared-ended', 'process-absent'] as const;
+const MAX_RELEASE_PIDS = 16;
+
+export const parseUsageEngineReviewReservationReleaseOutput = (
+  value: unknown,
+): UsageEngineReviewReservationReleaseOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['attemptId', 'evidence', 'kind', 'pids', 'releasedAt', 'result']) &&
+      value.kind === 'review-reservation-release' &&
+      typeof value.result === 'string' &&
+      (RESERVATION_RELEASE_RESULTS as readonly string[]).includes(value.result) &&
+      (value.evidence === null ||
+        (typeof value.evidence === 'string' &&
+          (RESERVATION_RELEASE_EVIDENCE as readonly string[]).includes(value.evidence))) &&
+      Array.isArray(value.pids) &&
+      value.pids.length <= MAX_RELEASE_PIDS &&
+      value.pids.every((pid) => Number.isSafeInteger(pid) && (pid as number) > 0) &&
+      (value.releasedAt === null || typeof value.releasedAt === 'string')
+    )
+  ) {
+    return fail('Usage engine review reservation release output is invalid.');
+  }
+  return {
+    attemptId: parseBoundedString(value.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+    evidence: value.evidence as UsageEngineReviewReservationReleaseOutput['evidence'],
+    kind: 'review-reservation-release',
+    pids: value.pids as number[],
+    releasedAt: value.releasedAt === null ? null : parseIsoTimestamp(value.releasedAt, 'Usage engine release time'),
+    result: value.result as UsageEngineReviewReservationReleaseOutput['result'],
+  };
+};
+
 const replicationDiagnosticCodes = new Set<UsageEngineReplicationDiagnosticCode>([
   'acknowledged',
   'blocked',
@@ -1577,6 +1644,14 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
       ...base,
       command,
       output: parseUsageEngineRoutingQualificationOutput(value.output),
+      state: 'succeeded',
+    };
+  }
+  if (command === 'release-review-reservation') {
+    return {
+      ...base,
+      command,
+      output: parseUsageEngineReviewReservationReleaseOutput(value.output),
       state: 'succeeded',
     };
   }

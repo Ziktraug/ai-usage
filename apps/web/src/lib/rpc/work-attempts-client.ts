@@ -1,15 +1,18 @@
 import {
   parseWorkAttemptsListOutput,
+  parseWorkAttemptsReleaseOutput,
   parseWorkAttemptsStartOutput,
   type WorkAttemptsContractClient,
   type WorkAttemptsListInput,
   type WorkAttemptsListOutput,
+  type WorkAttemptsReleaseInput,
+  type WorkAttemptsReleaseOutput,
   type WorkAttemptsStartInput,
   type WorkAttemptsStartOutput,
 } from '@ai-usage/web-contract/work-attempts';
 import { ORPCError } from '@orpc/client';
 
-export type WorkAttemptsRpcTransport = Pick<WorkAttemptsContractClient, 'list' | 'start'>;
+export type WorkAttemptsRpcTransport = Pick<WorkAttemptsContractClient, 'list' | 'release' | 'start'>;
 
 export interface WorkAttemptsClientCallOptions {
   readonly signal?: AbortSignal;
@@ -20,6 +23,10 @@ export interface WorkAttemptsClient {
     input: WorkAttemptsListInput,
     options?: WorkAttemptsClientCallOptions,
   ) => Promise<WorkAttemptsListOutput>;
+  readonly release: (
+    input: WorkAttemptsReleaseInput,
+    options?: WorkAttemptsClientCallOptions,
+  ) => Promise<WorkAttemptsReleaseOutput>;
   readonly start: (
     input: WorkAttemptsStartInput,
     options?: WorkAttemptsClientCallOptions,
@@ -28,6 +35,10 @@ export interface WorkAttemptsClient {
 
 const listFallback: WorkAttemptsListOutput = {
   error: { message: 'Review attempts are unavailable.', tag: 'Unavailable' },
+  ok: false,
+};
+const releaseFallback: WorkAttemptsReleaseOutput = {
+  error: { message: 'The release could not be recorded.', tag: 'Unavailable' },
   ok: false,
 };
 const startFallback: WorkAttemptsStartOutput = {
@@ -55,6 +66,20 @@ export const createWorkAttemptsClient = (transport: WorkAttemptsRpcTransport): W
         return { error: { message: error.message, tag: 'ForbiddenDemo' }, ok: false };
       }
       return listFallback;
+    }
+  },
+  release: async (input, options = {}) => {
+    try {
+      options.signal?.throwIfAborted();
+      const result = await transport.release(input, callOptions(options));
+      options.signal?.throwIfAborted();
+      return parseWorkAttemptsReleaseOutput(result);
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      if (error instanceof ORPCError && error.defined && error.code === 'ForbiddenDemo') {
+        return { error: { message: error.message, tag: 'ForbiddenDemo' }, ok: false };
+      }
+      return releaseFallback;
     }
   },
   start: async (input, options = {}) => {

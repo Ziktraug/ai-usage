@@ -185,6 +185,21 @@ index beside the new one and ignores the new columns, but a launch it attempts
 on a held identity fails visibly. There is no downgrade path: back up before
 the first start with the new code (see [Backup](#backup)).
 
+The same day the release evidence gained `operator-declared-ended`: the
+operator's declaration, from the Work view, that a lost attempt's review no
+longer runs, recorded with its time where the engine cannot look (a first
+version row without a launch marker, or a machine whose process list does not
+show the engine itself). SQLite cannot alter a column check, so a table whose
+`release_evidence` check predates that value is rebuilt on the next engine open:
+a new table with the current definition, every row copied, the old table
+dropped and the new one renamed, then its two indexes recreated, all inside the
+migration transaction and under the same `user_version`. The rebuild is
+idempotent (the stored table definition is the signal). A first-version row
+that was still live at an unclean stop is marked `lost` at the next start and
+stays reserved until that declaration or a process check releases it. A binary
+from before the rebuild opens the store and reads an operator-released row as a
+row it refuses on re-validation, counted, never shown.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

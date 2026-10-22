@@ -478,6 +478,16 @@ export const operationRequestPolicies = [
     transport: 'mutation',
   }),
   defineOperationPolicy({
+    // ADR 0055: the operator declares a lost attempt's review ended; the engine records it, stops nothing.
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
+    method: 'POST',
+    operation: 'releaseWorkAttemptReservation',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'workAttempts.release',
+    transport: 'mutation',
+  }),
+  defineOperationPolicy({
     applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
     method: 'POST',
     operation: 'setMachineLabel',

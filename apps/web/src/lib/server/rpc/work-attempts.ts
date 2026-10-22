@@ -1,10 +1,13 @@
 import {
   type WorkAttemptsListInput,
   type WorkAttemptsListOutput,
+  type WorkAttemptsReleaseInput,
+  type WorkAttemptsReleaseOutput,
   type WorkAttemptsStartInput,
   type WorkAttemptsStartOutput,
   workAttemptsContract,
   workAttemptsListOutputSchema,
+  workAttemptsReleaseOutputSchema,
   workAttemptsStartOutputSchema,
 } from '@ai-usage/web-contract/work-attempts';
 import { implement } from '@orpc/server';
@@ -13,6 +16,8 @@ import { parse } from 'valibot';
 export interface WorkAttemptsRpcDependencies {
   /** Resolves the runtime mode and reads the attempts; returns the contract envelope or throws. */
   readonly list: (input: WorkAttemptsListInput, signal: AbortSignal | undefined) => Promise<unknown>;
+  /** Forwards the operator's release of a held reservation; returns the contract envelope or throws. */
+  readonly release: (input: WorkAttemptsReleaseInput, signal: AbortSignal | undefined) => Promise<unknown>;
   /** Forwards the engine command; returns the contract envelope or throws. */
   readonly start: (input: WorkAttemptsStartInput, signal: AbortSignal | undefined) => Promise<unknown>;
 }
@@ -22,6 +27,10 @@ const isAbortError = (error: unknown, signal: AbortSignal | undefined): boolean 
 
 const listUnavailable: WorkAttemptsListOutput = {
   error: { message: 'Review attempts are unavailable.', tag: 'Unavailable' },
+  ok: false,
+};
+const releaseUnavailable: WorkAttemptsReleaseOutput = {
+  error: { message: 'The release could not be recorded.', tag: 'Unavailable' },
   ok: false,
 };
 const startUnavailable: WorkAttemptsStartOutput = {
@@ -46,6 +55,17 @@ export const createWorkAttemptsRpcRouter = (dependencies: WorkAttemptsRpcDepende
           throw error;
         }
         return listUnavailable;
+      }
+    }),
+    release: workAttempts.release.handler(async ({ input, signal }): Promise<WorkAttemptsReleaseOutput> => {
+      try {
+        return parse(workAttemptsReleaseOutputSchema, await dependencies.release(input, signal));
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (isAbortError(error, signal)) {
+          throw error;
+        }
+        return releaseUnavailable;
       }
     }),
     start: workAttempts.start.handler(async ({ input, signal }): Promise<WorkAttemptsStartOutput> => {

@@ -4,6 +4,7 @@ import type { UsageEngineCommandCompletion, UsageEngineCommandId } from '@ai-usa
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
 import {
   listWorkAttemptsForServer,
+  releaseWorkAttemptReservationForServer,
   startWorkAttemptForServer,
   toWorkAttemptWire,
   type WorkAttemptsServerReaders,
@@ -304,5 +305,58 @@ describe('Work attempts server', () => {
       error: { tag: 'Unavailable' },
     });
     expect(executions).toBe(0);
+  });
+
+  test('forwards the operator release as one engine command and relays what the engine did (ADR 0055)', async () => {
+    const commands: unknown[] = [];
+    const released = await releaseWorkAttemptReservationForServer(
+      { attemptId: 'attempt-lost' },
+      (command) => {
+        commands.push(command);
+        return Promise.resolve({
+          command: 'release-review-reservation',
+          commandId: 'c'.repeat(36) as UsageEngineCommandId,
+          completedAt: NOW.toISOString(),
+          output: {
+            attemptId: 'attempt-lost',
+            evidence: 'operator-declared-ended',
+            kind: 'review-reservation-release',
+            pids: [],
+            releasedAt: NOW.toISOString(),
+            result: 'released',
+          },
+          state: 'succeeded',
+        });
+      },
+      { mode: 'live' },
+    );
+    expect(commands).toEqual([{ attemptId: 'attempt-lost', command: 'release-review-reservation' }]);
+    expect(released).toEqual({
+      data: {
+        attemptId: 'attempt-lost',
+        evidence: 'operator-declared-ended',
+        pids: [],
+        releasedAt: NOW.toISOString(),
+        result: 'released',
+      },
+      ok: true,
+    });
+    let executions = 0;
+    const execute = () => {
+      executions += 1;
+      return Promise.reject(new Error('must not execute'));
+    };
+    expect(await releaseWorkAttemptReservationForServer({ attemptId: 'a' }, execute, { mode: 'demo' })).toMatchObject({
+      error: { tag: 'ForbiddenDemo' },
+    });
+    expect(await releaseWorkAttemptReservationForServer({ attemptId: 'a' }, execute, { mode: 'e2e' })).toMatchObject({
+      error: { tag: 'Unavailable' },
+    });
+    expect(executions).toBe(0);
+    expect(
+      await releaseWorkAttemptReservationForServer({ attemptId: 'a' }, () => Promise.reject(new Error('down')), {
+        mode: 'live',
+      }),
+    ).toMatchObject({ error: { tag: 'Unavailable' }, ok: false });
   });
 });

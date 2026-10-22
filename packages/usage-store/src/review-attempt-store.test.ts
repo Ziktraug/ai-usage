@@ -181,6 +181,87 @@ describe('review attempt store', () => {
     });
   });
 
+  test('rebuilds a table whose release evidence predates the operator declaration, keeping every row (ADR 0055)', async () => {
+    const dbPath = await createStore();
+    // The table as the reservation version created it: its release_evidence check names three values.
+    const previous = new Database(dbPath);
+    try {
+      previous.exec(`
+        DROP TABLE review_attempts;
+        CREATE TABLE review_attempts (
+          attempt_id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('read-only-review')), target_harness TEXT NOT NULL,
+          source_session_id TEXT NOT NULL, desktop_session_id TEXT, checkout_path TEXT,
+          checkout_origin TEXT CHECK (checkout_origin IS NULL OR checkout_origin IN ('desktop-worktree', 'desktop-cwd', 'served-session')),
+          project_label TEXT, session_title TEXT, candidate_id TEXT NOT NULL,
+          executor_harness TEXT NOT NULL CHECK (executor_harness IN ('claude-code', 'codex')), declaration_json TEXT,
+          state TEXT NOT NULL CHECK (state IN ('requested', 'starting', 'running', 'finished', 'failed', 'refused', 'lost')),
+          requested_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, updated_at TEXT NOT NULL, native_session_id TEXT,
+          pid INTEGER, exit_code INTEGER,
+          result_kind TEXT CHECK (result_kind IS NULL OR result_kind IN ('review', 'error', 'timeout')),
+          result_excerpt TEXT, num_turns INTEGER, duration_ms INTEGER, validations_json TEXT NOT NULL DEFAULT '[]',
+          acceptance TEXT NOT NULL DEFAULT 'pending' CHECK (acceptance IN ('pending', 'accepted', 'rejected')),
+          failure_reason TEXT, launch_session_id TEXT, released_at TEXT,
+          release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ('process-absent', 'outcome-recorded-late', 'recorded-before-reservations')),
+          scope_json TEXT, guarantee_json TEXT
+        );
+        CREATE INDEX idx_review_attempts_target ON review_attempts(machine_id, target_harness, source_session_id, requested_at DESC);
+        CREATE UNIQUE INDEX idx_review_attempts_reserved_identity ON review_attempts(idempotency_key)
+          WHERE (state IN ('requested', 'starting', 'running') OR (state = 'lost' AND released_at IS NULL));
+      `);
+      previous
+        .query(`
+          INSERT INTO review_attempts (attempt_id, machine_id, idempotency_key, action, target_harness, source_session_id,
+            candidate_id, executor_harness, state, requested_at, ended_at, updated_at, failure_reason)
+          VALUES ('legacy-lost', '${MACHINE}', ?, 'read-only-review', 'claude', 'cli-1', 'candidate', 'claude-code',
+            'lost', ?, ?, ?, 'engine restarted while running')
+        `)
+        .run('k'.repeat(64), NOW, LATER, LATER);
+    } finally {
+      previous.close();
+    }
+    await run(initializeUsageStore({ dbPath }));
+    await run(initializeUsageStore({ dbPath }));
+    const [held] = (await run(queryReviewAttempts({ dbPath }))).attempts;
+    expect(held).toMatchObject({ attemptId: 'legacy-lost', launchSessionId: null, releasedAt: null, state: 'lost' });
+
+    const declaredAt = '2026-10-22T11:00:00.000Z';
+    const released = await run(
+      releaseReviewAttemptReservation({
+        at: declaredAt,
+        attemptId: 'legacy-lost',
+        dbPath,
+        evidence: 'operator-declared-ended',
+      }),
+    );
+    expect(released.applied).toBe(true);
+    const [after] = (await run(queryReviewAttempts({ dbPath }))).attempts;
+    expect(after).toMatchObject({
+      failureReason: 'engine restarted while running',
+      releaseEvidence: 'operator-declared-ended',
+      releasedAt: declaredAt,
+      state: 'lost',
+    });
+    // The identity is free again: a new request opens a new attempt instead of reusing the lost one.
+    const next = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'after-release' }), dbPath }));
+    expect(next).toMatchObject({ attempt: { attemptId: 'after-release' }, reused: false });
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const indexes = (
+        db.query("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'review_attempts'").all() as {
+          name: string;
+        }[]
+      ).map(({ name }) => name);
+      expect(indexes.sort()).toEqual([
+        'idx_review_attempts_reserved_identity',
+        'idx_review_attempts_target',
+        'sqlite_autoindex_review_attempts_1',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('inserts one live attempt per identity and returns the existing one to a second request', async () => {
     const dbPath = await createStore();
     const first = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-1' }), dbPath }));

@@ -29,7 +29,7 @@ import {
   type UnresolvedReviewReservation,
 } from '@ai-usage/report-core/work-attempts';
 import type { ReviewTarget } from '@ai-usage/report-core/work-routing';
-import type { UsageEngineCommand } from '@ai-usage/usage-engine-control';
+import type { UsageEngineCommand, UsageEngineReviewReservationReleaseOutput } from '@ai-usage/usage-engine-control';
 import {
   markReviewAttemptsLost,
   queryLatestExecutorObservations,
@@ -676,5 +676,58 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     );
   };
 
-  return { live: () => [...runs.keys()], recoverLost, settle, shutdown, start };
+  /**
+   * The operator's release of a held reservation (ADR 0055). The engine still looks first: this
+   * engine's own live process, or a process carrying the marker, keeps the reservation held and is
+   * named; a listing that shows the marker absent releases it as `process-absent`; only where the
+   * engine cannot look (no marker, no readable listing) does the operator's declaration release it,
+   * recorded as `operator-declared-ended` at this instant. Nothing is stopped or adopted.
+   */
+  const releaseReservation: ReviewAttemptService['releaseReservation'] = async (command, signal) => {
+    const answer = (
+      result: UsageEngineReviewReservationReleaseOutput['result'],
+      fields: Partial<Pick<UsageEngineReviewReservationReleaseOutput, 'evidence' | 'pids' | 'releasedAt'>> = {},
+    ): UsageEngineReviewReservationReleaseOutput => ({
+      attemptId: command.attemptId,
+      evidence: fields.evidence ?? null,
+      kind: 'review-reservation-release',
+      pids: fields.pids ?? [],
+      releasedAt: fields.releasedAt ?? null,
+      result,
+    });
+    const held = await Effect.runPromise(
+      queryReviewAttempts({ dbPath: options.dbPath, machineId: options.machine().id, reserving: true }),
+    );
+    signal?.throwIfAborted();
+    const attempt = held.attempts.find((row) => row.attemptId === command.attemptId && row.state === 'lost');
+    if (attempt === undefined) {
+      return answer('not-held');
+    }
+    const tracked = runs.get(attempt.attemptId);
+    if (tracked !== undefined) {
+      return answer('process-found', { pids: [tracked.launch.pid] });
+    }
+    let evidence: 'operator-declared-ended' | 'process-absent' = 'operator-declared-ended';
+    if (attempt.launchSessionId !== null) {
+      const scan = await findProcesses(attempt.launchSessionId);
+      if (scan.kind === 'found') {
+        return answer('process-found', { pids: scan.pids.slice(0, 16) });
+      }
+      if (scan.kind === 'absent') {
+        evidence = 'process-absent';
+      }
+    }
+    const at = now().toISOString();
+    await gated(
+      () =>
+        Effect.runPromise(
+          releaseReviewAttemptReservation({ at, attemptId: attempt.attemptId, dbPath: options.dbPath, evidence }),
+        ),
+      signal,
+    );
+    report(`usage-engine review-attempt=released attempt=${attempt.attemptId} evidence=${evidence}`);
+    return answer('released', { evidence, releasedAt: at });
+  };
+
+  return { live: () => [...runs.keys()], recoverLost, releaseReservation, settle, shutdown, start };
 };

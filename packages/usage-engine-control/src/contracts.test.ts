@@ -585,6 +585,44 @@ describe('usage engine control contracts', () => {
     ).toThrow();
   });
 
+  test('carries the operator release of a held review reservation and its bounded answer (ADR 0055)', () => {
+    const command = { attemptId: 'attempt-lost', command: 'release-review-reservation' };
+    expect(parseUsageEngineCommand(command)).toEqual(command as never);
+    expect(parseWebUsageEngineCommand(command)).toEqual(command as never);
+    expect(() => parseUsageEngineCommand({ ...command, reason: 'free text' })).toThrow();
+    expect(() => parseUsageEngineCommand({ command: 'release-review-reservation' })).toThrow();
+
+    const completion = {
+      command: 'release-review-reservation',
+      commandId: 'command-1',
+      completedAt: '2026-10-22T08:00:02.000Z',
+      output: {
+        attemptId: 'attempt-lost',
+        evidence: 'operator-declared-ended',
+        kind: 'review-reservation-release',
+        pids: [],
+        releasedAt: '2026-10-22T08:00:02.000Z',
+        result: 'released',
+      },
+      state: 'succeeded',
+    };
+    expect(parseUsageEngineCommandCompletion(completion)).toEqual(completion as never);
+    const found = {
+      ...completion,
+      output: { ...completion.output, evidence: null, pids: [4242], releasedAt: null, result: 'process-found' },
+    };
+    expect(parseUsageEngineCommandCompletion(found)).toEqual(found as never);
+    for (const output of [
+      { ...completion.output, result: 'maybe' },
+      { ...completion.output, evidence: 'age' },
+      { ...completion.output, pids: [-1] },
+      { ...completion.output, rows: [] },
+      { kind: 'none' },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...completion, output })).toThrow();
+    }
+  });
+
   test('classifies retries by operation without trusting server input', () => {
     expect(classifyUsageEngineRetry('transport-failed', 'command')).toBe('same-command-id');
     expect(classifyUsageEngineRetry('transport-failed', 'status')).toBe('safe-request');

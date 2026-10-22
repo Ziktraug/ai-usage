@@ -9,6 +9,7 @@ export type UsageEngineCommandOutputKind =
   | 'publication'
   | 'replication-status'
   | 'review-attempt'
+  | 'review-reservation-release'
   | 'routing-qualification';
 
 interface UsageEngineCommandPolicy {
@@ -26,6 +27,8 @@ export const usageEngineCommandPolicies = {
   publish: { interruptible: false, outputKind: 'publication' },
   // Observes the executors now, then decides; nothing is started, so an abort leaves nothing behind.
   'qualify-review-routing': { interruptible: true, outputKind: 'routing-qualification' },
+  // Records the operator's declaration (or a process absence) on one row; nothing is stopped.
+  'release-review-reservation': { interruptible: false, outputKind: 'review-reservation-release' },
   'replication-status': { interruptible: true, outputKind: 'replication-status' },
   'replace-project-aliases': { interruptible: false, outputKind: 'none' },
   'replace-project-groups': { interruptible: false, outputKind: 'none' },

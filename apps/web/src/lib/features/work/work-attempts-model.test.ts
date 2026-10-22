@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import type { ReviewCandidate, ReviewRecommendation } from '@ai-usage/report-core/work-routing';
-import type { WorkAttemptsListOutput, WorkAttemptWire } from '@ai-usage/web-contract/work-attempts';
+import type {
+  WorkAttemptsListOutput,
+  WorkAttemptsReleaseOutput,
+  WorkAttemptWire,
+} from '@ai-usage/web-contract/work-attempts';
 import {
   checkoutOriginLabel,
   formatDurationSeconds,
   guaranteeSummary,
   launchGate,
   liveAttemptOf,
+  releaseOutcomeText,
   reservationNotice,
   reviewAttemptStateLabel,
   scopeSummary,
@@ -147,6 +152,19 @@ describe('reservation, scope and guarantee texts', () => {
       }),
     ).toBe('Reservation released: no process on this machine carried its launch marker any more.');
     expect(reservationNotice({ ...held, state: 'finished' })).toBeNull();
+    // Nothing can record a late outcome after a restart; the notice names the one release there is.
+    expect(reservationNotice(held)).not.toContain('result is recorded');
+    expect(reservationNotice(held)).toContain('“Declare the review ended”');
+    expect(
+      reservationNotice({
+        reservation: {
+          held: false,
+          releaseEvidence: 'operator-declared-ended',
+          releasedAt: '2026-10-22T10:05:00.000Z',
+        },
+        state: 'lost',
+      }),
+    ).toBe('Reservation released: you declared that its review no longer runs; nothing was stopped.');
     // The button stays: a click is the explicit request for the engine's process check.
     expect(
       launchGate({
@@ -157,6 +175,41 @@ describe('reservation, scope and guarantee texts', () => {
         reviewTargetsDeclared: 1,
       }).kind,
     ).toBe('open');
+  });
+
+  test('the release answer says what the engine did, and never that it stopped anything', () => {
+    const data: Omit<Extract<WorkAttemptsReleaseOutput, { ok: true }>['data'], 'result'> = {
+      attemptId: 'a',
+      evidence: null,
+      pids: [],
+      releasedAt: null,
+    };
+    expect(
+      releaseOutcomeText({
+        data: {
+          ...data,
+          evidence: 'operator-declared-ended',
+          releasedAt: '2026-10-22T10:05:00.000Z',
+          result: 'released',
+        },
+        ok: true,
+      }),
+    ).toBe('Reservation released on your declaration; nothing was stopped. A review can start again.');
+    expect(
+      releaseOutcomeText({
+        data: { ...data, evidence: 'process-absent', releasedAt: '2026-10-22T10:05:00.000Z', result: 'released' },
+        ok: true,
+      }),
+    ).toBe('Reservation released: no process carries its launch marker any more. A review can start again.');
+    expect(releaseOutcomeText({ data: { ...data, pids: [4242], result: 'process-found' }, ok: true })).toBe(
+      'Not released: a process still carries its launch marker (pid 4242). End that review in the harness first; nothing was stopped.',
+    );
+    expect(releaseOutcomeText({ data: { ...data, result: 'not-held' }, ok: true })).toBe(
+      'Nothing to release: this attempt no longer reserves the target.',
+    );
+    expect(releaseOutcomeText({ error: { message: 'engine down', tag: 'Unavailable' }, ok: false })).toBe(
+      'Not released: engine down',
+    );
   });
 
   test('the scope names one commit, its base, what was cut and the patch hash', () => {

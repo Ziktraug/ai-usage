@@ -129,6 +129,8 @@ describe('Work attempts Svelte rendering', () => {
     expect(body).toContain('Failure: engine restarted while running');
     expect(body).toContain('data-work-attempt-reservation="held"');
     expect(body).toContain('It still reserves this target');
+    // Without a release handler (no engine on this page) no release button is offered.
+    expect(body).not.toContain('data-work-attempt-release');
     expect(body).toMatch(NOT_COLLECTED_YET);
     expect(body).toContain('running · attempt live-att');
     expect(body).toContain('last heartbeat');
@@ -201,6 +203,34 @@ describe('Work attempts Svelte rendering', () => {
     expect(body).toContain(
       'Reservation released: the engine that launched it recorded its end after contact was lost.',
     );
+  });
+
+  test('offers “Declare the review ended” on a held reservation only (ADR 0055)', () => {
+    const body = render(fixture, {
+      props: {
+        attempts: {
+          attempts: list([
+            attempt({
+              attemptId: 'held-attempt',
+              reservation: { held: true, releaseEvidence: null, releasedAt: null },
+              state: 'lost',
+            }),
+            attempt({
+              attemptId: 'released-attempt',
+              reservation: { held: false, releaseEvidence: 'process-absent', releasedAt: '2026-10-22T10:03:00.000Z' },
+              state: 'lost',
+            }),
+            attempt({ attemptId: 'finished-attempt' }),
+          ]),
+          onRelease: () => Promise.resolve('released'),
+          pending: false,
+        },
+      },
+    }).body.replaceAll(/\s+/g, ' ');
+    expect(body.match(/data-work-attempt-release=/gu)).toHaveLength(1);
+    expect(body).toContain('data-work-attempt-release="held-attempt"');
+    expect(body).toContain('Declare the review ended');
+    expect(body).toContain('only if no such review still runs');
   });
 
   test('states the empty, pending and unavailable cases', () => {

@@ -16,6 +16,8 @@ import {
   parseReviewTargetDeclarations,
   REVIEW_ATTEMPT_BOUNDS,
   REVIEW_ATTEMPT_RESERVING_STATES,
+  REVIEW_RESERVATION_RELEASE_ACTION,
+  REVIEW_RESERVATION_RELEASE_EVIDENCE,
   type ReviewAttempt,
   type ReviewAttemptScope,
   type ReviewHarnessGuarantee,
@@ -343,17 +345,22 @@ describe('launch decision', () => {
       pids: [],
     });
     expect(unknowable).toContain('cannot tell whether its harness process still runs');
-    expect(unknowable).toContain('until its outcome is recorded');
+    // Nothing can record that outcome after a restart: the text names the one release that exists.
+    expect(unknowable).not.toContain('outcome is recorded');
+    expect(unknowable).toContain(`“${REVIEW_RESERVATION_RELEASE_ACTION}”`);
     expect(unknowable.length).toBeLessThanOrEqual(REVIEW_ATTEMPT_BOUNDS.maxFailureReason);
-    expect(
-      describeUnresolvedReviewReservation({
-        attemptId: 'attempt-legacy',
-        evidence: 'process-evidence-unavailable',
-        launchSessionId: null,
-        lostAt: null,
-        pids: [],
-      }),
-    ).toContain('recorded before launch markers existed');
+    const legacy = describeUnresolvedReviewReservation({
+      attemptId: 'attempt-legacy',
+      evidence: 'process-evidence-unavailable',
+      launchSessionId: null,
+      lostAt: null,
+      pids: [],
+    });
+    expect(legacy).toContain('recorded before launch markers existed');
+    expect(legacy).toContain(`“${REVIEW_RESERVATION_RELEASE_ACTION}”`);
+    expect(legacy).not.toContain('outcome is recorded');
+    expect(message).not.toContain('outcome is recorded');
+    expect(REVIEW_RESERVATION_RELEASE_EVIDENCE).toContain('operator-declared-ended');
     // A live attempt under another identity still answers first: it is the stronger fact.
     expect(
       decideReviewLaunch({

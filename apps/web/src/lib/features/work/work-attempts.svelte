@@ -6,6 +6,7 @@
     checkoutOriginLabel,
     DIRTY_TREE_TEXT,
     guaranteeSummary,
+    REVIEW_RESERVATION_RELEASE_ACTION,
     reservationNotice,
     resultHeading,
     reviewAttemptStateLabel,
@@ -13,16 +14,40 @@
     shortAttemptId,
   } from './work-attempts-model';
   import { formatExactInstant, formatRelativeAge } from './work-attention-model';
-  import { workExcerpt, workFactList, workHeading, workLink, workMuted, workPanel, workStack } from './work-styles';
+  import {
+    workButton,
+    workExcerpt,
+    workFactList,
+    workHeading,
+    workLink,
+    workMuted,
+    workPanel,
+    workStack,
+  } from './work-styles';
 
   let {
     attempts,
+    onRelease,
     pending,
   }: {
     /** The list envelope; `null` when it could not be read at all. */
     attempts: WorkAttemptsListOutput | null;
+    /**
+     * The operator's release of a held reservation (ADR 0055): resolves to the text saying what the
+     * engine did. Absent where no engine can answer; then no release is offered.
+     */
+    onRelease?: (attemptId: string) => Promise<string>;
     pending: boolean;
   } = $props();
+  let releases = $state<Record<string, { readonly message: string | null; readonly pending: boolean }>>({});
+  const release = async (attemptId: string): Promise<void> => {
+    if (!onRelease || releases[attemptId]?.pending) {
+      return;
+    }
+    releases = { ...releases, [attemptId]: { message: 'Recording your declaration…', pending: true } };
+    const message = await onRelease(attemptId);
+    releases = { ...releases, [attemptId]: { message, pending: false } };
+  };
   const reference = $derived(attempts?.ok ? attempts.data.generatedAt : new Date().toISOString());
   const detailHref = (rowId: string) => `${sessionRoutePathname({ kind: 'session', rowId })}?tab=sessions&range=all`;
   const when = (instant: string): string => `${formatRelativeAge(instant, reference)} (${formatExactInstant(instant)})`;
@@ -80,6 +105,25 @@
               <p class={workMuted} data-work-attempt-reservation={attempt.reservation.held ? 'held' : 'released'}>
                 {notice}
               </p>
+            {/if}
+            {#if attempt.reservation.held && onRelease}
+              {@const state = releases[attempt.attemptId]}
+              <p class={workMuted}>
+                Use this only if no such review still runs: the engine looks for its process first, then records the
+                release as your declaration with its time; it stops nothing.
+              </p>
+              <button
+                class={workButton}
+                data-work-attempt-release={attempt.attemptId}
+                disabled={state?.pending === true}
+                onclick={() => release(attempt.attemptId)}
+                type="button"
+              >
+                {REVIEW_RESERVATION_RELEASE_ACTION}
+              </button>
+              {#if state?.message}
+                <p class={workMuted} role="status">{state.message}</p>
+              {/if}
             {/if}
           {/if}
           {#if attempt.scope}

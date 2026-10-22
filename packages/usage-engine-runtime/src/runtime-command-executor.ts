@@ -13,6 +13,7 @@ import {
   type UsageEnginePublicationOutput,
   type UsageEngineReplicationStatusOutput,
   type UsageEngineReviewAttemptOutput,
+  type UsageEngineReviewReservationReleaseOutput,
   type UsageEngineRoutingQualificationOutput,
   usageEngineReportSourceIdsFor,
 } from '@ai-usage/usage-engine-control';
@@ -27,6 +28,7 @@ export type UsageEngineCommandOutput =
   | UsageEnginePublicationOutput
   | UsageEngineReplicationStatusOutput
   | UsageEngineReviewAttemptOutput
+  | UsageEngineReviewReservationReleaseOutput
   | UsageEngineRoutingQualificationOutput
   | undefined;
 
@@ -136,6 +138,12 @@ export const createRuntimeCommandExecutor = (
           throw new Error('Review attempts are not available in this engine composition.');
         }
         return await dependencies.reviewAttempts.start(command, signal);
+      }
+      case 'release-review-reservation': {
+        if (!dependencies.reviewAttempts) {
+          throw new Error('Review attempts are not available in this engine composition.');
+        }
+        return await dependencies.reviewAttempts.releaseReservation(command, signal);
       }
       case 'qualify-review-routing': {
         if (!dependencies.routingQualification) {
