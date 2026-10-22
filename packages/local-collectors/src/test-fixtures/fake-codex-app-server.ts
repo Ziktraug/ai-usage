@@ -24,6 +24,15 @@ process.stdin.on('data', (chunk: string) => {
     if (request.method === 'initialize') {
       send({ id: request.id, result: { serverInfo: { name: 'fixture', version: '1' } } });
     }
+    if (request.method === 'account/read') {
+      send({
+        id: request.id,
+        result: {
+          account: mode === 'auth-error' ? null : { type: 'chatgpt', email: 'quota@example.test', planType: 'plus' },
+          requiresOpenaiAuth: true,
+        },
+      });
+    }
     if (request.method === 'account/rateLimits/read') {
       send({ method: 'account/rateLimits/updated', params: {} });
       if (mode === 'auth-error') {
@@ -32,6 +41,8 @@ process.stdin.on('data', (chunk: string) => {
         send({
           id: request.id,
           result: {
+            accountId: 'quota-account',
+            ordinaryUsageAllowed: true,
             rateLimitResetCredits: null,
             rateLimits: {
               credits: null,

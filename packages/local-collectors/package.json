@@ -15,7 +15,9 @@
     "./datasets": "./src/datasets.ts",
     "./executor-observations": "./src/executor-observations.ts",
     "./facets": "./src/facets.ts",
-    "./rtk-enrichment": "./src/rtk-enrichment.ts"
+    "./rtk-enrichment": "./src/rtk-enrichment.ts",
+    "./codex-review-launcher": "./src/codex-review-launcher.ts",
+    "./codex-app-server-client": "./src/codex-app-server-client.ts"
   },
   "dependencies": {
     "@ai-usage/local-machine": "workspace:*",
