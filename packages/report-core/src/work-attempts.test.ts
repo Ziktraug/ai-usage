@@ -3,6 +3,7 @@ import type { ProviderStatus } from './provider-status';
 import {
   boundReviewExcerpt,
   buildReviewPrompt,
+  type CodexReviewHarnessGuarantee,
   decideReviewLaunch,
   describeUnresolvedReviewReservation,
   holdsReviewReservation,
@@ -359,7 +360,7 @@ describe('launch decision', () => {
       lostAt: null,
       pids: [],
     });
-    expect(legacy).toContain('recorded before launch markers existed');
+    expect(legacy).toContain('no independently verifiable process marker');
     expect(legacy).toContain(`“${REVIEW_RESERVATION_RELEASE_ACTION}”`);
     expect(legacy).not.toContain('outcome is recorded');
     expect(message).not.toContain('outcome is recorded');
@@ -651,7 +652,7 @@ describe('attempt re-validation', () => {
 
 describe('Codex review evidence', () => {
   test('validates native policy separately from the unchanged Claude guarantee', () => {
-    const codex = {
+    const codex: CodexReviewHarnessGuarantee = {
       kind: 'codex-app-server',
       cliVersion: '0.163.0',
       model: 'gpt-6-astra',

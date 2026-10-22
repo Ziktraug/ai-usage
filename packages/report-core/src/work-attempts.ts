@@ -4,7 +4,7 @@ import { normalizeIsoTimestamp } from './provider-status';
 import { isPrintableSkillObservationText } from './skill-observation';
 /**
  * Review attempts (ADR 0053, 0055): the one execution the product launches itself, a read-only review
- * by Claude Code of one commit in a declared checkout. This module holds what is pure:
+ * by a qualified local Claude Code or Codex executor of one commit in a declared checkout. This module holds what is pure:
  *
  * - the home-config `routing.reviewTargets[]` parser (which checkouts a review may run in);
  * - the target resolution rule (Desktop session `worktreePath ?? cwd`, else the served Session's
@@ -160,7 +160,7 @@ export const REVIEW_ATTEMPT_RUN_LIMITS = {
   timeoutMs: 10 * 60_000,
 } as const;
 
-/** The one supported executor for this first execution; Codex is declared, simulated, and refused. */
+/** Legacy default used when no declaration can identify a refused attempt's executor. */
 export const SUPPORTED_REVIEW_EXECUTOR: ExecutorHarness = 'claude-code';
 
 const isOneOf = <const Values extends readonly string[]>(values: Values, value: unknown): value is Values[number] =>
@@ -1038,7 +1038,7 @@ export const describeUnresolvedReviewReservation = (reservation: UnresolvedRevie
   if (reservation.evidence === 'process-running') {
     text = `${lost}, and a process carrying ${marker} still runs (pid ${reservation.pids.slice(0, 4).join(', ')}). The engine neither adopts nor stops a process it no longer owns: end that review in the harness; a review is accepted again once no process carries that marker.`;
   } else if (reservation.launchSessionId === null) {
-    text = `${lost}, and it was recorded before launch markers existed, so its harness process cannot be looked for. ${declare}`;
+    text = `${lost}, and no independently verifiable process marker is available for this harness, so its end cannot be established. ${declare}`;
   } else {
     text = `${lost}, and this machine offers no process listing the engine can read, so it cannot tell whether its harness process still runs. ${declare}`;
   }
@@ -1069,8 +1069,8 @@ const refusal = (
 /**
  * Pure launch policy. Refusals are ordered from the most structural to the most transient so the
  * operator reads the fix that unblocks the next step: an attempt already live for the target, a
- * lost attempt whose reservation is unresolved, no declaration for the candidate, an executor other
- * than Claude Code, a target outside `routing.reviewTargets`, an executor not observed available,
+ * lost attempt whose reservation is unresolved, no declaration for the candidate, unqualified Codex
+ * identity or model, a target outside `routing.reviewTargets`, an executor not observed available,
  * and finally a recommendation that is not `real` under the forced candidate.
  */
 export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaunchDecision => {
