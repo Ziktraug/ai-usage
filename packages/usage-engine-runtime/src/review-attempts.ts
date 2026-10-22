@@ -8,6 +8,7 @@ import {
   type ClaudeReviewOutcome,
   launchClaudeReview,
 } from '@ai-usage/local-collectors/claude-review-launcher';
+import { type ClaudeAccountProbe, probeClaudeAccount } from '@ai-usage/local-collectors/executor-observations';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '@ai-usage/local-machine/local-history';
 import { readLocalRoutingDeclarations } from '@ai-usage/local-machine/routing-config';
 import { projectLatestProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
@@ -74,6 +75,11 @@ export interface ReviewAttemptServiceOptions {
   /** Resolved lazily: the engine knows its machine only after `validateConfig`. */
   readonly machine: () => UsageMachine;
   readonly now?: () => Date;
+  /**
+   * Reads the signed-in account now, with the launch's own executable and environment; a pinned
+   * route is re-checked with it at start (ADR 0057). Defaults to `claude auth status`.
+   */
+  readonly probeAccount?: () => Promise<ClaudeAccountProbe>;
   /** Diagnostics for the operator log; never carries a transcript or a path the operator did not declare. */
   readonly report?: (line: string) => void;
   readonly runLimits?: Partial<
@@ -155,6 +161,13 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
   const now = options.now ?? (() => new Date());
   const launcher = options.launcher ?? launchClaudeReview;
   const findProcesses = options.findProcesses ?? createProcessTableScanner();
+  const probeAccount =
+    options.probeAccount ??
+    (async () =>
+      await probeClaudeAccount({
+        ...(options.launchOptions?.env === undefined ? {} : { env: options.launchOptions.env }),
+        ...(options.launchOptions?.executable === undefined ? {} : { executable: options.launchOptions.executable }),
+      }));
   const runWithWriter = options.runWithWriter ?? (async <Value>(operation: () => Promise<Value>) => await operation());
   const report = options.report ?? (() => undefined);
   const runs = new Map<string, TrackedRun>();
@@ -438,6 +451,25 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     };
     if (decision.kind === 'refused') {
       return await refuse(decision);
+    }
+    // The stored observation can be up to two cadences old; a pinned route is confirmed again
+    // now, with the launch's own CLI and CLAUDE_CONFIG_DIR, so a later sign-in to another account
+    // never runs the review under it (ADR 0057).
+    const pin = decision.declaration.accountFingerprint;
+    if (pin !== undefined) {
+      const current = await probeAccount();
+      signal?.throwIfAborted();
+      if (current.accountFingerprint !== pin) {
+        return await refuse({
+          kind: 'refused',
+          message:
+            current.accountFingerprint === null
+              ? `the signed-in account could not be confirmed against the pin ${pin} at start (${current.evidence}); qualify again`
+              : `Claude Code is now signed in to another account (fingerprint ${current.accountFingerprint}) than the pin ${pin}: sign back in to that account, or re-declare accountFingerprint and declaredAt`,
+          missing: [],
+          reason: 'identity-changed',
+        });
+      }
     }
     const requested = await gated(
       () =>

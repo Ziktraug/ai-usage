@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ClaudeReviewLaunch, ClaudeReviewOutcome } from '@ai-usage/local-collectors/claude-review-launcher';
+import { claudeAccountFingerprint } from '@ai-usage/local-collectors/executor-observations';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
@@ -146,6 +147,8 @@ interface Fixture {
 interface FixtureOptions {
   /** Fields merged into the one `routing.executors[]` entry (a model and its alternates, say). */
   readonly declaration?: Readonly<Record<string, unknown>>;
+  /** The account fingerprint the stored executor observation reports (ADR 0057). */
+  readonly observedFingerprint?: string;
   readonly quota?: boolean;
   /** Quota windows added to the all-models 5-hour one, under the given provider state. */
   readonly quotaWindows?: {
@@ -215,6 +218,7 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
   await Effect.runPromise(initializeUsageStore({ dbPath }));
   await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine, updatedAt: NOW }));
   const observation: ExecutorObservation = {
+    ...(options.observedFingerprint === undefined ? {} : { accountFingerprint: options.observedFingerprint }),
     authEvidence: 'claude auth status exit 0 loggedIn=true',
     authMethod: null,
     authState: 'logged-in',
@@ -603,6 +607,38 @@ describe('engine review attempts', () => {
     expect(attempt.guarantee?.model).toBe('Opus');
     // The snapshot keeps the declaration as written; the guarantee names the model that ran.
     expect(attempt.declaration).toMatchObject({ alternateModels: ['Opus'], model: 'Fable' });
+  });
+
+  test('a pinned route re-reads the signed-in account at start and refuses when it changed (ADR 0057)', async () => {
+    const accountA = { email: 'a@example.invalid', orgId: 'org-a' };
+    const accountB = { email: 'b@example.invalid', orgId: 'org-b' };
+    const pin = claudeAccountFingerprint(accountA);
+    if (pin === null) {
+      throw new Error('fixture fingerprint must exist');
+    }
+    const signedIn = (account: typeof accountA) =>
+      `if (process.argv[2] === "auth") { process.stdout.write(${JSON.stringify(JSON.stringify({ ...account, authMethod: 'claude.ai', loggedIn: true }))}); process.exit(0); }`;
+    // Qualified as confirmed from the stored observation; the CLI has since signed in to B.
+    const fixture = await createFixture({ declaration: { accountFingerprint: pin }, observedFingerprint: pin });
+    const switched = service(
+      fixture,
+      await fixture.executable([signedIn(accountB), emit(INIT_LINE, RESULT_LINE)].join('\n')),
+    );
+    const refused = await switched.start(command());
+    expect(refused.refusal?.reason).toBe('identity-changed');
+    expect(refused.refusal?.message).toContain(pin);
+    expect(refused.refusal?.message).toContain(claudeAccountFingerprint(accountB) ?? 'missing');
+    expect(switched.live()).toEqual([]);
+
+    // The same account at start: the review launches.
+    const same = service(
+      fixture,
+      await fixture.executable([signedIn(accountA), emit(INIT_LINE, RESULT_LINE)].join('\n')),
+    );
+    const started = await same.start(command());
+    expect(started.refusal).toBeNull();
+    await same.settle();
+    expect((await attemptById(fixture.dbPath, started.attempt.attemptId)).state).toBe('finished');
   });
 
   test('a double click and a second client on the same target launch one review', async () => {

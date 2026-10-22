@@ -24,5 +24,6 @@ export const REVIEW_LAUNCH_REFUSAL_REASONS = [
   'harness-unsupported',
   'attempt-already-live',
   'attempt-unresolved',
+  'identity-changed',
 ] as const;
 export type ReviewLaunchRefusalReason = (typeof REVIEW_LAUNCH_REFUSAL_REASONS)[number];

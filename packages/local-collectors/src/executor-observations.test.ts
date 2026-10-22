@@ -155,6 +155,58 @@ describe('observeExecutors', () => {
     );
   });
 
+  test('probes the account the launch will use: its CLAUDE_CONFIG_DIR and its executable override (ADR 0057)', async () => {
+    const reviews = '/home/op/.claude-reviews';
+    const override = '/opt/claude-review/bin/claude';
+    const { calls, run } = scripted({
+      [`${override} --version`]: ok('2.1.306 (Claude Code)\n'),
+      [`${override} auth status`]: ok(CLAUDE_STATUS),
+    });
+    const [observation] = await observeExecutors({
+      env: { AI_USAGE_CLAUDE_EXECUTABLE: override, CLAUDE_CONFIG_DIR: reviews, PATH: '/usr/bin' },
+      harnesses: ['claude-code'],
+      machineId: 'machine-a',
+      now: () => NOW,
+      run,
+      timeoutMs: 5000,
+      which: bothPresent,
+    });
+    expect(observation).toMatchObject({ accountFingerprint: EXPECTED_FINGERPRINT, binaryPath: override });
+    expect(calls.map((call) => call.command)).toEqual([override, override]);
+    expect(calls.every((call) => call.env?.CLAUDE_CONFIG_DIR === reviews)).toBe(true);
+
+    // Without either variable the probe runs `claude` from the PATH with no extra environment.
+    const plain = scripted({ 'claude --version': ok('2.1.306\n'), 'claude auth status': ok(CLAUDE_STATUS) });
+    await observeExecutors({
+      env: { PATH: '/usr/bin' },
+      harnesses: ['claude-code'],
+      machineId: 'machine-a',
+      now: () => NOW,
+      run: plain.run,
+      timeoutMs: 5000,
+      which: bothPresent,
+    });
+    expect(plain.calls.map((call) => [call.command, call.env?.CLAUDE_CONFIG_DIR])).toEqual([
+      ['claude', undefined],
+      ['claude', undefined],
+    ]);
+
+    // A relative override is refused exactly as the launcher refuses it, and nothing runs.
+    const relative = scripted({});
+    const [refused] = await observeExecutors({
+      env: { AI_USAGE_CLAUDE_EXECUTABLE: 'bin/claude', PATH: '/usr/bin' },
+      harnesses: ['claude-code'],
+      machineId: 'machine-a',
+      now: () => NOW,
+      run: relative.run,
+      timeoutMs: 5000,
+      which: bothPresent,
+    });
+    expect(refused).toMatchObject({ binaryPath: null, outcome: 'unavailable' });
+    expect(refused?.authEvidence).toContain('AI_USAGE_CLAUDE_EXECUTABLE must be an absolute path');
+    expect(relative.calls).toEqual([]);
+  });
+
   test('reports an absent binary as unavailable without running anything', async () => {
     const { calls, run } = scripted({});
     const observations = await observe(run, () => null);

@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { boundedProcessEnvironment } from '@ai-usage/local-machine/bounded-process';
 import {
   boundReviewExcerpt,
@@ -10,6 +9,7 @@ import {
   type ReviewAttemptScope,
   type ReviewHarnessGuarantee,
 } from '@ai-usage/report-core/work-attempts';
+import { CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY, ClaudeCommandError, claudeCommandFor } from './claude-command';
 import { ClaudeCliQualificationError, observeManagedSettings, qualifyClaudeCli } from './claude-review-cli';
 import { type PrepareReviewScopeOptions, prepareReviewScope, ReviewScopeError } from './claude-review-scope';
 
@@ -37,14 +37,11 @@ import { type PrepareReviewScopeOptions, prepareReviewScope, ReviewScopeError } 
  * harness still writes its own session logs under the operator's Claude directory, and no OS
  * sandbox is claimed.
  *
- * The executable is `claude` on the allow-listed PATH, or the one named by
- * `AI_USAGE_CLAUDE_EXECUTABLE`: an absolute path, or a bare name looked up on that PATH. A
- * relative path is refused rather than resolved against the target checkout, where a file of
- * that name would be run in the operator's name. Fixtures use the variable to substitute a fake
- * harness without touching the operator's PATH.
+ * The executable and its `CLAUDE_CONFIG_DIR` come from `claudeCommandFor` (`./claude-command`),
+ * the resolution the executor probe uses too, so the account confirmed is the account launched.
  */
-export const CLAUDE_EXECUTABLE_ENVIRONMENT_KEY = 'AI_USAGE_CLAUDE_EXECUTABLE';
-const CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY = 'CLAUDE_CONFIG_DIR';
+export { CLAUDE_EXECUTABLE_ENVIRONMENT_KEY } from './claude-command';
+
 const TERMINATE_GRACE_MS = 5000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
@@ -171,16 +168,6 @@ export const claudeReviewArguments = (
   ...(spec.effort === null ? [] : ['--effort', spec.effort]),
 ];
 
-const launcherEnvironment = (env: Readonly<Record<string, string | undefined>>): Record<string, string> => {
-  const configDirectory = env[CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY];
-  return boundedProcessEnvironment(
-    configDirectory === undefined || configDirectory === ''
-      ? {}
-      : { [CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY]: configDirectory },
-    env,
-  );
-};
-
 /**
  * A spawn error by its class and code only. The runtime's own message quotes the offending
  * argument, which is the prompt (commit SHAs, subject, session title); a stored failure reason
@@ -196,26 +183,29 @@ export const spawnFailureDetail = (error: unknown): string => {
   return code === null ? error.name : `${error.name} ${code}`;
 };
 
-const resolveExecutable = (
+/** The shared command and environment (`claudeCommandFor`), with the command made absolute for the spawn. */
+const resolveLaunch = (
   options: ClaudeReviewLaunchOptions,
   env: Readonly<Record<string, string | undefined>>,
-  environment: Readonly<Record<string, string>>,
-): string => {
-  const named = options.executable ?? env[CLAUDE_EXECUTABLE_ENVIRONMENT_KEY] ?? 'claude';
-  if (named.includes('/')) {
-    if (!path.isAbsolute(named)) {
-      throw new ClaudeReviewLaunchError(
-        'executable-invalid',
-        `${CLAUDE_EXECUTABLE_ENVIRONMENT_KEY} must be an absolute path or a bare command name; got "${named}"`,
-      );
+): { readonly environment: Record<string, string>; readonly executable: string } => {
+  let claude: ReturnType<typeof claudeCommandFor>;
+  try {
+    claude = claudeCommandFor(env, options.executable);
+  } catch (error) {
+    if (error instanceof ClaudeCommandError) {
+      throw new ClaudeReviewLaunchError('executable-invalid', error.message);
     }
-    return named;
+    throw error;
   }
-  const resolved = Bun.which(named, { PATH: environment.PATH ?? '' });
+  const environment = boundedProcessEnvironment(claude.environment, env);
+  if (claude.command.includes('/')) {
+    return { environment, executable: claude.command };
+  }
+  const resolved = Bun.which(claude.command, { PATH: environment.PATH ?? '' });
   if (resolved === null) {
-    throw new ClaudeReviewLaunchError('executable-missing', `${named} was not found on the allow-listed PATH`);
+    throw new ClaudeReviewLaunchError('executable-missing', `${claude.command} was not found on the allow-listed PATH`);
   }
-  return resolved;
+  return { environment, executable: resolved };
 };
 
 interface StreamReadState {
@@ -234,8 +224,7 @@ export const launchClaudeReview = async (
   options: ClaudeReviewLaunchOptions = {},
 ): Promise<ClaudeReviewLaunch> => {
   const env = options.env ?? process.env;
-  const environment = launcherEnvironment(env);
-  const executable = resolveExecutable(options, env, environment);
+  const { environment, executable } = resolveLaunch(options, env);
   if (!UUID.test(spec.launchSessionId)) {
     throw new ClaudeReviewLaunchError('spawn-failed', 'the launch session id must be a lowercase UUID');
   }

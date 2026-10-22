@@ -13,6 +13,7 @@ import {
   type ExecutorObservationOutcome,
   parseExecutorObservation,
 } from '@ai-usage/report-core/work-executors';
+import { type ClaudeCommand, ClaudeCommandError, claudeCommandFor } from './claude-command';
 
 /**
  * Observes the review executors a machine could run: is the harness CLI on the PATH, which version,
@@ -58,6 +59,11 @@ export const runBoundedProcess: BoundedRun = async (spec) => {
 };
 
 export interface ObserveExecutorsInput {
+  /**
+   * The environment the review launch uses (default `process.env`): its `CLAUDE_CONFIG_DIR` and
+   * `AI_USAGE_CLAUDE_EXECUTABLE` decide which CLI and which account the Claude probe reads.
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly harnesses?: readonly ExecutorHarness[];
   readonly machineId: string;
   readonly now?: () => Date;
@@ -163,12 +169,13 @@ const failedProbe = (command: string, kind: BoundedProcessFailureKind): AuthProb
  * `claude auth status` prints JSON by default; only its `loggedIn` boolean, its `authMethod` word
  * and, for a signed-in CLI, the hash of its `orgId` and `email` are kept.
  */
-const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthProbe> => {
+const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number, claude: ClaudeCommand): Promise<AuthProbe> => {
   let result: BoundedRunResult;
   try {
     result = await run({
       args: ['auth', 'status'],
-      command: 'claude',
+      command: claude.command,
+      env: claude.environment,
       maximumOutputBytes: MAXIMUM_OUTPUT_BYTES,
       timeoutMs,
     });
@@ -272,12 +279,24 @@ const unavailableObservation = (base: ObservationBase, evidence: string): Execut
 
 const observeExecutor = async (
   harness: ExecutorHarness,
-  input: Required<Pick<ObserveExecutorsInput, 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>>,
+  input: Required<Pick<ObserveExecutorsInput, 'env' | 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>>,
 ): Promise<ExecutorObservation> => {
-  const command = EXECUTOR_COMMANDS[harness];
   const observedAt = input.now().toISOString();
-  const binaryPath = input.which(command);
   const base: ObservationBase = { harness, machineId: input.machineId, observedAt };
+  let claude: ClaudeCommand | null = null;
+  if (harness === 'claude-code') {
+    try {
+      claude = claudeCommandFor(input.env);
+    } catch (error) {
+      if (error instanceof ClaudeCommandError) {
+        return unavailableObservation(base, error.message);
+      }
+      throw error;
+    }
+  }
+  const command = claude?.command ?? EXECUTOR_COMMANDS[harness];
+  const environment = claude?.environment ?? {};
+  const binaryPath = command.includes('/') ? command : input.which(command);
   if (binaryPath === null) {
     return unavailableObservation(base, `${command} binary not found on PATH`);
   }
@@ -288,6 +307,7 @@ const observeExecutor = async (
     const result = await input.run({
       args: ['--version'],
       command,
+      env: environment,
       maximumOutputBytes: MAXIMUM_OUTPUT_BYTES,
       timeoutMs: input.timeoutMs,
     });
@@ -305,9 +325,9 @@ const observeExecutor = async (
     versionEvidence = `${command} --version ${kind}`;
   }
   const auth =
-    harness === 'claude-code'
-      ? await claudeAuthProbe(input.run, input.timeoutMs)
-      : await codexAuthProbe(input.run, input.timeoutMs);
+    claude === null
+      ? await codexAuthProbe(input.run, input.timeoutMs)
+      : await claudeAuthProbe(input.run, input.timeoutMs, claude);
   if (auth.outcome === 'unavailable') {
     return unavailableObservation(base, `${auth.evidence} to the bounded runner`);
   }
@@ -325,8 +345,38 @@ const observeExecutor = async (
   };
 };
 
+export interface ClaudeAccountProbe {
+  /** The fingerprint of the account the CLI reports now; `null` when it reports none or the probe failed. */
+  readonly accountFingerprint: string | null;
+  readonly evidence: string;
+}
+
+/**
+ * Reads the signed-in Claude Code account now, with the launch's own command and environment
+ * (`claudeCommandFor`): what a start re-checks against a pinned route (ADR 0057).
+ */
+export const probeClaudeAccount = async (input: {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly executable?: string;
+  readonly run?: BoundedRun;
+  readonly timeoutMs?: number;
+}): Promise<ClaudeAccountProbe> => {
+  let claude: ClaudeCommand;
+  try {
+    claude = claudeCommandFor(input.env ?? process.env, input.executable);
+  } catch (error) {
+    if (error instanceof ClaudeCommandError) {
+      return { accountFingerprint: null, evidence: error.message };
+    }
+    throw error;
+  }
+  const auth = await claudeAuthProbe(input.run ?? runBoundedProcess, input.timeoutMs ?? DEFAULT_TIMEOUT_MS, claude);
+  return { accountFingerprint: auth.accountFingerprint, evidence: auth.evidence };
+};
+
 export const observeExecutors = async (input: ObserveExecutorsInput): Promise<ExecutorObservation[]> => {
   const resolved = {
+    env: input.env ?? process.env,
     machineId: input.machineId,
     now: input.now ?? (() => new Date()),
     run: input.run ?? runBoundedProcess,
