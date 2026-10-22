@@ -54,10 +54,14 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
   await expect(main.locator('[data-work-coverage]')).toContainText('39 of 41 files parsed');
-  for (const name of ['Needs you', 'Waiting on others', 'Leads', 'Recent, nothing pending']) {
+  for (const name of ['Needs you', 'Waiting on others', 'Leads', 'Recent · no pending declaration read']) {
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
-  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(5);
+  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(6);
+  // A question a later pull request may have answered stays in "Needs you", ranked last and marked.
+  const reconsidered = main.locator('[data-work-section="human-request"] [data-work-root]').last();
+  await expect(reconsidered).toContainText('Scan resource optimization');
+  await expect(reconsidered).toContainText('possibly answered');
   await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(10);
   await expect(main.getByText(KNOWN_WAITS_PATTERN)).toHaveCount(0);
   await expect(main.getByRole('button', { name: 'Simulate review assignment' })).toHaveCount(0);
@@ -122,8 +126,8 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   await expect(first).toBeFocused();
 
   // The simulation belongs to one understood target: a root joined to a collected Session.
-  await main.locator('[data-work-section="none"] button', { hasText: 'Show all 13' }).click();
-  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(13);
+  await main.locator('[data-work-section="none"] button', { hasText: 'Show all 12' }).click();
+  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(12);
   await rowNamed(page, JOINED_TITLE).click();
   await expect(aside).toContainText(`Simulates a read-only review of “${JOINED_TITLE}”`);
   await expect(aside.getByRole('link', { name: 'Open session detail' })).toBeVisible();
@@ -145,11 +149,11 @@ test('a direct address restores the filters and the selected root, and the detai
   const filters = main.locator('[data-work-filters]');
   await expect(filters.getByRole('button', { name: NEEDS_YOU_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
   await expect(filters.getByRole('button', { name: CLAUDE_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
-  await expect(main.locator('[data-work-root]')).toHaveCount(5);
+  await expect(main.locator('[data-work-root]')).toHaveCount(6);
   await expect(main.locator('[data-work-aside] [data-work-question]')).toContainText(BLOCKED_QUESTION);
   await expect(rowNamed(page, BLOCKED_TITLE)).toHaveAttribute('aria-current', 'true');
   await main.getByRole('button', { name: 'Clear filters', exact: true }).click();
-  await expect(main.locator('[data-work-root]')).toHaveCount(22);
+  await expect(main.locator('[data-work-root]')).toHaveCount(23);
   await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBe('desk-mobile-nav');
   await main.getByRole('button', { name: 'Close detail', exact: true }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBeNull();
