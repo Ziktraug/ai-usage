@@ -183,8 +183,8 @@ describe('queryWorkContext', () => {
     expect(context.schemaVersion).toBe(1);
     expect(context.generatedAt).toBe(canonicalInstantFromDate(EPOCH));
     expect(context.scope).toEqual({ checkoutPath: REPOSITORY, kind: 'checkout', match: 'same-or-inside' });
-    // The other project's roots are read but out of scope; the stale request is kept at any age.
-    expect(context.coverage.roots.inScope).toBeLessThan(context.coverage.roots.read);
+    // The other project is filtered before the read budget; the stale request is kept at any age.
+    expect(context.coverage.roots.inScope).toBe(context.coverage.roots.read);
     expect(context.waiting.every(({ root }) => root.project.label === 'fixture')).toBe(true);
     expect(titles(context.waiting)).toContain('Fixture: stale declaration');
     expect(titles(context.waiting)).not.toContain('Fixture: export column wording');
@@ -248,11 +248,18 @@ describe('queryWorkContext', () => {
     expect(context.coverage.attention.pullRequests).toMatchObject({ lastRunAt: hoursBefore(0.5), observed: 1 });
     expect(context.coverage.attention.desktopSessions.sessionsStored).toBeGreaterThan(0);
     expect(context.coverage.attention.window.sinceDays).toBe(30);
-    expect(context.truncated).toBe(false);
+    expect(context.truncated).toBe(true);
     expect(context.truncation).toEqual({
       bytes: false,
       dataset: false,
-      omitted: { checkouts: 0, decisions: 0, jiraIssues: 0, pullRequests: 0, waits: 0 },
+      omitted: {
+        checkouts: 0,
+        decisions: 0,
+        jiraIssues: 0,
+        pullRequests: 0,
+        waits: 0,
+        sessions: context.coverage.roots.inScope - WORK_CONTEXT_BOUNDS.maxSessions,
+      },
     });
 
     // Bounded and private: within the byte ceiling; no proposal brief, report or note text copied.
@@ -628,5 +635,120 @@ describe('projectWorkContext bounds', () => {
     expect(() => projectWorkContext(crowdedDataset(), { checkoutPath: 'relative/path', kind: 'checkout' })).toThrow(
       RangeError,
     );
+  });
+});
+
+describe('project context scope before read budgets', () => {
+  test('finds a project behind 600 unrelated roots and keeps its scoped coverage honest', async () => {
+    const dbPath = await createStore();
+    const template = parse(registryOf(REPOSITORY, 'minimal').documents[0] as ClaudeDesktopFixtureDocument, MACHINE);
+    if (template === null) {
+      throw new Error('fixture must parse');
+    }
+    const observations = Array.from({ length: 600 }, (_, index) => ({
+      ...template,
+      cliSessionId: `cli-crowd-${index}`,
+      desktopSessionId: `local_crowd-${index}`,
+      cwd: OTHER_REPOSITORY,
+      originCwd: OTHER_REPOSITORY,
+      worktreePath: null,
+      lastActivityAt: hoursBefore(0.01),
+      latestUserFrameAt: null,
+      spawnedFrom: null,
+      title: `Other project ${index}`,
+    }));
+    await Effect.runPromise(
+      importClaudeDesktopSessions({
+        dbPath,
+        machineId: MACHINE,
+        collectedAt: EPOCH,
+        completeness: {
+          filesParsed: observations.length,
+          filesSeen: observations.length,
+          rejected: 0,
+          truncated: false,
+          unsupported: 0,
+        },
+        observations,
+      }),
+    );
+    const context = await read(dbPath, { checkoutPath: REPOSITORY, kind: 'checkout' });
+    expect(titles(context.waiting)).toContain('Fixture: investigate checkout 3');
+    const byLabel = await read(dbPath, { kind: 'project-label', projectLabel: 'fixture' });
+    expect(titles(byLabel.waiting)).toContain('Fixture: investigate checkout 3');
+    expect(context.coverage.scopeAppliedBeforeBounds).toBe(true);
+    expect(context.coverage.roots.read).toBeLessThan(WORK_ATTENTION_BOUNDS.maxRoots);
+    expect(context.truncation.dataset).toBe(false);
+  });
+});
+
+describe('explicit historical and multi-checkout context', () => {
+  test('exposes an old exploration with an explicit window and known worktrees without merging sessions', async () => {
+    const dbPath = await createStore();
+    const template = parse(registryOf(REPOSITORY, 'minimal').documents[0] as ClaudeDesktopFixtureDocument, MACHINE);
+    if (template === null) {
+      throw new Error('fixture must parse');
+    }
+    const observations: ClaudeDesktopSessionObservation[] = [
+      '/fixture/worktree-a',
+      '/other/worktree-b',
+      '/other/worktree-b-sibling',
+    ].map((cwd, index) => ({
+      ...template,
+      cliSessionId: `cli-exploration-${index}`,
+      desktopSessionId: `local_exploration-${index}`,
+      cwd,
+      originCwd: null,
+      worktreePath: null,
+      createdAt: hoursBefore(120 * 24 + 1),
+      lastActivityAt: hoursBefore(120 * 24),
+      latestUserFrameAt: null,
+      spawnedFrom: null,
+      title: `Existing exploration ${index}`,
+      turnSummary: null,
+      declaredPullRequests: [],
+    }));
+    await Effect.runPromise(
+      importClaudeDesktopSessions({
+        dbPath,
+        machineId: MACHINE,
+        collectedAt: EPOCH,
+        completeness: {
+          filesParsed: observations.length,
+          filesSeen: observations.length,
+          rejected: 0,
+          truncated: false,
+          unsupported: 0,
+        },
+        observations,
+      }),
+    );
+    const scope = { checkoutPaths: ['/fixture/worktree-a', '/other/worktree-b'], kind: 'checkouts' as const };
+    const recent = await Effect.runPromise(queryWorkContext({ dbPath, now: EPOCH, scope }));
+    expect(recent.sessions).toEqual([]);
+    expect(recent.coverage.attention.window.excludedRoots).toBe(2);
+    const historical = await Effect.runPromise(queryWorkContext({ dbPath, now: EPOCH, scope, sinceDays: 180 }));
+    expect(new Set(titles(historical.sessions))).toEqual(new Set(['Existing exploration 0', 'Existing exploration 1']));
+    expect(historical.waiting).toEqual([]);
+    expect(historical.scope).toEqual({ ...scope, match: 'same-or-inside' });
+    expect(historical.coverage.attention.window.sinceDays).toBe(180);
+    expect(historical.sessions.every(({ root }) => root.key.sourceSessionId.startsWith('cli-exploration-'))).toBe(true);
+    expect(historical.truncated).toBe(false);
+  });
+
+  test('refuses unbounded checkout scopes and invalid exploration windows with typed failures', async () => {
+    const dbPath = await createStore();
+    for (const checkoutPaths of [[], Array.from({ length: 11 }, (_, index) => `/fixture/${index}`), ['relative']]) {
+      const result = await readWorkContext({ dbPath, scope: { kind: 'checkouts', checkoutPaths } });
+      expect(result).toMatchObject({ kind: 'error', failure: { code: 'invalid-input' } });
+    }
+    for (const sinceDays of [0, 3651, 0.5]) {
+      const result = await readWorkContext({
+        dbPath,
+        scope: { kind: 'checkout', checkoutPath: REPOSITORY },
+        sinceDays,
+      });
+      expect(result).toMatchObject({ kind: 'error', failure: { code: 'invalid-input' } });
+    }
   });
 });

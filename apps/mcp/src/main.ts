@@ -29,8 +29,8 @@ const defaultDependencies: MemoryMcpProcessDependencies = {
  * call and never created; only the failure code crosses the MCP edge.
  */
 export const createLocalWorkContextMcpReadService = (dbPath: string): WorkContextMcpReadService => ({
-  readWorkContext: async (scope, signal) => {
-    const result = await readWorkContext({ dbPath, scope, signal });
+  readWorkContext: async (scope, signal, options) => {
+    const result = await readWorkContext({ dbPath, scope, signal, ...options });
     return result.kind === 'success'
       ? { kind: 'success', value: result.value }
       : { code: result.failure.code, kind: 'error' };

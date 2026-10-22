@@ -90,6 +90,27 @@ test(
       expect(text.stdout).toContain('Only Claude Desktop sessions are represented.');
       expect(text.stdout).toContain('· Codex 0 in scope (sessions only; 0 of 0 recent campaigns read).');
 
+      const explicit = await runCli([
+        'work',
+        'context',
+        '--checkout',
+        'work/fixture',
+        '--checkout',
+        'outside',
+        '--since-days',
+        '180',
+        '--json',
+      ]);
+      expect(explicit.exitCode).toBe(0);
+      expect(JSON.parse(explicit.stdout)).toMatchObject({
+        scope: { kind: 'checkouts', checkoutPaths: [repository, path.join(root, 'outside')], match: 'same-or-inside' },
+        coverage: { scopeAppliedBeforeBounds: true, attention: { window: { sinceDays: 180 } } },
+        sessions: [
+          { root: { title: 'Fixture: investigate checkout 3' } },
+          { root: { title: 'Fixture: ship the collector' } },
+        ],
+      });
+
       // Read-only: the database is unchanged, its write-ahead log empty, no engine started.
       expect(Bun.hash(await Bun.file(dbPath).arrayBuffer())).toBe(storeBytes);
       expect(Bun.file(`${dbPath}-wal`).size).toBe(0);

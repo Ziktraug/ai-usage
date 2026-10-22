@@ -289,7 +289,12 @@ describe('Work context MCP tool', () => {
       expect(tools.tools.map(({ name }) => name)).toEqual([...memoryMcpToolNames, ...workMcpToolNames]);
       const work = tools.tools.find(({ name }) => name === 'work.context');
       expect(work?.annotations).toMatchObject({ destructiveHint: false, openWorldHint: false, readOnlyHint: true });
-      expect(Object.keys(work?.inputSchema.properties ?? {}).sort()).toEqual(['checkoutPath', 'projectLabel']);
+      expect(Object.keys(work?.inputSchema.properties ?? {}).sort()).toEqual([
+        'checkoutPath',
+        'checkoutPaths',
+        'projectLabel',
+        'sinceDays',
+      ]);
       expect(reservedMemoryMcpToolNames as readonly string[]).not.toContain('work.context');
     } finally {
       await fixture.close();
@@ -325,6 +330,41 @@ describe('Work context MCP tool', () => {
         { checkoutPath: '/fixture/checkout', kind: 'checkout' },
         { kind: 'project-label', projectLabel: 'fixture' },
       ]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test('passes explicit bounded worktrees and historical window through the one read port', async () => {
+    const calls: unknown[] = [];
+    const fixture = await connectedWithWork(
+      workService((scope, _signal, options) => {
+        calls.push({ scope, options });
+        return Promise.resolve({ kind: 'success', value: workContextValue });
+      }),
+    );
+    try {
+      const result = await fixture.client.callTool(
+        { name: 'work.context', arguments: { checkoutPaths: ['/fixture/a', '/fixture/b'], sinceDays: 180 } },
+        CallToolResultSchema,
+      );
+      expect(result.isError).not.toBe(true);
+      expect(calls).toEqual([
+        { scope: { kind: 'checkouts', checkoutPaths: ['/fixture/a', '/fixture/b'] }, options: { sinceDays: 180 } },
+      ]);
+      for (const arguments_ of [
+        { checkoutPaths: [] },
+        { checkoutPaths: Array.from({ length: 11 }, () => '/fixture') },
+        { checkoutPath: '/fixture', sinceDays: 3651 },
+        { checkoutPath: '/fixture', checkoutPaths: ['/other'] },
+      ]) {
+        const invalid = await fixture.client.callTool(
+          { name: 'work.context', arguments: arguments_ },
+          CallToolResultSchema,
+        );
+        expect(invalid.isError).toBe(true);
+      }
+      expect(calls).toHaveLength(1);
     } finally {
       await fixture.close();
     }

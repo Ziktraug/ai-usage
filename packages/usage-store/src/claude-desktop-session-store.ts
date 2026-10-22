@@ -15,6 +15,7 @@ import {
 } from '@ai-usage/report-core/work-attention-native';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import { validWorkSessionReadScope, type WorkSessionReadScope, workSessionScopeSql } from './work-session-scope';
 
 /**
  * Durable storage for the Claude Desktop session fact family (ADR 0050), modelled on
@@ -215,6 +216,7 @@ export interface QueryClaudeDesktopSessionsInput {
    * someone else. The Work read keeps these beyond its recency bound.
    */
   readonly pendingOnly?: boolean;
+  readonly scope?: WorkSessionReadScope;
   /** ISO lower bound on `lastActivityAt`, inclusive. */
   readonly sinceLastActivityAt?: string;
   readonly trace?: (query: { readonly params: readonly unknown[]; readonly sql: string }) => void;
@@ -792,7 +794,8 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
             olderThan === null ||
             (ids !== undefined &&
               (ids.length > MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER || ids.some((id) => id.trim().length === 0))) ||
-            (input.machineId !== undefined && input.machineId.trim().length === 0)
+            (input.machineId !== undefined && input.machineId.trim().length === 0) ||
+            (input.scope !== undefined && !validWorkSessionReadScope(input.scope))
           ) {
             throw usageStoreError(
               'queryClaudeDesktopSessions',
@@ -807,6 +810,14 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
           }
           const clauses: string[] = [];
           const params: unknown[] = [];
+          if (input.scope !== undefined) {
+            const scoped = workSessionScopeSql(input.scope, {
+              checkout: 'coalesce(worktree_path, cwd)',
+              project: 'coalesce(origin_cwd, cwd)',
+            });
+            clauses.push(scoped.sql);
+            params.push(...scoped.params);
+          }
           if (input.machineId !== undefined) {
             clauses.push('machine_id = ?');
             params.push(input.machineId);
@@ -933,17 +944,32 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
   const countClaudeDesktopSessions = (input: {
     readonly dbPath: string;
     readonly machineId?: string;
+    readonly scope?: WorkSessionReadScope;
   }): Effect.Effect<number, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
-          const row = (
-            input.machineId === undefined
-              ? db.query('SELECT COUNT(*) AS count FROM claude_desktop_sessions').get()
-              : db
-                  .query('SELECT COUNT(*) AS count FROM claude_desktop_sessions WHERE machine_id = ?')
-                  .get(input.machineId)
-          ) as { count: number };
+          if (input.scope !== undefined && !validWorkSessionReadScope(input.scope)) {
+            throw usageStoreError('countClaudeDesktopSessions', input.dbPath, 'Invalid Work scope', 'invalid-input');
+          }
+          const scope =
+            input.scope === undefined
+              ? null
+              : workSessionScopeSql(input.scope, {
+                  checkout: 'coalesce(worktree_path, cwd)',
+                  project: 'coalesce(origin_cwd, cwd)',
+                });
+          const clauses = [
+            ...(input.machineId === undefined ? [] : ['machine_id = ?']),
+            ...(scope === null ? [] : [scope.sql]),
+          ];
+          const row = db
+            .query(
+              `SELECT COUNT(*) AS count FROM claude_desktop_sessions ${clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`}`,
+            )
+            .get(...(input.machineId === undefined ? [] : [input.machineId]), ...(scope?.params ?? [])) as {
+            count: number;
+          };
           return row.count;
         },
         catch: (cause) => usageStoreReadError('countClaudeDesktopSessions', input.dbPath, cause),

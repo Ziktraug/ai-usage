@@ -153,3 +153,5 @@ export {
   MAX_WORK_HARNESS_SESSION_MEMBERS,
   MAX_WORK_SESSION_JOIN_IDS,
 } from './work-session-join';
+
+export { MAX_WORK_SCOPE_CHECKOUTS, type WorkSessionReadScope } from './work-session-scope';
