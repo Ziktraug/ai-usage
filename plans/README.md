@@ -76,8 +76,13 @@ dependency.
 
 ## Execution order & status
 
+Current continuation: [119 — Work continuity and Codex review](119-work-continuity-and-codex-review.md)
+extends plan 118 from PR #67's verified `6bf89308` head. Its local campaign is
+in progress; earlier delivery records are historical evidence, not this gate.
+
 | Plan | Title | Priority | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
+| 119 | Work continuity and Codex review | P1 | L | 118 at `6bf89308` | IN PROGRESS |
 | 001 | Integrate Skill Management Into ai-usage | P1 | L | - | DONE |
 | 002 | Skills Inventory UI — Multi-Axis Redesign of `/skills` | P1 | L | 001 | DONE |
 | 003 | Skills UX Polish — Fix the `/skills` Presentation Defects | P2 | M | 002 | DONE |

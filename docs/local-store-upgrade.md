@@ -46,6 +46,14 @@ live replication and later backfill.
 
 ## Additive tables under usage version 4 (2026-10-21)
 
+2026-10-22 (Work continuation, plan 119): `review_attempts` gains nullable
+`native_turn_id`, `stop_requested_at` and `stop_confirmed_at` columns. Existing
+attempts keep their identity, reservation, result and Claude guarantee; unknown
+native/stop observations remain null. Query-only readers report a store not yet
+upgraded instead of adding columns. Only the engine applies the additive upgrade.
+The campaign validates this on disposable databases; it does not authorize or
+prove an upgrade of the operator's daily stores.
+
 The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
 and `claude_desktop_collection_state` to the usage store without changing
 `user_version`, following the `skill_observations` precedent: the engine

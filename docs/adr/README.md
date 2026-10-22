@@ -81,6 +81,7 @@ publication settle window therefore takes 0048.
 | [0057](0057-observed-account-identity-and-on-demand-routing-qualification.md) | Observed account identity, models of one account, on-demand routing qualification | 2026-10-22 | Accepted; extends 0009, 0052, 0053 |
 | [0058](0058-harness-sessions-read-work-context-through-one-bounded-projection.md) | Harness sessions read Work context through one bounded, read-only projection (CLI and local MCP) | 2026-10-22 | Accepted; extends 0009, 0027, 0050, 0056 |
 | [0059](0059-work-roots-for-harnesses-that-declare-no-wait.md) | Work shows sessions of a harness that declares no wait, with their attention not observable | 2026-10-22 | Accepted; extends 0016, 0050, 0056 |
+| [0060](0060-attribute-work-responses-to-their-requests.md) | Attribute Work responses to their requests | 2026-10-22 | Accepted; amends 0056 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the
