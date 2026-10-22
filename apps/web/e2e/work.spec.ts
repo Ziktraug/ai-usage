@@ -9,7 +9,7 @@ import { expect, test } from './browser-test';
  */
 test.use({ extraHTTPHeaders: { 'x-ai-usage-sveltekit-mode': 'demo' } });
 
-const SYNTHETIC_ROOTS = 25;
+const SYNTHETIC_ROOTS = 28;
 const BLOCKED_TITLE = 'Fix mobile navigation label overlap';
 const BLOCKED_QUESTION = 'Which of the two 320px layouts do you prefer?';
 const JOINED_TITLE = 'Build report UI';
@@ -57,7 +57,7 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   for (const name of ['Needs you', 'Waiting on others', 'Leads', 'Recent · no pending declaration read']) {
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
-  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(6);
+  await expect(main.locator('[data-work-section="human-request"] [data-work-root]')).toHaveCount(8);
   // A question a later pull request may have answered stays in "Needs you", ranked last and marked.
   const reconsidered = main.locator('[data-work-section="human-request"] [data-work-root]').last();
   await expect(reconsidered).toContainText('Scan resource optimization');
@@ -76,7 +76,7 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
 
   // Search narrows the sections and lands in the address.
   await page.getByRole('searchbox').fill('mobile navigation');
-  await expect(main.getByRole('status').filter({ hasText: `1 of ${SYNTHETIC_ROOTS} roots shown` })).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `1 of ${SYNTHETIC_ROOTS} roots match.` })).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('mobile navigation');
   const blocked = rowNamed(page, BLOCKED_TITLE);
   await expect(blocked).toHaveCount(1);
@@ -126,8 +126,8 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   await expect(first).toBeFocused();
 
   // The simulation belongs to one understood target: a root joined to a collected Session.
-  await main.locator('[data-work-section="none"] button', { hasText: 'Show all 12' }).click();
-  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(12);
+  await main.locator('[data-work-section="none"] button', { hasText: 'Show all 13' }).click();
+  await expect(main.locator('[data-work-section="none"] [data-work-root]')).toHaveCount(13);
   await rowNamed(page, JOINED_TITLE).click();
   await expect(aside).toContainText(`Simulates a read-only review of “${JOINED_TITLE}”`);
   await expect(aside.getByRole('link', { name: 'Open session detail' })).toBeVisible();
@@ -149,11 +149,11 @@ test('a direct address restores the filters and the selected root, and the detai
   const filters = main.locator('[data-work-filters]');
   await expect(filters.getByRole('button', { name: NEEDS_YOU_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
   await expect(filters.getByRole('button', { name: CLAUDE_CHIP_PATTERN })).toHaveAttribute('aria-pressed', 'true');
-  await expect(main.locator('[data-work-root]')).toHaveCount(6);
+  await expect(main.locator('[data-work-root]')).toHaveCount(8);
   await expect(main.locator('[data-work-aside] [data-work-question]')).toContainText(BLOCKED_QUESTION);
   await expect(rowNamed(page, BLOCKED_TITLE)).toHaveAttribute('aria-current', 'true');
   await main.getByRole('button', { name: 'Clear filters', exact: true }).click();
-  await expect(main.locator('[data-work-root]')).toHaveCount(23);
+  await expect(main.locator('[data-work-root]')).toHaveCount(25);
   await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBe('desk-mobile-nav');
   await main.getByRole('button', { name: 'Close detail', exact: true }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get('root')).toBeNull();

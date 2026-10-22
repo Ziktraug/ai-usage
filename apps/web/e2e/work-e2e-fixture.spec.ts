@@ -1,3 +1,5 @@
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import { parseWorkAttentionOutput } from '@ai-usage/web-contract/work';
 import { parseWorkRoutingContext } from '@ai-usage/web-contract/work-routing';
 import AxeBuilder from '@axe-core/playwright';
@@ -23,13 +25,15 @@ import { decodeRpcResponseBody } from './rpc-test-transport';
 const WORK_ATTENTION_PATH = '/rpc/work/attention';
 /** The oRPC GET shape the browser link emits for an empty input. */
 const ROUTING_CONTEXT_URL = '/rpc/workRouting/context?data=%7B%22json%22%3A%7B%7D%7D';
-/** 24 seeded roots; the one older root without a pending declaration stays behind the 30-day window. */
-const ROOTS_SHOWN = 23;
+/** 30 seeded roots; the one older root without a pending declaration stays behind the 30-day window. */
+const ROOTS_SHOWN = 29;
 const HIDDEN_ROOTS = 1;
 const MINIMUM_ROOTS = 20;
-const NEEDS_YOU_ROOTS = 8;
+/** Eight current blocks and three older declarations to reconsider; the answered and handled roots rest. */
+const NEEDS_YOU_ROOTS = 11;
+const RECONSIDER_ROOTS = 3;
 const WAITING_ROOTS = 1;
-const LEAD_ROOTS = 1;
+const LEAD_ROOTS = 2;
 const RESTING_ROOTS = ROOTS_SHOWN - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
 const RESTING_TITLE = 'Recent · no pending declaration read';
 const BLOCKED_ROOT_ID = 'local_fixture-blocked-root';
@@ -60,6 +64,7 @@ const REVIEW_READY_TITLE = 'Fixture: review the store migration';
 const JIRA_REPLY_INTERPRETATION =
   "1 comment arrived on XLB-2090 after this session family's last activity (2026-10-20T01:00:00.000Z); no resumption observed.";
 const PROPOSAL_TITLE = 'Fixture: proposals pending';
+const CONTINUED_TITLE = 'Fixture: toolbar refresh';
 
 const waitForHydratedWork = async (page: Page): Promise<void> => {
   await expect(page.locator('main[data-route-shell="work"][data-work-hydrated="true"]')).toBeVisible({
@@ -101,8 +106,8 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   }
   expect(output.data.roots.length).toBe(ROOTS_SHOWN);
   expect(output.data.roots.length).toBeGreaterThanOrEqual(MINIMUM_ROOTS);
-  expect(output.data.coverage.desktopSessions).toMatchObject({ filesParsed: 40, filesSeen: 41, unsupported: 1 });
-  expect(output.data.coverage.pullRequests).toMatchObject({ disabled: false, failed: 1, observed: 3 });
+  expect(output.data.coverage.desktopSessions).toMatchObject({ filesParsed: 49, filesSeen: 50, unsupported: 1 });
+  expect(output.data.coverage.pullRequests).toMatchObject({ disabled: false, failed: 1, observed: 4 });
   expect(output.data.coverage.checkouts).toMatchObject({ failed: 0, observed: 1 });
   expect(output.data.coverage.jira).toMatchObject({ disabled: false, failed: 1, observed: 2 });
   expect(output.data.coverage.window).toEqual({ excludedRoots: HIDDEN_ROOTS, sinceDays: 30 });
@@ -112,8 +117,8 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   await expect(main.getByText('Declared outcomes are unavailable')).toHaveCount(0);
   const coverage = main.locator('[data-work-coverage]');
   await expect(coverage).toContainText('Desktop sessions: collected');
-  await expect(coverage).toContainText('40 of 41 files parsed · 1 unsupported');
-  await expect(coverage).toContainText('Pull requests: 3 observed, 1 failed 30 min ago');
+  await expect(coverage).toContainText('49 of 50 files parsed · 1 unsupported');
+  await expect(coverage).toContainText('Pull requests: 4 observed, 1 failed 30 min ago');
   await expect(coverage).toContainText('Checkouts: 1 observed 40 min ago');
   await expect(coverage.locator('[data-work-jira-coverage]')).toContainText('Jira: 2 observed, 1 failed 30 min ago');
   await expect(coverage.locator('[data-work-window]')).toContainText(
@@ -128,7 +133,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
   await expect(main.locator('[data-work-section="human-request"] header')).toContainText(
-    'A root marked “possibly answered” has a later pull request that may be the answer; it ranks last and stays yours until you confirm.',
+    'Older declarations to reconsider follow: something later may have answered them, without proof.',
   );
   await expect(main.locator('[data-work-section="none"] header')).toContainText(
     'Nothing pending was read here; that is not proof that nothing is pending.',
@@ -144,18 +149,24 @@ test('reads the seeded registry through work.attention and renders its roots, fa
     await expect(rowNamed(page, title)).toHaveCount(0);
   }
 
-  // A question is never demoted: the two requests a later pull request may have answered stay in
-  // "Needs you", ranked last and marked; a 40-day-old question is kept past the window.
+  // A question is never demoted: the requests something later may have answered stay in "Needs
+  // you", under their own heading after the current blocks; a 40-day-old question is kept.
   const needsYou = sectionRows(page, 'human-request');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText(SATISFIED_TITLE);
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText('possibly answered · PR #117');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText(
+  await expect(main.locator('[data-work-reconsider] [data-work-root]')).toHaveCount(RECONSIDER_ROOTS);
+  await expect(main.locator('[data-work-reconsider-heading]')).toHaveText(
+    `Older declarations to reconsider · ${RECONSIDER_ROOTS}`,
+  );
+  await expect(needsYou.last()).toContainText(CONTINUED_TITLE);
+  await expect(needsYou.last()).toContainText('work continued in a linked session');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 3)).toContainText(SATISFIED_TITLE);
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 3)).toContainText('possibly answered · PR #117');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 3)).toContainText(
     'PR #117 read failed (unauthenticated) · observed 30 min ago',
   );
-  await expect(needsYou.last()).toContainText(MERGED_BEFORE_TITLE);
-  await expect(needsYou.last()).toContainText('possibly answered · PR #90');
-  await expect(needsYou.last()).toContainText('PR #90 merged · observed 1 h ago');
-  await expect(needsYou.last()).toContainText('Jira XLB-2101 · To Do · observed 1 h ago');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText(MERGED_BEFORE_TITLE);
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText('possibly answered · PR #90');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText('PR #90 merged · observed 1 h ago');
+  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 2)).toContainText('Jira XLB-2101 · To Do · observed 1 h ago');
   await expect(main.locator('[data-work-section="human-request"]').locator(rowNamed(page, STALE_TITLE))).toHaveCount(1);
   await expect(rowNamed(page, STALE_TITLE)).toContainText('blocked · 40 d ago');
   await expect(rowNamed(page, REVIEW_READY_TITLE)).toContainText(
@@ -265,4 +276,149 @@ test('serves the e2e routing context with one declared, signed-in Claude Code ro
   expect(context.executorObservations).toHaveLength(1);
   expect(context.executorObservations[0]).toMatchObject({ authState: 'logged-in', harness: 'claude-code' });
   expect(context.declarationErrors).toEqual([]);
+});
+
+const CAPTURES_DIRECTORY_ENV = 'AI_USAGE_WORK_CAPTURES_DIR';
+/** Screenshots are a review artefact, written only where the operator asks; the assertions never read them. */
+const capture = async (page: Page, name: string, fullPage = true): Promise<void> => {
+  const directory = process.env[CAPTURES_DIRECTORY_ENV];
+  if (!directory) {
+    return;
+  }
+  await mkdir(directory, { recursive: true });
+  await page.screenshot({ fullPage, path: path.join(directory, name) });
+};
+
+const ANSWERED_ROOT_ID = 'local_fixture-answered-root';
+const ANSWERED_TITLE = 'Fixture: settle the layout';
+const ANSWERED_CURRENT_QUESTION = 'Delete the superseded layout branch now?';
+const ANSWERED_EARLIER_INTERPRETATION =
+  'Answered in Claude Desktop: the question “Keep the compact layout or the airy one?” (asked 2026-10-20T07:00:00.000Z); you wrote to the session at 2026-10-20T08:00:00.000Z and it declared again at 2026-10-20T09:00:00.000Z.';
+const REPLIED_TITLE = 'Fixture: export column wording';
+const UNRELATED_TITLE = 'Fixture: settings panel naming';
+const OFFERS_TITLE = 'Fixture: follow-ups after the import';
+const HANDLED_ROOT_ID = 'local_fixture-handled-root';
+const HANDLED_TITLE = 'Fixture: release checklist';
+const OLD_SUBJECT_QUERY = 'routine session 11';
+
+test('reads what Claude Desktop recorded after a request: answered, handled, to reconsider, superseded offers', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/work');
+  await waitForHydratedWork(page);
+  const main = page.getByRole('main');
+  await expect(main.locator('[data-work-coverage] [data-work-harness-coverage]')).toHaveText(
+    'Declarations: Claude Desktop only; other harnesses show activity alone',
+  );
+
+  // Q1 was answered in the harness, then Q2 was asked: Q2 is the current request, Q1 the last decision.
+  const answered = rowNamed(page, ANSWERED_TITLE);
+  await expect(main.locator('[data-work-section="human-request"]').locator(answered)).toHaveCount(1);
+  await expect(answered).toHaveAttribute('data-work-standing', 'current');
+  await expect(answered).toContainText(ANSWERED_CURRENT_QUESTION);
+  await expect(answered.locator('[data-work-decision]')).toContainText(
+    'Earlier “Keep the compact layout or the airy one?” answered in Claude Desktop · asked 5 h ago',
+  );
+  await expect(answered.locator('[data-work-next]')).toHaveText('Next: Answer in Claude Desktop.');
+
+  // An unrelated pull request merged after the question changes nothing: a current block.
+  const unrelated = rowNamed(page, UNRELATED_TITLE);
+  await expect(unrelated).toHaveAttribute('data-work-standing', 'current');
+  await expect(unrelated).toContainText('PR #131 merged · observed 1 h ago');
+  await expect(main.locator('[data-work-reconsider]').locator(unrelated)).toHaveCount(0);
+
+  // A message after the question, and work handled in a session started from the root: no longer waiting.
+  await main.locator('[data-work-section="none"] button', { hasText: 'Show all' }).click();
+  const replied = rowNamed(page, REPLIED_TITLE);
+  await expect(main.locator('[data-work-section="none"]').locator(replied)).toHaveCount(1);
+  await expect(replied).toHaveAttribute('data-work-standing', 'answered');
+  await expect(replied.locator('[data-work-standing-marker]')).toHaveText('Answered in Claude Desktop');
+  await expect(replied.locator('[data-work-decision]')).toContainText('You answered in Claude Desktop · asked 2 h ago');
+  const handled = rowNamed(page, HANDLED_TITLE);
+  await expect(main.locator('[data-work-section="none"]').locator(handled)).toHaveCount(1);
+  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Handled in a linked session');
+  await expect(handled.locator('[data-work-decision]')).toContainText(
+    'Handled in a session started from it · completed 6 h ago',
+  );
+
+  // The offer made before a later message and the expired offer are not pending; the last one is.
+  const offers = rowNamed(page, OFFERS_TITLE);
+  await expect(main.locator('[data-work-section="optional-lead"]').locator(offers)).toHaveCount(1);
+  await expect(offers).toContainText('proposals 1 open / 0 resolved / 2 no longer pending');
+  await capture(page, 'work-e2e-1440-arrival.png');
+  await expectAxeClean(page);
+
+  // The detail reads request, context, last decision and next action before the diagnostics.
+  const aside = await openWorkRoot(page, ANSWERED_ROOT_ID);
+  await expect(aside.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'current');
+  await expect(aside.locator('[data-work-question]')).toHaveText(ANSWERED_CURRENT_QUESTION);
+  await expect(aside.locator('[data-work-decision]')).toContainText(
+    'Last decision: Earlier “Keep the compact layout or the airy one?” answered in Claude Desktop · asked Oct 20, 2026, 07:00 UTC',
+  );
+  await expect(aside).toContainText(ANSWERED_EARLIER_INTERPRETATION);
+  await expect(aside).toContainText('Earlier declaration, blocked: Keep the compact layout or the airy one?');
+  const order = await aside.evaluate((element) =>
+    [
+      '[data-work-question]',
+      '[data-work-context]',
+      '[data-work-decision]',
+      '[data-work-next]',
+      '#work-detail-facts',
+    ].map((selector) => element.querySelector(selector)?.getBoundingClientRect().top ?? Number.NaN),
+  );
+  expect(order.every((top) => Number.isFinite(top))).toBe(true);
+  expect([...order].sort((left, right) => left - right)).toEqual(order);
+  await capture(page, 'work-e2e-1440-detail-answered.png');
+  const handledDetail = await openWorkRoot(page, HANDLED_ROOT_ID);
+  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'handled');
+  await expect(handledDetail).toContainText(
+    'Handled in “Fixture: fix the flaky export test”: started from this session at',
+  );
+  await expect(handledDetail).toContainText('Linked session declared completed: Finished the requested change.');
+  await expectAxeClean(page);
+});
+
+test('a search covers the ranking and says what it did not search; earlier questions are searchable', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/work');
+  await waitForHydratedWork(page);
+  const main = page.getByRole('main');
+  const status = main.locator('[data-work-search-coverage]');
+  await expect(status).toHaveText(
+    `${ROOTS_SHOWN} of ${ROOTS_SHOWN} roots shown; not shown: ${HIDDEN_ROOTS} older root without a pending declaration (30-day window).`,
+  );
+
+  // The old subject sits behind the window: the empty result is a statement about the ranking.
+  await page.getByRole('searchbox').fill(OLD_SUBJECT_QUERY);
+  await expect.poll(() => searchParam(page, 'q')).toBe(OLD_SUBJECT_QUERY);
+  await expect(status).toHaveText(
+    `0 of ${ROOTS_SHOWN} roots match. Searched the ${ROOTS_SHOWN} roots in this ranking; not searched: ${HIDDEN_ROOTS} older root without a pending declaration (30-day window).`,
+  );
+  await expect(
+    main.getByText('No root in this ranking matches these filters; what was not searched is listed above.'),
+  ).toBeVisible();
+  await capture(page, 'work-e2e-1440-search-old-subject.png', false);
+
+  // A question answered in the harness is still found by its own words, and the address keeps it.
+  await page.getByRole('searchbox').fill('compact layout');
+  await expect(status).toContainText(`1 of ${ROOTS_SHOWN} roots match.`);
+  await expect(rowNamed(page, ANSWERED_TITLE)).toHaveCount(1);
+
+  // Keyboard: from the last current block, ArrowDown continues into the roots to reconsider.
+  await page.getByRole('searchbox').fill('');
+  await expect(status).toContainText(`${ROOTS_SHOWN} of ${ROOTS_SHOWN} roots shown`);
+  const current = main.locator('[data-work-section="human-request"] [data-work-standing="current"]');
+  await current.last().focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(main.locator('[data-work-reconsider] [data-work-root]').first()).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => searchParam(page, 'root')).not.toBeNull();
+  await expect(main.locator('[data-work-aside] [data-work-request]')).toHaveAttribute(
+    'data-work-request',
+    'reconsider',
+  );
+  await capture(page, 'work-e2e-1440-detail-reconsider.png');
 });

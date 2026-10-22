@@ -303,3 +303,55 @@ export const workDrawerBody = css({
   overflowY: 'auto',
   minH: 0,
 });
+/**
+ * A question something later may have answered: muted and dashed, never styled as a current block.
+ * Complete on its own rather than layered on `workQuestion`: atoms that conflict resolve by
+ * stylesheet order, not by the order `cx` receives them.
+ */
+export const workQuestionToReconsider = css({
+  color: 'muted',
+  fontSize: '13px',
+  lineHeight: 1.45,
+  lineClamp: 2,
+  overflowWrap: 'anywhere',
+  pl: '8px',
+  borderLeft: '2px dashed token(colors.line)',
+});
+/** A question the harness recorded as answered, handled or archived; complete for the same reason. */
+export const workQuestionSettled = css({
+  color: 'muted',
+  fontSize: '13px',
+  lineHeight: 1.45,
+  lineClamp: 2,
+  overflowWrap: 'anywhere',
+});
+export const workStandingMarker = css({
+  px: '6px',
+  borderRadius: 'sm',
+  border: '1px dashed token(colors.line)',
+  color: 'muted',
+  fontSize: '11px',
+  lineHeight: 1.5,
+  whiteSpace: 'nowrap',
+});
+export const workRowDecision = css({ color: 'ink', fontSize: '12px', lineHeight: 1.5, overflowWrap: 'anywhere' });
+export const workRowNext = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5, overflowWrap: 'anywhere' });
+export const workSubsectionTitle = css({
+  color: 'muted',
+  fontSize: '12px',
+  fontWeight: 550,
+  letterSpacing: '0.02em',
+  mt: '6px',
+});
+/** The detail's question when it is not a current block: no accent, a dashed rule; complete on its own. */
+export const workDetailQuestionToReconsider = css({
+  color: 'muted',
+  fontSize: '14px',
+  lineHeight: 1.5,
+  px: '12px',
+  py: '10px',
+  borderLeft: '3px dashed token(colors.line)',
+  bg: 'surfaceMuted',
+  borderRadius: 'sm',
+  overflowWrap: 'anywhere',
+});
