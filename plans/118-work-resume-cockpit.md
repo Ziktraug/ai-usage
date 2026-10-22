@@ -580,3 +580,22 @@ member bound (review 2 P2-4: `json_extract` and window functions over every row 
 campaigns; about 25 ms at today's census, 332 ms for a 20 000-row campaign); select the root and
 the latest five members through the campaign index and take the count from
 `campaign_total_count`. Also still open: the real hook probe, CI on this head.
+
+### 2026-10-22 19:05 — real hook probe on the installed CLI (`604334f0`)
+
+Disposable two-commit repository whose own `.claude/settings.json` declares `PreToolUse` (matcher
+`*`), `SessionStart` and `UserPromptSubmit` command hooks, each touching a marker file outside the
+repository. CLI `claude` 2.1.306, `--model opus`.
+
+- Positive control, plain `claude -p … --max-turns 3` without the launcher's flags: the three
+  markers were created, so the fixture fires on this CLI version.
+- `launchClaudeReview` from `packages/local-collectors` (the product launcher, `maxTurns: 3`): no
+  marker created; argv carried `--session-id`, `--setting-sources` (empty), `--safe-mode`,
+  `--tools`, `--strict-mcp-config`, plan mode; guarantee `settingSources: []`, `safeMode: true`,
+  `tools: [Read, Grep, Glob]`, `model: opus`, `managedSettings: absent`, CLI `2.1.306`; the init
+  session id equalled the launch marker; outcome `finished`; the repository stayed at two commits
+  with a clean tree.
+
+This closes the open "real hook probe" item for Linux and CLI 2.1.306. Still not exercised: the
+isolated runtime on real native data (`campaign-runtime.sh start real` is refused to agents by the
+permission classifier; operator command in the campaign state).
