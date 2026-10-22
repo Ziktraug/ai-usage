@@ -214,3 +214,11 @@ At `5cb0d8e3` in a detached gate worktree: production suite (`work-production.sp
 The default suite reported 249 passed and one failure that was the production-only attempt spec
 picked up by the default config; `d5db87b7` excludes it there and makes it skip itself without its
 flag. The default suite is rerun at `d5db87b7` below.
+
+At `d5db87b7` (detached gate worktree): `bun run test:e2e` 249 passed, 0 failed (2.0 min). With the
+production suite (17/17), the opt-in attempt spec (1/1) and `test:web-production` at `5cb0d8e3`,
+every gate of this slice is green on the integrated head. A second independent review (campaign
+state, `REVIEW-2.md`) found the first execution safe under probing and kept two P1 findings: the
+project label of a joined worktree root still reads the worktree name, and the Jira "reply arrived"
+rule is computed per session family rather than per key; a last fix lot addresses them with the
+remaining P2 items before the slice is frozen.
