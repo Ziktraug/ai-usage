@@ -16,6 +16,7 @@ import {
   array,
   boolean,
   custom,
+  exactOptional,
   type InferOutput,
   literal,
   maxLength,
@@ -154,7 +155,7 @@ export const workAttemptSchema = strictObject({
   guarantee: nullable(workAttemptGuaranteeSchema),
   machineId: shortTextSchema,
   nativeSessionId: nullable(idSchema),
-  nativeTurnId: optional(nullable(idSchema)),
+  nativeTurnId: exactOptional(nullable(idSchema)),
   /** The served Session row for the native session once the report collected it; the link target of "Open session detail". */
   nativeSessionRowId: nullable(idSchema),
   numTurns: nullable(countSchema),
@@ -173,8 +174,8 @@ export const workAttemptSchema = strictObject({
   /** The commit the review was given; `null` when no scope was prepared (refusal, failure before the launch). */
   scope: nullable(workAttemptScopeSchema),
   startedAt: nullable(timestampSchema),
-  stopRequestedAt: optional(nullable(timestampSchema)),
-  stopConfirmedAt: optional(nullable(timestampSchema)),
+  stopRequestedAt: exactOptional(nullable(timestampSchema)),
+  stopConfirmedAt: exactOptional(nullable(timestampSchema)),
   state: picklist(REVIEW_ATTEMPT_STATES),
   target: workAttemptTargetSchema,
   updatedAt: timestampSchema,
