@@ -9,6 +9,7 @@ export type UsageEngineCommandOutputKind =
   | 'publication'
   | 'replication-status'
   | 'review-attempt'
+  | 'review-attempt-stop'
   | 'review-reservation-release'
   | 'routing-qualification';
 
@@ -40,4 +41,5 @@ export const usageEngineCommandPolicies = {
   'set-source-enabled': { interruptible: false, outputKind: 'none' },
   // The command returns once the attempt is recorded and spawned; aborting it never kills the review.
   'start-review-attempt': { interruptible: false, outputKind: 'review-attempt' },
+  'stop-review-attempt': { interruptible: false, outputKind: 'review-attempt-stop' },
 } as const satisfies Record<UsageEngineCommandName, UsageEngineCommandPolicy>;

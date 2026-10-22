@@ -4,12 +4,14 @@ import {
   parseWorkAttemptsListOutput,
   parseWorkAttemptsReleaseOutput,
   parseWorkAttemptsStartOutput,
+  parseWorkAttemptsStopOutput,
   type WorkAttemptsListData,
   type WorkAttemptWire,
   workAttemptsContract,
   workAttemptsListInputSchema,
   workAttemptsReleaseInputSchema,
   workAttemptsStartInputSchema,
+  workAttemptsStopInputSchema,
 } from './work-attempts';
 import { parseWorkRoutingContext } from './work-routing';
 
@@ -88,6 +90,16 @@ const listData: WorkAttemptsListData = {
 };
 
 describe('Work attempts Web contract', () => {
+  test('stop addresses one owned attempt and cannot assert confirmed termination', () => {
+    expect(workAttemptsContract.stop['~orpc'].route).toMatchObject({ method: 'POST', path: '/work/attempts/stop' });
+    expect(parse(workAttemptsStopInputSchema, { attemptId: 'a' })).toEqual({ attemptId: 'a' });
+    expect(() => parse(workAttemptsStopInputSchema, { attemptId: 'a', pid: 12 })).toThrow();
+    for (const result of ['requested', 'not-owned', 'already-ended']) {
+      const output = { ok: true, data: { attemptId: 'a', result } };
+      expect(parseWorkAttemptsStopOutput(output)).toEqual(output as never);
+    }
+    expect(() => parseWorkAttemptsStopOutput({ ok: true, data: { attemptId: 'a', result: 'killed' } })).toThrow();
+  });
   test('exposes two POST procedures and parses both inputs strictly', () => {
     expect(workAttemptsContract.list['~orpc'].route).toMatchObject({ method: 'POST', path: '/work/attempts' });
     expect(workAttemptsContract.start['~orpc'].route).toMatchObject({ method: 'POST', path: '/work/attempts/start' });
