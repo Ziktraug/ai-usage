@@ -24,14 +24,15 @@ const INITIAL_CLOSURE_ENTRY_KEYS = [
 ] as const;
 
 /**
- * A product decision, not an accounting of history: the report's first load stays under 315 KB
+ * A product decision, not an accounting of history: the report's first load stays under 310 KB
  * gzipped. Raising it is a deliberate choice about what the app costs to open, and the reason
  * belongs in the commit that raises it. Raised from 305 KB with the Work cockpit: the shared
  * closure now carries five more collection sources in the catalogue, three more RPC routers in the
  * client path map, two more Query families and the chunks Rollup re-split around them; the /work
- * route node itself stays out of this closure.
+ * route node, the review launch policy and the routing policy stay out of this closure (the
+ * control contract reads their vocabularies from import-free modules).
  */
-const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
+const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 310_000;
 
 /**
  * The last reviewed production measurement, and the tolerance around it. The ceiling alone cannot catch
@@ -41,8 +42,10 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// Lot K on 759daec1 (312 370 B before): attempt states and refusal reasons now come from an import-free module, so the shell closure no longer pulls the Work policy chunk.
-const RECORDED_GZIP_CLOSURE_BYTES = 305_459;
+// feat/work-resume-cockpit with lots M and K: attempt and routing vocabularies come from import-free
+// modules, so the shell closure pulls neither Work policy chunk (312 370 B before lot K, 313 709 B
+// after lot M's qualification parser); local production build on Bun 1.3.13.
+const RECORDED_GZIP_CLOSURE_BYTES = 305_759;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
