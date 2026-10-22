@@ -155,6 +155,45 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(codexSection).not.toContain('Declared by the session; current state unobserved.');
     expect(rowsIn(body, 'none')).toBe(10);
   });
+  test('a Codex row shows a plain one-line title; the detail keeps the prompt as written', () => {
+    const codex = dataset.roots.find((root) => root.key.harness === 'codex');
+    if (codex === undefined) {
+      throw new Error('Synthetic dataset must carry a Codex root');
+    }
+    const prompt =
+      '**Fix** the `parseRollout` reader in /home/fixture/Projects/ai-usage/packages/local-collectors/src. Then rerun.';
+    const root = { ...codex, title: prompt };
+    const body = render(fixture, {
+      props: {
+        board: {
+          dataset: { ...dataset, roots: dataset.roots.map((entry) => (entry === codex ? root : entry)) },
+          onFocusRow: noop,
+          onSearch: noop,
+          onSelect: noop,
+          search: EMPTY_WORK_ATTENTION_SEARCH,
+          selectedId: workRootId(root),
+        },
+        detail: {
+          loadedRows: [],
+          mode: 'demo',
+          onClose: noop,
+          providers: [],
+          quotaUnavailable: true,
+          reference: dataset.generatedAt,
+          revision: WORK_DEMO_REVISION,
+          root,
+          sessionClient,
+        },
+      },
+    }).body.replaceAll(/\s+/g, ' ');
+    const start = body.indexOf('data-work-section="not-observable"');
+    const row = withoutMarkers(body.slice(start, body.indexOf('</section>', start)));
+    expect(row).toContain('Fix the parseRollout reader in …/local-collectors/src…');
+    expect(row).not.toContain('**');
+    expect(row).not.toContain('<code');
+    const detail = withoutMarkers(body.slice(body.indexOf('data-work-detail=')));
+    expect(detail).toContain(prompt);
+  });
   test('a Codex detail names the unknown standing and does not count undeclared child statuses', () => {
     const codex = dataset.roots.find((root) => root.key.harness === 'codex');
     const body = withoutMarkers(html(EMPTY_WORK_ATTENTION_SEARCH, workRootId(codex!)));

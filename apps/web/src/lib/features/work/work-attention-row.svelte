@@ -15,6 +15,7 @@
     workRootLastDecision,
     workRootNextAction,
     workRootRelevantInstant,
+    workRootRowTitle,
     workRootStanding,
     workUndeclaredSituation,
   } from './work-attention-model';
@@ -94,7 +95,7 @@
   >
     <span class={workRowTop}>
       <HarnessBadge name={workHarnessLabel(root.key.harness)} />
-      <span class={workRowTitle}>{root.title}</span>
+      <span class={workRowTitle}>{workRootRowTitle(root)}</span>
       {#if standing === 'reconsider' || settled}
         <span class={workStandingMarker} data-work-standing-marker>{WORK_STANDING_LABELS[standing]}</span>
       {/if}

@@ -44,6 +44,20 @@ const LIST_SEPARATOR = ',';
 const MAX_QUERY_LENGTH = 200;
 const MAX_LIST_VALUES = 20;
 const WHITESPACE = /\s+/;
+const WHITESPACE_RUNS = /\s+/g;
+// Plain-text row titles for harnesses whose title is the first prompt (ADR 0059).
+const ROW_TITLE_MAX = 90;
+const ROW_TITLE_WORD_FLOOR = 60;
+const CODE_FENCE = /```[\w-]*/g;
+const MARKDOWN_LINK = /!?\[([^\]]*)\]\([^)]*\)/g;
+const STRONG = /(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g;
+const EMPHASIS_STAR = /\*(?=\S)([^*]+?)(?<=\S)\*/g;
+const EMPHASIS_UNDERSCORE = /(^|[^\w])_(?=\S)([^_]+?)(?<=\S)_(?!\w)/g;
+const INLINE_CODE = /(`+)([^`]+?)\1/g;
+const LINE_MARKERS = /^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)/gm;
+const LOCAL_PATH = /(?<![:\w/~.])(?:~\/|\/)(?:[\w.@-]+\/)+([\w.@-]+\/[\w.@-]+)/g;
+const SENTENCE_END = /[.!?](?=\s)/;
+const TRAILING_PUNCTUATION = /[\s,;:.\u2014-]+$/;
 
 const isAttentionKind = (value: string): value is WorkAttentionKind =>
   (WORK_ATTENTION_KINDS as readonly string[]).includes(value);
@@ -108,6 +122,52 @@ export const toggleListValue = (values: readonly string[], value: string): reado
 
 /** The address of a root: its desktop session id when it has one, otherwise its full session key. */
 export const workRootId = (root: WorkRoot): string => root.desktopSessionId ?? workSessionKeyString(root.key);
+
+/** Markdown read as plain text: marks dropped, links reduced to their words, long local paths to their tail. */
+const plainTitleText = (title: string): string =>
+  title
+    .replace(CODE_FENCE, ' ')
+    .replace(MARKDOWN_LINK, '$1')
+    .replace(LINE_MARKERS, '')
+    .replace(INLINE_CODE, '$2')
+    .replace(STRONG, '$2')
+    .replace(EMPHASIS_STAR, '$1')
+    .replace(EMPHASIS_UNDERSCORE, '$1$2')
+    .replace(LOCAL_PATH, '…/$1')
+    .replace(WHITESPACE_RUNS, ' ')
+    .trim();
+
+/** A sentence shorter than this ("Hi.", "Ok.") does not make a title; the bound applies instead. */
+const ROW_TITLE_MIN_SENTENCE = 20;
+
+const firstSentenceOrBound = (text: string): string => {
+  const end = SENTENCE_END.exec(text);
+  if (end !== null && end.index + 1 >= ROW_TITLE_MIN_SENTENCE && end.index + 1 <= ROW_TITLE_MAX) {
+    const sentence = text.slice(0, end.index + 1);
+    return `${end[0] === '.' ? sentence.slice(0, -1) : sentence}…`;
+  }
+  if (text.length <= ROW_TITLE_MAX) {
+    return text;
+  }
+  const bounded = text.slice(0, ROW_TITLE_MAX);
+  const space = bounded.lastIndexOf(' ');
+  const head = space >= ROW_TITLE_WORD_FLOOR ? bounded.slice(0, space) : bounded;
+  return `${head.replace(TRAILING_PUNCTUATION, '')}…`;
+};
+
+/**
+ * The title a row shows. A Claude Desktop title is the app's own and is shown as written. A
+ * harness that names a session by its first prompt (Codex, ADR 0059) gets a plain-text title:
+ * markdown marks dropped, whitespace collapsed, cut at the first sentence or near
+ * `ROW_TITLE_MAX` characters with an ellipsis. The detail and the search keep the full text.
+ */
+export const workRootRowTitle = (root: WorkRoot): string => {
+  if (root.key.harness === 'claude') {
+    return root.title;
+  }
+  const plain = plainTitleText(root.title);
+  return plain.length === 0 ? root.title.replace(WHITESPACE_RUNS, ' ').trim() : firstSentenceOrBound(plain);
+};
 
 /** The instant a row is dated by: the declaration first, then activity, then the last observation. */
 export const workRootRelevantInstant = (root: WorkRoot): string | null =>

@@ -24,6 +24,7 @@ import {
   workRootLastDecision,
   workRootNextAction,
   workRootPastProposalIds,
+  workRootRowTitle,
   workRootStanding,
   workSearchCoverage,
   workUndeclaredSituation,
@@ -143,6 +144,42 @@ describe('Work attention for a harness that declares no wait (ADR 0059)', () => 
     // A Claude root without a declaration and a bare activity row keep their own words.
     expect(workUndeclaredSituation(rootNamed('Headless Chrome CDP driving'))).toBe('no declaration');
     expect(workUndeclaredSituation({ ...codex, attention: 'none' })).toBe('activity only');
+  });
+  test('a Codex row reads a plain title: no markdown marks, one line, the first sentence or about 90 characters', () => {
+    const titled = (title: string) => workRootRowTitle({ ...codex, title });
+    expect(titled('**Fix** the `parseRollout` reader')).toBe('Fix the parseRollout reader');
+    expect(titled('Review   the\n\n__collector__  and *its* tests')).toBe('Review the collector and its tests');
+    expect(titled('# Plan\n- run `bun test`\n- read [the ADR](https://example.test/adr)')).toBe(
+      'Plan run bun test read the ADR',
+    );
+    // The first sentence, when it ends early; the rest is in the detail.
+    expect(titled('Investigate the collector failure. Then rerun the scan and report the counts.')).toBe(
+      'Investigate the collector failure…',
+    );
+    expect(titled('Can you check the quota window? It looks stale since yesterday.')).toBe(
+      'Can you check the quota window?…',
+    );
+    // A long first sentence is cut near 90 characters, at a word, with an ellipsis.
+    const long = titled(
+      'Refactor the history line emitter so that every chunk boundary is handled in linear work without re-flattening the rope',
+    );
+    expect(long).toBe('Refactor the history line emitter so that every chunk boundary is handled in linear work…');
+    expect(long.length).toBeLessThanOrEqual(91);
+    // Long local paths keep their last two segments; identifiers and addresses are left as written.
+    expect(titled('Read /home/fixture/Projects/ai-usage/packages/local-collectors/src/codex-history.ts first')).toBe(
+      'Read …/src/codex-history.ts first',
+    );
+    expect(titled('Check ~/Projects/ai-usage/apps/web and https://github.com/fixture/project/pull/66')).toBe(
+      'Check …/apps/web and https://github.com/fixture/project/pull/66',
+    );
+    expect(titled('Keep snake_case_names and v1.2.3 intact')).toBe('Keep snake_case_names and v1.2.3 intact');
+    // Nothing but marks: the title as written, whitespace collapsed.
+    expect(titled('```')).toBe('```');
+    // The detail keeps the full text; Claude Desktop titles are the app's own and stay as written.
+    const desktop = rootNamed('Fix mobile navigation label overlap');
+    expect(workRootRowTitle({ ...desktop, title: '**Kept** as written. Really.' })).toBe(
+      '**Kept** as written. Really.',
+    );
   });
   test('the coverage line says what Codex contributed: sessions shown, or why none were', () => {
     expect(workCodexCoverage(dataset)).toBe('1 of 1 Codex campaign shown, active in the last 30 days (served report)');

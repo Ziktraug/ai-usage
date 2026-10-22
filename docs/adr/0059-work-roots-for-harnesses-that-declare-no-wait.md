@@ -56,6 +56,27 @@ those declared links only.
   `local-machine`, a Codex cache version bump (a full re-parse) and its own
   rule for what settles it.
 
+## Amendment: plain titles, and the originator the read cannot see yet (2026-10-22)
+
+The first run on real history showed Codex rows titled by their raw first
+prompt: markdown marks, code spans and long local paths. A Codex row now shows
+a plain-text title (marks dropped, whitespace collapsed, long local paths
+reduced to their last two segments, cut at the first sentence or near 90
+characters with an ellipsis); the detail and the search keep the full text.
+
+Codex rollouts name the client that ran a session: `session_meta.originator`
+(`codex_exec`, `Codex Desktop`, `codex-tui`, an editor) and
+`session_meta.source` (`exec`, `vscode`, or a sub-agent object). A census of
+500 recent rollouts (read only, counts) found both on every one, `codex_exec`
+on 93. A `codex exec` run is not interactive and cannot wait on the person,
+so such a row could say "automated run · cannot wait on you" instead of
+"wait unknown". The read cannot say it yet: the served rows carry `origin`
+(human, sub-agent, classifier) but no originator, and the Codex reader in
+`local-machine` keeps `source` only to recognise sub-agents. Carrying it needs
+a parser change, a served-row field and a `CODEX_SESSION_CACHE_VERSION` bump
+(a full re-parse of every rollout); it is left to its own change, and until
+then every Codex root keeps `not-observable`.
+
 ## Consequences
 
 - The Work dataset contract is unchanged in shape: the new attention kind
