@@ -11,13 +11,6 @@ import {
   workAttemptFixtureCandidateId,
 } from './work-attempt-fixture';
 
-// Production-only: the fixture seeds a declared route, a review target and a fake `claude` only when
-// production-server.ts runs with this flag; under any other runtime the spec has nothing to prove.
-test.skip(
-  process.env.AI_USAGE_WORK_ATTEMPT_E2E !== '1',
-  'set AI_USAGE_WORK_ATTEMPT_E2E=1 so production-server.ts seeds the review fixture',
-);
-
 /**
  * Scenario 7 of the campaign acceptance (ADR 0053) on the production path: the supervised engine,
  * the disposable HOME seeded by `production-server.ts` with `AI_USAGE_WORK_ATTEMPT_E2E=1`, and a
@@ -26,7 +19,9 @@ test.skip(
  * second request while the attempt is live returns the same attempt instead of a twin.
  *
  * Run it with: `AI_USAGE_WORK_ATTEMPT_E2E=1 bun --bun playwright test --config
- * playwright.production.config.ts e2e/work-attempt-production.spec.ts`.
+ * playwright.production.config.ts e2e/work-attempt-production.spec.ts`. Without the flag the
+ * production config leaves this file out (`testIgnore`): the fixture then seeds no route, target
+ * or fake harness, and the spec would have nothing to prove.
  */
 const MACHINE_ID = 'production-e2e-machine';
 const BLOCKED_ROOT_ID = 'local_fixture-blocked-root';
