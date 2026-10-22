@@ -246,6 +246,26 @@ describe('claude review launcher', () => {
     expect((await launch.outcome).kind).toBe('finished');
   });
 
+  test('refuses a relative executable path instead of resolving it against the checkout', async () => {
+    const { checkout } = await fakeClaude(emit(INIT_LINE, RESULT_LINE));
+    // A `bin/claude` under the checkout would otherwise be what `./bin/claude` runs.
+    await mkdir(path.join(checkout, 'bin'), { recursive: true });
+    await writeFile(path.join(checkout, 'bin', 'claude'), `#!${process.execPath}\nprocess.exit(3);\n`);
+    await chmod(path.join(checkout, 'bin', 'claude'), 0o700);
+    for (const relative of ['./bin/claude', 'bin/claude', '../checkout/bin/claude']) {
+      const refused = await launchClaudeReview(
+        { checkoutPath: checkout, effort: null, model: null, sessionTitle: null },
+        {},
+        { env: { [CLAUDE_EXECUTABLE_ENVIRONMENT_KEY]: relative, HOME: process.env.HOME, PATH: process.env.PATH } },
+      ).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ClaudeReviewLaunchError);
+      expect(refused).toMatchObject({
+        kind: 'executable-invalid',
+        message: `${CLAUDE_EXECUTABLE_ENVIRONMENT_KEY} must be an absolute path or a bare command name; got "${relative}"`,
+      });
+    }
+  });
+
   test('reads the git summaries of a real checkout and degrades outside one', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'claude-review-git-'));
     roots.push(root);

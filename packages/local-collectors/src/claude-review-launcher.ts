@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { boundedProcessEnvironment, executeBoundedProcess } from '@ai-usage/local-machine/bounded-process';
 import {
   boundReviewExcerpt,
@@ -23,8 +24,10 @@ import {
  *   the transcript itself is never kept.
  *
  * The executable is `claude` on the allow-listed PATH, or the one named by
- * `AI_USAGE_CLAUDE_EXECUTABLE` (an absolute path or a bare name); fixtures use it to substitute a
- * fake harness without touching the operator's PATH.
+ * `AI_USAGE_CLAUDE_EXECUTABLE`: an absolute path, or a bare name looked up on that PATH. A
+ * relative path is refused rather than resolved against the target checkout, where a file of
+ * that name would be run in the operator's name. Fixtures use the variable to substitute a fake
+ * harness without touching the operator's PATH.
  */
 export const CLAUDE_EXECUTABLE_ENVIRONMENT_KEY = 'AI_USAGE_CLAUDE_EXECUTABLE';
 const CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY = 'CLAUDE_CONFIG_DIR';
@@ -42,7 +45,7 @@ export const CLAUDE_REVIEW_DISALLOWED_TOOLS = [
   'WebSearch',
 ] as const;
 
-export type ClaudeReviewLaunchFailureKind = 'executable-missing' | 'spawn-failed';
+export type ClaudeReviewLaunchFailureKind = 'executable-invalid' | 'executable-missing' | 'spawn-failed';
 
 export class ClaudeReviewLaunchError extends Error {
   readonly kind: ClaudeReviewLaunchFailureKind;
@@ -174,6 +177,12 @@ const resolveExecutable = (
 ): string => {
   const named = options.executable ?? env[CLAUDE_EXECUTABLE_ENVIRONMENT_KEY] ?? 'claude';
   if (named.includes('/')) {
+    if (!path.isAbsolute(named)) {
+      throw new ClaudeReviewLaunchError(
+        'executable-invalid',
+        `${CLAUDE_EXECUTABLE_ENVIRONMENT_KEY} must be an absolute path or a bare command name; got "${named}"`,
+      );
+    }
     return named;
   }
   const resolved = Bun.which(named, { PATH: environment.PATH ?? '' });
