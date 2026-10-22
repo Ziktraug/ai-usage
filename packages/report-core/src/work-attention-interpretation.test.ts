@@ -565,12 +565,33 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     );
   });
 
-  test('a report a session sent after the question, then its completion, is an explicit link that handles it', () => {
+  test('a report a session sent after the question, then its completion, keeps the question as one to reconsider (ADR 0056)', () => {
+    // A report sent to the root is an unproven link: the person may have investigated beside the
+    // question without answering it. Only a session started from the root closes it.
     const result = withHarness(question, {
       linkedSessions: [linked('local_reporter', 'side-session-note', 4.5, 'completed', 4)],
     });
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(true);
+    expect(kinds(result)).toEqual(['request-open', 'request-continued-elsewhere']);
+    expect(result.interpretations[1]?.text).toContain('reported to this session at');
+    expect(result.interpretations[1]?.text).toContain('declared completed at');
+  });
+
+  test('beside a completed report, a completed session started from the root still handles the question', () => {
+    const result = withHarness(
+      question,
+      {
+        linkedSessions: [
+          linked('local_reporter', 'side-session-note', 4.5, 'completed', 2),
+          linked('local_child', 'spawned-from', 4, 'completed', 3),
+        ],
+      },
+      [declaredTurn(question), childTurn('local_child', 'completed', 3)],
+    );
+    expect(result.attention).toBe('none');
     expect(kinds(result)).toEqual(['request-handled-elsewhere']);
-    expect(result.interpretations[0]?.text).toContain('reported to this session at');
+    expect(result.interpretations[0]?.text).toContain('started from this session at');
   });
 
   test('a child started before the question that finished after it leaves a current confirmed block', () => {

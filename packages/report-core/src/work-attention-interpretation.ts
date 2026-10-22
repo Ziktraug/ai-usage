@@ -257,11 +257,16 @@ const linkPhrase = (session: WorkLinkedSession): string =>
     ? `started from this session at ${session.linkedAt}`
     : `reported to this session at ${session.linkedAt}`;
 
-/** The linked session that finished after the request: started or reporting after it, then completed. */
+/**
+ * The session started from the root after the request that then declared itself completed. Only a
+ * `spawned-from` link closes a request (ADR 0056): a report sent to the root is an unproven link and
+ * leaves the request to reconsider through `continuedIn`.
+ */
 const handledBy = (sessions: readonly WorkLinkedSession[], askedAt: CanonicalInstant): WorkLinkedSession | null =>
   sessions
     .filter(
       (session) =>
+        session.link === 'spawned-from' &&
         session.linkedAt > askedAt &&
         session.declaration !== null &&
         session.declaration.status === 'completed' &&
