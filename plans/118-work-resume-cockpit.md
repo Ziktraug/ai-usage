@@ -222,3 +222,22 @@ state, `REVIEW-2.md`) found the first execution safe under probing and kept two 
 project label of a joined worktree root still reads the worktree name, and the Jira "reply arrived"
 rule is computed per session family rather than per key; a last fix lot addresses them with the
 remaining P2 items before the slice is frozen.
+
+### 2026-10-22 07:05 — second review fixes integrated (`a7fd4905`)
+
+Lot G (`f02e251e`…`64763c65`) answers the second review: every root is labelled by its origin
+project directory and a differing served label is carried apart as "report project"; a Jira reply
+is dated against the latest activity on its key across all families, only the most recent family
+is asked, older ones read "reply elsewhere"; a child's pull request listing that mirrors the
+root's checkout (same worktree or a PR the root lists itself) never reconsiders a question; a
+child's listing is dated by its activity, not its file time; the launcher refuses a relative
+`AI_USAGE_CLAUDE_EXECUTABLE`, runs with `--strict-mcp-config` and also disallows Agent, Task,
+TodoWrite and Skill (operator and checkout hooks remain a documented limit); a review target
+resolves only from the Desktop row of its own transcript; isolation tests now cover
+`review_attempts` and `jira_issue_observations`; an attempt steps to `starting` from `requested`
+only; the production-only attempt spec is excluded by the production config unless its flag is set
+(the earlier `test.skip` broke `bun run check`). Fixture: the two children whose declarations prove
+"possibly answered" and "declared before the question" now live in their own worktrees, as the
+rule requires. Worker evidence: typecheck 58/58, lint and check clean, web 1547 pass, packages
+1271 pass, production 17/17, attempt 1/1, default-config 51/51. The complete gate runs again on
+the merged head below.
