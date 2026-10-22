@@ -61,6 +61,7 @@ import {
 } from './input-file';
 import { type LegacyArtifactScavengeResult, scavengeLegacyUsageEngineArtifacts } from './recovery';
 import { createReviewAttemptService } from './review-attempts';
+import { createRoutingQualificationService } from './routing-qualification';
 import {
   createInitialUsageEngineSourceControlView,
   createUsageEngineRuntime,
@@ -1044,6 +1045,13 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     runWithWriter: (operation, signal) => writerGate.run(operation, signal),
     storage,
   });
+  // On-demand qualification (ADR 0057): reads only; its fresh observation is the source's own run.
+  const routingQualification = createRoutingQualificationService({
+    dbPath: options.dbPath,
+    machine: requireMachine,
+    now,
+    storage,
+  });
 
   return createUsageEngineRuntime({
     acquireWriterLease: options.acquireWriterLease,
@@ -1086,6 +1094,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     },
     ...(options.readReplicationStatus === undefined ? {} : { readReplicationStatus: options.readReplicationStatus }),
     reviewAttempts,
+    routingQualification,
     recover: async () =>
       await writerGate.run(async () => {
         await observe(

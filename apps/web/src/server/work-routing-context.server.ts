@@ -1,9 +1,29 @@
 import { readLocalRoutingDeclarations } from '@ai-usage/local-machine/routing-config';
 import type { ReviewTargetDeclaration } from '@ai-usage/report-core/work-attempts';
 import type { ExecutorDeclaration, ExecutorObservation } from '@ai-usage/report-core/work-executors';
+import { buildRoutingQualification, qualifyReviewRouting } from '@ai-usage/report-core/work-routing';
+import {
+  parseWebUsageEngineCommand,
+  type UsageEngineCommandCompletion,
+  type WebUsageEngineCommand,
+} from '@ai-usage/usage-engine-control';
 import { queryLatestExecutorObservations, usageStoreErrorReasonFrom } from '@ai-usage/usage-store/reader';
-import { parseWorkRoutingContext, type WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
+import {
+  parseWorkRoutingContext,
+  parseWorkRoutingQualifyOutput,
+  type WorkRoutingContext,
+  type WorkRoutingQualifyInput,
+  type WorkRoutingQualifyOutput,
+} from '@ai-usage/web-contract/work-routing';
 import { Effect } from 'effect';
+import type { RuntimeMode } from '../runtime-mode';
+import { validateTrustedLocalRequest } from './local-request-trust.server';
+import { getServerRuntimeMode } from './runtime-mode.server';
+import {
+  type ExecuteUsageEngineCommandOptions,
+  executeUsageEngineCommandToCompletion,
+} from './usage-engine-command.server';
+import { resolveUsageEngineControlClientForServer } from './usage-engine-control-resolver.server';
 import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 /**
@@ -115,3 +135,103 @@ export const e2eWorkRoutingContext = (): WorkRoutingContext =>
     machineId: 'fixture-machine',
     observationRead: { skipped: 0, truncated: false },
   });
+
+// ---------------------------------------------------------------------------------------------
+// workRouting.qualify (ADR 0057): one engine command, relayed; the Web process decides nothing
+// ---------------------------------------------------------------------------------------------
+
+type QualifyReviewRoutingCommand = Extract<WebUsageEngineCommand, { readonly command: 'qualify-review-routing' }>;
+
+export type ExecuteQualifyReviewRoutingCommand = (
+  command: QualifyReviewRoutingCommand,
+  options?: ExecuteUsageEngineCommandOptions,
+) => Promise<UsageEngineCommandCompletion>;
+
+const qualifyFailure = (tag: 'ForbiddenDemo' | 'Unavailable', message: string): WorkRoutingQualifyOutput =>
+  parseWorkRoutingQualifyOutput({ error: { message, tag }, ok: false });
+
+const executeQualifyCommand: ExecuteQualifyReviewRoutingCommand = async (command, options) => {
+  const control = await resolveUsageEngineControlClientForServer();
+  return await executeUsageEngineCommandToCompletion(control, command, options);
+};
+
+/**
+ * The synthetic e2e runtime has no engine: its answer is the same pure decision computed from the
+ * e2e routing fixture, with no quota (so it is never a real recommendation), and is labelled as such
+ * by its executor outcome `not-run`.
+ */
+export const e2eWorkRoutingQualification = (input: WorkRoutingQualifyInput, now: Date): WorkRoutingQualifyOutput => {
+  const context = e2eWorkRoutingContext();
+  const decided = qualifyReviewRouting({
+    declarations: context.declarations,
+    executorObservations: context.executorObservations,
+    now: now.toISOString(),
+    providers: [],
+    target: {
+      harness: input.target.harness,
+      kind: 'session',
+      machineId: context.machineId ?? 'fixture-machine',
+      sourceSessionId: input.target.sourceSessionId,
+    },
+  });
+  return parseWorkRoutingQualifyOutput({
+    data: buildRoutingQualification({ ...decided, executors: { outcome: 'not-run', refreshed: false } }),
+    ok: true,
+  });
+};
+
+export const qualifyWorkRoutingForServer = async (
+  input: WorkRoutingQualifyInput,
+  execute: ExecuteQualifyReviewRoutingCommand = executeQualifyCommand,
+  options: { readonly mode?: RuntimeMode; readonly now?: () => Date; readonly signal?: AbortSignal } = {},
+): Promise<WorkRoutingQualifyOutput> => {
+  const mode = options.mode ?? getServerRuntimeMode();
+  options.signal?.throwIfAborted();
+  if (mode === 'demo') {
+    return qualifyFailure('ForbiddenDemo', 'Routing qualification is not available in the demo.');
+  }
+  if (mode === 'e2e') {
+    return e2eWorkRoutingQualification(input, (options.now ?? (() => new Date()))());
+  }
+  const command = parseWebUsageEngineCommand({
+    command: 'qualify-review-routing',
+    target: {
+      desktopSessionId: input.target.desktopSessionId ?? null,
+      harness: input.target.harness,
+      sourceSessionId: input.target.sourceSessionId,
+    },
+  });
+  if (command.command !== 'qualify-review-routing') {
+    throw new Error('Expected a routing qualification command.');
+  }
+  let completion: UsageEngineCommandCompletion;
+  try {
+    completion = await execute(command, options.signal === undefined ? {} : { signal: options.signal });
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+    return qualifyFailure('Unavailable', 'The engine could not qualify the routing; it may be stopped or busy.');
+  }
+  if (completion.state !== 'succeeded' || completion.command !== 'qualify-review-routing') {
+    return qualifyFailure('Unavailable', 'The engine did not complete the routing qualification.');
+  }
+  return parseWorkRoutingQualifyOutput({ data: completion.output.qualification, ok: true });
+};
+
+export const qualifyWorkRoutingFromRequestForServer = async (
+  request: Request,
+  input: WorkRoutingQualifyInput,
+  execute?: ExecuteQualifyReviewRoutingCommand,
+  mode?: RuntimeMode,
+): Promise<WorkRoutingQualifyOutput> => {
+  const trustFailure = validateTrustedLocalRequest(request);
+  if (trustFailure) {
+    throw trustFailure;
+  }
+  return await qualifyWorkRoutingForServer(input, execute, {
+    ...(mode === undefined ? {} : { mode }),
+    signal: request.signal,
+  });
+};

@@ -450,6 +450,16 @@ export const operationRequestPolicies = [
     transport: 'query',
   }),
   defineOperationPolicy({
+    // ADR 0057: the engine observes the executors now and decides; nothing is started.
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
+    method: 'POST',
+    operation: 'qualifyWorkRouting',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'workRouting.qualify',
+    transport: 'mutation',
+  }),
+  defineOperationPolicy({
     applicationErrorFamilies: reportReadErrors,
     method: 'POST',
     operation: 'listWorkAttempts',

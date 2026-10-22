@@ -99,8 +99,8 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(44);
-    expect(dependencyAcquisitions).toBe(44);
+    expect(observed).toHaveLength(45);
+    expect(dependencyAcquisitions).toBe(45);
   });
   test('serves opaque project identity through the real Skills RPC routes only in an injected extended context', async () => {
     const capability = await createE2ESkillsCapability('extended');

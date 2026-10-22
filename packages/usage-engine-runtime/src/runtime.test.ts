@@ -12,9 +12,11 @@ import {
 import {
   createInitialUsageEngineSourceControlView,
   createUsageEngineRuntime,
+  type RoutingQualificationExecutorRun,
   UsageEngineCommandError,
   UsageEngineFatalConsistencyError,
   type UsageEngineMutationPort,
+  type UsageEngineRoutingQualificationPort,
   type UsageEngineRuntimeDependencies,
   UsageEngineSoftSourceError,
   type UsageEngineSourceControlPort,
@@ -601,6 +603,70 @@ describe('usage engine runtime', () => {
       'run-source:rtk.savings',
     ]);
     await runtime.dispose();
+  });
+
+  test('qualifies routing only after observing the executors now, and relays the decision (ADR 0057)', async () => {
+    const baseSourceControl = createTestSourceControl();
+    const observed: SourceControlView = {
+      ...publishedSourceControl(),
+      sources: publishedSourceControl().sources.map((source) =>
+        source.id === 'executors.capabilities'
+          ? { ...source, availability: 'detected', lastFinishedAt: FIXED_NOW.toISOString(), lastOutcome: 'success' }
+          : source,
+      ),
+    };
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      runSource: (sourceId) => {
+        baseSourceControl.calls.push(`run-source:${sourceId}`);
+        return Promise.resolve(observed);
+      },
+    };
+    const runs: RoutingQualificationExecutorRun[] = [];
+    const routingQualification: UsageEngineRoutingQualificationPort = {
+      qualify: (command, executorRun) => {
+        baseSourceControl.calls.push(`qualify:${command.target.sourceSessionId}`);
+        runs.push(executorRun);
+        return Promise.resolve({
+          kind: 'routing-qualification',
+          qualification: {
+            candidates: [],
+            chosenCandidateId: null,
+            executors: { outcome: 'success', refreshed: true },
+            omittedCandidates: 0,
+            qualifiedAt: FIXED_NOW.toISOString(),
+            reasons: ['Simulation only: no harness is started and no permission is granted.'],
+            recommendation: { candidateId: null, kind: 'none', missing: null },
+          },
+        });
+      },
+    };
+    const runtime = createUsageEngineRuntime({ ...createDependencies({ sourceControl }), routingQualification });
+    await runtime.start();
+    const target = { desktopSessionId: null, harness: 'claude', sourceSessionId: 'session-a' };
+    await runtime.executeCommand({ command: 'qualify-review-routing', target }, 'qualify');
+
+    expect(await runtime.waitForCommand('qualify')).toMatchObject({
+      command: 'qualify-review-routing',
+      output: { kind: 'routing-qualification', qualification: { recommendation: { kind: 'none' } } },
+      state: 'succeeded',
+    });
+    expect(
+      sourceControl.calls.filter((entry) => entry.startsWith('run-source:') || entry.startsWith('qualify:')),
+    ).toEqual(['run-source:executors.capabilities', 'qualify:session-a']);
+    expect(runs).toEqual([
+      {
+        source: expect.objectContaining({ id: 'executors.capabilities', lastOutcome: 'success' }),
+        startedAt: FIXED_NOW.toISOString(),
+      },
+    ]);
+    await runtime.dispose();
+
+    const without = createUsageEngineRuntime(createDependencies());
+    await without.start();
+    await without.executeCommand({ command: 'qualify-review-routing', target }, 'qualify-absent');
+    expect(await without.waitForCommand('qualify-absent')).toMatchObject({ state: 'failed' });
+    await without.dispose();
   });
 
   test('fails a fresh command when a source publication path throws an unclassified error', async () => {

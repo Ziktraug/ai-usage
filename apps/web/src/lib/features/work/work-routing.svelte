@@ -12,21 +12,27 @@
     simulateWorkReviewRouting,
   } from '@ai-usage/report-core/work-routing';
   import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
-  import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
+  import type { WorkRoutingContext, WorkRoutingQualifyOutput } from '@ai-usage/web-contract/work-routing';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/environment';
   import type { RuntimeMode } from '../../../runtime-mode';
   import { workAttemptsKey, workAttemptsQueryOptions } from '../../query/options/work-attempts';
-  import { workRoutingContextQueryOptions } from '../../query/options/work-routing';
+  import { workRoutingContextKey, workRoutingContextQueryOptions } from '../../query/options/work-routing';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
   import { createWorkAttemptsClient } from '../../rpc/work-attempts-client';
-  import { createWorkRoutingClient } from '../../rpc/work-routing-client';
+  import { createWorkRoutingClient, createWorkRoutingQualifyClient } from '../../rpc/work-routing-client';
   import WorkAttempts from './work-attempts.svelte';
   import { DEMO_EXECUTION_TEXT, launchGate, START_REVIEW_LABEL } from './work-attempts-model';
   import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
   import { projectWorkEvidence } from './work-evidence';
+  import {
+    identityLine,
+    qualificationFreshnessText,
+    qualificationHeadline,
+    routingSummary,
+  } from './work-routing-model';
   import { workButton, workHeading, workInput, workMuted, workPanel, workRow, workStack } from './work-styles';
   import { WORK_DEMO_TIME } from './work-synthetic';
 
@@ -35,6 +41,7 @@
     context,
     mode,
     providers,
+    qualification,
     quotaUnavailable,
     target,
   }: {
@@ -50,6 +57,11 @@
     context?: WorkRoutingContext | null;
     mode: RuntimeMode;
     providers: readonly ProviderStatus[];
+    /**
+     * The engine's decision for this target (ADR 0057). Omit it and the component asks the engine
+     * on "Qualify now"; pass one to render a supplied decision, or `null` to state none was taken.
+     */
+    qualification?: WorkRoutingQualifyOutput | null;
     quotaUnavailable: boolean;
     target: SessionPresentationRow;
   } = $props();
@@ -59,6 +71,11 @@
     browser && rpc
       ? createWorkRoutingClient(rpc.workRouting)
       : ssrUnavailableClient<ReturnType<typeof createWorkRoutingClient>>('Work routing context'),
+  );
+  const qualifyClient = untrack(() =>
+    browser && rpc
+      ? createWorkRoutingQualifyClient(rpc.workRouting)
+      : ssrUnavailableClient<ReturnType<typeof createWorkRoutingQualifyClient>>('Work routing qualification'),
   );
   const attemptsClient = untrack(() =>
     browser && rpc
@@ -116,6 +133,34 @@
       target: reviewTarget,
     });
   });
+  const summary = $derived(
+    mode === 'live' && resolvedContext
+      ? routingSummary({ candidates, context: resolvedContext, referenceTime, target: reviewTarget })
+      : [],
+  );
+  // The engine's decision (ADR 0057): one fresh qualification per click, never a cached dataset.
+  let engine = $state<{ readonly output: WorkRoutingQualifyOutput | null; readonly pending: boolean }>({
+    output: null,
+    pending: false,
+  });
+  const resolvedQualification = $derived(qualification === undefined ? engine.output : qualification);
+  const engineDecision = $derived(resolvedQualification?.ok ? resolvedQualification.data : null);
+  const qualifyNow = async (): Promise<void> => {
+    if (!reviewTarget || engine.pending || mode !== 'live') {
+      return;
+    }
+    engine = { output: engine.output, pending: true };
+    const output = await qualifyClient.qualify({
+      target: { desktopSessionId: null, harness: reviewTarget.harness, sourceSessionId: reviewTarget.sourceSessionId },
+    });
+    engine = { output, pending: false };
+    // The engine has just recorded a new executor observation: the summary above re-reads it.
+    await queryClient.invalidateQueries({ queryKey: workRoutingContextKey() });
+  };
+  const resetEngine = (_target: string): void => {
+    engine = { output: null, pending: false };
+  };
+  $effect(() => resetEngine(target.rowId));
   let preferred = $state<ReviewRoutingPolicy['preferredHarness']>('claude-code');
   let nearReset = $state(false);
   let result = $state<ReturnType<typeof simulateWorkReviewRouting> | null>(null);
@@ -147,27 +192,31 @@
       : null;
   });
   const attemptsPending = $derived(attempts === undefined && mode === 'live' && attemptsQuery.isPending);
+  // A fresh engine decision supersedes the browser simulation; the engine re-decides at launch anyway.
   const gate = $derived(
     launchGate({
       attempts: resolvedAttempts,
       attemptsPending,
-      chosen,
-      recommendation,
+      chosen: engineDecision
+        ? candidates.find((candidate) => candidate.id === engineDecision.chosenCandidateId)
+        : chosen,
+      recommendation: engineDecision ? engineDecision.recommendation : recommendation,
       reviewTargetsDeclared: resolvedContext?.reviewTargets?.length ?? 0,
     }),
   );
+  const launchCandidateId = $derived(engineDecision ? engineDecision.chosenCandidateId : (chosen?.id ?? null));
   let launch = $state<{ readonly message: string | null; readonly pending: boolean }>({
     message: null,
     pending: false,
   });
   const startReview = async (): Promise<void> => {
-    if (!(reviewTarget && chosen) || launch.pending || gate.kind !== 'open') {
+    if (!(reviewTarget && launchCandidateId) || launch.pending || gate.kind !== 'open') {
       return;
     }
     launch = { message: 'Starting the review…', pending: true };
     const output = await attemptsClient.start({
       action: 'read-only-review',
-      candidateId: chosen.id,
+      candidateId: launchCandidateId,
       target: { desktopSessionId: null, harness: reviewTarget.harness, sourceSessionId: reviewTarget.sourceSessionId },
     });
     launch = {
@@ -326,7 +375,118 @@
       Machine or native session identity is missing. A scoped review cannot be simulated.
     </p>
   {/if}
+  {#if summary.length > 0}
+    <section aria-label="Routing qualification on this machine" class={workStack} data-work-qualification="summary">
+      <h3 class={workHeading}>Routing qualification on this machine</h3>
+      <p class={workMuted}>
+        Once per machine, not per card: what the engine detected, what you declared, whether this session is an
+        authorized target, and what is missing. A permission exists only as a declaration in the home config.
+      </p>
+      {#each summary as row (row.harness)}
+        <div class={workPanel} data-work-qualification-harness={row.harness}>
+          <h4 class={workHeading}>{row.label}</h4>
+          <ul>
+            <li class={workMuted}>{row.detected}</li>
+            {#each row.declared as line}
+              <li class={workMuted}>{line}</li>
+            {/each}
+            {#each row.identity as line}
+              <li class={workMuted}>{line}</li>
+            {/each}
+            <li class={workMuted}>{row.target}</li>
+            <li class={workMuted}>{row.execution}</li>
+          </ul>
+          {#if row.missing.length > 0}
+            <p class={workMuted}>Missing for {row.label}:</p>
+            <ul>
+              {#each row.missing as action}
+                <li class={workMuted}>{action}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/each}
+    </section>
+  {/if}
+  {#if mode === 'live' && reviewTarget}
+    <div class={workRow}>
+      <button class={workButton} disabled={engine.pending} onclick={qualifyNow} type="button">
+        Qualify now with the engine
+      </button>
+    </div>
+    <p class={workMuted}>
+      The engine observes the harness CLIs now (version and sign-in status commands, nothing generated), re-reads your
+      declarations and the stored quota, and decides with the launch policy. Nothing is started.
+    </p>
+    {#if engine.pending}
+      <p class={workMuted} role="status">The engine is qualifying the routing…</p>
+    {/if}
+  {/if}
+  {#if resolvedQualification && !resolvedQualification.ok}
+    <p class={workMuted} data-work-qualification="unavailable" role="status">
+      Engine qualification unavailable ({resolvedQualification.error.tag}: {resolvedQualification.error.message}).
+    </p>
+  {:else if engineDecision}
+    <section
+      aria-label="Engine qualification"
+      aria-live="polite"
+      class={workStack}
+      data-work-qualification={engineDecision.recommendation.kind}
+    >
+      <h3 class={workHeading}>{qualificationHeadline(engineDecision)}</h3>
+      <p class={workMuted}>{qualificationFreshnessText(engineDecision)}</p>
+      <ul>
+        {#each engineDecision.reasons as reason}
+          <li class={workMuted}>{reason}</li>
+        {/each}
+      </ul>
+      {#each engineDecision.candidates as entry (entry.candidateId)}
+        <div class={workPanel}>
+          <h4 class={workHeading}>
+            {entry.harness === 'claude-code' ? 'Claude Code' : 'Codex'}
+            · {entry.accountScope ?? 'account unknown'} ·
+            {entry.model ?? 'model not declared'}:
+            {#if entry.candidateId === engineDecision.chosenCandidateId}
+              chosen
+            {:else}
+              {entry.eligible ? 'eligible, not preferred' : 'excluded'}
+            {/if}
+          </h4>
+          {#if entry.identity}
+            <p class={workMuted}>{identityLine(entry.identity)}</p>
+          {/if}
+          {#if entry.exclusionReasons.length > 0}
+            <ul>
+              {#each entry.exclusionReasons as reason}
+                <li class={workMuted}>{reason}</li>
+              {/each}
+            </ul>
+          {/if}
+          {#if entry.missingData.length > 0}
+            <p class={workMuted}>Limits and missing data: {entry.missingData.join('; ')}</p>
+          {/if}
+          {#if entry.actions.length > 0}
+            <p class={workMuted}>To qualify it:</p>
+            <ul>
+              {#each entry.actions as action}
+                <li class={workMuted}>{action}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/each}
+      {#if engineDecision.omittedCandidates > 0}
+        <p class={workMuted}>
+          {engineDecision.omittedCandidates}
+          further candidate(s) left out of this answer by its size bound.
+        </p>
+      {/if}
+    </section>
+  {/if}
   <form class={workStack} onsubmit={simulate}>
+    {#if mode === 'live'}
+      <p class={workMuted}>Local simulation from the read context, with optional preferences:</p>
+    {/if}
     <label class={workMuted}
       >Harness preference
       <select class={workInput} bind:value={preferred}>
@@ -405,7 +565,7 @@
   {#if mode !== 'live'}
     <p class={workMuted} data-work-launch="demo">{DEMO_EXECUTION_TEXT}</p>
   {:else if reviewTarget}
-    {#if result}
+    {#if result || engineDecision}
       <div class={workPanel} data-work-launch={gate.kind}>
         <h4 class={workHeading}>Execution</h4>
         {#if gate.kind === 'open'}

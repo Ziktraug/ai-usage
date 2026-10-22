@@ -8,7 +8,8 @@ export type UsageEngineCommandOutputKind =
   | 'none'
   | 'publication'
   | 'replication-status'
-  | 'review-attempt';
+  | 'review-attempt'
+  | 'routing-qualification';
 
 interface UsageEngineCommandPolicy {
   readonly interruptible: boolean;
@@ -23,6 +24,8 @@ export const usageEngineCommandPolicies = {
   'import-cursor': { interruptible: false, outputKind: 'cursor-import' },
   'preview-merge': { interruptible: true, outputKind: 'merge-preview' },
   publish: { interruptible: false, outputKind: 'publication' },
+  // Observes the executors now, then decides; nothing is started, so an abort leaves nothing behind.
+  'qualify-review-routing': { interruptible: true, outputKind: 'routing-qualification' },
   'replication-status': { interruptible: true, outputKind: 'replication-status' },
   'replace-project-aliases': { interruptible: false, outputKind: 'none' },
   'replace-project-groups': { interruptible: false, outputKind: 'none' },
