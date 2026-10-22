@@ -105,7 +105,7 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   await expect(aside.getByRole('heading', { level: 3, name: 'Facts by source' })).toBeVisible();
   await expect(aside).toContainText('GitHub');
   await expect(aside).toContainText('Local checkout');
-  await expect(aside.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(aside.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
   await expect(aside.getByRole('button', { name: 'Run simulation' })).toHaveCount(0);
   await expect(aside).toContainText('No collected transcript identifies a review target');
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -196,7 +196,7 @@ test('mobile keeps the list readable and opens the detail as a drawer without ho
   const dialog = page.getByRole('dialog', { name: 'Selected root', exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('[data-work-question]')).toContainText(BLOCKED_QUESTION);
-  await expect(dialog.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(dialog.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Close detail', exact: true })).toBeFocused();
   await settleAnimations(page);
   await expectNoOverflow(page);

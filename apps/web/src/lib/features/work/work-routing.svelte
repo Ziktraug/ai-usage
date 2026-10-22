@@ -414,8 +414,8 @@
     </p>
   {/if}
   {#if summary.length > 0}
-    <section aria-label="Routing qualification on this machine" class={workStack} data-work-qualification="summary">
-      <h3 class={workHeading}>Routing qualification on this machine</h3>
+    <details aria-label="Routing qualification on this machine" class={workStack} data-work-qualification="summary">
+      <summary class={workHeading}>Routing qualification on this machine</summary>
       <p class={workMuted}>
         Once per machine, not per card: what the engine detected, what you declared, whether this session is an
         authorized target, and what is missing. A permission exists only as a declaration in the home config.
@@ -444,7 +444,7 @@
           {/if}
         </div>
       {/each}
-    </section>
+    </details>
   {/if}
   {#if mode === 'live' && reviewTarget}
     <div class={workRow}>

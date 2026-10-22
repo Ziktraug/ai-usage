@@ -34,6 +34,7 @@
     workRootLastDecision,
     workRootNativeRequests,
     workRootNextAction,
+    workRootObservedActivity,
     workRootStanding,
   } from './work-attention-model';
   import WorkRouting from './work-routing.svelte';
@@ -107,6 +108,7 @@
   const standing = $derived(workRootStanding(root));
   const decision = $derived(workRootLastDecision(root));
   const nativeRequests = $derived(workRootNativeRequests(root));
+  const activity = $derived(workRootObservedActivity(root));
   const next = $derived(workRootNextAction(root));
   const request = $derived(
     root.declared?.needsAction ?? (root.declared?.status === 'review_ready' ? 'Review requested' : null),
@@ -177,6 +179,9 @@
         {/if}
       </p>
     {/if}
+    {#if activity}
+      <p class={workMuted} data-work-observed-activity>{activity}</p>
+    {/if}
     {#if next}
       <p class={workDetailText} data-work-next>Next: {next}</p>
     {/if}
@@ -225,6 +230,26 @@
       </p>
     </section>
   {/if}
+
+  <section aria-labelledby="work-routing-heading" class={workStack}>
+    <h3 class={workHeading} id="work-routing-heading">Review this work</h3>
+    {#if sessionRow}
+      <p class={workMuted}>
+        Choose an executor for a read-only review of “{root.title}”. The engine checks the target before launch.
+      </p>
+      <WorkRouting {mode} {providers} {quotaUnavailable} target={sessionRow} />
+    {:else if root.session && lookup.isPending}
+      <p class={workMuted} role="status">Resolving the collected Session for this root…</p>
+    {:else if root.session}
+      <p class={workMuted} role="status">
+        The collected Session could not be resolved at this revision; no review target is identified.
+      </p>
+    {:else}
+      <p class={workMuted}>
+        No collected transcript identifies a review target for this root. A simulation needs the joined Session.
+      </p>
+    {/if}
+  </section>
 
   <section aria-labelledby="work-detail-declaration" class={workStack}>
     <h3 class={workDetailLabel} id="work-detail-declaration">Declared by the session</h3>
@@ -395,26 +420,6 @@
       <a class={workLink} href={detailHref(root.session.rowId)}>Open session detail</a>
     {:else}
       <p class={workMuted}>Transcript not collected yet; there is no session detail to open.</p>
-    {/if}
-  </section>
-
-  <section aria-labelledby="work-routing-heading" class={workStack}>
-    <h3 class={workHeading} id="work-routing-heading">Review assignment simulation</h3>
-    {#if sessionRow}
-      <p class={workMuted}>
-        Simulates a read-only review of “{root.title}” on its collected Session. Nothing is started.
-      </p>
-      <WorkRouting {mode} {providers} {quotaUnavailable} target={sessionRow} />
-    {:else if root.session && lookup.isPending}
-      <p class={workMuted} role="status">Resolving the collected Session for this root…</p>
-    {:else if root.session}
-      <p class={workMuted} role="status">
-        The collected Session could not be resolved at this revision; no review target is identified.
-      </p>
-    {:else}
-      <p class={workMuted}>
-        No collected transcript identifies a review target for this root. A simulation needs the joined Session.
-      </p>
     {/if}
   </section>
 </article>

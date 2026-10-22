@@ -549,15 +549,6 @@ const decisionOf = (root: WorkRoot, entry: WorkInterpretation): WorkRootDecision
         text: `Earlier ${quoted(earlier)} answered in Claude Desktop`,
       };
     }
-    case 'earlier-request-superseded': {
-      const earlier = factById(root, entry.evidence[0]);
-      return {
-        instant: declaredAtOf(earlier),
-        instantLabel: 'asked',
-        kind: entry.kind,
-        text: `Earlier ${quoted(earlier)} replaced by a later declaration`,
-      };
-    }
     default:
       return null;
   }
@@ -568,7 +559,6 @@ const DECISION_ORDER: readonly WorkInterpretationKind[] = [
   'request-handled-elsewhere',
   'request-archived',
   'earlier-request-answered',
-  'earlier-request-superseded',
 ];
 
 export const workRootLastDecision = (root: WorkRoot): WorkRootDecision | null => {
@@ -1033,7 +1023,10 @@ export const workFactInstant = (fact: WorkFact): string => {
 };
 
 export const workRootObservedActivity = (root: WorkRoot): string | null =>
-  root.interpretations.find((entry) => entry.kind === 'request-message-observed')?.text ?? null;
+  root.interpretations
+    .filter((entry) => entry.kind === 'request-message-observed' || entry.kind === 'earlier-request-superseded')
+    .map((entry) => entry.text)
+    .join(' ') || null;
 
 export const workRootNativeRequests = (root: WorkRoot) =>
   root.facts.filter(

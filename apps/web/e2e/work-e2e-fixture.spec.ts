@@ -38,8 +38,8 @@ const MINIMUM_ROOTS = 20;
  * answered, three untouched for more than a week (ADR 0056 age tier). The answered and handled
  * roots rest.
  */
-const NEEDS_YOU_ROOTS = 11;
-const RECONSIDER_ROOTS = 6;
+const NEEDS_YOU_ROOTS = 13;
+const RECONSIDER_ROOTS = 7;
 const WAITING_ROOTS = 1;
 const LEAD_ROOTS = 2;
 const RESTING_ROOTS = DESKTOP_ROOTS_SHOWN - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
@@ -323,7 +323,7 @@ const ANSWERED_ROOT_ID = 'local_fixture-answered-root';
 const ANSWERED_TITLE = 'Fixture: settle the layout';
 const ANSWERED_CURRENT_QUESTION = 'Delete the superseded layout branch now?';
 const ANSWERED_EARLIER_INTERPRETATION =
-  'Answered in Claude Desktop: the question “Keep the compact layout or the airy one?” (asked 2026-10-20T07:00:00.000Z); you wrote to the session at 2026-10-20T08:00:00.000Z and it declared again at 2026-10-20T09:00:00.000Z.';
+  'Declaration replaced: the question “Keep the compact layout or the airy one?” (asked 2026-10-20T07:00:00.000Z) was replaced by the session’s declaration at 2026-10-20T09:00:00.000Z.';
 const REPLIED_TITLE = 'Fixture: export column wording';
 const UNRELATED_TITLE = 'Fixture: settings panel naming';
 const OFFERS_TITLE = 'Fixture: follow-ups after the import';
@@ -352,9 +352,8 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
   await expect(main.locator('[data-work-section="human-request"]').locator(answered)).toHaveCount(1);
   await expect(answered).toHaveAttribute('data-work-standing', 'current');
   await expect(answered).toContainText(ANSWERED_CURRENT_QUESTION);
-  await expect(answered.locator('[data-work-decision]')).toContainText(
-    'Earlier “Keep the compact layout or the airy one?” answered in Claude Desktop · asked 5 h ago',
-  );
+  await expect(answered.locator('[data-work-decision]')).toHaveCount(0);
+  await expect(answered.locator('[data-work-observed-activity]')).toContainText(ANSWERED_EARLIER_INTERPRETATION);
   await expect(answered.locator('[data-work-next]')).toHaveText('Next: Answer in Claude Desktop.');
 
   // An unrelated pull request merged after the question changes nothing: a current block.
@@ -363,24 +362,21 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
   await expect(unrelated).toContainText('PR #131 merged · observed 1 h ago');
   await expect(main.locator('[data-work-reconsider]').locator(unrelated)).toHaveCount(0);
 
-  // A message after the question, and work handled in a session started from the root: no longer waiting.
-  await main.locator('[data-work-section="none"] button', { hasText: 'Show all' }).click();
+  // A dated message and a completed linked session do not establish an answer.
   const replied = rowNamed(page, REPLIED_TITLE);
-  await expect(main.locator('[data-work-section="none"]').locator(replied)).toHaveCount(1);
-  await expect(replied).toHaveAttribute('data-work-standing', 'answered');
-  await expect(replied.locator('[data-work-standing-marker]')).toHaveText('Answered in Claude Desktop');
-  await expect(replied.locator('[data-work-decision]')).toContainText('You answered in Claude Desktop · asked 2 h ago');
+  await expect(main.locator('[data-work-section="human-request"]').locator(replied)).toHaveCount(1);
+  await expect(replied).toHaveAttribute('data-work-standing', 'current');
+  await expect(replied.locator('[data-work-decision]')).toHaveCount(0);
+  await expect(replied.locator('[data-work-observed-activity]')).toContainText('2026-10-20T11:00:00.000Z');
   const handled = rowNamed(page, HANDLED_TITLE);
-  await expect(main.locator('[data-work-section="none"]').locator(handled)).toHaveCount(1);
-  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Handled in a linked session');
-  await expect(handled.locator('[data-work-decision]')).toContainText(
-    'Handled in a session started from it · completed 6 h ago',
-  );
+  await expect(main.locator('[data-work-reconsider]').locator(handled)).toHaveCount(1);
+  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Older declaration to reconsider');
+  await expect(handled.locator('[data-work-decision]')).toHaveCount(0);
 
   // The offer made before a later message and the expired offer are not pending; the last one is.
   const offers = rowNamed(page, OFFERS_TITLE);
   await expect(main.locator('[data-work-section="optional-lead"]').locator(offers)).toHaveCount(1);
-  await expect(offers).toContainText('proposals 1 open / 0 resolved / 2 no longer pending');
+  await expect(offers).toContainText('proposals 2 open / 0 resolved / 1 no longer pending');
   await capture(page, 'work-e2e-1440-arrival.png');
   await expectAxeClean(page);
 
@@ -388,16 +384,14 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
   const aside = await openWorkRoot(page, ANSWERED_ROOT_ID);
   await expect(aside.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'current');
   await expect(aside.locator('[data-work-question]')).toHaveText(ANSWERED_CURRENT_QUESTION);
-  await expect(aside.locator('[data-work-decision]')).toContainText(
-    'Last decision: Earlier “Keep the compact layout or the airy one?” answered in Claude Desktop · asked Oct 20, 2026, 07:00 UTC',
-  );
+  await expect(aside.locator('[data-work-decision]')).toHaveCount(0);
   await expect(aside).toContainText(ANSWERED_EARLIER_INTERPRETATION);
   await expect(aside).toContainText('Earlier declaration, blocked: Keep the compact layout or the airy one?');
   const order = await aside.evaluate((element) =>
     [
       '[data-work-question]',
       '[data-work-context]',
-      '[data-work-decision]',
+      '[data-work-observed-activity]',
       '[data-work-next]',
       '#work-detail-facts',
     ].map((selector) => element.querySelector(selector)?.getBoundingClientRect().top ?? Number.NaN),
@@ -406,9 +400,9 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
   expect([...order].sort((left, right) => left - right)).toEqual(order);
   await capture(page, 'work-e2e-1440-detail-answered.png');
   const handledDetail = await openWorkRoot(page, HANDLED_ROOT_ID);
-  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'handled');
+  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'reconsider');
   await expect(handledDetail).toContainText(
-    'Handled in “Fixture: fix the flaky export test”: started from this session at',
+    'Older declaration to reconsider: work continued after the question in “Fixture: fix the flaky export test”',
   );
   await expect(handledDetail).toContainText('Linked session declared completed: Finished the requested change.');
   await expectAxeClean(page);

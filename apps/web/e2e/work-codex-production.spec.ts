@@ -7,6 +7,7 @@ import { expect, test } from './browser-test';
 import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transport';
 import { CODEX_JOURNEY_ACCOUNT, CODEX_JOURNEY_RECORD_ENV } from './work-codex-fixture';
 
+const projectThirty = /context-project=30/;
 const rootId = 'local_fixture-blocked-root';
 const target = { harness: 'claude', sourceSessionId: 'claude-fixture-025' };
 
@@ -71,7 +72,8 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   await page.reload();
   await expect(attempts.first()).toHaveAttribute('data-work-attempt', firstId ?? '');
   await expect(attempts.first()).toContainText('No findings in supplied patch.');
-  await page.screenshot({ path: testInfo.outputPath('codex-result-desktop.png'), fullPage: true });
+  await attempts.first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('codex-result-desktop.png') });
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 
   await writeFile(record.modePath, 'hold');
@@ -100,14 +102,82 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   await page.screenshot({ path: testInfo.outputPath('codex-stopped-390.png') });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/work?context-project=hidden-context&context-days=180');
+  await expect(page.locator('[data-work-root]').filter({ hasText: 'Old scoped exploration' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('[data-work-root]').filter({ hasText: 'Old scoped exploration' })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('context-project')).toBe('hidden-context');
+  await page.screenshot({ path: testInfo.outputPath('old-project-context-desktop.png') });
+  const reads: string[] = [];
+  page.on('request', (sent) => {
+    if (sent.url().includes('/rpc/work/attention')) {
+      reads.push(sent.url());
+    }
+  });
+  await page.goto('/work?context-project=%2Fwork%2Fai-usage');
+  await expect(page.locator('[data-work-context-invalid]')).toBeVisible();
+  await expect(page.locator('[data-work-root]')).toHaveCount(0);
+  expect(reads).toHaveLength(0);
+  await page.getByText('Explore a project context', { exact: true }).click();
+  await page.getByLabel('Exact project label').fill('30');
+  const scopedRead = page.waitForResponse((response) => response.url().includes('/rpc/work/attention'));
+  await page.getByRole('button', { name: 'Read project context', exact: true }).click();
+  await scopedRead;
+  await expect(page).toHaveURL(projectThirty);
+  await expect(page.locator('[data-work-context-invalid]')).toHaveCount(0);
+  await expect(page.locator('[data-work-root]')).toHaveCount(0);
+  reads.length = 0;
+  if ((await page.locator('[data-work-project-context]').getAttribute('open')) === null) {
+    await page.getByText('Explore a project context', { exact: true }).click();
+  }
+  await page.getByLabel('Exact project label').fill('/work/ai-usage');
+  await page.getByRole('button', { name: 'Read project context', exact: true }).click();
+  await expect(page.locator('[data-work-context-invalid]')).toBeVisible();
+  await expect(page.locator('[data-work-root]')).toHaveCount(0);
+  expect(reads).toHaveLength(0);
+  await page.goto('/work?context-project=checkout-3');
+  const native = page
+    .locator('[data-work-root]')
+    .filter({ hasText: 'Keep the scoped context available across worktrees?' });
+  await expect(native).toBeVisible();
+  await native.click();
+  await expect(page.locator('[data-work-aside] [data-work-native-requests]')).toContainText(
+    'No attributable answer observed',
+  );
+  await page.screenshot({ path: testInfo.outputPath('native-question-desktop.png') });
+  await writeFile(record.modePath, 'success');
+  await selection.selectOption({ label: `Codex · ${CODEX_JOURNEY_ACCOUNT} · gpt-6-astra · high` });
+  await aside.getByRole('button', { name: 'Run simulation', exact: true }).click();
+  await aside.getByRole('button', { name: 'Start read-only review (Codex)' }).click();
+  await expect(attempts).toHaveCount(1, { timeout: 45_000 });
+  await expect(attempts.first()).toHaveAttribute('data-work-attempt-state', 'finished', { timeout: 45_000 });
+  await expect(attempts.first()).toContainText('No findings in supplied patch.');
+  const nativeRoot = new URL(page.url()).searchParams.get('root');
+  const nativeAttempt = await attempts.first().getAttribute('data-work-attempt');
+  await page.reload();
+  expect(new URL(page.url()).searchParams.get('root')).toBe(nativeRoot);
+  expect(new URL(page.url()).searchParams.get('context-project')).toBe('checkout-3');
+  await expect(attempts.first()).toHaveAttribute('data-work-attempt', nativeAttempt ?? '');
+  await expect(aside.locator('[data-work-native-requests]')).toContainText(
+    'Keep the scoped context available across worktrees?',
+  );
+  await attempts.first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('native-context-result-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await drawer.locator('[data-work-attempt]').first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('native-context-result-390.png') });
+
   const protocol = (await readFile(record.logPath, 'utf8'))
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line));
-  expect(protocol.filter((entry) => entry.method === 'turn/start')).toHaveLength(2);
+  expect(protocol.filter((entry) => entry.method === 'turn/start')).toHaveLength(3);
   expect(protocol.filter((entry) => entry.method === 'turn/interrupt')).toHaveLength(1);
   expect(protocol.filter((entry) => entry.method === 'thread/start').map((entry) => entry.params.model)).toEqual([
     'gpt-6-astra',
     'gpt-6-sol',
+    'gpt-6-astra',
   ]);
 });

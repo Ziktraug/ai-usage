@@ -16,17 +16,35 @@ import {
 const dataset = syntheticWorkAttentionDataset();
 
 describe('Work attention Query identity and policy', () => {
-  test('reads an exact project and explicit older window from the address with no default budget increase', () => {
+  test('reads an exact project and explicit older window without raising the budget', () => {
     expect(workAttentionRequestFromSearch(new URLSearchParams('context-project=ai-usage&context-days=180'))).toEqual({
-      limit: 100,
-      machineId: null,
-      scope: { kind: 'project-label', projectLabel: 'ai-usage' },
-      sinceDays: 180,
+      ok: true,
+      input: {
+        limit: 100,
+        machineId: null,
+        scope: { kind: 'project-label', projectLabel: 'ai-usage' },
+        sinceDays: 180,
+      },
     });
-    expect(workAttentionRequestFromSearch(new URLSearchParams('context-days=Infinity'))).toEqual(
-      workAttentionRequest(),
-    );
-    expect(workAttentionRequestFromSearch(new URLSearchParams())).toEqual(workAttentionRequest());
+    expect(workAttentionRequestFromSearch(new URLSearchParams())).toEqual({ ok: true, input: workAttentionRequest() });
+    expect(workAttentionRequestFromSearch(new URLSearchParams('context-project=30'))).toEqual({
+      ok: true,
+      input: { ...workAttentionRequest(), scope: { kind: 'project-label', projectLabel: '30' } },
+    });
+  });
+  test('refuses invalid nonempty context instead of silently reading all projects', () => {
+    for (const search of [
+      'context-project=/work/ai-usage',
+      'context-project=..',
+      'context-days=Infinity',
+      'context-days=',
+      'context-days=3651',
+    ]) {
+      expect(workAttentionRequestFromSearch(new URLSearchParams(search))).toMatchObject({
+        ok: false,
+        error: { tag: 'InvalidProjectContext' },
+      });
+    }
   });
   test('keeps scoped historical context distinct from the global page', async () => {
     const identity = {

@@ -1,3 +1,4 @@
+import { WORK_ATTENTION_BOUNDS } from '@ai-usage/report-core/work-attention';
 import { queryOptions } from '@tanstack/svelte-query';
 import type { WorkAttentionClient } from '../../rpc/work-attention-client';
 import { unwrapWorkAttentionResult, type WorkAttentionIdentity, workAttentionKey } from '../identities/work-attention';
@@ -47,16 +48,42 @@ export const workAttentionQueryOptions = (
     queryKey: workAttentionKey(identity),
   });
 
-/** Exact project scope is applied before the root budget; exploration never raises that budget. */
-export const workAttentionRequestFromSearch = (params: URLSearchParams): WorkAttentionIdentity => {
-  const project = params.get('context-project')?.trim();
-  const parsedDays = Number(params.get('context-days') ?? 30);
-  const sinceDays = Number.isInteger(parsedDays) && parsedDays >= 1 && parsedDays <= 3650 ? parsedDays : 30;
+const daysPattern = /^\d+$/;
+
+export type WorkContextSearchRead =
+  | { readonly ok: true; readonly input: WorkAttentionIdentity }
+  | { readonly ok: false; readonly error: { readonly tag: 'InvalidProjectContext'; readonly message: string } };
+
+/** Invalid context never falls back to a global read. Empty scope is an intentional all-project read. */
+export const workAttentionRequestFromSearch = (params: URLSearchParams): WorkContextSearchRead => {
+  const project = params.get('context-project')?.trim() ?? '';
+  const days = params.get('context-days') ?? '30';
+  const sinceDays = Number(days);
+  if (
+    project &&
+    (project.includes('/') ||
+      project.includes('\\') ||
+      project === '.' ||
+      project === '..' ||
+      project.length > WORK_ATTENTION_BOUNDS.maxPath)
+  ) {
+    return {
+      ok: false,
+      error: { tag: 'InvalidProjectContext', message: 'Enter an exact project label, not a checkout path.' },
+    };
+  }
+  if (!(daysPattern.test(days) && Number.isSafeInteger(sinceDays)) || sinceDays < 1 || sinceDays > 3650) {
+    return {
+      ok: false,
+      error: { tag: 'InvalidProjectContext', message: 'Choose a history window from 1 to 3650 days.' },
+    };
+  }
   return {
-    ...workAttentionRequest(),
-    ...(project && !project.includes('/') && project !== '.' && project !== '..'
-      ? { scope: { kind: 'project-label' as const, projectLabel: project } }
-      : {}),
-    ...(sinceDays === 30 ? {} : { sinceDays }),
+    ok: true,
+    input: {
+      ...workAttentionRequest(),
+      ...(project ? { scope: { kind: 'project-label' as const, projectLabel: project } } : {}),
+      ...(sinceDays === 30 ? {} : { sinceDays }),
+    },
   };
 };

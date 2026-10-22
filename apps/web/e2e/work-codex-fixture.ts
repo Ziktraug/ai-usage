@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { SeedWorkAttemptFixtureInput } from './work-attempt-fixture';
+import { type SeedWorkAttemptFixtureInput, WORK_ATTEMPT_FIXTURE_WORKTREE } from './work-attempt-fixture';
 
 /** Explicit fake-process profile: no real Codex binary, credential or provider is contacted. */
 export const CODEX_JOURNEY_ENV = 'AI_USAGE_CODEX_JOURNEY_E2E';
@@ -13,6 +13,66 @@ export const CODEX_JOURNEY_FINGERPRINT = createHash('sha256')
 export const CODEX_JOURNEY_ACCOUNT = CODEX_JOURNEY_FINGERPRINT;
 
 export const seedCodexJourneyFixture = async (input: SeedWorkAttemptFixtureInput): Promise<void> => {
+  const sessions = path.join(input.home, '.codex', 'sessions', '2026', '07');
+  const rootPath = path.join(sessions, 'rollout-2026-07-02T09-00-00-codex-root-025.jsonl');
+  const original = await readFile(rootPath, 'utf8');
+  const old = original
+    .trim()
+    .split('\n')
+    .map((line) => {
+      const event = JSON.parse(line);
+      event.timestamp = new Date(Date.parse(event.timestamp) - 60 * 86_400_000).toISOString();
+      if (event.type === 'session_meta') {
+        event.payload.id = 'codex-old-context';
+        event.payload.cwd = path.join(input.home, 'work', 'hidden-context');
+      }
+      if (event.payload.type === 'user_message') {
+        event.payload.message = 'Old scoped exploration';
+      }
+      return JSON.stringify(event);
+    });
+  await writeFile(path.join(sessions, 'rollout-2026-05-03T09-00-00-codex-old-context.jsonl'), `${old.join('\n')}\n`);
+  await writeFile(
+    rootPath,
+    `${original
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const event = JSON.parse(line);
+        if (event.type === 'session_meta') {
+          event.payload.cwd = path.join(input.repository, ...WORK_ATTEMPT_FIXTURE_WORKTREE);
+        }
+        return JSON.stringify(event);
+      })
+      .join('\n')}\n`,
+  );
+  await appendFile(
+    rootPath,
+    `${JSON.stringify({
+      timestamp: '2026-07-02T09:04:00.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'request_user_input_async',
+        call_id: 'fixture-native-question',
+        arguments: JSON.stringify({
+          questions: [
+            {
+              title: 'Keep the scoped context available across worktrees?',
+              options: [
+                { label: 'Keep', description: 'Retain context' },
+                { label: 'Later', description: 'Defer' },
+              ],
+            },
+          ],
+        }),
+      },
+    })}\n`,
+  );
+  await appendFile(
+    rootPath,
+    `${JSON.stringify({ timestamp: '2026-07-02T09:04:01.000Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'fixture-native-question', output: JSON.stringify({ accepted: true }) } })}\n`,
+  );
   const modePath = path.join(input.home, 'codex-fixture-mode');
   const logPath = path.join(input.home, 'codex-fixture-protocol.jsonl');
   await writeFile(modePath, 'success');

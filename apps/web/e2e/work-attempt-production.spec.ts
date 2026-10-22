@@ -130,7 +130,7 @@ test('launches one read-only review from the cockpit, follows it to its result a
   await waitForHydratedWork(page);
   const aside = page.getByRole('main').locator('[data-work-aside]');
   await expect(aside.locator('[data-work-detail]')).toHaveAttribute('data-work-detail', BLOCKED_ROOT_ID);
-  await expect(aside.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(aside.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
 
   // Before any click: the attempts list exists and is empty; no button exists before a simulation.
   const attempts = aside.locator('[data-work-attempts]');

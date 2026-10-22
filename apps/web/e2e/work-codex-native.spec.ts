@@ -63,7 +63,8 @@ test('real installed Codex metadata refuses credit-enabled generation from Work'
   );
   await expect(aside.locator('[data-work-attempt-state="failed"]')).toContainText('review was not generated');
   await expect(aside.locator('[data-work-attempt-state="failed"]')).toContainText('not reported yet');
-  await page.screenshot({ path: testInfo.outputPath('native-credit-refusal-desktop.png'), fullPage: true });
+  await aside.locator('[data-work-attempt-state="failed"]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('native-credit-refusal-desktop.png') });
   const methods = (await readFile(record.logPath, 'utf8'))
     .trim()
     .split('\n')
@@ -72,6 +73,10 @@ test('real installed Codex metadata refuses credit-enabled generation from Work'
   expect(methods).toContain('account/rateLimits/read');
   expect(methods).not.toContain('thread/start');
   expect(methods).not.toContain('turn/start');
+  await writeFile(
+    testInfo.outputPath('native-refusal-methods.json'),
+    JSON.stringify({ nativeMetadata: true, generationGuardTriggered: false, methods }, null, 2),
+  );
   await page.reload();
   await expect(aside.locator('[data-work-attempt-state="failed"]')).toContainText('review was not generated');
 });

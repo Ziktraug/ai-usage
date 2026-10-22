@@ -267,7 +267,11 @@
             <p class={workSectionNote}>
               {group.section.note}
               {#if group.section.kind !== 'none' && group.section.kind !== 'not-observable'}
-                Declared by the session; current state unobserved.
+                {#if group.roots.some((root) => root.key.harness === 'codex' && root.attention === 'human-request')}
+                  Native request evidence and session declarations; general state unobserved.
+                {:else}
+                  Declared by the session; current state unobserved.
+                {/if}
               {/if}
             </p>
           </header>

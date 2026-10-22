@@ -504,13 +504,12 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
   test('an earlier question replaced by a later declaration stays dated without an inferred answer, dated by its own fact', () => {
     const root = rootNamed('Sources label');
     expect(workRootStanding(root)).toBe('current');
-    const decision = workRootLastDecision(root);
-    expect(decision?.text).toBe(
-      'Earlier “Call the rail entry “Inputs” or “Collectors”?” replaced by a later declaration',
-    );
-    expect(decision?.instantLabel).toBe('asked');
+    expect(workRootLastDecision(root)).toBeNull();
+    expect(workRootObservedActivity(root)).toContain('Replaced by a later declaration');
     const earlier = root.facts.find((fact) => fact.id === 'sources-label:declared-earlier');
-    expect(String(earlier?.kind === 'declared-turn' ? earlier.declaredAt : null)).toBe(String(decision?.instant));
+    expect(workRootObservedActivity(root)).toContain(
+      String(earlier?.kind === 'declared-turn' ? earlier.declaredAt : null),
+    );
     expect(workRootNextAction(root)).toBe('Answer in Claude Desktop.');
     // The earlier question stays searchable by its own words.
     expect(matchesWorkAttentionSearch(root, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'collectors' })).toBe(true);

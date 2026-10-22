@@ -65,8 +65,8 @@ const MINIMUM_ROOTS = 20;
  * final registry files: the replied root, whose reply only an earlier sweep can date, stays a
  * current block here (ADR 0056); the e2e fixture and the history chain test replay the earlier sweep.
  */
-const NEEDS_YOU_ROOTS = 12;
-const RECONSIDER_ROOTS = 5;
+const NEEDS_YOU_ROOTS = 13;
+const RECONSIDER_ROOTS = 6;
 const WAITING_ROOTS = 1;
 const LEAD_ROOTS = 2;
 const FOLDED_ROOTS = 10;
@@ -395,7 +395,7 @@ test('renders the collected registry and its observed facts as a resume surface,
 
   // Routing: the disposable HOME declares no executor, so the panel can only name what would
   // qualify one; the simulation chooses nobody and starts nothing.
-  await expect(aside.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(aside.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
   await expect(aside).toContainText(`Simulates a read-only review of “${BLOCKED_TITLE}” on its collected Session.`);
   await expect(aside).toContainText(NO_DECLARATION_TEXT);
   const evidence = aside.locator('summary').filter({ hasText: EVIDENCE_COUNT_PATTERN });
@@ -632,7 +632,7 @@ test('opens the collected root as a drawer at 390px without overflow', async ({ 
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('[data-work-question]')).toHaveText(BLOCKED_QUESTION);
   await expect(dialog).toContainText(`Declared by the session at ${BLOCKED_DECLARED_AT}`);
-  await expect(dialog.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(dialog.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Close detail', exact: true })).toBeFocused();
   await settleAnimations(page);
   await expectNoOverflow(page);
@@ -683,23 +683,23 @@ test('reads on the production path what the native registry says about requests,
   // Offers made before a later message, or expired, are no longer a lead.
   const offers = rowNamed(page, OFFERS_TITLE);
   await expect(main.locator('[data-work-section="optional-lead"]').locator(offers)).toHaveCount(1);
-  await expect(offers).toContainText('proposals 1 open / 0 resolved / 2 no longer pending');
+  await expect(offers).toContainText('proposals 2 open / 0 resolved / 1 no longer pending');
 
-  // Handled in a session started from the root after its question: no longer waiting, with provenance.
-  await main.locator('[data-work-section="none"] button', { hasText: 'Show all' }).click();
+  // A completed linked session does not identify an answer to the root’s question.
   const handled = rowNamed(page, HANDLED_TITLE);
-  await expect(main.locator('[data-work-section="none"]').locator(handled)).toHaveCount(1);
-  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Handled in a linked session');
+  await expect(main.locator('[data-work-reconsider]').locator(handled)).toHaveCount(1);
+  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Older declaration to reconsider');
+  await expect(handled.locator('[data-work-decision]')).toHaveCount(0);
   await capture(page, 'work-prod-1440-standings.png', { fullPage: true });
   await expectAxeClean(page);
 
   const handledDetail = await openWorkRoot(page, HANDLED_ROOT_ID);
-  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'handled');
+  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'reconsider');
   await expect(handledDetail).toContainText(
-    'Handled in “Fixture: fix the flaky export test”: started from this session at',
+    'Older declaration to reconsider: work continued after the question in “Fixture: fix the flaky export test”',
   );
   await expect(handledDetail.locator('[data-work-next]')).toHaveText(
-    'Next: Nothing asked of you; the linked session’s outcome is in the detail.',
+    'Next: Check what followed; answer or archive the session in Claude Desktop to settle it.',
   );
   const continuedDetail = await openWorkRoot(page, CONTINUED_ROOT_ID);
   await expect(continuedDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'reconsider');

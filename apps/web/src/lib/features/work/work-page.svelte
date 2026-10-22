@@ -22,6 +22,7 @@
   import {
     WorkAttentionQueryError,
     workAttentionQueryOptions,
+    workAttentionRequest,
     workAttentionRequestFromSearch,
   } from '../../query/options/work-attention';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
@@ -79,14 +80,18 @@
   });
 
   // --- Declared outcomes (the resume surface) ---------------------------------------------------
+  const contextRead = $derived(workAttentionRequestFromSearch(page.url.searchParams));
   const attentionQuery = createQuery(() =>
-    workAttentionQueryOptions(clients.attention, workAttentionRequestFromSearch(page.url.searchParams), {
+    workAttentionQueryOptions(clients.attention, contextRead.ok ? contextRead.input : workAttentionRequest(), {
       browser,
-      enabled: true,
+      enabled: contextRead.ok,
     }),
   );
-  const dataset = $derived(attentionQuery.data ?? null);
+  const dataset = $derived(contextRead.ok ? (attentionQuery.data ?? null) : null);
   const attentionError = $derived.by(() => {
+    if (!contextRead.ok) {
+      return contextRead.error.message;
+    }
     if (attentionQuery.error instanceof WorkAttentionQueryError) {
       return attentionQuery.error.message;
     }
@@ -121,7 +126,7 @@
     const next = new URL(page.url);
     for (const name of ['context-project', 'context-days']) {
       const value = String(fields.get(name) ?? '').trim();
-      if (value && value !== '30') {
+      if (value && !(name === 'context-days' && value === '30')) {
         next.searchParams.set(name, value);
       } else {
         next.searchParams.delete(name);
@@ -235,7 +240,9 @@
     ),
   );
   const retryAll = (): void => {
-    attentionQuery.refetch();
+    if (contextRead.ok) {
+      attentionQuery.refetch();
+    }
     bootstrapQuery.refetch();
     sessions.refetch();
   };
@@ -321,10 +328,15 @@
           </p>
         </form>
       </details>
-      {#if page.url.searchParams.has('context-project') || page.url.searchParams.has('context-days')}
+      {#if !contextRead.ok}
+        <p class={workMuted} data-work-context-invalid role="alert">
+          {contextRead.error.message}
+          No project context was read.
+        </p>
+      {:else if page.url.searchParams.has('context-project') || page.url.searchParams.has('context-days')}
         <p class={workMuted} role="status">
           Context: {page.url.searchParams.get('context-project') || 'all projects'} ·
-          {workAttentionRequestFromSearch(page.url.searchParams).sinceDays ?? 30}
+          {contextRead.input.sinceDays ?? 30}
           days · at most 100 ranked roots.
         </p>
       {/if}

@@ -371,7 +371,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
       expect(body).toContain(source);
     }
     expect(body).toContain('Uncertainty:');
-    expect(body).toContain('Review assignment simulation');
+    expect(body).toContain('Review this work');
     expect(body).toContain('Transcript not collected yet');
     expect(body).not.toContain('Run simulation');
   });
@@ -422,7 +422,7 @@ describe('Work resume surface server rendering of request standings (ADR 0056)',
       'data-work-request="current"',
       'data-work-question',
       'data-work-context',
-      'Last decision: Earlier “Call the rail entry “Inputs” or “Collectors”?” replaced by a later declaration',
+      'data-work-observed-activity',
       'Next: Answer in Claude Desktop.',
       'Declared by the session',
       'Interpretations',
@@ -433,6 +433,7 @@ describe('Work resume surface server rendering of request standings (ADR 0056)',
     expect(occurrences(body, 'data-work-question')).toBe(1);
     expect(body).toContain('Earlier declaration, blocked: Call the rail entry “Inputs” or “Collectors”?');
     expect(body).toContain('you wrote to the session at');
+    expect(body).not.toContain('data-work-decision');
   });
 });
 
@@ -463,6 +464,7 @@ test('native Codex questions keep individual answers, pending text and native pr
       },
     }).body,
   );
+  expect(body).toContain('Native request evidence and session declarations; general state unobserved.');
   expect(body).toContain('Native Codex questions');
   expect(body).toContain('Which review model should run?');
   expect(body).toContain('Answer attributed to this question');
