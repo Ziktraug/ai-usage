@@ -60,6 +60,12 @@ export interface ReplicationStatusArgs {
   json: boolean;
 }
 
+export interface WorkContextArgs {
+  json: boolean;
+  /** As given: a relative checkout path is resolved against the operator's working directory. */
+  scope: { checkoutPath: string; kind: 'checkout' } | { kind: 'project-label'; projectLabel: string };
+}
+
 export type QuotaHistoryRange = '24h' | '7d' | '30d';
 
 export const QUOTA_HISTORY_RANGES = ['24h', '7d', '30d'] as const satisfies readonly QuotaHistoryRange[];
@@ -88,6 +94,7 @@ export type CliCommand =
   | { _tag: 'MachineSetLabel'; label: string }
   | { _tag: 'MemorySearch'; args: MemorySearchArgs }
   | { _tag: 'ReplicationStatus'; args: ReplicationStatusArgs }
+  | { _tag: 'WorkContext'; args: WorkContextArgs }
   | { _tag: 'ProjectsList'; args: ProjectsListArgs }
   | { _tag: 'Setup'; args: SetupArgs }
   | { _tag: 'CursorImport'; args: CursorImportArgs };
@@ -158,6 +165,7 @@ export const helpText =
   '  machine                show or update this machine identity\n' +
   '  memory search <query>  search accepted local Memory\n' +
   '  replication status     show outbound publication state\n' +
+  '  work context           stored Work context of one checkout or project\n' +
   '  projects list          summarize detected projects\n' +
   '  cursor import <csv>    copy a Cursor usage export into local ignored storage\n' +
   '  setup                  launch project alias setup UI\n' +
@@ -200,6 +208,10 @@ export const helpText =
   '\nReplication:\n' +
   '  replication status [--json]\n' +
   '                         show content-free Usage and Memory outbox state\n' +
+  '\nWork:\n' +
+  '  work context (--checkout <path> | --project-label <name>) [--json]\n' +
+  '                         waits, settled decisions, linked facts and coverage from\n' +
+  '                         Claude Desktop sessions; reads the store only, starts no engine\n' +
   '\nProjects:\n' +
   '  projects list --paths [files...] [--local]\n' +
   '\nCursor:\n' +
@@ -537,6 +549,36 @@ const parseReplicationCommand = (argv: string[]): Effect.Effect<CliCommand, CliA
     return { _tag: 'ReplicationStatus', args: { json } };
   });
 
+const WORK_CONTEXT_SCOPE_MESSAGE = 'work context expects exactly one of --checkout or --project-label';
+
+const parseWorkCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
+  Effect.gen(function* () {
+    const rest = [...argv];
+    const subcommand = rest.shift();
+    if (subcommand !== 'context') {
+      return yield* Effect.fail(cliArgumentError(`Unknown work subcommand: ${subcommand ?? ''}`.trim()));
+    }
+    let json = false;
+    const scopes: WorkContextArgs['scope'][] = [];
+    while (rest.length) {
+      const arg = rest.shift()!;
+      if (arg === '--json') {
+        json = true;
+      } else if (arg === '--checkout') {
+        scopes.push({ checkoutPath: yield* parseRequiredValue(rest, '--checkout'), kind: 'checkout' });
+      } else if (arg === '--project-label') {
+        scopes.push({ kind: 'project-label', projectLabel: yield* parseRequiredValue(rest, '--project-label') });
+      } else {
+        return yield* Effect.fail(cliArgumentError(`Unknown option for work context: ${arg}`));
+      }
+    }
+    const [scope, ...others] = scopes;
+    if (scope === undefined || others.length > 0) {
+      return yield* Effect.fail(cliArgumentError(WORK_CONTEXT_SCOPE_MESSAGE));
+    }
+    return { _tag: 'WorkContext', args: { json, scope } };
+  });
+
 const parseSetupArgs = (argv: string[]): Effect.Effect<SetupArgs, CliArgumentError> =>
   Effect.gen(function* () {
     const args: SetupArgs = { files: [], local: false, port: 3456 };
@@ -597,6 +639,10 @@ export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgum
     if (command === 'cursor') {
       rest.shift();
       return yield* parseCursorCommand(rest);
+    }
+    if (command === 'work') {
+      rest.shift();
+      return yield* parseWorkCommand(rest);
     }
     if (command === 'setup') {
       rest.shift();

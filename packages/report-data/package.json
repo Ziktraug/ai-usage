@@ -9,7 +9,8 @@
     "./provider-quota-history": "./src/provider-quota-history.ts",
     "./served-revision-query": "./src/served-revision-query.ts",
     "./skill-observation-read": "./src/skill-observation-read.ts",
-    "./work-attention-read": "./src/work-attention-read.ts"
+    "./work-attention-read": "./src/work-attention-read.ts",
+    "./work-context-read": "./src/work-context-read.ts"
   },
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",

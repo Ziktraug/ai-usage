@@ -15,6 +15,7 @@ import {
   collectProjectSourcesFromSnapshots,
   type ProjectSource,
 } from '@ai-usage/report-data/portable-report';
+import { readWorkContext } from '@ai-usage/report-data/work-context-read';
 import type {
   UsageEngineCollectionOutput,
   UsageEngineCommand,
@@ -23,7 +24,7 @@ import type {
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
 import { Console, Effect, Exit } from 'effect';
 import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
-import { type AppError, CliArgumentError, formatAppError } from './errors';
+import { type AppError, CliArgumentError, CliWorkContextError, formatAppError } from './errors';
 import { renderMemorySearch } from './memory';
 import { quotaStatusDataset, renderQuota, renderQuotaHistory, renderQuotaJson } from './quota';
 import { setColor } from './render/colors';
@@ -47,6 +48,7 @@ import {
   sourceExecutionOutcomes,
   sourceExecutionWarnings,
 } from './usage-read-model';
+import { renderWorkContext } from './work-context';
 
 interface CliQuotaRefreshBoundaryResult {
   readonly kind: 'refresh';
@@ -362,6 +364,26 @@ export const app = Effect.gen(function* () {
     return;
   }
 
+  if (command._tag === 'WorkContext') {
+    // A stored read (ADR 0058): the store opens read-only, no engine starts, none is contacted.
+    const { scope } = command.args;
+    const result = yield* fromPromise(() =>
+      readWorkContext({
+        dbPath: runtime.paths.databasePath,
+        scope:
+          scope.kind === 'checkout'
+            ? { checkoutPath: path.resolve(runtime.paths.operatorCwd, scope.checkoutPath), kind: 'checkout' }
+            : scope,
+        signal: runtime.signal,
+      }),
+    );
+    if (result.kind === 'error') {
+      return yield* Effect.fail(new CliWorkContextError(result.failure));
+    }
+    yield* writeStdout(`${renderWorkContext(result.value, command.args.json)}\n`);
+    return;
+  }
+
   if (command._tag === 'MachineSetLabel') {
     const execution = yield* executeEngine(runtime, { command: 'set-machine-label', label: command.label });
     const completion = execution.completion;
@@ -606,7 +628,7 @@ const writePortableFile = (filePath: string, text: string) =>
 const formatDefect = (defect: unknown): string => (defect instanceof Error ? defect.message : String(defect));
 
 const isAppError = (error: unknown): error is AppError =>
-  error instanceof CliArgumentError || error instanceof CliUsageEngineError;
+  error instanceof CliArgumentError || error instanceof CliUsageEngineError || error instanceof CliWorkContextError;
 
 export const runnableApp = app.pipe(
   Effect.as(0 as number),
