@@ -24,11 +24,14 @@ const INITIAL_CLOSURE_ENTRY_KEYS = [
 ] as const;
 
 /**
- * A product decision, not an accounting of history: the report's first load stays under 305 KB
+ * A product decision, not an accounting of history: the report's first load stays under 315 KB
  * gzipped. Raising it is a deliberate choice about what the app costs to open, and the reason
- * belongs in the commit that raises it.
+ * belongs in the commit that raises it. Raised from 305 KB with the Work cockpit: the shared
+ * closure now carries five more collection sources in the catalogue, three more RPC routers in the
+ * client path map, two more Query families and the chunks Rollup re-split around them; the /work
+ * route node itself stays out of this closure.
  */
-const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
+const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
 
 /**
  * The last reviewed production measurement, and the tolerance around it. The ceiling alone cannot catch
@@ -38,8 +41,9 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// Main at 8f7ac54a: harness provider marks and the header collection status; CI run 39264507656.
-const RECORDED_GZIP_CLOSURE_BYTES = 301_473;
+// feat/work-resume-cockpit at a7fd4905: Work cockpit sources, routers and Query families; local
+// production build on Bun 1.3.13 (CI run 39735055775 measured 312 363 B).
+const RECORDED_GZIP_CLOSURE_BYTES = 312_372;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
