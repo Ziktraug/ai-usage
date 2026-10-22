@@ -231,6 +231,7 @@ export const workRootSchema = strictObject({
 
 export const workAttentionCoverageSchema = strictObject({
   checkouts: strictObject({ failed: countSchema, lastRunAt: nullable(instantSchema), observed: countSchema }),
+  codexSessions: strictObject({ campaignsInWindow: countSchema, campaignsRead: countSchema }),
   desktopSessions: strictObject({
     collectedAt: nullable(instantSchema),
     filesParsed: countSchema,

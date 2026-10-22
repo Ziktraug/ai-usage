@@ -138,8 +138,18 @@ describe('Work attention for a harness that declares no wait (ADR 0059)', () => 
     expect(workUndeclaredSituation({ ...codex, attention: 'none' })).toBe('activity only');
   });
   test('the coverage line says what Codex contributed: sessions shown, or why none were', () => {
-    expect(workCodexCoverage(dataset)).toBe('1 session shown, active in the last 30 days (served report)');
-    const withoutCodex = { ...dataset, roots: roots.filter((root) => root.key.harness !== 'codex') };
+    expect(workCodexCoverage(dataset)).toBe('1 of 1 Codex campaign shown, active in the last 30 days (served report)');
+    // The Codex budget and the page limit both leave campaigns out: the line counts them.
+    expect(
+      workCodexCoverage({
+        ...dataset,
+        coverage: { ...dataset.coverage, codexSessions: { campaignsInWindow: 204, campaignsRead: 20 } },
+      }),
+    ).toBe('1 of 204 Codex campaigns shown, active in the last 30 days (served report)');
+    const withoutCodex = {
+      coverage: { ...dataset.coverage, codexSessions: { campaignsInWindow: 0, campaignsRead: 0 } },
+      roots: roots.filter((root) => root.key.harness !== 'codex'),
+    };
     expect(workCodexCoverage(withoutCodex)).toBe('no session active in the last 30 days');
     expect(
       workCodexCoverage({

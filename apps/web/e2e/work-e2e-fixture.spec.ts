@@ -45,7 +45,7 @@ const CODEX_ROOT_TITLE = 'Fixture Codex: refactor the collector';
 const CODEX_WORKTREE_TITLE = 'Fixture Codex: checkout 3 follow-up';
 const CODEX_ORPHAN_TITLE = 'Fixture Codex: orphaned delegate';
 const CODEX_COVERAGE =
-  'Codex · sessions only, no declared waits: 3 sessions shown, active in the last 30 days (served report)';
+  'Codex · sessions only, no declared waits: 3 of 3 Codex campaigns shown, active in the last 30 days (served report)';
 const CODEX_CHIP_PATTERN = /^Codex\s*3$/;
 const BLOCKED_ROOT_ID = 'local_fixture-blocked-root';
 const BLOCKED_TITLE = 'Fixture: investigate checkout 3';

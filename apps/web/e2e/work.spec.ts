@@ -55,7 +55,7 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
   await expect(main.locator('[data-work-coverage]')).toContainText('39 of 41 files parsed');
   await expect(main.locator('[data-work-coverage] [data-work-harness-coverage="codex"]')).toHaveText(
-    'Codex · sessions only, no declared waits: 1 session shown, active in the last 30 days (served report)',
+    'Codex · sessions only, no declared waits: 1 of 1 Codex campaign shown, active in the last 30 days (served report)',
   );
   for (const name of [
     'Needs you',

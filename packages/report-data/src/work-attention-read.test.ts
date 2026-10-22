@@ -407,6 +407,7 @@ describe('queryWorkAttention', () => {
     expect(byId.has('local_f')).toBe(false);
     expect(dataset.coverage).toEqual({
       checkouts: { failed: 0, lastRunAt: null, observed: 0 },
+      codexSessions: { campaignsInWindow: 0, campaignsRead: 0 },
       desktopSessions: {
         collectedAt: canonicalInstantFromDate(new Date('2026-10-20T11:59:00.000Z')),
         filesParsed: 9,

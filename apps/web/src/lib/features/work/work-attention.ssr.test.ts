@@ -137,7 +137,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     const body = withoutMarkers(html(EMPTY_WORK_ATTENTION_SEARCH));
     expect(body).toContain('Claude Desktop registry · declared waits: collected');
     expect(body).toContain(
-      'Codex · sessions only, no declared waits: 1 session shown, active in the last 30 days (served report)',
+      'Codex · sessions only, no declared waits: 1 of 1 Codex campaign shown, active in the last 30 days (served report)',
     );
     expect(body).toContain('Other harnesses: not read here');
     expect(body).not.toContain('Declarations: Claude Desktop only');

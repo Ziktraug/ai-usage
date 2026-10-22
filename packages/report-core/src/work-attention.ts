@@ -22,6 +22,12 @@ import { normalizeIsoTimestamp } from './provider-status';
  */
 export const WORK_ATTENTION_BOUNDS = {
   maxChildrenTitles: 5,
+  /**
+   * Codex roots per read (ADR 0059), the most recently active first: their own budget, so the
+   * sessions of a harness that declares no wait can neither crowd Desktop roots out of a page nor
+   * inflate the payload. The campaigns beyond it are counted in `coverage.codexSessions`.
+   */
+  maxCodexRoots: 20,
   /** Distinct turn declarations kept per desktop session (ADR 0056); the newest survive. */
   maxDeclarationsPerSession: 8,
   maxDetailText: 512,
@@ -1155,6 +1161,14 @@ export interface WorkAttentionCoverage {
     readonly failed: number;
     readonly lastRunAt: CanonicalInstant | null;
     readonly observed: number;
+  };
+  /**
+   * The served Codex campaigns active in the window (ADR 0059), and how many the read took: at most
+   * `WORK_ATTENTION_BOUNDS.maxCodexRoots`, the most recent first. Both are 0 without a served revision.
+   */
+  readonly codexSessions: {
+    readonly campaignsInWindow: number;
+    readonly campaignsRead: number;
   };
   readonly desktopSessions: {
     readonly collectedAt: CanonicalInstant | null;

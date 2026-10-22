@@ -526,8 +526,10 @@ export const workRootNextAction = (root: WorkRoot): string | null => {
 export const workCodexCoverage = (dataset: Pick<WorkAttentionDataset, 'coverage' | 'roots'>): string => {
   const shown = dataset.roots.filter((root) => root.key.harness === 'codex').length;
   const { sinceDays } = dataset.coverage.window;
+  // Codex rows have their own budget (ADR 0059) and the page limit cuts them first: say how many.
+  const inWindow = Math.max(dataset.coverage.codexSessions.campaignsInWindow, shown);
   if (shown > 0) {
-    return `${shown} ${shown === 1 ? 'session' : 'sessions'} shown, active in the last ${sinceDays} days (served report)`;
+    return `${shown} of ${inWindow} Codex ${inWindow === 1 ? 'campaign' : 'campaigns'} shown, active in the last ${sinceDays} days (served report)`;
   }
   return dataset.coverage.sessions.revision === null
     ? 'not read: no served report revision yet'

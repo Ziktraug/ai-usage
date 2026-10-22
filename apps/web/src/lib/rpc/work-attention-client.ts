@@ -530,6 +530,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     !(
       isRecord(value) &&
       isRecord(value.checkouts) &&
+      isRecord(value.codexSessions) &&
       isRecord(value.desktopSessions) &&
       isRecord(value.jira) &&
       isRecord(value.pullRequests) &&
@@ -550,6 +551,10 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     failed: count(value.checkouts.failed),
     lastRunAt: optionalInstant(value.checkouts.lastRunAt),
     observed: count(value.checkouts.observed),
+  };
+  const codexSessions = {
+    campaignsInWindow: count(value.codexSessions.campaignsInWindow),
+    campaignsRead: count(value.codexSessions.campaignsRead),
   };
   const desktopSessions = {
     collectedAt: optionalInstant(value.desktopSessions.collectedAt),
@@ -579,6 +584,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
   if (
     !(
       defined(Object.values(checkouts)) &&
+      defined(Object.values(codexSessions)) &&
       defined(Object.values(desktopSessions)) &&
       defined(Object.values(jira)) &&
       defined(Object.values(pullRequests)) &&
@@ -590,6 +596,7 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
   }
   return {
     checkouts: checkouts as WorkAttentionCoverage['checkouts'],
+    codexSessions: codexSessions as WorkAttentionCoverage['codexSessions'],
     desktopSessions: desktopSessions as WorkAttentionCoverage['desktopSessions'],
     jira: jira as WorkAttentionCoverage['jira'],
     pullRequests: pullRequests as WorkAttentionCoverage['pullRequests'],

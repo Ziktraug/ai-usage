@@ -1225,12 +1225,14 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
   const jiraKeyActivity = indexJiraKeyActivity(allGroups);
   // Harness families were read for the window already; they share checkouts with Desktop roots.
   const harness = input.harnessSessions;
-  const harnessFamilies =
+  const harnessInScope =
     harness === undefined
       ? []
       : harness.families.filter(
           (family) => input.machineId === undefined || family.members[0]?.machineId === input.machineId,
         );
+  // Their own budget, the most recent first (the store's order): never more than `maxCodexRoots`.
+  const harnessFamilies = harnessInScope.slice(0, WORK_ATTENTION_BOUNDS.maxCodexRoots);
   const fullIndex = indexExternalFacts(input.externalFacts, allGroups, jiraKeyActivity, harnessFamilies);
   const groups = allGroups.filter(
     (group) =>
@@ -1258,11 +1260,20 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
   // The join covers the Desktop roots; a harness root is a served Session by construction.
   const joined = desktopRoots.filter((root) => root.session !== null).length;
   // Families of the window beyond the harness read bound are counted with the roots, never shown.
-  const harnessUnread = harness === undefined ? 0 : Math.max(harness.familiesInWindow - harness.families.length, 0);
+  const harnessUnread =
+    harness === undefined
+      ? 0
+      : Math.max(harness.familiesInWindow - harness.families.length, 0) +
+        harnessInScope.length -
+        harnessFamilies.length;
   const readTruncated = input.readTruncated ?? false;
   return {
     coverage: {
       ...factCoverage(input.externalFacts.runStates, input.machineId),
+      codexSessions: {
+        campaignsInWindow: harnessFamilies.length + harnessUnread,
+        campaignsRead: harnessFamilies.length,
+      },
       desktopSessions: desktopCoverage(input.collectionStates, input.refusedRows ?? 0, readTruncated, {
         read: observations.length,
         stored: Math.max(input.sessionsStored ?? observations.length, observations.length),
@@ -1488,8 +1499,8 @@ export const queryWorkAttention = (
       activeSince: now.getTime() - sinceDays * DAY_MS,
       dbPath: input.dbPath,
       harnessKey: WORK_UNDECLARED_HARNESS,
-      // One page of roots at most: a family beyond it could never rank into the page anyway.
-      limit: input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT,
+      // The Codex budget at most (ADR 0059): a family beyond it is counted, never shown.
+      limit: Math.min(input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT, WORK_ATTENTION_BOUNDS.maxCodexRoots),
       ...machineFilter,
     });
     const harnessSessions: WorkHarnessSessions = { ...harnessRead, harness: WORK_UNDECLARED_HARNESS };

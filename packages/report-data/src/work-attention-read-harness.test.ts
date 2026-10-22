@@ -10,6 +10,7 @@ import {
   type CheckoutStatusObservation,
   type ClaudeDesktopSessionObservation,
   parseClaudeDesktopSessionObservation,
+  WORK_ATTENTION_BOUNDS,
   type WorkRoot,
 } from '@ai-usage/report-core/work-attention';
 import {
@@ -447,6 +448,33 @@ describe('Codex sessions on the Work read', () => {
 
     expect(dataset.roots.map((root) => root.key.harness)).toEqual(['claude', 'claude', 'codex']);
     expect(dataset.totalRoots).toBe(4);
+    expect(dataset.truncated).toBe(true);
+  });
+
+  test('Codex roots have their own budget: the most recent first, never crowding Desktop roots, counted', async () => {
+    const dbPath = await createStore();
+    const families = WORK_ATTENTION_BOUNDS.maxCodexRoots + 10;
+    await publishCodexRows(
+      dbPath,
+      Array.from({ length: families }, (_value, index) => ({
+        activeHoursAgo: 1 + index,
+        id: `codex-${String(index).padStart(3, '0')}`,
+        name: `Codex family ${String(index)}`,
+        origin: 'human' as const,
+      })),
+    );
+
+    const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, limit: 100, machineId: MACHINE, now: NOW }));
+
+    const codex = dataset.roots.filter((root) => root.key.harness === 'codex');
+    expect(codex).toHaveLength(WORK_ATTENTION_BOUNDS.maxCodexRoots);
+    expect(codex[0]?.key.sourceSessionId).toBe('codex-000');
+    expect(dataset.roots.slice(0, 2).map((root) => root.key.harness)).toEqual(['claude', 'claude']);
+    expect(dataset.coverage.codexSessions).toEqual({
+      campaignsInWindow: families,
+      campaignsRead: WORK_ATTENTION_BOUNDS.maxCodexRoots,
+    });
+    expect(dataset.totalRoots).toBe(2 + families);
     expect(dataset.truncated).toBe(true);
   });
 

@@ -1198,6 +1198,10 @@ export const syntheticWorkAttentionDataset = (): WorkAttentionDataset => {
   return {
     coverage: {
       checkouts: { failed: 0, lastRunAt: OBSERVED_AT, observed: 6 },
+      codexSessions: {
+        campaignsInWindow: roots.filter((entry) => entry.key.harness === 'codex').length,
+        campaignsRead: roots.filter((entry) => entry.key.harness === 'codex').length,
+      },
       desktopSessions: {
         collectedAt: COLLECTED_AT,
         filesParsed: 39,

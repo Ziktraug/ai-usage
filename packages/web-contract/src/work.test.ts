@@ -93,6 +93,7 @@ const root = (overrides: Partial<WorkRootWire> = {}): WorkRootWire => ({
 const dataset = (roots: readonly WorkRootWire[] = [root()]): WorkAttentionDatasetWire => ({
   coverage: {
     checkouts: { failed: 0, lastRunAt: null, observed: 0 },
+    codexSessions: { campaignsInWindow: 0, campaignsRead: 0 },
     desktopSessions: {
       collectedAt: AT,
       filesParsed: 3,
@@ -133,6 +134,22 @@ describe('Work contract', () => {
     expect(
       safeParse(workAttentionOutputSchema, { error: { message: '', tag: 'Unavailable' }, ok: false }).success,
     ).toBe(false);
+  });
+
+  test('carries a Codex root whose attention is not observable and the Codex campaign counts (ADR 0059)', () => {
+    const codex = root({ attention: 'not-observable', declared: null, desktopSessionId: null });
+    const base = dataset([codex]);
+    const ok = {
+      data: { ...base, coverage: { ...base.coverage, codexSessions: { campaignsInWindow: 204, campaignsRead: 20 } } },
+      ok: true as const,
+    };
+    expect(parseWorkAttentionOutput(ok)).toEqual(ok);
+    const unknownKind = { data: dataset([{ ...codex, attention: 'unknown' as never }]), ok: true as const };
+    expect(safeParse(workAttentionOutputSchema, unknownKind).success).toBe(false);
+    const { codexSessions: _codexSessions, ...withoutCodex } = base.coverage;
+    expect(safeParse(workAttentionOutputSchema, { data: { ...base, coverage: withoutCodex }, ok: true }).success).toBe(
+      false,
+    );
   });
 
   test('refuses unknown keys, non-canonical instants and out-of-bound collections', () => {

@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { WORK_ATTENTION_BOUNDS } from '@ai-usage/report-core/work-attention';
 import { parseWorkAttentionOutput } from '@ai-usage/web-contract/work';
 import AxeBuilder from '@axe-core/playwright';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
@@ -29,9 +30,9 @@ import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transpo
  *
  * The same HOME seeds 205 Codex rollouts (the session-scroll fixture: a root with a delegated child
  * on 2026-07-02 and 203 sessions in `/work/fixture-pagination` the morning of the pinned day).
- * Codex declares no turn status (ADR 0059): the read takes one page of its most recent served
- * families, ranks them after every Desktop root, and the page limit (100) keeps 71 of them, each
- * with its wait unknown; the others are counted, never shown as nothing pending.
+ * Codex declares no turn status (ADR 0059): the read takes the Codex budget of its most recent
+ * served families (20), ranks them after every Desktop root, each with its wait unknown; the other
+ * 184 are counted ("20 of 204 Codex campaigns shown"), never shown as nothing pending.
  */
 
 const CAPTURES_DIRECTORY_ENV = 'AI_USAGE_WORK_CAPTURES_DIR';
@@ -43,17 +44,18 @@ const DESKTOP_COLLECTION_TIMEOUT_MS = 60_000;
  */
 const DESKTOP_ROOTS_SHOWN = 29;
 const HIDDEN_ROOTS = 1;
-/** The page limit the Work view asks for; the Codex rows fill what the Desktop roots leave of it. */
+/** The page limit the Work view asks for; the Desktop roots and the Codex budget both fit in it. */
 const PAGE_LIMIT = 100;
-const ROOTS_SHOWN = PAGE_LIMIT;
-const CODEX_ROOTS_SHOWN = PAGE_LIMIT - DESKTOP_ROOTS_SHOWN;
+/** The Codex budget (ADR 0059): the most recent campaigns only, whatever the page leaves free. */
+const CODEX_ROOTS_SHOWN = WORK_ATTENTION_BOUNDS.maxCodexRoots;
+const ROOTS_SHOWN = DESKTOP_ROOTS_SHOWN + CODEX_ROOTS_SHOWN;
 /** 203 standalone Codex sessions and the root family, all active in the window. */
 const CODEX_FAMILIES = 204;
 const DESKTOP_ROOTS = DESKTOP_ROOTS_SHOWN + HIDDEN_ROOTS;
 const BEYOND_RANKING = DESKTOP_ROOTS + CODEX_FAMILIES - ROOTS_SHOWN - HIDDEN_ROOTS;
 const CODEX_TITLE = 'Codex · no declared wait read';
 const CODEX_PROJECT_LABEL = 'fixture-pagination';
-const CODEX_COVERAGE = `Codex · sessions only, no declared waits: ${CODEX_ROOTS_SHOWN} sessions shown, active in the last 30 days (served report)`;
+const CODEX_COVERAGE = `Codex · sessions only, no declared waits: ${CODEX_ROOTS_SHOWN} of ${CODEX_FAMILIES} Codex campaigns shown, active in the last 30 days (served report)`;
 const CODEX_CHIP_PATTERN = new RegExp(`^Codex\\s*${CODEX_ROOTS_SHOWN}$`);
 const MINIMUM_ROOTS = 20;
 /**
