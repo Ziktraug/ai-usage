@@ -6,11 +6,15 @@
   import {
     formatExactInstant,
     formatRelativeAge,
+    WORK_STANDING_LABELS,
     workDeclaredStatusLabel,
     workHarnessLabel,
     workRootFactChips,
     workRootId,
+    workRootLastDecision,
+    workRootNextAction,
     workRootRelevantInstant,
+    workRootStanding,
   } from './work-attention-model';
   import {
     workChip,
@@ -19,10 +23,15 @@
     workChipWarn,
     workMarker,
     workQuestion,
+    workQuestionSettled,
+    workQuestionToReconsider,
     workRowButton,
+    workRowDecision,
     workRowMeta,
+    workRowNext,
     workRowTitle,
     workRowTop,
+    workStandingMarker,
   } from './work-styles';
 
   let {
@@ -42,6 +51,17 @@
   const id = $derived(workRootId(root));
   const instant = $derived(workRootRelevantInstant(root));
   const chips = $derived(workRootFactChips(root));
+  const standing = $derived(workRootStanding(root));
+  const decision = $derived(workRootLastDecision(root));
+  const next = $derived(workRootNextAction(root));
+  const settled = $derived(standing === 'answered' || standing === 'handled' || standing === 'archived');
+  // One complete class per standing: layered atoms would resolve by stylesheet order, not by intent.
+  const questionClass = $derived.by(() => {
+    if (standing === 'reconsider') {
+      return workQuestionToReconsider;
+    }
+    return settled ? workQuestionSettled : workQuestion;
+  });
   const place = $derived(
     [
       root.project.label,
@@ -54,6 +74,9 @@
   const situation = $derived(
     root.declared ? workDeclaredStatusLabel(root.declared.status) : undeclared(root.key.harness),
   );
+  const request = $derived(
+    root.declared?.needsAction ?? (root.declared?.status === 'review_ready' ? 'Review requested' : null),
+  );
 </script>
 
 <li>
@@ -61,6 +84,7 @@
     aria-current={selected ? 'true' : undefined}
     class={workRowButton}
     data-work-root={id}
+    data-work-standing={standing}
     onclick={() => onSelect(id)}
     {tabindex}
     type="button"
@@ -68,10 +92,16 @@
     <span class={workRowTop}>
       <HarnessBadge name={workHarnessLabel(root.key.harness)} />
       <span class={workRowTitle}>{root.title}</span>
+      {#if standing === 'reconsider' || settled}
+        <span class={workStandingMarker} data-work-standing-marker>{WORK_STANDING_LABELS[standing]}</span>
+      {/if}
       {#if root.archived}
         <span class={workMarker}>archived</span>
       {/if}
     </span>
+    {#if request}
+      <span class={questionClass}>{request}</span>
+    {/if}
     <span class={workRowMeta}>
       <span>{place}</span>
       <span aria-hidden="true">·</span>
@@ -83,8 +113,19 @@
         ></span
       >
     </span>
-    {#if root.declared?.needsAction}
-      <span class={workQuestion}>{root.declared.needsAction}</span>
+    {#if decision}
+      <span class={workRowDecision} data-work-decision
+        >{decision.text}
+        {#if decision.instant}
+          ·
+          <time datetime={decision.instant} title={formatExactInstant(decision.instant)}
+            >{decision.instantLabel} {formatRelativeAge(decision.instant, reference)}</time
+          >
+        {/if}</span
+      >
+    {/if}
+    {#if next}
+      <span class={workRowNext} data-work-next>Next: {next}</span>
     {/if}
     {#if chips.length > 0}
       <span class={workChipRow}>

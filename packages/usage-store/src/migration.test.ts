@@ -46,6 +46,7 @@ const durableTables = [
   'executor_observations',
   'claude_desktop_collection_state',
   'claude_desktop_sessions',
+  'claude_desktop_turn_declarations',
   'jira_issue_observations',
   'provider_quota_observations',
   'pull_request_observations',
@@ -686,6 +687,7 @@ describe('usage-store forward migration', () => {
     const metadataBefore = readMetadata(beforeMigration);
     beforeMigration.exec('DROP TABLE claude_desktop_sessions;');
     beforeMigration.exec('DROP TABLE claude_desktop_collection_state;');
+    beforeMigration.exec('DROP TABLE claude_desktop_turn_declarations;');
     expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
     beforeMigration.close(true);
 
@@ -757,6 +759,71 @@ describe('usage-store forward migration', () => {
     const read = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath, machineId: machine.id }));
     expect(read.skipped).toBe(0);
     expect(read.observations.map(({ desktopSessionId }) => desktopSessionId)).toEqual(['local_legacy']);
+  });
+
+  test('adds the declaration history and the message time to a Desktop family written before them, without bumping user_version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-desktop-history-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    await Effect.runPromise(
+      importClaudeDesktopSessions({
+        completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [
+          {
+            accountDirectory: 'account',
+            archived: false,
+            cliSessionId: 'cli-before-history',
+            createdAt: '2026-10-01T08:00:00.000Z',
+            cwd: '/home/fixture/work/project',
+            desktopSessionId: 'local_before_history',
+            fileModifiedAt: '2026-10-01T09:00:00.000Z',
+            filePath: '.config/Claude/claude-code-sessions/account/org/local_before_history.json',
+            format: 'claude-desktop-session-v1',
+            lastActivityAt: '2026-10-01T09:00:00.000Z',
+            machineId: 'machine-a',
+            observedAt: '2026-10-01T09:01:00.000Z',
+            organizationDirectory: 'org',
+            title: 'Before the history',
+            titleSource: 'auto',
+            turnSummary: {
+              detail: 'Stopped.',
+              needsAction: 'Which?',
+              status: 'blocked',
+              summarizesUuid: 'uuid-before',
+            },
+          },
+        ],
+      }),
+    );
+
+    // The family as ADR 0050 created it: no history table, no message-time column.
+    const before = new Database(dbPath, { create: false, readwrite: true });
+    before.exec('DROP TABLE claude_desktop_turn_declarations;');
+    before.exec('ALTER TABLE claude_desktop_sessions DROP COLUMN latest_user_frame_at;');
+    const countsBefore = before.query('SELECT COUNT(*) AS count FROM claude_desktop_sessions').get() as {
+      count: number;
+    };
+    before.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const columns = migrated.query('PRAGMA table_info(claude_desktop_sessions)').all() as { name: string }[];
+    expect(columns.map(({ name }) => name)).toContain('latest_user_frame_at');
+    const history = migrated
+      .query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_turn_declarations'")
+      .get();
+    expect(history).not.toBeNull();
+    expect(migrated.query('SELECT COUNT(*) AS count FROM claude_desktop_sessions').get()).toEqual(countsBefore);
+    migrated.close(true);
+    // The older row reads as "no message recorded"; the migration advances no generation.
+    const read = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath }));
+    expect(read.observations.map((observation) => observation.latestUserFrameAt)).toEqual([null]);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
   });
 
   test('migrates a populated schema-3 store to schema 4 by adding the replication outbox and refuses a newer schema', async () => {

@@ -1,9 +1,12 @@
 import {
   type ClaudeDesktopTurnStatus,
   WORK_ATTENTION_KINDS,
+  type WorkAttentionDataset,
   type WorkAttentionKind,
   type WorkFact,
   type WorkFactSource,
+  type WorkInterpretation,
+  type WorkInterpretationKind,
   type WorkRoot,
   workSessionKeyString,
 } from '@ai-usage/report-core/work-attention';
@@ -121,6 +124,12 @@ const searchableText = (root: WorkRoot): string =>
     root.project.worktreeName ?? '',
     root.declared?.needsAction ?? '',
     root.declared?.detail ?? '',
+    // Earlier questions of the root: a question answered in the harness is still findable by its words.
+    ...root.facts.flatMap((fact) =>
+      fact.kind === 'declared-turn' && fact.desktopSessionId === root.desktopSessionId && fact.needsAction !== null
+        ? [fact.needsAction]
+        : [],
+    ),
     ...pullRequestFacts(root).flatMap((fact) => [`#${fact.number}`, fact.repository]),
     ...jiraFacts(root).map((fact) => fact.key),
   ]
@@ -182,7 +191,7 @@ export const WORK_ATTENTION_SECTIONS: readonly WorkAttentionSection[] = [
   {
     collapseBeyond: null,
     kind: 'human-request',
-    note: 'Questions and review requests the sessions declared. A root marked “possibly answered” has a later pull request that may be the answer; it ranks last and stays yours until you confirm.',
+    note: 'Questions and review requests nothing recorded since has answered. Older declarations to reconsider follow: something later may have answered them, without proof.',
     title: 'Needs you',
   },
   {
@@ -330,6 +339,196 @@ const HARNESS_LABELS: Readonly<Record<string, string>> = {
 
 export const workHarnessLabel = (harness: string): string => HARNESS_LABELS[harness] ?? harness;
 
+// ---------------------------------------------------------------------------------------------
+// Standing of a root's request (ADR 0056): read from the interpretations, never recomputed here
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Where a root's request stands. `current` is a confirmed block nothing later touches;
+ * `reconsider` an older declaration something later may have answered without proof; `answered`,
+ * `handled` and `archived` name a dated native record that it no longer waits; `none` asks nothing.
+ */
+export type WorkRootStanding = 'answered' | 'archived' | 'current' | 'handled' | 'none' | 'reconsider';
+
+const CLOSING_STANDINGS: Partial<Record<WorkInterpretationKind, WorkRootStanding>> = {
+  'request-answered': 'answered',
+  'request-archived': 'archived',
+  'request-handled-elsewhere': 'handled',
+};
+
+export const workRootStanding = (root: WorkRoot): WorkRootStanding => {
+  for (const entry of root.interpretations) {
+    const standing = CLOSING_STANDINGS[entry.kind];
+    if (standing !== undefined) {
+      return standing;
+    }
+  }
+  if (root.attention === 'human-request') {
+    return root.reconsidered ? 'reconsider' : 'current';
+  }
+  return 'none';
+};
+
+export const WORK_STANDING_LABELS: Readonly<Record<WorkRootStanding, string>> = {
+  answered: 'Answered in Claude Desktop',
+  archived: 'Archived in Claude Desktop',
+  current: 'Current block',
+  handled: 'Handled in a linked session',
+  none: 'Nothing asked',
+  reconsider: 'Older declaration to reconsider',
+};
+
+const factById = (root: WorkRoot, id: string | undefined): WorkFact | undefined =>
+  id === undefined ? undefined : root.facts.find((fact) => fact.id === id);
+
+const declaredAtOf = (fact: WorkFact | undefined): string | null =>
+  fact?.kind === 'declared-turn' ? fact.declaredAt : null;
+
+const quoted = (fact: WorkFact | undefined): string =>
+  fact?.kind === 'declared-turn' && fact.needsAction !== null ? `“${fact.needsAction}”` : 'the review request';
+
+/** The latest decision recorded about the root's requests, for the row: what was settled, dated by a fact. */
+export interface WorkRootDecision {
+  readonly instant: string | null;
+  readonly instantLabel: string;
+  readonly kind: WorkInterpretationKind;
+  readonly text: string;
+}
+
+const decisionOf = (root: WorkRoot, entry: WorkInterpretation): WorkRootDecision | null => {
+  switch (entry.kind) {
+    case 'request-answered':
+      // The message's own time is in the detail; the row dates the question it answered.
+      return {
+        instant: root.declared?.at ?? null,
+        instantLabel: 'asked',
+        kind: entry.kind,
+        text: 'You answered in Claude Desktop',
+      };
+    case 'request-handled-elsewhere':
+      return {
+        instant: declaredAtOf(factById(root, entry.evidence.at(-1))),
+        instantLabel: 'completed',
+        kind: entry.kind,
+        text: 'Handled in a session started from it',
+      };
+    case 'request-archived':
+      return {
+        instant: root.age.lastObservedAt,
+        instantLabel: 'observed',
+        kind: entry.kind,
+        text: 'Archived in Claude Desktop',
+      };
+    case 'earlier-request-answered': {
+      const earlier = factById(root, entry.evidence[0]);
+      return {
+        instant: declaredAtOf(earlier),
+        instantLabel: 'asked',
+        kind: entry.kind,
+        text: `Earlier ${quoted(earlier)} answered in Claude Desktop`,
+      };
+    }
+    case 'earlier-request-superseded': {
+      const earlier = factById(root, entry.evidence[0]);
+      return {
+        instant: declaredAtOf(earlier),
+        instantLabel: 'asked',
+        kind: entry.kind,
+        text: `Earlier ${quoted(earlier)} replaced by a later declaration`,
+      };
+    }
+    default:
+      return null;
+  }
+};
+
+const DECISION_ORDER: readonly WorkInterpretationKind[] = [
+  'request-answered',
+  'request-handled-elsewhere',
+  'request-archived',
+  'earlier-request-answered',
+  'earlier-request-superseded',
+];
+
+export const workRootLastDecision = (root: WorkRoot): WorkRootDecision | null => {
+  for (const kind of DECISION_ORDER) {
+    const entry = root.interpretations.find((candidate) => candidate.kind === kind);
+    if (entry !== undefined) {
+      return decisionOf(root, entry);
+    }
+  }
+  return null;
+};
+
+/** Open proposal facts an interpretation says are no longer pending (superseded or expired). */
+export const workRootPastProposalIds = (root: WorkRoot): ReadonlySet<string> =>
+  new Set(
+    root.interpretations
+      .filter(({ kind }) => kind === 'proposal-superseded' || kind === 'proposal-expired')
+      .flatMap(({ evidence }) => evidence),
+  );
+
+/** What the person can do next, in one line; `null` when nothing is asked of them. */
+export const workRootNextAction = (root: WorkRoot): string | null => {
+  switch (workRootStanding(root)) {
+    case 'current':
+      if (root.declared?.status === 'review_ready') {
+        return 'Review the change, then tell the session in Claude Desktop.';
+      }
+      return root.declared?.needsAction
+        ? 'Answer in Claude Desktop.'
+        : 'Read the new Jira reply, then resume the session.';
+    case 'reconsider':
+      return 'Check what followed; answer or archive the session in Claude Desktop to settle it.';
+    case 'answered':
+      return 'Nothing asked of you since your message.';
+    case 'handled':
+      return 'Nothing asked of you; the linked session’s outcome is in the detail.';
+    default:
+      break;
+  }
+  if (root.attention === 'external-wait') {
+    return 'Waiting on a pull request review on GitHub.';
+  }
+  if (root.attention === 'optional-lead') {
+    return 'Optional: start or dismiss the proposal in Claude Desktop.';
+  }
+  return null;
+};
+
+/**
+ * What a search or a filter covered, said plainly: the ranking is a selection of the read, so a
+ * filter over it is never presented as a search of everything collected.
+ */
+export const workSearchCoverage = (
+  dataset: Pick<WorkAttentionDataset, 'coverage' | 'roots' | 'totalRoots'>,
+  matched: number,
+  filtered: boolean,
+): string => {
+  const shown = dataset.roots.length;
+  const windowed = dataset.coverage.window.excludedRoots;
+  const beyondRanking = Math.max(dataset.totalRoots - shown - windowed, 0);
+  const left: string[] = [];
+  if (windowed > 0) {
+    left.push(
+      `${windowed} older ${windowed === 1 ? 'root' : 'roots'} without a pending declaration (${dataset.coverage.window.sinceDays}-day window)`,
+    );
+  }
+  if (beyondRanking > 0) {
+    left.push(`${beyondRanking} beyond the ranking limit`);
+  }
+  if (dataset.coverage.desktopSessions.truncated) {
+    left.push('older sessions beyond the read bound');
+  }
+  const head = filtered
+    ? `${matched} of ${shown} roots match. Searched the ${shown} roots in this ranking`
+    : `${matched} of ${shown} roots shown`;
+  if (left.length === 0) {
+    return `${head}${filtered ? '; nothing else was read.' : '.'}`;
+  }
+  return `${head}; not ${filtered ? 'searched' : 'shown'}: ${left.join(', ')}.`;
+};
+
 export type WorkFactChipTone = 'neutral' | 'ok' | 'warn';
 
 export interface WorkFactChip {
@@ -436,13 +635,25 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
   const chips: WorkFactChip[] = [];
   if (root.reconsidered) {
     const number = reconsideredPullRequestNumber(root);
-    chips.push({
-      id: `${workRootId(root)}:reconsidered`,
-      instant: null,
-      instantLabel: null,
-      label: number === null ? 'possibly answered' : `possibly answered · PR #${number}`,
-      tone: 'neutral',
-    });
+    const continued = root.interpretations.some(({ kind }) => kind === 'request-continued-elsewhere');
+    if (number !== null || !continued) {
+      chips.push({
+        id: `${workRootId(root)}:reconsidered`,
+        instant: null,
+        instantLabel: null,
+        label: number === null ? 'possibly answered' : `possibly answered · PR #${number}`,
+        tone: 'neutral',
+      });
+    }
+    if (continued) {
+      chips.push({
+        id: `${workRootId(root)}:continued`,
+        instant: null,
+        instantLabel: null,
+        label: 'work continued in a linked session',
+        tone: 'neutral',
+      });
+    }
   }
   if (root.declared?.status === 'blocked' && (root.declared.needsAction?.trim() ?? '') === '') {
     // Blocked without a relayable question: nothing to ask, but not nothing pending.
@@ -471,11 +682,12 @@ export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
   );
   if (proposals.length > 0) {
     const open = proposals.filter((fact) => fact.resolution === 'open').length;
+    const past = workRootPastProposalIds(root).size;
     chips.push({
       id: `${workRootId(root)}:proposals`,
       instant: null,
       instantLabel: null,
-      label: `proposals ${open} open / ${proposals.length - open} resolved`,
+      label: `proposals ${open - past} open / ${proposals.length - open} resolved${past > 0 ? ` / ${past} no longer pending` : ''}`,
       tone: 'neutral',
     });
   }
@@ -521,9 +733,15 @@ export const groupWorkFactsBySource = (facts: readonly WorkFact[]): readonly Wor
 };
 
 /** One line per fact for the detail panel; the provenance is rendered beside it, not inside it. */
-export const workFactSummary = (fact: WorkFact): string => {
+export const workFactSummary = (fact: WorkFact, root?: WorkRoot): string => {
   switch (fact.kind) {
     case 'declared-turn':
+      if (root !== undefined && fact.desktopSessionId !== root.desktopSessionId) {
+        return `Linked session declared ${workDeclaredStatusLabel(fact.status)}: ${fact.needsAction ?? fact.detail}`;
+      }
+      if (root !== undefined && fact.declaredAt !== root.declared?.at) {
+        return `Earlier declaration, ${workDeclaredStatusLabel(fact.status)}: ${fact.needsAction ?? fact.detail}`;
+      }
       return `Declared ${workDeclaredStatusLabel(fact.status)}: ${fact.detail}`;
     case 'declared-pull-request':
       return `Declared PR #${fact.number} ${fact.state.toLowerCase()} on ${fact.repository}${fact.branch ? ` (${fact.branch})` : ''}`;

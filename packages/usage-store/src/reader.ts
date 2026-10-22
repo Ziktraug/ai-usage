@@ -4,8 +4,13 @@ export type {
   QueryClaudeDesktopCollectionStateResult,
   QueryClaudeDesktopSessionsInput,
   QueryClaudeDesktopSessionsResult,
+  QueryClaudeDesktopTurnDeclarationsInput,
+  QueryClaudeDesktopTurnDeclarationsResult,
 } from './claude-desktop-session-store';
-export { MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
+export {
+  MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER,
+  MAX_CLAUDE_DESKTOP_SESSION_READ,
+} from './claude-desktop-session-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type {
@@ -72,6 +77,7 @@ export {
   MAX_USAGE_MACHINE_FLEET_MACHINES,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,

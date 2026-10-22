@@ -5,6 +5,7 @@ import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
   type CheckoutStatusObservation,
   type ClaudeDesktopSessionObservation,
+  type ClaudeDesktopTurnDeclaration,
   type JiraIssueObservation,
   type PullRequestObservation,
   WORK_ATTENTION_BOUNDS,
@@ -27,13 +28,22 @@ import {
   jiraIssueFact,
   pullRequestFact,
 } from '@ai-usage/report-core/work-attention-facts';
-import { interpretWorkRoot } from '@ai-usage/report-core/work-attention-interpretation';
+import {
+  interpretWorkRoot,
+  type WorkEarlierDeclaration,
+  type WorkLinkedSession,
+  type WorkRootHarnessInput,
+} from '@ai-usage/report-core/work-attention-interpretation';
+import { claudeDesktopDeclarationKey } from '@ai-usage/report-core/work-attention-native';
 import {
   type ClaudeDesktopCollectionState,
+  MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
   MAX_WORK_FACT_QUERY_LIMIT,
+  MAX_WORK_SESSION_JOIN_IDS,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -147,15 +157,219 @@ const provenanceOf = (observation: ClaudeDesktopSessionObservation): WorkFactPro
   source: 'claude-desktop',
 });
 
-const declarationOf = (observation: ClaudeDesktopSessionObservation): WorkRootDeclaration | null =>
-  observation.turnSummary === null
-    ? null
-    : {
-        at: observation.lastActivityAt,
-        detail: observation.turnSummary.detail,
-        needsAction: observation.turnSummary.needsAction,
-        status: observation.turnSummary.status,
-      };
+/** The declaration histories the store recorded (ADR 0056), per session. */
+type DeclarationHistory = ReadonlyMap<string, readonly ClaudeDesktopTurnDeclaration[]>;
+
+const NO_DECLARATIONS: readonly ClaudeDesktopTurnDeclaration[] = [];
+
+const sessionKey = (observation: Pick<ClaudeDesktopSessionObservation, 'desktopSessionId' | 'machineId'>): string =>
+  `${observation.machineId}\u0000${observation.desktopSessionId}`;
+
+const indexDeclarationHistory = (declarations: readonly ClaudeDesktopTurnDeclaration[]): DeclarationHistory => {
+  const index = new Map<string, ClaudeDesktopTurnDeclaration[]>();
+  for (const declaration of declarations) {
+    const key = sessionKey(declaration);
+    index.set(key, [...(index.get(key) ?? []), declaration]);
+  }
+  for (const rows of index.values()) {
+    rows.sort((left, right) => (left.declaredAt < right.declaredAt ? -1 : 1));
+  }
+  return index;
+};
+
+const historyOf = (history: DeclarationHistory, observation: ClaudeDesktopSessionObservation) =>
+  history.get(sessionKey(observation)) ?? NO_DECLARATIONS;
+
+/**
+ * The declaration a session makes now, dated by the first sweep that saw it when the store
+ * recorded its history; otherwise by the session's last activity, as a single sweep can only do.
+ */
+const declarationOf = (
+  observation: ClaudeDesktopSessionObservation,
+  history: DeclarationHistory,
+): WorkRootDeclaration | null => {
+  const summary = observation.turnSummary;
+  if (summary === null) {
+    return null;
+  }
+  const key = claudeDesktopDeclarationKey(summary);
+  const recorded = historyOf(history, observation).find(
+    (row) => row.declarationKey === key && row.supersededAt === null,
+  );
+  return {
+    at: recorded?.declaredAt ?? observation.lastActivityAt,
+    detail: summary.detail,
+    needsAction: summary.needsAction,
+    status: summary.status,
+  };
+};
+
+const isRequestDeclaration = (status: ClaudeDesktopTurnDeclaration['status'], needsAction: string | null): boolean =>
+  status === 'review_ready' || (status === 'blocked' && needsAction !== null && needsAction.trim().length > 0);
+
+/** Earlier declarations restated per root; the store keeps more, the view needs the latest few. */
+const MAX_EARLIER_DECLARATION_FACTS = 3;
+
+/**
+ * The root's requests a later turn replaced, as `declared-turn` facts (dated by the session, first
+ * observed by the sweep that recorded them) and the inputs the interpreter confronts them with.
+ */
+const earlierDeclarationsOf = (
+  root: ClaudeDesktopSessionObservation,
+  history: DeclarationHistory,
+): { readonly facts: WorkFact[]; readonly inputs: WorkEarlierDeclaration[] } => {
+  const facts: WorkFact[] = [];
+  const inputs: WorkEarlierDeclaration[] = [];
+  const replaced = historyOf(history, root)
+    .filter((row) => row.supersededAt !== null && isRequestDeclaration(row.status, row.needsAction))
+    .slice(-MAX_EARLIER_DECLARATION_FACTS);
+  for (const row of replaced) {
+    if (row.supersededAt === null) {
+      continue;
+    }
+    const factId = `${root.desktopSessionId}:declared-turn:${pathDigest(row.declarationKey)}`;
+    facts.push({
+      declaredAt: row.declaredAt,
+      desktopSessionId: root.desktopSessionId,
+      detail: row.detail,
+      id: factId,
+      kind: 'declared-turn',
+      needsAction: row.needsAction,
+      provenance: {
+        coverage: 'complete',
+        machineId: row.machineId,
+        observedAt: row.firstObservedAt,
+        source: 'claude-desktop',
+      },
+      status: row.status,
+    });
+    inputs.push({
+      declaredAt: row.declaredAt,
+      factId,
+      needsAction: row.needsAction,
+      repliedAt: row.repliedAt,
+      status: row.status,
+      supersededAt: row.supersededAt,
+    });
+  }
+  return { facts, inputs };
+};
+
+/** The current declaration of another session, as a fact a root may cite as evidence. */
+const linkedDeclarationFact = (
+  session: ClaudeDesktopSessionObservation,
+  declaration: WorkRootDeclaration,
+): WorkFact => ({
+  declaredAt: declaration.at,
+  desktopSessionId: session.desktopSessionId,
+  detail: declaration.detail,
+  id: `${session.desktopSessionId}:declared-turn`,
+  kind: 'declared-turn',
+  needsAction: declaration.needsAction,
+  provenance: provenanceOf(session),
+  status: declaration.status,
+});
+
+const noteFactId = (root: ClaudeDesktopSessionObservation, note: { readonly at: string; readonly sessionId: string }) =>
+  `${root.desktopSessionId}:note:${note.sessionId}:${note.at}`;
+
+/**
+ * The sessions the harness links to a root (ADR 0056), each once: started from it (`spawnedFrom`
+ * names the root, dated by the session's creation) or reporting to it (its latest side-session
+ * note in the root's file). A session linked both ways is read by the link dated after the
+ * request when there is one, the spawn first. Only the links dated after the request are
+ * returned, with their declarations as facts the root may cite: an older link says nothing about
+ * a later question.
+ */
+const linkedSessionsOf = (
+  group: RootGroup,
+  askedAt: CanonicalInstant | null,
+  sessions: ReadonlyMap<string, ClaudeDesktopSessionObservation>,
+  history: DeclarationHistory,
+): { readonly facts: WorkFact[]; readonly inputs: WorkLinkedSession[] } => {
+  const facts: WorkFact[] = [];
+  const inputs: WorkLinkedSession[] = [];
+  if (askedAt === null) {
+    return { facts, inputs };
+  }
+  const { root } = group;
+  const latestNotes = new Map<
+    string,
+    { readonly at: CanonicalInstant; readonly sessionId: string; readonly title: string }
+  >();
+  for (const note of root.sideSessionNotes) {
+    const known = latestNotes.get(note.sessionId);
+    if (known === undefined || note.at > known.at) {
+      latestNotes.set(note.sessionId, note);
+    }
+  }
+  const candidates = new Map<string, ClaudeDesktopSessionObservation | null>();
+  for (const child of group.children) {
+    if (child.spawnedFrom?.sessionId === root.desktopSessionId) {
+      candidates.set(child.desktopSessionId, child);
+    }
+  }
+  for (const sessionId of latestNotes.keys()) {
+    if (!candidates.has(sessionId)) {
+      candidates.set(
+        sessionId,
+        sessions.get(sessionKey({ desktopSessionId: sessionId, machineId: root.machineId })) ?? null,
+      );
+    }
+  }
+  const linkAfter = (
+    session: ClaudeDesktopSessionObservation | null,
+    note: { readonly at: CanonicalInstant; readonly sessionId: string } | undefined,
+    after: CanonicalInstant,
+  ): Pick<WorkLinkedSession, 'link' | 'linkedAt' | 'linkFactId'> | null => {
+    if (session !== null && session.spawnedFrom?.sessionId === root.desktopSessionId && session.createdAt > after) {
+      return { link: 'spawned-from', linkedAt: session.createdAt, linkFactId: null };
+    }
+    if (note !== undefined && note.at > after) {
+      return { link: 'side-session-note', linkedAt: note.at, linkFactId: noteFactId(root, note) };
+    }
+    return null;
+  };
+  for (const [sessionId, session] of candidates) {
+    const note = latestNotes.get(sessionId);
+    const link = linkAfter(session, note, askedAt);
+    if (link === null) {
+      continue;
+    }
+    const declared = session === null ? null : declarationOf(session, history);
+    if (session !== null && declared !== null) {
+      facts.push(linkedDeclarationFact(session, declared));
+    }
+    inputs.push({
+      ...link,
+      declaration:
+        session === null || declared === null
+          ? null
+          : { at: declared.at, factId: `${session.desktopSessionId}:declared-turn`, status: declared.status },
+      desktopSessionId: sessionId,
+      title: session?.title ?? note?.title ?? sessionId,
+    });
+  }
+  return { facts, inputs };
+};
+
+/** The root's harness context for the interpreter: what Claude Desktop recorded around its declaration. */
+const harnessContextOf = (
+  root: ClaudeDesktopSessionObservation,
+  earlier: readonly WorkEarlierDeclaration[],
+  linked: readonly WorkLinkedSession[],
+): WorkRootHarnessInput => ({
+  archived: root.archived,
+  earlierDeclarations: earlier,
+  latestUserFrameAt: root.latestUserFrameAt,
+  linkedSessions: linked,
+  openProposals: root.openSuggestions.map((suggestion) => ({
+    createdAt: suggestion.createdAt,
+    expiresAt: suggestion.expiresAt,
+    factId: `${root.desktopSessionId}:proposal:${suggestion.id}`,
+    title: suggestion.title,
+  })),
+});
 
 /** Children fold into counts and a few titles; they never become roots. */
 const childrenOf = (children: readonly ClaudeDesktopSessionObservation[]): WorkRootChildren => ({
@@ -401,13 +615,22 @@ const childDeclaredPullRequestFacts = (group: RootGroup): WorkFact[] => {
  * what the family declared about pull requests and what GitHub and the disk showed, then
  * proposals, branches, notes and spawn origin.
  */
-const factsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
+const factsOf = (
+  group: RootGroup,
+  index: ExternalFactIndex,
+  declared: WorkRootDeclaration | null,
+  harness: {
+    readonly citedNotes: ReadonlySet<string>;
+    readonly earlier: readonly WorkFact[];
+    readonly linked: readonly WorkFact[];
+  },
+): WorkFact[] => {
   const { root } = group;
   const provenance = provenanceOf(root);
   const facts: WorkFact[] = [];
   if (root.turnSummary !== null) {
     facts.push({
-      declaredAt: root.lastActivityAt,
+      declaredAt: declared?.at ?? root.lastActivityAt,
       desktopSessionId: root.desktopSessionId,
       detail: root.turnSummary.detail,
       id: `${root.desktopSessionId}:declared-turn`,
@@ -417,6 +640,7 @@ const factsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
       status: root.turnSummary.status,
     });
   }
+  facts.push(...harness.earlier);
   if (root.wrapUpDescription !== null) {
     facts.push({
       at: root.lastActivityAt,
@@ -436,6 +660,7 @@ const factsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
     });
   }
   facts.push(
+    ...harness.linked,
     ...declaredPullRequestFacts(root, 'root'),
     ...childDeclaredPullRequestFacts(group),
     ...externalFactsOf(group, index),
@@ -468,10 +693,15 @@ const factsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[] => {
   for (const branch of root.writtenBranches) {
     facts.push({ branch, id: `${root.desktopSessionId}:branch:${branch}`, kind: 'written-branch', provenance });
   }
-  for (const note of root.sideSessionNotes.slice(-MAX_SIDE_SESSION_NOTE_FACTS)) {
+  // The latest notes, and any older one a linked session is cited by, so its evidence resolves.
+  const recentNotes = root.sideSessionNotes.length - MAX_SIDE_SESSION_NOTE_FACTS;
+  for (const [position, note] of root.sideSessionNotes.entries()) {
+    if (position < recentNotes && !harness.citedNotes.has(noteFactId(root, note))) {
+      continue;
+    }
     facts.push({
       at: note.at,
-      id: `${root.desktopSessionId}:note:${note.sessionId}:${note.at}`,
+      id: noteFactId(root, note),
       kind: 'side-session-note',
       provenance,
       report: note.report,
@@ -568,9 +798,6 @@ const mergeInterpretations = (
   }
   return { attention, interpretations, reconsidered: declared.reconsidered };
 };
-
-const sessionKey = (observation: Pick<ClaudeDesktopSessionObservation, 'desktopSessionId' | 'machineId'>): string =>
-  `${observation.machineId}\u0000${observation.desktopSessionId}`;
 
 /**
  * Roots and their descendants, by `spawnedFrom`. The chain is followed to its top: a child of a
@@ -681,37 +908,59 @@ const joinSessions = (
     }
     const byKey = new Map<string, ServedSessionRowIdentity>();
     let revision: string | null = null;
-    for (const [machineId, ids] of idsByMachine) {
-      const joined = yield* querySessionRowsBySourceSessionIds({
-        dbPath,
-        harnessKey: WORK_HARNESS_KEY,
-        machineId,
-        sourceSessionIds: [...ids],
-      });
-      revision = joined.revision;
-      if (joined.revision === null) {
-        return NO_SERVED_REVISION;
-      }
-      for (const row of joined.rows) {
-        // The first served row for an identity wins; a transcript split across rows is one Session.
-        if (!byKey.has(joinKey(machineId, row.sourceSessionId))) {
-          byKey.set(joinKey(machineId, row.sourceSessionId), row);
+    for (const [machineId, machineIds] of idsByMachine) {
+      // The join reads at most `MAX_WORK_SESSION_JOIN_IDS` ids at a time; a read that kept pending
+      // sessions beyond its recency bound may name more, so it is asked in chunks.
+      const ids = [...machineIds];
+      for (let start = 0; start < ids.length; start += MAX_WORK_SESSION_JOIN_IDS) {
+        const joined = yield* querySessionRowsBySourceSessionIds({
+          dbPath,
+          harnessKey: WORK_HARNESS_KEY,
+          machineId,
+          sourceSessionIds: ids.slice(start, start + MAX_WORK_SESSION_JOIN_IDS),
+        });
+        revision = joined.revision;
+        if (joined.revision === null) {
+          return NO_SERVED_REVISION;
+        }
+        for (const row of joined.rows) {
+          // The first served row for an identity wins; a transcript split across rows is one Session.
+          if (!byKey.has(joinKey(machineId, row.sourceSessionId))) {
+            byKey.set(joinKey(machineId, row.sourceSessionId), row);
+          }
         }
       }
     }
     return { find: (machineId, sourceSessionId) => byKey.get(joinKey(machineId, sourceSessionId)), revision };
   });
 
+/** What the read holds beside the groups: the recorded declaration histories and every session it read. */
+interface ReadContext {
+  readonly history: DeclarationHistory;
+  readonly observations: ReadonlyMap<string, ClaudeDesktopSessionObservation>;
+}
+
 const buildRoot = (
   group: RootGroup,
   sessions: WorkAttentionSessionLookup,
   index: ExternalFactIndex,
+  context: ReadContext,
   now: Date,
   staleAfterMs: number | undefined,
 ): WorkRoot => {
   const { root } = group;
-  const { cut, facts } = boundFacts(factsOf(group, index));
-  const declared = declarationOf(root);
+  const declared = declarationOf(root, context.history);
+  const earlier = earlierDeclarationsOf(root, context.history);
+  const linked = linkedSessionsOf(group, declared?.at ?? null, context.observations, context.history);
+  const { cut, facts } = boundFacts(
+    factsOf(group, index, declared, {
+      citedNotes: new Set(
+        linked.inputs.flatMap((session) => (session.linkFactId === null ? [] : [session.linkFactId])),
+      ),
+      earlier: earlier.facts,
+      linked: linked.facts,
+    }),
+  );
   const session = sessions.find(root.machineId, root.cliSessionId) ?? null;
   const declaredResult = interpretWorkRoot({
     coverage: {
@@ -721,6 +970,7 @@ const buildRoot = (
     },
     declaration: declared,
     facts,
+    harness: harnessContextOf(root, earlier.inputs, linked.inputs),
     now,
     ...(staleAfterMs === undefined ? {} : { staleAfterMs }),
   });
@@ -830,6 +1080,11 @@ const factCoverage = (
 
 export interface AssembleWorkAttentionInput {
   readonly collectionStates: readonly ClaudeDesktopCollectionState[];
+  /**
+   * The declaration histories the store recorded for the sessions read (ADR 0056), any order. Absent
+   * or empty, every declaration is dated by its session's last activity and no earlier one is read.
+   */
+  readonly declarations?: readonly ClaudeDesktopTurnDeclaration[];
   /** The latest pull request and checkout observations and the producers' run states. */
   readonly externalFacts: WorkAttentionExternalFacts;
   readonly limit?: number;
@@ -885,6 +1140,10 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
       ? input.observations
       : input.observations.filter((observation) => observation.machineId === input.machineId);
   const allGroups = groupRoots(observations);
+  const context: ReadContext = {
+    history: indexDeclarationHistory(input.declarations ?? []),
+    observations: new Map(observations.map((observation) => [sessionKey(observation), observation])),
+  };
   // The window applies after interpretation, never before it: an old root is hidden only when
   // nothing pending was read for it. Its attention does not depend on the checkout-sharing index,
   // so the older roots are classified against the full index and the kept ones rebuilt against
@@ -895,11 +1154,11 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
   const groups = allGroups.filter(
     (group) =>
       latestActivity(group) >= since ||
-      PENDING_ATTENTIONS.has(buildRoot(group, input.sessions, fullIndex, now, input.staleAfterMs).attention),
+      PENDING_ATTENTIONS.has(buildRoot(group, input.sessions, fullIndex, context, now, input.staleAfterMs).attention),
   );
   const index = indexExternalFacts(input.externalFacts, groups, jiraKeyActivity);
   const roots = groups
-    .map((group) => buildRoot(group, input.sessions, index, now, input.staleAfterMs))
+    .map((group) => buildRoot(group, input.sessions, index, context, now, input.staleAfterMs))
     .sort(compareRoots);
   const joined = roots.filter((root) => root.session !== null).length;
   const readTruncated = input.readTruncated ?? false;
@@ -994,6 +1253,118 @@ const readExternalFacts = (
     return { checkouts, jiraIssues, pullRequests, runStates: runs };
   });
 
+/** Levels of `spawnedFrom` followed beyond the read to reach a root; the registry nests one or two. */
+const MAX_PARENT_LOOKUPS = 8;
+
+interface DesktopSessionRead {
+  readonly observations: readonly ClaudeDesktopSessionObservation[];
+  readonly skipped: number;
+  /** Sessions were left unread: older than the recency page and asking nothing of the person. */
+  readonly truncated: boolean;
+}
+
+/**
+ * The bounded registry read. First the `MAX_CLAUDE_DESKTOP_SESSION_READ` most recently active
+ * sessions, so a child outside the window still folds under its root. When more exist, the older
+ * sessions that may carry a wait are read too (one more bounded page): a declaration that asks
+ * something of the person, or a declared pull request an observation may show awaiting someone
+ * else. A wait stays a wait at any age, and the recency bound must not hide it. A wait read only
+ * from Jira (a reply on a key an older session wrote) is not selected by this page. Then the parents
+ * the read names but does not hold are fetched by id, level by level, so a child is never shown
+ * as an orphan only because its root is older than the page. What still escapes the read (older
+ * sessions with nothing pending, pending ones beyond the second page) leaves `truncated` set.
+ */
+const readDesktopSessions = (
+  dbPath: string,
+  machineFilter: { readonly machineId?: string },
+): Effect.Effect<DesktopSessionRead, UsageStoreError> =>
+  Effect.gen(function* () {
+    const recent = yield* queryClaudeDesktopSessions({
+      dbPath,
+      limit: MAX_CLAUDE_DESKTOP_SESSION_READ,
+      ...machineFilter,
+    });
+    const observations = [...recent.observations];
+    let skipped = recent.skipped;
+    let truncated = false;
+    const oldest = recent.observations.at(-1)?.lastActivityAt;
+    if (recent.truncated && oldest !== undefined) {
+      const pending = yield* queryClaudeDesktopSessions({
+        dbPath,
+        limit: MAX_CLAUDE_DESKTOP_SESSION_READ,
+        olderThanLastActivityAt: oldest,
+        pendingOnly: true,
+        ...machineFilter,
+      });
+      observations.push(...pending.observations);
+      skipped += pending.skipped;
+      // Older sessions with nothing pending were not read, so the read is a selection either way.
+      truncated = true;
+    } else if (recent.truncated) {
+      truncated = true;
+    }
+    const held = new Set(observations.map(sessionKey));
+    for (let level = 0; level < MAX_PARENT_LOOKUPS; level++) {
+      const missing = [
+        ...new Set(
+          observations.flatMap((observation) =>
+            observation.spawnedFrom !== null &&
+            !held.has(
+              sessionKey({ desktopSessionId: observation.spawnedFrom.sessionId, machineId: observation.machineId }),
+            )
+              ? [observation.spawnedFrom.sessionId]
+              : [],
+          ),
+        ),
+      ].slice(0, MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER);
+      if (missing.length === 0) {
+        break;
+      }
+      const parents = yield* queryClaudeDesktopSessions({
+        dbPath,
+        desktopSessionIds: missing,
+        limit: MAX_CLAUDE_DESKTOP_SESSION_READ,
+        ...machineFilter,
+      });
+      const found = parents.observations.filter((parent) => !held.has(sessionKey(parent)));
+      skipped += parents.skipped;
+      if (found.length === 0) {
+        // The parents named are not in the registry: their children stand as roots with a gap.
+        break;
+      }
+      for (const parent of found) {
+        held.add(sessionKey(parent));
+        observations.push(parent);
+      }
+    }
+    return { observations, skipped, truncated };
+  });
+
+/** The recorded declarations of every session read, in chunks of the store's id bound. */
+const readDeclarationHistory = (
+  dbPath: string,
+  observations: readonly ClaudeDesktopSessionObservation[],
+  machineFilter: { readonly machineId?: string },
+): Effect.Effect<
+  { readonly declarations: ClaudeDesktopTurnDeclaration[]; readonly skipped: number },
+  UsageStoreError
+> =>
+  Effect.gen(function* () {
+    const ids = [...new Set(observations.map((observation) => observation.desktopSessionId))];
+    const declarations: ClaudeDesktopTurnDeclaration[] = [];
+    let skipped = 0;
+    for (let start = 0; start < ids.length; start += MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER) {
+      const page = yield* queryClaudeDesktopTurnDeclarations({
+        dbPath,
+        desktopSessionIds: ids.slice(start, start + MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER),
+        ...machineFilter,
+      });
+      declarations.push(...page.declarations);
+      skipped += page.skipped;
+    }
+    return { declarations, skipped };
+  });
+
 export const queryWorkAttention = (
   input: QueryWorkAttentionInput,
 ): Effect.Effect<WorkAttentionDataset, UsageStoreError> =>
@@ -1003,25 +1374,21 @@ export const queryWorkAttention = (
       return yield* Effect.fail(invalidInput(input.dbPath, problem));
     }
     const machineFilter = input.machineId === undefined ? {} : { machineId: input.machineId };
-    // The whole bounded family, most recent first, so a child outside the window still folds
-    // under its root and is never mistaken for an orphan.
-    const read = yield* queryClaudeDesktopSessions({
-      dbPath: input.dbPath,
-      limit: MAX_CLAUDE_DESKTOP_SESSION_READ,
-      ...machineFilter,
-    });
+    const read = yield* readDesktopSessions(input.dbPath, machineFilter);
     const states = yield* queryClaudeDesktopCollectionState({ dbPath: input.dbPath, ...machineFilter });
     const sessions = yield* joinSessions(input.dbPath, read.observations);
     const externalFacts = yield* readExternalFacts(input, read.observations);
+    const history = yield* readDeclarationHistory(input.dbPath, read.observations, machineFilter);
     return assembleWorkAttention({
       collectionStates: states.states,
+      declarations: history.declarations,
       externalFacts,
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...machineFilter,
       ...(input.now === undefined ? {} : { now: input.now }),
       observations: read.observations,
       readTruncated: read.truncated,
-      refusedRows: read.skipped,
+      refusedRows: read.skipped + history.skipped,
       sessions,
       ...(input.sinceDays === undefined ? {} : { sinceDays: input.sinceDays }),
       ...(input.staleAfterMs === undefined ? {} : { staleAfterMs: input.staleAfterMs }),

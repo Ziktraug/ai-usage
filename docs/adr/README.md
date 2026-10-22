@@ -77,6 +77,7 @@ publication settle window therefore takes 0048.
 | [0053](0053-first-read-only-review-attempt-launched-by-the-engine.md) | First read-only review attempt launched by the engine | 2026-10-22 | Accepted; extends 0009, 0050, 0052; amended by 0055 |
 | [0054](0054-jira-issue-facts-explicit-keys-read-only.md) | Jira issue facts: explicit keys only, read through the operator's CLI session, never written | 2026-10-22 | Accepted; extends 0009, 0050, 0051 |
 | [0055](0055-review-attempt-reservation-scope-and-harness-guarantee.md) | Review attempt reservation, reviewed scope and harness guarantee | 2026-10-22 | Accepted; amends 0053 |
+| [0056](0056-native-records-may-settle-a-derived-wait.md) | A dated native record may settle a derived wait; an inference may not | 2026-10-22 | Accepted; amends 0050 |
 | [0057](0057-observed-account-identity-and-on-demand-routing-qualification.md) | Observed account identity, models of one account, on-demand routing qualification | 2026-10-22 | Accepted; extends 0009, 0052, 0053 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions

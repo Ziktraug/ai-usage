@@ -144,11 +144,13 @@ const declaredTurn = (
   at: CanonicalInstant,
   detail: string,
   needsAction: string | null,
+  /** Another session's declaration, or an earlier one of this root, carries its own identity. */
+  identity: { readonly desktopSessionId?: string; readonly factId?: string } = {},
 ): WorkFact => ({
   declaredAt: at,
-  desktopSessionId: `desk-${id}`,
+  desktopSessionId: identity.desktopSessionId ?? `desk-${id}`,
   detail,
-  id: `${id}:declared`,
+  id: identity.factId ?? `${id}:declared`,
   kind: 'declared-turn',
   needsAction,
   provenance: desktop(),
@@ -828,6 +830,131 @@ const seeds = (): readonly RootSeed[] => [
     project: 'ai-usage',
     reconsidered: true,
     title: 'Scan resource optimization',
+  },
+  // ADR 0056: what Claude Desktop recorded after a request ---------------------------------
+  {
+    attention: 'human-request',
+    branch: 'feat/sources-label',
+    declared: {
+      at: hoursAgo(5),
+      detail: 'The label is renamed in the rail; the settings page still says “Sources”.',
+      needsAction: 'Rename the settings page heading too, or keep “Sources” there?',
+      status: 'blocked',
+    },
+    facts: [
+      declaredTurn(
+        'sources-label',
+        'blocked',
+        hoursAgo(5),
+        'The label is renamed in the rail; the settings page still says “Sources”.',
+        'Rename the settings page heading too, or keep “Sources” there?',
+      ),
+      declaredTurn(
+        'sources-label',
+        'blocked',
+        hoursAgo(8),
+        'Two names fit the rail.',
+        'Call the rail entry “Inputs” or “Collectors”?',
+        { factId: 'sources-label:declared-earlier' },
+      ),
+    ],
+    id: 'sources-label',
+    interpretations: [
+      interpretation(
+        'request-open',
+        'The session stopped on a question: Rename the settings page heading too, or keep “Sources” there?',
+        'This is the session’s own last declaration; nothing observed since says it was answered.',
+        ['sources-label:declared'],
+      ),
+      interpretation(
+        'earlier-request-answered',
+        `Answered in Claude Desktop: the question “Call the rail entry “Inputs” or “Collectors”?” (asked ${hoursAgo(8)}); you wrote to the session at ${hoursAgo(7)} and it declared again at ${hoursAgo(5)}.`,
+        'Read from Claude Desktop’s own record; the message itself is not read. It answers this request only: no proposal, other question or authorization follows from it.',
+        ['sources-label:declared-earlier', 'sources-label:declared'],
+      ),
+    ],
+    lastActivityHoursAgo: 5,
+    project: 'ai-usage',
+    title: 'Sources label',
+  },
+  {
+    attention: 'human-request',
+    branch: 'feat/toolbar-icons',
+    children: { count: 1, reviewReady: 1, titles: ['Toolbar icon study'] },
+    declared: {
+      at: hoursAgo(20),
+      detail: 'Two icon sets prepared for comparison.',
+      needsAction: 'Which icon set should the toolbar use?',
+      status: 'blocked',
+    },
+    facts: [
+      declaredTurn(
+        'toolbar-icons',
+        'blocked',
+        hoursAgo(20),
+        'Two icon sets prepared for comparison.',
+        'Which icon set should the toolbar use?',
+      ),
+      declaredTurn('toolbar-icons', 'review_ready', hoursAgo(17), 'Icon study ready for a look.', null, {
+        desktopSessionId: 'desk-toolbar-icons-study',
+        factId: 'desk-toolbar-icons-study:declared-turn',
+      }),
+    ],
+    id: 'toolbar-icons',
+    interpretations: [
+      interpretation(
+        'request-open',
+        'The session stopped on a question: Which icon set should the toolbar use?',
+        'This is the session’s own last declaration; work continued in a linked session after it, but nothing confirms it settled the question.',
+        ['toolbar-icons:declared'],
+      ),
+      interpretation(
+        'request-continued-elsewhere',
+        `Older declaration to reconsider: work continued after the question in “Toolbar icon study” (started from this session at ${hoursAgo(19)}; declared review ready at ${hoursAgo(17)}).`,
+        'The link to that session is attested, but nothing says it settles this request; the question stays yours.',
+        ['desk-toolbar-icons-study:declared-turn'],
+      ),
+    ],
+    lastActivityHoursAgo: 17,
+    project: 'ai-usage',
+    reconsidered: true,
+    title: 'Toolbar refresh',
+  },
+  {
+    attention: 'none',
+    branch: 'release/0.9',
+    children: { completed: 1, count: 1, titles: ['Fix the flaky export test'] },
+    declared: {
+      at: hoursAgo(7),
+      detail: 'The release checklist is done except for one flaky test.',
+      needsAction: 'Fix the flaky export test before the release, or skip it?',
+      status: 'blocked',
+    },
+    facts: [
+      declaredTurn(
+        'release-checklist',
+        'blocked',
+        hoursAgo(7),
+        'The release checklist is done except for one flaky test.',
+        'Fix the flaky export test before the release, or skip it?',
+      ),
+      declaredTurn('release-checklist', 'completed', hoursAgo(6), 'The export test is stable again.', null, {
+        desktopSessionId: 'desk-release-flaky-fix',
+        factId: 'desk-release-flaky-fix:declared-turn',
+      }),
+    ],
+    id: 'release-checklist',
+    interpretations: [
+      interpretation(
+        'request-handled-elsewhere',
+        `Handled in “Fix the flaky export test”: started from this session at ${hoursAgo(6.8)}, after the question “Fix the flaky export test before the release, or skip it?” (asked ${hoursAgo(7)}), and declared completed at ${hoursAgo(6)}.`,
+        'Claude Desktop attests the link and the completion; what that session did is its own declaration, not read further.',
+        ['release-checklist:declared', 'desk-release-flaky-fix:declared-turn'],
+      ),
+    ],
+    lastActivityHoursAgo: 6,
+    project: 'ai-usage',
+    title: 'Release checklist',
   },
   {
     archived: true,

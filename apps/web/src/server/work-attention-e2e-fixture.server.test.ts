@@ -102,7 +102,9 @@ describe('work attention e2e fixture', () => {
       .filter((root) => root.facts.some(({ kind }) => kind === 'pull-request'))
       .map((root) => root.desktopSessionId)
       .sort();
-    expect(withPullRequests).toEqual([ids.completedRoot, ids.mergedBeforeRoot, ids.satisfiedRoot].sort());
+    expect(withPullRequests).toEqual(
+      [ids.completedRoot, ids.mergedBeforeRoot, ids.satisfiedRoot, ids.unrelatedPullRequestRoot].sort(),
+    );
   });
 
   test('confronts three explicitly linked Jira tickets: a reply arrived, a status that differs, a refused read', async () => {
@@ -174,7 +176,7 @@ describe('work attention e2e fixture', () => {
       disabled: false,
       failed: 1,
       lastRunAt: hoursBefore(0.5),
-      observed: 3,
+      observed: 4,
     });
     expect(result.data.coverage.checkouts).toEqual({ failed: 0, lastRunAt: hoursBefore(40 / 60), observed: 1 });
     expect(result.data.coverage.sessions).toEqual({ joined: 0, revision: null, unmatched: 0 });
@@ -184,5 +186,41 @@ describe('work attention e2e fixture', () => {
     // Every first-level group the Work view renders is present at least once.
     const attentions = new Set(result.data.roots.map((root) => root.attention));
     expect([...attentions].sort()).toEqual(['external-wait', 'human-request', 'none', 'optional-lead']);
+  });
+});
+
+describe('work attention e2e fixture against what Claude Desktop recorded after a request (ADR 0056)', () => {
+  test('replays the earlier file states, so an answered question and a reply read as the store would read them', async () => {
+    const result = await readFixture();
+    const byId = new Map(result.data.roots.map((root) => [root.desktopSessionId, root]));
+
+    const answered = byId.get(ids.answeredRoot);
+    expect(answered?.attention).toBe('human-request');
+    expect(answered?.declared?.needsAction).toBe('Delete the superseded layout branch now?');
+    expect(kindsOf(answered)).toEqual(['request-open', 'earlier-request-answered']);
+    expect(answered?.interpretations[1]?.text).toBe(
+      `Answered in Claude Desktop: the question “Keep the compact layout or the airy one?” (asked ${hoursBefore(5)}); you wrote to the session at ${hoursBefore(4)} and it declared again at ${hoursBefore(3)}.`,
+    );
+
+    const replied = byId.get(ids.repliedRoot);
+    expect(replied?.attention).toBe('none');
+    expect(kindsOf(replied)).toEqual(['request-answered']);
+
+    // GitHub shows #131 merged after the question; the question asks for no pull request.
+    const unrelated = byId.get(ids.unrelatedPullRequestRoot);
+    expect(unrelated?.attention).toBe('human-request');
+    expect(unrelated?.reconsidered).toBe(false);
+    expect(kindsOf(unrelated)).toEqual(['request-open', 'pull-request-merged']);
+
+    const offers = byId.get(ids.laterOfferRoot);
+    expect(offers?.attention).toBe('optional-lead');
+    expect(kindsOf(offers)).toEqual(['proposal-open', 'proposal-superseded', 'proposal-expired']);
+
+    expect(kindsOf(byId.get(ids.handledRoot))).toEqual(['request-handled-elsewhere']);
+    expect(byId.get(ids.handledRoot)?.attention).toBe('none');
+    expect(byId.get(ids.continuedRoot)?.reconsidered).toBe(true);
+    expect(kindsOf(byId.get(ids.continuedRoot))).toEqual(['request-open', 'request-continued-elsewhere']);
+    // The new interpretation kinds cross the wire contract.
+    expect(parseWorkAttentionOutput(result)).toEqual(JSON.parse(JSON.stringify(result)));
   });
 });

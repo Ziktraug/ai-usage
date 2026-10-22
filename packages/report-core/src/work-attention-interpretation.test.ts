@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { canonicalInstantFromDate } from './canonical-instant';
 import type { WorkFact, WorkFactProvenance, WorkRootDeclaration } from './work-attention';
-import { interpretWorkRoot, type WorkRootCoverageInput } from './work-attention-interpretation';
+import {
+  interpretWorkRoot,
+  NO_HARNESS_CONTEXT,
+  type WorkLinkedSession,
+  type WorkRootCoverageInput,
+  type WorkRootHarnessInput,
+} from './work-attention-interpretation';
 
 const NOW = new Date('2026-10-20T12:00:00.000Z');
 const iso = (hoursAgo: number) => canonicalInstantFromDate(new Date(NOW.getTime() - hoursAgo * 3_600_000));
@@ -400,5 +406,245 @@ describe('interpretWorkRoot', () => {
     expect(() =>
       interpretWorkRoot({ coverage: covered, declaration: null, facts: [], now: NOW, staleAfterMs: 0 }),
     ).toThrow(RangeError);
+  });
+});
+
+describe('interpretWorkRoot against what the harness recorded after the request (ADR 0056)', () => {
+  const question = blocked('Which of the two 320px layouts do you prefer?', 5);
+  const withHarness = (
+    declaration: WorkRootDeclaration | null,
+    harness: Partial<WorkRootHarnessInput>,
+    facts: readonly WorkFact[] = declaration === null ? [] : [declaredTurn(declaration)],
+  ) =>
+    interpretWorkRoot({
+      coverage: covered,
+      declaration,
+      facts,
+      harness: { ...NO_HARNESS_CONTEXT, ...harness },
+      now: NOW,
+    });
+  const childTurn = (id: string, status: 'blocked' | 'completed' | 'review_ready', hoursAgo: number): WorkFact => ({
+    declaredAt: iso(hoursAgo),
+    desktopSessionId: id,
+    detail: `Declared ${status}.`,
+    id: `${id}:declared-turn`,
+    kind: 'declared-turn',
+    needsAction: status === 'blocked' ? 'Child question?' : null,
+    provenance: provenance(hoursAgo),
+    status,
+  });
+  const linked = (
+    id: string,
+    link: WorkLinkedSession['link'],
+    linkedHoursAgo: number,
+    status: 'blocked' | 'completed' | 'review_ready' | null,
+    declaredHoursAgo = linkedHoursAgo - 0.5,
+  ): WorkLinkedSession => ({
+    declaration: status === null ? null : { at: iso(declaredHoursAgo), factId: `${id}:declared-turn`, status },
+    desktopSessionId: id,
+    link,
+    linkedAt: iso(linkedHoursAgo),
+    linkFactId: link === 'side-session-note' ? `local_root:note:${id}` : null,
+    title: `Fixture ${id}`,
+  });
+
+  test('a message recorded after the question answers it: no confirmation, dated, with its evidence', () => {
+    const result = withHarness(question, { latestUserFrameAt: iso(4) });
+    expect(result.attention).toBe('none');
+    expect(result.reconsidered).toBe(false);
+    expect(kinds(result)).toEqual(['request-answered']);
+    expect(result.interpretations[0]?.evidence).toEqual(['local_root:declared-turn']);
+    expect(result.interpretations[0]?.text).toBe(
+      `Answered in Claude Desktop: you wrote to the session at ${iso(4)}, after the question “Which of the two 320px layouts do you prefer?” (asked ${iso(5)}); it has not declared since.`,
+    );
+    expect(result.interpretations[0]?.uncertainty).toContain('authorization');
+  });
+
+  test('a message recorded before the question answers nothing', () => {
+    const result = withHarness(question, { latestUserFrameAt: iso(5.5) });
+    expect(result.attention).toBe('human-request');
+    expect(kinds(result)).toEqual(['request-open']);
+  });
+
+  test('a review request answered in the harness and an archived session are no longer waiting', () => {
+    const review: WorkRootDeclaration = { at: iso(5), detail: 'Ready.', needsAction: null, status: 'review_ready' };
+    expect(kinds(withHarness(review, { latestUserFrameAt: iso(4) }))).toEqual(['request-answered']);
+    const archived = withHarness(question, { archived: true });
+    expect(archived.attention).toBe('none');
+    expect(kinds(archived)).toEqual(['request-archived']);
+  });
+
+  test('Q1 answered, then Q2: Q1 is read as answered with its dates, Q2 stays the current request', () => {
+    const current = blocked('Delete checkout 3 now?', 3);
+    const result = withHarness(
+      current,
+      {
+        earlierDeclarations: [
+          {
+            declaredAt: iso(6),
+            factId: 'local_root:declared-turn:q1',
+            needsAction: 'Which of the two 320px layouts do you prefer?',
+            repliedAt: iso(5),
+            status: 'blocked',
+            supersededAt: iso(3),
+          },
+        ],
+        latestUserFrameAt: iso(5),
+      },
+      [declaredTurn(current)],
+    );
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(false);
+    expect(kinds(result)).toEqual(['request-open', 'earlier-request-answered']);
+    expect(result.interpretations[0]?.text).toBe('The session stopped on a question: Delete checkout 3 now?');
+    expect(result.interpretations[1]?.evidence).toEqual(['local_root:declared-turn:q1', 'local_root:declared-turn']);
+    expect(result.interpretations[1]?.text).toBe(
+      `Answered in Claude Desktop: the question “Which of the two 320px layouts do you prefer?” (asked ${iso(6)}); you wrote to the session at ${iso(5)} and it declared again at ${iso(3)}.`,
+    );
+  });
+
+  test('an earlier question replaced without a recorded message is no longer asked, and says so', () => {
+    const current = blocked('Delete checkout 3 now?', 3);
+    const result = withHarness(
+      current,
+      {
+        earlierDeclarations: [
+          {
+            declaredAt: iso(6),
+            factId: 'local_root:declared-turn:q1',
+            needsAction: 'Which layout?',
+            repliedAt: null,
+            status: 'blocked',
+            supersededAt: iso(3),
+          },
+        ],
+      },
+      [declaredTurn(current)],
+    );
+    expect(kinds(result)).toEqual(['request-open', 'earlier-request-superseded']);
+    expect(result.interpretations[1]?.uncertainty).toContain('No message from you was recorded in between');
+  });
+
+  test('the same question asked again after a message stays the current request and says it was asked before', () => {
+    const current = blocked('Which layout?', 3);
+    const result = withHarness(
+      current,
+      {
+        earlierDeclarations: [
+          {
+            declaredAt: iso(6),
+            factId: 'local_root:declared-turn:q1',
+            needsAction: '  which   layout? ',
+            repliedAt: iso(5),
+            status: 'blocked',
+            supersededAt: iso(3),
+          },
+        ],
+        latestUserFrameAt: iso(5),
+      },
+      [declaredTurn(current)],
+    );
+    expect(result.attention).toBe('human-request');
+    expect(kinds(result)).toEqual(['request-open']);
+    expect(result.interpretations[0]?.uncertainty).toContain(
+      `you wrote to the session at ${iso(5)}, and it asked again`,
+    );
+  });
+
+  test('a session started from this one after the question and declared completed handles it, with provenance', () => {
+    const result = withHarness(
+      question,
+      { linkedSessions: [linked('local_child', 'spawned-from', 4, 'completed', 3)] },
+      [declaredTurn(question), childTurn('local_child', 'completed', 3)],
+    );
+    expect(result.attention).toBe('none');
+    expect(kinds(result)).toEqual(['request-handled-elsewhere']);
+    expect(result.interpretations[0]?.evidence).toEqual(['local_root:declared-turn', 'local_child:declared-turn']);
+    expect(result.interpretations[0]?.text).toBe(
+      `Handled in “Fixture local_child”: started from this session at ${iso(4)}, after the question “Which of the two 320px layouts do you prefer?” (asked ${iso(5)}), and declared completed at ${iso(3)}.`,
+    );
+  });
+
+  test('a report a session sent after the question, then its completion, is an explicit link that handles it', () => {
+    const result = withHarness(question, {
+      linkedSessions: [linked('local_reporter', 'side-session-note', 4.5, 'completed', 4)],
+    });
+    expect(kinds(result)).toEqual(['request-handled-elsewhere']);
+    expect(result.interpretations[0]?.text).toContain('reported to this session at');
+  });
+
+  test('a child started before the question that finished after it leaves a current confirmed block', () => {
+    const result = withHarness(question, {
+      linkedSessions: [linked('local_child', 'spawned-from', 8, 'completed', 3)],
+    });
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(false);
+    expect(kinds(result)).toEqual(['request-open']);
+  });
+
+  test('work continued after the question without a completion is an older declaration to reconsider', () => {
+    const result = withHarness(question, {
+      linkedSessions: [
+        linked('local_child', 'spawned-from', 4, 'review_ready', 3),
+        linked('local_reporter', 'side-session-note', 2, null),
+      ],
+    });
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(true);
+    expect(kinds(result)).toEqual(['request-open', 'request-continued-elsewhere']);
+    expect(result.interpretations[0]?.uncertainty).toContain('work continued in a linked session after it');
+    expect(result.interpretations[1]?.text).toContain('Older declaration to reconsider');
+    expect(result.interpretations[1]?.text).toContain('declared review ready at');
+    expect(result.interpretations[1]?.text).toContain('no declaration read');
+    expect(result.interpretations[1]?.evidence).toEqual([
+      'local_child:declared-turn',
+      'local_root:note:local_reporter',
+    ]);
+  });
+
+  test('a message answers the request it followed and no other: the next proposal stays pending', () => {
+    const proposals: WorkFact[] = [proposal('p-old', 'open'), proposal('p-new', 'open'), proposal('p-gone', 'open')];
+    const result = withHarness(
+      question,
+      {
+        latestUserFrameAt: iso(4),
+        openProposals: [
+          { createdAt: iso(4.5), expiresAt: iso(-100), factId: 'p-old', title: 'Old offer' },
+          { createdAt: iso(3.5), expiresAt: iso(-100), factId: 'p-new', title: 'New offer' },
+          { createdAt: iso(200), expiresAt: iso(32), factId: 'p-gone', title: 'Expired offer' },
+        ],
+      },
+      [declaredTurn(question), ...proposals],
+    );
+    expect(result.attention).toBe('optional-lead');
+    expect(kinds(result)).toEqual(['request-answered', 'proposal-open', 'proposal-superseded', 'proposal-expired']);
+    const byKind = new Map(result.interpretations.map((entry) => [entry.kind, entry]));
+    expect(byKind.get('proposal-open')?.evidence).toEqual(['p-new']);
+    expect(byKind.get('proposal-superseded')?.evidence).toEqual(['p-old']);
+    expect(byKind.get('proposal-superseded')?.text).toContain('“Old offer”');
+    expect(byKind.get('proposal-expired')?.evidence).toEqual(['p-gone']);
+  });
+
+  test('without a pending offer left, superseded and expired proposals are no lead', () => {
+    const result = withHarness(
+      null,
+      {
+        latestUserFrameAt: iso(4),
+        openProposals: [{ createdAt: iso(5), expiresAt: null, factId: 'p-old', title: 'Old offer' }],
+      },
+      [proposal('p-old', 'open')],
+    );
+    expect(result.attention).toBe('none');
+    expect(kinds(result)).toEqual(['proposal-superseded']);
+  });
+
+  test('an unrelated pull request merged after a question resolves nothing (current prudence)', () => {
+    const result = withHarness(question, { latestUserFrameAt: iso(5.5) }, [
+      declaredTurn(question),
+      observedPullRequest('gh:90', { mergedAtHoursAgo: 2, state: 'MERGED', updatedAtHoursAgo: 2 }, 1),
+    ]);
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(false);
+    expect(kinds(result)).toEqual(['request-open']);
   });
 });

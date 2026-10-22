@@ -113,6 +113,7 @@ export {
   previewPeerMergeBundle,
   publishServedReportRevision,
   queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
   queryLatestCheckoutStatusObservations,

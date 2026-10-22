@@ -8,11 +8,15 @@ import type {
   CheckoutStatusObservation,
   ClaudeDesktopCollectionCompleteness,
   ClaudeDesktopSessionObservation,
+  ClaudeDesktopTurnDeclaration,
   JiraIssueObservation,
   PullRequestObservation,
   WorkAttentionDataset,
 } from '@ai-usage/report-core/work-attention';
-import { parseClaudeDesktopSessionFile } from '@ai-usage/report-core/work-attention-native';
+import {
+  advanceClaudeDesktopDeclarationHistory,
+  parseClaudeDesktopSessionFile,
+} from '@ai-usage/report-core/work-attention-native';
 import {
   assembleWorkAttention,
   NO_SERVED_REVISION,
@@ -56,6 +60,8 @@ export const WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY = 'XLB-1998';
 
 interface E2EWorkAttentionSource {
   readonly completeness: ClaudeDesktopCollectionCompleteness;
+  /** The declaration history the store would have recorded over the earlier sweeps and the last one. */
+  readonly declarations: readonly ClaudeDesktopTurnDeclaration[];
   readonly externalFacts: WorkAttentionExternalFacts;
   readonly observations: readonly ClaudeDesktopSessionObservation[];
 }
@@ -153,7 +159,9 @@ const pullRequestObservation = (
  * minutes ago. On Jira, XLB-2090 received a reply six hours ago, after the review-ready family's
  * last activity (eleven hours ago); XLB-2101 is still To Do while pull request 90 is merged;
  * XLB-1998 could not be read half an hour ago for lack of credentials, and its last successful
- * read, a day ago, showed it in progress. All three producers ran.
+ * read, a day ago, showed it in progress. Pull request 131, listed by the settings root's child
+ * (which predates the question), merged five hours ago and answers nothing: the question asks for
+ * no pull request. All three producers ran.
  */
 const buildExternalFacts = (): WorkAttentionExternalFacts => {
   const awaitingReview = pullRequestObservation(118);
@@ -164,6 +172,15 @@ const buildExternalFacts = (): WorkAttentionExternalFacts => {
     reviewDecision: 'APPROVED',
     state: 'MERGED',
     updatedAt: hoursBefore(2),
+  });
+  // Listed by a child that predates the settings question; merged after it, it still answers nothing.
+  const unrelatedMerged = pullRequestObservation(131, {
+    checksRollup: 'success',
+    mergedAt: hoursBefore(5),
+    observedAt: hoursBefore(1),
+    reviewDecision: 'APPROVED',
+    state: 'MERGED',
+    updatedAt: hoursBefore(5),
   });
   const lastRead = pullRequestObservation(117, { observedAt: hoursBefore(26), updatedAt: hoursBefore(27) });
   const unreadable = pullRequestObservation(117, {
@@ -234,6 +251,7 @@ const buildExternalFacts = (): WorkAttentionExternalFacts => {
     pullRequests: [
       { latest: awaitingReview, latestObserved: awaitingReview },
       { latest: merged, latestObserved: merged },
+      { latest: unrelatedMerged, latestObserved: unrelatedMerged },
       { latest: unreadable, latestObserved: lastRead },
     ],
     runStates: [
@@ -242,7 +260,7 @@ const buildExternalFacts = (): WorkAttentionExternalFacts => {
         failed: 1,
         machineId: WORK_ATTENTION_E2E_MACHINE_ID,
         message: null,
-        observed: 3,
+        observed: 4,
         ranAt: hoursBefore(0.5),
         sourceId: 'github.pull-requests',
       },
@@ -276,21 +294,37 @@ const buildSource = (): E2EWorkAttentionSource => {
     variant: 'representative',
   });
   const observedAt = WORK_ATTENTION_E2E_NOW.toISOString();
+  const parseContext = (entry: (typeof registry.documents)[number], sweptAt: string) => ({
+    accountDirectory: entry.account,
+    fileModifiedAt: entry.modifiedAt.toISOString(),
+    machineId: WORK_ATTENTION_E2E_MACHINE_ID,
+    observedAt: sweptAt,
+    organizationDirectory: entry.organization,
+    relativeFilePath: `.config/Claude/claude-code-sessions/${entry.account}/${entry.organization}/${entry.fileName}`,
+  });
+  // The sweeps the engine would have made before: each earlier file state, seen a minute after it
+  // was written, advances the history exactly as the store import does (ADR 0056).
+  let declarations: readonly ClaudeDesktopTurnDeclaration[] = [];
+  const advance = (observation: ClaudeDesktopSessionObservation): void => {
+    const others = declarations.filter((row) => row.desktopSessionId !== observation.desktopSessionId);
+    declarations = [...others, ...advanceClaudeDesktopDeclarationHistory(declarations, observation)];
+  };
+  for (const entry of registry.history) {
+    const earlier = parseClaudeDesktopSessionFile(entry.document, parseContext(entry, entry.modifiedAt.toISOString()));
+    if (earlier.kind !== 'observation') {
+      throw new Error(`The e2e Desktop history file ${entry.fileName} does not parse.`);
+    }
+    advance(earlier.observation);
+  }
   const observations: ClaudeDesktopSessionObservation[] = [];
   const completeness = { filesParsed: 0, filesSeen: 0, rejected: 0, truncated: false, unsupported: 0 };
   for (const entry of registry.documents) {
     completeness.filesSeen += 1;
     const pairIndex = CLAUDE_DESKTOP_FIXTURE_PAIRS.findIndex((pair) => pair.account === entry.account);
-    const result = parseClaudeDesktopSessionFile(entry.document, {
-      accountDirectory: entry.account,
-      fileModifiedAt: entry.modifiedAt.toISOString(),
-      machineId: WORK_ATTENTION_E2E_MACHINE_ID,
-      observedAt,
-      organizationDirectory: entry.organization,
-      relativeFilePath: `.config/Claude/claude-code-sessions/${entry.account}/${entry.organization}/${entry.fileName}`,
-    });
+    const result = parseClaudeDesktopSessionFile(entry.document, parseContext(entry, observedAt));
     if (result.kind === 'observation') {
       completeness.filesParsed += 1;
+      advance(result.observation);
       observations.push(withJiraLinks(result.observation, registry.ids));
     } else if (result.kind === 'unsupported') {
       completeness.unsupported += 1;
@@ -304,7 +338,7 @@ const buildSource = (): E2EWorkAttentionSource => {
       throw new Error('The e2e Desktop registry names an account outside its pairs.');
     }
   }
-  return { completeness, externalFacts: buildExternalFacts(), observations };
+  return { completeness, declarations, externalFacts: buildExternalFacts(), observations };
 };
 
 const getSource = (): E2EWorkAttentionSource => {
@@ -313,11 +347,12 @@ const getSource = (): E2EWorkAttentionSource => {
 };
 
 export const readE2EWorkAttention = (request: WorkAttentionInput): Promise<WorkAttentionServerResult> => {
-  const { completeness, externalFacts, observations } = getSource();
+  const { completeness, declarations, externalFacts, observations } = getSource();
   const data: WorkAttentionDataset = assembleWorkAttention({
     collectionStates: [
       { collectedAt: WORK_ATTENTION_E2E_NOW.toISOString(), completeness, machineId: WORK_ATTENTION_E2E_MACHINE_ID },
     ],
+    declarations,
     externalFacts,
     ...(request.limit === undefined ? {} : { limit: request.limit }),
     ...(request.machineId === undefined || request.machineId === null ? {} : { machineId: request.machineId }),

@@ -102,13 +102,15 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('2 unsupported');
     expect(body).toContain('4 older roots without pending declarations hidden (30-day window)');
     expect(withoutMarkers(body)).toContain('Jira: 1 observed');
-    expect(body).toContain(`ranking covers ${dataset.roots.length} of ${dataset.totalRoots} roots`);
+    expect(body).toContain(
+      `${dataset.roots.length} of ${dataset.roots.length} roots shown; not shown: 4 older roots without a pending declaration (30-day window), 9 beyond the ranking limit.`,
+    );
     expect(body).not.toContain('Known waits');
     expect(body).not.toContain('Simulate review assignment');
     expect(occurrences(body, 'Declared by the session; current state unobserved.')).toBe(3);
-    expect(rowsIn(body, 'human-request')).toBe(6);
+    expect(rowsIn(body, 'human-request')).toBe(8);
     expect(rowsIn(body, 'none')).toBe(10);
-    expect(body).toContain('Show all 12 in Recent · no pending declaration read');
+    expect(body).toContain('Show all 13 in Recent · no pending declaration read');
     expect(body).toContain('possibly answered · PR #61');
     expect(body).toContain('Confirm whether the Codex quota window should be dated by its last confirmation');
     expect(body).toContain('blocked · <time datetime="2026-06-11T09:00:00.000Z"');
@@ -173,7 +175,9 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
   test('applies the address filters on the server and reports the narrowed count', () => {
     const body = html({ ...EMPTY_WORK_ATTENTION_SEARCH, query: 'mobile navigation' });
     expect(occurrences(body, 'data-work-root=')).toBe(1);
-    expect(body).toContain(`1 of ${dataset.roots.length} roots shown`);
+    expect(body).toContain(
+      `1 of ${dataset.roots.length} roots match. Searched the ${dataset.roots.length} roots in this ranking; not searched:`,
+    );
     expect(body).toContain('aria-pressed="false"');
     const chips = html({ ...EMPTY_WORK_ATTENTION_SEARCH, attention: ['optional-lead'], harness: ['claude'] });
     expect(occurrences(chips, 'data-work-root=')).toBe(3);
@@ -203,5 +207,46 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain(`/sessions/${encodeURIComponent(joined!.session!.rowId)}`);
     expect(body).toContain('Related served sessions');
     expect(body).toContain('Resolving the collected Session for this root');
+  });
+});
+
+describe('Work resume surface server rendering of request standings (ADR 0056)', () => {
+  test('current blocks lead Needs you; older declarations to reconsider follow under their own heading', () => {
+    const body = html(EMPTY_WORK_ATTENTION_SEARCH);
+    const section = body.slice(
+      body.indexOf('data-work-section="human-request"'),
+      body.indexOf('data-work-section="external-wait"'),
+    );
+    const heading = section.indexOf('Older declarations to reconsider · 2');
+    expect(heading).toBeGreaterThan(0);
+    // Every current block is rendered before the heading, every row to reconsider after it.
+    expect(occurrences(section.slice(0, heading), 'data-work-standing="current"')).toBe(6);
+    expect(occurrences(section.slice(0, heading), 'data-work-standing="reconsider"')).toBe(0);
+    expect(occurrences(section.slice(heading), 'data-work-standing="reconsider"')).toBe(2);
+    // The marker is words, not only a style.
+    expect(occurrences(section, '>Older declaration to reconsider<')).toBe(2);
+    expect(body).toContain('data-work-standing="handled"');
+    expect(body).toContain('Handled in a linked session');
+    expect(body).toContain('Next: Answer in Claude Desktop.');
+  });
+  test('the detail reads request, context, last decision and next action before the diagnostics', () => {
+    const page = withoutMarkers(html(EMPTY_WORK_ATTENTION_SEARCH, 'desk-sources-label'));
+    // The detail alone: the board before it repeats the decision and the next action per row.
+    const body = page.slice(page.indexOf('data-work-detail='));
+    const order = [
+      'data-work-request="current"',
+      'data-work-question',
+      'data-work-context',
+      'Last decision: Earlier “Call the rail entry “Inputs” or “Collectors”?” answered in Claude Desktop',
+      'Next: Answer in Claude Desktop.',
+      'Declared by the session',
+      'Interpretations',
+      'Facts by source',
+    ].map((needle) => body.indexOf(needle));
+    expect(order.every((position) => position >= 0)).toBe(true);
+    expect([...order].sort((left, right) => left - right)).toEqual(order);
+    expect(occurrences(body, 'data-work-question')).toBe(1);
+    expect(body).toContain('Earlier declaration, blocked: Call the rail entry “Inputs” or “Collectors”?');
+    expect(body).toContain('you wrote to the session at');
   });
 });

@@ -25,11 +25,15 @@
     formatRelativeAge,
     groupWorkFactsBySource,
     WORK_FACT_SOURCE_LABELS,
+    WORK_STANDING_LABELS,
     workDeclaredStatusLabel,
     workFactInstant,
     workFactSummary,
     workHarnessLabel,
     workRootId,
+    workRootLastDecision,
+    workRootNextAction,
+    workRootStanding,
   } from './work-attention-model';
   import WorkRouting from './work-routing.svelte';
   import {
@@ -39,6 +43,7 @@
     workDetailHeader,
     workDetailLabel,
     workDetailQuestion,
+    workDetailQuestionToReconsider,
     workDetailText,
     workDetailTitle,
     workFactItem,
@@ -98,6 +103,12 @@
   const factGroups = $derived(groupWorkFactsBySource(root.facts));
   const detailHref = (rowId: string) => `${sessionRoutePathname({ kind: 'session', rowId })}?tab=sessions&range=all`;
   const statusTones = { blocked: statusPillWarn, completed: statusPillOk, review_ready: statusPillInfo } as const;
+  const standing = $derived(workRootStanding(root));
+  const decision = $derived(workRootLastDecision(root));
+  const next = $derived(workRootNextAction(root));
+  const request = $derived(
+    root.declared?.needsAction ?? (root.declared?.status === 'review_ready' ? 'Review requested' : null),
+  );
   const resetChildren = (_id: string): void => {
     childrenOpen = false;
   };
@@ -117,24 +128,57 @@
         {/if}
       </div>
       <h2 class={workDetailTitle} id="work-detail-heading">{root.title}</h2>
-      <p class={workMuted}>
-        {root.project.label}
-        {#if root.project.branch}
-          · {root.project.branch}{root.project.worktreeName ? ` (worktree ${root.project.worktreeName})` : ''}
-        {/if}
-        {#if root.project.checkoutPath}
-          · {root.project.checkoutPath}
-        {/if}
-        · {root.key.machineId}
-      </p>
-      {#if root.project.servedLabel !== null && root.project.servedLabel !== root.project.label}
-        <p class={workMuted} data-work-served-label>report project: {root.project.servedLabel}</p>
-      {/if}
     </div>
     <button aria-label="Close detail" class={workCloseButton} onclick={onClose} type="button" bind:this={closeButton}>
       Close
     </button>
   </header>
+
+  <!-- Request first, then its context, the last decision and the next action; diagnostics follow. -->
+  <section aria-labelledby="work-detail-request" class={workStack} data-work-request={standing}>
+    <h3 class={workDetailLabel} id="work-detail-request">Request · {WORK_STANDING_LABELS[standing]}</h3>
+    {#if request}
+      <p class={standing === 'current' ? workDetailQuestion : workDetailQuestionToReconsider} data-work-question>
+        {request}
+      </p>
+    {/if}
+    {#if root.declared && request}
+      <p class={workMuted}>
+        asked
+        <time datetime={root.declared.at} title={formatExactInstant(root.declared.at)}
+          >{formatRelativeAge(root.declared.at, reference)}</time
+        >
+        · {formatExactInstant(root.declared.at)}
+      </p>
+    {/if}
+    <p class={workMuted} data-work-context>
+      {root.project.label}
+      {#if root.project.branch}
+        · {root.project.branch}{root.project.worktreeName ? ` (worktree ${root.project.worktreeName})` : ''}
+      {/if}
+      {#if root.project.checkoutPath}
+        · {root.project.checkoutPath}
+      {/if}
+      · {root.key.machineId}
+    </p>
+    {#if root.project.servedLabel !== null && root.project.servedLabel !== root.project.label}
+      <p class={workMuted} data-work-served-label>report project: {root.project.servedLabel}</p>
+    {/if}
+    {#if decision}
+      <p class={workDetailText} data-work-decision>
+        Last decision: {decision.text}
+        {#if decision.instant}
+          · {decision.instantLabel}
+          <time datetime={decision.instant} title={formatExactInstant(decision.instant)}
+            >{formatExactInstant(decision.instant)}</time
+          >
+        {/if}
+      </p>
+    {/if}
+    {#if next}
+      <p class={workDetailText} data-work-next>Next: {next}</p>
+    {/if}
+  </section>
 
   <section aria-labelledby="work-detail-declaration" class={workStack}>
     <h3 class={workDetailLabel} id="work-detail-declaration">Declared by the session</h3>
@@ -143,18 +187,18 @@
         <span class={cx(statusPill, statusTones[root.declared.status])}
           >{workDeclaredStatusLabel(root.declared.status)}</span
         >
-        <span class={workMuted}>
-          declared
-          <time datetime={root.declared.at} title={formatExactInstant(root.declared.at)}
-            >{formatRelativeAge(root.declared.at, reference)}</time
-          >
-          · {formatExactInstant(root.declared.at)}
-        </span>
+        {#if !request}
+          <!-- A request already carries this date above, as the time it was asked. -->
+          <span class={workMuted}>
+            declared
+            <time datetime={root.declared.at} title={formatExactInstant(root.declared.at)}
+              >{formatRelativeAge(root.declared.at, reference)}</time
+            >
+            · {formatExactInstant(root.declared.at)}
+          </span>
+        {/if}
       </div>
       <p class={workDetailText}>{root.declared.detail}</p>
-      {#if root.declared.needsAction}
-        <p class={workDetailQuestion} data-work-question>{root.declared.needsAction}</p>
-      {/if}
       <p class={workMuted}>
         Declared by the session at {formatExactInstant(root.declared.at)}; its current state is unobserved.
       </p>
@@ -198,7 +242,7 @@
             {@const instant = workFactInstant(fact)}
             <li class={workFactItem}>
               <span>
-                {workFactSummary(fact)}
+                {workFactSummary(fact, root)}
                 · <time datetime={instant} title={formatExactInstant(instant)}>{formatExactInstant(instant)}</time>
               </span>
               <ProvenanceMarker

@@ -10,6 +10,11 @@
   const checkouts = $derived(coverage.checkouts);
   const jira = $derived(coverage.jira);
   const hidden = $derived(coverage.window.excludedRoots);
+  const refused = $derived(
+    desktop.refusedRows > 0
+      ? ` · ${desktop.refusedRows} stored ${desktop.refusedRows === 1 ? 'row' : 'rows'} refused on read`
+      : '',
+  );
 </script>
 
 <p class={workCoverageLine} data-work-coverage>
@@ -25,11 +30,13 @@
       >
       · {desktop.filesParsed} of {desktop.filesSeen} files parsed{desktop.unsupported > 0
         ? ` · ${desktop.unsupported} unsupported`
-        : ''}{desktop.truncated ? ' · listing truncated' : ''}
+        : ''}{desktop.truncated ? ' · not every session read (older ones without a wait are left out)' : ''}{refused}
     {:else}
       not observed
     {/if}
   </span>
+  <!-- Declarations come from one harness's registry; other harnesses appear with activity only. -->
+  <span data-work-harness-coverage>Declarations: Claude Desktop only; other harnesses show activity alone</span>
   <span>
     Pull requests:
     {#if pulls.disabled}

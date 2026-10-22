@@ -17,6 +17,11 @@ import {
   workFilterOptions,
   workRootFactChips,
   workRootId,
+  workRootLastDecision,
+  workRootNextAction,
+  workRootPastProposalIds,
+  workRootStanding,
+  workSearchCoverage,
   writeWorkAttentionSearch,
 } from './work-attention-model';
 import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
@@ -64,7 +69,9 @@ describe('Work attention grouping and ordering', () => {
     ]);
     const needsYou = groupWorkRoots(roots)[0]!.roots;
     expect(needsYou.at(-1)?.title).toBe('Scan resource optimization');
-    expect(needsYou.slice(0, -1).every((root) => !root.reconsidered)).toBe(true);
+    // The older declarations to reconsider close the section, after every current block.
+    expect(needsYou.slice(-2).map((root) => root.title)).toEqual(['Toolbar refresh', 'Scan resource optimization']);
+    expect(needsYou.slice(0, -2).every((root) => !root.reconsidered)).toBe(true);
     // Older than every other request, it would rank first by date alone; the flag sorts it last.
     expect(workRootFactChips(reconsidered).map((chip) => chip.label)).toEqual([
       'possibly answered · PR #61',
@@ -113,7 +120,7 @@ describe('Work attention search and filters', () => {
   });
   test('attention, harness, machine and project chips narrow the list independently', () => {
     const blocked = filterWorkRoots(roots, { ...EMPTY_WORK_ATTENTION_SEARCH, attention: ['human-request'] });
-    expect(blocked.length).toBe(6);
+    expect(blocked.length).toBe(8);
     expect(blocked.every((root) => root.attention === 'human-request')).toBe(true);
     const codex = filterWorkRoots(roots, { ...EMPTY_WORK_ATTENTION_SEARCH, harness: ['codex'] });
     expect(codex.length).toBeGreaterThanOrEqual(3);
@@ -284,5 +291,96 @@ describe('Work attention dates and fact chips', () => {
   test('facts group by their source in first-seen order', () => {
     const groups = groupWorkFactsBySource(rootNamed('Fix mobile navigation label overlap').facts);
     expect(groups.map((group) => group.source)).toEqual(['claude-desktop', 'github', 'local-checkout']);
+  });
+});
+
+describe('Work attention standing, last decision and next action (ADR 0056)', () => {
+  test('reads the standing from the interpretations: current, to reconsider, answered elsewhere', () => {
+    expect(workRootStanding(rootNamed('Fix mobile navigation label overlap'))).toBe('current');
+    expect(workRootStanding(rootNamed('Scan resource optimization'))).toBe('reconsider');
+    expect(workRootStanding(rootNamed('Toolbar refresh'))).toBe('reconsider');
+    expect(workRootStanding(rootNamed('Release checklist'))).toBe('handled');
+    expect(workRootStanding(rootNamed('Viz lineage exploration'))).toBe('none');
+  });
+
+  test('an earlier question answered in the harness is the row’s last decision, dated by its own fact', () => {
+    const root = rootNamed('Sources label');
+    expect(workRootStanding(root)).toBe('current');
+    const decision = workRootLastDecision(root);
+    expect(decision?.text).toBe('Earlier “Call the rail entry “Inputs” or “Collectors”?” answered in Claude Desktop');
+    expect(decision?.instantLabel).toBe('asked');
+    const earlier = root.facts.find((fact) => fact.id === 'sources-label:declared-earlier');
+    expect(String(earlier?.kind === 'declared-turn' ? earlier.declaredAt : null)).toBe(String(decision?.instant));
+    expect(workRootNextAction(root)).toBe('Answer in Claude Desktop.');
+    // The earlier question stays searchable by its own words.
+    expect(matchesWorkAttentionSearch(root, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'collectors' })).toBe(true);
+  });
+
+  test('a handled request names the linked session’s completion and asks nothing', () => {
+    const root = rootNamed('Release checklist');
+    expect(workRootLastDecision(root)).toMatchObject({
+      instantLabel: 'completed',
+      text: 'Handled in a session started from it',
+    });
+    expect(workRootNextAction(root)).toBe('Nothing asked of you; the linked session’s outcome is in the detail.');
+    expect(workFactSummary(root.facts[1]!, root)).toBe(
+      'Linked session declared completed: The export test is stable again.',
+    );
+    expect(workFactSummary(root.facts[0]!, root)).toStartWith('Declared blocked:');
+  });
+
+  test('an older declaration to reconsider says so in its chips and next action', () => {
+    const root = rootNamed('Toolbar refresh');
+    expect(workRootFactChips(root).map((chip) => chip.label)).toContain('work continued in a linked session');
+    expect(workRootNextAction(root)).toBe(
+      'Check what followed; answer or archive the session in Claude Desktop to settle it.',
+    );
+  });
+
+  test('proposals an interpretation says are past are not counted as open', () => {
+    const base = rootNamed('Fix mobile navigation label overlap');
+    const open = (id: string): WorkRoot['facts'][number] => ({
+      createdAt: null,
+      id,
+      kind: 'proposal',
+      provenance: base.facts[0]!.provenance,
+      resolution: 'open',
+      suggestionId: id,
+      title: id,
+      tldr: null,
+    });
+    const root: WorkRoot = {
+      ...base,
+      facts: [open('p-old'), open('p-new')],
+      interpretations: [
+        { evidence: ['p-old'], kind: 'proposal-superseded', text: 'Superseded.', uncertainty: 'Unread.' },
+      ],
+    };
+    expect([...workRootPastProposalIds(root)]).toEqual(['p-old']);
+    expect(workRootFactChips(root).find((chip) => chip.id.endsWith(':proposals'))?.label).toBe(
+      'proposals 1 open / 0 resolved / 1 no longer pending',
+    );
+  });
+
+  test('a search over the ranking says what it did not search', () => {
+    expect(workSearchCoverage(dataset, 2, true)).toBe(
+      `2 of ${dataset.roots.length} roots match. Searched the ${dataset.roots.length} roots in this ranking; not searched: 4 older roots without a pending declaration (30-day window), 9 beyond the ranking limit.`,
+    );
+    expect(workSearchCoverage(dataset, dataset.roots.length, false)).toBe(
+      `${dataset.roots.length} of ${dataset.roots.length} roots shown; not shown: 4 older roots without a pending declaration (30-day window), 9 beyond the ranking limit.`,
+    );
+    const whole = {
+      ...dataset,
+      coverage: { ...dataset.coverage, window: { excludedRoots: 0, sinceDays: 30 } },
+      totalRoots: dataset.roots.length,
+    };
+    expect(workSearchCoverage(whole, 0, true)).toBe(
+      `0 of ${dataset.roots.length} roots match. Searched the ${dataset.roots.length} roots in this ranking; nothing else was read.`,
+    );
+    const bounded = {
+      ...whole,
+      coverage: { ...whole.coverage, desktopSessions: { ...whole.coverage.desktopSessions, truncated: true } },
+    };
+    expect(workSearchCoverage(bounded, 0, true)).toContain('not searched: older sessions beyond the read bound.');
   });
 });

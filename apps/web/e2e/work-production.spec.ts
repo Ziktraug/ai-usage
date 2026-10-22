@@ -8,8 +8,8 @@ import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transpo
 
 /**
  * The Work resume surface on the production path. The disposable HOME carries a native Claude
- * Desktop session registry (`seedHarnessHome` with `claudeDesktopSessions: 'representative'`: 24
- * roots, 17 children, one unsupported file); the supervised engine collects it through
+ * Desktop session registry (`seedHarnessHome` with `claudeDesktopSessions: 'representative'`: 30
+ * roots, 20 children, one unsupported file); the supervised engine collects it through
  * `claude.desktop-sessions` into `claude_desktop_sessions`, then observes the pull requests the
  * registry declared through the fixture's `gh` (`github.pull-requests`) and the checkouts it named
  * through `git status` (`checkouts.status`); `report-data` reads it all back for the
@@ -32,22 +32,28 @@ const CAPTURES_DIRECTORY_ENV = 'AI_USAGE_WORK_CAPTURES_DIR';
 const DEFAULT_ORIGIN = 'http://127.0.0.1:4175';
 const DESKTOP_COLLECTION_TIMEOUT_MS = 60_000;
 /**
- * The registry seeds 24 roots. The 30-day window hides the one older root whose family declared
+ * The registry seeds 30 roots. The 30-day window hides the one older root whose family declared
  * nothing pending; the two older roots still blocked on a question stay visible.
  */
-const ROOTS_SHOWN = 23;
+const ROOTS_SHOWN = 29;
 const HIDDEN_ROOTS = 1;
 const MINIMUM_ROOTS = 20;
-const NEEDS_YOU_ROOTS = 8;
+/**
+ * Ten current blocks and two older declarations to reconsider. A single sweep sees only the final
+ * registry files: the replied root, whose reply only an earlier sweep can date, stays a current
+ * block here (ADR 0056); the e2e fixture and the history chain test replay the earlier sweep.
+ */
+const NEEDS_YOU_ROOTS = 12;
+const RECONSIDER_ROOTS = 2;
 const WAITING_ROOTS = 1;
-const LEAD_ROOTS = 1;
+const LEAD_ROOTS = 2;
 const FOLDED_ROOTS = 10;
 const RESTING_ROOTS = ROOTS_SHOWN - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
 const RESTING_TITLE = 'Recent · no pending declaration read';
-/** The registry declares three distinct pull requests (#117, #118, #90); the fixture gh answers each. */
-const DECLARED_PULL_REQUESTS = 3;
-const REGISTRY_FILES = 41;
-const PARSED_FILES = 40;
+/** The registry declares four distinct pull requests (#117, #118, #90, #131); the fixture gh answers each. */
+const DECLARED_PULL_REQUESTS = 4;
+const REGISTRY_FILES = 50;
+const PARSED_FILES = 49;
 const BLOCKED_ROOT_ID = 'local_fixture-blocked-root';
 /** Every registry session sits in the seeded repository (`…/work/fixture`) or a worktree under it. */
 const PROJECT_LABEL = 'fixture';
@@ -76,6 +82,7 @@ const COMPLETED_INTERPRETATION =
   'fixture/ai-usage#118 is open and awaiting review (REVIEW_REQUIRED; checks unknown) as of ';
 const PROPOSAL_ROOT_ID = 'local_fixture-proposal-root';
 const PROPOSAL_TITLE = 'Fixture: proposals pending';
+const CONTINUED_TITLE = 'Fixture: toolbar refresh';
 const UNSUPPORTED_ROOT_ID = 'local_fixture-unsupported';
 const UNSUPPORTED_TITLE = 'Fixture: unknown shape';
 const UNSUPPORTED_INTERPRETATION =
@@ -230,7 +237,7 @@ test('renders the collected registry and its observed facts as a resume surface,
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
   await expect(main.locator('[data-work-section="human-request"] header')).toContainText(
-    'A root marked “possibly answered” has a later pull request that may be the answer; it ranks last and stays yours until you confirm.',
+    'Older declarations to reconsider follow: something later may have answered them, without proof.',
   );
   await expect(main.locator('[data-work-section="none"] header')).toContainText(
     'Nothing pending was read here; that is not proof that nothing is pending.',
@@ -277,9 +284,12 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(main.locator('[data-work-section="external-wait"]').locator(completed)).toHaveCount(1);
   await expect(completed).toContainText('PR #118 review required · observed');
   const needsYou = sectionRows(page, 'human-request');
-  await expect(needsYou.last()).toContainText(SATISFIED_TITLE);
-  await expect(needsYou.last()).toContainText('possibly answered · PR #117');
-  await expect(needsYou.last()).toContainText('PR #117 review required · observed');
+  const toReconsider = main.locator('[data-work-reconsider] [data-work-root]');
+  await expect(toReconsider).toHaveCount(RECONSIDER_ROOTS);
+  await expect(toReconsider.first()).toContainText(SATISFIED_TITLE);
+  await expect(toReconsider.first()).toContainText('possibly answered · PR #117');
+  await expect(toReconsider.first()).toContainText('PR #117 review required · observed');
+  await expect(needsYou.last()).toContainText(CONTINUED_TITLE);
   const mergedBefore = rowNamed(page, MERGED_BEFORE_TITLE);
   await expect(main.locator('[data-work-section="human-request"]').locator(mergedBefore)).toHaveCount(1);
   await expect(mergedBefore).toContainText('PR #90 review required · observed');
@@ -299,7 +309,7 @@ test('renders the collected registry and its observed facts as a resume surface,
 
   // Search narrows the sections and lands in the address.
   await page.getByRole('searchbox').fill('investigate');
-  await expect(main.getByRole('status').filter({ hasText: `1 of ${ROOTS_SHOWN} roots shown` })).toBeVisible();
+  await expect(main.getByRole('status').filter({ hasText: `1 of ${ROOTS_SHOWN} roots match.` })).toBeVisible();
   await expect.poll(() => searchParam(page, 'q')).toBe('investigate');
   await expect(blocked).toHaveCount(1);
 
@@ -502,4 +512,71 @@ test('opens the collected root as a drawer at 390px without overflow', async ({ 
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect.poll(() => searchParam(page, 'root')).toBeNull();
+});
+
+const ANSWERED_TITLE = 'Fixture: settle the layout';
+const REPLIED_TITLE = 'Fixture: export column wording';
+const UNRELATED_TITLE = 'Fixture: settings panel naming';
+const OFFERS_TITLE = 'Fixture: follow-ups after the import';
+const HANDLED_ROOT_ID = 'local_fixture-handled-root';
+const HANDLED_TITLE = 'Fixture: release checklist';
+const CONTINUED_ROOT_ID = 'local_fixture-continued-root';
+
+test('reads on the production path what the native registry says about requests, offers and linked work (ADR 0056)', async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await waitForCollectedWork(request);
+  await page.goto('/work');
+  await waitForHydratedWork(page);
+  const main = page.getByRole('main');
+
+  // The latest question is the current request; one sweep cannot know the earlier one.
+  const answered = rowNamed(page, ANSWERED_TITLE);
+  await expect(answered).toHaveAttribute('data-work-standing', 'current');
+  await expect(answered).toContainText('Delete the superseded layout branch now?');
+  await expect(answered.locator('[data-work-decision]')).toHaveCount(0);
+  // A reply a single sweep cannot date leaves the question a current block, never a guessed answer.
+  await expect(rowNamed(page, REPLIED_TITLE)).toHaveAttribute('data-work-standing', 'current');
+
+  // An unrelated pull request, observed through gh, resolves nothing.
+  const unrelated = rowNamed(page, UNRELATED_TITLE);
+  await expect(main.locator('[data-work-section="human-request"]').locator(unrelated)).toHaveCount(1);
+  await expect(unrelated).toHaveAttribute('data-work-standing', 'current');
+  await expect(unrelated).toContainText('PR #131 review required · observed');
+
+  // Work continued in a session started from the root after its question: to reconsider, marked in words.
+  const continued = main.locator('[data-work-reconsider]').locator(rowNamed(page, CONTINUED_TITLE));
+  await expect(continued).toHaveCount(1);
+  await expect(continued.locator('[data-work-standing-marker]')).toHaveText('Older declaration to reconsider');
+
+  // Offers made before a later message, or expired, are no longer a lead.
+  const offers = rowNamed(page, OFFERS_TITLE);
+  await expect(main.locator('[data-work-section="optional-lead"]').locator(offers)).toHaveCount(1);
+  await expect(offers).toContainText('proposals 1 open / 0 resolved / 2 no longer pending');
+
+  // Handled in a session started from the root after its question: no longer waiting, with provenance.
+  await main.locator('[data-work-section="none"] button', { hasText: 'Show all' }).click();
+  const handled = rowNamed(page, HANDLED_TITLE);
+  await expect(main.locator('[data-work-section="none"]').locator(handled)).toHaveCount(1);
+  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Handled in a linked session');
+  await capture(page, 'work-prod-1440-standings.png', { fullPage: true });
+  await expectAxeClean(page);
+
+  const handledDetail = await openWorkRoot(page, HANDLED_ROOT_ID);
+  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'handled');
+  await expect(handledDetail).toContainText(
+    'Handled in “Fixture: fix the flaky export test”: started from this session at',
+  );
+  await expect(handledDetail.locator('[data-work-next]')).toHaveText(
+    'Next: Nothing asked of you; the linked session’s outcome is in the detail.',
+  );
+  const continuedDetail = await openWorkRoot(page, CONTINUED_ROOT_ID);
+  await expect(continuedDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'reconsider');
+  await expect(continuedDetail).toContainText(
+    'Older declaration to reconsider: work continued after the question in “Fixture: toolbar icon study”',
+  );
+  await capture(page, 'work-prod-1440-detail-reconsider.png', { fullPage: true });
+  await expectAxeClean(page);
 });

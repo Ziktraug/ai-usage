@@ -13,6 +13,7 @@ export {
   markReviewAttemptsLost,
   publishServedReportRevision,
   queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
   queryCurrentServedReportRevision,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,

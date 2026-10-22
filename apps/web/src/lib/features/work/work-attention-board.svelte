@@ -15,6 +15,7 @@
     workFilterOptions,
     workHarnessLabel,
     workRootId,
+    workSearchCoverage,
   } from './work-attention-model';
   import WorkAttentionRow from './work-attention-row.svelte';
   import {
@@ -33,6 +34,7 @@
     workSectionTitle,
     workShowMore,
     workStack,
+    workSubsectionTitle,
   } from './work-styles';
 
   let {
@@ -244,16 +246,16 @@
       </button>
     {/if}
   </div>
-  <p aria-live="polite" class={workMuted} role="status">
-    {visible.length}
-    of {dataset.roots.length} roots shown{dataset.truncated
-      ? ` · ranking covers ${dataset.roots.length} of ${dataset.totalRoots} roots`
-      : ''}.
+  <p aria-live="polite" class={workMuted} data-work-search-coverage role="status">
+    {workSearchCoverage(dataset, visible.length, filtered)}
   </p>
   <div class={workStack} data-work-sections bind:this={host}>
     {#each groups as group (group.section.kind)}
       {#if group.roots.length > 0}
         {@const shown = rowsShown(group.section.kind, group.roots.length)}
+        {@const rows = group.roots.slice(0, shown)}
+        {@const current = group.section.kind === 'human-request' ? rows.filter((root) => !root.reconsidered) : rows}
+        {@const toReconsider = group.section.kind === 'human-request' ? rows.filter((root) => root.reconsidered) : []}
         <section
           aria-labelledby={`work-section-${group.section.kind}`}
           class={workSection}
@@ -269,17 +271,35 @@
               {/if}
             </p>
           </header>
-          <ul class={workRowList}>
-            {#each group.roots.slice(0, shown) as root (workRootId(root))}
-              <WorkAttentionRow
-                {onSelect}
-                reference={dataset.generatedAt}
-                {root}
-                selected={workRootId(root) === selectedId}
-                tabindex={workRootId(root) === activeId ? 0 : -1}
-              />
-            {/each}
-          </ul>
+          {#if current.length > 0}
+            <ul class={workRowList}>
+              {#each current as root (workRootId(root))}
+                <WorkAttentionRow
+                  {onSelect}
+                  reference={dataset.generatedAt}
+                  {root}
+                  selected={workRootId(root) === selectedId}
+                  tabindex={workRootId(root) === activeId ? 0 : -1}
+                />
+              {/each}
+            </ul>
+          {/if}
+          {#if toReconsider.length > 0}
+            <h3 class={workSubsectionTitle} data-work-reconsider-heading id="work-section-reconsider">
+              Older declarations to reconsider · {toReconsider.length}
+            </h3>
+            <ul aria-labelledby="work-section-reconsider" class={workRowList} data-work-reconsider>
+              {#each toReconsider as root (workRootId(root))}
+                <WorkAttentionRow
+                  {onSelect}
+                  reference={dataset.generatedAt}
+                  {root}
+                  selected={workRootId(root) === selectedId}
+                  tabindex={workRootId(root) === activeId ? 0 : -1}
+                />
+              {/each}
+            </ul>
+          {/if}
           {#if shown < group.roots.length}
             <button class={workShowMore} onclick={() => expand(group.section.kind)} type="button">
               Show all {group.roots.length} in {group.section.title}
@@ -291,7 +311,7 @@
     {#if visible.length === 0}
       <p class={workMuted} role="status">
         {filtered
-          ? 'No root matches these filters.'
+          ? 'No root in this ranking matches these filters; what was not searched is listed above.'
           : 'No declared outcomes collected yet. Collection coverage is listed above; absence is not completion.'}
       </p>
     {/if}

@@ -30,6 +30,7 @@ explicitly declared information.
 | E | First read-only review attempt launched from the product (Claude Code only, isolated checkout) | — | NOT STARTED (depends on A, C, R) |
 | M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE, integrated (`599fa303`) |
 | K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
+| L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE (lot branch, awaiting integration) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -309,6 +310,29 @@ local-collectors 272, usage-engine-runtime 217, usage-engine-control 61, web-con
 1551 pass; opt-in production attempt spec 1/1 under `nix develop` (Bun 1.3.13); bundle closure
 305 459 B (the branch keeps the base's 305 000 B ceiling, so `test:web-bundle` reports the ceiling
 until it meets the integration head's).
+
+### 2026-10-22 10:20 — lot L: resolved waits, honest coverage (`375427a5`, `6dc6b3db`, `8b2691cf`, lot branch)
+
+Native facts checked read-only on the operator's registry (75 files): only the latest
+`postTurnSummary` is kept per file and the transcript holds no summary history, so the usage store
+now records a bounded declaration history (`claude_desktop_turn_declarations`, 8 per session) and
+`latestUserFrameAt` (new nullable column), additively under `user_version` 4 (ADR 0056). A message
+recorded after a question answers it without a confirmation in the product; an earlier question a
+later turn replaced reads as answered (dated, with its facts) while the new one stays the current
+request; a session started from the root after the question and completed handles it; work
+continued there without completion makes it an older declaration to reconsider, listed apart; an
+unrelated pull request still resolves nothing; offers past their native expiry or followed by a
+later message are no longer pending. No transcript is read. The Work read keeps sessions that may
+carry a wait (a request, a declared pull request) beyond its 500-session recency page and fetches
+missing parents; the search status says what a filter did not search. Rows and the detail read
+request → context → last decision → next action. Evidence: typecheck 58/58, `bun run lint` and
+`bun run check` clean; report-core 501, report-data 68 (incl. a 504-session store with the oldest
+roots pending), usage-store 265, usage-engine-runtime 213 (incl. a two-sweep collector → store →
+read chain), local-collectors 259, local-machine 216, web unit 1556 pass, 0 fail; e2e `work.spec.ts`
++ `work-e2e-fixture.spec.ts` 11/11; production `work-production.spec.ts` 5/5 under `nix develop`.
+Not done here: exact "N of S sessions read" counts need the wire mirrors (patch handed to the
+integrator); the hydration double read of `work.attention` comes from the shared `collection-swr`
+policy (`refetchOnMount: 'always'`), reported with its fix. Visual snapshot references untouched.
 
 ### 2026-10-22 10:20 — lot M integrated (`599fa303`)
 

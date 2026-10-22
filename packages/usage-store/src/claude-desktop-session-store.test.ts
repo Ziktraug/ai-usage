@@ -9,11 +9,13 @@ import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import {
   type ClaudeDesktopSessionObservation,
   parseClaudeDesktopSessionObservation,
+  WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
 import {
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
   queryLocalMergeBundle,
   queryUsageStoreGeneration,
   type UsageStoreError,
@@ -367,5 +369,125 @@ describe('claude desktop session store', () => {
       expect(text).not.toContain('local_one');
       expect(text).not.toContain('Decide whether to open');
     }
+  });
+});
+
+describe('claude desktop turn declaration history (ADR 0056)', () => {
+  const declarations = (dbPath: string) =>
+    Effect.runPromise(queryClaudeDesktopTurnDeclarations({ dbPath, desktopSessionIds: ['local_one'] }));
+  const turn = (summarizesUuid: string, needsAction: string | null, status: 'blocked' | 'completed' = 'blocked') => ({
+    detail: `Declared ${status}.`,
+    needsAction,
+    status,
+    summarizesUuid,
+  });
+  const sweep = (
+    activityAt: string,
+    frameAt: string | null,
+    summary: ReturnType<typeof turn>,
+  ): ClaudeDesktopSessionObservation =>
+    observation({
+      fileModifiedAt: activityAt,
+      lastActivityAt: activityAt,
+      latestUserFrameAt: frameAt,
+      turnSummary: summary,
+    } as Partial<ClaudeDesktopSessionObservation>);
+
+  test('Q1, a message, then Q2: Q1 is kept as replied and superseded, Q2 is the current declaration', async () => {
+    const dbPath = await createStore('desktop-history');
+    await importBatch(dbPath, [sweep('2026-10-20T06:00:00.000Z', '2026-10-20T05:50:00.000Z', turn('uuid-q1', 'Q1?'))]);
+    await importBatch(dbPath, [sweep('2026-10-20T06:30:00.000Z', '2026-10-20T06:20:00.000Z', turn('uuid-q1', 'Q1?'))]);
+    await importBatch(dbPath, [sweep('2026-10-20T08:00:00.000Z', '2026-10-20T06:20:00.000Z', turn('uuid-q2', 'Q2?'))]);
+
+    const read = await declarations(dbPath);
+    expect(read.skipped).toBe(0);
+    expect(
+      read.declarations.map((row) => [
+        row.declarationKey,
+        row.needsAction,
+        row.declaredAt,
+        row.repliedAt,
+        row.supersededAt,
+      ]),
+    ).toEqual([
+      ['uuid-q1', 'Q1?', '2026-10-20T06:00:00.000Z', '2026-10-20T06:20:00.000Z', '2026-10-20T08:00:00.000Z'],
+      ['uuid-q2', 'Q2?', '2026-10-20T08:00:00.000Z', null, null],
+    ]);
+    // The message time round-trips on the session row as well.
+    const sessions = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath }));
+    expect(String(sessions.observations[0]?.latestUserFrameAt)).toBe('2026-10-20T06:20:00.000Z');
+  });
+
+  test('an unchanged file writes nothing, and a current declaration missing from the history is recorded', async () => {
+    const dbPath = await createStore('desktop-history-seed');
+    const first = sweep('2026-10-20T06:00:00.000Z', null, turn('uuid-q1', 'Q1?'));
+    await importBatch(dbPath, [first]);
+    const writable = new Database(dbPath);
+    writable.exec('DELETE FROM claude_desktop_turn_declarations');
+    writable.close(true);
+    // A store from before the history: the session row is unchanged, the history starts from this sweep.
+    expect(await importBatch(dbPath, [first])).toEqual({ inserted: 0, skipped: 0, unchanged: 1, updated: 0 });
+    expect((await declarations(dbPath)).declarations.map((row) => row.declarationKey)).toEqual(['uuid-q1']);
+    expect(await importBatch(dbPath, [first])).toEqual({ inserted: 0, skipped: 0, unchanged: 1, updated: 0 });
+    expect((await declarations(dbPath)).declarations).toHaveLength(1);
+  });
+
+  test('keeps the newest declarations per session and counts a refused row instead of showing it', async () => {
+    const dbPath = await createStore('desktop-history-bound');
+    for (let index = 0; index < 11; index++) {
+      const at = new Date(Date.UTC(2026, 9, 20, index)).toISOString();
+      await importBatch(dbPath, [sweep(at, null, turn(`uuid-${index}`, `Question ${index}?`))]);
+    }
+    const read = await declarations(dbPath);
+    expect(read.declarations).toHaveLength(WORK_ATTENTION_BOUNDS.maxDeclarationsPerSession);
+    expect(read.declarations.at(-1)).toMatchObject({ declarationKey: 'uuid-10', supersededAt: null });
+    const writable = new Database(dbPath);
+    writable.exec(
+      "UPDATE claude_desktop_turn_declarations SET status_category = 'waiting' WHERE declaration_key = 'uuid-5'",
+    );
+    writable.close(true);
+    const refused = await declarations(dbPath);
+    expect(refused.skipped).toBe(1);
+    expect(refused.declarations.map((row) => row.declarationKey)).not.toContain('uuid-5');
+    expect(await failureReason(queryClaudeDesktopTurnDeclarations({ dbPath, desktopSessionIds: [''] }))).toBe(
+      'invalid-input',
+    );
+    expect(
+      (await Effect.runPromise(queryClaudeDesktopTurnDeclarations({ dbPath, desktopSessionIds: [] }))).declarations,
+    ).toEqual([]);
+  });
+
+  test('reads pending sessions beyond a recency page, and sessions by id, never widening an empty filter', async () => {
+    const dbPath = await createStore('desktop-pending');
+    await importBatch(dbPath, [
+      observation({ desktopSessionId: 'local_recent', lastActivityAt: '2026-10-20T09:00:00.000Z' } as never),
+      observation({
+        desktopSessionId: 'local_old_blocked',
+        lastActivityAt: '2026-09-01T09:00:00.000Z',
+      } as never),
+      observation({
+        declaredPullRequests: [],
+        desktopSessionId: 'local_old_done',
+        lastActivityAt: '2026-09-02T09:00:00.000Z',
+        turnSummary: turn('uuid-done', null, 'completed'),
+      } as never),
+      // Completed, but it declared a pull request: an observation may show it waiting on someone.
+      observation({
+        desktopSessionId: 'local_old_pr',
+        lastActivityAt: '2026-09-03T09:00:00.000Z',
+        turnSummary: turn('uuid-pr', null, 'completed'),
+      } as never),
+    ]);
+    const older = await Effect.runPromise(
+      queryClaudeDesktopSessions({ dbPath, olderThanLastActivityAt: '2026-10-20T09:00:00.000Z', pendingOnly: true }),
+    );
+    expect(older.observations.map((row) => row.desktopSessionId)).toEqual(['local_old_pr', 'local_old_blocked']);
+    const byId = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath, desktopSessionIds: ['local_old_done'] }));
+    expect(byId.observations.map((row) => row.desktopSessionId)).toEqual(['local_old_done']);
+    const none = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath, desktopSessionIds: [] }));
+    expect(none).toEqual({ observations: [], skipped: 0, truncated: false });
+    expect(await failureReason(queryClaudeDesktopSessions({ dbPath, olderThanLastActivityAt: 'yesterday' }))).toBe(
+      'invalid-input',
+    );
   });
 });
