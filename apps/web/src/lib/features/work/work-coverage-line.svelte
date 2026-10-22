@@ -1,10 +1,16 @@
 <script lang="ts">
-  import type { WorkAttentionCoverage } from '@ai-usage/report-core/work-attention';
-  import { formatExactInstant, formatRelativeAge } from './work-attention-model';
+  import type { WorkAttentionCoverage, WorkRoot } from '@ai-usage/report-core/work-attention';
+  import { formatExactInstant, formatRelativeAge, workCodexCoverage } from './work-attention-model';
   import { workCoverageLine } from './work-styles';
 
-  let { coverage, reference, synthetic }: { coverage: WorkAttentionCoverage; reference: string; synthetic: boolean } =
-    $props();
+  let {
+    coverage,
+    reference,
+    roots,
+    synthetic,
+  }: { coverage: WorkAttentionCoverage; reference: string; roots: readonly WorkRoot[]; synthetic: boolean } = $props();
+  // Per harness, what was read (ADR 0059): declared waits come from the Desktop registry only.
+  const codex = $derived(workCodexCoverage({ coverage, roots }));
   const desktop = $derived(coverage.desktopSessions);
   const pulls = $derived(coverage.pullRequests);
   const checkouts = $derived(coverage.checkouts);
@@ -28,8 +34,8 @@
   {#if synthetic}
     <span>Synthetic dataset</span>
   {/if}
-  <span>
-    Desktop sessions:
+  <span data-work-harness-coverage="claude-desktop">
+    Claude Desktop registry · declared waits:
     {#if desktop.collectedAt}
       collected
       <time datetime={desktop.collectedAt} title={formatExactInstant(desktop.collectedAt)}
@@ -42,8 +48,8 @@
       not observed
     {/if}
   </span>
-  <!-- Declarations come from one harness's registry; other harnesses appear with activity only. -->
-  <span data-work-harness-coverage>Declarations: Claude Desktop only; other harnesses show activity alone</span>
+  <span data-work-harness-coverage="codex">Codex · sessions only, no declared waits: {codex}</span>
+  <span data-work-harness-coverage="other">Other harnesses: not read here</span>
   <span>
     Pull requests:
     {#if pulls.disabled}

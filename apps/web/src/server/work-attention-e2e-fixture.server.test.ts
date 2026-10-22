@@ -8,6 +8,10 @@ import type { WorkRoot } from '@ai-usage/report-core/work-attention';
 import { parseWorkAttentionOutput } from '@ai-usage/web-contract/work';
 import {
   readE2EWorkAttention,
+  WORK_ATTENTION_E2E_CODEX_ORPHAN_TITLE,
+  WORK_ATTENTION_E2E_CODEX_REVISION,
+  WORK_ATTENTION_E2E_CODEX_ROOT_TITLE,
+  WORK_ATTENTION_E2E_CODEX_WORKTREE_TITLE,
   WORK_ATTENTION_E2E_JIRA_REPLY_KEY,
   WORK_ATTENTION_E2E_JIRA_TODO_KEY,
   WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY,
@@ -67,18 +71,27 @@ describe('work attention e2e fixture', () => {
     expect(merged?.interpretations[1]?.uncertainty).toContain('the question stays yours until you confirm');
     expect(merged?.interpretations[2]?.text).toContain('merge does not prove deployment');
 
-    // A dirty checkout observed forty minutes ago, shared by the blocked root and three others.
+    // A dirty checkout observed forty minutes ago, shared by the blocked root, three other Desktop
+    // roots and the Codex session recorded in that worktree.
     const blocked = byId.get(ids.blockedRoot);
     expect(blocked?.attention).toBe('human-request');
     expect(kindsOf(blocked)).toEqual(['request-open', 'local-changes-unvalidated']);
     expect(blocked?.interpretations[1]?.text).toBe(
-      `2 modified, 1 untracked observed at ${hoursBefore(40 / 60)} on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 4 roots.`,
+      `2 modified, 1 untracked observed at ${hoursBefore(40 / 60)} on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 5 roots.`,
     );
-    const sharing = [...byId.values()].filter((root) =>
+    const sharing = result.data.roots.filter((root) =>
       root.facts.some((fact) => fact.kind === 'checkout-status' && fact.checkoutPath === WORK_ATTENTION_E2E_WORKTREE),
     );
-    expect(sharing).toHaveLength(4);
-    expect(sharing.every((root) => root.project.worktreeName === 'checkout-3')).toBe(true);
+    expect(sharing.map((root) => root.key.harness).sort()).toEqual(['claude', 'claude', 'claude', 'claude', 'codex']);
+    // Desktop declares the worktree; Codex records the directory only, and no worktree is inferred for it.
+    expect(
+      sharing.map((root) => [root.key.harness, root.project.worktreeName]).filter(([harness]) => harness === 'codex'),
+    ).toEqual([['codex', null]]);
+    expect(
+      sharing
+        .filter((root) => root.key.harness === 'claude')
+        .every((root) => root.project.worktreeName === 'checkout-3'),
+    ).toBe(true);
 
     // An unauthenticated read with an older successful one: two coverage gaps, the dated state kept.
     const satisfied = byId.get(ids.satisfiedRoot);
@@ -179,13 +192,63 @@ describe('work attention e2e fixture', () => {
       observed: 4,
     });
     expect(result.data.coverage.checkouts).toEqual({ failed: 0, lastRunAt: hoursBefore(40 / 60), observed: 1 });
-    expect(result.data.coverage.sessions).toEqual({ joined: 0, revision: null, unmatched: 0 });
+    // The Desktop join is absent here; the revision named is the one the Codex families came from.
+    expect(result.data.coverage.sessions).toEqual({
+      joined: 0,
+      revision: WORK_ATTENTION_E2E_CODEX_REVISION,
+      unmatched: 0,
+    });
     expect(result.data.coverage.window.sinceDays).toBe(30);
     expect(result.data.totalRoots).toBe(result.data.roots.length + result.data.coverage.window.excludedRoots);
     expect(JSON.stringify(result)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
     // Every first-level group the Work view renders is present at least once.
     const attentions = new Set(result.data.roots.map((root) => root.attention));
-    expect([...attentions].sort()).toEqual(['external-wait', 'human-request', 'none', 'optional-lead']);
+    expect([...attentions].sort()).toEqual([
+      'external-wait',
+      'human-request',
+      'none',
+      'not-observable',
+      'optional-lead',
+    ]);
+  });
+
+  test('shows the served Codex families as their own roots, wait unknown, never folded or promoted (ADR 0059)', async () => {
+    const result = await readFixture();
+    const codex = result.data.roots.filter((root) => root.key.harness === 'codex');
+    // After every Desktop root, most recently active first.
+    expect(result.data.roots.slice(-3)).toEqual(codex);
+    expect(codex.map((root) => [root.title, root.attention, root.desktopSessionId, root.declared])).toEqual([
+      [WORK_ATTENTION_E2E_CODEX_WORKTREE_TITLE, 'not-observable', null, null],
+      [WORK_ATTENTION_E2E_CODEX_ROOT_TITLE, 'not-observable', null, null],
+      [WORK_ATTENTION_E2E_CODEX_ORPHAN_TITLE, 'not-observable', null, null],
+    ]);
+    const [worktree, root, orphan] = codex;
+    // The dirty worktree is interpreted, and still asks nothing of anyone.
+    expect(kindsOf(worktree)).toEqual(['coverage-gap', 'local-changes-unvalidated']);
+    expect(worktree?.interpretations[1]?.text).toContain('Checkout shared by 5 roots.');
+    expect(worktree?.project).toMatchObject({
+      branch: 'fixture/checkout-3',
+      checkoutPath: WORK_ATTENTION_E2E_WORKTREE,
+    });
+    // Its delegated child and its review fold under the root through their declared links only.
+    expect(root?.children).toMatchObject({
+      count: 2,
+      titles: ['Fixture Codex: delegated slice', 'Fixture Codex: review'],
+    });
+    expect(root?.session).toEqual({
+      campaignKey: `${WORK_ATTENTION_E2E_MACHINE_ID}:codex:codex-e2e-root`,
+      rowId: 'e2e-codex-row-codex-e2e-root',
+    });
+    expect(orphan?.interpretations.map(({ text }) => text)).toContain(
+      'Started from a Codex session that is not in the served report; it stands as its own root.',
+    );
+    // No Desktop root gained a child from a Codex session that shares its checkout and branch.
+    expect(
+      result.data.roots
+        .filter((candidate) => candidate.key.harness === 'claude')
+        .flatMap((candidate) => candidate.children.titles)
+        .some((title) => title.startsWith('Fixture Codex')),
+    ).toBe(false);
   });
 });
 

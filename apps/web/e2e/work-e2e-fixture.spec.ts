@@ -14,8 +14,9 @@ import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transpo
  * (`work-attention-e2e-fixture.server.ts`), held in memory, with synthetic external facts shaped
  * as the engine's producers store them: an open pull request awaiting review, one merged after
  * the request that asked for it, a dirty shared worktree, a pull request GitHub refused to read,
- * and three Jira issues (a reply that arrived, a status that differs, a read that failed). Only
- * the SQLite round trip and the served-revision join are absent here; the production path is
+ * and three Jira issues (a reply that arrived, a status that differs, a read that failed), plus
+ * three served Codex families shaped as the store read returns them (ADR 0059). Only the SQLite
+ * round trip and the Desktop served-revision join are absent here; the production path is
  * `work-production.spec.ts`.
  *
  * Titles and questions are the generator's; ages read against the fixture's fixed clock
@@ -26,7 +27,10 @@ const WORK_ATTENTION_PATH = '/rpc/work/attention';
 /** The oRPC GET shape the browser link emits for an empty input. */
 const ROUTING_CONTEXT_URL = '/rpc/workRouting/context?data=%7B%22json%22%3A%7B%7D%7D';
 /** 30 seeded roots; the one older root without a pending declaration stays behind the 30-day window. */
-const ROOTS_SHOWN = 29;
+const DESKTOP_ROOTS_SHOWN = 29;
+/** Three served Codex families, after every Desktop root, wait unknown. */
+const CODEX_ROOTS = 3;
+const ROOTS_SHOWN = DESKTOP_ROOTS_SHOWN + CODEX_ROOTS;
 const HIDDEN_ROOTS = 1;
 const MINIMUM_ROOTS = 20;
 /** Eight current blocks and three older declarations to reconsider; the answered and handled roots rest. */
@@ -34,15 +38,22 @@ const NEEDS_YOU_ROOTS = 11;
 const RECONSIDER_ROOTS = 3;
 const WAITING_ROOTS = 1;
 const LEAD_ROOTS = 2;
-const RESTING_ROOTS = ROOTS_SHOWN - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
+const RESTING_ROOTS = DESKTOP_ROOTS_SHOWN - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
 const RESTING_TITLE = 'Recent · no pending declaration read';
+const CODEX_TITLE = 'Codex · no declared wait read';
+const CODEX_ROOT_TITLE = 'Fixture Codex: refactor the collector';
+const CODEX_WORKTREE_TITLE = 'Fixture Codex: checkout 3 follow-up';
+const CODEX_ORPHAN_TITLE = 'Fixture Codex: orphaned delegate';
+const CODEX_COVERAGE =
+  'Codex · sessions only, no declared waits: 3 sessions shown, active in the last 30 days (served report)';
+const CODEX_CHIP_PATTERN = /^Codex\s*3$/;
 const BLOCKED_ROOT_ID = 'local_fixture-blocked-root';
 const BLOCKED_TITLE = 'Fixture: investigate checkout 3';
 const BLOCKED_QUESTION = 'Confirm whether the fixture should keep checkout 3 or delete it.';
 const BLOCKED_CHILD_TITLES = ['Fixture: child two', 'Fixture: grandchild of checkout 3'];
 const BLOCKED_DECLARED_AT = 'Oct 20, 2026, 11:00 UTC';
 const DIRTY_WORKTREE_INTERPRETATION =
-  '2 modified, 1 untracked observed at 2026-10-20T11:20:00.000Z on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 4 roots.';
+  '2 modified, 1 untracked observed at 2026-10-20T11:20:00.000Z on fixture/checkout-3 in checkout-3; since when is unknown; validation and delivery unobserved. Checkout shared by 5 roots.';
 const STALE_TITLE = 'Fixture: stale declaration';
 const COMPLETED_TITLE = 'Fixture: ship the collector';
 const COMPLETED_INTERPRETATION =
@@ -123,7 +134,8 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
   await expect(main.getByText('Declared outcomes are unavailable')).toHaveCount(0);
   const coverage = main.locator('[data-work-coverage]');
-  await expect(coverage).toContainText('Desktop sessions: collected');
+  await expect(coverage).toContainText('Claude Desktop registry · declared waits: collected');
+  await expect(coverage.locator('[data-work-harness-coverage="codex"]')).toHaveText(CODEX_COVERAGE);
   await expect(coverage).toContainText('49 of 50 files parsed · 1 unsupported');
   await expect(coverage).toContainText('Pull requests: 4 observed, 1 failed 30 min ago');
   await expect(coverage).toContainText('Checkouts: 1 observed 40 min ago');
@@ -136,7 +148,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   await expect(
     main.getByRole('status').filter({ hasText: `${ROOTS_SHOWN} of ${ROOTS_SHOWN} roots shown` }),
   ).toBeVisible();
-  for (const name of ['Needs you', 'Waiting on others', 'Leads', RESTING_TITLE]) {
+  for (const name of ['Needs you', 'Waiting on others', 'Leads', RESTING_TITLE, CODEX_TITLE]) {
     await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
   }
   // Hydrated and rendered from the server's answer: the browser has not read the dataset again.
@@ -150,6 +162,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   await expect(sectionRows(page, 'human-request')).toHaveCount(NEEDS_YOU_ROOTS);
   await expect(sectionRows(page, 'external-wait')).toHaveCount(WAITING_ROOTS);
   await expect(sectionRows(page, 'optional-lead')).toHaveCount(LEAD_ROOTS);
+  await expect(sectionRows(page, 'not-observable')).toHaveCount(CODEX_ROOTS);
   await main
     .locator('[data-work-section="none"] button', { hasText: `Show all ${RESTING_ROOTS} in ${RESTING_TITLE}` })
     .click();
@@ -317,8 +330,13 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
   await page.goto('/work');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
-  await expect(main.locator('[data-work-coverage] [data-work-harness-coverage]')).toHaveText(
-    'Declarations: Claude Desktop only; other harnesses show activity alone',
+  // Per harness, what was read: declared waits from the Desktop registry only (ADR 0059).
+  await expect(main.locator('[data-work-coverage] [data-work-harness-coverage="claude-desktop"]')).toContainText(
+    'Claude Desktop registry · declared waits: collected',
+  );
+  await expect(main.locator('[data-work-coverage] [data-work-harness-coverage="codex"]')).toHaveText(CODEX_COVERAGE);
+  await expect(main.locator('[data-work-coverage] [data-work-harness-coverage="other"]')).toHaveText(
+    'Other harnesses: not read here',
   );
 
   // Q1 was answered in the harness, then Q2 was asked: Q2 is the current request, Q1 the last decision.
@@ -386,6 +404,72 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
   );
   await expect(handledDetail).toContainText('Linked session declared completed: Finished the requested change.');
   await expectAxeClean(page);
+});
+
+test('shows Codex sessions apart: wait unknown, never folded under a Desktop root, never a request (ADR 0059)', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/work');
+  await waitForHydratedWork(page);
+  const main = page.getByRole('main');
+  const section = main.locator('[data-work-section="not-observable"]');
+  await expect(section.getByRole('heading', { level: 2, name: CODEX_TITLE, exact: true })).toBeVisible();
+  await expect(section.locator('header')).toContainText(
+    'Whether one waits on you is unknown — not declared by this harness, which is not the same as nothing pending.',
+  );
+  await expect(section.locator('header')).not.toContainText('Declared by the session; current state unobserved.');
+  // Most recently active first; every row says its wait is unknown, in words.
+  await expect(sectionRows(page, 'not-observable')).toHaveCount(CODEX_ROOTS);
+  await expect(sectionRows(page, 'not-observable').nth(0)).toContainText(CODEX_WORKTREE_TITLE);
+  await expect(sectionRows(page, 'not-observable').nth(1)).toContainText(CODEX_ROOT_TITLE);
+  await expect(sectionRows(page, 'not-observable').nth(2)).toContainText(CODEX_ORPHAN_TITLE);
+  for (const index of [0, 1, 2]) {
+    const row = sectionRows(page, 'not-observable').nth(index);
+    await expect(row).toHaveAttribute('data-work-standing', 'not-declared');
+    await expect(row.locator('[data-work-not-declared]')).toHaveText('wait not declared');
+    await expect(row).toContainText('wait unknown · not declared by Codex');
+  }
+  // The dirty shared worktree is a fact on the Codex row too; it does not make it a request.
+  const worktree = rowNamed(page, CODEX_WORKTREE_TITLE);
+  // Codex records the directory alone: the row is labelled by it, no origin checkout is inferred.
+  await expect(worktree).toContainText('checkout-3 · fixture/checkout-3');
+  await expect(worktree).toContainText('checkout dirty (2 modified) · observed 40 min ago');
+  await expect(main.locator('[data-work-section="human-request"]').locator(worktree)).toHaveCount(0);
+  await expect(rowNamed(page, CODEX_ROOT_TITLE)).toContainText('children 2');
+  await capture(page, 'work-e2e-1440-codex-section.png');
+  await expectAxeClean(page);
+
+  // The harness filter narrows to Codex alone and says what it searched.
+  await main.locator('[data-work-filters]').getByRole('button', { name: CODEX_CHIP_PATTERN }).click();
+  await expect.poll(() => searchParam(page, 'harness')).toBe('codex');
+  await expect(main.locator('[data-work-root]')).toHaveCount(CODEX_ROOTS);
+  await expect(main.locator('[data-work-search-coverage]')).toContainText(
+    `${CODEX_ROOTS} of ${ROOTS_SHOWN} roots match.`,
+  );
+
+  // The detail: unknown standing, the children Codex linked, the gap of a parent never collected.
+  await rowNamed(page, CODEX_ROOT_TITLE).click();
+  const aside = main.locator('[data-work-aside]');
+  await expect(aside.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'not-declared');
+  await expect(aside).toContainText('Request · Unknown — not declared by this harness');
+  await expect(aside.locator('[data-work-not-declared-detail]')).toContainText(
+    'Codex records no turn declaration for its sessions: whether this one waits on you is unknown — not declared by this harness.',
+  );
+  await expect(aside).toContainText(
+    '2 child sessions · linked by their declared parent in Codex; their outcomes are not declared',
+  );
+  await expect(aside).not.toContainText('0 blocked · 0 review ready');
+  await expect(aside.locator('[data-work-next]')).toHaveText(
+    'Next: Check the session in Codex; this view cannot tell whether it waits on you.',
+  );
+  await expect(aside.getByRole('link', { name: 'Open session detail' })).toBeVisible();
+  await capture(page, 'work-e2e-1440-codex-detail.png');
+  await expectAxeClean(page);
+  await rowNamed(page, CODEX_ORPHAN_TITLE).click();
+  await expect(aside).toContainText(
+    'Started from a Codex session that is not in the served report; it stands as its own root.',
+  );
 });
 
 test('a search covers the ranking and says what it did not search; earlier questions are searchable', async ({

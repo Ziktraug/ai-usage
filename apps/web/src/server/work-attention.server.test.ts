@@ -16,6 +16,7 @@ import { Effect } from 'effect';
 import { readWorkAttentionForServer } from './work-attention.server';
 import {
   readE2EWorkAttention,
+  WORK_ATTENTION_E2E_CODEX_REVISION,
   WORK_ATTENTION_E2E_MACHINE_ID,
   WORK_ATTENTION_E2E_NOW,
 } from './work-attention-e2e-fixture.server';
@@ -157,7 +158,13 @@ describe('work attention server', () => {
       first.data.roots.some((root) => root.interpretations.some(({ kind }) => kind === 'request-satisfied-elsewhere')),
     ).toBe(true);
     expect(first.data.coverage.desktopSessions).toMatchObject({ truncated: false, unsupported: 1 });
-    expect(first.data.coverage.sessions).toEqual({ joined: 0, revision: null, unmatched: 0 });
+    // No Desktop join in e2e; the revision named is the one the served Codex families came from.
+    expect(first.data.coverage.sessions).toEqual({
+      joined: 0,
+      revision: WORK_ATTENTION_E2E_CODEX_REVISION,
+      unmatched: 0,
+    });
+    expect(first.data.roots.filter((root) => root.attention === 'not-observable')).toHaveLength(3);
     expect(JSON.stringify(first)).not.toContain(CLAUDE_DESKTOP_FIXTURE_PROMPT_SENTINEL);
 
     const second = await readE2EWorkAttention({ limit: 5 });

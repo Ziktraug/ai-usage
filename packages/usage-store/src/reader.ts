@@ -94,6 +94,7 @@ export {
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
+  queryRecentServedHarnessSessions,
   queryReportRows,
   queryReviewAttempts,
   queryReviewTargetResolution,
@@ -139,8 +140,16 @@ export {
 } from './session-query-sqlite';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
 export type {
+  QueryRecentServedHarnessSessionsInput,
+  QueryRecentServedHarnessSessionsResult,
   QuerySessionRowsBySourceSessionIdsInput,
   QuerySessionRowsBySourceSessionIdsResult,
+  ServedHarnessSessionFamily,
+  ServedHarnessSessionMember,
   ServedSessionRowIdentity,
 } from './work-session-join';
-export { MAX_WORK_SESSION_JOIN_IDS } from './work-session-join';
+export {
+  MAX_WORK_HARNESS_SESSION_FAMILIES,
+  MAX_WORK_HARNESS_SESSION_MEMBERS,
+  MAX_WORK_SESSION_JOIN_IDS,
+} from './work-session-join';

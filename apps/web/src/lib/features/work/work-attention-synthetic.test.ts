@@ -20,14 +20,23 @@ describe('Synthetic Work attention dataset', () => {
     expect<string>(dataset.generatedAt).toBe(WORK_DEMO_TIME);
     expect(new Set(dataset.roots.map((root) => JSON.stringify(root.key))).size).toBe(dataset.roots.length);
   });
-  test('covers the three attention kinds, two harnesses, partial coverage and generic titles', () => {
+  test('covers every attention kind, two harnesses, partial coverage and generic titles', () => {
     const kinds = new Set(dataset.roots.map((root) => root.attention));
-    expect([...kinds].sort()).toEqual(['external-wait', 'human-request', 'none', 'optional-lead']);
+    expect([...kinds].sort()).toEqual(['external-wait', 'human-request', 'none', 'not-observable', 'optional-lead']);
     const harnesses = new Set(dataset.roots.map((root) => root.key.harness));
     expect([...harnesses].sort()).toEqual(['claude', 'codex']);
-    expect(dataset.roots.filter((root) => root.key.harness === 'codex').every((root) => root.declared === null)).toBe(
-      true,
-    );
+    // As the read model builds them (ADR 0059): a served Codex Session, its wait unknown, nothing declared.
+    const codex = dataset.roots.filter((root) => root.key.harness === 'codex');
+    expect(
+      codex.every(
+        (root) =>
+          root.declared === null &&
+          root.attention === 'not-observable' &&
+          root.desktopSessionId === null &&
+          root.session !== null,
+      ),
+    ).toBe(true);
+    expect(dataset.roots.filter((root) => root.attention === 'not-observable')).toEqual(codex);
     expect(dataset.roots.filter((root) => root.title === 'Enquête')).toHaveLength(2);
     expect(dataset.roots.filter((root) => root.titleSource === 'auto').length).toBeGreaterThanOrEqual(2);
     expect(dataset.roots.some((root) => root.archived)).toBe(true);

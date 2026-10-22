@@ -15,6 +15,7 @@
     workRootNextAction,
     workRootRelevantInstant,
     workRootStanding,
+    workUndeclaredSituation,
   } from './work-attention-model';
   import {
     workChip,
@@ -70,9 +71,8 @@
       .filter((part): part is string => Boolean(part))
       .join(' · '),
   );
-  const undeclared = (harness: string): string => (harness === 'claude' ? 'no declaration' : 'activity only');
   const situation = $derived(
-    root.declared ? workDeclaredStatusLabel(root.declared.status) : undeclared(root.key.harness),
+    root.declared ? workDeclaredStatusLabel(root.declared.status) : workUndeclaredSituation(root),
   );
   const request = $derived(
     root.declared?.needsAction ?? (root.declared?.status === 'review_ready' ? 'Review requested' : null),
@@ -94,6 +94,10 @@
       <span class={workRowTitle}>{root.title}</span>
       {#if standing === 'reconsider' || settled}
         <span class={workStandingMarker} data-work-standing-marker>{WORK_STANDING_LABELS[standing]}</span>
+      {/if}
+      {#if standing === 'not-declared'}
+        <!-- ADR 0059: unknown, never "nothing pending"; said in words, not by colour alone. -->
+        <span class={workMarker} data-work-not-declared>wait not declared</span>
       {/if}
       {#if root.archived}
         <span class={workMarker}>archived</span>

@@ -48,13 +48,23 @@ import {
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
+  queryRecentServedHarnessSessions,
   querySessionRowsBySourceSessionIds,
   queryWorkFactRunStates,
+  type ServedHarnessSessionFamily,
   type ServedSessionRowIdentity,
   UsageStoreError,
   type WorkFactRunState,
 } from '@ai-usage/usage-store/reader';
 import { Effect } from 'effect';
+import {
+  harnessFamilyCheckoutPaths,
+  harnessSessionRoot,
+  WORK_UNDECLARED_HARNESS,
+  type WorkHarnessSessions,
+} from './work-attention-read-harness';
+
+export { WORK_UNDECLARED_HARNESS, type WorkHarnessSessions } from './work-attention-read-harness';
 
 /**
  * The one bounded read of the Work attention dataset (ADR 0050, ADR 0051), shared by the web
@@ -80,9 +90,15 @@ import { Effect } from 'effect';
  * - when the latest observation failed and an older successful one exists, both are attached:
  *   the dated state stays the last known one and the failure stays visible.
  *
- * It never names a served report revision for its own data: the Desktop family and the fact
- * tables live outside the revision (the Session join is the only place a revision is consulted,
- * and its absence is reported in `coverage.sessions` rather than failing the read).
+ * It never names a served report revision for the Desktop data: the Desktop family and the fact
+ * tables live outside the revision (the Session join consults one, and its absence is reported in
+ * `coverage.sessions` rather than failing the read).
+ *
+ * Codex declares no turn status, so its sessions come from the served revision itself (ADR 0059):
+ * the recent served campaigns of `codex`, one root each, attention `not-observable`, attached to
+ * checkout observations by exact path only and never folded under a Desktop root
+ * (`work-attention-read-harness.ts`). They rank after every Desktop root, so the page limit cuts
+ * them first and never hides a Desktop root to make room for them.
  */
 
 export const WORK_ATTENTION_DEFAULT_LIMIT = 100;
@@ -141,6 +157,7 @@ const ATTENTION_RANK: Record<WorkAttentionKind, number> = {
   'external-wait': 1,
   'human-request': 0,
   none: 3,
+  'not-observable': 4,
   'optional-lead': 2,
 };
 
@@ -492,6 +509,7 @@ const indexExternalFacts = (
   facts: WorkAttentionExternalFacts,
   groups: readonly RootGroup[],
   jiraKeyActivity: JiraKeyActivityIndex,
+  harnessFamilies: readonly ServedHarnessSessionFamily[],
 ): ExternalFactIndex => {
   const pullRequests = new Map<string, LatestWorkObservation<PullRequestObservation>>();
   for (const item of facts.pullRequests) {
@@ -513,6 +531,18 @@ const indexExternalFacts = (
       perMachine.set(checkoutPath, (perMachine.get(checkoutPath) ?? 0) + 1);
     }
     rootsPerCheckout.set(group.root.machineId, perMachine);
+  }
+  // A harness root in the same checkout is a root sharing it: its changes may be the ones seen there.
+  for (const family of harnessFamilies) {
+    const machineId = family.members[0]?.machineId;
+    if (machineId === undefined) {
+      continue;
+    }
+    const perMachine = rootsPerCheckout.get(machineId) ?? new Map<string, number>();
+    for (const checkoutPath of harnessFamilyCheckoutPaths(family)) {
+      perMachine.set(checkoutPath, (perMachine.get(checkoutPath) ?? 0) + 1);
+    }
+    rootsPerCheckout.set(machineId, perMachine);
   }
   return { checkouts, jiraIssues, jiraKeyActivity, pullRequests, rootsPerCheckout };
 };
@@ -577,6 +607,39 @@ const externalFactsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[]
           observation,
           `${root.desktopSessionId}:jira:${observation.key}@${observation.observedAt}`,
           keyActivity?.get(key)?.lastActivityAt ?? familyLastActivityAt,
+        ),
+      );
+    }
+  }
+  return facts;
+};
+
+/**
+ * The checkout observations a harness family's recorded working directories name, by exact path on
+ * the root's machine (ADR 0059). The only external fact such a root carries: the harness declares
+ * no pull request and its branch never links one.
+ */
+const harnessCheckoutFacts = (
+  family: ServedHarnessSessionFamily,
+  harness: string,
+  index: ExternalFactIndex,
+): WorkFact[] => {
+  const root = family.members[0];
+  if (root === undefined) {
+    return [];
+  }
+  const owner = `${harness}:${pathDigest(root.sourceSessionId)}`;
+  const facts: WorkFact[] = [];
+  for (const checkoutPath of harnessFamilyCheckoutPaths(family)) {
+    const item = index.checkouts.get(checkoutKey(root.machineId, checkoutPath));
+    if (item === undefined) {
+      continue;
+    }
+    for (const observation of observationsOf(item)) {
+      facts.push(
+        checkoutStatusFact(
+          observation,
+          `${owner}:checkout:${pathDigest(observation.checkoutPath)}@${observation.observedAt}`,
         ),
       );
     }
@@ -1089,6 +1152,12 @@ export interface AssembleWorkAttentionInput {
   readonly declarations?: readonly ClaudeDesktopTurnDeclaration[];
   /** The latest pull request and checkout observations and the producers' run states. */
   readonly externalFacts: WorkAttentionExternalFacts;
+  /**
+   * The recent served families of a harness that declares no turn status (ADR 0059), as
+   * `queryRecentServedHarnessSessions` read them for the activity window. Each becomes one root
+   * whose attention is `not-observable`. Absent, no such harness was read.
+   */
+  readonly harnessSessions?: WorkHarnessSessions;
   readonly limit?: number;
   readonly machineId?: string;
   readonly now?: Date;
@@ -1154,17 +1223,42 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
   // the index of the roots the dataset actually carries. The Jira key activity is read over every
   // family both times: a hidden family may be the one that last relayed a key.
   const jiraKeyActivity = indexJiraKeyActivity(allGroups);
-  const fullIndex = indexExternalFacts(input.externalFacts, allGroups, jiraKeyActivity);
+  // Harness families were read for the window already; they share checkouts with Desktop roots.
+  const harness = input.harnessSessions;
+  const harnessFamilies =
+    harness === undefined
+      ? []
+      : harness.families.filter(
+          (family) => input.machineId === undefined || family.members[0]?.machineId === input.machineId,
+        );
+  const fullIndex = indexExternalFacts(input.externalFacts, allGroups, jiraKeyActivity, harnessFamilies);
   const groups = allGroups.filter(
     (group) =>
       latestActivity(group) >= since ||
       PENDING_ATTENTIONS.has(buildRoot(group, input.sessions, fullIndex, context, now, input.staleAfterMs).attention),
   );
-  const index = indexExternalFacts(input.externalFacts, groups, jiraKeyActivity);
-  const roots = groups
-    .map((group) => buildRoot(group, input.sessions, index, context, now, input.staleAfterMs))
-    .sort(compareRoots);
-  const joined = roots.filter((root) => root.session !== null).length;
+  const index = indexExternalFacts(input.externalFacts, groups, jiraKeyActivity, harnessFamilies);
+  const desktopRoots = groups.map((group) => buildRoot(group, input.sessions, index, context, now, input.staleAfterMs));
+  const harnessRoots =
+    harness === undefined
+      ? []
+      : harnessFamilies.map((family) => {
+          const machineId = family.members[0]?.machineId;
+          const rootsPerCheckout = machineId === undefined ? undefined : index.rootsPerCheckout.get(machineId);
+          return harnessSessionRoot({
+            checkoutFacts: harnessCheckoutFacts(family, harness.harness, index),
+            family,
+            generatedAt: harness.generatedAt,
+            harness: harness.harness,
+            now,
+            ...(rootsPerCheckout === undefined ? {} : { rootsPerCheckout }),
+          });
+        });
+  const roots = [...desktopRoots, ...harnessRoots].sort(compareRoots);
+  // The join covers the Desktop roots; a harness root is a served Session by construction.
+  const joined = desktopRoots.filter((root) => root.session !== null).length;
+  // Families of the window beyond the harness read bound are counted with the roots, never shown.
+  const harnessUnread = harness === undefined ? 0 : Math.max(harness.familiesInWindow - harness.families.length, 0);
   const readTruncated = input.readTruncated ?? false;
   return {
     coverage: {
@@ -1175,16 +1269,16 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
       }),
       sessions: {
         joined,
-        revision: input.sessions.revision,
-        unmatched: input.sessions.revision === null ? 0 : roots.length - joined,
+        revision: input.sessions.revision ?? harness?.revision ?? null,
+        unmatched: input.sessions.revision === null ? 0 : desktopRoots.length - joined,
       },
       window: { excludedRoots: allGroups.length - groups.length, sinceDays },
     },
     generatedAt,
     machineId: input.machineId ?? null,
     roots: roots.slice(0, limit),
-    totalRoots: allGroups.length,
-    truncated: roots.length > limit || readTruncated,
+    totalRoots: allGroups.length + harnessFamilies.length + harnessUnread,
+    truncated: roots.length > limit || readTruncated || harnessUnread > 0,
   };
 };
 
@@ -1228,10 +1322,13 @@ const declaredJiraKeys = (observations: readonly ClaudeDesktopSessionObservation
 const readExternalFacts = (
   input: QueryWorkAttentionInput,
   observations: readonly ClaudeDesktopSessionObservation[],
+  harnessFamilies: readonly ServedHarnessSessionFamily[],
 ): Effect.Effect<WorkAttentionExternalFacts, UsageStoreError> =>
   Effect.gen(function* () {
     const machineFilter = input.machineId === undefined ? {} : { machineId: input.machineId };
-    const paths = [...new Set(observations.map(checkoutPathOf))];
+    const paths = [
+      ...new Set([...observations.map(checkoutPathOf), ...harnessFamilies.flatMap(harnessFamilyCheckoutPaths)]),
+    ];
     const pullRequests = yield* readInChunks(declaredLinks(observations), (links) =>
       queryLatestPullRequestObservations({
         dbPath: input.dbPath,
@@ -1381,19 +1478,32 @@ export const queryWorkAttention = (
       return yield* Effect.fail(invalidInput(input.dbPath, problem));
     }
     const machineFilter = input.machineId === undefined ? {} : { machineId: input.machineId };
+    // One reference instant for the harness window and the assembly, so both read the same window.
+    const now = input.now ?? new Date();
+    const sinceDays = input.sinceDays ?? WORK_ATTENTION_DEFAULT_SINCE_DAYS;
     const read = yield* readDesktopSessions(input.dbPath, machineFilter);
     const states = yield* queryClaudeDesktopCollectionState({ dbPath: input.dbPath, ...machineFilter });
     const sessions = yield* joinSessions(input.dbPath, read.observations);
-    const externalFacts = yield* readExternalFacts(input, read.observations);
+    const harnessRead = yield* queryRecentServedHarnessSessions({
+      activeSince: now.getTime() - sinceDays * DAY_MS,
+      dbPath: input.dbPath,
+      harnessKey: WORK_UNDECLARED_HARNESS,
+      // One page of roots at most: a family beyond it could never rank into the page anyway.
+      limit: input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT,
+      ...machineFilter,
+    });
+    const harnessSessions: WorkHarnessSessions = { ...harnessRead, harness: WORK_UNDECLARED_HARNESS };
+    const externalFacts = yield* readExternalFacts(input, read.observations, harnessSessions.families);
     const history = yield* readDeclarationHistory(input.dbPath, read.observations, machineFilter);
     const sessionsStored = yield* countClaudeDesktopSessions({ dbPath: input.dbPath, ...machineFilter });
     return assembleWorkAttention({
       collectionStates: states.states,
       declarations: history.declarations,
       externalFacts,
+      harnessSessions,
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...machineFilter,
-      ...(input.now === undefined ? {} : { now: input.now }),
+      now,
       observations: read.observations,
       readTruncated: read.truncated,
       refusedRows: read.skipped + history.skipped,

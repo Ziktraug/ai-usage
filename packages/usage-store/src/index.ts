@@ -4491,7 +4491,7 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
 });
 
-export const { querySessionRowsBySourceSessionIds } = createWorkSessionJoinStore({
+export const { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds } = createWorkSessionJoinStore({
   usageStoreError,
   usageStoreReadError,
   withUsageStoreReader,

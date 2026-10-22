@@ -901,9 +901,18 @@ export const parseJiraIssueObservation = (value: unknown): JiraIssueObservation 
 /**
  * First-level grouping of a root. `human-request` is a declared question or review request that
  * no later fact satisfies; `external-wait` is an open pull request waiting on someone else;
- * `optional-lead` is an unanswered proposal, never urgent; `none` is everything else.
+ * `optional-lead` is an unanswered proposal, never urgent; `none` is everything else a
+ * declaring harness reported. `not-observable` is a root of a harness that declares no turn
+ * status (Codex, ADR 0059): whether it waits on someone is unknown, which is not "nothing
+ * pending", so no request or wait is ever derived for it and it ranks after every other kind.
  */
-export const WORK_ATTENTION_KINDS = ['human-request', 'external-wait', 'optional-lead', 'none'] as const;
+export const WORK_ATTENTION_KINDS = [
+  'human-request',
+  'external-wait',
+  'optional-lead',
+  'none',
+  'not-observable',
+] as const;
 export type WorkAttentionKind = (typeof WORK_ATTENTION_KINDS)[number];
 
 export const WORK_FACT_SOURCES = ['claude-desktop', 'claude-transcript', 'github', 'local-checkout', 'jira'] as const;
@@ -1203,7 +1212,8 @@ export interface WorkAttentionDataset {
   readonly roots: readonly WorkRoot[];
   /**
    * Every root of the read, including those beyond the page limit and those the activity window
-   * hid (`coverage.window.excludedRoots`); the page must say the ranking covers a selection.
+   * hid (`coverage.window.excludedRoots`), and the served Codex families active in the window
+   * beyond the one page the read takes (ADR 0059); the page must say the ranking covers a selection.
    */
   readonly totalRoots: number;
   readonly truncated: boolean;

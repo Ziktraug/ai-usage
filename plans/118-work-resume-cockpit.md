@@ -32,6 +32,7 @@ explicitly declared information.
 | K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
 | L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE, integrated (`9bbbd9fa`) |
 | N | Work context for harness sessions (ADR 0058): one bounded read-only projection of the Work attention read per checkout or project label (waits, settled decisions with evidence, linked facts, coverage), as `ai-usage work context` and the local MCP tool `work.context`; no registration | `feat/work-resume-cockpit-n-context` | DONE, integrated (`03439fd9`) |
+| C (Codex) | Native Codex sessions on `/work` (ADR 0059): one root per recent served Codex campaign, attention `not-observable` (never a derived request or wait, never folded under a Desktop root), checkout facts by exact path, ranked after every Desktop root, a section and a per-harness coverage line of their own | `feat/work-resume-cockpit-c-codex` | DONE on its lot branch (`a422f61e`), not integrated |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -490,3 +491,39 @@ public-package-interfaces and memory-search-and-mcp name the facade and the cond
 `work.context` tool (`69810b35`). Verified: `bun run check` 1622 files clean, `bun run lint` rc 0,
 `bun run typecheck` 58/58; report-data 76, mcp-adapter 12, apps/mcp 2, apps/cli 115 pass, 0 fail;
 `bun run test:tools` 145 pass (197 s, Bun 1.3.13). The full gate waits for lot C.
+### 2026-10-22 14:00 — lot C (Codex): Codex sessions on `/work`, wait not observable (`a422f61e`, base `d820c2f8`)
+
+Native census (read only, counts and key names, `~/.codex/sessions`, newest 80/400/1 500 of 4 989
+rollouts): `session_meta` gives `cwd`, `git.{branch,repository_url,commit_hash}`,
+`parent_thread_id`, `thread_source`; no approval request is persisted (approvals go to
+`guardian_review` sessions, 189 of 400 rollouts); the only person-facing request is the
+`request_user_input_async` tool call (51 in 1 500, output an immediate `{"accepted"}`, answered
+later by a plain user message: 38 followed by one, 13 not). It is not surfaced: the parser lives
+in `local-machine` (outside the lot) and needs a cache bump and a settling rule (ADR 0059). The
+served rows already carry every needed fact; no table and no migration were added.
+
+`queryRecentServedHarnessSessions` (usage-store, additive) reads one page of the current
+revision's most recent `codex` campaigns: a window scan on `idx_served_report_rows_active_time`,
+then the chosen campaigns on `idx_served_report_rows_campaign`, the root and its five latest
+members each, the rest counted. `queryWorkAttention` turns each family into a root
+(`work-attention-read-harness.ts`), adds the Codex directories to the checkout read, counts
+unread families in `totalRoots` and `truncated`, and names the revision in `coverage.sessions`
+when no Desktop join did. The contract changes only through `WORK_ATTENTION_KINDS`
+(`not-observable`); the oRPC schema and the browser client were not edited. The board gains a
+"Codex · no declared wait read" section; rows say "wait unknown · not declared by Codex"; the
+coverage line reads per harness (Desktop registry: declared waits; Codex: sessions only, no
+declared waits; other harnesses: not read here). The demo dataset's Codex roots were aligned
+with what the read model can produce.
+
+Cost on the ×1 perf fixture (copy of lot P's x1 store, 4 989 Codex rows, 1 675 Codex families in
+the window): `queryWorkAttention` warm median 42.4 ms (cold 59.5) of which the Codex store read
+12.1 ms; dataset 183 KB of which 89 KB for the 65 Codex roots the page keeps.
+
+Tests: report-data `work-attention-read-harness.test.ts` (8, store + read + assembly), the
+usage-engine-runtime chain `work-attention-codex-chain.integration.test.ts` (seeded rollout →
+`codex.sessions` → store → publication → read), model, synthetic, SSR and e2e-fixture server
+tests; `work.spec.ts`, `work-e2e-fixture.spec.ts` 12/12 and `work-production.spec.ts` 6/6 under
+`nix develop` (screenshots inspected, kept out of the repository). Typecheck, check and lint
+PASS; web unit 1 581 pass; report-data 76, report-core 542, usage-store 273, web-contract 94
+pass. Not run: the full `verify` gate, `test:e2e` beyond the Work specs. No committed visual
+snapshot covers `/work`.
