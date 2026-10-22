@@ -86,6 +86,7 @@ test(
       expect(text.stdout).toContain('Waiting (1)');
       expect(text.stdout).toContain('Confirm whether the fixture should keep checkout 3 or delete it.');
       expect(text.stdout).toContain('Only Claude Desktop sessions are represented.');
+      expect(text.stdout).toContain('· Codex 0 in scope (sessions only; 0 of 0 recent campaigns read).');
 
       // Read-only: the database is unchanged, its write-ahead log empty, no engine started.
       expect(Bun.hash(await Bun.file(dbPath).arrayBuffer())).toBe(storeBytes);

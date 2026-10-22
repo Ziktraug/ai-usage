@@ -350,6 +350,88 @@ describe('readWorkContext', () => {
   });
 });
 
+describe('projectWorkContext with Codex sessions in scope (ADR 0059)', () => {
+  const codexFamily = (index: number, checkoutPath: string) => ({
+    campaignKey: `codex-campaign-${String(index)}`,
+    lastActiveAt: EPOCH.getTime() - index * 3_600_000,
+    memberCount: 1,
+    members: [
+      {
+        activeAt: EPOCH.getTime() - index * 3_600_000,
+        branch: 'fixture/codex',
+        campaignRoot: true,
+        checkoutPath,
+        machineId: MACHINE,
+        origin: 'human',
+        parentSourceSessionId: null,
+        projectLabel: 'fixture',
+        rowId: `row-codex-${String(index)}`,
+        sourceSessionId: `codex-${String(index)}`,
+        startedAt: hoursBefore(index + 1),
+        title: `Fixture Codex: session ${String(index)}`,
+      },
+    ],
+  });
+
+  test('a Codex root is never a wait, and the coverage names per harness what was read', () => {
+    const registry = registryOf(REPOSITORY, 'minimal');
+    const observations = registry.documents
+      .map((document) => parse(document as ClaudeDesktopFixtureDocument, MACHINE))
+      .filter((observation): observation is ClaudeDesktopSessionObservation => observation !== null);
+    const dataset = assembleWorkAttention({
+      collectionStates: [],
+      externalFacts: NO_EXTERNAL_FACTS,
+      harnessSessions: {
+        families: [codexFamily(1, REPOSITORY), codexFamily(2, OTHER_REPOSITORY)],
+        familiesInWindow: 5,
+        generatedAt: EPOCH.toISOString(),
+        harness: 'codex',
+        refusedRows: 0,
+        revision: 'revision-1',
+      },
+      limit: 200,
+      now: EPOCH,
+      observations,
+      sessions: NO_SERVED_REVISION,
+    });
+    expect(dataset.roots.some((root) => root.attention === 'not-observable')).toBe(true);
+
+    const context = projectWorkContext(dataset, { checkoutPath: REPOSITORY, kind: 'checkout' });
+    expect(context.waiting.every((wait) => wait.root.title !== 'Fixture Codex: session 1')).toBe(true);
+    expect(context.waiting.length).toBeGreaterThan(0);
+    expect(context.coverage.harnesses).toEqual({
+      claudeDesktop: { inScope: context.coverage.roots.inScope - 1, reads: 'declared-waits' },
+      codex: { campaignsInWindow: 5, campaignsRead: 2, inScope: 1, reads: 'sessions-only' },
+    });
+    const notes = context.coverage.notes.map(({ code }) => code);
+    expect(notes).toContain('desktop-waits-codex-sessions');
+    expect(notes).not.toContain('claude-desktop-only');
+    expect(context.coverage.notes.find(({ code }) => code === 'desktop-waits-codex-sessions')?.text).toContain(
+      'Codex declares no wait',
+    );
+
+    // Without any Codex campaign read, the sentence stays the Claude Desktop one.
+    const desktopOnly = projectWorkContext(
+      assembleWorkAttention({
+        collectionStates: [],
+        externalFacts: NO_EXTERNAL_FACTS,
+        limit: 200,
+        now: EPOCH,
+        observations,
+        sessions: NO_SERVED_REVISION,
+      }),
+      { checkoutPath: REPOSITORY, kind: 'checkout' },
+    );
+    expect(desktopOnly.coverage.notes.map(({ code }) => code)).toContain('claude-desktop-only');
+    expect(desktopOnly.coverage.harnesses.codex).toEqual({
+      campaignsInWindow: 0,
+      campaignsRead: 0,
+      inScope: 0,
+      reads: 'sessions-only',
+    });
+  });
+});
+
 describe('projectWorkContext bounds', () => {
   /** Thirty blocked roots in one checkout, each declaring the longest question and detail the contract admits. */
   const crowdedDataset = () => {

@@ -68,6 +68,7 @@ export const renderWorkContext = (context: WorkContextDataset, json: boolean): s
     counted('Jira issues', context.linked.jiraIssues.length, omitted.jiraIssues),
     ...orNone(context.linked.jiraIssues.map(jiraLine)),
     `Coverage: ${String(roots.inScope)} of ${String(roots.read)} roots read are in scope (${String(roots.total)} in the Work read); Desktop registry collected ${attention.desktopSessions.collectedAt ?? 'never'}; window ${String(attention.window.sinceDays)} days.`,
+    `Harnesses: Claude Desktop ${String(context.coverage.harnesses.claudeDesktop.inScope)} in scope (declared waits) · Codex ${String(context.coverage.harnesses.codex.inScope)} in scope (sessions only; ${String(context.coverage.harnesses.codex.campaignsRead)} of ${String(context.coverage.harnesses.codex.campaignsInWindow)} recent campaigns read).`,
     ...context.coverage.notes.map((note) => `  · ${note.text}`),
     ...(context.truncated
       ? [

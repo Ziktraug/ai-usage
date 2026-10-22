@@ -82,6 +82,29 @@ export const WORK_CONTEXT_COVERAGE_NOTES = [
   },
 ] as const;
 
+/**
+ * Replaces the `claude-desktop-only` note when the read included Codex campaigns (ADR 0059): their
+ * sessions are in the context, as sessions only.
+ */
+export const WORK_CONTEXT_CODEX_NOTE = {
+  code: 'desktop-waits-codex-sessions',
+  text: 'Claude Desktop sessions carry their declared waits. Codex sessions are included as sessions only: Codex declares no wait, so none is derived and none appears in waiting (coverage.harnesses.codex counts the recent campaigns read). Claude Code sessions started outside Claude Desktop, and OpenCode and Cursor sessions, are not represented.',
+} as const;
+
+export type WorkContextCoverageNote = (typeof WORK_CONTEXT_COVERAGE_NOTES)[number] | typeof WORK_CONTEXT_CODEX_NOTE;
+
+/** What each harness contributes to the context: declared waits, or sessions only. */
+export interface WorkContextHarnessCoverage {
+  readonly claudeDesktop: { readonly inScope: number; readonly reads: 'declared-waits' };
+  readonly codex: {
+    /** Recent served Codex campaigns active in the window, and how many the Work read took (ADR 0059). */
+    readonly campaignsInWindow: number;
+    readonly campaignsRead: number;
+    readonly inScope: number;
+    readonly reads: 'sessions-only';
+  };
+}
+
 export type WorkContextScope =
   | { readonly checkoutPath: string; readonly kind: 'checkout' }
   | { readonly kind: 'project-label'; readonly projectLabel: string };
@@ -171,7 +194,9 @@ export interface WorkContextTruncation {
 export interface WorkContextCoverage {
   /** The Work attention read's own coverage, unchanged: what it read, which producers ran, which window it applied. */
   readonly attention: WorkAttentionCoverage;
-  readonly notes: typeof WORK_CONTEXT_COVERAGE_NOTES;
+  /** Per harness, what was read and how many roots of each are in scope. */
+  readonly harnesses: WorkContextHarnessCoverage;
+  readonly notes: readonly WorkContextCoverageNote[];
   readonly roots: {
     /** Roots of the read that matched the scope. */
     readonly inScope: number;
@@ -465,12 +490,28 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     pullRequests: lists.pullRequests.slice(0, limits.pullRequests),
     waits: lists.waits.slice(0, limits.waits),
   };
+  const codexInScope = roots.filter((root) => root.attention === 'not-observable').length;
+  const { codexSessions } = dataset.coverage;
+  const harnesses: WorkContextHarnessCoverage = {
+    claudeDesktop: { inScope: roots.length - codexInScope, reads: 'declared-waits' },
+    codex: {
+      campaignsInWindow: codexSessions.campaignsInWindow,
+      campaignsRead: codexSessions.campaignsRead,
+      inScope: codexInScope,
+      reads: 'sessions-only',
+    },
+  };
+  const notes: readonly WorkContextCoverageNote[] =
+    codexSessions.campaignsRead > 0
+      ? [WORK_CONTEXT_CODEX_NOTE, ...WORK_CONTEXT_COVERAGE_NOTES.filter(({ code }) => code !== 'claude-desktop-only')]
+      : WORK_CONTEXT_COVERAGE_NOTES;
   const build = (bytes: boolean): WorkContextDataset => {
     const truncation = { bytes, dataset: dataset.truncated, omitted: { ...omitted } };
     return {
       coverage: {
         attention: dataset.coverage,
-        notes: WORK_CONTEXT_COVERAGE_NOTES,
+        harnesses,
+        notes,
         roots: { inScope: roots.length, read: dataset.roots.length, total: dataset.totalRoots },
       },
       decisions: kept.decisions,
