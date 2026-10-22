@@ -14,6 +14,8 @@ const dataset: WorkAttentionDatasetWire = {
       filesParsed: 0,
       filesSeen: 0,
       refusedRows: 0,
+      sessionsRead: 0,
+      sessionsStored: 0,
       truncated: false,
       unsupported: 0,
     },

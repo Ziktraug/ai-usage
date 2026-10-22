@@ -98,6 +98,8 @@ const dataset = (roots: readonly WorkRootWire[] = [root()]): WorkAttentionDatase
       filesParsed: 3,
       filesSeen: 4,
       refusedRows: 0,
+      sessionsRead: 1,
+      sessionsStored: 1,
       truncated: false,
       unsupported: 1,
     },

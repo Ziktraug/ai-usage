@@ -517,8 +517,12 @@ export const workSearchCoverage = (
   if (beyondRanking > 0) {
     left.push(`${beyondRanking} beyond the ranking limit`);
   }
-  if (dataset.coverage.desktopSessions.truncated) {
-    left.push('older sessions beyond the read bound');
+  const { sessionsRead, sessionsStored, truncated } = dataset.coverage.desktopSessions;
+  if (sessionsRead < sessionsStored) {
+    const unread = sessionsStored - sessionsRead;
+    left.push(`${unread} older ${unread === 1 ? 'session' : 'sessions'} without a wait (read bound)`);
+  } else if (truncated) {
+    left.push('sessions the registry listing left unread');
   }
   const head = filtered
     ? `${matched} of ${shown} roots match. Searched the ${shown} roots in this ranking`

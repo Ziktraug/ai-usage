@@ -379,8 +379,18 @@ describe('Work attention standing, last decision and next action (ADR 0056)', ()
     );
     const bounded = {
       ...whole,
+      coverage: {
+        ...whole.coverage,
+        desktopSessions: { ...whole.coverage.desktopSessions, sessionsRead: 500, sessionsStored: 750, truncated: true },
+      },
+    };
+    expect(workSearchCoverage(bounded, 0, true)).toContain(
+      'not searched: 250 older sessions without a wait (read bound).',
+    );
+    const listing = {
+      ...whole,
       coverage: { ...whole.coverage, desktopSessions: { ...whole.coverage.desktopSessions, truncated: true } },
     };
-    expect(workSearchCoverage(bounded, 0, true)).toContain('not searched: older sessions beyond the read bound.');
+    expect(workSearchCoverage(listing, 0, true)).toContain('not searched: sessions the registry listing left unread.');
   });
 });

@@ -10,6 +10,13 @@
   const checkouts = $derived(coverage.checkouts);
   const jira = $derived(coverage.jira);
   const hidden = $derived(coverage.window.excludedRoots);
+  // What the read left out, counted: the bound keeps every session that may carry a wait.
+  const unread = $derived.by(() => {
+    if (desktop.sessionsRead < desktop.sessionsStored) {
+      return ` · ${desktop.sessionsRead} of ${desktop.sessionsStored} stored sessions read (older ones without a wait left out)`;
+    }
+    return desktop.truncated ? ' · registry listing truncated' : '';
+  });
   const refused = $derived(
     desktop.refusedRows > 0
       ? ` · ${desktop.refusedRows} stored ${desktop.refusedRows === 1 ? 'row' : 'rows'} refused on read`
@@ -30,7 +37,7 @@
       >
       · {desktop.filesParsed} of {desktop.filesSeen} files parsed{desktop.unsupported > 0
         ? ` · ${desktop.unsupported} unsupported`
-        : ''}{desktop.truncated ? ' · not every session read (older ones without a wait are left out)' : ''}{refused}
+        : ''}{unread}{refused}
     {:else}
       not observed
     {/if}

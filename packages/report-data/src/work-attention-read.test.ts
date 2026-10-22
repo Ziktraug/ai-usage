@@ -412,6 +412,8 @@ describe('queryWorkAttention', () => {
         filesParsed: 9,
         filesSeen: 10,
         refusedRows: 0,
+        sessionsRead: sessions.length,
+        sessionsStored: sessions.length,
         truncated: false,
         unsupported: 1,
       },
@@ -1696,6 +1698,10 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     expect(dataset.totalRoots).toBe(MAX_CLAUDE_DESKTOP_SESSION_READ - 1 + 3);
     expect(dataset.roots.some((root) => root.desktopSessionId === 'local_recent-499')).toBe(false);
     // Older sessions with nothing pending were not read: the dataset says it is a selection.
+    expect(dataset.coverage.desktopSessions).toMatchObject({
+      sessionsRead: MAX_CLAUDE_DESKTOP_SESSION_READ + 3,
+      sessionsStored: MAX_CLAUDE_DESKTOP_SESSION_READ + 4,
+    });
     expect(dataset.coverage.desktopSessions.truncated).toBe(true);
     expect(dataset.truncated).toBe(true);
   });

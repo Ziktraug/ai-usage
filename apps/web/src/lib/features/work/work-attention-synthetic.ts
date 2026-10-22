@@ -1225,6 +1225,8 @@ export const syntheticWorkAttentionDataset = (): WorkAttentionDataset => {
         filesParsed: 39,
         filesSeen: 41,
         refusedRows: 0,
+        sessionsRead: 41,
+        sessionsStored: 41,
         truncated: false,
         unsupported: 2,
       },

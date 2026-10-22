@@ -236,6 +236,8 @@ export const workAttentionCoverageSchema = strictObject({
     filesParsed: countSchema,
     filesSeen: countSchema,
     refusedRows: countSchema,
+    sessionsRead: countSchema,
+    sessionsStored: countSchema,
     truncated: boolean(),
     unsupported: countSchema,
   }),

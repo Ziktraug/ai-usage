@@ -74,6 +74,7 @@ export type {
   WorkFactSourceId,
 } from './index';
 export {
+  countClaudeDesktopSessions,
   MAX_USAGE_MACHINE_FLEET_MACHINES,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,

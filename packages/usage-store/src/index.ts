@@ -4428,6 +4428,7 @@ export const {
 });
 export { WORK_FACT_SOURCE_IDS, type WorkFactSourceId } from './work-fact-store';
 export const {
+  countClaudeDesktopSessions,
   importClaudeDesktopSessions,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,

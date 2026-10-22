@@ -915,6 +915,27 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
       }),
     );
 
+  /** How many desktop sessions are stored, for one machine or all; the Work read states what it left out. */
+  const countClaudeDesktopSessions = (input: {
+    readonly dbPath: string;
+    readonly machineId?: string;
+  }): Effect.Effect<number, UsageStoreError> =>
+    withUsageStoreReader(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          const row = (
+            input.machineId === undefined
+              ? db.query('SELECT COUNT(*) AS count FROM claude_desktop_sessions').get()
+              : db
+                  .query('SELECT COUNT(*) AS count FROM claude_desktop_sessions WHERE machine_id = ?')
+                  .get(input.machineId)
+          ) as { count: number };
+          return row.count;
+        },
+        catch: (cause) => usageStoreReadError('countClaudeDesktopSessions', input.dbPath, cause),
+      }),
+    );
+
   const queryClaudeDesktopCollectionState = (
     input: QueryClaudeDesktopCollectionStateInput,
   ): Effect.Effect<QueryClaudeDesktopCollectionStateResult, UsageStoreError> =>
@@ -938,6 +959,7 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
     );
 
   return {
+    countClaudeDesktopSessions,
     importClaudeDesktopSessions,
     queryClaudeDesktopCollectionState,
     queryClaudeDesktopSessions,

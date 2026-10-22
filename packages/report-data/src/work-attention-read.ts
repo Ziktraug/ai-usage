@@ -37,6 +37,7 @@ import {
 import { claudeDesktopDeclarationKey } from '@ai-usage/report-core/work-attention-native';
 import {
   type ClaudeDesktopCollectionState,
+  countClaudeDesktopSessions,
   MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
   MAX_WORK_FACT_QUERY_LIMIT,
@@ -1025,6 +1026,7 @@ const desktopCoverage = (
   states: readonly ClaudeDesktopCollectionState[],
   refusedRows: number,
   readTruncated: boolean,
+  sessions: { readonly read: number; readonly stored: number },
 ): WorkAttentionCoverage['desktopSessions'] => {
   let collectedAt: CanonicalInstant | null = null;
   const totals = { filesParsed: 0, filesSeen: 0, truncated: readTruncated, unsupported: 0 };
@@ -1038,7 +1040,7 @@ const desktopCoverage = (
     totals.unsupported += state.completeness.unsupported;
     totals.truncated ||= state.completeness.truncated;
   }
-  return { collectedAt, ...totals, refusedRows };
+  return { collectedAt, ...totals, refusedRows, sessionsRead: sessions.read, sessionsStored: sessions.stored };
 };
 
 /**
@@ -1097,6 +1099,8 @@ export interface AssembleWorkAttentionInput {
   /** Persisted rows the read refused on re-validation. */
   readonly refusedRows?: number;
   readonly sessions: WorkAttentionSessionLookup;
+  /** Sessions stored for the read's machines; defaults to the observations given, a complete read. */
+  readonly sessionsStored?: number;
   readonly sinceDays?: number;
   readonly staleAfterMs?: number;
 }
@@ -1165,7 +1169,10 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
   return {
     coverage: {
       ...factCoverage(input.externalFacts.runStates, input.machineId),
-      desktopSessions: desktopCoverage(input.collectionStates, input.refusedRows ?? 0, readTruncated),
+      desktopSessions: desktopCoverage(input.collectionStates, input.refusedRows ?? 0, readTruncated, {
+        read: observations.length,
+        stored: Math.max(input.sessionsStored ?? observations.length, observations.length),
+      }),
       sessions: {
         joined,
         revision: input.sessions.revision,
@@ -1379,6 +1386,7 @@ export const queryWorkAttention = (
     const sessions = yield* joinSessions(input.dbPath, read.observations);
     const externalFacts = yield* readExternalFacts(input, read.observations);
     const history = yield* readDeclarationHistory(input.dbPath, read.observations, machineFilter);
+    const sessionsStored = yield* countClaudeDesktopSessions({ dbPath: input.dbPath, ...machineFilter });
     return assembleWorkAttention({
       collectionStates: states.states,
       declarations: history.declarations,
@@ -1390,6 +1398,7 @@ export const queryWorkAttention = (
       readTruncated: read.truncated,
       refusedRows: read.skipped + history.skipped,
       sessions,
+      sessionsStored,
       ...(input.sinceDays === undefined ? {} : { sinceDays: input.sinceDays }),
       ...(input.staleAfterMs === undefined ? {} : { staleAfterMs: input.staleAfterMs }),
     });

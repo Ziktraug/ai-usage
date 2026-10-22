@@ -1153,6 +1153,10 @@ export interface WorkAttentionCoverage {
     readonly filesSeen: number;
     /** Persisted rows the read refused on re-validation; they exist but could not be shown. */
     readonly refusedRows: number;
+    /** Sessions the Work read held: the recency page, the older ones that may carry a wait, their parents. */
+    readonly sessionsRead: number;
+    /** Sessions stored for the read's machines; more than `sessionsRead` when the read bound left some out. */
+    readonly sessionsStored: number;
     readonly truncated: boolean;
     readonly unsupported: number;
   };

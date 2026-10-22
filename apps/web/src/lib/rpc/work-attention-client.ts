@@ -556,6 +556,8 @@ const parseCoverage = (value: unknown): WorkAttentionCoverage | undefined => {
     filesParsed: count(value.desktopSessions.filesParsed),
     filesSeen: count(value.desktopSessions.filesSeen),
     refusedRows: count(value.desktopSessions.refusedRows),
+    sessionsRead: count(value.desktopSessions.sessionsRead),
+    sessionsStored: count(value.desktopSessions.sessionsStored),
     truncated: typeof value.desktopSessions.truncated === 'boolean' ? value.desktopSessions.truncated : undefined,
     unsupported: count(value.desktopSessions.unsupported),
   };

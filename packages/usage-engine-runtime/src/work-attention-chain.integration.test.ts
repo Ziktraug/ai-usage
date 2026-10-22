@@ -199,6 +199,8 @@ describe('work attention chain', () => {
       filesParsed: fixture.claudeDesktop.rootCount + fixture.claudeDesktop.childCount - 1,
       filesSeen: fixture.claudeDesktop.rootCount + fixture.claudeDesktop.childCount,
       refusedRows: 0,
+      sessionsRead: fixture.claudeDesktop.rootCount + fixture.claudeDesktop.childCount,
+      sessionsStored: fixture.claudeDesktop.rootCount + fixture.claudeDesktop.childCount,
       truncated: false,
       unsupported: 1,
     });
