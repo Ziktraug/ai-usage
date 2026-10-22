@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
+import type { WorkRoutingContext, WorkRoutingQualification } from '@ai-usage/web-contract/work-routing';
 import { ORPCError } from '@orpc/client';
-import { createWorkRoutingClient, type WorkRoutingRpcTransport } from './work-routing-client';
+import {
+  createWorkRoutingClient,
+  createWorkRoutingQualifyClient,
+  type WorkRoutingRpcTransport,
+} from './work-routing-client';
 
 const context: WorkRoutingContext = {
   configPath: null,
@@ -48,5 +52,50 @@ describe('Work routing browser client', () => {
     controller.abort();
     const client = createWorkRoutingClient({ context: () => Promise.resolve(context) });
     await expect(client.getContext({ signal: controller.signal })).rejects.toThrow();
+  });
+});
+
+describe('Work routing qualification browser client (ADR 0057)', () => {
+  const input = { target: { desktopSessionId: null, harness: 'claude', sourceSessionId: 'session-a' } };
+  const qualification = {
+    candidates: [],
+    chosenCandidateId: null,
+    executors: { outcome: 'success', refreshed: true },
+    omittedCandidates: 0,
+    qualifiedAt: '2026-10-22T08:00:00.000Z',
+    reasons: ['Simulation only: no harness is started and no permission is granted.'],
+    recommendation: { candidateId: null, kind: 'none', missing: null },
+  } satisfies WorkRoutingQualification;
+
+  test('posts each request to the engine path, validates the envelope and maps failures to data', async () => {
+    const received: unknown[] = [];
+    const client = createWorkRoutingQualifyClient({
+      qualify: (value) => {
+        received.push(value);
+        return Promise.resolve({ data: qualification, ok: true } as never);
+      },
+    });
+    expect(await client.qualify(input)).toEqual({ data: qualification, ok: true });
+    expect(await client.qualify(input)).toEqual({ data: qualification, ok: true });
+    // No cache: two clicks are two engine qualifications.
+    expect(received).toEqual([input, input]);
+
+    const demo = createWorkRoutingQualifyClient({
+      qualify: () =>
+        Promise.reject(new ORPCError('ForbiddenDemo', { defined: true, message: 'Demo mode.', status: 403 })),
+    });
+    expect(await demo.qualify(input)).toEqual({ error: { message: 'Demo mode.', tag: 'ForbiddenDemo' }, ok: false });
+
+    const leaking = createWorkRoutingQualifyClient({
+      qualify: () => Promise.resolve({ data: { ...qualification, windows: [] }, ok: true } as never),
+    });
+    expect(await leaking.qualify(input)).toEqual({
+      error: { message: 'The routing could not be qualified.', tag: 'Unavailable' },
+      ok: false,
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(client.qualify(input, { signal: controller.signal })).rejects.toThrow();
   });
 });

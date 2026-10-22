@@ -99,6 +99,51 @@ describe('executor declarations', () => {
     expect(result.issues.every((issue) => issue.path.startsWith('routing.executors[0]'))).toBe(true);
   });
 
+  test('reads a pinned account fingerprint and alternate models only when declared (ADR 0057)', () => {
+    const pinned = parse([
+      entry({ accountFingerprint: '0123456789abcdef', alternateModels: ['Opus'], model: 'Fable' }),
+    ]);
+    expect(pinned.issues).toEqual([]);
+    expect(pinned.declarations[0]).toMatchObject({
+      accountFingerprint: '0123456789abcdef',
+      alternateModels: ['Opus'],
+      model: 'Fable',
+    });
+    // Absent fields stay absent, so a stored declaration snapshot re-parses to the same value.
+    const [plain] = parse([entry()]).declarations;
+    expect(plain && 'accountFingerprint' in plain).toBe(false);
+    expect(plain && 'alternateModels' in plain).toBe(false);
+    expect(parse([entry({ alternateModels: [] })]).declarations[0]).toEqual(plain);
+    const snapshot = parseExecutorDeclarations(
+      { executors: [JSON.parse(JSON.stringify(pinned.declarations[0]))] },
+      { defaultMachineId: null },
+    );
+    expect(snapshot.declarations).toEqual(pinned.declarations);
+  });
+
+  test.each([
+    [{ accountFingerprint: '0123456789ABCDEF' }, 'routing.executors[0].accountFingerprint'],
+    [{ accountFingerprint: '0123' }, 'routing.executors[0].accountFingerprint'],
+    [{ accountFingerprint: 1234 }, 'routing.executors[0].accountFingerprint'],
+    [{ alternateModels: ['Opus'] }, 'routing.executors[0].alternateModels'],
+    [{ alternateModels: 'Opus', model: 'Fable' }, 'routing.executors[0].alternateModels'],
+    [{ alternateModels: ['fable'], model: 'Fable' }, 'routing.executors[0].alternateModels[0]'],
+    [{ alternateModels: ['Opus', 'opus'], model: 'Fable' }, 'routing.executors[0].alternateModels[1]'],
+    [{ alternateModels: [''], model: 'Fable' }, 'routing.executors[0].alternateModels[0]'],
+    [
+      {
+        alternateModels: Array.from({ length: EXECUTOR_BOUNDS.maxAlternateModels + 1 }, (_, i) => `m${i}`),
+        model: 'x',
+      },
+      'routing.executors[0].alternateModels',
+    ],
+  ])('rejects %j at %s without echoing the value', (override, path) => {
+    const result = parse([entry(override)]);
+    expect(result.declarations).toEqual([]);
+    expect(result.issues.map((issue) => issue.path)).toEqual([path]);
+    expect(result.issues.every((issue) => !issue.reason.includes('0123'))).toBe(true);
+  });
+
   test('keeps the first of duplicate (machine, harness, account) entries and reports the rest', () => {
     const result = parse([entry({ model: 'first' }), entry({ model: 'second' })]);
     expect(result.declarations.map((declaration) => declaration.model)).toEqual(['first']);
@@ -198,6 +243,15 @@ describe('executor observations', () => {
     }
     for (const method of ['claude.ai', 'chatgpt', 'oauth', null]) {
       expect(executorAuthMethodIndicatesApiKey(method)).toBe(false);
+    }
+  });
+
+  test('reads an account fingerprint when present; absent and null both mean none', () => {
+    const withFingerprint = { ...observation, accountFingerprint: '0123456789abcdef' };
+    expect(parseExecutorObservation(withFingerprint)).toEqual(withFingerprint);
+    expect(parseExecutorObservation({ ...observation, accountFingerprint: null })).toEqual(observation);
+    for (const invalid of ['0123456789ABCDEF', '0123', 'not-hex-not-hex!', 7]) {
+      expect(parseExecutorObservation({ ...observation, accountFingerprint: invalid })).toBeNull();
     }
   });
 

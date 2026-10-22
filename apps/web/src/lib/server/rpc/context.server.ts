@@ -428,8 +428,13 @@ const createWorkAttemptsDependencies = (request: Request): WebRpcRouterDependenc
     }),
 });
 
-const createWorkRoutingDependencies = (): WebRpcRouterDependencies['workRouting'] => ({
+const createWorkRoutingDependencies = (request: Request): WebRpcRouterDependencies['workRouting'] => ({
   isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
+  qualify: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-routing-context.server');
+      return await server.qualifyWorkRoutingFromRequestForServer(request, input);
+    }),
   readContext: async (signal) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/work-routing-context.server');
@@ -455,6 +460,6 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
     sync: createSyncDependencies(request),
     work: createWorkDependencies(),
     workAttempts: createWorkAttemptsDependencies(request),
-    workRouting: createWorkRoutingDependencies(),
+    workRouting: createWorkRoutingDependencies(request),
   });
 };

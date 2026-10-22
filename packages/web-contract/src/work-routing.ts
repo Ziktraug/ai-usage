@@ -1,10 +1,13 @@
 import { REVIEW_ATTEMPT_BOUNDS } from '@ai-usage/report-core/work-attempts';
-import { EXECUTOR_BOUNDS } from '@ai-usage/report-core/work-executors';
+import { EXECUTOR_BOUNDS, isExecutorAccountFingerprint } from '@ai-usage/report-core/work-executors';
+import { CANDIDATE_IDENTITY_STATES, ROUTING_QUALIFICATION_BOUNDS } from '@ai-usage/report-core/work-routing';
 import { type ContractRouterClient, oc } from '@orpc/contract';
 import {
   array,
+  boolean,
   custom,
   type InferOutput,
+  literal,
   maxLength,
   minLength,
   nullable,
@@ -15,9 +18,10 @@ import {
   strictObject,
   string,
   union,
+  variant,
 } from 'valibot';
 import { publicErrorMap } from './errors';
-import { emptyInputSchema, isJsonWireValue } from './schema-conventions';
+import { emptyInputSchema, isJsonWireValue, jsonWireValueSchema, publicMessageSchema } from './schema-conventions';
 
 /**
  * The review-routing context the Work view qualifies candidates from: the operator's declarations
@@ -43,6 +47,11 @@ const pathSchema = pipe(string(), minLength(1), maxLength(EXECUTOR_BOUNDS.maxPat
 const issueTextSchema = pipe(string(), minLength(1), maxLength(512));
 
 const executorHarnessSchema = picklist(['claude-code', 'codex']);
+/** ADR 0057: the truncated hash the collector derives; never the account identifiers themselves. */
+const accountFingerprintSchema = custom<string>(
+  isExecutorAccountFingerprint,
+  'Expected a lowercase hexadecimal account fingerprint.',
+);
 
 export const executorDeclaredTargetSchema = union([
   strictObject({ kind: picklist(['any-local-session']) }),
@@ -50,7 +59,9 @@ export const executorDeclaredTargetSchema = union([
 ]);
 
 export const executorDeclarationSchema = strictObject({
+  accountFingerprint: optional(accountFingerprintSchema),
   accountScope: scopeSchema,
+  alternateModels: optional(pipe(array(textSchema), minLength(1), maxLength(EXECUTOR_BOUNDS.maxAlternateModels))),
   authorization: picklist(['allowed', 'forbidden']),
   capabilities: pipe(array(picklist(['read-only-review'])), maxLength(1)),
   declaredAt: timestampSchema,
@@ -64,6 +75,7 @@ export const executorDeclarationSchema = strictObject({
 });
 
 export const executorObservationSchema = strictObject({
+  accountFingerprint: optional(accountFingerprintSchema),
   authEvidence: textSchema,
   authMethod: nullable(pipe(string(), minLength(1), maxLength(EXECUTOR_BOUNDS.maxAuthMethod))),
   authState: picklist(['logged-in', 'logged-out', 'unknown']),
@@ -112,6 +124,86 @@ export type WorkRoutingContext = InferOutput<typeof workRoutingContextSchema>;
 
 export const parseWorkRoutingContext = (value: unknown): WorkRoutingContext => parse(workRoutingContextSchema, value);
 
+/**
+ * `workRouting.qualify` (ADR 0057): asks the engine to observe the executors now and decide who may
+ * review this target. The answer is the engine's decision with its reasons and limits; it starts
+ * nothing, grants nothing and carries no quota window, only the verdicts drawn from them.
+ */
+const qualificationTextSchema = pipe(string(), minLength(1), maxLength(ROUTING_QUALIFICATION_BOUNDS.maxText));
+const qualificationListSchema = pipe(
+  array(qualificationTextSchema),
+  maxLength(ROUTING_QUALIFICATION_BOUNDS.maxEntries),
+);
+const qualificationIdSchema = pipe(string(), minLength(1), maxLength(ROUTING_QUALIFICATION_BOUNDS.maxId));
+const targetIdentitySchema = pipe(string(), minLength(1), maxLength(EXECUTOR_BOUNDS.maxScope));
+
+export const workRoutingQualifyInputSchema = strictObject({
+  target: strictObject({
+    desktopSessionId: optional(nullable(targetIdentitySchema)),
+    harness: targetIdentitySchema,
+    sourceSessionId: targetIdentitySchema,
+  }),
+});
+
+export const workRoutingQualificationSchema = strictObject({
+  candidates: pipe(
+    array(
+      strictObject({
+        accountScope: nullable(qualificationIdSchema),
+        actions: qualificationListSchema,
+        candidateId: qualificationIdSchema,
+        eligible: boolean(),
+        exclusionReasons: qualificationListSchema,
+        harness: executorHarnessSchema,
+        identity: nullable(
+          strictObject({
+            declared: nullable(accountFingerprintSchema),
+            observed: nullable(accountFingerprintSchema),
+            observedAt: nullable(timestampSchema),
+            state: picklist(CANDIDATE_IDENTITY_STATES),
+          }),
+        ),
+        missingData: qualificationListSchema,
+        model: nullable(qualificationTextSchema),
+      }),
+    ),
+    maxLength(ROUTING_QUALIFICATION_BOUNDS.maxCandidates),
+  ),
+  chosenCandidateId: nullable(qualificationIdSchema),
+  executors: strictObject({
+    outcome: picklist(['disabled', 'failed', 'not-detected', 'not-run', 'skipped', 'success', 'timed-out', 'warning']),
+    refreshed: boolean(),
+  }),
+  omittedCandidates: custom<number>((value) => Number.isSafeInteger(value) && Number(value) >= 0),
+  qualifiedAt: timestampSchema,
+  reasons: qualificationListSchema,
+  recommendation: strictObject({
+    candidateId: nullable(qualificationIdSchema),
+    kind: picklist(['real', 'conditional', 'none']),
+    missing: nullable(qualificationTextSchema),
+  }),
+});
+
+export const workRoutingQualifyErrorTags = ['ForbiddenDemo', 'Unavailable'] as const;
+
+export const workRoutingQualifyOutputSchema = pipe(
+  jsonWireValueSchema,
+  variant('ok', [
+    strictObject({ data: workRoutingQualificationSchema, ok: literal(true) }),
+    strictObject({
+      error: strictObject({ message: publicMessageSchema, tag: picklist(workRoutingQualifyErrorTags) }),
+      ok: literal(false),
+    }),
+  ]),
+);
+
+export type WorkRoutingQualifyInput = InferOutput<typeof workRoutingQualifyInputSchema>;
+export type WorkRoutingQualification = InferOutput<typeof workRoutingQualificationSchema>;
+export type WorkRoutingQualifyOutput = InferOutput<typeof workRoutingQualifyOutputSchema>;
+
+export const parseWorkRoutingQualifyOutput = (value: unknown): WorkRoutingQualifyOutput =>
+  parse(workRoutingQualifyOutputSchema, value);
+
 const workRoutingErrors = {
   ForbiddenDemo: publicErrorMap.ForbiddenDemo,
   Unavailable: publicErrorMap.Unavailable,
@@ -123,6 +215,10 @@ export const workRoutingContract = {
     .input(emptyInputSchema)
     .output(workRoutingContextSchema)
     .errors(workRoutingErrors),
+  qualify: oc
+    .route({ method: 'POST', path: '/work/routing-qualification' })
+    .input(workRoutingQualifyInputSchema)
+    .output(workRoutingQualifyOutputSchema),
 } as const;
 
 export type WorkRoutingContractClient = ContractRouterClient<typeof workRoutingContract>;

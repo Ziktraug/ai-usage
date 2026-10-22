@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { projectSessionPage } from '@ai-usage/report-core/session-query';
 import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
-import type { WorkRoutingContext } from '@ai-usage/web-contract/work-routing';
+import type { WorkRoutingContext, WorkRoutingQualification } from '@ai-usage/web-contract/work-routing';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
@@ -126,9 +126,11 @@ const context: WorkRoutingContext = {
   observationRead: { skipped: 0, truncated: false },
 };
 
+const HYDRATION_MARKER_PATTERN = /<!--[^>]*-->/g;
 const html = (props: Record<string, unknown>): string =>
   render(fixture, { props: { routing: props } })
-    .body.replaceAll(/\s+/g, ' ')
+    .body.replaceAll(HYDRATION_MARKER_PATTERN, '')
+    .replaceAll(/\s+/g, ' ')
     .replaceAll('&lt;', '<');
 
 describe('Work routing Svelte rendering from a supplied context', () => {
@@ -200,5 +202,172 @@ describe('Work routing Svelte rendering from a supplied context', () => {
     expect(body).toContain('Candidate evidence (2)');
     expect(body).toContain('Synthetic evidence examples');
     expect(body).not.toContain('Routing context unavailable');
+  });
+});
+
+describe('Work routing qualification path (ADR 0057)', () => {
+  const FINGERPRINT = '0123456789abcdef';
+  const [declaration] = context.declarations;
+  const [observation] = context.executorObservations;
+  if (!(declaration && observation)) {
+    throw new Error('The routing fixture has one declaration and one observation.');
+  }
+  const declaredId = `declared:${JSON.stringify([MACHINE, 'claude-code', 'personal'])}`;
+  const pinned: WorkRoutingContext = {
+    ...context,
+    declarations: [{ ...declaration, accountFingerprint: FINGERPRINT, alternateModels: ['Sonnet'], model: 'Fable' }],
+    executorObservations: [{ ...observation, accountFingerprint: FINGERPRINT }],
+    reviewTargets: [{ checkoutPath: '/home/operator/src/ai-usage', label: 'main' }],
+  };
+  const admitted: WorkAttemptsListOutput = {
+    data: {
+      attempts: [],
+      generatedAt: new Date().toISOString(),
+      skipped: 0,
+      target: {
+        admitted: true,
+        checkoutOrigin: 'desktop-cwd',
+        checkoutPath: '/home/operator/src/ai-usage',
+        harness: 'claude',
+        sourceSessionId: 'root-session',
+      },
+      truncated: false,
+    },
+    ok: true,
+  };
+  const qualification: WorkRoutingQualification = {
+    candidates: [
+      {
+        accountScope: 'personal',
+        actions: [],
+        candidateId: `${declaredId}:model:1:Sonnet`,
+        eligible: true,
+        exclusionReasons: [],
+        harness: 'claude-code',
+        identity: {
+          declared: FINGERPRINT,
+          observed: FINGERPRINT,
+          observedAt: observation.observedAt,
+          state: 'confirmed',
+        },
+        missingData: ['Quota window Fable · Weekly applies to another model than Sonnet; not counted.'],
+        model: 'Sonnet',
+      },
+      {
+        accountScope: 'personal',
+        actions: ['Quota window Fable · Weekly is exhausted; wait for its reset at 2026-10-24T05:00:00.000Z'],
+        candidateId: declaredId,
+        eligible: false,
+        exclusionReasons: ['Quota window Fable · Weekly is exhausted or blocked.'],
+        harness: 'claude-code',
+        identity: {
+          declared: FINGERPRINT,
+          observed: FINGERPRINT,
+          observedAt: observation.observedAt,
+          state: 'confirmed',
+        },
+        missingData: [],
+        model: 'Fable',
+      },
+    ],
+    chosenCandidateId: `${declaredId}:model:1:Sonnet`,
+    executors: { outcome: 'success', refreshed: true },
+    omittedCandidates: 0,
+    qualifiedAt: new Date().toISOString(),
+    reasons: [
+      'Simulation only: no harness is started and no permission is granted.',
+      'Fable, Sonnet are models of one account (personal): one quota resource, not separate reserves.',
+    ],
+    recommendation: { candidateId: `${declaredId}:model:1:Sonnet`, kind: 'real', missing: null },
+  };
+
+  test('says once per machine what is detected, declared, authorized and missing', () => {
+    const body = html({ context, mode: 'live', providers, quotaUnavailable: false, target });
+    expect(body).toContain('Routing qualification on this machine');
+    expect(body).toContain(
+      'Detected: claude 2.1.303 (Claude Code) · signed in (claude.ai) · no account reported · observed',
+    );
+    expect(body).toContain(
+      'Declared: account personal · allowed · subscription verified · models Opus · targets any local session · account not pinned · declared 2026-10-20T08:00:00.000Z.',
+    );
+    expect(body).toContain('Account: this harness reports no account without its credential file');
+    expect(body).toContain('Target: this session is authorized by the declared targets.');
+    expect(body).toContain('Declared: nothing; quota and observations alone never authorize.');
+    expect(body).toContain('Execution: simulated only; this version launches no Codex review.');
+    expect(body).toContain('Qualify now with the engine');
+    // Nothing was asked of the engine during rendering.
+    expect(body).not.toContain('Qualified by the engine');
+
+    const unpinned = html({
+      context: { ...context, executorObservations: [{ ...observation, accountFingerprint: FINGERPRINT }] },
+      mode: 'live',
+      providers,
+      quotaUnavailable: false,
+      target,
+    });
+    expect(unpinned).toContain(`account ${FINGERPRINT}`);
+    expect(unpinned).toContain(`Account: ${FINGERPRINT} is observed, but the declaration pins no account`);
+    expect(unpinned).toContain('Missing for Claude Code:');
+    expect(unpinned).toContain(`Pin the signed-in account: add "accountFingerprint": "${FINGERPRINT}"`);
+
+    const demo = html({ mode: 'demo', providers: [], quotaUnavailable: false, target });
+    expect(demo).not.toContain('Routing qualification on this machine');
+    expect(demo).not.toContain('Qualify now with the engine');
+  });
+
+  test('renders the engine decision with its reasons and limits, and opens the launch on it', () => {
+    const body = html({
+      attempts: admitted,
+      context: pinned,
+      mode: 'live',
+      providers,
+      qualification: { data: qualification, ok: true },
+      quotaUnavailable: false,
+      target,
+    });
+    expect(body).toContain('Real recommendation: Claude Code · personal · Sonnet.');
+    expect(body).toContain('executors observed by the engine for this qualification');
+    expect(body).toContain('Claude Code · personal · Sonnet: chosen');
+    expect(body).toContain('Claude Code · personal · Fable: excluded');
+    expect(body).toContain('Quota window Fable · Weekly is exhausted or blocked.');
+    expect(body).toContain('Limits and missing data: Quota window Fable · Weekly applies to another model than Sonnet');
+    expect(body).toContain('one quota resource, not separate reserves');
+    expect(body).toContain(`Account: the signed-in account (observed ${FINGERPRINT}) is the pinned one.`);
+    expect(body).toContain('data-work-launch="open"');
+    expect(body).toContain('Start read-only review (Claude Code)');
+
+    const conditional = html({
+      attempts: admitted,
+      context: pinned,
+      mode: 'live',
+      providers,
+      qualification: {
+        data: {
+          ...qualification,
+          chosenCandidateId: null,
+          executors: { outcome: 'disabled', refreshed: false },
+          recommendation: { candidateId: declaredId, kind: 'conditional', missing: 'account identity observation' },
+        },
+        ok: true,
+      },
+      quotaUnavailable: false,
+      target,
+    });
+    expect(conditional).toContain(
+      'Conditional on Claude Code · personal · Fable (missing: account identity observation)',
+    );
+    expect(conditional).toContain('executors not refreshed: the executors source is disabled');
+    expect(conditional).toContain('data-work-launch="closed"');
+    expect(conditional).not.toContain('Start read-only review');
+
+    const unavailable = html({
+      context: pinned,
+      mode: 'live',
+      providers,
+      qualification: { error: { message: 'The engine is not running.', tag: 'Unavailable' }, ok: false },
+      quotaUnavailable: false,
+      target,
+    });
+    expect(unavailable).toContain('Engine qualification unavailable (Unavailable: The engine is not running.)');
   });
 });

@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { parseWorkRoutingContext, type WorkRoutingContext, workRoutingContract } from './work-routing';
+import { ROUTING_QUALIFICATION_BOUNDS } from '@ai-usage/report-core/work-routing';
+import {
+  parseWorkRoutingContext,
+  parseWorkRoutingQualifyOutput,
+  type WorkRoutingContext,
+  type WorkRoutingQualification,
+  workRoutingContract,
+} from './work-routing';
 
 const context: WorkRoutingContext = {
   configPath: '/home/operator/.config/ai-usage/config.json',
@@ -51,7 +58,25 @@ describe('Work routing Web contract', () => {
     ]);
   });
 
+  test('carries a pinned and an observed account fingerprint and alternate models (ADR 0057)', () => {
+    const [declared] = context.declarations;
+    const [observed] = context.executorObservations;
+    if (!(declared && observed)) {
+      throw new Error('fixture context has one declaration and one observation');
+    }
+    const pinned: WorkRoutingContext = {
+      ...context,
+      declarations: [{ ...declared, accountFingerprint: '0123456789abcdef', alternateModels: ['Fable'] }],
+      executorObservations: [{ ...observed, accountFingerprint: '0123456789abcdef' }],
+    };
+    expect(parseWorkRoutingContext(pinned)).toEqual(pinned);
+  });
+
   test.each([
+    { declarations: [{ ...context.declarations[0], accountFingerprint: 'operator@example.test' }] },
+    { declarations: [{ ...context.declarations[0], alternateModels: [] }] },
+    { executorObservations: [{ ...context.executorObservations[0], accountFingerprint: '0123456789ABCDEF' }] },
+    { executorObservations: [{ ...context.executorObservations[0], email: 'operator@example.test' }] },
     { generatedAt: '2026-10-21T21:05:00Z' },
     { declarations: [{ ...context.declarations[0], authorization: 'maybe' }] },
     { declarations: [{ ...context.declarations[0], targets: [] }] },
@@ -64,5 +89,70 @@ describe('Work routing Web contract', () => {
     { unexpected: true },
   ])('rejects %j', (override) => {
     expect(() => parseWorkRoutingContext({ ...context, ...override })).toThrow();
+  });
+});
+
+describe('Work routing qualification contract (ADR 0057)', () => {
+  const qualification: WorkRoutingQualification = {
+    candidates: [
+      {
+        accountScope: 'personal',
+        actions: [],
+        candidateId: 'declared:["machine-a","claude-code","personal"]:model:1:Opus',
+        eligible: true,
+        exclusionReasons: [],
+        harness: 'claude-code',
+        identity: {
+          declared: '0123456789abcdef',
+          observed: '0123456789abcdef',
+          observedAt: '2026-10-22T08:00:00.000Z',
+          state: 'confirmed',
+        },
+        missingData: ['Quota window Fable · Weekly applies to another model than Opus; not counted.'],
+        model: 'Opus',
+      },
+    ],
+    chosenCandidateId: 'declared:["machine-a","claude-code","personal"]:model:1:Opus',
+    executors: { outcome: 'success', refreshed: true },
+    omittedCandidates: 0,
+    qualifiedAt: '2026-10-22T08:00:01.000Z',
+    reasons: ['Simulation only: no harness is started and no permission is granted.'],
+    recommendation: {
+      candidateId: 'declared:["machine-a","claude-code","personal"]:model:1:Opus',
+      kind: 'real',
+      missing: null,
+    },
+  };
+
+  test('is one POST that answers the engine decision or a typed failure envelope', () => {
+    expect(workRoutingContract.qualify['~orpc'].route).toMatchObject({
+      method: 'POST',
+      path: '/work/routing-qualification',
+    });
+    expect(parseWorkRoutingQualifyOutput({ data: qualification, ok: true })).toEqual({ data: qualification, ok: true });
+    expect(
+      parseWorkRoutingQualifyOutput({
+        error: { message: 'The engine is not running.', tag: 'Unavailable' },
+        ok: false,
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  test.each([
+    { leaked: true },
+    { executors: { outcome: 'success', refreshed: 'yes' } },
+    { recommendation: { candidateId: null, kind: 'likely', missing: null } },
+    { reasons: ['x'.repeat(ROUTING_QUALIFICATION_BOUNDS.maxText + 1)] },
+    {
+      candidates: [
+        {
+          ...qualification.candidates[0],
+          identity: { ...qualification.candidates[0]?.identity, observed: 'operator@example.test' },
+        },
+      ],
+    },
+    { candidates: [{ ...qualification.candidates[0], windows: [] }] },
+  ])('rejects %j', (override) => {
+    expect(() => parseWorkRoutingQualifyOutput({ data: { ...qualification, ...override }, ok: true })).toThrow();
   });
 });

@@ -86,3 +86,22 @@ test('rejects a routing section that is not an executors array as an invalid con
   const { homePath } = await writeHome({ 'config.json': { routing: { executors: 'all' } } });
   await expect(readLocalRoutingDeclarations(homePath)).rejects.toThrow('Invalid ai-usage config');
 });
+
+test('reads a pinned account and alternate models from a disposable home, and writes nothing back (ADR 0057)', async () => {
+  const pinned = { ...declaration, accountFingerprint: '0123456789abcdef', alternateModels: ['Opus'], model: 'Fable' };
+  const { configPath, homePath } = await writeHome({
+    'config.json': { routing: { executors: [pinned, { ...pinned, accountFingerprint: 'Not-Hex', harness: 'codex' }] } },
+    'machine.json': { id: 'machine-from-file', label: 'Workstation' },
+  });
+  const written = await Bun.file(configPath).text();
+
+  const result = await readLocalRoutingDeclarations(homePath);
+  expect(result.declarations).toEqual([{ ...pinned, effort: null, machineId: 'machine-from-file' }]);
+  expect(result.issues).toEqual([
+    {
+      path: 'routing.executors[1].accountFingerprint',
+      reason: 'must be the 16-character lowercase hexadecimal fingerprint the Work view shows',
+    },
+  ]);
+  expect(await Bun.file(configPath).text()).toBe(written);
+});

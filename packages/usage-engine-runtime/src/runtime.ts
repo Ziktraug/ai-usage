@@ -3,6 +3,7 @@ import {
   type CollectionSourceId,
   collectionSourceDefinitions,
   parseSourceControlSnapshot,
+  type SourceControlEntryView,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
 import {
@@ -21,6 +22,7 @@ import {
   type UsageEngineMergePreviewOutput,
   type UsageEngineReplicationStatusOutput,
   type UsageEngineReviewAttemptOutput,
+  type UsageEngineRoutingQualificationOutput,
   type UsageEngineStatus,
 } from '@ai-usage/usage-engine-control';
 import { createRuntimeCommandCoordinator, type RuntimeCommandCoordinator } from './runtime-command-coordinator';
@@ -108,6 +110,24 @@ export interface UsageEngineMutationPort {
 }
 
 type StartReviewAttemptCommand = Extract<UsageEngineCommand, { readonly command: 'start-review-attempt' }>;
+type QualifyReviewRoutingCommand = Extract<UsageEngineCommand, { readonly command: 'qualify-review-routing' }>;
+
+/** The executor observation the engine ran for one qualification, as the source reported it. */
+export interface RoutingQualificationExecutorRun {
+  /** `null` when the source is absent from this composition. */
+  readonly source: SourceControlEntryView | null;
+  /** When the qualification started; a run that finished earlier is not fresh. */
+  readonly startedAt: string;
+}
+
+export interface UsageEngineRoutingQualificationPort {
+  /** Re-reads the declarations and stored facts, then decides; starts nothing and writes nothing. */
+  readonly qualify: (
+    command: QualifyReviewRoutingCommand,
+    executorRun: RoutingQualificationExecutorRun,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineRoutingQualificationOutput>;
+}
 
 export interface UsageEngineReviewAttemptPort {
   /**
@@ -134,6 +154,8 @@ export interface UsageEngineRuntimeDependencies {
   readonly recover: () => Promise<void>;
   /** The review launcher (ADR 0053); absent in compositions that cannot execute anything. */
   readonly reviewAttempts?: UsageEngineReviewAttemptPort;
+  /** The on-demand routing qualification (ADR 0057); absent in compositions without routing. */
+  readonly routingQualification?: UsageEngineRoutingQualificationPort;
   readonly sourceControl: Omit<UsageEngineSourceControlPort, 'runSource' | 'setSourceEnabled'> & {
     readonly runSource: (sourceId: RunSourceCommand['sourceId'], signal?: AbortSignal) => Promise<SourceControlView>;
     readonly setSourceEnabled: (

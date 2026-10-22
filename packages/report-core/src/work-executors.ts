@@ -13,6 +13,10 @@ import { isPrintableSkillObservationText } from './skill-observation';
  *   PATH, its version, and the sign-in state a non-interactive CLI command reports. It never reads a
  *   credential file and never generates anything.
  * - Quota stays where it already is (provider-status, ADR 0045); this module does not restate it.
+ * - An **account fingerprint** (ADR 0057) is the one identity signal on both sides: the collector
+ *   hashes the non-secret account and organization identifiers the CLI's own status command
+ *   reports, and the operator may pin that value in the declaration. The raw identifiers are never
+ *   stored, and a declared fingerprint is never presented as an observed one.
  *
  * Both parsers are strict and re-run on the way out of storage, so a tightened bound hides rows
  * already persisted. Raising a bound is safe.
@@ -33,6 +37,10 @@ export const EXECUTOR_OBSERVATION_OUTCOMES = ['observed', 'unavailable', 'timeou
 export type ExecutorObservationOutcome = (typeof EXECUTOR_OBSERVATION_OUTCOMES)[number];
 
 export const EXECUTOR_BOUNDS = {
+  /** `accountFingerprint`: lowercase hexadecimal characters of the truncated SHA-256 (ADR 0057). */
+  accountFingerprintLength: 16,
+  /** `alternateModels` per entry: further models of the same account, in preference order. */
+  maxAlternateModels: 8,
   /** `authMethod`: the sign-in method word a CLI reports ("claude.ai", "console", "api-key"). */
   maxAuthMethod: 64,
   /** Entries accepted from `routing.executors[]`; later entries are reported, not read. */
@@ -59,8 +67,19 @@ export type ExecutorDeclaredTarget =
   | { readonly kind: 'project'; readonly projectLabel: string };
 
 export interface ExecutorDeclaration {
+  /**
+   * The account the operator pins this route to: the fingerprint the engine observes for the
+   * signed-in CLI (ADR 0057). Absent means none is pinned; while the CLI reports an identity, such
+   * a route cannot be a real recommendation, because nothing ties the signed-in account to it.
+   */
+  readonly accountFingerprint?: string | undefined;
   /** The account suffix of the quota key (`claude:<accountScope>`), or the operator's name for the account. */
   readonly accountScope: string;
+  /**
+   * Further models of the same account the review may run with, after `model`, in preference
+   * order; absent means none. They share the account's quota: one resource, never extra reserves.
+   */
+  readonly alternateModels?: readonly string[] | undefined;
   readonly authorization: ExecutorAuthorization;
   readonly capabilities: readonly ExecutorCapability[];
   /** Canonical ISO instant; the declaration is a dated statement, never a current observation. */
@@ -76,7 +95,11 @@ export interface ExecutorDeclaration {
 
 /** The documented shape of one `routing.executors[]` entry as the operator writes it. */
 export interface ExecutorDeclarationInput {
+  /** The fingerprint the Work view shows for the signed-in CLI; pins the route to that account. */
+  readonly accountFingerprint?: string | undefined;
   readonly accountScope: string;
+  /** Requires `model`: further models of the same account, in preference order. */
+  readonly alternateModels?: readonly string[] | undefined;
   readonly authorization: ExecutorAuthorization;
   readonly capabilities: readonly ExecutorCapability[];
   readonly declaredAt: string;
@@ -118,6 +141,12 @@ export interface ParseExecutorDeclarationsOptions {
 }
 
 export interface ExecutorObservation {
+  /**
+   * The truncated SHA-256 of the account and organization identifiers the CLI's status command
+   * reported (ADR 0057). Absent when it reported none, and for a harness that exposes none outside
+   * a credential file. Never the identifiers themselves.
+   */
+  readonly accountFingerprint?: string | undefined;
   /** How the sign-in state was established, bounded and credential-free (for example "codex login status exit 0"). */
   readonly authEvidence: string;
   /**
@@ -135,7 +164,9 @@ export interface ExecutorObservation {
 }
 
 const DECLARATION_KEYS: ReadonlySet<string> = new Set([
+  'accountFingerprint',
   'accountScope',
+  'alternateModels',
   'authorization',
   'capabilities',
   'declaredAt',
@@ -148,6 +179,7 @@ const DECLARATION_KEYS: ReadonlySet<string> = new Set([
   'targets',
 ]);
 const OBSERVATION_KEYS: ReadonlySet<string> = new Set([
+  'accountFingerprint',
   'authEvidence',
   'authMethod',
   'authState',
@@ -171,6 +203,12 @@ const isBoundedText = (value: unknown, maximum: number): value is string =>
   value.trim().length > 0 &&
   value.length <= maximum &&
   isPrintableSkillObservationText(value);
+
+const ACCOUNT_FINGERPRINT_PATTERN = new RegExp(`^[0-9a-f]{${EXECUTOR_BOUNDS.accountFingerprintLength}}$`, 'u');
+
+/** Exactly the collector's format: lowercase hexadecimal of the documented length. */
+export const isExecutorAccountFingerprint = (value: unknown): value is string =>
+  typeof value === 'string' && ACCOUNT_FINGERPRINT_PATTERN.test(value);
 
 const hasOnlyKeys = (record: Record<string, unknown>, keys: ReadonlySet<string>): string[] =>
   Object.keys(record).filter((key) => !keys.has(key));
@@ -307,6 +345,44 @@ const parseOptionalText = (
   return { ok: true, value };
 };
 
+const parseAlternateModels = (
+  value: unknown,
+  model: string | null,
+  path: string,
+  issues: ExecutorDeclarationIssue[],
+): readonly string[] => {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > EXECUTOR_BOUNDS.maxAlternateModels) {
+    issues.push({ path, reason: `must be an array of at most ${EXECUTOR_BOUNDS.maxAlternateModels} model names` });
+    return [];
+  }
+  if (value.length > 0 && model === null) {
+    issues.push({ path, reason: 'requires model: alternates follow the preferred model' });
+    return [];
+  }
+  const seen = new Set(model === null ? [] : [model.trim().toLowerCase()]);
+  const models: string[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (!isBoundedText(entry, EXECUTOR_BOUNDS.maxText)) {
+      issues.push({
+        path: `${path}[${index}]`,
+        reason: `must be a non-empty string of at most ${EXECUTOR_BOUNDS.maxText} characters`,
+      });
+      return [];
+    }
+    const normalized = entry.trim().toLowerCase();
+    if (seen.has(normalized)) {
+      issues.push({ path: `${path}[${index}]`, reason: 'repeats model or an earlier alternate' });
+      return [];
+    }
+    seen.add(normalized);
+    models.push(entry);
+  }
+  return models;
+};
+
 const parseDeclaration = (
   value: unknown,
   path: string,
@@ -357,7 +433,14 @@ const parseDeclaration = (
     issues.push({ path: `${path}.quality`, reason: "must be 'review-capable'" });
   }
   const model = parseOptionalText(value.model, `${path}.model`, issues);
+  const alternateModels = parseAlternateModels(value.alternateModels, model.value, `${path}.alternateModels`, issues);
   const effort = parseOptionalText(value.effort, `${path}.effort`, issues);
+  if (value.accountFingerprint !== undefined && !isExecutorAccountFingerprint(value.accountFingerprint)) {
+    issues.push({
+      path: `${path}.accountFingerprint`,
+      reason: `must be the ${EXECUTOR_BOUNDS.accountFingerprintLength}-character lowercase hexadecimal fingerprint the Work view shows`,
+    });
+  }
   const declaredAt = parseDeclaredAt(value.declaredAt);
   if (declaredAt === null) {
     issues.push({ path: `${path}.declaredAt`, reason: 'is required and must be an RFC 3339 date-time' });
@@ -377,7 +460,9 @@ const parseDeclaration = (
     return null;
   }
   return {
+    ...(isExecutorAccountFingerprint(value.accountFingerprint) ? { accountFingerprint: value.accountFingerprint } : {}),
     accountScope: value.accountScope,
+    ...(alternateModels.length > 0 ? { alternateModels } : {}),
     authorization: value.authorization,
     capabilities,
     declaredAt,
@@ -460,6 +545,8 @@ export const parseExecutorObservation = (value: unknown): ExecutorObservation | 
   const observedAt = normalizeIsoTimestamp(value.observedAt);
   // Rows and collectors from before the field carry no `authMethod`; absent reads as null.
   const authMethod = value.authMethod === undefined ? null : value.authMethod;
+  // Rows and collectors from before ADR 0057 carry no fingerprint; absent and null both mean none.
+  const accountFingerprint = value.accountFingerprint ?? null;
   if (
     !(isExecutorHarness(value.harness) && isBoundedText(value.machineId, EXECUTOR_BOUNDS.maxScope)) ||
     typeof value.observedAt !== 'string' ||
@@ -468,12 +555,14 @@ export const parseExecutorObservation = (value: unknown): ExecutorObservation | 
     !isOneOf(EXECUTOR_OBSERVATION_OUTCOMES, value.outcome) ||
     !isBoundedText(value.authEvidence, EXECUTOR_BOUNDS.maxText) ||
     !(authMethod === null || isBoundedText(authMethod, EXECUTOR_BOUNDS.maxAuthMethod)) ||
+    !(accountFingerprint === null || isExecutorAccountFingerprint(accountFingerprint)) ||
     !(value.binaryPath === null || isBoundedText(value.binaryPath, EXECUTOR_BOUNDS.maxPath)) ||
     !(value.version === null || isBoundedText(value.version, EXECUTOR_BOUNDS.maxText))
   ) {
     return null;
   }
   return {
+    ...(accountFingerprint === null ? {} : { accountFingerprint }),
     authEvidence: value.authEvidence,
     authMethod,
     authState: value.authState,

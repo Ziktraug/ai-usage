@@ -28,6 +28,7 @@ explicitly declared information.
 | C | `/work` recomposed around the dataset: needs-you / waiting-on-others / leads, folded children, search and filters in the URL, detail panel, local-time dates, routing simulation attached to one root | `feat/work-resume-cockpit-c-ui` | IN PROGRESS |
 | R | Declared executors (`routing.executors[]`, home-only config), observed executor availability, per-field provenance, qualification actions, real/conditional recommendation | `feat/work-resume-cockpit-r-routing` | IN PROGRESS |
 | E | First read-only review attempt launched from the product (Claude Code only, isolated checkout) | — | NOT STARTED (depends on A, C, R) |
+| M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE in the worker branch (not integrated) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -249,3 +250,27 @@ the merged head below.
 `bun run verify` PASS (323 s); package suites 1886 pass, 0 fail; `bun run test:e2e` 249 passed
 (1.6 min, visual snapshots unchanged); production suite 17/17; opt-in review attempt spec 1/1;
 `bun run test:web-production` PASS. The slice is frozen at this head.
+
+### 2026-10-22 10:05 — lot M on its worker branch (`9d799429`, `5b54f198`, base `759daec1`)
+
+Lot M (ADR 0057): `claude auth status` already printed `orgId` and `email`; the collector now keeps
+only a 16-hex domain-separated SHA-256 of them (`accountFingerprint`, additive column), and
+`routing.executors[]` may pin it and declare `alternateModels`. Qualification states the identity
+per field (`confirmed`, `contradicted`, `unpinned`, `unobserved`, `not-observable`); an unpinned
+route whose CLI reports an account is conditional on the pin, a changed account invalidates a
+pinned one. Found and fixed: a provider read `partial` because the Fable window was blocked
+excluded every model of the account; `weekly_opus` windows never matched a declared Opus. The
+engine command `qualify-review-routing` (behind `workRouting.qualify`, registered in the
+request-policy allow-list) runs `executors.capabilities` now, re-reads declarations and quota and
+answers the launch policy's decision; the routing panel shows detected / declared / target /
+missing once per machine and a "Qualify now with the engine" action whose answer feeds the gate.
+Verification: `bun run typecheck` 58/58, `bun run lint` and `bun run check` clean; report-core
+513, local-collectors 260, local-machine 217, usage-store 261, usage-engine-control 62,
+usage-engine-runtime 217, web-contract 93, apps/web unit 1556 pass, 0 fail; production specs
+`work-production.spec.ts` 4/4 and opt-in `work-attempt-production.spec.ts` 1/1. Browser check on
+the production fixture (disposable HOME, fake `claude`): four clicks, four POSTs to
+`/rpc/workRouting/qualify`, a new executor observation each time; no identity → real; identity
+reported → conditional on the pin; pinned with Fable then Opus → real, launch gate open, axe 0;
+account switched → contradicted, gate closed. Not done here: the launch still resolves the
+declaration by its primary id and launches `declaration.model` (lot K files; diff in the worker
+report); the operator's real unpinned declaration will read conditional until pinned.

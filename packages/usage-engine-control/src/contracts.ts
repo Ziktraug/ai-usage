@@ -32,6 +32,7 @@ import {
   type ReviewAttemptState,
   type ReviewLaunchRefusalReason,
 } from '@ai-usage/report-core/work-attempts';
+import { parseRoutingQualification, type RoutingQualification } from '@ai-usage/report-core/work-routing';
 
 declare const usageEngineBrand: unique symbol;
 
@@ -305,6 +306,7 @@ export type UsageEngineCommand =
       readonly command: 'start-review-attempt';
       readonly target: UsageEngineReviewAttemptTarget;
     }
+  | { readonly command: 'qualify-review-routing'; readonly target: UsageEngineReviewAttemptTarget }
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
   | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
@@ -588,6 +590,11 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         command: 'start-review-attempt',
         target: parseReviewAttemptTarget(command.target),
       };
+    case 'qualify-review-routing':
+      if (!hasExactKeys(command, ['command', 'target'])) {
+        return fail('Usage engine qualify-review-routing command contains unknown fields.');
+      }
+      return { command: 'qualify-review-routing', target: parseReviewAttemptTarget(command.target) };
     case 'set-machine-label':
       if (!hasExactKeys(command, ['command', 'label'])) {
         return fail('Usage engine set-machine-label command contains unknown fields.');
@@ -900,6 +907,16 @@ export interface UsageEngineReviewAttemptOutput {
   readonly refusal: { readonly message: string; readonly reason: ReviewLaunchRefusalReason } | null;
 }
 
+/**
+ * What a `qualify-review-routing` command answers (ADR 0057): the decision the engine took from the
+ * executor observation it has just run, the declarations re-read from the home config and the
+ * stored quota. A decision, not report data; it starts nothing.
+ */
+export interface UsageEngineRoutingQualificationOutput {
+  readonly kind: 'routing-qualification';
+  readonly qualification: RoutingQualification;
+}
+
 export interface UsageEnginePublicationOutput {
   readonly kind: 'publication';
   readonly publication: UsageEngineCurrentPublication;
@@ -1004,6 +1021,11 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
+      readonly command: 'qualify-review-routing';
+      readonly output: UsageEngineRoutingQualificationOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
       readonly command: Exclude<
         UsageEngineCommandName,
         | 'collect-fresh-quota'
@@ -1014,6 +1036,7 @@ export type UsageEngineCommandCompletion =
         | 'replication-status'
         | 'set-machine-label'
         | 'start-review-attempt'
+        | 'qualify-review-routing'
       >;
       readonly output: { readonly kind: 'none' };
       readonly state: 'succeeded';
@@ -1032,6 +1055,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'import-cursor',
   'preview-merge',
   'publish',
+  'qualify-review-routing',
   'replication-status',
   'replace-project-aliases',
   'replace-project-groups',
@@ -1324,6 +1348,17 @@ export const parseUsageEngineReviewAttemptOutput = (value: unknown): UsageEngine
   };
 };
 
+export const parseUsageEngineRoutingQualificationOutput = (value: unknown): UsageEngineRoutingQualificationOutput => {
+  if (!(isRecord(value) && hasExactKeys(value, ['kind', 'qualification']) && value.kind === 'routing-qualification')) {
+    return fail('Usage engine routing qualification output is invalid.');
+  }
+  const qualification = parseRoutingQualification(value.qualification);
+  if (qualification === null) {
+    return fail('Usage engine routing qualification is invalid or exceeds its bounds.');
+  }
+  return { kind: 'routing-qualification', qualification };
+};
+
 const replicationDiagnosticCodes = new Set<UsageEngineReplicationDiagnosticCode>([
   'acknowledged',
   'blocked',
@@ -1538,6 +1573,14 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
   }
   if (command === 'start-review-attempt') {
     return { ...base, command, output: parseUsageEngineReviewAttemptOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'qualify-review-routing') {
+    return {
+      ...base,
+      command,
+      output: parseUsageEngineRoutingQualificationOutput(value.output),
+      state: 'succeeded',
+    };
   }
   if (command === 'publish') {
     return { ...base, command, output: parseUsageEnginePublicationOutput(value.output), state: 'succeeded' };

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   BoundedProcessError,
   type BoundedProcessFailureKind,
@@ -15,10 +16,11 @@ import {
 
 /**
  * Observes the review executors a machine could run: is the harness CLI on the PATH, which version,
- * does its own non-interactive status command say it is signed in, and through which method.
- * Metadata only: nothing here opens a session, generates text, or reads a credential file. Evidence
- * strings are built from exit codes and a classification word, never from raw output, so an email
- * or token on stdout can never reach the store.
+ * does its own non-interactive status command say it is signed in, through which method, and to
+ * which account (as a truncated hash, ADR 0057). Metadata only: nothing here opens a session,
+ * generates text, or reads a credential file. Evidence strings are built from exit codes and a
+ * classification word, never from raw output, so an email or token on stdout can never reach the
+ * store.
  *
  * Process execution goes through the repository's one bounded runner
  * (`@ai-usage/local-machine/bounded-process`): no shell, an allow-listed environment (PATH, HOME,
@@ -79,6 +81,7 @@ const EXECUTOR_COMMANDS: Readonly<Record<ExecutorHarness, string>> = {
 };
 
 interface AuthProbe {
+  readonly accountFingerprint: string | null;
   readonly authMethod: string | null;
   readonly authState: ExecutorAuthState;
   readonly evidence: string;
@@ -86,6 +89,40 @@ interface AuthProbe {
 }
 
 const bounded = (text: string): string => text.slice(0, EXECUTOR_BOUNDS.maxText);
+
+/** Domain separation: this fingerprint is comparable only with fingerprints made by this function. */
+const ACCOUNT_FINGERPRINT_DOMAIN = 'ai-usage executor account v1';
+/** An identifier longer than this is not one the CLI reports; it is treated as absent, never truncated. */
+const MAX_IDENTIFIER_LENGTH = 512;
+
+const identifier = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= MAX_IDENTIFIER_LENGTH ? trimmed : null;
+};
+
+/**
+ * The account `claude auth status` reports (organization id and account email), reduced to the
+ * first 16 hexadecimal characters of a domain-separated SHA-256 (ADR 0057). It is comparable
+ * between observations and with a pinned declaration; the identifiers themselves are never kept.
+ * `null` when the CLI reported neither.
+ */
+export const claudeAccountFingerprint = (payload: unknown): string | null => {
+  if (typeof payload !== 'object' || payload === null) {
+    return null;
+  }
+  const organization = identifier('orgId' in payload ? payload.orgId : undefined);
+  const email = identifier('email' in payload ? payload.email : undefined)?.toLowerCase() ?? null;
+  if (organization === null && email === null) {
+    return null;
+  }
+  return createHash('sha256')
+    .update(`${ACCOUNT_FINGERPRINT_DOMAIN}\norg=${organization ?? ''}\nemail=${email ?? ''}`)
+    .digest('hex')
+    .slice(0, EXECUTOR_BOUNDS.accountFingerprintLength);
+};
 
 /** A sign-in method as the CLI names it, kept only when it is short printable ASCII. */
 const boundedAuthMethod = (value: unknown): string | null => {
@@ -115,13 +152,17 @@ const outcomeOfFailure = (kind: BoundedProcessFailureKind): ExecutorObservationO
 };
 
 const failedProbe = (command: string, kind: BoundedProcessFailureKind): AuthProbe => ({
+  accountFingerprint: null,
   authMethod: null,
   authState: 'unknown',
   evidence: `${command} ${kind}`,
   outcome: outcomeOfFailure(kind),
 });
 
-/** `claude auth status` prints JSON by default; only its `loggedIn` boolean and `authMethod` word are read. */
+/**
+ * `claude auth status` prints JSON by default; only its `loggedIn` boolean, its `authMethod` word
+ * and, for a signed-in CLI, the hash of its `orgId` and `email` are kept.
+ */
 const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthProbe> => {
   let result: BoundedRunResult;
   try {
@@ -148,6 +189,7 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<Auth
     // Older CLIs have no `auth status`; they exit non-zero with usage text. That is "unknown",
     // never a reason to read the credentials file instead.
     return {
+      accountFingerprint: null,
       authMethod: null,
       authState: 'unknown',
       evidence:
@@ -162,6 +204,7 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<Auth
       ? boundedAuthMethod(payload.authMethod)
       : null;
   return {
+    accountFingerprint: loggedIn ? claudeAccountFingerprint(payload) : null,
     authMethod,
     authState: loggedIn ? 'logged-in' : 'logged-out',
     evidence: `claude auth status exit ${result.exitCode} loggedIn=${loggedIn}${authMethod === null ? '' : ` authMethod=${authMethod}`}`,
@@ -188,6 +231,7 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthP
   }
   if (result.exitCode !== 0) {
     return {
+      accountFingerprint: null,
       authMethod: null,
       authState: 'logged-out',
       evidence: `codex login status exit ${result.exitCode}`,
@@ -201,7 +245,9 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthP
   } else if (CODEX_CHATGPT_PATTERN.test(result.stdout)) {
     authMethod = 'chatgpt';
   }
+  // Codex names its account only inside its credential file, which is never read: no fingerprint.
   return {
+    accountFingerprint: null,
     authMethod,
     authState: 'logged-in',
     evidence: mentionsLoggedIn
@@ -269,6 +315,7 @@ const observeExecutor = async (
   const evidence = versionEvidence === '' ? auth.evidence : `${versionEvidence}; ${auth.evidence}`;
   return {
     ...base,
+    ...(auth.accountFingerprint === null ? {} : { accountFingerprint: auth.accountFingerprint }),
     authEvidence: bounded(evidence),
     authMethod: auth.authMethod,
     authState: auth.authState,

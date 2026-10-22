@@ -1753,6 +1753,7 @@ const migrate = (db: SqliteDatabase): boolean => {
       auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
       auth_evidence TEXT NOT NULL,
       auth_method TEXT,
+      account_fingerprint TEXT,
       outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
     );
     CREATE INDEX IF NOT EXISTS idx_executor_observations_latest
@@ -1765,6 +1766,11 @@ const migrate = (db: SqliteDatabase): boolean => {
     if (!executorColumns.some((column) => column.name === 'auth_method')) {
       schemaChanged = true;
       db.exec('ALTER TABLE executor_observations ADD COLUMN auth_method TEXT');
+    }
+    // Same rule for the account fingerprint (ADR 0057): older rows read as "no identity reported".
+    if (!executorColumns.some((column) => column.name === 'account_fingerprint')) {
+      schemaChanged = true;
+      db.exec('ALTER TABLE executor_observations ADD COLUMN account_fingerprint TEXT');
     }
     db.exec(reviewAttemptSchemaSql);
     if (skillObservationCollectionStateMissing) {
