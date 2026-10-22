@@ -407,6 +407,36 @@ engine lost contact with (restart, shutdown) is shown as "contact lost; verify
 in the harness" and is never relaunched. Only Claude Code launches in this
 version; Codex stays at simulation.
 
+### 10. Give a harness session the Work context of its checkout
+
+A Claude Code or Codex session can ask what is waiting, what was decided and
+what is linked for the checkout or project it works in, from the same data as
+the Work view ([ADR 0058](docs/adr/0058-harness-sessions-read-work-context-through-one-bounded-projection.md)).
+Both forms read the usage store read-only, start no engine and never write:
+
+```sh
+bun run cli -- work context --checkout "$PWD" --json   # this checkout and paths inside it
+bun run cli -- work context --project-label ai-usage   # the project directory's name, exact
+```
+
+The local stdio MCP server (`bun run mcp`) exposes the same read as the
+read-only tool `work.context`, with exactly one of `checkoutPath` (absolute)
+or `projectLabel`. Adding the tool registers nothing: the server is still
+registered only by your explicit `bun run mcp:register:codex` (or your own
+harness configuration).
+
+The answer (`schemaVersion` 1) has `waiting` (human requests and external
+waits, each with the session's own declaration, its date and provenance),
+`decisions` (requests answered, handled elsewhere, archived or superseded,
+newest first, each with its evidence), `linked` (pull request, checkout and
+Jira facts) and `coverage`. Coverage always states what is not covered: only
+Claude Desktop sessions are represented (Codex, OpenCode, Cursor and Claude
+Code sessions started outside Claude Desktop are not), no transcript is read,
+and quiet roots older than the window are left out. Lists are bounded (at most
+20 waits and 20 decisions) and the whole answer stays under 64 KiB of JSON;
+`truncation` says what was left out. A missing or not-yet-upgraded store is an
+error (exit 1, or an MCP error such as `store-missing`), never an empty answer.
+
 ## Output formats
 
 The default output is a terminal table with an analytics summary. The same report can be emitted in other formats:

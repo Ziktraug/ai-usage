@@ -31,6 +31,7 @@ explicitly declared information.
 | M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE, integrated (`599fa303`) |
 | K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
 | L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE, integrated (`9bbbd9fa`) |
+| N | Work context for harness sessions (ADR 0058): one bounded read-only projection of the Work attention read per checkout or project label (waits, settled decisions with evidence, linked facts, coverage), as `ai-usage work context` and the local MCP tool `work.context`; no registration | `feat/work-resume-cockpit-n-context` | DONE on the lot branch (`4d238986`, `f34566fb`, `b58e0ef0`); package-boundary allowance proposed to the integrator |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -443,3 +444,31 @@ the retry wrapper 251 passed, no retry (130 s); `bun run test:e2e-production` PA
 production report 13/13, `work-production.spec.ts` 5/5, `work-attempt-production.spec.ts` 1/1,
 session scroll and campaign map 7/7, campaign continuity 31/31. Not run: `test:tools` and
 `test:web-production` (nothing they cover changed), the real hook probe, CI on this head.
+
+### 2026-10-22 13:55 — lot N: Work context for harness sessions (`4d238986`, `f34566fb`, `b58e0ef0`, lot branch)
+
+`@ai-usage/report-data/work-context-read` projects the one `queryWorkAttention` read (widest page)
+onto a checkout path (that path or inside it, compared as written) or a project label (exact):
+`waiting` (human requests and external waits with the session's declaration, date and registry
+provenance), `decisions` (the five ADR 0056 settled kinds, newest first, evidence resolved to kind,
+date and provenance), `linked` (pull request, checkout and Jira facts) and `coverage` (the Work read's
+own coverage plus fixed notes: Claude Desktop sessions only, no transcript, declared links only,
+activity window, literal paths). Reports, wrap-ups, notes and proposals are cited by id only. Count
+bounds per list and a 64 KiB ceiling on the compact JSON, cut from the least urgent list, counted in
+`truncation`. `ai-usage work context` and the MCP tool `work.context` (existing local stdio server,
+read-only annotations, one scope, sanitized codes) call the same `readWorkContext`; a missing store
+is a typed failure, never an empty answer; nothing is registered (ADR 0058). Evidence: report-data
+76 pass (8 new, two sweeps of the representative registry, scopes, prefix-sharing sibling, bounds,
+typed failures; two mutations of the scope and attention filters caught), mcp-adapter 12 pass (4 new,
+through the in-memory MCP client), apps/mcp 2 pass, CLI 115 pass (3 new, incl. a sandboxed process
+reading a seeded store with its bytes unchanged and no engine); typecheck 58/58; `bun run check` 1622
+files clean. `bun run lint` fails only on the two CLI imports of `report-data/work-context-read`
+until `tools/check-package-boundaries.ts` allows them (patch handed to the integrator; the patched
+checker passes on this branch). Stdio trial, generative-free: lot V's fixture profile store copied to
+the lot's `.agent-memory`, read by `bun run mcp` through a scripted JSON-RPC client; as copied (built
+at `3402c046`) it answered the typed `store-not-upgraded`; after this head's engine upgraded the copy
+(`machine set-label`, isolated home), `work.context` returned 23 roots in scope, 8 waits, 3 declared
+pull requests, 4 checkout statuses and 0 decisions (one sweep cannot date a reply), store bytes
+unchanged. Not done: real data, Codex sessions (not represented by design), `bun.lock` lines for the
+two new `apps/mcp` dependencies, `docs/public-package-interfaces.md` and
+`docs/memory-search-and-mcp.md` (out of the lot's scope; handed over).
