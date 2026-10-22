@@ -1,6 +1,6 @@
 # ADR 0050: Work attention facts stay outside the served revision
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR 0056](0056-native-records-may-settle-a-derived-wait.md) (a dated native record may settle a derived wait)
 - **Date**: 2026-10-21
 - **Extends**: 0009, 0016, 0017
 

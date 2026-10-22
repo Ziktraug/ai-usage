@@ -142,20 +142,27 @@ A reading computed on request that confronts a Session's declarations with the
 facts gathered around it and names its own uncertainty, such as "request open"
 or "possibly answered elsewhere". It is never persisted and never shown as a
 fact; a changed rule re-reads the same facts differently. An interpretation
-never closes a request: a later pull request can mark a root reconsidered, and
-the question stays the operator's until they confirm. What may reconsider a
-request is narrow: a pull request a child session listed from another
-checkout while active after the question, or a GitHub observation showing a
-pull request merged after it. The root's own listed pull request mirrors the
-branch of the checkout it sits in and counts only through such a GitHub
-observation dated after the question, never through the listing itself.
+never closes a request by inference (ADR 0056); only a dated, explicit record
+of the harness does: a message the person wrote to the session after the
+question, the session archived, or a session started from it after the
+question that declared itself completed. A later pull request, or work
+continued in a linked session without a completion, makes the root an older
+declaration to reconsider, and the question stays the operator's. What may
+reconsider a request through a pull request is narrow: a pull request a child
+session listed from another checkout while active after the question, or a
+GitHub observation showing a pull request merged after it. The root's own
+listed pull request mirrors the branch of the checkout it sits in and counts
+only through such a GitHub observation dated after the question, never through
+the listing itself.
 _Avoid_: fact, inferred state, conclusion, task status
 
 **Proposal**:
 A suggestion a Session's harness offered for a follow-up, with its title and a
 short synopsis; the brief itself is never collected. "Started" and "dismissed"
-are observed states without a recorded reason. A proposal is not a task, has no
-owner and no deadline, and is never ranked above a question a person was asked.
+are observed states without a recorded reason. An offer past its expiry, or
+followed by a later message from the person, is no longer presented as
+pending. A proposal is not a task, has no owner and no deadline, and is never
+ranked above a question a person was asked.
 _Avoid_: task, todo, backlog item, pending action
 
 **Collected session**:

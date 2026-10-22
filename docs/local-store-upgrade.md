@@ -134,6 +134,23 @@ as skipped, never shown), retention of five rows per issue plus the newest
 success, outside the served revision, the export and the replication outbox.
 A binary from before this change ignores the table; a binary from after it
 reads an older store with no Jira rows as "not observed".
+
+### Additive table and column under usage version 4 (2026-10-22, declaration history)
+
+The Claude Desktop family (ADR 0056) adds one table,
+`claude_desktop_turn_declarations` (the distinct turn declarations of each
+desktop session, at most eight per session, with the session's own dates and the
+time of a message recorded after each), and one nullable column,
+`claude_desktop_sessions.latest_user_frame_at`. The engine creates the table
+and adds the column on its next open when they are absent, without changing
+`user_version` or the store generation; no backfill runs: the history starts
+with the next sweep, and older rows read as "no message recorded". Both stay
+outside the served revision, the export and the replication outbox. An older
+binary opens the store normally and ignores the table and the column: a session
+row it inserts leaves the column empty, and a row it updates keeps the value the
+newer binary last wrote. There is no downgrade path: back up before the first
+start with the new code (see [Backup](#backup)).
+
 ### Additive table under usage version 4 (2026-10-22, review attempts)
 
 The first execution launched by the product (ADR 0053) adds one table,
