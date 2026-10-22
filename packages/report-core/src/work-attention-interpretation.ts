@@ -25,13 +25,12 @@ import {
  *
  * What may change a request (ADR 0056), from the strongest to the weakest:
  *
- * - **A dated, explicit native record closes it.** The person wrote to the session in Claude
- *   Desktop after the question (`latestUserFrameAt`), archived the session there, or a session
- *   started from this one after the question declared itself completed. The product does not
- *   decide; it reads the harness's own record and names its date.
+ * - **Archiving removes it from current attention, without proving an answer.** A native
+ *   replacement declaration similarly supersedes a request without establishing its outcome.
+ *   A dated message or a completed child does not identify which request it answered.
  * - **An unproven link makes it an older declaration to reconsider.** A later pull request (the
  *   narrow rule below), work continued in a session started from this one, or a report a session
- *   sent to it after the question: the attention stays `human-request`, the root is marked
+ *   sent to it after the question, or a later user message: attention stays `human-request`, the root is marked
  *   `reconsidered`, and the question stays the person's.
  * - **So does a week of silence** (`request-dormant`): no later turn, no message from the person
  *   and no activity in the session family for more than `WORK_REQUEST_DORMANT_AFTER_MS`. It ranks
@@ -39,9 +38,9 @@ import {
  * - **Everything else leaves it a current confirmed block**, however much else happened in the
  *   family: an unrelated pull request, a child that finished work it was given before the question.
  *
- * A message answers the request it followed and nothing else: it never settles a child's question
- * or another root, and it authorizes nothing. It ends an earlier proposal only as an offer the
- * person went past (`proposal-superseded`), never as a decision about it.
+ * The Desktop registry records message dates, not question-response identities. Those dates
+ * cannot establish an answer, authorization, or the supersession of an open proposal. An exact
+ * native response link must be qualified at the source before a reader can recognize it here.
  */
 
 export const WORK_ATTENTION_STALE_AFTER_MS = 7 * 86_400_000;
@@ -65,7 +64,7 @@ export interface WorkEarlierDeclaration {
   readonly declaredAt: CanonicalInstant;
   readonly factId: string;
   readonly needsAction: string | null;
-  /** A message the person wrote to the session after it and no later than its replacement. */
+  /** A message observed after it and no later than its replacement; not an attributed answer. */
   readonly repliedAt: CanonicalInstant | null;
   readonly status: ClaudeDesktopTurnStatus;
   /** The replacing declaration's date. */
@@ -258,9 +257,6 @@ const possiblyAnsweredElsewhere = (
   uncertainty: 'This does not prove it is the same work; the question stays yours until you confirm.',
 });
 
-const ANSWER_UNCERTAINTY =
-  'Read from Claude Desktop’s own record; the message itself is not read. It answers this request only: no proposal, other question or authorization follows from it.';
-
 /** What the person's request is called in a sentence. */
 const requestLabel = (status: ClaudeDesktopTurnStatus, needsAction: string | null): string =>
   isQuestion(status, needsAction) ? `the question “${needsAction}”` : 'the review request';
@@ -270,24 +266,7 @@ const linkPhrase = (session: WorkLinkedSession): string =>
     ? `started from this session at ${session.linkedAt}`
     : `reported to this session at ${session.linkedAt}`;
 
-/**
- * The session started from the root after the request that then declared itself completed. Only a
- * `spawned-from` link closes a request (ADR 0056): a report sent to the root is an unproven link and
- * leaves the request to reconsider through `continuedIn`.
- */
-const handledBy = (sessions: readonly WorkLinkedSession[], askedAt: CanonicalInstant): WorkLinkedSession | null =>
-  sessions
-    .filter(
-      (session) =>
-        session.link === 'spawned-from' &&
-        session.linkedAt > askedAt &&
-        session.declaration !== null &&
-        session.declaration.status === 'completed' &&
-        session.declaration.at >= askedAt,
-    )
-    .sort((left, right) => ((left.declaration?.at ?? '') < (right.declaration?.at ?? '') ? 1 : -1))[0] ?? null;
-
-/** Linked sessions that took up work after the request without a declaration that it was done. */
+/** Later linked activity, including completion: lineage does not identify the request handled. */
 const continuedIn = (sessions: readonly WorkLinkedSession[], askedAt: CanonicalInstant): WorkLinkedSession[] =>
   sessions.filter((session) => session.linkedAt > askedAt);
 
@@ -319,23 +298,19 @@ interface ProposalStanding {
   readonly expired: WorkOpenProposal[];
   /** Proposal fact ids still offered. */
   readonly pending: string[];
-  readonly superseded: WorkOpenProposal[];
 }
 
 /**
- * An open proposal stops being presented as pending when Claude Desktop's own expiry passed, or
- * when the person wrote to the session after it was offered: they went on with the session
- * instead, and the offer of the turn that followed is the current one. A proposal without a
- * creation date or a recorded message stays pending.
+ * An open proposal stops being offered when Claude Desktop's own expiry passed. Later messages
+ * do not establish a decision about the proposal; native started/dismissed states are facts.
  */
 const proposalStanding = (
   facts: readonly WorkFact[],
   proposals: readonly WorkOpenProposal[],
-  latestUserFrameAt: CanonicalInstant | null,
   now: CanonicalInstant,
 ): ProposalStanding => {
   const byFact = new Map(proposals.map((proposal) => [proposal.factId, proposal]));
-  const standing: ProposalStanding = { expired: [], pending: [], superseded: [] };
+  const standing: ProposalStanding = { expired: [], pending: [] };
   for (const fact of facts) {
     if (fact.kind !== 'proposal' || fact.resolution !== 'open') {
       continue;
@@ -343,13 +318,6 @@ const proposalStanding = (
     const proposal = byFact.get(fact.id);
     if (proposal?.expiresAt !== null && proposal?.expiresAt !== undefined && proposal.expiresAt <= now) {
       standing.expired.push(proposal);
-    } else if (
-      proposal?.createdAt !== null &&
-      proposal?.createdAt !== undefined &&
-      latestUserFrameAt !== null &&
-      latestUserFrameAt > proposal.createdAt
-    ) {
-      standing.superseded.push(proposal);
     } else {
       standing.pending.push(fact.id);
     }
@@ -359,10 +327,7 @@ const proposalStanding = (
 
 const plural = (count: number, one: string, many: string): string => (count === 1 ? one : `${count} ${many}`);
 
-const proposalInterpretations = (
-  standing: ProposalStanding,
-  latestUserFrameAt: CanonicalInstant | null,
-): WorkInterpretation[] => {
+const proposalInterpretations = (standing: ProposalStanding): WorkInterpretation[] => {
   const interpretations: WorkInterpretation[] = [];
   if (standing.pending.length > 0) {
     interpretations.push({
@@ -370,15 +335,6 @@ const proposalInterpretations = (
       kind: 'proposal-open',
       text: `${standing.pending.length === 1 ? 'One proposal is' : `${standing.pending.length} proposals are`} open and unanswered.`,
       uncertainty: 'Proposals are the session’s suggestions, not tasks; nothing says they are still wanted.',
-    });
-  }
-  if (standing.superseded.length > 0) {
-    interpretations.push({
-      evidence: standing.superseded.map((proposal) => proposal.factId),
-      kind: 'proposal-superseded',
-      text: `${plural(standing.superseded.length, 'One proposal', 'proposals')} offered before your later message (${latestUserFrameAt ?? 'undated'}) ${standing.superseded.length === 1 ? 'is' : 'are'} no longer presented as pending: ${standing.superseded.map((proposal) => `“${proposal.title}”`).join(', ')}.`,
-      uncertainty:
-        'You went on with the session after the offer; whether the work it suggested was done is not read, and it was neither started nor dismissed in Claude Desktop.',
     });
   }
   if (standing.expired.length > 0) {
@@ -416,20 +372,14 @@ const earlierRequestInterpretations = (
     .reverse()
     .map((declaration): WorkInterpretation => {
       const label = requestLabel(declaration.status, declaration.needsAction);
-      if (declaration.repliedAt !== null) {
-        return {
-          evidence: [declaration.factId, ...currentEvidence],
-          kind: 'earlier-request-answered',
-          text: `Answered in Claude Desktop: ${label} (asked ${declaration.declaredAt}); you wrote to the session at ${declaration.repliedAt} and it declared again at ${declaration.supersededAt}.`,
-          uncertainty: ANSWER_UNCERTAINTY,
-        };
-      }
       return {
         evidence: [declaration.factId, ...currentEvidence],
         kind: 'earlier-request-superseded',
-        text: `No longer asked: ${label} (asked ${declaration.declaredAt}) was replaced by the session’s declaration at ${declaration.supersededAt}.`,
+        text: `Declaration replaced: ${label} (asked ${declaration.declaredAt}) was replaced by the session’s declaration at ${declaration.supersededAt}.`,
         uncertainty:
-          'No message from you was recorded in between: the session went on by itself (a side session woke it, for instance) or a sweep missed the message.',
+          declaration.repliedAt === null
+            ? 'No message from you was recorded in between. The session resumed; a replacement declaration does not establish an answer, decision or delivery.'
+            : `A message from you was observed at ${declaration.repliedAt}. Its date does not identify an answer to this request; the replacement declaration does not establish a decision or delivery.`,
       };
     });
 
@@ -480,7 +430,7 @@ interface RequestResult {
   readonly reconsidered: boolean;
 }
 
-/** The root's current request against what followed it: closed by a native record, to reconsider, or open. */
+/** The root's current request against what followed it: archived, to reconsider, or open. */
 const interpretCurrentRequest = (
   declaration: WorkRootDeclaration,
   facts: readonly WorkFact[],
@@ -501,37 +451,7 @@ const interpretCurrentRequest = (
           kind: 'request-archived',
           text: `Archived in Claude Desktop: the session was archived with ${label} (asked ${askedAt}) as its last declaration.`,
           uncertainty:
-            'Archiving is your own action in the harness; this view no longer presents the request as waiting.',
-        },
-      ],
-      reconsidered: false,
-    };
-  }
-  if (reply !== null) {
-    return {
-      attention: 'none',
-      interpretations: [
-        {
-          evidence: [...evidence],
-          kind: 'request-answered',
-          text: `Answered in Claude Desktop: you wrote to the session at ${reply}, after ${label} (asked ${askedAt}); it has not declared since.`,
-          uncertainty: ANSWER_UNCERTAINTY,
-        },
-      ],
-      reconsidered: false,
-    };
-  }
-  const handled = handledBy(harness.linkedSessions, askedAt);
-  if (handled?.declaration) {
-    return {
-      attention: 'none',
-      interpretations: [
-        {
-          evidence: [...evidence, ...linkEvidence(handled)],
-          kind: 'request-handled-elsewhere',
-          text: `Handled in “${handled.title}”: ${linkPhrase(handled)}, after ${label} (asked ${askedAt}), and declared completed at ${handled.declaration.at}.`,
-          uncertainty:
-            'Claude Desktop attests the link and the completion; what that session did is its own declaration, not read further.',
+            'Archiving is your own action in the harness; this view no longer presents the request as waiting. It does not establish an answer, authorization or delivery.',
         },
       ],
       reconsidered: false,
@@ -545,12 +465,15 @@ const interpretCurrentRequest = (
   const pullRequestLater = declared.length + observed.length > 0;
   // A week of silence sets a request apart only when no later link already does.
   const dormant = pullRequestLater || continued.length > 0 ? null : dormantSince(askedAt, harness, now);
-  const reconsidered = pullRequestLater || continued.length > 0 || dormant !== null;
+  const reconsidered = reply !== null || pullRequestLater || continued.length > 0 || dormant !== null;
   let reconsideredBecause = `nothing happened in the session since, for more than ${DORMANT_DAYS} days, but nothing closed it either.`;
   if (pullRequestLater) {
     reconsideredBecause = 'a later pull request may be the answer, but nothing confirms it.';
   } else if (continued.length > 0) {
     reconsideredBecause = 'work continued in a linked session after it, but nothing confirms it settled the question.';
+  } else if (reply !== null) {
+    reconsideredBecause =
+      'a later message was observed, but no native link identifies it as an answer to this request.';
   }
   let reviewUncertainty = 'Declared by the session; no review outcome has been observed.';
   if (dormant !== null) {
@@ -582,6 +505,15 @@ const interpretCurrentRequest = (
             : `This is the session’s own last declaration; nothing observed since says it was answered.${asked}`,
         },
   ];
+  if (reply !== null) {
+    interpretations.push({
+      evidence: [...evidence],
+      kind: 'request-message-observed',
+      text: `Message observed in Claude Desktop at ${reply}, after ${label} (asked ${askedAt}); no later declaration has been read.`,
+      uncertainty:
+        'Only the message date is available. Whether it answers this question is unknown; it establishes no decision, authorization or delivery.',
+    });
+  }
   if (pullRequestLater) {
     interpretations.push(possiblyAnsweredElsewhere(declared, observed));
   }
@@ -622,11 +554,11 @@ export const interpretWorkRoot = (input: InterpretWorkRootInput): WorkRootInterp
     ...earlierRequestInterpretations(harness.earlierDeclarations, declaration, declaredTurnEvidence),
   );
 
-  const proposals = proposalStanding(input.facts, harness.openProposals, harness.latestUserFrameAt, now);
+  const proposals = proposalStanding(input.facts, harness.openProposals, now);
   if (proposals.pending.length > 0 && attention === 'none') {
     attention = 'optional-lead';
   }
-  interpretations.push(...proposalInterpretations(proposals, harness.latestUserFrameAt));
+  interpretations.push(...proposalInterpretations(proposals));
   const resolvedProposals = input.facts.filter((fact) => fact.kind === 'proposal' && fact.resolution !== 'open');
   if (resolvedProposals.length > 0) {
     const dismissed = resolvedProposals.filter((fact) => fact.kind === 'proposal' && fact.resolution === 'dismissed');

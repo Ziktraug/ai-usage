@@ -1108,18 +1108,21 @@ export type WorkFactKind = WorkFact['kind'];
 
 /**
  * What an interpretation names. The request kinds read one declaration against what followed it
- * (ADR 0056): `request-open` is a current confirmed block; `request-satisfied-elsewhere` and
+ * (ADR 0056): `request-open` is a current declared block; `request-satisfied-elsewhere` and
  * `request-continued-elsewhere` make it an older declaration to reconsider (an unproven link, the
  * question stays the person's), and so does `request-dormant` (no activity in its session family
- * for more than `WORK_REQUEST_DORMANT_AFTER_MS`, which closes nothing); `request-answered`, `request-handled-elsewhere` and
- * `request-archived` name a dated, explicit native record that it is no longer waiting; the
- * `earlier-request-*` kinds read declarations a later turn replaced.
+ * for more than `WORK_REQUEST_DORMANT_AFTER_MS`, which closes nothing). `request-message-observed`
+ * records a later message without attributing an answer. `request-archived` removes current
+ * attention without claiming a decision. `request-answered` and `request-handled-elsewhere` need
+ * an exact native attribution; chronology and lineage alone never qualify. The
+ * `earlier-request-*` kinds read declarations a later turn replaced without implying delivery.
  */
 export const WORK_INTERPRETATION_KINDS = [
   'request-open',
   'request-satisfied-elsewhere',
   'request-continued-elsewhere',
   'request-dormant',
+  'request-message-observed',
   'request-answered',
   'request-handled-elsewhere',
   'request-archived',
