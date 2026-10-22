@@ -32,6 +32,7 @@ import {
   safeInteger,
   strictObject,
   string,
+  union,
   variant,
 } from 'valibot';
 import { jsonWireValueSchema, publicMessageSchema } from './schema-conventions';
@@ -105,7 +106,7 @@ export const workAttemptScopeSchema = strictObject({
 });
 
 /** What the launched harness was configured with: the guarantee "read-only" rests on (ADR 0055). */
-export const workAttemptGuaranteeSchema = strictObject({
+const claudeWorkAttemptGuaranteeSchema = strictObject({
   cliVersion: shortTextSchema,
   effort: nullable(shortTextSchema),
   managedSettings: picklist(['absent', 'present']),
@@ -115,6 +116,21 @@ export const workAttemptGuaranteeSchema = strictObject({
   settingSources: pipe(array(picklist(REVIEW_SETTING_SOURCES)), maxLength(REVIEW_SETTING_SOURCES.length)),
   tools: pipe(array(picklist(REVIEW_READ_ONLY_TOOLS)), minLength(1), maxLength(REVIEW_READ_ONLY_TOOLS.length)),
 });
+
+const codexWorkAttemptGuaranteeSchema = strictObject({
+  kind: literal('codex-app-server'),
+  cliVersion: shortTextSchema,
+  model: shortTextSchema,
+  effort: nullable(shortTextSchema),
+  sandbox: literal('read-only'),
+  approvalPolicy: literal('never'),
+  networkAccess: literal(false),
+  accountFingerprint: pipe(string(), regex(/^[0-9a-f]{16}$/u, 'Expected an account fingerprint.')),
+  externalTools: literal('disabled'),
+  managedPolicy: literal('inherited'),
+});
+
+export const workAttemptGuaranteeSchema = union([claudeWorkAttemptGuaranteeSchema, codexWorkAttemptGuaranteeSchema]);
 
 export const workAttemptSchema = strictObject({
   /** Human acceptance, distinct from the result; always `pending` in this version (no mutation exists). */
@@ -138,6 +154,7 @@ export const workAttemptSchema = strictObject({
   guarantee: nullable(workAttemptGuaranteeSchema),
   machineId: shortTextSchema,
   nativeSessionId: nullable(idSchema),
+  nativeTurnId: optional(nullable(idSchema)),
   /** The served Session row for the native session once the report collected it; the link target of "Open session detail". */
   nativeSessionRowId: nullable(idSchema),
   numTurns: nullable(countSchema),
@@ -156,6 +173,8 @@ export const workAttemptSchema = strictObject({
   /** The commit the review was given; `null` when no scope was prepared (refusal, failure before the launch). */
   scope: nullable(workAttemptScopeSchema),
   startedAt: nullable(timestampSchema),
+  stopRequestedAt: optional(nullable(timestampSchema)),
+  stopConfirmedAt: optional(nullable(timestampSchema)),
   state: picklist(REVIEW_ATTEMPT_STATES),
   target: workAttemptTargetSchema,
   updatedAt: timestampSchema,

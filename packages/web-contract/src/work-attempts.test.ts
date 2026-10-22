@@ -230,4 +230,37 @@ describe('Work attempts Web contract', () => {
     expect(() => parseWorkRoutingContext({ ...context, reviewTargets: [{ checkoutPath: '' }] })).toThrow();
     expect(() => parseWorkRoutingContext({ ...context, reviewTargets: [{ checkoutPath: '/x', secret: 1 }] })).toThrow();
   });
+
+  test('keeps Codex native identity and stop evidence separate from Claude guarantees', () => {
+    const codex = {
+      ...attempt,
+      executorHarness: 'codex',
+      nativeTurnId: 'turn-1',
+      stopRequestedAt: '2026-10-22T10:00:20.000Z',
+      stopConfirmedAt: null,
+      guarantee: {
+        kind: 'codex-app-server',
+        cliVersion: '0.163.0',
+        model: 'fixture-model',
+        effort: 'high',
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+        networkAccess: false,
+        accountFingerprint: '0123456789abcdef',
+        externalTools: 'disabled',
+        managedPolicy: 'inherited',
+      },
+    };
+    const output = { data: { ...listData, attempts: [codex] }, ok: true };
+    expect(parseWorkAttemptsListOutput(output)).toEqual(output as never);
+    for (const guarantee of [
+      { ...codex.guarantee, networkAccess: true },
+      { ...codex.guarantee, safeMode: true },
+      { ...codex.guarantee, accountFingerprint: 'raw-account-identity' },
+    ]) {
+      expect(() =>
+        parseWorkAttemptsListOutput({ ...output, data: { ...output.data, attempts: [{ ...codex, guarantee }] } }),
+      ).toThrow();
+    }
+  });
 });

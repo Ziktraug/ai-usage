@@ -635,4 +635,30 @@ describe('usage engine control contracts', () => {
     expect(classifyUsageEngineRetry('merge-self-merge', 'command')).toBe('never');
     expect(classifyUsageEngineRetry('merge-store-failed', 'command')).toBe('never');
   });
+
+  test('a review stop command identifies an owned attempt without claiming confirmed termination', () => {
+    const command = { attemptId: 'attempt-owned', command: 'stop-review-attempt' };
+    expect(parseUsageEngineCommand(command)).toEqual(command as never);
+    expect(parseWebUsageEngineCommand(command)).toEqual(command as never);
+    expect(() => parseUsageEngineCommand({ ...command, pid: 123 })).toThrow();
+    expect(() => parseUsageEngineCommand({ command: 'stop-review-attempt' })).toThrow();
+    const completion = {
+      command: 'stop-review-attempt',
+      commandId: 'command-stop',
+      completedAt: '2026-10-22T08:00:02.000Z',
+      output: { attemptId: 'attempt-owned', kind: 'review-attempt-stop', result: 'requested' },
+      state: 'succeeded',
+    };
+    for (const result of ['requested', 'not-owned', 'already-ended']) {
+      const value = { ...completion, output: { ...completion.output, result } };
+      expect(parseUsageEngineCommandCompletion(value)).toEqual(value as never);
+    }
+    for (const output of [
+      { ...completion.output, result: 'all-descendants-killed' },
+      { ...completion.output, pid: 123 },
+      { ...completion.output, attemptId: '' },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...completion, output })).toThrow();
+    }
+  });
 });

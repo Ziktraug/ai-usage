@@ -307,6 +307,7 @@ export type UsageEngineCommand =
   | { readonly command: 'qualify-review-routing'; readonly target: UsageEngineReviewAttemptTarget }
   /** The operator declares that the lost attempt's review no longer runs (ADR 0055); nothing is stopped. */
   | { readonly attemptId: string; readonly command: 'release-review-reservation' }
+  | { readonly attemptId: string; readonly command: 'stop-review-attempt' }
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
   | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
@@ -595,6 +596,14 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         return fail('Usage engine qualify-review-routing command contains unknown fields.');
       }
       return { command: 'qualify-review-routing', target: parseReviewAttemptTarget(command.target) };
+    case 'stop-review-attempt':
+      if (!hasExactKeys(command, ['attemptId', 'command'])) {
+        return fail('Usage engine stop-review-attempt command contains unknown fields.');
+      }
+      return {
+        attemptId: parseBoundedString(command.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+        command: 'stop-review-attempt',
+      };
     case 'release-review-reservation':
       if (!hasExactKeys(command, ['attemptId', 'command'])) {
         return fail('Usage engine release-review-reservation command contains unknown fields.');
@@ -940,6 +949,13 @@ export interface UsageEngineReviewReservationReleaseOutput {
   readonly result: 'not-held' | 'process-found' | 'released';
 }
 
+/** An interrupt request is not confirmation that the native turn or its descendants stopped. */
+export interface UsageEngineReviewAttemptStopOutput {
+  readonly attemptId: string;
+  readonly kind: 'review-attempt-stop';
+  readonly result: 'requested' | 'not-owned' | 'already-ended';
+}
+
 export interface UsageEnginePublicationOutput {
   readonly kind: 'publication';
   readonly publication: UsageEngineCurrentPublication;
@@ -1054,6 +1070,11 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
+      readonly command: 'stop-review-attempt';
+      readonly output: UsageEngineReviewAttemptStopOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
       readonly command: Exclude<
         UsageEngineCommandName,
         | 'collect-fresh-quota'
@@ -1066,6 +1087,7 @@ export type UsageEngineCommandCompletion =
         | 'start-review-attempt'
         | 'qualify-review-routing'
         | 'release-review-reservation'
+        | 'stop-review-attempt'
       >;
       readonly output: { readonly kind: 'none' };
       readonly state: 'succeeded';
@@ -1096,6 +1118,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'set-machine-label',
   'set-source-enabled',
   'start-review-attempt',
+  'stop-review-attempt',
 ]);
 
 const parseUsageEngineCommandName = (value: unknown): UsageEngineCommandName => {
@@ -1393,6 +1416,21 @@ const RESERVATION_RELEASE_RESULTS = ['not-held', 'process-found', 'released'] as
 const RESERVATION_RELEASE_EVIDENCE = ['operator-declared-ended', 'process-absent'] as const;
 const MAX_RELEASE_PIDS = 16;
 
+export const parseUsageEngineReviewAttemptStopOutput = (value: unknown): UsageEngineReviewAttemptStopOutput => {
+  if (
+    !(isRecord(value) && hasExactKeys(value, ['attemptId', 'kind', 'result'])) ||
+    value.kind !== 'review-attempt-stop' ||
+    !(value.result === 'requested' || value.result === 'not-owned' || value.result === 'already-ended')
+  ) {
+    return fail('Usage engine review stop output is invalid.');
+  }
+  return {
+    attemptId: parseBoundedString(value.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+    kind: 'review-attempt-stop',
+    result: value.result,
+  };
+};
+
 export const parseUsageEngineReviewReservationReleaseOutput = (
   value: unknown,
 ): UsageEngineReviewReservationReleaseOutput => {
@@ -1652,6 +1690,14 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
       ...base,
       command,
       output: parseUsageEngineReviewReservationReleaseOutput(value.output),
+      state: 'succeeded',
+    };
+  }
+  if (command === 'stop-review-attempt') {
+    return {
+      ...base,
+      command,
+      output: parseUsageEngineReviewAttemptStopOutput(value.output),
       state: 'succeeded',
     };
   }
