@@ -13,6 +13,7 @@ describe('Web RPC client composition', () => {
     expect(rpcMethodForPath(['report', 'revisionBootstrap'])).toBe('GET');
     expect(rpcMethodForPath(['skills', 'snapshot'])).toBe('GET');
     expect(rpcMethodForPath(['replication', 'status'])).toBe('GET');
+    expect(rpcMethodForPath(['workRouting', 'context'])).toBe('GET');
     expect(rpcMethodForPath(['campaign', 'setLabelOverride'])).toBe('POST');
   });
 });

@@ -452,8 +452,15 @@ test('redirects Svelte demo routes before protected acquisition', async ({ conte
   await page.goto('/skills/global');
   await expect(page).toHaveURL('/');
   await expect(page.locator('[data-route-shell="report"]')).toBeAttached();
-  await expect(page.getByRole('button', { name: 'Manage' })).toHaveCount(0);
+  await page.setViewportSize({ height: 844, width: 390 });
+  const mobileNavigation = page.locator('[data-app-navigation="mobile"][data-hydrated="true"]');
+  await expect(mobileNavigation).toBeVisible();
+  await mobileNavigation.getByRole('button', { name: 'Manage', exact: true }).click();
+  await expect(
+    page.getByRole('navigation', { name: 'Manage destinations' }).getByRole('link', { name: 'Campaigns', exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole('link', { name: MANAGEMENT_DESTINATION_PATTERN })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   expect(businessRequests).toEqual([]);
 
   for (const path of [

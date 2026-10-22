@@ -11,7 +11,10 @@ Platform entries introduced by plans 101–107 (`platform-core`,
 described for existing packages and apps) are exports present on `main` since
 PR #53. Plan 107's open criteria and the application operations that still
 lack an operator surface are listed in [`future-work.md`](future-work.md).
-All entries describe current interfaces.
+Entries describe current exports. Retained modules from the retired Session
+distillation feature are explicitly marked below; their presence is not a
+published generation or summary-library capability. The complete remaining lot
+is in the [retirement notice](session-distillation.md#residual-deletion-lot).
 
 ## `@ai-usage/effect-runtime`
 
@@ -77,12 +80,10 @@ state.
 - `./identity`: branded canonical UUID IDs, canonical instants, identity value
   validation, and Space/Person/Device/SCM/Repository/Project/Checkout/Capture
   Context domain contracts.
-- `./distillation-evidence`: bounded original-event packets, source snapshots,
-  progressive windows and source-reference validation.
-- `./session-distillation`: generated account content, immutable analysis and
-  worker lifecycle contracts, exact evidence and compact recall identities.
-- `./distillation-discovery`: bounded Project/session previews, immutable
-  selection requests, analysis library and revision-history read contracts.
+- `./distillation-evidence`, `./session-distillation`, and
+  `./distillation-discovery`: retained account/evidence and operation contracts
+  used by residual Memory internals and storage tests. The feature is retired;
+  these exports are scheduled for separate dependency cleanup.
 
 This package is pure and owns no storage, transport, authorization adapter, or
 application runtime.
@@ -163,6 +164,8 @@ This package owns no persistence and never resolves ambiguity by itself.
 - `./codex-session-analysis`: bounded exact-session Codex reader.
 - `./codex-skill-observation`: pure Codex catalogue and `SKILL.md` read
   observation extractors.
+- `./distillation-evidence`: retained bounded account-evidence extractor; no
+  published distillation runtime consumes it after retirement.
 - `./errors`: local-history error/warning contracts.
 - `./history-budgets`: shared local-history budgets.
 - `./internal/codex-history`: shared Codex parser/projection core for the
@@ -221,6 +224,10 @@ not belong here.
   observations, folded and clamped to the caller's response caps.
 - `./served-revision-query`: strict bounded support/focused/Session query
   validation and direct revision-keyed execution through the read-only store.
+- `./work-context-read`: the bounded Work context for one checkout or project
+  label (ADR 0058), a projection of the Work attention read through the
+  read-only store, shared by `ai-usage work context` and the `work.context`
+  MCP tool; typed, path-free failures.
 
 There are no collection, scheduler, source-adapter, one-shot writer, artifact,
 lease, or subprocess exports. Production `report-data` code may import only
@@ -245,7 +252,9 @@ lease, or subprocess exports. Production `report-data` code may import only
   `usage-merge` owners.
 - `./testing`: temporary mixed read/write fixtures for tests and E2E only.
 
-There is deliberately no root export.
+There is deliberately no root export. The unused
+`queryDistillationSessionMetadata` reader export remains in the documented
+retirement cleanup lot; ordinary report and native Session reads are preserved.
 
 ## `@ai-usage/replication-protocol`
 
@@ -278,21 +287,28 @@ Production code never opens a database or network connection itself.
   import state, non-replacing coherent backup, and replication outbox ownership.
 
 This is a write-capable local adapter. Production composition is restricted to
-`apps/usage-engine`; Web, CLI, and MCP must use application-service seams.
+`apps/usage-engine`; Web, CLI, and MCP must use application-service seams. The
+identity kernel still attaches the historical account repository. Its schema,
+existing records and local-only publication safeguards remain intact after
+retirement of the generation runtime.
 
 ## `@ai-usage/memory-service`
 
-- `./analysis-promotion`: explicit local analysis passage promotion through
-  Observation/Proposal ports, with immutable source references and replay identity.
-- `./browse`: bounded accepted-knowledge browse projections; complete revisions
-  remain accessible through exact reads.
-- `./distillation-errors`: closed operational failure categories for clients.
+- `./browse`: bounded accepted-knowledge browse projections with historical
+  account provenance rendered as text; complete accepted revisions remain
+  accessible through exact reads.
+- `./analysis-promotion`, `./distillation-errors`, `./distillation-redaction`,
+  and `./distillation-repository`: retained internal account/promotion code and
+  storage contracts. Their CLI, browser and loopback publication operations
+  are removed; these exports remain in the residual cleanup lot.
 
 - `.`: protocol-v1 contracts, strict parsers, fixed operation paths, and byte/
   count/deadline bounds.
 - `./application`: authorization-first Memory application services.
-- `./client`: injected authenticated numeric-loopback client with bounded
-  response reads and cancellation/deadline mapping.
+- `./client`: injected authenticated numeric-loopback client for Project
+  resolution, accepted Memory, proposal review, search and Project context, with
+  bounded responses and cancellation/deadline mapping. It exposes no account
+  generation, account browsing or promotion method.
 - `./conformance`: adapter-independent persistence conformance.
 - `./domain`: storage-independent Observation, Proposal, Item, Revision,
   relation, import, export, and outbox contracts.
@@ -333,7 +349,9 @@ portable corpus and ranking contracts.
 
 Only this package imports the MCP SDK. It may consume Memory/authorization/
 identity contracts and Skills projection locking, but no SQLite or PostgreSQL
-adapter.
+adapter. The read-only `work.context` tool is registered only when the
+composition passes a Work context reader; the adapter owns its schema, the
+one-scope rule, the response bound and sanitized errors, never the store.
 
 ## `@ai-usage/usage-engine-control`
 
@@ -432,8 +450,25 @@ access.
 ## `@ai-usage/mcp`
 
 Executable-only local stdio composition. It imports the MCP adapter, Memory
-loopback client, and runtime-path contracts; it exports no in-process domain or
-storage API.
+loopback client, runtime-path contracts, and, for `work.context`,
+`@ai-usage/report-data/work-context-read` with the `usage-store/reader` store
+path (read-only `query_only`; it never starts or contacts an engine); it
+exports no in-process domain or storage API.
+
+## `@ai-usage/web-contract`
+
+- `.`: the composed browser oRPC contract.
+- `./memory`: accepted-knowledge browse and exact reads, proposal review/actions
+  and accepted-Memory search.
+- `./session`: native Session page, detail, VCS, neighbors, campaign children and
+  lookup contracts.
+- `./projects`, `./replication`, `./report`, `./skills`, `./sync`, `./control`,
+  `./errors`, and `./schema-conventions`: the remaining pure browser contracts
+  and shared validation/error schemas.
+
+There is no Session-distillation export, router branch or Memory promotion
+procedure. Browser imports remain contract-first and do not reach retired
+platform account contracts.
 
 ## `@ai-usage/skills`
 
@@ -470,7 +505,8 @@ storage API.
   reach the authorization implementation or `project-application`.
 - `apps/cli` may import effect-runtime, Memory-service client/search contracts,
   platform-core, report-core,
-  `@ai-usage/report-data/portable-report`, usage-engine-control,
+  `@ai-usage/report-data/portable-report`,
+  `@ai-usage/report-data/work-context-read`, usage-engine-control,
   `usage-store/reader`, and `@ai-usage/usage-engine/main` for a bounded
   foreground process. The executable is a terminal process boundary, not an
   in-process runtime dependency. CLI must not import collectors,

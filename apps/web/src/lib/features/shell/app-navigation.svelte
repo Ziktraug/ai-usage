@@ -24,10 +24,13 @@
     activeReportTab,
     ensureHistoryEntryKey,
     isActiveManagementDestination,
+    mobileNavigationFor,
     navigationTypeForScroll,
     reportDestinationUrl,
+    reportTabs,
     shellManagementDestinations,
     shouldPreserveReportScroll,
+    workDestination,
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
   import { useShellNavigationOwner } from './navigation-owner-context';
@@ -56,7 +59,7 @@
     display: { base: 'none', md: 'flex' },
     flexDirection: 'column',
     w: { md: '56px', xl: '216px' },
-    p: { md: '20px 8px', xl: '24px 16px' },
+    p: { md: '16px 5px', xl: '24px 16px' },
     borderRight: '1px solid token(colors.line)',
     bg: 'surface',
     color: 'ink',
@@ -79,7 +82,7 @@
   // stand-in the icon rail draws in its place.
   const productMark = css({ display: 'flex', color: 'accent', flexShrink: 0 });
   const productWordmark = css({ srOnly: { md: true, xl: false } });
-  const navigationGroup = css({ display: 'grid', gap: '4px', mb: { md: '20px', xl: '30px' } });
+  const navigationGroup = css({ display: 'grid', gap: '4px', mb: { md: '10px', xl: '30px' } });
   // The icon rail drops the group headings, so a hairline carries the grouping the labels used to.
   const navigationGroupDivider = css({
     md: { pt: '16px', borderTop: '1px solid token(colors.line)' },
@@ -101,7 +104,8 @@
     alignItems: 'center',
     justifyContent: { md: 'center', xl: 'flex-start' },
     gap: '10px',
-    minH: { base: '38px', md: '40px', xl: '38px' },
+    minH: { base: '44px', xl: '38px' },
+    minW: '44px',
     px: { base: '10px', md: 0, xl: '10px' },
     borderWidth: '1px',
     borderStyle: 'solid',
@@ -136,8 +140,9 @@
   const railFooter = css({
     display: 'flex',
     alignItems: 'center',
-    justifyContent: { md: 'center', xl: 'space-between' },
+    justifyContent: { base: 'space-between', md: 'center', xl: 'space-between' },
     gap: '8px',
+    '& button': { minW: { base: '44px', xl: '36px' }, minH: { base: '44px', xl: '36px' } },
   });
   const mobileNavigation = css({
     position: 'fixed',
@@ -153,18 +158,19 @@
     bg: 'surface',
     _print: { display: 'none' },
   });
-  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
   const mobileLink = css({
     display: 'grid',
     placeItems: 'center',
-    minW: 0,
+    minW: '44px',
     minH: '52px',
-    px: '5px',
+    px: '2px',
+    '@media screen and (max-width: 359px)': { px: 0 },
     border: 0,
     bg: 'transparent',
     fontFamily: 'sans',
     fontSize: '11px',
     fontWeight: 550,
+    whiteSpace: 'nowrap',
     textDecoration: 'none',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
@@ -186,12 +192,8 @@
   });
 
   const managePopoverId = 'app-manage-navigation';
-  const reportTabs = [
-    { icon: 'overview', label: 'Overview', tab: 'overview' },
-    { icon: 'sessions', label: 'Sessions', tab: 'sessions' },
-    { icon: 'breakdown', label: 'Analysis', tab: 'breakdown' },
-  ] as const;
-  const showManage = $derived(runtimeMode !== 'demo');
+  const showManagement = $derived(runtimeMode !== 'demo');
+  const mobileDestinations = $derived(mobileNavigationFor(page.url, runtimeMode));
   const dirtyRegistry = useDirtyGuardRegistry();
   const shellNavigation = useShellNavigationOwner();
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
@@ -437,6 +439,15 @@
   <div class={productName}>
     <span aria-hidden="true" class={productMark}><ProductMark /></span><span class={productWordmark}>ai-usage</span>
   </div>
+  <nav aria-label="Work space" class={navigationGroup}>
+    <NavigationLink
+      active={page.url.pathname === workDestination.href}
+      class={linkClass(page.url.pathname === workDestination.href)}
+      href={workDestination.href}
+      icon={workDestination.icon}
+      label={workDestination.label}
+    />
+  </nav>
   <nav aria-label="Report views" class={navigationGroup}>
     <div class={navigationGroupLabel}>Report</div>
     {#each reportTabs as destination (destination.tab)}
@@ -457,7 +468,7 @@
       label="Campaigns"
     />
   </nav>
-  {#if showManage}
+  {#if showManagement}
     <nav aria-label="Manage destinations" class={cx(navigationGroup, navigationGroupDivider)}>
       <div class={navigationGroupLabel}>Manage</div>
       {#each shellManagementDestinations as destination (destination.href)}
@@ -479,54 +490,42 @@
 
 <nav
   aria-label="Report views"
-  class={cx(mobileNavigation, !showManage && mobileNavigationReportOnly)}
+  class={mobileNavigation}
   data-app-navigation="mobile"
   data-hydrated={navigationHydrated ? 'true' : 'false'}
 >
-  {#each reportTabs as destination (destination.tab)}
+  {#each mobileDestinations.primary as destination (destination.label)}
     <NavigationLink
-      active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}
-      class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab, true)}
-      href={reportDestinationUrl(page.url, destination.tab).href}
+      active={destination.active}
+      class={linkClass(destination.active, true)}
+      href={destination.href}
       label={destination.label}
-      preserveScroll
+      preserveScroll={destination.preserveScroll ?? false}
     />
   {/each}
-  <NavigationLink
-    active={page.url.pathname === '/campaigns'}
-    class={linkClass(page.url.pathname === '/campaigns', true)}
-    href={`/campaigns${page.url.search}`}
-    label="Campaigns"
+  <ManageButton
+    active={mobileDestinations.manageActive}
+    class={linkClass(mobileDestinations.manageActive, true)}
+    controls={managePopoverId}
+    onToggle={() => { manageOpen = !manageOpen; }}
+    open={manageOpen}
+    bind:element={manageButton}
   />
-  {#if showManage}
-    <ManageButton
-      class={cx(
-          mobileLink,
-          shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
-            ? mobileLinkActive
-            : mobileLinkInactive,
-        )}
-      controls={managePopoverId}
-      onToggle={() => { manageOpen = !manageOpen; }}
-      open={manageOpen}
-      bind:element={manageButton}
-    />
-  {/if}
 </nav>
-{#if showManage && manageOpen}
+{#if manageOpen}
   <nav aria-label="Manage destinations" class={managePopover} id={managePopoverId}>
     <span class={css({ color: 'muted', fontSize: '11px', fontWeight: 650, px: '10px', py: '6px' })}>Manage</span>
-    {#each shellManagementDestinations as destination (destination.href)}
+    {#each mobileDestinations.overflow as destination (destination.label)}
       <NavigationLink
-        active={isActiveManagementDestination(page.url.pathname, destination.href)}
-        class={linkClass(isActiveManagementDestination(page.url.pathname, destination.href))}
+        active={destination.active}
+        class={linkClass(destination.active)}
         href={destination.href}
         icon={destination.icon}
         label={destination.label}
       />
     {/each}
     <div
-      class={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid token(colors.line)', pt: '10px', px: '10px', color: 'muted', fontSize: '12px' })}
+      class={cx(railFooter, css({ borderTop: '1px solid token(colors.line)', pt: '10px', px: '10px', color: 'muted', fontSize: '12px' }))}
     >
       <span>Appearance</span><ThemeToggle />
     </div>

@@ -430,6 +430,17 @@ const runSourceJobBody = (
     if (completed.needsRtk || completed.needsRtkRerun) {
       yield* scheduler.enqueueSource('rtk.savings', 'dependency');
     }
+    // A result may name the sources it produced inputs for; each is queued once as a dependency
+    // run. Admission refuses a source already queued or running, so nothing is doubled, and a
+    // source never wakes itself. Only the autonomous engine follows wakes: a foreground
+    // collection runs exactly what it was asked for.
+    if (completion._tag === 'success' && runtime.autonomousCollection.open) {
+      for (const sourceId of completion.result.wake ?? []) {
+        if (sourceId !== job.sourceId) {
+          yield* scheduler.enqueueSource(sourceId, 'dependency');
+        }
+      }
+    }
     if (completed.needsPublicationWake) {
       yield* scheduler.ensurePublicationQueued('source-wake');
     }

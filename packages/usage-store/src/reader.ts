@@ -1,12 +1,35 @@
+export type {
+  ClaudeDesktopCollectionState,
+  QueryClaudeDesktopCollectionStateInput,
+  QueryClaudeDesktopCollectionStateResult,
+  QueryClaudeDesktopSessionsInput,
+  QueryClaudeDesktopSessionsResult,
+  QueryClaudeDesktopTurnDeclarationsInput,
+  QueryClaudeDesktopTurnDeclarationsResult,
+} from './claude-desktop-session-store';
+export {
+  MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER,
+  MAX_CLAUDE_DESKTOP_SESSION_READ,
+} from './claude-desktop-session-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
+export type {
+  QueryLatestExecutorObservationsInput,
+  QueryLatestExecutorObservationsResult,
+} from './executor-observation-store';
 export type { FocusedReportQueryResult } from './focused-report-query-sqlite';
 export { executeFocusedReportQuery } from './focused-report-query-sqlite';
 export type {
   CurrentServedLocalProjectSources,
+  LatestCheckoutStatusObservations,
+  LatestJiraIssueObservations,
+  LatestPullRequestObservations,
   ProviderQuotaSourceState,
+  QueryLatestCheckoutStatusObservationsInput,
+  QueryLatestJiraIssueObservationsInput,
   QueryLatestLocalProviderQuotaObservationsInput,
   QueryLatestProviderQuotaObservationsInput,
+  QueryLatestPullRequestObservationsInput,
   QueryLocalMergeBundleInput,
   QueryNormalizedDatasetItemsInput,
   QueryNormalizedDatasetItemsResult,
@@ -19,6 +42,7 @@ export type {
   QueryServedReportRevisionInput,
   QueryServedReportRevisionLocalSnapshotInput,
   QueryServedRevisionDataInput,
+  QueryServedSessionPullRequestLinksInput,
   QuerySkillObservationsInput,
   QuerySkillObservationsResult,
   QueryStoredReportCaptureInput,
@@ -28,6 +52,7 @@ export type {
   QueryUsageMachineFleetResult,
   QueryUsageStoreGenerationInput,
   QueryUsageSyncFleetResult,
+  QueryWorkFactRunStatesInput,
   ServedLocalProjectSource,
   ServedReportRevisionBootstrap,
   ServedReportRevisionLocalSnapshot,
@@ -36,33 +61,51 @@ export type {
   ServedReportRevisionRows,
   ServedReportRevisionSlices,
   ServedReportRevisionSupport,
+  ServedSessionPullRequestLink,
+  ServedSessionPullRequestLinks,
   StoredProviderQuotaObservation,
   StoredSkillObservation,
   StoredSourceAuthority,
   StoredUsageRowStatus,
   UsageMachineFleetItem,
   UsageStoreGenerations,
+  WorkFactRunState,
+  WorkFactRunStates,
+  WorkFactSourceId,
 } from './index';
 export {
+  countClaudeDesktopSessions,
   MAX_USAGE_MACHINE_FLEET_MACHINES,
+  queryClaudeDesktopCollectionState,
+  queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
   queryDistillationSessionMetadata,
+  queryLatestCheckoutStatusObservations,
+  queryLatestExecutorObservations,
+  queryLatestJiraIssueObservations,
   queryLatestLocalProviderQuotaObservations,
   queryLatestProviderQuotaObservations,
+  queryLatestPullRequestObservations,
   queryLocalMergeBundle,
   queryNormalizedDatasetItems,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
+  queryRecentServedHarnessSessions,
   queryReportRows,
+  queryReviewAttempts,
+  queryReviewTargetResolution,
   queryServedReportRevisionLocalSnapshot,
   queryServedReportRevisionPortableConfig,
   queryServedReportRevisionRows,
   queryServedReportRevisionSlices,
   queryServedReportRevisionSupport,
   queryServedRevisionData,
+  queryServedSessionPullRequestLinks,
+  querySessionRowsBySourceSessionIds,
   querySkillObservations,
   queryStoredReportCapture,
   queryUsageLocalMachine,
@@ -70,9 +113,16 @@ export {
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
   queryUsageSyncFleet,
+  queryWorkFactRunStates,
   USAGE_STORE_SCHEMA_VERSION,
   usageStorePath,
 } from './index';
+export type {
+  QueryReviewAttemptsInput,
+  QueryReviewAttemptsResult,
+  QueryReviewTargetResolutionInput,
+  ReviewTargetResolutionFacts,
+} from './review-attempt-store';
 export type { ServedRevisionQueryKind, ServedRevisionQueryResult } from './served-query-catalog';
 export type { ServedRevisionQueryTrace } from './served-revision';
 export type {
@@ -88,3 +138,18 @@ export {
   buildSessionQuerySqlOrder,
   executeMaterializedSessionQuery,
 } from './session-query-sqlite';
+export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
+export type {
+  QueryRecentServedHarnessSessionsInput,
+  QueryRecentServedHarnessSessionsResult,
+  QuerySessionRowsBySourceSessionIdsInput,
+  QuerySessionRowsBySourceSessionIdsResult,
+  ServedHarnessSessionFamily,
+  ServedHarnessSessionMember,
+  ServedSessionRowIdentity,
+} from './work-session-join';
+export {
+  MAX_WORK_HARNESS_SESSION_FAMILIES,
+  MAX_WORK_HARNESS_SESSION_MEMBERS,
+  MAX_WORK_SESSION_JOIN_IDS,
+} from './work-session-join';

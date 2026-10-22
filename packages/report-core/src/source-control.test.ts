@@ -4,6 +4,7 @@ import {
   collectionSourceDefinitions,
   collectionSourceIds,
   enabledSessionHarnessKeys,
+  getCollectionSourceDefinition,
   isCollectionSourceId,
   isSourcePolicyOverrides,
   parseReportPublishedEvent,
@@ -58,6 +59,12 @@ describe('collection source contracts', () => {
   test('defines every stable source exactly once with the agreed defaults', () => {
     expect(collectionSourceDefinitions.map(({ id }) => id)).toEqual([...collectionSourceIds]);
     expect(new Set(collectionSourceIds).size).toBe(collectionSourceIds.length);
+    // The Desktop registry feeds the fact producers' inputs, so it precedes them: startup runs are
+    // serialized in catalogue order and the producers' first run must already see its rows.
+    const position = (id: (typeof collectionSourceIds)[number]) => collectionSourceIds.indexOf(id);
+    for (const fed of ['executors.capabilities', 'checkouts.status', 'github.pull-requests', 'jira.issues'] as const) {
+      expect(position('claude.desktop-sessions')).toBeLessThan(position(fed));
+    }
     // Provider quota is polled against a remote allowance, so it runs on a slower cadence than the
     // local-file sources; everything else reads the filesystem every minute.
     expect(
@@ -65,11 +72,24 @@ describe('collection source contracts', () => {
         .filter(({ group }) => group === 'provider-usage')
         .every(({ cadenceMs }) => cadenceMs === 300_000),
     ).toBe(true);
+    // Executor capabilities spawn harness CLIs for metadata, so they poll every fifteen minutes; the
+    // fact producers spawn one process per checkout or pull request, so they poll more slowly still.
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'checkouts.status')?.cadenceMs).toBe(300_000);
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'github.pull-requests')?.cadenceMs).toBe(600_000);
+    expect(collectionSourceDefinitions.find(({ id }) => id === 'jira.issues')?.cadenceMs).toBe(600_000);
     expect(
       collectionSourceDefinitions
-        .filter(({ group }) => group !== 'provider-usage')
+        .filter(
+          ({ group, id }) =>
+            group !== 'provider-usage' &&
+            id !== 'executors.capabilities' &&
+            id !== 'checkouts.status' &&
+            id !== 'github.pull-requests' &&
+            id !== 'jira.issues',
+        )
         .every(({ cadenceMs }) => cadenceMs === 60_000),
     ).toBe(true);
+    expect(getCollectionSourceDefinition('executors.capabilities').cadenceMs).toBe(900_000);
   });
 
   test('enables every source by default', () => {

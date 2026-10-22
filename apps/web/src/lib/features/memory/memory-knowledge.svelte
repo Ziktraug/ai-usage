@@ -1,6 +1,6 @@
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import type { MemoryKnowledgeInput } from '@ai-usage/web-contract/memory';
-  import type { SessionDistillationContractClient } from '@ai-usage/web-contract/session-distillation';
   import { createQuery } from '@tanstack/svelte-query';
   import { immutableRevisionKey } from '../../query/keys';
   import { browserMemoryClient, memoryKnowledgeOptions } from '../../query/options/memory-workspace';
@@ -17,6 +17,8 @@
     memoryRow,
     memoryStack,
   } from './memory-styles';
+
+  const evidenceText = css({ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', minW: 0 });
 
   let { projectId = null }: { projectId?: string | null } = $props();
   let kind = $state<MemoryKnowledgeInput['kind']>(null);
@@ -36,18 +38,6 @@
       return browserMemoryClient(rpc).getKnowledge(selected, { signal });
     },
   }));
-  const sourceLink = (value: unknown): string | null => {
-    if (
-      typeof value !== 'object' ||
-      value === null ||
-      !('sourceLocator' in value) ||
-      typeof value.sourceLocator !== 'string' ||
-      !value.sourceLocator.startsWith('/memory?')
-    ) {
-      return null;
-    }
-    return value.sourceLocator;
-  };
 </script>
 <div class={memoryStack}>
   <label class={memoryField}
@@ -67,10 +57,7 @@
     {:else if query.data?.items.length===0}
       <section class={memoryPanel}>
         <h2 class={memoryHeading}>No accepted knowledge in this scope</h2>
-        <p class={memoryCopy}>
-          Session accounts remain readable in Analysed sessions. Propose a useful passage there, edit it, then
-          explicitly accept it in Pending review to create your first knowledge.
-        </p>
+        <p class={memoryCopy}>Knowledge appears here after a proposal is explicitly accepted in Pending review.</p>
       </section>
     {:else if query.data}
       <p class={memoryCopy}>
@@ -111,7 +98,7 @@
                 </ul>
                 <details>
                   <summary class={memoryCopy}>Retained structured evidence</summary>
-                  <pre class={memoryCopy}>{JSON.stringify(detail.data.structuredContent,null,2)}</pre>
+                  <pre class={[memoryCopy,evidenceText]}>{JSON.stringify(detail.data.structuredContent,null,2)}</pre>
                 </details>
               </section>
             {:else if detail.error}
@@ -120,11 +107,13 @@
               <p class={memoryCopy} role="status">Reading the accepted revision…</p>
             {/if}
           {/if}
-          {#if sourceLink(item.provenance)}
-            <a href={sourceLink(item.provenance)}>Read source analysis and evidence</a>
-          {:else}
-            <p class={memoryCopy}>Provenance is retained with this accepted revision.</p>
-          {/if}
+          <details>
+            <summary class={memoryCopy}>Retained provenance</summary>
+            {#if item.provenance.sourceLocator}
+              <p class={memoryCopy}>{item.provenance.sourceLocator}</p>
+            {/if}
+            <pre class={[memoryCopy,evidenceText]}>{JSON.stringify(item.provenance,null,2)}</pre>
+          </details>
         </article>
       {/each}
       <div class={memoryRow}>

@@ -8,11 +8,16 @@ import type { ReportRpcServices } from './report';
 import { createReportRpcRouter } from './report';
 import type { SessionRpcDependencies } from './session';
 import { createSessionRpcRouter } from './session';
-import { createSessionDistillationRpcRouter, type SessionDistillationRpcDependencies } from './session-distillation';
 import type { SelectSkillsCapability, SkillsRequestPreflight } from './skills';
 import { createSkillsRouter } from './skills';
 import type { SyncRpcDependencies } from './sync';
 import { createSyncRpcRouter } from './sync';
+import type { WorkRpcDependencies } from './work';
+import { createWorkRpcRouter } from './work';
+import type { WorkAttemptsRpcDependencies } from './work-attempts';
+import { createWorkAttemptsRpcRouter } from './work-attempts';
+import type { WorkRoutingRpcDependencies } from './work-routing';
+import { createWorkRoutingRpcRouter } from './work-routing';
 
 export interface WebRpcRouterDependencies {
   readonly memory: MemoryRpcDependencies;
@@ -20,12 +25,14 @@ export interface WebRpcRouterDependencies {
   readonly replication: ReplicationRpcDependencies;
   readonly report: ReportRpcServices;
   readonly session: SessionRpcDependencies;
-  readonly sessionDistillation: SessionDistillationRpcDependencies;
   readonly skills: {
     readonly preflight: SkillsRequestPreflight;
     readonly selectCapability: SelectSkillsCapability;
   };
   readonly sync: SyncRpcDependencies;
+  readonly work: WorkRpcDependencies;
+  readonly workAttempts: WorkAttemptsRpcDependencies;
+  readonly workRouting: WorkRoutingRpcDependencies;
 }
 
 export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
@@ -34,9 +41,11 @@ export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
   projects: createProjectsRpcRouter(dependencies.projects),
   replication: createReplicationRpcRouter(dependencies.replication),
   session: createSessionRpcRouter(dependencies.session),
-  sessionDistillation: createSessionDistillationRpcRouter(dependencies.sessionDistillation),
   skills: createSkillsRouter(dependencies.skills.selectCapability, dependencies.skills.preflight),
   sync: createSyncRpcRouter(dependencies.sync),
+  work: createWorkRpcRouter(dependencies.work),
+  workAttempts: createWorkAttemptsRpcRouter(dependencies.workAttempts),
+  workRouting: createWorkRoutingRpcRouter(dependencies.workRouting),
 });
 
 export type WebRpcRouter = ReturnType<typeof createWebRpcRouter>;

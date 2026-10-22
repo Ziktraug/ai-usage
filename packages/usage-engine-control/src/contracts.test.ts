@@ -3,6 +3,7 @@ import {
   classifyUsageEngineRetry,
   parseUsageEngineCommand,
   parseUsageEngineCommandCancellationResult,
+  parseUsageEngineCommandCompletion,
   parseUsageEngineCommandResult,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
@@ -54,6 +55,16 @@ describe('usage engine control contracts', () => {
       },
       { command: 'set-machine-label', label: 'Workstation' },
       { campaignKey: 'machine-a:codex:root-a', command: 'set-campaign-label-override', label: 'Launch' },
+      {
+        action: 'read-only-review',
+        candidateId: 'declared:["machine-a","claude-code","personal"]',
+        command: 'start-review-attempt',
+        target: { desktopSessionId: 'local_one', harness: 'claude', sourceSessionId: 'session-a' },
+      },
+      {
+        command: 'qualify-review-routing',
+        target: { desktopSessionId: null, harness: 'claude', sourceSessionId: 'session-a' },
+      },
       { command: 'collect-fresh-quota' },
       { command: 'import-cursor', input: { handoffId: 'handoff-1', kind: 'inbox-handoff' } },
       {
@@ -517,6 +528,99 @@ describe('usage engine control contracts', () => {
         protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
       }),
     ).toThrow('byte limit');
+  });
+
+  test('carries a bounded routing qualification and refuses one that does not conform (ADR 0057)', () => {
+    const qualification = {
+      candidates: [
+        {
+          accountScope: 'personal',
+          actions: [],
+          candidateId: 'declared:["machine-a","claude-code","personal"]',
+          eligible: true,
+          exclusionReasons: [],
+          harness: 'claude-code',
+          identity: {
+            declared: '0123456789abcdef',
+            observed: '0123456789abcdef',
+            observedAt: '2026-10-22T08:00:00.000Z',
+            state: 'confirmed',
+          },
+          missingData: ['Effort was not observed (optional).'],
+          model: 'Opus',
+        },
+      ],
+      chosenCandidateId: 'declared:["machine-a","claude-code","personal"]',
+      executors: { outcome: 'success', refreshed: true },
+      omittedCandidates: 0,
+      qualifiedAt: '2026-10-22T08:00:01.000Z',
+      reasons: ['Simulation only: no harness is started and no permission is granted.'],
+      recommendation: { candidateId: 'declared:["machine-a","claude-code","personal"]', kind: 'real', missing: null },
+    };
+    const completion = {
+      command: 'qualify-review-routing',
+      commandId: 'command-1',
+      completedAt: '2026-10-22T08:00:02.000Z',
+      output: { kind: 'routing-qualification', qualification },
+      state: 'succeeded',
+    };
+    expect(parseUsageEngineCommandCompletion(completion)).toEqual(completion as never);
+    for (const output of [
+      { kind: 'routing-qualification', qualification: { ...qualification, report: [] } },
+      { kind: 'routing-qualification', qualification: { ...qualification, recommendation: { kind: 'maybe' } } },
+      { kind: 'none' },
+      { kind: 'routing-qualification', qualification, rows: [] },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...completion, output })).toThrow();
+    }
+    expect(() =>
+      parseUsageEngineCommand({ command: 'qualify-review-routing', target: { harness: 'claude' } }),
+    ).toThrow();
+    expect(() =>
+      parseUsageEngineCommand({
+        candidateId: 'x',
+        command: 'qualify-review-routing',
+        target: { harness: 'claude', sourceSessionId: 'session-a' },
+      }),
+    ).toThrow();
+  });
+
+  test('carries the operator release of a held review reservation and its bounded answer (ADR 0055)', () => {
+    const command = { attemptId: 'attempt-lost', command: 'release-review-reservation' };
+    expect(parseUsageEngineCommand(command)).toEqual(command as never);
+    expect(parseWebUsageEngineCommand(command)).toEqual(command as never);
+    expect(() => parseUsageEngineCommand({ ...command, reason: 'free text' })).toThrow();
+    expect(() => parseUsageEngineCommand({ command: 'release-review-reservation' })).toThrow();
+
+    const completion = {
+      command: 'release-review-reservation',
+      commandId: 'command-1',
+      completedAt: '2026-10-22T08:00:02.000Z',
+      output: {
+        attemptId: 'attempt-lost',
+        evidence: 'operator-declared-ended',
+        kind: 'review-reservation-release',
+        pids: [],
+        releasedAt: '2026-10-22T08:00:02.000Z',
+        result: 'released',
+      },
+      state: 'succeeded',
+    };
+    expect(parseUsageEngineCommandCompletion(completion)).toEqual(completion as never);
+    const found = {
+      ...completion,
+      output: { ...completion.output, evidence: null, pids: [4242], releasedAt: null, result: 'process-found' },
+    };
+    expect(parseUsageEngineCommandCompletion(found)).toEqual(found as never);
+    for (const output of [
+      { ...completion.output, result: 'maybe' },
+      { ...completion.output, evidence: 'age' },
+      { ...completion.output, pids: [-1] },
+      { ...completion.output, rows: [] },
+      { kind: 'none' },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...completion, output })).toThrow();
+    }
   });
 
   test('classifies retries by operation without trusting server input', () => {

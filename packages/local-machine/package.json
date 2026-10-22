@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./bounded-process": "./src/bounded-process.ts",
     "./campaign-label-config": "./src/campaign-label-config.ts",
     "./claude-session-analysis": "./src/claude-session-analysis.ts",
     "./claude-session-facts": "./src/claude-session-facts.ts",
@@ -22,12 +23,14 @@
     "./opencode-session-facts": "./src/opencode-session-facts.ts",
     "./platform-paths": "./src/platform-paths.ts",
     "./private-storage": "./src/private-storage.ts",
+    "./routing-config": "./src/routing-config.ts",
     "./session-label": "./src/session-label.ts",
     "./session-detail": "./src/session-detail.ts",
     "./skills-config": "./src/skills-config.ts",
     "./source-policy-config": "./src/source-policy-config.ts",
     "./text": "./src/text.ts",
     "./test-fixtures/skill-observation-transcripts": "./src/test-fixtures/skill-observation-transcripts.ts",
+    "./testing/claude-desktop-sessions": "./src/testing/claude-desktop-sessions-fixture.ts",
     "./testing/harness-home": "./src/testing/harness-home.ts",
     "./testing/memory-storage": "./src/testing/memory-storage.ts"
   },

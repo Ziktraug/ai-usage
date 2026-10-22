@@ -18,7 +18,6 @@ import {
   createProjectId,
   instantNow,
 } from '@ai-usage/platform-core/identity';
-import { DistillationError } from '@ai-usage/platform-core/session-distillation';
 import { createLocalMemoryServiceHandler, startLocalMemoryService } from './memory-service-server';
 
 const roots: string[] = [];
@@ -35,37 +34,44 @@ const fixture = async () => {
 };
 
 describe('local Memory service', () => {
-  test('preserves actionable distillation error codes across the authenticated client boundary', async () => {
+  test('withdrawn generation and publication routes stay unavailable behind Memory authentication', async () => {
     const { kernel } = await fixture();
     const token = createMemoryServiceToken('0123456789abcdefghijklmnopqrstuvwxyzABCDEFG');
-    let failure = 'worker-busy';
-    const handler = await createLocalMemoryServiceHandler({
-      kernel,
-      token,
-      distillation: {
-        execute: () => Promise.reject(new DistillationError(failure)),
-      },
-    });
+    const handler = await createLocalMemoryServiceHandler({ kernel, token });
     const client = createMemoryServiceClient({
       resolveRendezvous: async () => ({ port: 12_345, protocolVersion: 1, token }),
       fetch: async (input, init) => await handler.handle(new Request(input, init), '127.0.0.1'),
     });
     try {
-      for (const [internal, expected] of [
-        ['worker-busy', 'worker-busy'],
-        ['stale-worker', 'lease-expired'],
-        ['submission-conflict', 'conflict'],
-        ['source-grant-mismatch', 'forbidden'],
-        ['source-changed', 'source-modified'],
-        ['extractor-version-mismatch', 'version-incompatible'],
-        ['cancelled', 'cancelled'],
-        ['storage-failed', 'storage-unavailable'],
-      ]) {
-        failure = internal ?? '';
-        await expect(
-          client.distillation({ kind: 'claim', projectId: 'synthetic', jobId: 'synthetic' }),
-        ).rejects.toMatchObject({ code: expected });
+      expect(Object.keys(client)).not.toContain('distillation');
+      expect(Object.keys(client)).not.toContain('promoteAnalysis');
+      for (const pathname of ['/v1/session-distillation', '/v1/memory-proposals/from-analysis']) {
+        for (const method of ['GET', 'POST']) {
+          const response = await handler.handle(
+            new Request(`http://127.0.0.1:12345${pathname}`, {
+              method,
+              headers: {
+                authorization: 'Bearer 0123456789abcdefghijklmnopqrstuvwxyzABCDEFG',
+                'x-ai-usage-memory-protocol-version': '1',
+                'content-type': 'application/json',
+              },
+              ...(method === 'POST' ? { body: '{}' } : {}),
+            }),
+            '127.0.0.1',
+          );
+          expect(response.status).toBe(404);
+          expect(await response.text()).toBe('');
+        }
+        const unauthenticated = await handler.handle(
+          new Request(`http://127.0.0.1:12345${pathname}`, {
+            headers: { 'x-ai-usage-memory-protocol-version': '1' },
+          }),
+          '127.0.0.1',
+        );
+        expect(unauthenticated.status).toBe(401);
       }
+      expect(await client.listMemoryItems({ pageSize: 20 })).toEqual({ items: [], nextCursor: null });
+      expect((await client.listProposalReviews()).proposals).toEqual([]);
     } finally {
       await kernel.close();
     }
@@ -207,7 +213,7 @@ describe('local Memory service', () => {
   });
 
   test('reviews one pending Memory proposal through the authenticated local protocol', async () => {
-    const { kernel, stateDirectory } = await fixture();
+    const { kernel } = await fixture();
     const bootstrap = await kernel.getBootstrapIdentity();
     const principal = { kind: 'person' as const, personId: bootstrap.person.id };
     const authorization = { activeSpaceId: bootstrap.space.id, trustedDevice: true } as const;
@@ -258,9 +264,10 @@ describe('local Memory service', () => {
     }
 
     const token = createMemoryServiceToken('0123456789abcdefghijklmnopqrstuvwxyzABCDEFG');
-    const service = await startLocalMemoryService({ kernel, stateDirectory, token });
+    const handler = await createLocalMemoryServiceHandler({ kernel, token });
     const client = createMemoryServiceClient({
-      resolveRendezvous: async () => await loadMemoryServiceRendezvous(memoryServiceRendezvousPath(stateDirectory)),
+      resolveRendezvous: async () => ({ port: 12_345, protocolVersion: 1, token }),
+      fetch: async (input, init) => await handler.handle(new Request(input, init), '127.0.0.1'),
     });
     const snapshot = await client.listProposalReviews();
     expect(await client.listMemoryItems({ pageSize: 20 })).toEqual({ items: [], nextCursor: null });
@@ -343,7 +350,6 @@ describe('local Memory service', () => {
       truncated: false,
     });
 
-    await service.dispose();
     await kernel.close();
   });
 });

@@ -572,9 +572,174 @@ describe('machine config', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test('reads a routing section whose entries are validated later and rejects a malformed section', async () => {
+    const home = await mkdtemp('ai-usage-routing-home-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+      // One entry is wrong on purpose: the section still reads, and the entry is reported by the
+      // routing parser instead of making the whole configuration unreadable.
+      const routing = { executors: [{ harness: 'claude-code', authorization: 'maybe' }] };
+      writeFileSync(aiUsageConfigPath(storage), JSON.stringify({ routing }));
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.routing).toEqual(routing);
+
+      writeFileSync(aiUsageConfigPath(storage), JSON.stringify({ routing: { executors: 'all' } }));
+      await expect(
+        Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      ).rejects.toThrow('Invalid ai-usage config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects routing declarations in repository configuration', async () => {
+    const home = await mkdtemp('ai-usage-routing-home-only-');
+    const repo = await mkdtemp('ai-usage-routing-repo-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeFileSync(path.join(repo, 'ai-usage.config.ts'), 'export default { routing: { executors: [] } };\n');
+
+      const error = await Effect.runPromise(
+        readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage), Effect.flip),
+      );
+      expect(formatLocalHistoryError(error)).toContain('routing may only be configured in the user home config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });
 
 const mkdtemp = async (prefix: string) => {
   const { mkdtemp } = await import('node:fs/promises');
   return mkdtemp(path.join(tmpdir(), prefix));
 };
+
+describe('github config', () => {
+  const writeHomeConfig = (home: string, value: unknown): ReturnType<typeof createLocalHistoryStorage> => {
+    const storage = createLocalHistoryStorage(home);
+    mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+    writeFileSync(aiUsageConfigPath(storage), `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    return storage;
+  };
+
+  test('reads a strict github section from the user home config', async () => {
+    const home = await mkdtemp('ai-usage-github-config-');
+    try {
+      const storage = writeHomeConfig(home, {
+        github: { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }], enabled: true },
+      });
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.github).toEqual({
+        accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }],
+        enabled: true,
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a malformed github section instead of ignoring it', async () => {
+    const invalid: unknown[] = [
+      { enabled: 'yes' },
+      { accounts: [{ ghUser: 'alice', host: 'ghe.example.com', owner: 'fixture' }] },
+      { accounts: [{ ghUser: '', host: 'github.com', owner: 'fixture' }] },
+      { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture/project' }] },
+      { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture', token: 'never' }] },
+      { enabled: false, hostOwnerPattern: 'fixture/*' },
+      [],
+    ];
+    for (const github of invalid) {
+      const home = await mkdtemp('ai-usage-github-config-invalid-');
+      try {
+        const storage = writeHomeConfig(home, { github });
+        await expect(
+          Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+        ).rejects.toThrow('Invalid ai-usage config');
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('refuses a github section in repository config', async () => {
+    const home = await mkdtemp('ai-usage-github-config-repo-');
+    const repo = await mkdtemp('ai-usage-github-config-repo-cwd-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeFileSync(path.join(repo, 'ai-usage.config.ts'), 'export default { github: { enabled: false } };\n');
+      const failure = await Effect.runPromise(
+        Effect.flip(readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      );
+      expect(formatLocalHistoryError(failure)).toContain('github may only be configured in the user home config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('jira config', () => {
+  const writeHomeConfig = (home: string, value: unknown): ReturnType<typeof createLocalHistoryStorage> => {
+    const storage = createLocalHistoryStorage(home);
+    mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+    writeFileSync(aiUsageConfigPath(storage), `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    return storage;
+  };
+
+  test('reads a strict jira section from the user home config', async () => {
+    const home = await mkdtemp('ai-usage-jira-config-');
+    try {
+      const storage = writeHomeConfig(home, { jira: { enabled: false, site: 'example.atlassian.net' } });
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.jira).toEqual({ enabled: false, site: 'example.atlassian.net' });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a malformed jira section instead of ignoring it', async () => {
+    const invalid: unknown[] = [
+      { enabled: 'yes' },
+      { site: 'https://example.atlassian.net' },
+      { site: 'not a host' },
+      { enabled: true, token: 'never' },
+      [],
+    ];
+    for (const jira of invalid) {
+      const home = await mkdtemp('ai-usage-jira-config-invalid-');
+      try {
+        const storage = writeHomeConfig(home, { jira });
+        await expect(
+          Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+        ).rejects.toThrow('Invalid ai-usage config');
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('refuses a jira section in repository config', async () => {
+    const home = await mkdtemp('ai-usage-jira-config-repo-');
+    const repo = await mkdtemp('ai-usage-jira-config-repo-cwd-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeFileSync(path.join(repo, 'ai-usage.config.ts'), 'export default { jira: { enabled: false } };\n');
+      const failure = await Effect.runPromise(
+        Effect.flip(readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      );
+      expect(formatLocalHistoryError(failure)).toContain('jira may only be configured in the user home config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});

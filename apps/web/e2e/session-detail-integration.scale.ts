@@ -122,6 +122,12 @@ const captureSessionTraffic = (page: Page) => {
     }
   };
   const observeResponse = (response: Response): void => {
+    // Only responses to requests observed after attachment belong to the traversal under test. A request the
+    // previous document issued before attachment may answer after it, and the full navigation that follows
+    // evicts that body: reading it rejects with no handler attached and fails the test outside any assertion.
+    if (!requests.includes(response.request())) {
+      return;
+    }
     const pathname = new URL(response.url()).pathname;
     if (pathname.startsWith('/rpc/session/')) {
       responses.push(response.text().then((body) => ({ pathname, body })));

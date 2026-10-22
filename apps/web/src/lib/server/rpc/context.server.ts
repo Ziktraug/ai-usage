@@ -327,21 +327,6 @@ const createProjectsDependencies = (): WebRpcRouterDependencies['projects'] => (
     }),
 });
 
-const createSessionDistillationDependencies = (): WebRpcRouterDependencies['sessionDistillation'] => ({
-  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
-  read: async (input, signal) =>
-    await phaseBound(signal, async () => {
-      if ((await runtimeMode(abortOptions(signal))) === 'e2e') {
-        if (input.kind === 'projects' || input.kind === 'browse') {
-          return { items: [], nextCursor: null };
-        }
-        throw new Error('Synthetic browser mode does not acquire local analysis authority.');
-      }
-      const server = await import('../../../server/session-distillation.server');
-      return await server.readSessionDistillationForServer(input, signal);
-    }),
-});
-
 const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
   getKnowledge: async (input, signal) =>
     await phaseBound(signal, async () => {
@@ -360,15 +345,6 @@ const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
       }
       const server = await import('../../../server/memory-service.server');
       return await server.listMemoryKnowledgeForServer(input, signal);
-    }),
-  promoteAnalysis: async (input, signal) =>
-    await phaseBound(signal, async () => {
-      const mode = await runtimeMode(abortOptions(signal));
-      if (mode === 'e2e') {
-        throw new Error('Synthetic review fixture does not consume local analyses.');
-      }
-      const server = await import('../../../server/memory-service.server');
-      return await server.promoteMemoryAnalysisForServer(input, signal);
     }),
   applyProposalReviewAction: async (input, signal) =>
     await phaseBound(signal, async () => {
@@ -431,6 +407,49 @@ const createSyncDependencies = (request: Request): WebRpcRouterDependencies['syn
     }),
 });
 
+const createWorkDependencies = (): WebRpcRouterDependencies['work'] => ({
+  readAttention: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attention.server');
+      return await server.readWorkAttentionForServer(input, abortOptions(signal));
+    }),
+});
+
+const createWorkAttemptsDependencies = (request: Request): WebRpcRouterDependencies['workAttempts'] => ({
+  list: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attempts.server');
+      return await server.listWorkAttemptsForServer(input, abortOptions(signal));
+    }),
+  release: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attempts.server');
+      return await server.releaseWorkAttemptReservationFromRequestForServer(request, input);
+    }),
+  start: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attempts.server');
+      return await server.startWorkAttemptFromRequestForServer(request, input);
+    }),
+});
+
+const createWorkRoutingDependencies = (request: Request): WebRpcRouterDependencies['workRouting'] => ({
+  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
+  qualify: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-routing-context.server');
+      return await server.qualifyWorkRoutingFromRequestForServer(request, input);
+    }),
+  readContext: async (signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-routing-context.server');
+      if ((await runtimeMode(abortOptions(signal))) === 'e2e') {
+        return server.e2eWorkRoutingContext();
+      }
+      return await server.getWorkRoutingContextForServer(undefined, abortOptions(signal));
+    }),
+});
+
 export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpcRouterDependencies> => {
   const fixtureVariant = e2eSkillsFixtureVariantForHeaders(request.headers);
   return Promise.resolve({
@@ -439,11 +458,13 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
     report: createReportDependencies(request),
     replication: createReplicationDependencies(),
     session: createSessionDependencies(),
-    sessionDistillation: createSessionDistillationDependencies(),
     skills: {
       preflight: preflightSkills,
       selectCapability: async (options) => await selectSkillsCapability(options, fixtureVariant),
     },
     sync: createSyncDependencies(request),
+    work: createWorkDependencies(),
+    workAttempts: createWorkAttemptsDependencies(request),
+    workRouting: createWorkRoutingDependencies(request),
   });
 };

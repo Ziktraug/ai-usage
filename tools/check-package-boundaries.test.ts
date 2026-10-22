@@ -483,7 +483,7 @@ describe('package boundary guard', () => {
     );
   });
 
-  test('allows only the three Web local-machine operations and test-only fixtures', async () => {
+  test('allows only the Web local-machine operations and test-only fixtures', async () => {
     const root = await createFixture();
     await writePackage(
       root,
@@ -491,6 +491,7 @@ describe('package boundary guard', () => {
       'web',
       { name: '@ai-usage/web' },
       [
+        "import '@ai-usage/local-machine/bounded-process';",
         "import '@ai-usage/local-machine/campaign-label-config';",
         "import '@ai-usage/local-machine/session-detail';",
         "import '@ai-usage/local-machine/skills-config';",
@@ -618,7 +619,7 @@ describe('package boundary guard', () => {
     ]);
   });
 
-  test('allows CLI only the collector-free report-data portable facade', async () => {
+  test('allows CLI only the collector-free report-data portable and Work context facades', async () => {
     const root = await createFixture();
     await writePackage(
       root,
@@ -629,6 +630,7 @@ describe('package boundary guard', () => {
         `import '${reportDataPackage}';`,
         `import '${reportDataPackage}/served-revision-query';`,
         `import '${reportDataPortableReport}';`,
+        `import '${reportDataPackage}/work-context-read';`,
       ].join('\n'),
     );
 

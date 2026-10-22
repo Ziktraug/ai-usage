@@ -9,6 +9,51 @@ const STANDALONE_CAMPAIGN_PATTERN = /^Review release notes /;
 const INCOMPLETE_CAMPAIGN_PATTERN = /^Explore dashboard layout /;
 const UNKNOWN_RPC_PROBE_PATH = '/rpc/demo-boundary-probe';
 
+test('mobile demo opens Campaigns through Manage without exposing business destinations or making business requests', async ({
+  page,
+}) => {
+  const businessRequests: string[] = [];
+  page.on('request', (browserRequest) => {
+    // The client navigation reads SvelteKit's demo route envelope; its server load returns no local observations.
+    if (
+      browserRequest.resourceType() === 'fetch' &&
+      browserRequest.method() === 'GET' &&
+      new URL(browserRequest.url()).pathname === '/campaigns/__data.json'
+    ) {
+      return;
+    }
+    if (BUSINESS_RESOURCE_TYPES.has(browserRequest.resourceType())) {
+      businessRequests.push(`${browserRequest.resourceType()}:${browserRequest.url()}`);
+    }
+  });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto('/?range=all&q=Build%20report%20UI');
+  await waitForHydratedReport(page);
+  const navigation = page.locator('[data-app-navigation="mobile"][data-hydrated="true"]');
+  await expect(navigation).toBeVisible();
+  await expect(navigation.getByRole('link')).toHaveText(['Work', 'Overview', 'Sessions', 'Analysis']);
+  const manage = navigation.getByRole('button', { name: 'Manage', exact: true });
+  await manage.focus();
+  await page.keyboard.press('Enter');
+  const destinations = page.getByRole('navigation', { name: 'Manage destinations', exact: true });
+  await expect(destinations.getByRole('link')).toHaveText(['Campaigns']);
+  const campaigns = destinations.getByRole('link', { name: 'Campaigns', exact: true });
+  await expect(campaigns).toHaveAttribute('href', `/campaigns${new URL(page.url()).search}`);
+  await campaigns.click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Campaigns', exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('q')).toBe('Build report UI');
+  expect(new URL(page.url()).searchParams.get('range')).toBe('all');
+  await expect(manage).toHaveAttribute('aria-current', 'page');
+  await expect(manage).toHaveAttribute('aria-expanded', 'false');
+  await manage.click();
+  await expect(campaigns).toHaveAttribute('aria-current', 'page');
+  await expect(destinations.getByRole('link')).toHaveText(['Campaigns']);
+  await page.keyboard.press('Escape');
+  await expect(manage).toBeFocused();
+  await expect(destinations).toHaveCount(0);
+  expect(businessRequests).toEqual([]);
+});
+
 test('explores Campaigns and individual session details without local data or business requests', async ({ page }) => {
   const businessRequests: string[] = [];
   page.on('request', (browserRequest) => {

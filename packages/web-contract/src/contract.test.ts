@@ -5,9 +5,11 @@ import { projectsContract } from './projects';
 import { replicationContract } from './replication';
 import { reportContract } from './report';
 import { sessionContract } from './session';
-import { sessionDistillationContract } from './session-distillation';
 import { skillsContract } from './skills';
 import { syncContract } from './sync';
+import { workContract } from './work';
+import { workAttemptsContract } from './work-attempts';
+import { workRoutingContract } from './work-routing';
 
 test('composes every RPC leaf under one root contract', () => {
   expect(webContract).toEqual({
@@ -16,8 +18,10 @@ test('composes every RPC leaf under one root contract', () => {
     projects: projectsContract,
     replication: replicationContract,
     session: sessionContract,
-    sessionDistillation: sessionDistillationContract,
     skills: skillsContract,
     sync: syncContract,
+    work: workContract,
+    workAttempts: workAttemptsContract,
+    workRouting: workRoutingContract,
   });
 });

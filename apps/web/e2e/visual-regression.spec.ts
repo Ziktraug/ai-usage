@@ -349,7 +349,7 @@ test('matches the mobile light session drawer at 390x844', async ({ page }) => {
       };
     }),
   );
-  expect(tabGeometry.length).toBe(5);
+  expect(tabGeometry.length).toBe(4);
   for (const [index, tab] of tabGeometry.entries()) {
     expect(tab.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
     expect(tab.scrollWidth).toBeLessThanOrEqual(Math.ceil(tab.width));

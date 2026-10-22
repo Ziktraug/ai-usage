@@ -43,6 +43,9 @@ interface FileFingerprint {
 type ClaudeProvider = 'Claude sub' | 'Claude API';
 
 interface ClaudeFileResult {
+  /** Explicit launches only: a SendMessage recipient does not establish parentage. */
+  declaredChildSourceSessionIds: string[];
+  lineageIncomplete: boolean;
   observations: SkillObservation[];
   observationsTruncated: boolean;
   /** Cached for the same reason as the reject counts: a warm scan must not look complete. */
@@ -79,7 +82,9 @@ interface ClaudeCache {
 // Bumped to 15 for per-transcript stat-keyed entries, including partial-data
 // counters and the resolved origin repository, with the pricing provider shared
 // by the entire cache.
-const CLAUDE_CACHE_VERSION = 15;
+// Bumped to 16 to retain explicit launch identities for cross-transcript lineage.
+const CLAUDE_CACHE_VERSION = 16;
+const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -134,6 +139,10 @@ const reviveClaudeCacheEntry = (value: unknown, provider: ClaudeProvider): Claud
       revived.rejectedMetricRecords === 0 &&
       revived.rows.length <= 1 &&
       revived.rows.every((row) => row.provider === provider) &&
+      Array.isArray(value.declaredChildSourceSessionIds) &&
+      value.declaredChildSourceSessionIds.length <= MAX_DECLARED_CLAUDE_CHILDREN &&
+      value.declaredChildSourceSessionIds.every((id: unknown) => typeof id === 'string' && id.length > 0) &&
+      typeof value.lineageIncomplete === 'boolean' &&
       observations.valid &&
       typeof value.observationsTruncated === 'boolean' &&
       (repositoryKey === null || typeof repositoryKey === 'string') &&
@@ -145,6 +154,8 @@ const reviveClaudeCacheEntry = (value: unknown, provider: ClaudeProvider): Claud
   return {
     mtimeMs: value.mtimeMs,
     size: size.value,
+    declaredChildSourceSessionIds: value.declaredChildSourceSessionIds,
+    lineageIncomplete: value.lineageIncomplete,
     observations: observations.observations,
     observationsTruncated: value.observationsTruncated,
     oversizedLines: oversizedLines.value,
@@ -385,6 +396,8 @@ const parseClaudeFile = (
     // producing a usage row, and that invocation remains a fact about the skill.
     const extraction = extractClaudeSkillObservations({ records, sourceSessionId });
     const result: ClaudeFileResult = {
+      declaredChildSourceSessionIds: [],
+      lineageIncomplete: false,
       observations: extraction.observations,
       observationsTruncated: extraction.truncated,
       oversizedLines: transcriptRead.oversizedLines,
@@ -405,6 +418,18 @@ const parseClaudeFile = (
       ? (parseClaudeSessionFacts({ isAgentFile, records, repository, sourceSessionId }) ?? initialFacts)
       : initialFacts;
     const { projection, report, source } = facts;
+    result.declaredChildSourceSessionIds = [
+      ...new Set(
+        facts.detailFacts.interactions.flatMap((interaction) =>
+          interaction.kind === 'spawn' && interaction.childSourceSessionId !== null
+            ? [interaction.childSourceSessionId]
+            : [],
+        ),
+      ),
+    ];
+    result.lineageIncomplete =
+      facts.detailFacts.coverage.childDiscovery.status !== 'complete' ||
+      facts.detailFacts.coverage.interactionAttribution.reasons.includes('interaction-budget');
     result.rejectedMetricRecords = report.rejectedMetricRecords;
     const session: CollectedSession = {
       source: {
@@ -440,6 +465,139 @@ const parseClaudeFile = (
     return { lines, result };
   });
 
+const claudeLineageIdentity = (row: CollectorRow, sessionId = row.source?.sourceSessionId): string | null =>
+  row.source?.harnessKey === 'claude' && sessionId ? JSON.stringify([row.source.machineId ?? null, sessionId]) : null;
+
+/** Compose current evidence after the scan; never persist derived parents in per-file caches. */
+const reconcileClaudeLineage = (
+  rows: CollectorRow[],
+  declaredChildren: ReadonlyMap<
+    CollectorRow,
+    Pick<ClaudeFileResult, 'declaredChildSourceSessionIds' | 'lineageIncomplete'>
+  >,
+): { rows: CollectorRow[]; warnings: LocalHistoryWarning[] } => {
+  const byIdentity = new Map<string, CollectorRow[]>();
+  for (const row of rows) {
+    const key = claudeLineageIdentity(row);
+    if (key !== null) {
+      const matching = byIdentity.get(key) ?? [];
+      matching.push(row);
+      byIdentity.set(key, matching);
+    }
+  }
+  const unresolved = new Set<string>();
+  const conflicts = new Set<string>();
+  const declarations = new Map<string, Set<string>>();
+  const partial = new Set<string>();
+  for (const [parent, evidence] of declaredChildren) {
+    const parentKey = claudeLineageIdentity(parent);
+    if (parentKey === null) {
+      continue;
+    }
+    if (evidence.lineageIncomplete) {
+      partial.add(parentKey);
+    }
+    for (const childId of evidence.declaredChildSourceSessionIds) {
+      const childKey = claudeLineageIdentity(parent, childId);
+      if (childKey === null) {
+        continue;
+      }
+      if (!byIdentity.has(childKey)) {
+        unresolved.add(childKey);
+      } else if (byIdentity.get(parentKey)?.length !== 1 || parentKey === childKey) {
+        conflicts.add(childKey);
+      } else {
+        const parents = declarations.get(childKey) ?? new Set<string>();
+        parents.add(parentKey);
+        declarations.set(childKey, parents);
+      }
+    }
+  }
+  const supplements = new Map<string, string>();
+  const parentKeys = new Map<string, string>();
+  for (const [key, matching] of byIdentity) {
+    const row = matching[0];
+    if (!row || matching.length !== 1) {
+      conflicts.add(key);
+      continue;
+    }
+    const declared = declarations.get(key) ?? new Set<string>();
+    const direct = row.source?.parentSourceSessionId;
+    const directKey = direct ? claudeLineageIdentity(row, direct) : null;
+    if (directKey !== null) {
+      parentKeys.set(key, directKey);
+      if (!byIdentity.has(directKey)) {
+        unresolved.add(key);
+      }
+      if ([...declared].some((parent) => parent !== directKey)) {
+        conflicts.add(key);
+      }
+    } else if (declared.size > 1) {
+      conflicts.add(key);
+    } else if (!conflicts.has(key)) {
+      const parentKey = [...declared][0];
+      const parentId = parentKey === undefined ? undefined : byIdentity.get(parentKey)?.[0]?.source?.sourceSessionId;
+      if (parentKey !== undefined && parentId) {
+        supplements.set(key, parentId);
+        parentKeys.set(key, parentKey);
+      }
+    }
+  }
+  // Memoised walks remain linear even for deeply nested launches. Any path into a
+  // cycle is unresolved; recorded direct parents remain intact for diagnosis.
+  const reachesCycle = new Map<string, boolean>();
+  for (const start of supplements.keys()) {
+    const visiting = new Set<string>();
+    let current: string | undefined = start;
+    while (current !== undefined && !visiting.has(current) && !reachesCycle.has(current)) {
+      visiting.add(current);
+      current = parentKeys.get(current);
+    }
+    const cycle = current !== undefined && (visiting.has(current) || reachesCycle.get(current) === true);
+    for (const key of visiting) {
+      reachesCycle.set(key, cycle);
+    }
+  }
+  const linkedRows = rows.map((row) => {
+    const key = claudeLineageIdentity(row);
+    const parent = key === null ? undefined : supplements.get(key);
+    if (!(key !== null && parent && row.source)) {
+      return row;
+    }
+    if (reachesCycle.get(key)) {
+      conflicts.add(key);
+      return row;
+    }
+    return { ...row, source: { ...row.source, parentSourceSessionId: parent } };
+  });
+  const warnings: LocalHistoryWarning[] = [];
+  if (partial.size > 0) {
+    warnings.push({
+      affectedSessions: partial.size,
+      harness: 'claude',
+      operation: 'claude.lineage-partial',
+      message: `${partial.size} Claude sessions have incomplete launch evidence or exceeded a link budget. Additional related sessions may be unlinked.`,
+    });
+  }
+  if (unresolved.size > 0) {
+    warnings.push({
+      affectedSessions: unresolved.size,
+      harness: 'claude',
+      operation: 'claude.lineage-unresolved',
+      message: `${unresolved.size} Claude session links name a parent or child absent from collected history. Related work may be missing.`,
+    });
+  }
+  if (conflicts.size > 0) {
+    warnings.push({
+      affectedSessions: conflicts.size,
+      harness: 'claude',
+      operation: 'claude.lineage-conflict',
+      message: `${conflicts.size} Claude sessions have conflicting or ambiguous lineage evidence. Recorded direct parents are preserved; no ambiguous parent is added.`,
+    });
+  }
+  return { rows: linkedRows, warnings };
+};
+
 export const collectClaudeResult = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePaths(storage);
@@ -467,6 +625,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   }
 
   const rows: CollectorRow[] = [];
+  const declaredChildren = new Map<CollectorRow, ClaudeFileResult>();
   const nextFiles: Record<string, ClaudeCacheEntry> = {};
   const observations: SkillObservation[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
@@ -510,6 +669,9 @@ export const collectClaudeResult = Effect.gen(function* () {
           }
         }
         rows.push(...result.rows);
+        for (const row of result.rows) {
+          declaredChildren.set(row, result);
+        }
         observations.push(...result.observations);
         rejectedMetricRecords += result.rejectedMetricRecords;
         rejectedObservations += result.rejectedObservations;
@@ -568,11 +730,14 @@ export const collectClaudeResult = Effect.gen(function* () {
   const truncationWarning = observationsTruncated
     ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;
+  const lineage = reconcileClaudeLineage(rows, declaredChildren);
   return {
     observationCompleteness: claudeObservationCompleteness(rejectedObservations, observationsTruncated),
     observations,
-    rows,
-    warnings: [warning, observationWarning, oversizedWarning, truncationWarning].filter((value) => value !== null),
+    rows: lineage.rows,
+    warnings: [warning, observationWarning, oversizedWarning, truncationWarning, ...lineage.warnings].filter(
+      (value) => value !== null,
+    ),
   };
 });
 

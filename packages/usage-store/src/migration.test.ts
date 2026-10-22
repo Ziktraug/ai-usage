@@ -8,6 +8,8 @@ import { completeSkillObservationCollection } from '@ai-usage/report-core/skill-
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
+  queryClaudeDesktopSessions,
+  queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
   querySkillObservations,
@@ -17,6 +19,8 @@ import {
 } from './reader';
 import { SERVED_REPORT_PROJECTION_SCHEMA_VERSION } from './served-revision';
 import {
+  importClaudeDesktopSessions,
+  importExecutorObservations,
   importLocalRows,
   importProviderQuotaBatch,
   importSkillObservations,
@@ -38,12 +42,20 @@ interface SchemaObject {
 }
 
 const durableTables = [
+  'checkout_status_observations',
+  'executor_observations',
+  'claude_desktop_collection_state',
+  'claude_desktop_sessions',
+  'claude_desktop_turn_declarations',
+  'jira_issue_observations',
   'provider_quota_observations',
+  'pull_request_observations',
   'served_report_revisions',
   'skill_observation_collection_state',
   'skill_observations',
   'usage_local_machine',
   'usage_rows',
+  'work_fact_run_state',
 ] as const;
 
 const readUserVersion = (db: Database): number =>
@@ -423,6 +435,395 @@ describe('usage-store forward migration', () => {
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
     expect(read.skipped).toBe(0);
     expect(read.observations.map(({ observation }) => observation.skillName)).toEqual(['write-a-skill']);
+  });
+
+  test('adds the executor observation table to a current-version store without bumping user_version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-executor-observation-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    beforeMigration.exec('DROP TABLE executor_observations;');
+    expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    beforeMigration.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const observation = {
+      authEvidence: 'codex login status exit 0 (output mentions "Logged in")',
+      authState: 'logged-in',
+      binaryPath: '/usr/bin/codex',
+      harness: 'codex',
+      machineId: 'machine-a',
+      observedAt: '2026-10-21T21:00:00.000Z',
+      outcome: 'observed',
+      version: 'codex-cli 0.163.0',
+    };
+    const imported = await Effect.runPromise(
+      importExecutorObservations({
+        dbPath,
+        observations: [
+          ...Array.from({ length: 12 }, (_, index) => ({
+            ...observation,
+            observedAt: new Date(Date.parse(observation.observedAt) + index * 60_000).toISOString(),
+          })),
+          { ...observation, harness: 'claude-code', binaryPath: '/usr/bin/claude', version: '2.1.303 (Claude Code)' },
+          { ...observation, harness: 'cursor' },
+        ],
+      }),
+    );
+    expect(imported).toEqual({ inserted: 13, pruned: 2, rejected: 1 });
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const retained = migrated
+      .query('SELECT harness, COUNT(*) AS count FROM executor_observations GROUP BY harness ORDER BY harness')
+      .all();
+    expect(retained).toEqual([
+      { count: 1, harness: 'claude-code' },
+      { count: 10, harness: 'codex' },
+    ]);
+    // A row that fails re-validation is counted, not served.
+    migrated.close(true);
+    const corrupting = new Database(dbPath, { create: false, readwrite: true });
+    corrupting.exec(`
+      INSERT INTO executor_observations (machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, outcome)
+      VALUES ('machine-b', 'codex', 'not-a-time', NULL, NULL, 'unknown', 'manual row', 'invalid');
+    `);
+    corrupting.close(true);
+
+    const latest = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(latest.truncated).toBe(false);
+    expect(latest.skipped).toBe(1);
+    expect(latest.observations.map(({ harness, observedAt }) => [harness, observedAt])).toEqual([
+      ['claude-code', '2026-10-21T21:00:00.000Z'],
+      ['codex', '2026-10-21T21:11:00.000Z'],
+    ]);
+    expect(await Effect.runPromise(queryLatestExecutorObservations({ dbPath, machineId: 'machine-b' }))).toEqual({
+      observations: [],
+      skipped: 1,
+      truncated: false,
+    });
+    // Observations qualify routing; they are not report data and never request a publication.
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
+  test('adds the auth_method column to an executor_observations table written before it, without bumping user_version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-executor-auth-method-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    // The table as the first implementation created it, with one row from that time.
+    const before = new Database(dbPath, { create: false, readwrite: true });
+    before.exec(`
+      DROP TABLE executor_observations;
+      CREATE TABLE executor_observations (
+        id INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL,
+        harness TEXT NOT NULL CHECK (harness IN ('claude-code', 'codex')),
+        observed_at TEXT NOT NULL,
+        binary_path TEXT,
+        version TEXT,
+        auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
+        auth_evidence TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
+      );
+      INSERT INTO executor_observations (machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, outcome)
+      VALUES ('machine-a', 'codex', '2026-10-21T20:00:00.000Z', '/usr/bin/codex', 'codex-cli 0.163.0', 'logged-in', 'codex login status exit 0', 'observed');
+    `);
+    const columnsBefore = before.query('PRAGMA table_info(executor_observations)').all() as { name: string }[];
+    expect(columnsBefore.map(({ name }) => name)).not.toContain('auth_method');
+    before.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const columns = migrated.query('PRAGMA table_info(executor_observations)').all() as { name: string }[];
+    expect(columns.map(({ name }) => name)).toContain('auth_method');
+    migrated.close(true);
+
+    // The pre-column row reads as "no method"; a new row carries the method it observed.
+    const imported = await Effect.runPromise(
+      importExecutorObservations({
+        dbPath,
+        observations: [
+          {
+            authEvidence: 'claude auth status exit 0 loggedIn=true authMethod=api-key',
+            authMethod: 'api-key',
+            authState: 'logged-in',
+            binaryPath: '/usr/bin/claude',
+            harness: 'claude-code',
+            machineId: 'machine-a',
+            observedAt: '2026-10-21T21:00:00.000Z',
+            outcome: 'observed',
+            version: '2.1.303 (Claude Code)',
+          },
+        ],
+      }),
+    );
+    expect(imported).toEqual({ inserted: 1, pruned: 0, rejected: 0 });
+    const latest = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(latest.skipped).toBe(0);
+    expect(latest.observations.map(({ harness, authMethod }) => [harness, authMethod])).toEqual([
+      ['claude-code', 'api-key'],
+      ['codex', null],
+    ]);
+    // Re-opening is idempotent and the store generation never moved.
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
+  test('adds the account_fingerprint column (ADR 0057) under the same user_version; older rows read as none', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-executor-fingerprint-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const observed = {
+      authEvidence: 'claude auth status exit 0 loggedIn=true authMethod=claude.ai',
+      authMethod: 'claude.ai',
+      authState: 'logged-in',
+      binaryPath: '/usr/bin/claude',
+      harness: 'claude-code',
+      machineId: 'machine-a',
+      observedAt: '2026-10-22T08:00:00.000Z',
+      outcome: 'observed',
+      version: '2.1.306 (Claude Code)',
+    } as const;
+
+    // The table as lot R created it (with auth_method, without account_fingerprint), with one row.
+    const before = new Database(dbPath, { create: false, readwrite: true });
+    before.exec(`
+      DROP TABLE executor_observations;
+      CREATE TABLE executor_observations (
+        id INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL,
+        harness TEXT NOT NULL CHECK (harness IN ('claude-code', 'codex')),
+        observed_at TEXT NOT NULL,
+        binary_path TEXT,
+        version TEXT,
+        auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
+        auth_evidence TEXT NOT NULL,
+        auth_method TEXT,
+        outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
+      );
+      INSERT INTO executor_observations (machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method, outcome)
+      VALUES ('machine-a', 'claude-code', '2026-10-22T07:00:00.000Z', '/usr/bin/claude', '2.1.306 (Claude Code)', 'logged-in', 'claude auth status exit 0 loggedIn=true', 'claude.ai', 'observed');
+    `);
+    before.close(true);
+
+    // A query-only reader that meets the older table reads "no fingerprint" instead of failing.
+    const unmigrated = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(unmigrated.observations).toHaveLength(1);
+    expect(unmigrated.observations[0] && 'accountFingerprint' in unmigrated.observations[0]).toBe(false);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const columns = migrated.query('PRAGMA table_info(executor_observations)').all() as { name: string }[];
+    expect(columns.map(({ name }) => name)).toContain('account_fingerprint');
+    migrated.close(true);
+
+    expect(
+      await Effect.runPromise(
+        importExecutorObservations({
+          dbPath,
+          observations: [
+            { ...observed, accountFingerprint: '0123456789abcdef' },
+            { ...observed, accountFingerprint: 'NOT-A-FINGERPRINT', machineId: 'machine-b' },
+          ],
+        }),
+      ),
+    ).toEqual({ inserted: 1, pruned: 0, rejected: 1 });
+    const latest = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(latest.skipped).toBe(0);
+    expect(latest.observations).toEqual([{ ...observed, accountFingerprint: '0123456789abcdef' }]);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
+  test('adds the Claude Desktop session family to a populated store already on the current version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-claude-desktop-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const machine = { id: 'desktop-legacy-machine', label: 'Desktop legacy machine' };
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine,
+        rows: [
+          {
+            ...normalizeUsageRow({
+              calls: 1,
+              cost: actualCost(null),
+              date: new Date('2026-10-01T08:00:00.000Z'),
+              durationMs: 1000,
+              endDate: new Date('2026-10-01T08:01:00.000Z'),
+              harness: 'Claude Code',
+              model: 'claude-sonnet-4-6',
+              name: 'Desktop legacy session',
+              project: 'ai-usage',
+              provider: 'Claude sub',
+              tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+            }),
+            source: {
+              harnessKey: 'claude',
+              sourcePath: '/home/alex/Projects/ai-usage',
+              sourceSessionId: 'desktop-legacy-session',
+            },
+          },
+        ],
+      }),
+    );
+
+    // A store written before this family existed carries the current user_version (4), so
+    // absence of the tables is the only available signal, exactly as for skill observations.
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    const countsBefore = readCounts(beforeMigration);
+    const metadataBefore = readMetadata(beforeMigration);
+    beforeMigration.exec('DROP TABLE claude_desktop_sessions;');
+    beforeMigration.exec('DROP TABLE claude_desktop_collection_state;');
+    beforeMigration.exec('DROP TABLE claude_desktop_turn_declarations;');
+    expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    beforeMigration.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(readCounts(migrated)).toEqual(countsBefore);
+    // Adding the family moves no durable data and advances no generation.
+    expect(readMetadata(migrated)).toEqual(metadataBefore);
+    const indexes = migrated
+      .query(
+        "SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'claude_desktop_sessions' ORDER BY name",
+      )
+      .all() as { name: string }[];
+    migrated.close(true);
+    expect(indexes.map(({ name }) => name)).toEqual([
+      'idx_claude_desktop_sessions_activity',
+      'idx_claude_desktop_sessions_cli',
+      'idx_claude_desktop_sessions_identity',
+    ]);
+
+    const imported = await Effect.runPromise(
+      importClaudeDesktopSessions({
+        completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+        dbPath,
+        machineId: machine.id,
+        observations: [
+          {
+            accountDirectory: 'account',
+            archived: false,
+            branch: null,
+            cliSessionId: 'desktop-legacy-session',
+            completedTurns: null,
+            createdAt: '2026-10-01T08:00:00.000Z',
+            cwd: '/home/alex/Projects/ai-usage',
+            declaredPullRequests: [],
+            desktopSessionId: 'local_legacy',
+            effort: null,
+            fileModifiedAt: '2026-10-01T08:01:00.000Z',
+            filePath: '.config/Claude/claude-code-sessions/account/org/local_legacy.json',
+            format: 'claude-desktop-session-v1',
+            lastActivityAt: '2026-10-01T08:01:00.000Z',
+            lastTurnReport: null,
+            machineId: machine.id,
+            model: null,
+            observedAt: '2026-10-01T08:02:00.000Z',
+            openSuggestions: [],
+            organizationDirectory: 'org',
+            originCwd: null,
+            priorCliSessionIds: [],
+            resolvedSuggestions: {},
+            sideSessionNotes: [],
+            sourceBranch: null,
+            spawnedFrom: null,
+            title: 'Fixture: legacy',
+            titleSource: 'auto',
+            turnSummary: null,
+            unsupportedReason: null,
+            worktreePath: null,
+            wrapUpDescription: null,
+            writtenBranches: [],
+          },
+        ],
+      }),
+    );
+    expect(imported).toEqual({ inserted: 1, skipped: 0, unchanged: 0, updated: 0 });
+    const read = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath, machineId: machine.id }));
+    expect(read.skipped).toBe(0);
+    expect(read.observations.map(({ desktopSessionId }) => desktopSessionId)).toEqual(['local_legacy']);
+  });
+
+  test('adds the declaration history and the message time to a Desktop family written before them, without bumping user_version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-desktop-history-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    await Effect.runPromise(
+      importClaudeDesktopSessions({
+        completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [
+          {
+            accountDirectory: 'account',
+            archived: false,
+            cliSessionId: 'cli-before-history',
+            createdAt: '2026-10-01T08:00:00.000Z',
+            cwd: '/home/fixture/work/project',
+            desktopSessionId: 'local_before_history',
+            fileModifiedAt: '2026-10-01T09:00:00.000Z',
+            filePath: '.config/Claude/claude-code-sessions/account/org/local_before_history.json',
+            format: 'claude-desktop-session-v1',
+            lastActivityAt: '2026-10-01T09:00:00.000Z',
+            machineId: 'machine-a',
+            observedAt: '2026-10-01T09:01:00.000Z',
+            organizationDirectory: 'org',
+            title: 'Before the history',
+            titleSource: 'auto',
+            turnSummary: {
+              detail: 'Stopped.',
+              needsAction: 'Which?',
+              status: 'blocked',
+              summarizesUuid: 'uuid-before',
+            },
+          },
+        ],
+      }),
+    );
+
+    // The family as ADR 0050 created it: no history table, no message-time column.
+    const before = new Database(dbPath, { create: false, readwrite: true });
+    before.exec('DROP TABLE claude_desktop_turn_declarations;');
+    before.exec('ALTER TABLE claude_desktop_sessions DROP COLUMN latest_user_frame_at;');
+    const countsBefore = before.query('SELECT COUNT(*) AS count FROM claude_desktop_sessions').get() as {
+      count: number;
+    };
+    before.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const columns = migrated.query('PRAGMA table_info(claude_desktop_sessions)').all() as { name: string }[];
+    expect(columns.map(({ name }) => name)).toContain('latest_user_frame_at');
+    const history = migrated
+      .query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'claude_desktop_turn_declarations'")
+      .get();
+    expect(history).not.toBeNull();
+    expect(migrated.query('SELECT COUNT(*) AS count FROM claude_desktop_sessions').get()).toEqual(countsBefore);
+    migrated.close(true);
+    // The older row reads as "no message recorded"; the migration advances no generation.
+    const read = await Effect.runPromise(queryClaudeDesktopSessions({ dbPath }));
+    expect(read.observations.map((observation) => observation.latestUserFrameAt)).toEqual([null]);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
   });
 
   test('migrates a populated schema-3 store to schema 4 by adding the replication outbox and refuses a newer schema', async () => {

@@ -39,10 +39,20 @@
     "./served-revision": "./src/served-revision.ts",
     "./snapshot": "./src/snapshot.ts",
     "./source-control": "./src/source-control.ts",
+    "./test-fixtures/claude-desktop-sessions": "./src/claude-desktop-sessions.test-fixture.ts",
     "./test-fixtures/local-time-row": "./src/local-time-row.test-fixture.ts",
     "./time-zone": "./src/time-zone.ts",
     "./types": "./src/types.ts",
-    "./usage-row": "./src/usage-row.ts"
+    "./usage-row": "./src/usage-row.ts",
+    "./work-attention": "./src/work-attention.ts",
+    "./work-attention-facts": "./src/work-attention-facts.ts",
+    "./work-attention-interpretation": "./src/work-attention-interpretation.ts",
+    "./work-attention-native": "./src/work-attention-native.ts",
+    "./work-attempts": "./src/work-attempts.ts",
+    "./work-attempts-vocabulary": "./src/work-attempts-vocabulary.ts",
+    "./work-executors": "./src/work-executors.ts",
+    "./work-routing": "./src/work-routing.ts",
+    "./work-routing-vocabulary": "./src/work-routing-vocabulary.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

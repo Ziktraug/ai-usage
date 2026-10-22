@@ -3,10 +3,38 @@ import type { CampaignLabelOverride } from './campaign-label';
 import type { ProjectGroupConfig } from './project-group';
 import type { SourcePolicyOverrides } from './source-control';
 import type { UsageRowWithOptionalSource } from './types';
+import type { RoutingConfig } from './work-executors';
 
 export interface ProjectAliasEntry {
   match: string[];
   name: string;
+}
+
+/** One `gh` login whose stored token answers pull request reads for one repository owner. */
+export interface AiUsageGitHubAccountConfig {
+  ghUser: string;
+  host: 'github.com';
+  owner: string;
+}
+
+/**
+ * User-home only (ADR 0051). Absent means the pull request source runs through the CLI's active
+ * account whenever `gh` is installed; `enabled: false` records a disabled run instead.
+ */
+export interface AiUsageGitHubConfig {
+  accounts?: AiUsageGitHubAccountConfig[];
+  enabled?: boolean;
+}
+
+/**
+ * User-home only (ADR 0054). Absent means the Jira issue source runs through the Atlassian CLI's
+ * signed-in session whenever `acli` is installed; `enabled: false` records a disabled run instead.
+ * `site` names the Jira site the explicit keys belong to, for the operator's record; this version
+ * does not pass it to the CLI.
+ */
+export interface AiUsageJiraConfig {
+  enabled?: boolean;
+  site?: string;
 }
 
 export interface AiUsageConfig {
@@ -19,8 +47,12 @@ export interface AiUsageConfig {
     maxSessionSpanMs?: number;
     user?: string;
   };
+  github?: AiUsageGitHubConfig;
+  jira?: AiUsageJiraConfig;
   projectAliases?: ProjectAliasEntry[];
   projectGroups?: ProjectGroupConfig[];
+  /** Home-only review routing declarations (`routing.executors[]`); entries are parsed by `parseExecutorDeclarations`. */
+  routing?: RoutingConfig;
   skills?: unknown;
   sourcePolicies?: SourcePolicyOverrides;
 }

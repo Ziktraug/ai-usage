@@ -12,6 +12,9 @@ import {
   type UsageEngineMergePreviewOutput,
   type UsageEnginePublicationOutput,
   type UsageEngineReplicationStatusOutput,
+  type UsageEngineReviewAttemptOutput,
+  type UsageEngineReviewReservationReleaseOutput,
+  type UsageEngineRoutingQualificationOutput,
   usageEngineReportSourceIdsFor,
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineRuntimeDependencies } from './runtime';
@@ -24,6 +27,9 @@ export type UsageEngineCommandOutput =
   | UsageEngineMergePreviewOutput
   | UsageEnginePublicationOutput
   | UsageEngineReplicationStatusOutput
+  | UsageEngineReviewAttemptOutput
+  | UsageEngineReviewReservationReleaseOutput
+  | UsageEngineRoutingQualificationOutput
   | undefined;
 
 interface RuntimeCommandExecutorState {
@@ -127,6 +133,29 @@ export const createRuntimeCommandExecutor = (
       case 'set-campaign-label-override':
         await dependencies.mutation.setCampaignLabelOverride(command, signal);
         return;
+      case 'start-review-attempt': {
+        if (!dependencies.reviewAttempts) {
+          throw new Error('Review attempts are not available in this engine composition.');
+        }
+        return await dependencies.reviewAttempts.start(command, signal);
+      }
+      case 'release-review-reservation': {
+        if (!dependencies.reviewAttempts) {
+          throw new Error('Review attempts are not available in this engine composition.');
+        }
+        return await dependencies.reviewAttempts.releaseReservation(command, signal);
+      }
+      case 'qualify-review-routing': {
+        if (!dependencies.routingQualification) {
+          throw new Error('Routing qualification is not available in this engine composition.');
+        }
+        // Fresh by construction (ADR 0057): the executors are observed now through their own
+        // source, so its policy, run state and store write stay the source's; then the decision.
+        const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+        const snapshot = await runSourceSoftly('executors.capabilities');
+        const source = snapshot.sources.find(({ id }) => id === 'executors.capabilities') ?? null;
+        return await dependencies.routingQualification.qualify(command, { source, startedAt }, signal);
+      }
       case 'collect-fresh-quota':
         return await collectSources([...providerUsageSourceIds]);
       case 'import-cursor': {

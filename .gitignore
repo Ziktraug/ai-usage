@@ -10,6 +10,7 @@ styled-system
 ai-usage-reports/
 .ai-usage/
 .agent-memory/
+.agent-bin/
 apps/web/playwright-report/
 apps/web/test-results/
 logs/

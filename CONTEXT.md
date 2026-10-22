@@ -91,17 +91,22 @@ A session launched from another session, such as a Claude sub-agent, a Codex spa
 _Avoid_: subagent run, agent instance, worker
 
 **Session analysis**:
-A generated, immutable account of one Session snapshot: sourced objectives,
-attempts, observations, decisions and outcomes, with explicit coverage limits.
-Its revision is independent from a usage report revision. It remains a local
-interpretation in a separate searchable corpus, not accepted Memory or a
-Campaign-wide account. Schema and reference validation do not prove truth.
-_Avoid_: Memory item, accepted guidance, transcript, productivity score
+On-demand inspection of a Session through its native harness history: rounds,
+metrics, tool activity and timeline with the reader's explicit coverage limits.
+This remains available after retirement of generated Session accounts.
+_Avoid_: generated account, accepted guidance, productivity score
 
-**Work episode**:
-An interpreted unit of work within a Session analysis, with an objective,
-significant attempts, a qualified outcome and evidence references. It is not
-the harness-derived Round, an observed Campaign or a durable Work thread.
+**Historical Session account**:
+An immutable generated interpretation retained from the retired Session
+distillation feature. Existing content, source references and promotion
+provenance remain stored; the account library and generation flow are withdrawn
+under ADR 0049. Historical interpretations do not become accepted Memory.
+_Avoid_: native Session analysis, accepted guidance, current library
+
+**Work episode (historical)**:
+An interpreted unit within a historical Session account, retaining its objective,
+attempts, qualified outcome and evidence references. It is not the
+harness-derived Round, an observed Campaign or a durable Work thread.
 _Avoid_: Round, task, Work thread, execution grouping
 
 **Campaign**:
@@ -117,6 +122,48 @@ _Avoid_: work thread, inferred task, active agent fleet
 The declared way a session was started, with three values: human, delegated, or automated review. It is absent when the harness did not declare one. An absent attribute is expressed by provenance, never by a sentinel value in its own domain.
 An automated review with a declared parent contributes to that parent's campaign. A review shape that declares no parent remains a standalone one-session review campaign; a declared but unresolved parent remains an integrity error.
 _Avoid_: unknown origin, origin unknown, undeclared as a category
+
+**Native outcome**:
+What a Session declared about itself at its last turn end, as its harness
+recorded it: a status (blocked, completed, review ready), the action it asked
+for, and short reports. It is dated by the Session and read later by this
+product, so it is a declaration from that moment, never the Session's current
+state; nothing newer than the declaration is implied by showing it.
+_Avoid_: current state, live status, session state
+
+**Fact**:
+One dated observation of one source with its coverage: a native outcome, a
+declared or observed pull request, a checkout status. Facts are stored and
+re-validated on read; they carry provenance and never a verdict.
+_Avoid_: finding, verdict, status, truth
+
+**Interpretation**:
+A reading computed on request that confronts a Session's declarations with the
+facts gathered around it and names its own uncertainty, such as "request open"
+or "possibly answered elsewhere". It is never persisted and never shown as a
+fact; a changed rule re-reads the same facts differently. An interpretation
+never closes a request by inference (ADR 0056); only a dated, explicit record
+of the harness does: a message the person wrote to the session after the
+question, the session archived, or a session started from it after the
+question that declared itself completed. A later pull request, or work
+continued in a linked session without a completion, makes the root an older
+declaration to reconsider, and the question stays the operator's. What may
+reconsider a request through a pull request is narrow: a pull request a child
+session listed from another checkout while active after the question, or a
+GitHub observation showing a pull request merged after it. The root's own
+listed pull request mirrors the branch of the checkout it sits in and counts
+only through such a GitHub observation dated after the question, never through
+the listing itself.
+_Avoid_: fact, inferred state, conclusion, task status
+
+**Proposal**:
+A suggestion a Session's harness offered for a follow-up, with its title and a
+short synopsis; the brief itself is never collected. "Started" and "dismissed"
+are observed states without a recorded reason. An offer past its expiry, or
+followed by a later message from the person, is no longer presented as
+pending. A proposal is not a task, has no owner and no deadline, and is never
+ranked above a question a person was asked.
+_Avoid_: task, todo, backlog item, pending action
 
 **Collected session**:
 An intermediate collector result that preserves harness-specific local history details before normalization into a usage row. It is the seam used by collectors that need shared row conversion.

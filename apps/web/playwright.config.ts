@@ -13,9 +13,16 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 export default defineConfig({
   expect: { timeout: 5000 },
   fullyParallel: true,
+  // Warm the dev server's module graph before the first test; see the setup file.
+  globalSetup: './e2e/warm-dev-server.setup.ts',
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
-  testIgnore: ['demo-isolation.spec.ts', 'production-report.spec.ts'],
+  testIgnore: [
+    'demo-isolation.spec.ts',
+    'production-report.spec.ts',
+    'work-attempt-production.spec.ts',
+    'work-production.spec.ts',
+  ],
   use: {
     baseURL: 'http://127.0.0.1:4174',
     ...devices['Desktop Chrome'],

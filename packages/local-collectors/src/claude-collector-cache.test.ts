@@ -3,6 +3,9 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } fro
 import os from 'node:os';
 import path from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { serializeUsageRow } from '@ai-usage/report-core/report-data';
+import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
+import { projectSessionPage } from '@ai-usage/report-core/session-query';
 import { MAX_SKILL_OBSERVATIONS_PER_SESSION } from '@ai-usage/report-core/skill-observation';
 import { Effect } from 'effect';
 import { collectorCachePath } from './collector-cache';
@@ -31,6 +34,26 @@ const assistant = (id: string, inputTokens = 10) => ({
     usage: { input_tokens: inputTokens, output_tokens: 5, cache_read_input_tokens: 2, cache_creation_input_tokens: 1 },
   },
 });
+
+const launch = (parent: string, child: string, tool = 'Agent'): unknown[] => {
+  const event = assistant(parent);
+  const toolUseId = `launch-${parent}-${child}`;
+  return [
+    {
+      ...event,
+      message: {
+        ...event.message,
+        content: [{ type: 'tool_use', id: toolUseId, name: tool, input: { to: child, description: 'Review fixture' } }],
+      },
+    },
+    {
+      type: 'user',
+      timestamp: event.timestamp,
+      toolUseResult: { agentId: child },
+      message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'Launched' }] },
+    },
+  ];
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -84,6 +107,189 @@ const fixture = async () => {
 };
 
 describe('Claude per-file collector cache', () => {
+  test.each([
+    'Agent',
+    'Task',
+  ])('links an explicit %s launch on cold and warm scans without caching derived parents', async (tool) => {
+    const { alpha, directory, cachePath, reads, run } = await fixture();
+    const child = path.join(directory, 'agent-child.jsonl');
+    await writeFile(alpha, jsonl(...launch('alpha', 'child', tool)));
+    await writeFile(child, jsonl(assistant('child')));
+    const cold = await run();
+    expect(cold.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source).toMatchObject({
+      harnessKey: 'claude',
+      parentSourceSessionId: 'alpha',
+    });
+    expect(cold.warnings).toEqual([]);
+    const serialized = normalizeSessionLineage(cold.rows).map(serializeUsageRow);
+    expect(serialized.find((row) => row.source?.sourceSessionId === 'agent-child')).toMatchObject({
+      origin: 'subagent',
+      subagent: true,
+      source: { parentSourceSessionId: 'alpha', rootSourceSessionId: 'alpha' },
+    });
+    const page = projectSessionPage(serialized, {
+      cursor: null,
+      filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+      pageSize: 10,
+      range: { from: null, to: null },
+      revision: 'collector-lineage-fixture',
+      sort: [{ desc: true, id: 'date' }],
+    });
+    expect(page).toMatchObject({ itemCount: 2, sessionCount: 3 });
+    expect(page.items.find((item) => item.row.source?.sourceSessionId === 'alpha')?.row.campaignTotalCount).toBe(2);
+    const cache = await readCache(cachePath);
+    expect(record(cache.files[alpha]).declaredChildSourceSessionIds).toEqual(['agent-child']);
+    expect(record(cache.files[child]).rows).toEqual([
+      expect.objectContaining({ source: expect.not.objectContaining({ parentSourceSessionId: 'alpha' }) }),
+    ]);
+    reads.clear();
+    expect(await run()).toEqual(cold);
+    expect(reads.size).toBe(0);
+
+    await rm(alpha);
+    const orphan = await run();
+    expect(
+      orphan.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
+    ).toBeUndefined();
+    expect(reads.size).toBe(0);
+  });
+
+  test('invalidates version 15 entries to recover previously dropped launches', async () => {
+    const { alpha, beta, directory, cachePath, reads, run } = await fixture();
+    const child = path.join(directory, 'agent-child.jsonl');
+    await writeFile(alpha, jsonl(...launch('alpha', 'child')));
+    await writeFile(child, jsonl(assistant('child')));
+    const cold = await run();
+    const cache = await readCache(cachePath);
+    cache.version = 15;
+    await writeFile(cachePath, JSON.stringify(cache));
+    reads.clear();
+    expect(await run()).toEqual(cold);
+    expect([...reads.keys()].sort()).toEqual([alpha, beta, child].sort());
+    expect((await readCache(cachePath)).version).toBe(16);
+  });
+
+  test('keeps competing declarations unresolved on cold and warm scans, then rechecks the remaining evidence', async () => {
+    const { alpha, beta, directory, reads, run } = await fixture();
+    await writeFile(alpha, jsonl(...launch('alpha', 'child')));
+    await writeFile(beta, jsonl(...launch('beta', 'child')));
+    await writeFile(path.join(directory, 'agent-child.jsonl'), jsonl(assistant('child')));
+    const cold = await run();
+    expect(
+      cold.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
+    ).toBeUndefined();
+    expect(cold.warnings).toEqual([
+      expect.objectContaining({ operation: 'claude.lineage-conflict', affectedSessions: 1 }),
+    ]);
+    reads.clear();
+    expect(await run()).toEqual(cold);
+    expect(reads.size).toBe(0);
+    await rm(beta);
+    const resolved = await run();
+    expect(
+      resolved.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
+    ).toBe('alpha');
+    expect(resolved.warnings).toEqual([]);
+    expect(reads.size).toBe(0);
+  });
+
+  test('preserves a direct parent when a different session claims the launch and reports a subsequently missing parent', async () => {
+    const { alpha, beta, directory, reads, run } = await fixture();
+    await writeFile(alpha, jsonl(...launch('alpha', 'child')));
+    await writeFile(path.join(directory, 'agent-child.jsonl'), jsonl({ ...assistant('child'), sessionId: 'beta' }));
+    const cold = await run();
+    expect(cold.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId).toBe(
+      'beta',
+    );
+    expect(cold.warnings).toEqual([
+      expect.objectContaining({ operation: 'claude.lineage-conflict', affectedSessions: 1 }),
+    ]);
+    reads.clear();
+    expect(await run()).toEqual(cold);
+    expect(reads.size).toBe(0);
+    await rm(beta);
+    const missing = await run();
+    expect(
+      missing.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
+    ).toBe('beta');
+    expect(missing.warnings.map((warning) => warning.operation)).toEqual([
+      'claude.lineage-unresolved',
+      'claude.lineage-conflict',
+    ]);
+    expect(await run()).toEqual(missing);
+    expect(reads.size).toBe(0);
+  });
+
+  test('reports a missing declared child until it is collected, reusing the parent cache', async () => {
+    const { alpha, directory, reads, run } = await fixture();
+    await writeFile(alpha, jsonl(...launch('alpha', 'child')));
+    const missing = await run();
+    expect(missing.warnings).toEqual([
+      expect.objectContaining({ operation: 'claude.lineage-unresolved', affectedSessions: 1 }),
+    ]);
+    reads.clear();
+    expect(await run()).toEqual(missing);
+    expect(reads.size).toBe(0);
+    const child = path.join(directory, 'agent-child.jsonl');
+    await writeFile(child, jsonl(assistant('child')));
+    const resolved = await run();
+    expect(
+      resolved.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
+    ).toBe('alpha');
+    expect(resolved.warnings).toEqual([]);
+    expect(reads).toEqual(new Map([[child, 1]]));
+  });
+
+  test('keeps incomplete launch-result coverage visible on warm scans', async () => {
+    const { alpha, reads, run } = await fixture();
+    await writeFile(alpha, jsonl(launch('alpha', 'child')[0]));
+    const cold = await run();
+    expect(cold.warnings).toEqual([
+      expect.objectContaining({ operation: 'claude.lineage-partial', affectedSessions: 1 }),
+    ]);
+    reads.clear();
+    expect(await run()).toEqual(cold);
+    expect(reads.size).toBe(0);
+  });
+
+  test('does not infer parentage from a SendMessage recipient or coincident timestamps and titles', async () => {
+    const { alpha, directory, reads, run } = await fixture();
+    await writeFile(alpha, jsonl(...launch('same-title', 'child', 'SendMessage')));
+    await writeFile(path.join(directory, 'agent-child.jsonl'), jsonl(assistant('same-title')));
+    const cold = await run();
+    expect(
+      cold.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
+    ).toBeUndefined();
+    expect(cold.warnings).toEqual([]);
+    reads.clear();
+    expect(await run()).toEqual(cold);
+    expect(reads.size).toBe(0);
+  });
+
+  test('rejects cyclic declarations and duplicate session identities', async () => {
+    const { directory, reads, run } = await fixture();
+    await writeFile(path.join(directory, 'agent-left.jsonl'), jsonl(...launch('left', 'right')));
+    await writeFile(path.join(directory, 'agent-right.jsonl'), jsonl(...launch('right', 'left')));
+    const cold = await run();
+    expect(cold.rows.filter((row) => row.subagent).every((row) => !row.source?.parentSourceSessionId)).toBe(true);
+    expect(cold.warnings).toEqual([
+      expect.objectContaining({ operation: 'claude.lineage-conflict', affectedSessions: 2 }),
+    ]);
+    reads.clear();
+    expect(await run()).toEqual(cold);
+    expect(reads.size).toBe(0);
+    const duplicateDirectory = path.join(directory, 'duplicate');
+    await mkdir(duplicateDirectory);
+    await writeFile(path.join(duplicateDirectory, 'agent-right.jsonl'), jsonl(assistant('duplicate')));
+    const duplicate = await run();
+    expect(
+      duplicate.rows
+        .filter((row) => row.source?.sourceSessionId === 'agent-right')
+        .every((row) => !row.source?.parentSourceSessionId),
+    ).toBe(true);
+    expect(duplicate.warnings.some((warning) => warning.operation === 'claude.lineage-conflict')).toBe(true);
+  });
+
   test('parses every transcript on a cold run and writes one entry per file', async () => {
     const { alpha, beta, cachePath, directory, reads, run } = await fixture();
     const empty = path.join(directory, 'empty.jsonl');
@@ -98,7 +304,7 @@ describe('Claude per-file collector cache', () => {
     );
     expect(result.rows).toHaveLength(2);
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(15);
+    expect(cache.version).toBe(16);
     expect(cache.provider).toBe('Claude sub');
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
     expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(
@@ -219,7 +425,7 @@ describe('Claude per-file collector cache', () => {
     expect(Object.keys((await readCache(cachePath)).files)).toEqual([beta]);
   });
 
-  test('ignores version 14 caches and rewrites them as version 15 after a full parse', async () => {
+  test('ignores version 14 caches and rewrites them as version 16 after a full parse', async () => {
     const { alpha, beta, cachePath, reads, run } = await fixture();
     const cold = await run();
     await writeFile(
@@ -235,7 +441,7 @@ describe('Claude per-file collector cache', () => {
       ]),
     );
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(15);
+    expect(cache.version).toBe(16);
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
   });
 
@@ -292,6 +498,8 @@ describe('Claude per-file collector cache', () => {
     { field: 'rejectedObservations', value: -1 },
     { field: 'oversizedLines', value: -1 },
     { field: 'observationsTruncated', value: 'false' },
+    { field: 'declaredChildSourceSessionIds', value: [null] },
+    { field: 'lineageIncomplete', value: null },
     { field: 'size', value: -1 },
     { field: 'mtimeMs', value: 'invalid' },
   ])('re-parses only the entry with invalid $field', async ({ field, value }) => {
