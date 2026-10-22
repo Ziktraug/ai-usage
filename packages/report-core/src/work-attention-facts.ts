@@ -273,13 +273,15 @@ export const explicitJiraKeys = (
 
 /**
  * The fact one observation yields for one root. `newCommentsSince` counts the kept comments
- * created after the family's last activity (at most the ten the observation holds); it is `null`
- * when the read failed, because the failure says nothing about the comments.
+ * created after `keyLastActivityAt` (at most the ten the observation holds): the latest activity
+ * on the key across every family that wrote it, which the read model computes, or the family's
+ * own when it is the only one. It is `null` when the read failed, because the failure says
+ * nothing about the comments.
  */
 export const jiraIssueFact = (
   observation: JiraIssueObservation,
   factId: string,
-  familyLastActivityAt: CanonicalInstant,
+  keyLastActivityAt: CanonicalInstant,
 ): JiraIssueFact => {
   const newestCommentAt = observation.comments.reduce<CanonicalInstant | null>(
     (newest, comment) => (newest === null || comment.createdAt > newest ? comment.createdAt : newest),
@@ -292,7 +294,7 @@ export const jiraIssueFact = (
     kind: 'jira-issue',
     newCommentsSince:
       observation.outcome === 'observed'
-        ? observation.comments.filter((comment) => comment.createdAt > familyLastActivityAt).length
+        ? observation.comments.filter((comment) => comment.createdAt > keyLastActivityAt).length
         : null,
     newestCommentAt,
     outcome: observation.outcome,
@@ -309,6 +311,13 @@ export const jiraIssueFact = (
   };
 };
 
+/** The latest activity on one Jira key across the families that wrote it, and which family it was. */
+export interface JiraKeyActivity {
+  readonly lastActivityAt: CanonicalInstant;
+  /** The title of the root whose family was last active on the key. */
+  readonly latestFamilyTitle: string;
+}
+
 export interface InterpretJiraFactsInput {
   /** The root's facts: the Jira facts to interpret and the pull request facts they are confronted with. */
   readonly facts: readonly WorkFact[];
@@ -316,6 +325,12 @@ export interface InterpretJiraFactsInput {
   readonly familyLastActivityAt: CanonicalInstant;
   /** How long an observation counts as current. Default 24 hours. */
   readonly freshMs?: number;
+  /**
+   * Per key, the latest activity across every family that wrote it (same machine). A key absent
+   * here was written by this family alone. Only the family whose activity is that latest one is
+   * asked to answer a reply; the others are told where the reply is carried.
+   */
+  readonly keyActivity?: ReadonlyMap<string, JiraKeyActivity>;
   readonly now: Date;
 }
 
@@ -399,7 +414,8 @@ const interpretJiraIssue = (
   const { observedAt } = fact.provenance;
   const results: WorkInterpretation[] = [];
   const arrived = fact.newCommentsSince ?? 0;
-  if (arrived > 0) {
+  const keyActivity = input.keyActivity?.get(fact.key);
+  if (arrived > 0 && (keyActivity === undefined || input.familyLastActivityAt >= keyActivity.lastActivityAt)) {
     // A comment that arrived is final, so a stale observation still establishes the arrival.
     results.push(
       interpretation(
@@ -407,6 +423,16 @@ const interpretJiraIssue = (
         [fact.id],
         `${String(arrived)} comment${arrived === 1 ? '' : 's'} arrived on ${fact.key} after this session family's last activity (${input.familyLastActivityAt}); no resumption observed.`,
         `You may have read them in Jira; this view cannot tell. Newest comment ${fact.newestCommentAt ?? 'undated'}, observed ${observedAt}.`,
+      ),
+    );
+  } else if (arrived > 0 && keyActivity !== undefined) {
+    // A later family relayed the key: the reply is theirs to answer, and this root only says so.
+    results.push(
+      interpretation(
+        'jira-reply-elsewhere',
+        [fact.id],
+        `${String(arrived)} comment${arrived === 1 ? '' : 's'} arrived on ${fact.key} after the latest activity on this key (${keyActivity.lastActivityAt}); the most recent family on this key is “${keyActivity.latestFamilyTitle}”, which carries the request.`,
+        `This family last worked on ${fact.key} at ${input.familyLastActivityAt}; whether the reply concerns it is not known. Newest comment ${fact.newestCommentAt ?? 'undated'}, observed ${observedAt}.`,
       ),
     );
   }
@@ -435,10 +461,13 @@ const interpretJiraIssue = (
 
 /**
  * Interprets the Jira facts of one root, in fact order, capped at the contract's interpretation
- * bound. A reply that arrived after the family's last activity is named without claiming it was
- * not read elsewhere; a To Do ticket beside an open or merged pull request is named as a
- * difference, not as an error; a failed read names its cause and the exact action when there is
- * one. Facts of other kinds are consulted (pull requests) but never interpreted here.
+ * bound. A reply that arrived after the latest activity on the key is named as a request only on
+ * the family that was last active on that key, without claiming it was not read elsewhere; an
+ * older family on the same key is told which family carries it (`jira-reply-elsewhere`), so a
+ * ticket relayed from branch to branch never leaves a permanent request on every family that
+ * once wrote it. A To Do ticket beside an open or merged pull request is named as a difference,
+ * not as an error; a failed read names its cause and the exact action when there is one. Facts
+ * of other kinds are consulted (pull requests) but never interpreted here.
  */
 export const interpretJiraFacts = (input: InterpretJiraFactsInput): WorkInterpretation[] => {
   const freshMs = input.freshMs ?? WORK_FACT_FRESHNESS_MS;

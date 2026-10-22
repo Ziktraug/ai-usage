@@ -23,6 +23,7 @@ import {
   explicitJiraKeys,
   interpretExternalFacts,
   interpretJiraFacts,
+  type JiraKeyActivity,
   jiraIssueFact,
   pullRequestFact,
 } from '@ai-usage/report-core/work-attention-facts';
@@ -61,7 +62,9 @@ import { Effect } from 'effect';
  *   receives the fact with the sharing named in its interpretation;
  * - a `jira-issue` observation joins a root when a member of its family wrote that key as a
  *   whole segment of a branch name (`explicitJiraKeys`, ADR 0054), on the same machine; a key in
- *   a title or a path never links one, and the same number on another project is another key;
+ *   a title or a path never links one, and the same number on another project is another key.
+ *   A reply counts as arrived only after the latest activity on the key across every family
+ *   that wrote it, and only the family last active on the key is asked to answer it;
  * - when the latest observation failed and an older successful one exists, both are attached:
  *   the dated state stays the last known one and the failure stays visible.
  *
@@ -236,15 +239,43 @@ const latestActivity = (group: RootGroup): CanonicalInstant =>
     .map((observation) => observation.lastActivityAt)
     .reduce((latest, current) => (current > latest ? current : latest));
 
+/** Per machine, per Jira key: the latest activity among every family that wrote the key, and whose it was. */
+type JiraKeyActivityIndex = ReadonlyMap<string, ReadonlyMap<string, JiraKeyActivity>>;
+
+/**
+ * Computed over every family of the read, hidden or not: a family the activity window leaves out
+ * may still be the one that last relayed a key, and a reply older than that activity is not new.
+ */
+const indexJiraKeyActivity = (groups: readonly RootGroup[]): JiraKeyActivityIndex => {
+  const index = new Map<string, Map<string, JiraKeyActivity>>();
+  for (const group of groups) {
+    const perMachine = index.get(group.root.machineId) ?? new Map<string, JiraKeyActivity>();
+    const lastActivityAt = latestActivity(group);
+    for (const key of familyJiraKeys(group)) {
+      const known = perMachine.get(key);
+      if (known === undefined || lastActivityAt > known.lastActivityAt) {
+        perMachine.set(key, { lastActivityAt, latestFamilyTitle: group.root.title });
+      }
+    }
+    index.set(group.root.machineId, perMachine);
+  }
+  return index;
+};
+
 interface ExternalFactIndex {
   readonly checkouts: ReadonlyMap<string, LatestWorkObservation<CheckoutStatusObservation>>;
   readonly jiraIssues: ReadonlyMap<string, LatestWorkObservation<JiraIssueObservation>>;
+  readonly jiraKeyActivity: JiraKeyActivityIndex;
   readonly pullRequests: ReadonlyMap<string, LatestWorkObservation<PullRequestObservation>>;
   /** Per machine, how many roots of the dataset have that checkout path in their family. */
   readonly rootsPerCheckout: ReadonlyMap<string, ReadonlyMap<string, number>>;
 }
 
-const indexExternalFacts = (facts: WorkAttentionExternalFacts, groups: readonly RootGroup[]): ExternalFactIndex => {
+const indexExternalFacts = (
+  facts: WorkAttentionExternalFacts,
+  groups: readonly RootGroup[],
+  jiraKeyActivity: JiraKeyActivityIndex,
+): ExternalFactIndex => {
   const pullRequests = new Map<string, LatestWorkObservation<PullRequestObservation>>();
   for (const item of facts.pullRequests) {
     const { latest } = item;
@@ -266,7 +297,7 @@ const indexExternalFacts = (facts: WorkAttentionExternalFacts, groups: readonly 
     }
     rootsPerCheckout.set(group.root.machineId, perMachine);
   }
-  return { checkouts, jiraIssues, pullRequests, rootsPerCheckout };
+  return { checkouts, jiraIssues, jiraKeyActivity, pullRequests, rootsPerCheckout };
 };
 
 /**
@@ -317,6 +348,7 @@ const externalFactsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[]
     }
   }
   const familyLastActivityAt = latestActivity(group);
+  const keyActivity = index.jiraKeyActivity.get(root.machineId);
   for (const key of familyJiraKeys(group)) {
     const item = index.jiraIssues.get(jiraIssueKey(root.machineId, key));
     if (item === undefined) {
@@ -327,7 +359,7 @@ const externalFactsOf = (group: RootGroup, index: ExternalFactIndex): WorkFact[]
         jiraIssueFact(
           observation,
           `${root.desktopSessionId}:jira:${observation.key}@${observation.observedAt}`,
-          familyLastActivityAt,
+          keyActivity?.get(key)?.lastActivityAt ?? familyLastActivityAt,
         ),
       );
     }
@@ -474,11 +506,12 @@ const DECLARATION_INTERPRETATION_KINDS = new Set<WorkInterpretation['kind']>([
 
 /**
  * The three interpreters meet here. Attention: a human request first, which a Jira reply that
- * arrived after the family's last activity also makes (nothing on this machine shows it was
- * read); else an external wait when GitHub showed a pull request awaiting someone else; else
- * what the declaration interpreter said (an optional lead, or nothing). The merged list leads
- * with the declaration's own statement, then the external and local statements, then the Jira
- * statements, then proposals, staleness and coverage gaps.
+ * arrived after the latest activity on its key also makes, on the family last active on that key
+ * only (nothing on this machine shows it was read; an older family on the key is told where the
+ * reply is carried and is not promoted); else an external wait when GitHub showed a pull request
+ * awaiting someone else; else what the declaration interpreter said (an optional lead, or
+ * nothing). The merged list leads with the declaration's own statement, then the external and
+ * local statements, then the Jira statements, then proposals, staleness and coverage gaps.
  */
 const mergeInterpretations = (
   declared: {
@@ -668,7 +701,13 @@ const buildRoot = (
     now,
     ...(rootsPerCheckout === undefined ? {} : { rootsPerCheckout }),
   });
-  const jira = interpretJiraFacts({ facts, familyLastActivityAt: latestActivity(group), now });
+  const keyActivity = index.jiraKeyActivity.get(root.machineId);
+  const jira = interpretJiraFacts({
+    facts,
+    familyLastActivityAt: latestActivity(group),
+    now,
+    ...(keyActivity === undefined ? {} : { keyActivity }),
+  });
   const { attention, interpretations, reconsidered } = mergeInterpretations(declaredResult, external, jira, cut);
   const checkoutPath = checkoutPathOf(root);
   return {
@@ -820,14 +859,16 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
   // The window applies after interpretation, never before it: an old root is hidden only when
   // nothing pending was read for it. Its attention does not depend on the checkout-sharing index,
   // so the older roots are classified against the full index and the kept ones rebuilt against
-  // the index of the roots the dataset actually carries.
-  const fullIndex = indexExternalFacts(input.externalFacts, allGroups);
+  // the index of the roots the dataset actually carries. The Jira key activity is read over every
+  // family both times: a hidden family may be the one that last relayed a key.
+  const jiraKeyActivity = indexJiraKeyActivity(allGroups);
+  const fullIndex = indexExternalFacts(input.externalFacts, allGroups, jiraKeyActivity);
   const groups = allGroups.filter(
     (group) =>
       latestActivity(group) >= since ||
       PENDING_ATTENTIONS.has(buildRoot(group, input.sessions, fullIndex, now, input.staleAfterMs).attention),
   );
-  const index = indexExternalFacts(input.externalFacts, groups);
+  const index = indexExternalFacts(input.externalFacts, groups, jiraKeyActivity);
   const roots = groups
     .map((group) => buildRoot(group, input.sessions, index, now, input.staleAfterMs))
     .sort(compareRoots);

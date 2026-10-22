@@ -656,7 +656,7 @@ const runInput = (sourceId: WorkFactRunState['sourceId'], counts: { failed: numb
   ...counts,
 });
 
-const assemble = (externalFacts: WorkAttentionExternalFacts, observations = sessions) =>
+const assemble = (externalFacts: WorkAttentionExternalFacts, observations = sessions, sinceDays?: number) =>
   assembleWorkAttention({
     collectionStates: [],
     externalFacts,
@@ -664,6 +664,7 @@ const assemble = (externalFacts: WorkAttentionExternalFacts, observations = sess
     now: NOW,
     observations,
     sessions: NO_SERVED_REVISION,
+    ...(sinceDays === undefined ? {} : { sinceDays }),
   });
 
 const rootOf = (dataset: ReturnType<typeof assemble>, desktopSessionId: string) => {
@@ -1064,6 +1065,69 @@ describe('assembleWorkAttention with Jira facts', () => {
         .filter((root) => root.desktopSessionId !== 'local_j1')
         .every((root) => !root.facts.some((fact) => fact.kind === 'jira-issue')),
     ).toBe(true);
+  });
+
+  test('a key relayed by a later family: a reply is new only after the latest activity on the key, and asked of that family alone', () => {
+    // KA wrote XLB-3000 sixty days ago and completed; KB relayed the key two days ago.
+    const relay = [
+      session({
+        id: 'ka',
+        lastActivityHoursAgo: 60 * 24,
+        status: 'completed',
+        title: 'Fixture: KA first on XLB-3000',
+        writtenBranches: ['feat/XLB-3000/first'],
+      }),
+      session({
+        id: 'kb',
+        lastActivityHoursAgo: 2 * 24,
+        status: 'completed',
+        title: 'Fixture: KB relayed XLB-3000',
+        writtenBranches: ['fix/XLB-3000/relay'],
+      }),
+    ];
+    const commented = (hours: number) =>
+      jiraObservation({
+        comments: [{ authorLabel: 'Sam', createdAt: hoursAgo(hours), excerpt: 'Reply.', id: '1' }],
+        key: 'XLB-3000',
+        updatedAt: hoursAgo(hours),
+      });
+    const relayed = (observation: JiraIssueObservation, sinceDays?: number) =>
+      assemble(
+        { ...NO_EXTERNAL_FACTS, jiraIssues: [{ latest: observation, latestObserved: observation }] },
+        relay,
+        sinceDays,
+      );
+
+    // A comment ten days ago came before KB relayed the key: nothing is new for anyone. KA's only
+    // statement is the age of its declaration.
+    const beforeRelay = relayed(commented(10 * 24), 90);
+    for (const [id, kinds] of [
+      ['local_ka', ['declared-status-stale']],
+      ['local_kb', []],
+    ] as const) {
+      const root = rootOf(beforeRelay, id);
+      expect(root.attention).toBe('none');
+      expect(root.interpretations.map(({ kind }) => kind)).toEqual([...kinds]);
+      expect(root.facts.filter((fact) => fact.kind === 'jira-issue').map((fact) => fact.newCommentsSince)).toEqual([0]);
+    }
+
+    // A comment yesterday is new for the key: KB, last active on it, is asked; KA is only told.
+    const afterRelay = relayed(commented(24), 90);
+    const kb = rootOf(afterRelay, 'local_kb');
+    expect(kb.attention).toBe('human-request');
+    expect(kb.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-arrived']);
+    expect(kb.interpretations[0]?.text).toContain(`after this session family's last activity (${hoursAgo(2 * 24)})`);
+    const ka = rootOf(afterRelay, 'local_ka');
+    expect(ka.attention).toBe('none');
+    expect(ka.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-elsewhere', 'declared-status-stale']);
+    expect(ka.interpretations[0]?.text).toBe(
+      `1 comment arrived on XLB-3000 after the latest activity on this key (${hoursAgo(2 * 24)}); the most recent family on this key is “Fixture: KB relayed XLB-3000”, which carries the request.`,
+    );
+    expect(afterRelay.roots.map((root) => root.desktopSessionId)).toEqual(['local_kb', 'local_ka']);
+    // Under the default window KA, with nothing pending, is hidden like any other old root.
+    const windowed = relayed(commented(24));
+    expect(windowed.roots.map((root) => root.desktopSessionId)).toEqual(['local_kb']);
+    expect(windowed.coverage.window.excludedRoots).toBe(1);
   });
 
   test('a To Do ticket beside a merged pull request is a difference; an unauthenticated read keeps the dated success', () => {

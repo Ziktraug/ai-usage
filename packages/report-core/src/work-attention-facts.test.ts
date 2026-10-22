@@ -418,6 +418,35 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
     expect(failed.provenance.coverage).toBe('partial');
   });
 
+  test('a reply is asked of the family last active on the key; an older family is told where it is carried', () => {
+    const fact = jiraIssueFact(jiraIssue(), 'jira-1', ACTIVITY_BEFORE_REPLY);
+    const keyActivity = new Map([
+      ['XLB-2090', { lastActivityAt: ACTIVITY_BEFORE_REPLY, latestFamilyTitle: 'Fixture: the later family' }],
+    ]);
+    // The family whose activity is the key's latest one carries the request.
+    expect(
+      interpretJiraFacts({ facts: [fact], familyLastActivityAt: ACTIVITY_BEFORE_REPLY, keyActivity, now: NOW }).map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(['jira-reply-arrived']);
+    // An older family on the same key names the reply and the family that carries it, never a request.
+    const earlier = parseCanonicalInstant('2026-10-20T18:00:00.000Z');
+    expect(interpretJiraFacts({ facts: [fact], familyLastActivityAt: earlier, keyActivity, now: NOW })).toEqual([
+      {
+        evidence: ['jira-1'],
+        kind: 'jira-reply-elsewhere',
+        text: `1 comment arrived on XLB-2090 after the latest activity on this key (${ACTIVITY_BEFORE_REPLY}); the most recent family on this key is “Fixture: the later family”, which carries the request.`,
+        uncertainty: `This family last worked on XLB-2090 at ${earlier}; whether the reply concerns it is not known. Newest comment 2026-10-21T20:30:00.000Z, observed ${FRESH}.`,
+      },
+    ]);
+    // A key the index does not know was written by this family alone: the request is its own.
+    expect(
+      interpretJiraFacts({ facts: [fact], familyLastActivityAt: earlier, keyActivity: new Map(), now: NOW }).map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(['jira-reply-arrived']);
+  });
+
   test('names the exact action for an unauthenticated read and the missing CLI for a disabled one', () => {
     const facts = [
       jiraIssueFact(failedJiraIssue(), 'jira-1', ACTIVITY_BEFORE_REPLY),

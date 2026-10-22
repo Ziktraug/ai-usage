@@ -130,7 +130,9 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     const body = html(EMPTY_WORK_ATTENTION_SEARCH, workRootId(withJira!));
     expect(body).toContain('data-work-detail=');
     expect(body).toContain('>Jira<');
-    expect(body).toContain("Jira XLB-2090 In Progress, 2 comments, 2 new replies since the family's last activity");
+    expect(body).toContain(
+      'Jira XLB-2090 In Progress, 2 comments, 2 new replies since the latest activity on this key',
+    );
     expect(body).toContain('2 comments arrived on XLB-2090 after this session family');
     expect(body).toContain('You may have read them in Jira; this view cannot tell.');
   });

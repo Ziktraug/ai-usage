@@ -62,14 +62,21 @@ runs beside `github.pull-requests`:
   part. The table is outside the served revision, the export and the
   replication outbox.
 - **Interpretation names its uncertainty.** `newCommentsSince` counts the
-  kept comments created after the family's last activity. When it is
-  positive the root is a human request ("N comment(s) arrived on KEY after
-  this session family's last activity (date); no resumption observed. You may
-  have read them in Jira; this view cannot tell"); when the family was active
-  after the newest comment, nothing is said. A To Do ticket beside an open or
-  merged pull request is "a different status is not automatically an error".
-  An unauthenticated read keeps the last dated success beside it and names
-  the exact action.
+  kept comments created after the latest activity on the key: the most
+  recent `lastActivityAt` among every session family (roots and children)
+  that wrote the key explicitly, on that machine. When it is positive, the
+  family that was last active on the key is a human request ("N comment(s)
+  arrived on KEY after this session family's last activity (date); no
+  resumption observed. You may have read them in Jira; this view cannot
+  tell"); an older family on the same key carries the dated status and is
+  only told where the reply is carried (`jira-reply-elsewhere`: "… the most
+  recent family on this key is <title>, which carries the request"), never
+  promoted, so a ticket relayed from branch to branch does not leave a
+  permanent request on every family that once wrote it. When the key was
+  relayed after the newest comment, nothing is said. A To Do ticket beside an
+  open or merged pull request is "a different status is not automatically an
+  error". An unauthenticated read keeps the last dated success beside it and
+  names the exact action.
 
 ## Consequences
 

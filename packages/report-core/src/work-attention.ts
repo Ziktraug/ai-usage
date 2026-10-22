@@ -893,7 +893,11 @@ export type WorkFact = WorkFactBase &
         readonly kind: 'jira-issue';
         readonly commentCount: number | null;
         readonly key: string;
-        /** Comments created after the family's last activity; `null` when the read failed. */
+        /**
+         * Comments created after the latest activity on this key, across every session family that
+         * wrote it in a branch name; `null` when the read failed. A family that relayed the key
+         * later than this one therefore counts for this root too: a reply it saw is not new.
+         */
         readonly newCommentsSince: number | null;
         readonly newestCommentAt: CanonicalInstant | null;
         readonly outcome: JiraIssueObservationOutcome;
@@ -939,6 +943,7 @@ export const WORK_INTERPRETATION_KINDS = [
   'pull-request-merged',
   'local-changes-unvalidated',
   'jira-reply-arrived',
+  'jira-reply-elsewhere',
   'jira-status-differs',
   'proposal-open',
   'proposal-resolved',

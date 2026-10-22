@@ -240,7 +240,7 @@ test('names the pull requests and Jira issues that may answer, wait on or contra
   const reviewReady = await openWorkRoot(page, REVIEW_READY_ROOT_ID);
   await expect(reviewReady).toContainText(JIRA_REPLY_INTERPRETATION);
   await expect(reviewReady).toContainText(
-    "Jira XLB-2090 In Progress, 2 comments, 1 new reply since the family's last activity",
+    'Jira XLB-2090 In Progress, 2 comments, 1 new reply since the latest activity on this key',
   );
 
   // The open pull request awaiting review, with GitHub's own state beside the declaration.
