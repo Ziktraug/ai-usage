@@ -1094,7 +1094,7 @@ describe('qualifyReviewCandidates', () => {
       expect(personal?.quota?.key).toBe('claude');
       expect(work?.quota).toBeNull();
       expect(work?.qualificationActions).toContain(
-        `The quota stream for claude on machine ${MACHINE} belongs to the signed-in account, which another routing.executors[] entry pins; this entry is not the signed-in account`,
+        `The quota stream for claude on machine ${MACHINE} belongs to the signed-in account, which another routing.executors[] entry pins; this entry pins another account`,
       );
       const { recommendation, result } = run(candidates);
       expect(result.chosenCandidateId).toBe(personal?.id ?? null);
@@ -1108,6 +1108,15 @@ describe('qualifyReviewCandidates', () => {
         executorObservations: [signedIn()],
       });
       expect(twins.filter((entry) => entry.id.startsWith('declared:') && entry.quota !== null)).toEqual([]);
+      // An unpinned peer is not called another account: it is told to pin or go.
+      const unpinnedPeer = qualify({
+        declarations: [declaration({ accountFingerprint: SIGNED_IN }), declaration({ accountScope: 'work' })],
+        executorObservations: [signedIn()],
+      }).find((entry) => entry.accountScope === 'work');
+      expect(unpinnedPeer?.quota).toBeNull();
+      expect(unpinnedPeer?.qualificationActions).toContain(
+        `The quota stream for claude on machine ${MACHINE} belongs to the signed-in account, which another routing.executors[] entry pins; this entry pins no confirmed account: pin its accountFingerprint or remove it`,
+      );
     });
 
     test('a confirmed identity never overrides an observed API-key sign-in', () => {

@@ -462,13 +462,17 @@ const bindQuotaStream = (
     return { actions: [], stream: bare[0] ?? null };
   }
   if (bare.length === 1 && scoped.length === 0 && peers.confirmed === 1) {
-    // The bare stream is read through the signed-in CLI, so it belongs to the signed-in account:
-    // the one declaration whose pinned fingerprint that account confirms binds it (ADR 0057).
+    // The bare stream is read with the machine's signed-in credentials, so it belongs to the
+    // signed-in account: the one declaration whose pin that account confirms binds it (ADR 0057).
     return identity.state === 'confirmed'
       ? { actions: [], stream: bare[0] ?? null }
       : {
           actions: [
-            `The quota stream for ${family} on machine ${declaration.machineId} belongs to the signed-in account, which another routing.executors[] entry pins; this entry is not the signed-in account`,
+            `The quota stream for ${family} on machine ${declaration.machineId} belongs to the signed-in account, which another routing.executors[] entry pins; ${
+              identity.state === 'contradicted'
+                ? 'this entry pins another account'
+                : 'this entry pins no confirmed account: pin its accountFingerprint or remove it'
+            }`,
           ],
           stream: null,
         };

@@ -61,6 +61,9 @@ from a cached context, while the launch re-decided in the engine.
 
 - The fingerprint proves the CLI's signed-in account, not billing; the
   subscription stays the operator's declaration (ADR 0052).
+- It is a local comparison key, not an anonymization: anyone who knows the
+  email and organization can recompute it. Like every executor observation it
+  never enters a served revision, snapshot or replication.
 - The probe runs with the bounded runner's allow-listed environment; a
   `CLAUDE_CONFIG_DIR` or API key exported only in another shell is not seen.
 - The quota reading carries no account: a stored reading taken before an
