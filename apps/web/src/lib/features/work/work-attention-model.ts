@@ -531,9 +531,14 @@ export const workCodexCoverage = (dataset: Pick<WorkAttentionDataset, 'coverage'
   if (shown > 0) {
     return `${shown} of ${inWindow} Codex ${inWindow === 1 ? 'campaign' : 'campaigns'} shown, active in the last ${sinceDays} days (served report)`;
   }
-  return dataset.coverage.sessions.revision === null
-    ? 'not read: no served report revision yet'
-    : `no session active in the last ${sinceDays} days`;
+  if (dataset.coverage.sessions.revision === null) {
+    return 'not read: no served report revision yet';
+  }
+  if (inWindow > 0) {
+    // Desktop roots rank first and filled the page: the campaigns exist; absence is never claimed.
+    return `0 of ${inWindow} Codex ${inWindow === 1 ? 'campaign' : 'campaigns'} shown: the page limit left them out (active in the last ${sinceDays} days, served report)`;
+  }
+  return `no session active in the last ${sinceDays} days`;
 };
 
 /**

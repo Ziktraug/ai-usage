@@ -100,6 +100,11 @@ export interface WorkContextHarnessCoverage {
     /** Recent served Codex campaigns active in the window, and how many the Work read took (ADR 0059). */
     readonly campaignsInWindow: number;
     readonly campaignsRead: number;
+    /**
+     * Campaigns read that the page limit cut before the scope was applied (Desktop roots rank
+     * first): whether they are in scope is unknown, so `inScope` is a lower bound when this is > 0.
+     */
+    readonly cutByPage: number;
     readonly inScope: number;
     readonly reads: 'sessions-only';
   };
@@ -497,6 +502,10 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     codex: {
       campaignsInWindow: codexSessions.campaignsInWindow,
       campaignsRead: codexSessions.campaignsRead,
+      cutByPage: Math.max(
+        codexSessions.campaignsRead - dataset.roots.filter((root) => root.attention === 'not-observable').length,
+        0,
+      ),
       inScope: codexInScope,
       reads: 'sessions-only',
     },

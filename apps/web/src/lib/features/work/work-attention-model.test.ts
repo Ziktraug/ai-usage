@@ -151,6 +151,13 @@ describe('Work attention for a harness that declares no wait (ADR 0059)', () => 
       roots: roots.filter((root) => root.key.harness !== 'codex'),
     };
     expect(workCodexCoverage(withoutCodex)).toBe('no session active in the last 30 days');
+    // Desktop roots filled the page: the campaigns exist, none is shown, and the line says so.
+    expect(
+      workCodexCoverage({
+        coverage: { ...dataset.coverage, codexSessions: { campaignsInWindow: 20, campaignsRead: 20 } },
+        roots: withoutCodex.roots,
+      }),
+    ).toBe('0 of 20 Codex campaigns shown: the page limit left them out (active in the last 30 days, served report)');
     expect(
       workCodexCoverage({
         ...withoutCodex,

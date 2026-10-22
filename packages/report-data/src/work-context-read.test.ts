@@ -401,8 +401,37 @@ describe('projectWorkContext with Codex sessions in scope (ADR 0059)', () => {
     expect(context.waiting.length).toBeGreaterThan(0);
     expect(context.coverage.harnesses).toEqual({
       claudeDesktop: { inScope: context.coverage.roots.inScope - 1, reads: 'declared-waits' },
-      codex: { campaignsInWindow: 5, campaignsRead: 2, inScope: 1, reads: 'sessions-only' },
+      codex: { campaignsInWindow: 5, campaignsRead: 2, cutByPage: 0, inScope: 1, reads: 'sessions-only' },
     });
+
+    // Desktop roots fill the page: the Codex roots are cut before scoping, and the context says so
+    // instead of reporting them as absent from the scope.
+    const desktopCount = dataset.roots.filter((root) => root.attention !== 'not-observable').length;
+    const fullPage = assembleWorkAttention({
+      collectionStates: [],
+      externalFacts: NO_EXTERNAL_FACTS,
+      harnessSessions: {
+        families: [codexFamily(1, REPOSITORY), codexFamily(2, OTHER_REPOSITORY)],
+        familiesInWindow: 2,
+        generatedAt: EPOCH.toISOString(),
+        harness: 'codex',
+        refusedRows: 0,
+        revision: 'revision-1',
+      },
+      limit: desktopCount,
+      now: EPOCH,
+      observations,
+      sessions: NO_SERVED_REVISION,
+    });
+    const cut = projectWorkContext(fullPage, { checkoutPath: REPOSITORY, kind: 'checkout' });
+    expect(cut.coverage.harnesses.codex).toEqual({
+      campaignsInWindow: 2,
+      campaignsRead: 2,
+      cutByPage: 2,
+      inScope: 0,
+      reads: 'sessions-only',
+    });
+    expect(cut.truncation.dataset).toBe(true);
     const notes = context.coverage.notes.map(({ code }) => code);
     expect(notes).toContain('desktop-waits-codex-sessions');
     expect(notes).not.toContain('claude-desktop-only');
@@ -426,6 +455,7 @@ describe('projectWorkContext with Codex sessions in scope (ADR 0059)', () => {
     expect(desktopOnly.coverage.harnesses.codex).toEqual({
       campaignsInWindow: 0,
       campaignsRead: 0,
+      cutByPage: 0,
       inScope: 0,
       reads: 'sessions-only',
     });
