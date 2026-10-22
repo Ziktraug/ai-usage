@@ -51,7 +51,25 @@ describe('Work routing Web contract', () => {
     ]);
   });
 
+  test('carries a pinned and an observed account fingerprint and alternate models (ADR 0057)', () => {
+    const [declared] = context.declarations;
+    const [observed] = context.executorObservations;
+    if (!(declared && observed)) {
+      throw new Error('fixture context has one declaration and one observation');
+    }
+    const pinned: WorkRoutingContext = {
+      ...context,
+      declarations: [{ ...declared, accountFingerprint: '0123456789abcdef', alternateModels: ['Fable'] }],
+      executorObservations: [{ ...observed, accountFingerprint: '0123456789abcdef' }],
+    };
+    expect(parseWorkRoutingContext(pinned)).toEqual(pinned);
+  });
+
   test.each([
+    { declarations: [{ ...context.declarations[0], accountFingerprint: 'operator@example.test' }] },
+    { declarations: [{ ...context.declarations[0], alternateModels: [] }] },
+    { executorObservations: [{ ...context.executorObservations[0], accountFingerprint: '0123456789ABCDEF' }] },
+    { executorObservations: [{ ...context.executorObservations[0], email: 'operator@example.test' }] },
     { generatedAt: '2026-10-21T21:05:00Z' },
     { declarations: [{ ...context.declarations[0], authorization: 'maybe' }] },
     { declarations: [{ ...context.declarations[0], targets: [] }] },

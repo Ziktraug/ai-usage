@@ -1,17 +1,23 @@
 import { describe, expect, test } from 'bun:test';
+import { normalizeClaudeAgentSdkQuotaObservation, projectLatestProviderQuotaObservation } from './provider-quota';
 import type { ProviderLimitWindow, ProviderStatus } from './provider-status';
 import type { ExecutorDeclaration, ExecutorObservation } from './work-executors';
 import {
   assessReviewRecommendation,
+  buildRoutingQualification,
   type CandidateProvenanceMap,
+  declarationForReviewCandidate,
   MAX_REVIEW_ROUTING_CANDIDATES,
   observedReviewCandidates,
+  parseRoutingQualification,
   type QualifyReviewCandidatesInput,
   qualifyReviewCandidates,
+  qualifyReviewRouting,
   type ReviewCandidate,
   type ReviewRoutingInput,
   type ReviewRoutingPolicy,
   type ReviewTarget,
+  ROUTING_QUALIFICATION_BOUNDS,
   recommendationKind,
   simulateWorkReviewRouting,
 } from './work-routing';
@@ -807,5 +813,463 @@ describe('qualifyReviewCandidates', () => {
 
   test('rejects a non-canonical reference time instead of guessing freshness', () => {
     expect(() => qualify({ now: 'now' })).toThrow(RangeError);
+  });
+
+  describe('the case of the day: the Fable limit is exhausted, the all-models limit is not, Opus is declared', () => {
+    /** The stored reading exactly as the Agent SDK collector writes it and every reader projects it. */
+    const sdkQuota = (overrides: { readonly fable?: number; readonly weeklyAll?: number } = {}): ProviderStatus => {
+      const observation = normalizeClaudeAgentSdkQuotaObservation({
+        machineId: MACHINE,
+        observedAt: RECENT,
+        result: {
+          rate_limits: {
+            limits: [
+              { group: 'session', kind: 'session', percent: 12, resets_at: '2026-10-21T15:00:00.000Z', scope: null },
+              {
+                group: 'weekly',
+                kind: 'weekly_all',
+                percent: overrides.weeklyAll ?? 40,
+                resets_at: '2026-10-25T05:00:00.000Z',
+                scope: null,
+              },
+            ],
+            model_scoped: [
+              { display_name: 'Fable', resets_at: '2026-10-24T05:00:00.000Z', utilization: overrides.fable ?? 100 },
+            ],
+          },
+          rate_limits_available: true,
+          subscription_type: 'max',
+        },
+      });
+      if (!observation) {
+        throw new Error('fixture payload did not normalize');
+      }
+      return projectLatestProviderQuotaObservation({ lastObservedAt: RECENT, observation });
+    };
+    const fableThenOpus = declaration({ alternateModels: ['Opus'], model: 'Fable' });
+
+    test('the collector reads the account as partial because one model window is blocked', () => {
+      const quota = sdkQuota();
+      expect(quota.key).toBe('claude');
+      expect(quota.state).toBe('partial');
+      expect(quota.windows.map((window) => [window.id, window.scope, window.blocked])).toEqual([
+        ['session', 'global', false],
+        ['weekly_all', 'global', false],
+        ['model:Fable', 'model', true],
+      ]);
+    });
+
+    test('Fable alone is excluded by its own window, not by the partial state of the whole account', () => {
+      const fable = only(qualify({ declarations: [declaration({ model: 'Fable' })], providers: [sdkQuota()] }));
+      expect(fable.qualificationActions).toEqual([
+        'Quota window Fable · Weekly is exhausted; wait for its reset at 2026-10-24T05:00:00.000Z',
+      ]);
+      const { recommendation, result } = run([fable]);
+      expect(result.chosenCandidateId).toBeNull();
+      expect(excluded(result, fable.id)).toContain('Quota window Fable · Weekly is exhausted or blocked.');
+      expect(excluded(result, fable.id)).not.toContain('Quota observation is partial');
+      expect(recommendation.kind).toBe('none');
+    });
+
+    test('Opus declared alone runs on the all-models windows; the Fable window is not counted', () => {
+      const opus = only(qualify({ declarations: [declaration({ model: 'Opus' })], providers: [sdkQuota()] }));
+      const { recommendation, result } = run([opus]);
+      expect(result.chosenCandidateId).toBe(opus.id);
+      expect(recommendation).toEqual({ candidateId: opus.id, kind: 'real', missing: null });
+      expect(result.evaluations[0]?.missingData).toContain(
+        'Quota window Fable · Weekly applies to another model than Opus; not counted.',
+      );
+    });
+
+    test('one declaration with Fable then Opus yields two models of one account, and Opus is chosen', () => {
+      const candidates = qualify({ declarations: [fableThenOpus], providers: [sdkQuota()] });
+      const key = JSON.stringify([MACHINE, 'claude-code', 'personal']);
+      expect(candidates.map((entry) => [entry.id, entry.model, entry.resourceId])).toEqual([
+        [`declared:${key}`, 'Fable', `declared:${key}`],
+        [`declared:${key}:model:1:Opus`, 'Opus', `declared:${key}`],
+      ]);
+      // One stored reading, the same object: never two reserves.
+      expect(candidates[0]?.quota).toBe(candidates[1]?.quota ?? null);
+      const { recommendation, result } = run(candidates);
+      const opusId = `declared:${key}:model:1:Opus`;
+      expect(result.chosenCandidateId).toBe(opusId);
+      expect(recommendation).toEqual({ candidateId: opusId, kind: 'real', missing: null });
+      expect(excluded(result, `declared:${key}`)).toContain('Fable · Weekly is exhausted');
+      expect(excluded(result, opusId)).toBe('');
+      expect(result.evaluations.flatMap((entry) => entry.exclusionReasons)).not.toContain(
+        'Quota scope is attributed to multiple candidates; attribution is ambiguous.',
+      );
+      expect(result.reasons.join(' ')).toContain(
+        'Fable, Opus are models of one account (personal): one quota resource, not separate reserves. The account-wide windows (5h, Weekly) bound every model whichever runs',
+      );
+      expect(declarationForReviewCandidate([fableThenOpus], opusId)).toEqual({
+        declaration: fableThenOpus,
+        model: 'Opus',
+      });
+      expect(declarationForReviewCandidate([fableThenOpus], `declared:${key}`)?.model).toBe('Fable');
+      expect(declarationForReviewCandidate([fableThenOpus], `declared:${key}:model:2:Sonnet`)).toBeNull();
+    });
+
+    test('the declared order decides between two eligible models; the shared limits still bind both', () => {
+      const candidates = qualify({ declarations: [fableThenOpus], providers: [sdkQuota({ fable: 30 })] });
+      expect(run(candidates).result.chosenCandidateId).toBe(candidates[0]?.id ?? null);
+      expect(candidates[0]?.model).toBe('Fable');
+    });
+
+    test('an exhausted all-models window excludes every model of the account: no model is a spare reserve', () => {
+      const candidates = qualify({ declarations: [fableThenOpus], providers: [sdkQuota({ weeklyAll: 100 })] });
+      const { recommendation, result } = run(candidates);
+      expect(result.chosenCandidateId).toBeNull();
+      for (const entry of candidates) {
+        expect(excluded(result, entry.id)).toContain('Quota window Weekly is exhausted or blocked.');
+        expect(entry.qualificationActions).toContain(
+          'Quota window Weekly is exhausted; wait for its reset at 2026-10-25T05:00:00.000Z',
+        );
+      }
+      expect(recommendation.kind).toBe('none');
+    });
+
+    test('a provider partial for want of windows is still excluded', () => {
+      const empty = only(qualify({ providers: [bareQuota('claude', { state: 'partial', windows: [] })] }));
+      expect(excluded(run([empty]).result, empty.id)).toContain('Quota observation is partial');
+    });
+  });
+
+  test('a model window named by a limits[] kind applies to the model it names, never through a period word', () => {
+    const windows = [
+      windowFixture({ id: 'session', label: '5h' }),
+      windowFixture({
+        blocked: true,
+        group: 'weekly',
+        id: 'weekly_opus',
+        label: 'Weekly · Opus',
+        remainingPercent: 0,
+        scope: 'model',
+        usedPercent: 100,
+      }),
+    ];
+    for (const model of ['Opus', 'claude-opus-4-1', 'opus']) {
+      const candidate = only(
+        qualify({ declarations: [declaration({ model })], providers: [bareQuota('claude', { windows })] }),
+      );
+      expect(excluded(run([candidate]).result, candidate.id)).toContain('Quota window Weekly · Opus is exhausted');
+    }
+    for (const model of ['Sonnet', 'weekly', 'model']) {
+      const candidate = only(
+        qualify({ declarations: [declaration({ model })], providers: [bareQuota('claude', { windows })] }),
+      );
+      expect(run([candidate]).result.chosenCandidateId).toBe(candidate.id);
+    }
+    // A model-scoped window that names no model cannot be attributed and blocks every model.
+    const anonymous = [windowFixture({ group: 'weekly', id: 'weekly', label: 'Weekly', scope: 'model' })];
+    const unattributed = only(
+      qualify({
+        declarations: [declaration({ model: 'Opus' })],
+        providers: [bareQuota('claude', { windows: anonymous })],
+      }),
+    );
+    expect(excluded(run([unattributed]).result, unattributed.id)).toContain(
+      'Quota window Weekly applicability to this model is not established.',
+    );
+  });
+
+  describe('account identity (ADR 0057)', () => {
+    const SIGNED_IN = '0123456789abcdef';
+    const OTHER = 'fedcba9876543210';
+    const signedIn = (overrides: Partial<ExecutorObservation> = {}) =>
+      observation({ accountFingerprint: SIGNED_IN, authMethod: 'claude.ai', ...overrides });
+
+    test('an observed identity the declaration does not pin is conditional on the pin, with the exact value', () => {
+      const unpinned = only(qualify({ executorObservations: [signedIn()] }));
+      expect(unpinned.identity).toEqual({
+        declared: null,
+        observed: SIGNED_IN,
+        observedAt: '2026-10-21T11:50:00.000Z',
+        observedProvenance: 'observed-now',
+        state: 'unpinned',
+      });
+      expect(unpinned.qualificationActions).toEqual([
+        `Pin the signed-in account: add "accountFingerprint": "${SIGNED_IN}" to routing.executors[] for claude:personal (observed 2026-10-21T11:50:00.000Z); a later change of account then invalidates this route instead of passing unnoticed`,
+      ]);
+      const { recommendation, result } = run([unpinned]);
+      expect(result.chosenCandidateId).toBeNull();
+      expect(excluded(result, unpinned.id)).toContain('is observed but not pinned by the declaration');
+      expect(recommendation).toEqual({
+        candidateId: unpinned.id,
+        kind: 'conditional',
+        missing: 'account identity pin (routing.executors[].accountFingerprint)',
+      });
+    });
+
+    test('a pinned identity the signed-in CLI confirms is a real recommendation', () => {
+      const confirmed = only(
+        qualify({
+          declarations: [declaration({ accountFingerprint: SIGNED_IN })],
+          executorObservations: [signedIn()],
+        }),
+      );
+      expect(confirmed.identity?.state).toBe('confirmed');
+      expect(confirmed.identity?.declared).toBe(SIGNED_IN);
+      expect(confirmed.qualificationActions).toEqual([]);
+      expect(run([confirmed]).recommendation).toEqual({ candidateId: confirmed.id, kind: 'real', missing: null });
+    });
+
+    test('a change of account invalidates the route: the pinned and observed identities disagree', () => {
+      const contradicted = only(
+        qualify({
+          declarations: [declaration({ accountFingerprint: OTHER })],
+          executorObservations: [signedIn()],
+        }),
+      );
+      expect(contradicted.identity?.state).toBe('contradicted');
+      expect(contradicted.qualificationActions).toEqual([
+        `Claude Code is signed in to another account (fingerprint ${SIGNED_IN} observed 2026-10-21T11:50:00.000Z) than claude:personal pins (${OTHER}): sign claude back in to that account, or re-declare routing.executors[].accountFingerprint and declaredAt for the new one`,
+      ]);
+      const { recommendation, result } = run([contradicted]);
+      expect(excluded(result, contradicted.id)).toContain(
+        `Account identity contradicts the declaration: the CLI reports account ${SIGNED_IN}`,
+      );
+      expect(recommendation.kind).toBe('none');
+    });
+
+    test('a pin without a current identity observation is conditional on that observation', () => {
+      const silent = only(
+        qualify({
+          declarations: [declaration({ accountFingerprint: SIGNED_IN })],
+          executorObservations: [observation()],
+        }),
+      );
+      expect(silent.identity).toMatchObject({ observed: null, observedProvenance: 'unknown', state: 'unobserved' });
+      expect(run([silent]).recommendation).toEqual({
+        candidateId: silent.id,
+        kind: 'conditional',
+        missing: 'account identity observation',
+      });
+      // A stale observation names only the executor observation: identity waits on the same refresh.
+      const stale = only(
+        qualify({
+          declarations: [declaration({ accountFingerprint: SIGNED_IN })],
+          executorObservations: [signedIn({ observedAt: '2026-10-21T10:00:00.000Z' })],
+        }),
+      );
+      expect(stale.identity).toMatchObject({ observed: SIGNED_IN, observedProvenance: 'stale', state: 'unobserved' });
+      const staleRun = run([stale]);
+      expect(staleRun.recommendation).toEqual({
+        candidateId: stale.id,
+        kind: 'conditional',
+        missing: 'executor availability observation',
+      });
+      expect(staleRun.result.evaluations[0]?.missingData).toContain(
+        'Account identity awaits a current executor observation.',
+      );
+    });
+
+    test('a harness that exposes no identity keeps the single-declaration binding and says so', () => {
+      const codex = only(
+        qualify({
+          declarations: [declaration({ harness: 'codex' })],
+          executorObservations: [codexObservation()],
+          providers: [bareQuota('codex')],
+        }),
+      );
+      expect(codex.identity?.state).toBe('not-observable');
+      const { recommendation, result } = run([codex]);
+      expect(recommendation.kind).toBe('real');
+      expect(result.evaluations[0]?.missingData).toContain(
+        'Account identity is not observable for this harness; the binding rests on the single declaration.',
+      );
+    });
+
+    test('the signed-in account selects its pinned entry among two that share the bare stream', () => {
+      const candidates = qualify({
+        declarations: [
+          declaration({ accountFingerprint: SIGNED_IN }),
+          declaration({ accountFingerprint: OTHER, accountScope: 'work' }),
+        ],
+        executorObservations: [signedIn()],
+      });
+      expect(candidates.map((entry) => entry.id.split(':')[0])).toEqual(['declared', 'declared']);
+      const personal = candidates.find((entry) => entry.accountScope === 'personal');
+      const work = candidates.find((entry) => entry.accountScope === 'work');
+      expect(personal?.quota?.key).toBe('claude');
+      expect(work?.quota).toBeNull();
+      expect(work?.qualificationActions).toContain(
+        `The quota stream for claude on machine ${MACHINE} belongs to the signed-in account, which another routing.executors[] entry pins; this entry is not the signed-in account`,
+      );
+      const { recommendation, result } = run(candidates);
+      expect(result.chosenCandidateId).toBe(personal?.id ?? null);
+      expect(recommendation.kind).toBe('real');
+      // Two entries pinned to the same account are still ambiguous.
+      const twins = qualify({
+        declarations: [
+          declaration({ accountFingerprint: SIGNED_IN }),
+          declaration({ accountFingerprint: SIGNED_IN, accountScope: 'work' }),
+        ],
+        executorObservations: [signedIn()],
+      });
+      expect(twins.filter((entry) => entry.id.startsWith('declared:') && entry.quota !== null)).toEqual([]);
+    });
+
+    test('a confirmed identity never overrides an observed API-key sign-in', () => {
+      const api = only(
+        qualify({
+          declarations: [declaration({ accountFingerprint: SIGNED_IN })],
+          executorObservations: [signedIn({ authMethod: 'api-key' })],
+        }),
+      );
+      expect(api.identity?.state).toBe('confirmed');
+      expect(api.subscription).toBe('api');
+      expect(run([api]).recommendation.kind).toBe('none');
+    });
+
+    test('an observed-only stream names the fingerprint to declare', () => {
+      const observed = only(qualify({ declarations: [], executorObservations: [signedIn()] }));
+      expect(observed.qualificationActions[0]).toBe(
+        `Add routing.executors[] for claude:<accountScope> with authorization 'allowed', targets [{kind:'any-local-session'}], subscription 'verified', declaredAt, accountFingerprint "${SIGNED_IN}" (the signed-in account)`,
+      );
+    });
+  });
+});
+
+describe('engine qualification (ADR 0057)', () => {
+  const MACHINE = TARGET.machineId;
+  const declared: ExecutorDeclaration = {
+    accountFingerprint: '0123456789abcdef',
+    accountScope: 'personal',
+    alternateModels: ['Opus'],
+    authorization: 'allowed',
+    capabilities: ['read-only-review'],
+    declaredAt: '2026-10-20T08:00:00.000Z',
+    effort: null,
+    harness: 'claude-code',
+    machineId: MACHINE,
+    model: 'Fable',
+    quality: 'review-capable',
+    subscription: 'verified',
+    targets: [{ kind: 'any-local-session' }],
+  };
+  const signedIn: ExecutorObservation = {
+    accountFingerprint: '0123456789abcdef',
+    authEvidence: 'claude auth status exit 0 loggedIn=true authMethod=claude.ai',
+    authMethod: 'claude.ai',
+    authState: 'logged-in',
+    binaryPath: '/usr/bin/claude',
+    harness: 'claude-code',
+    machineId: MACHINE,
+    observedAt: '2026-10-21T11:59:30.000Z',
+    outcome: 'observed',
+    version: '2.1.306 (Claude Code)',
+  };
+  const fableExhausted = quotaFixture('claude-code', {
+    key: 'claude',
+    state: 'partial',
+    windows: [
+      windowFixture({ id: 'session', label: '5h', usedPercent: 12, remainingPercent: 88 }),
+      windowFixture({ group: 'weekly', id: 'weekly_all', label: 'Weekly', usedPercent: 40, remainingPercent: 60 }),
+      windowFixture({
+        blocked: true,
+        group: 'weekly',
+        id: 'model:Fable',
+        label: 'Fable · Weekly',
+        remainingPercent: 0,
+        scope: 'model',
+        usedPercent: 100,
+      }),
+    ],
+  });
+  const routed = () =>
+    qualifyReviewRouting({
+      declarations: [declared],
+      executorObservations: [signedIn],
+      now: NOW,
+      providers: [fableExhausted],
+      target: TARGET,
+    });
+
+  test('decides under the launch policy and builds a bounded decision that survives the boundary', () => {
+    const { candidates, recommendation, result } = routed();
+    const opusId = `declared:${JSON.stringify([MACHINE, 'claude-code', 'personal'])}:model:1:Opus`;
+    expect(recommendation).toEqual({ candidateId: opusId, kind: 'real', missing: null });
+    const qualification = buildRoutingQualification({
+      candidates,
+      executors: { outcome: 'success', refreshed: true },
+      recommendation,
+      result,
+    });
+    expect(qualification.qualifiedAt).toBe(NOW);
+    expect(qualification.chosenCandidateId).toBe(opusId);
+    expect(qualification.candidates.map((entry) => [entry.model, entry.eligible])).toEqual([
+      ['Opus', true],
+      ['Fable', false],
+    ]);
+    expect(qualification.candidates[0]?.identity).toEqual({
+      declared: '0123456789abcdef',
+      observed: '0123456789abcdef',
+      observedAt: '2026-10-21T11:59:30.000Z',
+      state: 'confirmed',
+    });
+    expect(qualification.candidates[1]?.exclusionReasons).toContain(
+      'Quota window Fable · Weekly is exhausted or blocked.',
+    );
+    expect(qualification.omittedCandidates).toBe(0);
+    expect(parseRoutingQualification(JSON.parse(JSON.stringify(qualification)))).toEqual(qualification);
+  });
+
+  test('keeps the decision within its byte budget and counts what it leaves out', () => {
+    const { result } = routed();
+    const long = 'x'.repeat(2000);
+    const many: ReviewCandidate[] = Array.from({ length: 20 }, (_, index) =>
+      candidate('codex', { id: `observed:${index}`, qualificationActions: Array.from({ length: 30 }, () => long) }),
+    );
+    const evaluations = many.map((entry) => ({
+      candidateId: entry.id,
+      eligible: false,
+      exclusionReasons: Array.from({ length: 30 }, () => long),
+      missingData: Array.from({ length: 30 }, () => long),
+    }));
+    const qualification = buildRoutingQualification({
+      candidates: many,
+      executors: { outcome: 'failed', refreshed: false },
+      recommendation: { candidateId: null, kind: 'none', missing: null },
+      result: { ...result, chosenCandidateId: null, evaluations },
+    });
+    expect(qualification.candidates.length).toBeLessThanOrEqual(ROUTING_QUALIFICATION_BOUNDS.maxCandidates);
+    expect(qualification.omittedCandidates).toBe(20 - qualification.candidates.length);
+    expect(new TextEncoder().encode(JSON.stringify(qualification)).byteLength).toBeLessThanOrEqual(
+      ROUTING_QUALIFICATION_BOUNDS.maxBytes,
+    );
+    expect(qualification.candidates[0]?.actions[0]?.endsWith('…')).toBe(true);
+    expect(parseRoutingQualification(qualification)).toEqual(qualification);
+  });
+
+  test.each([
+    ['an extra field', { leaked: true }],
+    ['a non-canonical time', { qualifiedAt: '2026-10-21T12:00:00Z' }],
+    ['an unknown executor outcome', { executors: { outcome: 'maybe', refreshed: true } }],
+    ['an unknown recommendation', { recommendation: { candidateId: null, kind: 'probably', missing: null } }],
+    ['an oversized reason', { reasons: ['x'.repeat(ROUTING_QUALIFICATION_BOUNDS.maxText + 1)] }],
+    ['a negative omission count', { omittedCandidates: -1 }],
+  ])('refuses %s', (_label, override) => {
+    const { candidates, recommendation, result } = routed();
+    const qualification = buildRoutingQualification({
+      candidates,
+      executors: { outcome: 'success', refreshed: true },
+      recommendation,
+      result,
+    });
+    expect(parseRoutingQualification({ ...qualification, ...override })).toBeNull();
+    const [first] = qualification.candidates;
+    expect(
+      parseRoutingQualification({
+        ...qualification,
+        candidates: [{ ...first, identity: { ...first?.identity, state: 'trusted' } }],
+      }),
+    ).toBeNull();
+    expect(
+      parseRoutingQualification({
+        ...qualification,
+        candidates: [{ ...first, identity: { ...first?.identity, observed: 'operator@example.test' } }],
+      }),
+    ).toBeNull();
   });
 });

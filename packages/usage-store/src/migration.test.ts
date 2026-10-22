@@ -575,6 +575,74 @@ describe('usage-store forward migration', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
   });
 
+  test('adds the account_fingerprint column (ADR 0057) under the same user_version; older rows read as none', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-executor-fingerprint-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const observed = {
+      authEvidence: 'claude auth status exit 0 loggedIn=true authMethod=claude.ai',
+      authMethod: 'claude.ai',
+      authState: 'logged-in',
+      binaryPath: '/usr/bin/claude',
+      harness: 'claude-code',
+      machineId: 'machine-a',
+      observedAt: '2026-10-22T08:00:00.000Z',
+      outcome: 'observed',
+      version: '2.1.306 (Claude Code)',
+    } as const;
+
+    // The table as lot R created it (with auth_method, without account_fingerprint), with one row.
+    const before = new Database(dbPath, { create: false, readwrite: true });
+    before.exec(`
+      DROP TABLE executor_observations;
+      CREATE TABLE executor_observations (
+        id INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL,
+        harness TEXT NOT NULL CHECK (harness IN ('claude-code', 'codex')),
+        observed_at TEXT NOT NULL,
+        binary_path TEXT,
+        version TEXT,
+        auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
+        auth_evidence TEXT NOT NULL,
+        auth_method TEXT,
+        outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
+      );
+      INSERT INTO executor_observations (machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method, outcome)
+      VALUES ('machine-a', 'claude-code', '2026-10-22T07:00:00.000Z', '/usr/bin/claude', '2.1.306 (Claude Code)', 'logged-in', 'claude auth status exit 0 loggedIn=true', 'claude.ai', 'observed');
+    `);
+    before.close(true);
+
+    // A query-only reader that meets the older table reads "no fingerprint" instead of failing.
+    const unmigrated = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(unmigrated.observations).toHaveLength(1);
+    expect(unmigrated.observations[0] && 'accountFingerprint' in unmigrated.observations[0]).toBe(false);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const columns = migrated.query('PRAGMA table_info(executor_observations)').all() as { name: string }[];
+    expect(columns.map(({ name }) => name)).toContain('account_fingerprint');
+    migrated.close(true);
+
+    expect(
+      await Effect.runPromise(
+        importExecutorObservations({
+          dbPath,
+          observations: [
+            { ...observed, accountFingerprint: '0123456789abcdef' },
+            { ...observed, accountFingerprint: 'NOT-A-FINGERPRINT', machineId: 'machine-b' },
+          ],
+        }),
+      ),
+    ).toEqual({ inserted: 1, pruned: 0, rejected: 1 });
+    const latest = await Effect.runPromise(queryLatestExecutorObservations({ dbPath }));
+    expect(latest.skipped).toBe(0);
+    expect(latest.observations).toEqual([{ ...observed, accountFingerprint: '0123456789abcdef' }]);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
   test('adds the Claude Desktop session family to a populated store already on the current version', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-store-claude-desktop-migration-'));
     temporaryRoots.push(root);

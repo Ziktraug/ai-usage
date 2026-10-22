@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
+import { claudeAccountFingerprint } from '@ai-usage/local-collectors/executor-observations';
 import {
   BoundedProcessError,
   type BoundedProcessOptions,
@@ -338,6 +339,8 @@ describe('scheduled source adapters', () => {
       expect(stored.skipped).toBe(0);
       expect(stored.observations).toEqual([
         {
+          // Only the hash of the reported account reaches the store (ADR 0057).
+          accountFingerprint: claudeAccountFingerprint({ email: 'hidden@example.test' }) ?? 'missing',
           authEvidence: 'claude auth status exit 0 loggedIn=true',
           authMethod: null,
           authState: 'logged-in',

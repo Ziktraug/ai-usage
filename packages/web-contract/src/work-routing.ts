@@ -1,5 +1,5 @@
 import { REVIEW_ATTEMPT_BOUNDS } from '@ai-usage/report-core/work-attempts';
-import { EXECUTOR_BOUNDS } from '@ai-usage/report-core/work-executors';
+import { EXECUTOR_BOUNDS, isExecutorAccountFingerprint } from '@ai-usage/report-core/work-executors';
 import { type ContractRouterClient, oc } from '@orpc/contract';
 import {
   array,
@@ -43,6 +43,11 @@ const pathSchema = pipe(string(), minLength(1), maxLength(EXECUTOR_BOUNDS.maxPat
 const issueTextSchema = pipe(string(), minLength(1), maxLength(512));
 
 const executorHarnessSchema = picklist(['claude-code', 'codex']);
+/** ADR 0057: the truncated hash the collector derives; never the account identifiers themselves. */
+const accountFingerprintSchema = custom<string>(
+  isExecutorAccountFingerprint,
+  'Expected a lowercase hexadecimal account fingerprint.',
+);
 
 export const executorDeclaredTargetSchema = union([
   strictObject({ kind: picklist(['any-local-session']) }),
@@ -50,7 +55,9 @@ export const executorDeclaredTargetSchema = union([
 ]);
 
 export const executorDeclarationSchema = strictObject({
+  accountFingerprint: optional(accountFingerprintSchema),
   accountScope: scopeSchema,
+  alternateModels: optional(pipe(array(textSchema), minLength(1), maxLength(EXECUTOR_BOUNDS.maxAlternateModels))),
   authorization: picklist(['allowed', 'forbidden']),
   capabilities: pipe(array(picklist(['read-only-review'])), maxLength(1)),
   declaredAt: timestampSchema,
@@ -64,6 +71,7 @@ export const executorDeclarationSchema = strictObject({
 });
 
 export const executorObservationSchema = strictObject({
+  accountFingerprint: optional(accountFingerprintSchema),
   authEvidence: textSchema,
   authMethod: nullable(pipe(string(), minLength(1), maxLength(EXECUTOR_BOUNDS.maxAuthMethod))),
   authState: picklist(['logged-in', 'logged-out', 'unknown']),

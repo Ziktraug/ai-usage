@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { EXECUTOR_BOUNDS, type ExecutorObservation } from '@ai-usage/report-core/work-executors';
 import {
   BoundedProcessError,
   type BoundedProcessFailureKind,
   type BoundedRun,
   type BoundedRunSpec,
+  claudeAccountFingerprint,
   observeExecutors,
   runBoundedProcess,
 } from './executor-observations';
@@ -18,6 +20,16 @@ const CLAUDE_STATUS = JSON.stringify({
   orgId: 'org-secret',
   subscriptionType: 'max',
 });
+
+const FINGERPRINT_FORMAT = /^[0-9a-f]{16}$/u;
+/**
+ * Computed independently of the collector: the format is a contract, since an operator pins this
+ * value in the declaration; changing it would contradict every pinned route at once.
+ */
+const EXPECTED_FINGERPRINT = createHash('sha256')
+  .update(`ai-usage executor account v1\norg=org-secret\nemail=${SECRET_EMAIL}`)
+  .digest('hex')
+  .slice(0, 16);
 
 type Script = Readonly<Record<string, (() => Promise<{ exitCode: number; stdout: string }>) | undefined>>;
 
@@ -70,6 +82,7 @@ describe('observeExecutors', () => {
     const observations = await observe(run);
     expect(observations).toEqual([
       {
+        accountFingerprint: EXPECTED_FINGERPRINT,
         authEvidence: 'claude auth status exit 0 loggedIn=true authMethod=claude.ai',
         authMethod: 'claude.ai',
         authState: 'logged-in',
@@ -177,6 +190,36 @@ describe('observeExecutors', () => {
       outcome: 'unavailable',
       version: null,
     });
+  });
+
+  test('fingerprints the reported account without keeping it, and only for a signed-in CLI (ADR 0057)', async () => {
+    expect(claudeAccountFingerprint({ email: SECRET_EMAIL, orgId: 'org-secret' })).toBe(EXPECTED_FINGERPRINT);
+    expect(claudeAccountFingerprint({ email: ` ${SECRET_EMAIL.toUpperCase()} `, orgId: 'org-secret' })).toBe(
+      EXPECTED_FINGERPRINT,
+    );
+    expect(claudeAccountFingerprint({ email: SECRET_EMAIL, orgId: 'org-other' })).not.toBe(EXPECTED_FINGERPRINT);
+    expect(claudeAccountFingerprint({ email: SECRET_EMAIL })).toMatch(FINGERPRINT_FORMAT);
+    for (const silent of [{}, { email: '', orgId: '  ' }, { email: 7 }, { orgId: 'o'.repeat(513) }, null, 'x']) {
+      expect(claudeAccountFingerprint(silent)).toBeNull();
+    }
+    const signedOut = await observe(
+      scripted({
+        'claude --version': ok('2.1.306 (Claude Code)\n'),
+        'claude auth status': ok(JSON.stringify({ email: SECRET_EMAIL, loggedIn: false, orgId: 'org-secret' }), 1),
+      }).run,
+      bothPresent,
+      ['claude-code'],
+    );
+    expect(signedOut[0] && 'accountFingerprint' in signedOut[0]).toBe(false);
+    const anonymous = await observe(
+      scripted({
+        'claude --version': ok('2.1.306 (Claude Code)\n'),
+        'claude auth status': ok(JSON.stringify({ authMethod: 'claude.ai', loggedIn: true })),
+      }).run,
+      bothPresent,
+      ['claude-code'],
+    );
+    expect(anonymous[0] && 'accountFingerprint' in anonymous[0]).toBe(false);
   });
 
   test('classifies the Claude sign-in state from the loggedIn field only', async () => {

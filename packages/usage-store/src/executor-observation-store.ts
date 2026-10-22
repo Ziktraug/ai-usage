@@ -77,6 +77,7 @@ interface ExecutorObservationStoreDependencies {
 }
 
 interface ExecutorObservationRecord {
+  account_fingerprint: string | null;
   auth_evidence: string;
   auth_method: string | null;
   auth_state: string;
@@ -92,6 +93,7 @@ const MAX_IMPORT_BATCH = 256;
 
 const observationFromRecord = (record: ExecutorObservationRecord): ExecutorObservation | null =>
   parseExecutorObservation({
+    accountFingerprint: record.account_fingerprint,
     authEvidence: record.auth_evidence,
     authMethod: record.auth_method,
     authState: record.auth_state,
@@ -129,8 +131,9 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
           try {
             const insert = db.query(`
               INSERT INTO executor_observations (
-                machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method, outcome
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method,
+                account_fingerprint, outcome
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             const prune = db.query(`
               DELETE FROM executor_observations
@@ -158,6 +161,7 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
                 observation.authState,
                 observation.authEvidence,
                 observation.authMethod,
+                observation.accountFingerprint ?? null,
                 observation.outcome,
               );
               inserted++;
@@ -190,9 +194,16 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
       Effect.try({
         try: () => {
           const limit = EXECUTOR_BOUNDS.maxObservations;
+          // The reader is query-only and cannot add the ADR 0057 column; a store the engine has not
+          // reopened since then has recorded no fingerprint, which reads as exactly that.
+          const columns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
+          const fingerprint = columns.some((column) => column.name === 'account_fingerprint')
+            ? 'account_fingerprint'
+            : 'NULL AS account_fingerprint';
           const rows = db
             .query(`
-              SELECT machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method, outcome
+              SELECT machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method,
+                ${fingerprint}, outcome
               FROM (
                 SELECT *, ROW_NUMBER() OVER (
                   PARTITION BY machine_id, harness ORDER BY observed_at DESC, id DESC
