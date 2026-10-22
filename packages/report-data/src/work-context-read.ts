@@ -78,7 +78,7 @@ export const WORK_CONTEXT_COVERAGE_NOTES = [
   },
   {
     code: 'literal-paths',
-    text: 'Checkout paths are compared as written: symbolic links and git worktrees outside the checkout path are not resolved.',
+    text: 'Checkout paths are compared as written: symbolic links and git worktrees outside the checkout path are not resolved, and a recorded path that is not absolute is never compared (coverage.roots.unscopedPaths counts them).',
   },
 ] as const;
 
@@ -209,6 +209,11 @@ export interface WorkContextCoverage {
     readonly read: number;
     /** Every root of the read, including those its window or page left out. */
     readonly total: number;
+    /**
+     * Roots read whose recorded checkout path is not absolute (relative, or another platform's):
+     * never compared with a checkout scope, so never in it; 0 for a project-label scope.
+     */
+    readonly unscopedPaths: number;
   };
 }
 
@@ -272,7 +277,14 @@ export const normalizeWorkContextScope = (scope: WorkContextScope): WorkContextA
   return { kind: 'project-label', match: 'exact', projectLabel };
 };
 
+/**
+ * A recorded path is compared as written, and only when it is absolute: a relative or foreign
+ * (`C:\…` on Linux) path is never resolved against this process's working directory.
+ */
 const isSameOrInside = (candidate: string, target: string): boolean => {
+  if (!path.isAbsolute(candidate)) {
+    return false;
+  }
   const relative = path.relative(target, path.resolve(candidate));
   return relative === '' || !(relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative));
 };
@@ -515,6 +527,12 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     pullRequests: lists.pullRequests.slice(0, limits.pullRequests),
     waits: lists.waits.slice(0, limits.waits),
   };
+  const unscopedPaths =
+    applied.kind === 'checkout'
+      ? dataset.roots.filter(
+          (root) => root.project.checkoutPath !== null && !path.isAbsolute(root.project.checkoutPath),
+        ).length
+      : 0;
   const codexInScope = roots.filter((root) => root.attention === 'not-observable').length;
   const { codexSessions } = dataset.coverage;
   const harnesses: WorkContextHarnessCoverage = {
@@ -541,7 +559,7 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
         attention: dataset.coverage,
         harnesses,
         notes,
-        roots: { inScope: roots.length, read: dataset.roots.length, total: dataset.totalRoots },
+        roots: { inScope: roots.length, read: dataset.roots.length, total: dataset.totalRoots, unscopedPaths },
       },
       decisions: kept.decisions,
       generatedAt: dataset.generatedAt,

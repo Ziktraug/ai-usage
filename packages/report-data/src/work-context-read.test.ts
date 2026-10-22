@@ -358,6 +358,48 @@ describe('readWorkContext', () => {
   });
 });
 
+describe('projectWorkContext recorded paths', () => {
+  test('a recorded path that is not absolute never matches a checkout scope, and is counted', () => {
+    const registry = registryOf(REPOSITORY, 'minimal');
+    const template = parse(registry.documents[0] as ClaudeDesktopFixtureDocument, MACHINE);
+    if (template === null) {
+      throw new Error('the minimal blocked root must parse');
+    }
+    const dataset = assembleWorkAttention({
+      collectionStates: [],
+      externalFacts: NO_EXTERNAL_FACTS,
+      limit: 200,
+      now: EPOCH,
+      observations: [template],
+      sessions: NO_SERVED_REVISION,
+    });
+    const [root] = dataset.roots;
+    if (root === undefined) {
+      throw new Error('the blocked root must be read');
+    }
+    const recorded = (checkoutPath: string, id: string) => ({
+      ...root,
+      desktopSessionId: id,
+      key: { ...root.key, sourceSessionId: id },
+      project: { ...root.project, checkoutPath },
+      title: `Fixture: recorded ${id}`,
+    });
+    const foreign = {
+      ...dataset,
+      roots: [recorded('work/fixture', 'relative'), recorded('C:\\fixture\\home\\work\\fixture', 'windows')],
+    };
+    // Resolved against this process's working directory, the relative path would match its scope.
+    for (const checkoutPath of [process.cwd(), path.parse(process.cwd()).root]) {
+      const context = projectWorkContext(foreign, { checkoutPath, kind: 'checkout' });
+      expect(context.waiting).toEqual([]);
+      expect(context.coverage.roots).toMatchObject({ inScope: 0, unscopedPaths: 2 });
+    }
+    // A project label still matches them: the label is not a path.
+    const byLabel = projectWorkContext(foreign, { kind: 'project-label', projectLabel: root.project.label });
+    expect(byLabel.coverage.roots).toMatchObject({ inScope: 2, unscopedPaths: 0 });
+  });
+});
+
 describe('projectWorkContext proposals', () => {
   test('a waiting root cites its superseded or expired proposals by id, date and kind, never by title', () => {
     const registry = registryOf(REPOSITORY, 'minimal');
