@@ -958,7 +958,18 @@ export interface WorkInterpretation {
 export interface WorkRootProject {
   readonly branch: string | null;
   readonly checkoutPath: string | null;
+  /**
+   * The project directory's name, by one rule for every root: the origin checkout of a worktree
+   * session, else its cwd. The served report never overrides it, because the report labels a
+   * worktree session by the worktree directory it ran in.
+   */
   readonly label: string;
+  /**
+   * The project label the served report gives the joined Session, when one is joined; `null`
+   * otherwise. Secondary information for the detail, never a filter: it differs from `label`
+   * for a session run in a worktree.
+   */
+  readonly servedLabel: string | null;
   readonly worktreeName: string | null;
 }
 
@@ -1010,8 +1021,8 @@ export interface WorkRoot {
   readonly reconsidered: boolean;
   /**
    * The served Session row this root joins to, when the current revision carries one for
-   * `key`; the Work view opens session detail through it. `null` also means `project.label`
-   * was derived from the Desktop `cwd` rather than read from the report.
+   * `key`; the Work view opens session detail through it and `project.servedLabel` carries its
+   * project label. `null` means no served row was found at the current revision.
    */
   readonly session: WorkRootSession | null;
   readonly title: string;

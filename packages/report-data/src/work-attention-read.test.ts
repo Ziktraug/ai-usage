@@ -204,7 +204,7 @@ const createStore = async (observations: readonly ClaudeDesktopSessionObservatio
   return dbPath;
 };
 
-const publishServedSession = async (dbPath: string): Promise<void> => {
+const publishServedSession = async (dbPath: string, projectLabel = 'Served project'): Promise<void> => {
   const machine = { id: MACHINE, label: 'Work Machine' };
   await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
   const row: SerializedRow = {
@@ -224,7 +224,7 @@ const publishServedSession = async (dbPath: string): Promise<void> => {
     linesDeleted: 0,
     model: 'claude-fixture',
     name: 'Served session',
-    project: 'Served project',
+    project: projectLabel,
     provider: 'Claude sub',
     sessionLabel: 'Served session',
     source: {
@@ -363,6 +363,7 @@ describe('queryWorkAttention', () => {
       branch: 'fixture/worktree',
       checkoutPath: '/home/fixture/work/project/.claude/worktrees/wt-1',
       label: 'project',
+      servedLabel: null,
       worktreeName: 'wt-1',
     });
     expect(a?.session).toBeNull();
@@ -376,7 +377,8 @@ describe('queryWorkAttention', () => {
 
     const b = byId.get('local_b');
     expect(b?.session?.rowId).toEqual(expect.any(String));
-    expect(b?.project.label).toBe('Served project');
+    // The join never renames the project; the report's own label travels apart.
+    expect(b?.project).toMatchObject({ label: 'project', servedLabel: 'Served project', worktreeName: null });
     expect(b?.interpretations.map(({ kind }) => kind)).toEqual(['request-open']);
 
     const c = byId.get('local_c');
@@ -512,6 +514,34 @@ describe('queryWorkAttention', () => {
       observed: 2,
     });
     expect(dataset.coverage.checkouts).toEqual({ failed: 0, lastRunAt: hoursAgo(0.25), observed: 1 });
+  });
+
+  test('a joined worktree root keeps its origin project as label; the served worktree label is carried apart', async () => {
+    const worktreeRoot = session({
+      cliSessionId: 'cli-served',
+      id: 'w',
+      lastActivityHoursAgo: 1,
+      status: 'completed',
+      title: 'Fixture: W in a worktree',
+      worktree: true,
+    });
+    const dbPath = await createStore([worktreeRoot, session({ id: 'x', lastActivityHoursAgo: 2, title: 'X' })]);
+    // The report labels the transcript by the directory it ran in: the worktree, not the project.
+    await publishServedSession(dbPath, 'wt-1');
+
+    const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: NOW }));
+    const w = dataset.roots.find((root) => root.desktopSessionId === 'local_w');
+    expect(w?.session?.rowId).toEqual(expect.any(String));
+    expect(w?.project).toEqual({
+      branch: 'fixture/worktree',
+      checkoutPath: '/home/fixture/work/project/.claude/worktrees/wt-1',
+      label: 'project',
+      servedLabel: 'wt-1',
+      worktreeName: 'wt-1',
+    });
+    const x = dataset.roots.find((root) => root.desktopSessionId === 'local_x');
+    expect(x?.session).toBeNull();
+    expect(x?.project).toMatchObject({ label: 'project', servedLabel: null, worktreeName: null });
   });
 
   test('without a served revision the join is reported as unavailable, not as a gap per root', async () => {

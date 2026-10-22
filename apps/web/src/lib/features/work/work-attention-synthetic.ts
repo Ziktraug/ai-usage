@@ -66,6 +66,8 @@ interface RootSeed {
   readonly machineId?: string;
   readonly project: string;
   readonly reconsidered?: boolean;
+  /** The project label the served report gives the joined Session; defaults to the project when joined. */
+  readonly servedLabel?: string | null;
   readonly title: string;
   readonly titleSource?: WorkRoot['titleSource'];
   readonly worktreeName?: string | null;
@@ -94,6 +96,9 @@ const root = (seed: RootSeed, joins: ReadonlyMap<string, WorkRootSession>): Work
   const machineId = seed.machineId ?? MACHINE;
   const lastActivityAt = hoursAgo(seed.lastActivityHoursAgo);
   const declared = seed.declared ?? null;
+  const session = joins.get(seed.id) ?? null;
+  // The report labels a joined session by the directory it ran in; the seed may say otherwise.
+  const joinedLabel = session === null ? null : seed.project;
   return {
     age: {
       createdAt: hoursAgo(seed.createdHoursAgo ?? seed.lastActivityHoursAgo + 6),
@@ -123,10 +128,11 @@ const root = (seed: RootSeed, joins: ReadonlyMap<string, WorkRootSession>): Work
         ? `~/Projects/${seed.project}-${seed.worktreeName}`
         : `~/Projects/${seed.project}`,
       label: seed.project,
+      servedLabel: seed.servedLabel === undefined ? joinedLabel : seed.servedLabel,
       worktreeName: seed.worktreeName ?? null,
     },
     reconsidered: seed.reconsidered ?? false,
-    session: joins.get(seed.id) ?? null,
+    session,
     title: seed.title,
     titleSource: seed.titleSource ?? (harness === 'claude' ? 'tool' : 'unknown'),
   };

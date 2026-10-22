@@ -79,6 +79,7 @@ const root = (overrides: Partial<WorkRootWire> = {}): WorkRootWire => ({
     branch: 'fixture/branch',
     checkoutPath: '/home/fixture/work/project',
     label: 'project',
+    servedLabel: 'project',
     worktreeName: null,
   },
   reconsidered: false,

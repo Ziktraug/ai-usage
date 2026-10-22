@@ -426,6 +426,7 @@ const parseRoot = (value: unknown): WorkRoot | undefined => {
     branch: optionalText(value.project.branch, maxShortText),
     checkoutPath: optionalText(value.project.checkoutPath, maxPath),
     label: text(value.project.label, maxShortText),
+    servedLabel: optionalText(value.project.servedLabel, maxShortText),
     worktreeName: optionalText(value.project.worktreeName, maxShortText),
   };
   const declared = parseDeclaration(value.declared);

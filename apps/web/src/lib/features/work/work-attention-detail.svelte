@@ -127,6 +127,9 @@
         {/if}
         · {root.key.machineId}
       </p>
+      {#if root.project.servedLabel !== null && root.project.servedLabel !== root.project.label}
+        <p class={workMuted} data-work-served-label>report project: {root.project.servedLabel}</p>
+      {/if}
     </div>
     <button aria-label="Close detail" class={workCloseButton} onclick={onClose} type="button" bind:this={closeButton}>
       Close

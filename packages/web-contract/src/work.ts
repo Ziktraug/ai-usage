@@ -217,8 +217,9 @@ export const workRootSchema = strictObject({
   project: strictObject({
     branch: nullable(shortTextSchema),
     checkoutPath: nullable(pathTextSchema),
-    // A label may be read from the report (free text) or derived from a path; it is bounded like one.
+    // Labels are a directory name or the report's free text; both are bounded like a path.
     label: pathTextSchema,
+    servedLabel: nullable(pathTextSchema),
     worktreeName: nullable(shortTextSchema),
   }),
   reconsidered: boolean(),
