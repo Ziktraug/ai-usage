@@ -9,6 +9,7 @@ export type {
   ImportCodexWorkObservationsInput,
   QueryCodexWorkObservationsInput,
 } from './codex-work-store';
+export { MAX_CODEX_WORK_BATCH } from './codex-work-store';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 export type {

@@ -67,6 +67,7 @@ import {
   importPullRequestObservations,
   importSkillObservations,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
+  MAX_CODEX_WORK_BATCH,
   MAX_WORK_FACT_QUERY_LIMIT,
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
@@ -461,15 +462,22 @@ const createSessionSource = (input: {
               minimumExposureObservedAt,
               observations: preparedObservations.observations,
             }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      const importedWork =
-        collection.workObservations === undefined
-          ? { changed: 0, rejected: 0 }
-          : yield* importCodexWorkObservations({
-              dbPath: input.dbPath,
-              machineId: input.machine.id,
-              observedAt: input.now().toISOString(),
-              observations: collection.workObservations,
-            }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      const importedWork = { changed: 0, rejected: 0 };
+      const workObservations = collection.workObservations ?? [];
+      const observedAt = input.now().toISOString();
+      // The store bound applies to each transaction, not to the user's history. Empty snapshots
+      // must also survive: they clear request evidence from an earlier parse of that session.
+      for (let offset = 0; offset < workObservations.length; offset += MAX_CODEX_WORK_BATCH) {
+        yield* abortIfRequested(context.signal);
+        const batch = yield* importCodexWorkObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          observedAt,
+          observations: workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH),
+        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        importedWork.changed += batch.changed;
+        importedWork.rejected += batch.rejected;
+      }
       if (importedWork.rejected > 0) {
         return yield* Effect.fail(
           sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
