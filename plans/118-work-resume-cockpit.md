@@ -30,7 +30,7 @@ explicitly declared information.
 | E | First read-only review attempt launched from the product (Claude Code only, isolated checkout) | — | NOT STARTED (depends on A, C, R) |
 | M | Routing qualification made usable and truthful: observed account fingerprint and its pin, alternate models of one account, window-by-window quota, engine `qualify-review-routing` behind `workRouting.qualify`, short qualification path in the routing panel (ADR 0057) | `feat/work-resume-cockpit-m-routing` | DONE, integrated (`599fa303`) |
 | K | Review attempt defects (ADR 0055): a lost attempt keeps its reservation until process evidence or a late outcome releases it; the review gets one commit's bounded patch; the launch excludes every settings source, runs in safe mode and records its guarantee | `feat/work-resume-cockpit-k-review` | DONE, integrated (`516617cf`) |
-| L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE (lot branch, awaiting integration) |
+| L | Resolved waits on `/work`: a bounded declaration history and `latestUserFrameAt` in the usage store, native answers, handled and superseded requests and offers (ADR 0056), pending sessions kept beyond the read bound, request → context → decision → next action rows, honest search coverage | `feat/work-resume-cockpit-l-resume` | DONE, integrated (`9bbbd9fa`) |
 
 ## Decisions (short; durable ones get ADRs 0050–0052)
 
@@ -379,3 +379,35 @@ local-collectors 273, web-contract 93 pass, 0 fail; under `nix develop`: web uni
 PASS, `test:web-bundle` 4/4, `work-production.spec.ts` 4/4 (three runs; one printed an engine
 `startup-failure` diagnostic after the last test), opt-in `work-attempt-production.spec.ts` 1/1.
 Not run: the real hook probe (steps for the operator in the integrator's notes), the full gate.
+
+### 2026-10-22 11:40 — lots M, K and L integrated; gate at `efd2a9bc`
+
+`9bbbd9fa` merges lot L (`375427a5`…`ddacf360`) with `--no-ff`; conflicts only in the ADR index
+(0055, 0056, 0057 kept in order) and this plan. Checked against the code first: the additive
+`claude_desktop_turn_declarations` table (at most 8 declarations per session) and the nullable
+`latest_user_frame_at` column migrate by presence under `user_version` 4 with a migration test;
+the answered, superseded, unrelated-PR, expired-proposal, completed-child and continued-work cases
+and the second bounded page of wait-carrying sessions and missing parents are tested; the diff
+reads no transcript. The UI says "Answered in Claude Desktop" / "You answered in Claude Desktop"
+and "no longer asked", never approved or authorized, with the note that the message itself is not
+read. Integration commits: lot L's prepared patches, reviewed: the read counts the stored sessions
+it left out ("N of S stored sessions read", `aa1b7cf9`), CONTEXT.md and the upgrade notes
+(`1ba25637`, reflowed, older-binary sentence corrected, ADR 0050 marked amended by 0056); the
+Work attention dataset gets its own `collection-facts-swr` policy, refetching on mount only when
+stale, so a server-rendered page load reads it once (`efd2a9bc`, unit test plus the e2e fixture
+spec asserting no browser re-read; the production spec allows one, its server clock is pinned).
+
+Gate in the detached gate worktree at `efd2a9bc` under `nix develop` (Bun 1.3.13): frozen install;
+`bun run check` 1616 files clean; `bun run lint` PASS; `bun run typecheck` PASS (turbo `check`
+58/58 with `--force`, 59 s); package suites 56 turbo tasks, 2 715 pass, 0 fail (203 s); web unit
+1 570 pass (62 s); tools 145 pass (205 s); build PASS (30 s); client manifest PASS,
+`test:web-bundle` 4/4, first load 305 823 B (recorded 305 759, ceiling 310 000);
+`bun run test:e2e` through the retry wrapper 251 passed, no retry (120 s);
+`bun run test:web-production` PASS (41 s); `bun run test:e2e-production` (now with the Work
+specs): production report 13/13, `work-production.spec.ts` 5/5, opt-in
+`work-attempt-production.spec.ts` 1/1, session scroll and campaign map 7/7; its campaign
+continuity step first hit port 4178 held by another session's run, then measured 30/31, 30/31
+and 31/31 (one different test each time: a Session drawer `getResponseBody` protocol error, a
+500 on `/rpc/campaign/labelOverrides`; both pass alone; the base `3402c046` passed 31/31 once
+under the same load). Not verified: the real hook probe (operator steps prepared), CI on this
+head, and whether the two continuity failures are load-only flakes.
