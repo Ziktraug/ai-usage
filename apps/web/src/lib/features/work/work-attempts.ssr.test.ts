@@ -57,13 +57,16 @@ const attempt = (overrides: Partial<WorkAttemptWire>): WorkAttemptWire => ({
   executorHarness: 'claude-code',
   exitCode: 0,
   failureReason: null,
+  guarantee: null,
   machineId: 'm',
   nativeSessionId: 'native-1',
   nativeSessionRowId: null,
   numTurns: 3,
   requestedAt: '2026-10-22T10:00:00.000Z',
+  reservation: { held: false, releaseEvidence: null, releasedAt: null },
   resultExcerpt: 'Finding 1: src/a.ts:12 (medium)\nA null path reaches the launcher.',
   resultKind: 'review',
+  scope: null,
   startedAt: '2026-10-22T10:00:01.000Z',
   state: 'finished',
   target: {
@@ -101,6 +104,7 @@ describe('Work attempts Svelte rendering', () => {
           failureReason: 'engine restarted while running',
           nativeSessionId: 'native-2',
           resultExcerpt: null,
+          reservation: { held: true, releaseEvidence: null, releasedAt: null },
           resultKind: null,
           state: 'lost',
         }),
@@ -123,11 +127,80 @@ describe('Work attempts Svelte rendering', () => {
     expect(body).toContain('contact lost; verify in the harness · attempt lost-att');
     expect(body).toContain('Contact lost; verify in the harness. The engine never relaunches an attempt.');
     expect(body).toContain('Failure: engine restarted while running');
+    expect(body).toContain('data-work-attempt-reservation="held"');
+    expect(body).toContain('It still reserves this target');
     expect(body).toMatch(NOT_COLLECTED_YET);
     expect(body).toContain('running · attempt live-att');
     expect(body).toContain('last heartbeat');
     expect(body).not.toContain('Retry');
     expect(body).not.toContain('Relaunch');
+  });
+
+  test('states the commit a review was given, a truncated patch as partial, and the harness guarantee', () => {
+    const body = html({
+      attempts: list([
+        attempt({
+          guarantee: {
+            cliVersion: '2.1.306',
+            effort: null,
+            model: 'opus',
+            managedSettings: 'absent',
+            safeMode: true,
+            settingSources: [],
+            tools: ['Read', 'Grep', 'Glob'],
+          },
+          scope: {
+            base: 'first-parent',
+            baseSha: 'c'.repeat(40),
+            fileCount: 2,
+            files: [
+              {
+                additions: 3,
+                coverage: 'complete',
+                deletions: 1,
+                path: 'a.ts',
+                previousPath: null,
+                status: 'modified',
+              },
+              { additions: 9, coverage: 'omitted', deletions: 0, path: 'b.ts', previousPath: null, status: 'added' },
+            ],
+            headSha: 'b'.repeat(40),
+            includedBytes: 2048,
+            includedLines: 60,
+            kind: 'commit',
+            parentCount: 1,
+            patchBytes: 5120,
+            patchLines: 140,
+            patchSha256: 'd'.repeat(64),
+            repositoryPrefix: '',
+            subject: 'fix: one',
+            truncated: true,
+            workingTreeDirty: true,
+          },
+        }),
+        attempt({
+          attemptId: 'released-attempt',
+          reservation: {
+            held: false,
+            releaseEvidence: 'outcome-recorded-late',
+            releasedAt: '2026-10-22T10:02:00.000Z',
+          },
+          state: 'lost',
+        }),
+      ]),
+      pending: false,
+    });
+    expect(body).toContain(
+      'Reviewed commit bbbbbbbbbbbb "fix: one" against its first parent cccccccccccc, one revision only.',
+    );
+    expect(body).toContain('Patch partial: 2 KB of 5 KB, 60 of 140 lines; 2 files (1 complete, 1 omitted)');
+    expect(body).toContain('The working tree had uncommitted changes');
+    expect(body).toContain('Result (review, partial: the patch was truncated) · 3 turns');
+    expect(body).toContain('Ran under Claude Code 2.1.306: settings loaded none');
+    expect(body).toContain('no OS sandbox is claimed');
+    expect(body).toContain(
+      'Reservation released: the engine that launched it recorded its end after contact was lost.',
+    );
   });
 
   test('states the empty, pending and unavailable cases', () => {

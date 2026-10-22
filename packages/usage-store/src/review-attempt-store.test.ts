@@ -17,6 +17,7 @@ import {
   initializeUsageStore,
   markReviewAttemptsLost,
   publishServedReportRevision,
+  releaseReviewAttemptReservation,
   requestReviewAttempt,
   transitionReviewAttempt,
   updateUsageMachineLabel,
@@ -93,10 +94,91 @@ describe('review attempt store', () => {
           .map(({ name }) => name)
           .filter((name) => !name.startsWith('sqlite_autoindex'))
           .sort(),
-      ).toEqual(['idx_review_attempts_live_identity', 'idx_review_attempts_target']);
+      ).toEqual(['idx_review_attempts_reserved_identity', 'idx_review_attempts_target']);
+      const columns = (db.query('PRAGMA table_info(review_attempts)').all() as { name: string }[]).map(
+        ({ name }) => name,
+      );
+      expect(columns).toEqual(
+        expect.arrayContaining([
+          'launch_session_id',
+          'released_at',
+          'release_evidence',
+          'scope_json',
+          'guarantee_json',
+        ]),
+      );
     } finally {
       db.close();
     }
+  });
+
+  test('upgrades a table created by the first version: adds the columns, releases its lost rows by name, swaps the index', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-review-attempts-legacy-'));
+    roots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await run(initializeUsageStore({ dbPath }));
+    // Rebuild the table exactly as the first version created it, with two lost rows on one key
+    // (the earlier rule allowed that) and one live row.
+    const legacy = new Database(dbPath);
+    try {
+      legacy.exec(`
+        DROP TABLE review_attempts;
+        CREATE TABLE review_attempts (
+          attempt_id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('read-only-review')), target_harness TEXT NOT NULL,
+          source_session_id TEXT NOT NULL, desktop_session_id TEXT, checkout_path TEXT,
+          checkout_origin TEXT CHECK (checkout_origin IS NULL OR checkout_origin IN ('desktop-worktree', 'desktop-cwd', 'served-session')),
+          project_label TEXT, session_title TEXT, candidate_id TEXT NOT NULL,
+          executor_harness TEXT NOT NULL CHECK (executor_harness IN ('claude-code', 'codex')), declaration_json TEXT,
+          state TEXT NOT NULL CHECK (state IN ('requested', 'starting', 'running', 'finished', 'failed', 'refused', 'lost')),
+          requested_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, updated_at TEXT NOT NULL, native_session_id TEXT,
+          pid INTEGER, exit_code INTEGER,
+          result_kind TEXT CHECK (result_kind IS NULL OR result_kind IN ('review', 'error', 'timeout')),
+          result_excerpt TEXT, num_turns INTEGER, duration_ms INTEGER, validations_json TEXT NOT NULL DEFAULT '[]',
+          acceptance TEXT NOT NULL DEFAULT 'pending' CHECK (acceptance IN ('pending', 'accepted', 'rejected')),
+          failure_reason TEXT
+        );
+        CREATE INDEX idx_review_attempts_target ON review_attempts(machine_id, target_harness, source_session_id, requested_at DESC);
+        CREATE UNIQUE INDEX idx_review_attempts_live_identity ON review_attempts(idempotency_key) WHERE state IN ('requested', 'starting', 'running');
+      `);
+      const insert = legacy.query(`
+        INSERT INTO review_attempts (attempt_id, machine_id, idempotency_key, action, target_harness, source_session_id,
+          candidate_id, executor_harness, state, requested_at, ended_at, updated_at)
+        VALUES (?, '${MACHINE}', ?, 'read-only-review', 'claude', 'cli-1', 'candidate', 'claude-code', ?, ?, ?, ?)
+      `);
+      insert.run('lost-1', 'k'.repeat(64), 'lost', NOW, LATER, LATER);
+      insert.run('lost-2', 'k'.repeat(64), 'lost', LATER, '2026-10-22T10:01:00.000Z', '2026-10-22T10:01:00.000Z');
+      insert.run('live-1', 'k'.repeat(64), 'running', '2026-10-22T10:02:00.000Z', null, '2026-10-22T10:02:00.000Z');
+    } finally {
+      legacy.close();
+    }
+    await run(initializeUsageStore({ dbPath }));
+    // Idempotent: a second open changes nothing.
+    await run(initializeUsageStore({ dbPath }));
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const indexes = (
+        db.query("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'review_attempts'").all() as {
+          name: string;
+        }[]
+      ).map(({ name }) => name);
+      expect(indexes).toContain('idx_review_attempts_reserved_identity');
+      expect(indexes).not.toContain('idx_review_attempts_live_identity');
+    } finally {
+      db.close();
+    }
+    const byId = new Map((await run(queryReviewAttempts({ dbPath }))).attempts.map((row) => [row.attemptId, row]));
+    expect(byId.get('lost-1')).toMatchObject({ releaseEvidence: 'recorded-before-reservations', releasedAt: LATER });
+    expect(byId.get('lost-2')).toMatchObject({
+      releaseEvidence: 'recorded-before-reservations',
+      releasedAt: '2026-10-22T10:01:00.000Z',
+    });
+    expect(byId.get('live-1')).toMatchObject({
+      launchSessionId: null,
+      releasedAt: null,
+      scope: null,
+      state: 'running',
+    });
   });
 
   test('inserts one live attempt per identity and returns the existing one to a second request', async () => {
@@ -286,6 +368,167 @@ describe('review attempt store', () => {
     expect(byId.get('other-machine')?.state).toBe('requested');
     expect((await run(queryReviewAttempts({ dbPath, states: ['lost'] }))).attempts).toHaveLength(2);
     expect((await run(queryReviewAttempts({ dbPath, machineId: 'elsewhere' }))).attempts).toHaveLength(1);
+  });
+
+  test('a lost attempt keeps its reservation until it is released with evidence; heartbeats never release it', async () => {
+    const dbPath = await createStore();
+    const launchSessionId = '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f';
+    const requested = await run(
+      requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-1', launchSessionId }), dbPath }),
+    );
+    expect(requested.attempt).toMatchObject({ launchSessionId, releasedAt: null, state: 'requested' });
+    await run(
+      transitionReviewAttempt({ at: LATER, attemptId: 'attempt-1', dbPath, patch: { pid: 4242, state: 'running' } }),
+    );
+    await run(markReviewAttemptsLost({ at: LATER, dbPath, machineId: MACHINE, reason: () => 'engine restarted' }));
+
+    // The same identity is still reserved: a second request returns the lost row and inserts nothing.
+    const blocked = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-2' }), dbPath }));
+    expect(blocked).toMatchObject({ attempt: { attemptId: 'attempt-1', state: 'lost' }, reused: true });
+    // The unique index enforces it below the code path too.
+    const raw = new Database(dbPath);
+    try {
+      expect(() =>
+        raw
+          .query(`
+            INSERT INTO review_attempts (attempt_id, machine_id, idempotency_key, action, target_harness,
+              source_session_id, candidate_id, executor_harness, state, requested_at, updated_at)
+            VALUES ('twin', '${MACHINE}', '${'k'.repeat(64)}', 'read-only-review', 'claude', 'cli-1', 'c', 'claude-code', 'requested', '${NOW}', '${NOW}')
+          `)
+          .run(),
+      ).toThrow('UNIQUE');
+    } finally {
+      raw.close();
+    }
+    // A late heartbeat from the old process's engine is not applied and releases nothing.
+    expect(
+      await run(transitionReviewAttempt({ at: '2026-10-22T10:00:30.000Z', attemptId: 'attempt-1', dbPath, patch: {} })),
+    ).toEqual({ applied: false });
+    expect(
+      (await run(queryReviewAttempts({ dbPath, reserving: true }))).attempts.map(({ attemptId }) => attemptId),
+    ).toEqual(['attempt-1']);
+    // Release only from `lost`, never from another state.
+    expect(
+      await run(
+        releaseReviewAttemptReservation({
+          at: LATER,
+          attemptId: 'missing',
+          dbPath,
+          evidence: 'process-absent',
+        }),
+      ),
+    ).toEqual({ applied: false });
+
+    // A late outcome from the launching engine is recorded on the lost row and releases it; the
+    // first evidence stands when a second release arrives.
+    expect(
+      await run(
+        releaseReviewAttemptReservation({
+          at: '2026-10-22T10:01:00.000Z',
+          attemptId: 'attempt-1',
+          dbPath,
+          evidence: 'outcome-recorded-late',
+          outcome: {
+            durationMs: 50_000,
+            exitCode: 0,
+            nativeSessionId: launchSessionId,
+            numTurns: 3,
+            resultExcerpt: 'Finding 1: late.',
+            resultKind: 'review',
+          },
+        }),
+      ),
+    ).toEqual({ applied: true });
+    await run(
+      releaseReviewAttemptReservation({
+        at: '2026-10-22T10:02:00.000Z',
+        attemptId: 'attempt-1',
+        dbPath,
+        evidence: 'process-absent',
+      }),
+    );
+    const [lost] = (await run(queryReviewAttempts({ dbPath, states: ['lost'] }))).attempts;
+    expect(lost).toMatchObject({
+      exitCode: 0,
+      failureReason: 'engine restarted',
+      releaseEvidence: 'outcome-recorded-late',
+      releasedAt: '2026-10-22T10:01:00.000Z',
+      resultExcerpt: 'Finding 1: late.',
+      state: 'lost',
+    });
+    expect((await run(queryReviewAttempts({ dbPath, reserving: true }))).attempts).toEqual([]);
+    const free = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-3' }), dbPath }));
+    expect(free).toMatchObject({ attempt: { attemptId: 'attempt-3', state: 'requested' }, reused: false });
+  });
+
+  test('two concurrent requests on one identity insert one attempt, whichever connection wins', async () => {
+    const dbPath = await createStore();
+    const results = await Promise.all([
+      run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'client-a' }), dbPath })),
+      run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'client-b' }), dbPath })),
+    ]);
+    expect(results.filter((result) => !result.reused)).toHaveLength(1);
+    expect(new Set(results.map((result) => result.attempt.attemptId)).size).toBe(1);
+    expect((await run(queryReviewAttempts({ dbPath }))).attempts).toHaveLength(1);
+  });
+
+  test('records the reviewed scope and the harness guarantee with the launch and reads them back', async () => {
+    const dbPath = await createStore();
+    await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-1' }), dbPath }));
+    const scope = {
+      base: 'empty-tree' as const,
+      baseSha: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+      fileCount: 1,
+      files: [
+        {
+          additions: 1,
+          coverage: 'complete' as const,
+          deletions: 0,
+          path: 'a.txt',
+          previousPath: null,
+          status: 'added' as const,
+        },
+      ],
+      headSha: 'a'.repeat(40),
+      includedBytes: 80,
+      includedLines: 6,
+      kind: 'commit' as const,
+      parentCount: 0,
+      patchBytes: 80,
+      patchLines: 6,
+      patchSha256: 'e'.repeat(64),
+      repositoryPrefix: '',
+      subject: 'first',
+      truncated: false,
+      workingTreeDirty: false,
+    };
+    const guarantee = {
+      cliVersion: '2.1.306',
+      effort: null,
+      model: 'opus',
+      managedSettings: 'absent' as const,
+      safeMode: true,
+      settingSources: [],
+      tools: ['Read', 'Grep', 'Glob'] as const,
+    };
+    await run(
+      transitionReviewAttempt({
+        at: LATER,
+        attemptId: 'attempt-1',
+        dbPath,
+        patch: { guarantee, pid: 99, scope, state: 'starting' },
+      }),
+    );
+    const [attempt] = (await run(queryReviewAttempts({ dbPath }))).attempts;
+    expect(attempt).toMatchObject({ guarantee, scope, state: 'starting' });
+    // A scope that no longer re-validates hides the row rather than serving it.
+    const raw = new Database(dbPath);
+    try {
+      raw.query(`UPDATE review_attempts SET scope_json = '{"kind":"pull-request"}'`).run();
+    } finally {
+      raw.close();
+    }
+    expect(await run(queryReviewAttempts({ dbPath }))).toMatchObject({ attempts: [], skipped: 1 });
   });
 
   test('bounds the list, reports truncation and counts rows that no longer re-validate', async () => {

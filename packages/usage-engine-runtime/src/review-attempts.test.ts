@@ -2,12 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ClaudeReviewOutcome } from '@ai-usage/local-collectors/claude-review-launcher';
+import type { ClaudeReviewLaunch, ClaudeReviewOutcome } from '@ai-usage/local-collectors/claude-review-launcher';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import type { ReviewAttempt } from '@ai-usage/report-core/work-attempts';
+import type { ReviewAttempt, ReviewAttemptScope, ReviewHarnessGuarantee } from '@ai-usage/report-core/work-attempts';
 import { parseClaudeDesktopSessionObservation } from '@ai-usage/report-core/work-attention';
 import type { ExecutorObservation } from '@ai-usage/report-core/work-executors';
 import type { UsageEngineCommand } from '@ai-usage/usage-engine-control';
@@ -16,11 +16,15 @@ import {
   importExecutorObservations,
   importProviderQuotaBatch,
   initializeUsageStore,
+  markReviewAttemptsLost,
   queryReviewAttempts,
+  requestReviewAttempt,
+  transitionReviewAttempt,
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import { createReviewAttemptService, type ReviewLauncher } from './review-attempts';
+import type { FindReviewProcesses } from './review-attempts-process';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -43,6 +47,82 @@ const RESULT_LINE = JSON.stringify({
 });
 const emit = (...lines: string[]): string =>
   lines.map((line) => `process.stdout.write(${JSON.stringify(`${line}\n`)});`).join('\n');
+/** The options `claude --help` must name for the launcher to qualify the CLI. */
+const FAKE_HELP = [
+  '--allowedTools',
+  '--disallowedTools',
+  '--output-format',
+  '--permission-mode',
+  '--print',
+  '--safe-mode',
+  '--session-id',
+  '--setting-sources',
+  '--strict-mcp-config',
+  '--tools',
+  '--verbose',
+].join('\n');
+const FAKE_SCOPE: ReviewAttemptScope = {
+  base: 'first-parent',
+  baseSha: 'c'.repeat(40),
+  fileCount: 1,
+  files: [{ additions: 1, coverage: 'complete', deletions: 0, path: 'a.txt', previousPath: null, status: 'modified' }],
+  headSha: 'b'.repeat(40),
+  includedBytes: 90,
+  includedLines: 7,
+  kind: 'commit',
+  parentCount: 1,
+  patchBytes: 90,
+  patchLines: 7,
+  patchSha256: 'd'.repeat(64),
+  repositoryPrefix: '',
+  subject: 'second',
+  truncated: false,
+  workingTreeDirty: false,
+};
+const FAKE_GUARANTEE: ReviewHarnessGuarantee = {
+  cliVersion: '2.1.306',
+  effort: null,
+  model: 'opus',
+  managedSettings: 'absent',
+  safeMode: true,
+  settingSources: [],
+  tools: ['Read', 'Grep', 'Glob'],
+};
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+/** An in-memory launch whose events and outcome the test drives; no process is started. */
+const controlledLauncher = () => {
+  let settle: (outcome: ClaudeReviewOutcome) => void = () => undefined;
+  const calls: { events: Parameters<ReviewLauncher>[1]; launchSessionId: string }[] = [];
+  const outcome = new Promise<ClaudeReviewOutcome>((resolve) => {
+    settle = resolve;
+  });
+  const launcher: ReviewLauncher = async (spec, events) => {
+    calls.push({ events, launchSessionId: spec.launchSessionId });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return {
+      args: [],
+      guarantee: FAKE_GUARANTEE,
+      outcome,
+      pid: 999_999,
+      prompt: 'PROMPT',
+      scope: FAKE_SCOPE,
+      terminate: () => undefined,
+    } satisfies ClaudeReviewLaunch;
+  };
+  return { calls, launcher, settle: (value: ClaudeReviewOutcome) => settle(value) };
+};
+const FINISHED: ClaudeReviewOutcome = {
+  durationMs: 10,
+  exitCode: 0,
+  failureReason: null,
+  kind: 'finished',
+  nativeSessionId: 'native-late',
+  numTurns: 1,
+  resultExcerpt: 'Finding 1: late but real.',
+  resultKind: 'review',
+};
+const scanFound: FindReviewProcesses = async () => ({ kind: 'found', pids: [4242] });
 
 type StartCommand = Extract<UsageEngineCommand, { readonly command: 'start-review-attempt' }>;
 const command = (overrides: Partial<StartCommand> = {}): StartCommand => ({
@@ -74,6 +154,30 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
   const dbPath = path.join(root, 'state', 'usage.sqlite');
   const bin = path.join(root, 'bin');
   await Promise.all([mkdir(checkout, { recursive: true }), mkdir(bin, { recursive: true })]);
+  // The checkout has two commits: the review's scope is the second, against its first parent.
+  const git = async (...args: string[]) => {
+    const run = Bun.spawn(['git', ...args], {
+      cwd: checkout,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+        GIT_AUTHOR_NAME: 'Fixture',
+        GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+        GIT_COMMITTER_NAME: 'Fixture',
+      },
+      stderr: 'ignore',
+      stdout: 'ignore',
+    });
+    if ((await run.exited) !== 0) {
+      throw new Error(`git ${args.join(' ')} failed in the fixture`);
+    }
+  };
+  await git('init', '-q', '-b', 'main');
+  await writeFile(path.join(checkout, 'a.txt'), 'one\n');
+  await git('add', 'a.txt');
+  await git('commit', '-q', '-m', 'first');
+  await writeFile(path.join(checkout, 'a.txt'), 'one\ntwo\n');
+  await git('commit', '-q', '-am', 'second');
   const storage = createLocalHistoryStorage(home);
   await Effect.runPromise(writeMachineConfig(machine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
   await mkdir(path.join(home, '.config', 'ai-usage'), { recursive: true, mode: 0o700 });
@@ -194,7 +298,16 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
   );
   const executable = async (body: string): Promise<string> => {
     const file = path.join(bin, 'claude');
-    await writeFile(file, `#!${process.execPath}\n${body}\n`);
+    await writeFile(
+      file,
+      [
+        `#!${process.execPath}`,
+        'if (process.argv[2] === "--version") { process.stdout.write("2.1.306 (Claude Code)\\n"); process.exit(0); }',
+        `if (process.argv[2] === "--help") { process.stdout.write(${JSON.stringify(`${FAKE_HELP}\n`)}); process.exit(0); }`,
+        body,
+        '',
+      ].join('\n'),
+    );
     await chmod(file, 0o700);
     return file;
   };
@@ -213,10 +326,15 @@ const attemptById = async (dbPath: string, attemptId: string): Promise<ReviewAtt
   return found;
 };
 
-const service = (fixture: Fixture, executable: string, extra: { readonly timeoutMs?: number } = {}) => {
+const service = (
+  fixture: Fixture,
+  executable: string,
+  extra: { readonly findProcesses?: FindReviewProcesses; readonly timeoutMs?: number } = {},
+) => {
   const lines: string[] = [];
   const created = createReviewAttemptService({
     dbPath: fixture.dbPath,
+    ...(extra.findProcesses === undefined ? {} : { findProcesses: extra.findProcesses }),
     launchOptions: { env: { HOME: fixture.home, PATH: process.env.PATH }, executable },
     machine: () => machine,
     now: () => NOW,
@@ -239,7 +357,15 @@ describe('engine review attempts', () => {
     // The init line is read, and `running` written, before the launcher hands the launch back.
     const launcher: ReviewLauncher = async (_spec, events) => {
       await events.onInit?.('native-early');
-      return { args: [], outcome, pid: process.pid, prompt: 'PROMPT', terminate: () => undefined };
+      return {
+        args: [],
+        guarantee: FAKE_GUARANTEE,
+        outcome,
+        pid: process.pid,
+        prompt: 'PROMPT',
+        scope: FAKE_SCOPE,
+        terminate: () => undefined,
+      };
     };
     const engine = createReviewAttemptService({
       dbPath: fixture.dbPath,
@@ -397,42 +523,234 @@ describe('engine review attempts', () => {
     expect((await attempts(noQuota.dbPath)).every((attempt) => attempt.state === 'refused')).toBe(true);
   });
 
-  test('fails the attempt when the executable is missing and marks live attempts lost on restart and shutdown', async () => {
+  test('records the commit it reviewed and the guarantee it ran under; a checkout without a commit fails the attempt', async () => {
+    const fixture = await createFixture();
+    const engine = service(fixture, await fixture.executable(emit(INIT_LINE, RESULT_LINE)));
+    const started = await engine.start(command());
+    await engine.settle();
+    const attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
+    const head = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd: fixture.checkout }).stdout.toString().trim();
+    expect(attempt.scope).toMatchObject({ base: 'first-parent', headSha: head, kind: 'commit', subject: 'second' });
+    expect(attempt.guarantee).toMatchObject({
+      effort: null,
+      model: null,
+      safeMode: true,
+      settingSources: [],
+      tools: ['Read', 'Grep', 'Glob'],
+    });
+    expect(attempt.launchSessionId).toMatch(UUID_PATTERN);
+
+    await rm(path.join(fixture.checkout, '.git'), { force: true, recursive: true });
+    const unscoped = await engine.start(command());
+    expect(unscoped.attempt.state).toBe('failed');
+    const failed = await attemptById(fixture.dbPath, unscoped.attempt.attemptId);
+    expect(failed).toMatchObject({ pid: null, resultKind: 'error', scope: null, state: 'failed' });
+    expect(failed.failureReason).toContain('scope-unavailable: the checkout has no commit to review');
+  });
+
+  test('a double click and a second client on the same target launch one review', async () => {
+    const fixture = await createFixture();
+    const controlled = controlledLauncher();
+    const engine = createReviewAttemptService({
+      dbPath: fixture.dbPath,
+      launcher: controlled.launcher,
+      machine: () => machine,
+      now: () => NOW,
+      storage: fixture.storage,
+    });
+    const [first, second] = await Promise.all([engine.start(command()), engine.start(command())]);
+    const fromAnotherClient = await engine.start(command({ target: { ...command().target, desktopSessionId: null } }));
+    expect(controlled.calls).toHaveLength(1);
+    expect([first.attempt.reused, second.attempt.reused].sort()).toEqual([false, true]);
+    expect(first.attempt.attemptId).toBe(second.attempt.attemptId);
+    expect(fromAnotherClient.attempt).toMatchObject({ attemptId: first.attempt.attemptId, reused: true });
+    expect(await attempts(fixture.dbPath)).toHaveLength(1);
+    controlled.settle(FINISHED);
+    await engine.settle();
+  });
+
+  test('a restart with the review still running keeps the target reserved and never touches that process', async () => {
     const fixture = await createFixture();
     const missing = await service(fixture, path.join(fixture.home, 'no-such-claude')).start(command());
     expect(missing.attempt.state).toBe('failed');
-    let attempt = await attemptById(fixture.dbPath, missing.attempt.attemptId);
-    expect(attempt.failureReason).toContain('executor-unavailable');
-    expect(attempt).toMatchObject({ pid: null, resultKind: 'error', state: 'failed' });
+    expect((await attemptById(fixture.dbPath, missing.attempt.attemptId)).failureReason).toContain(
+      'executor-unavailable',
+    );
 
     const executable = await fixture.executable(`${emit(INIT_LINE)}\nsetTimeout(() => process.exit(0), 60_000);`);
     const engine = service(fixture, executable);
     const started = await engine.start(command());
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    let attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
     expect(attempt).toMatchObject({ nativeSessionId: 'native-engine-1', state: 'running' });
+    const pid = attempt.pid ?? 0;
 
-    // A restarted engine holds no pipe to the process: the row is lost, never relaunched.
+    // A restarted engine holds no pipe to the process; the real process table still shows it.
     const restarted = service(fixture, executable);
     expect(await restarted.recoverLost()).toEqual([started.attempt.attemptId]);
     attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
-    expect(attempt.state).toBe('lost');
+    expect(attempt).toMatchObject({ releasedAt: null, state: 'lost' });
     expect(attempt.failureReason).toContain('engine restarted while running');
-    expect(attempt.failureReason).toContain('still alive');
-    await engine.shutdown();
-    expect(engine.live()).toEqual([]);
+    expect(attempt.failureReason).toContain(`still runs (pid ${pid})`);
+    const refused = await restarted.start(command());
+    expect(refused).toMatchObject({
+      attempt: { reused: false, state: 'refused' },
+      refusal: { reason: 'attempt-unresolved' },
+    });
+    expect(refused.refusal?.message).toContain(`--session-id ${attempt.launchSessionId}`);
+    expect(refused.refusal?.message).toContain('neither adopts nor stops');
+    expect(restarted.live()).toEqual([]);
+    expect(() => process.kill(pid, 0)).not.toThrow();
 
-    // Shutdown with a live run: the process is terminated and the row is lost with the shutdown reason.
-    const second = service(fixture, executable);
-    const live = await second.start(command());
-    expect(live.attempt.state).toBe('starting');
-    await second.shutdown();
-    const rows = await attempts(fixture.dbPath);
-    const lost = rows.find((row) => row.attemptId === live.attempt.attemptId);
-    expect(lost).toMatchObject({
-      failureReason: 'engine stopped while the attempt was running; verify in the harness',
+    // The engine that started it stops it at its own shutdown and records the end it saw.
+    await engine.shutdown();
+    attempt = await attemptById(fixture.dbPath, started.attempt.attemptId);
+    expect(attempt).toMatchObject({ releaseEvidence: 'outcome-recorded-late', state: 'lost' });
+    const relaunched = await restarted.start(command());
+    expect(relaunched.attempt).toMatchObject({ reused: false, state: 'starting' });
+    await restarted.shutdown();
+    // Shutdown with a live run of its own: the process is stopped, its exit seen, the row ended.
+    const stopped = await attemptById(fixture.dbPath, relaunched.attempt.attemptId);
+    expect(stopped).toMatchObject({
+      failureReason:
+        'stopped at engine shutdown: the engine terminated its process and saw it exit (terminated by the engine)',
+      resultKind: 'error',
+      state: 'failed',
+    });
+    await expect(restarted.start(command())).rejects.toThrow('stopping');
+    // Several real launches (CLI qualification, git scope, a process to stop): more than the default budget.
+  }, 30_000);
+
+  test('a lost attempt whose launch marker no process carries is released, and the review launches', async () => {
+    const fixture = await createFixture();
+    const controlled = controlledLauncher();
+    const engine = createReviewAttemptService({
+      dbPath: fixture.dbPath,
+      launcher: controlled.launcher,
+      machine: () => machine,
+      now: () => NOW,
+      storage: fixture.storage,
+    });
+    const first = await engine.start(command());
+    // Contact is recorded lost (as by a restart) while the real process table shows no such marker.
+    await Effect.runPromise(
+      markReviewAttemptsLost({
+        at: NOW.toISOString(),
+        dbPath: fixture.dbPath,
+        machineId: machine.id,
+        reason: () => 'lost',
+      }),
+    );
+    // The engine that launched it still tracks it, so it alone would never call it gone.
+    expect((await engine.start(command())).refusal?.reason).toBe('attempt-unresolved');
+    const next = controlledLauncher();
+    const restarted = createReviewAttemptService({
+      dbPath: fixture.dbPath,
+      launcher: next.launcher,
+      machine: () => machine,
+      now: () => NOW,
+      storage: fixture.storage,
+    });
+    const second = await restarted.start(command());
+    expect(second.attempt).toMatchObject({ reused: false, state: 'starting' });
+    expect(await attemptById(fixture.dbPath, first.attempt.attemptId)).toMatchObject({
+      releaseEvidence: 'process-absent',
       state: 'lost',
     });
-    await expect(second.start(command())).rejects.toThrow('stopping');
+    controlled.settle(FINISHED);
+    next.settle(FINISHED);
+    await Promise.all([engine.settle(), restarted.settle()]);
+  });
+
+  test('a late heartbeat after the loss changes nothing; a late result is recorded and releases the target', async () => {
+    const fixture = await createFixture();
+    const controlled = controlledLauncher();
+    const owner = createReviewAttemptService({
+      dbPath: fixture.dbPath,
+      findProcesses: scanFound,
+      launcher: controlled.launcher,
+      machine: () => machine,
+      now: () => NOW,
+      storage: fixture.storage,
+    });
+    const started = await owner.start(command());
+    const restarted = createReviewAttemptService({
+      dbPath: fixture.dbPath,
+      findProcesses: scanFound,
+      launcher: controlledLauncher().launcher,
+      machine: () => machine,
+      now: () => new Date('2026-10-22T10:05:00.000Z'),
+      storage: fixture.storage,
+    });
+    await restarted.recoverLost();
+    const lost = await attemptById(fixture.dbPath, started.attempt.attemptId);
+    expect(lost).toMatchObject({ releasedAt: null, state: 'lost' });
+
+    await controlled.calls[0]?.events.onHeartbeat?.();
+    await controlled.calls[0]?.events.onInit?.('native-late');
+    expect(await attemptById(fixture.dbPath, started.attempt.attemptId)).toEqual(lost);
+    expect((await restarted.start(command())).refusal?.reason).toBe('attempt-unresolved');
+
+    controlled.settle(FINISHED);
+    await owner.settle();
+    expect(await attemptById(fixture.dbPath, started.attempt.attemptId)).toMatchObject({
+      releaseEvidence: 'outcome-recorded-late',
+      resultExcerpt: 'Finding 1: late but real.',
+      resultKind: 'review',
+      state: 'lost',
+    });
+    expect((await restarted.start(command())).attempt).toMatchObject({ reused: false, state: 'starting' });
+  });
+
+  test('without a readable process table the reservation stays held, and the refusal says why', async () => {
+    const fixture = await createFixture();
+    await Effect.runPromise(
+      requestReviewAttempt({
+        attempt: {
+          attemptId: 'attempt-elsewhere',
+          candidateId: CANDIDATE_ID,
+          declaration: null,
+          executorHarness: 'claude-code',
+          idempotencyKey: 'f'.repeat(64),
+          launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
+          machineId: machine.id,
+          requestedAt: NOW.toISOString(),
+          state: 'requested',
+          target: {
+            checkoutOrigin: 'desktop-cwd',
+            checkoutPath: '/elsewhere',
+            desktopSessionId: null,
+            harness: 'claude',
+            projectLabel: null,
+            sessionTitle: null,
+            sourceSessionId: 'cli-1',
+          },
+        },
+        dbPath: fixture.dbPath,
+      }),
+    );
+    await Effect.runPromise(
+      transitionReviewAttempt({
+        at: NOW.toISOString(),
+        attemptId: 'attempt-elsewhere',
+        dbPath: fixture.dbPath,
+        patch: { state: 'running' },
+      }),
+    );
+    const engine = createReviewAttemptService({
+      dbPath: fixture.dbPath,
+      findProcesses: async () => ({ kind: 'unavailable', reason: 'no readable process table on darwin' }),
+      launcher: controlledLauncher().launcher,
+      machine: () => machine,
+      now: () => NOW,
+      storage: fixture.storage,
+    });
+    await engine.recoverLost();
+    const held = await attemptById(fixture.dbPath, 'attempt-elsewhere');
+    expect(held.failureReason).toContain('the process table is not readable (no readable process table on darwin)');
+    // Another identity on the same target: still refused, since a process may run on it.
+    const refused = await engine.start(command());
+    expect(refused.refusal?.reason).toBe('attempt-unresolved');
+    expect(refused.refusal?.message).toContain('cannot tell whether its harness process still runs');
   });
 });

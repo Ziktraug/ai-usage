@@ -4,14 +4,21 @@ import {
   boundReviewExcerpt,
   buildReviewPrompt,
   decideReviewLaunch,
+  describeUnresolvedReviewReservation,
+  holdsReviewReservation,
   isCheckoutPathAdmitted,
   isLiveReviewAttemptState,
   normalizeCheckoutPath,
   parseClaudeStreamJsonLine,
   parseReviewAttempt,
+  parseReviewAttemptScope,
+  parseReviewHarnessGuarantee,
   parseReviewTargetDeclarations,
   REVIEW_ATTEMPT_BOUNDS,
+  REVIEW_ATTEMPT_RESERVING_STATES,
   type ReviewAttempt,
+  type ReviewAttemptScope,
+  type ReviewHarnessGuarantee,
   type ReviewLaunchDecisionInput,
   resolveReviewCheckoutPath,
   reviewAttemptIdempotencyKey,
@@ -21,6 +28,7 @@ import type { ExecutorDeclaration, ExecutorObservation } from './work-executors'
 import type { ReviewTarget } from './work-routing';
 
 const SHA256_HEX = /^[0-9a-f]{64}$/u;
+const MORE_FILES = /- and \d+ more files not listed/u;
 const NOW = '2026-10-22T10:00:00.000Z';
 const RECENT = '2026-10-22T09:58:00.000Z';
 const MACHINE = 'machine-a';
@@ -89,6 +97,54 @@ const allowedInput: ReviewLaunchDecisionInput = {
   providers: [quota],
   reviewTargets: [{ checkoutPath: '/home/op/src', label: null }],
   target: TARGET,
+  unresolvedAttempt: null,
+};
+
+const HEAD_SHA = 'b'.repeat(40);
+const BASE_SHA = 'c'.repeat(40);
+const scope: ReviewAttemptScope = {
+  base: 'first-parent',
+  baseSha: BASE_SHA,
+  fileCount: 2,
+  files: [
+    {
+      additions: 3,
+      coverage: 'complete',
+      deletions: 1,
+      path: 'src/a.ts',
+      previousPath: null,
+      status: 'modified',
+    },
+    {
+      additions: 0,
+      coverage: 'omitted',
+      deletions: 0,
+      path: 'src/new name.ts',
+      previousPath: 'src/old name.ts',
+      status: 'renamed',
+    },
+  ],
+  headSha: HEAD_SHA,
+  includedBytes: 120,
+  includedLines: 9,
+  kind: 'commit',
+  parentCount: 1,
+  patchBytes: 300,
+  patchLines: 20,
+  patchSha256: 'd'.repeat(64),
+  repositoryPrefix: '',
+  subject: 'fix: guard the launcher',
+  truncated: true,
+  workingTreeDirty: false,
+};
+const guarantee: ReviewHarnessGuarantee = {
+  cliVersion: '2.1.306',
+  effort: null,
+  model: 'opus',
+  managedSettings: 'absent',
+  safeMode: true,
+  settingSources: [],
+  tools: ['Read', 'Grep', 'Glob'],
 };
 
 const attempt: ReviewAttempt = {
@@ -102,14 +158,19 @@ const attempt: ReviewAttempt = {
   executorHarness: 'claude-code',
   exitCode: 0,
   failureReason: null,
+  guarantee,
   idempotencyKey: 'a'.repeat(64),
+  launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
   machineId: MACHINE,
   nativeSessionId: 'native-1',
   numTurns: 3,
   pid: 4242,
+  releaseEvidence: null,
+  releasedAt: null,
   requestedAt: NOW,
   resultExcerpt: 'Finding 1: src/a.ts:12 (medium)\n\tA null path reaches the launcher.',
   resultKind: 'review',
+  scope,
   startedAt: '2026-10-22T10:00:01.000Z',
   state: 'finished',
   target: {
@@ -223,6 +284,71 @@ describe('launch decision', () => {
     expect(decision.kind === 'refused' && decision.message).toContain('attempt-1');
   });
 
+  test('refuses while a lost attempt still holds the reservation, naming what is unresolved and what releases it', () => {
+    const running = decideReviewLaunch({
+      ...allowedInput,
+      unresolvedAttempt: {
+        attemptId: 'attempt-lost',
+        evidence: 'process-running',
+        launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
+        lostAt: '2026-10-22T09:59:00.000Z',
+        pids: [4242],
+      },
+    });
+    expect(running).toMatchObject({ kind: 'refused', reason: 'attempt-unresolved' });
+    const message = running.kind === 'refused' ? running.message : '';
+    expect(message).toContain('attempt attempt-lost lost contact at 2026-10-22T09:59:00.000Z');
+    expect(message).toContain('pid 4242');
+    expect(message).toContain('--session-id 6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f');
+    expect(message).toContain('neither adopts nor stops');
+    expect(message).toContain('accepted again once');
+    expect(message.length).toBeLessThanOrEqual(REVIEW_ATTEMPT_BOUNDS.maxFailureReason);
+
+    const unknowable = describeUnresolvedReviewReservation({
+      attemptId: 'attempt-lost',
+      evidence: 'process-evidence-unavailable',
+      launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
+      lostAt: null,
+      pids: [],
+    });
+    expect(unknowable).toContain('cannot tell whether its harness process still runs');
+    expect(unknowable).toContain('until its outcome is recorded');
+    expect(unknowable.length).toBeLessThanOrEqual(REVIEW_ATTEMPT_BOUNDS.maxFailureReason);
+    expect(
+      describeUnresolvedReviewReservation({
+        attemptId: 'attempt-legacy',
+        evidence: 'process-evidence-unavailable',
+        launchSessionId: null,
+        lostAt: null,
+        pids: [],
+      }),
+    ).toContain('recorded before launch markers existed');
+    // A live attempt under another identity still answers first: it is the stronger fact.
+    expect(
+      decideReviewLaunch({
+        ...allowedInput,
+        otherLiveAttempt: { attemptId: 'attempt-1' },
+        unresolvedAttempt: {
+          attemptId: 'attempt-lost',
+          evidence: 'process-running',
+          launchSessionId: null,
+          lostAt: null,
+          pids: [],
+        },
+      }),
+    ).toMatchObject({ reason: 'attempt-already-live' });
+  });
+
+  test('a reservation is held by a live attempt and by a lost one until it is released with evidence', () => {
+    expect(REVIEW_ATTEMPT_RESERVING_STATES).toEqual(['requested', 'starting', 'running', 'lost']);
+    expect(holdsReviewReservation({ releasedAt: null, state: 'running' })).toBe(true);
+    expect(holdsReviewReservation({ releasedAt: null, state: 'lost' })).toBe(true);
+    expect(holdsReviewReservation({ releasedAt: NOW, state: 'lost' })).toBe(false);
+    for (const state of ['finished', 'failed', 'refused'] as const) {
+      expect(holdsReviewReservation({ releasedAt: null, state })).toBe(false);
+    }
+  });
+
   test('refuses without a declaration, for an observed-only candidate and for a foreign candidate id', () => {
     expect(decideReviewLaunch({ ...allowedInput, declarations: [] })).toMatchObject({
       kind: 'refused',
@@ -304,15 +430,57 @@ describe('launch decision', () => {
 });
 
 describe('prompt and stream-json reading', () => {
-  test('builds a bounded generic prompt and says when git could not answer', () => {
-    const prompt = buildReviewPrompt({ gitDiffStat: null, gitLog: 'abc1234 fix: thing', sessionTitle: 'Title' });
+  test('names one commit, its base, the patch it carries and what the patch leaves out', () => {
+    const patch = 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n';
+    const prompt = buildReviewPrompt({ patch, scope, sessionTitle: 'Title' });
     expect(prompt).toContain('Do not modify files.');
     expect(prompt).toContain('Target session: Title');
-    expect(prompt).toContain('Latest commit (git log -1): abc1234 fix: thing');
-    expect(prompt).toContain('Changed files (git diff --stat HEAD~1..HEAD):\nunavailable');
-    const long = buildReviewPrompt({ gitDiffStat: 'x'.repeat(10_000), gitLog: null, sessionTitle: null });
-    expect(long.length).toBeLessThan(REVIEW_ATTEMPT_BOUNDS.maxPromptContext + 400);
-    expect(long).toContain('[truncated]');
+    expect(prompt).toContain(`one commit, ${HEAD_SHA} ("fix: guard the launcher")`);
+    expect(prompt).toContain(`from its first parent ${BASE_SHA} to ${HEAD_SHA}`);
+    expect(prompt).toContain('not a pull request or a branch');
+    expect(prompt).toContain('The patch is truncated: 120 of 300 bytes, 9 of 20 lines');
+    expect(prompt).toContain('- renamed src/old name.ts -> src/new name.ts (+0 -0, omitted)');
+    expect(prompt).toContain('- modified src/a.ts (+3 -1, complete)');
+    expect(prompt).toContain('say which files you could not assess and that the review is partial');
+    expect(prompt).toContain(`<<<patch sha256=${'d'.repeat(64)}\n${patch}>>>end of patch`);
+    expect(prompt).not.toContain('working tree has uncommitted changes');
+
+    const root = buildReviewPrompt({
+      patch,
+      scope: {
+        ...scope,
+        base: 'empty-tree',
+        baseSha: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+        parentCount: 0,
+        repositoryPrefix: 'packages/a/',
+        truncated: false,
+        workingTreeDirty: true,
+      },
+      sessionTitle: null,
+    });
+    expect(root).toContain('from the empty tree (a root commit) to');
+    expect(root).toContain('The patch is complete');
+    expect(root).toContain('the subdirectory packages/a/ of that repository');
+    expect(root).toContain('The working tree has uncommitted changes to tracked files');
+    expect(root).toContain('Target session: unavailable');
+    const merge = buildReviewPrompt({ patch, scope: { ...scope, parentCount: 2 }, sessionTitle: null });
+    expect(merge).toContain('a merge commit, compared with its first parent only');
+    // The largest prompt the bounds allow still fits one Linux argv element (128 KiB).
+    const widest = buildReviewPrompt({
+      patch: 'x'.repeat(REVIEW_ATTEMPT_BOUNDS.maxPatchPromptBytes - 1).concat('\n'),
+      scope: {
+        ...scope,
+        fileCount: 500,
+        files: Array.from({ length: REVIEW_ATTEMPT_BOUNDS.maxScopeFiles }, (_, index) => ({
+          ...scope.files[1]!,
+          path: `${String(index).padStart(4, '0')}${'p'.repeat(REVIEW_ATTEMPT_BOUNDS.maxScopePath - 4)}`,
+          previousPath: 'q'.repeat(REVIEW_ATTEMPT_BOUNDS.maxScopePath),
+        })),
+      },
+      sessionTitle: 't'.repeat(REVIEW_ATTEMPT_BOUNDS.maxText),
+    });
+    expect(new TextEncoder().encode(widest).byteLength).toBeLessThan(128 * 1024);
+    expect(widest).toMatch(MORE_FILES);
   });
 
   test('reads only init and result lines', () => {
@@ -369,5 +537,60 @@ describe('attempt re-validation', () => {
       parseReviewAttempt({ ...attempt, target: { ...attempt.target, checkoutOrigin: null, checkoutPath: null } }),
     ).not.toBeNull();
     expect(parseReviewAttempt({ ...attempt, declaration: null, exitCode: -1 })?.exitCode).toBe(-1);
+  });
+
+  test('accepts a release only on a lost attempt, with both its instant and its evidence', () => {
+    const lost = { ...attempt, state: 'lost' as const };
+    expect(parseReviewAttempt(lost)).toEqual(lost);
+    const released = { ...lost, releaseEvidence: 'process-absent' as const, releasedAt: NOW };
+    expect(parseReviewAttempt(released)).toEqual(released);
+    expect(parseReviewAttempt({ ...released, releaseEvidence: null })).toBeNull();
+    expect(parseReviewAttempt({ ...released, releasedAt: null })).toBeNull();
+    expect(parseReviewAttempt({ ...released, releaseEvidence: 'it-looked-old' })).toBeNull();
+    expect(parseReviewAttempt({ ...released, state: 'finished' })).toBeNull();
+    expect(parseReviewAttempt({ ...attempt, launchSessionId: 'not a uuid' })).toBeNull();
+    expect(parseReviewAttempt({ ...attempt, launchSessionId: null, guarantee: null, scope: null })).not.toBeNull();
+  });
+
+  test('re-validates the reviewed scope and the declared harness guarantee strictly', () => {
+    expect(parseReviewAttemptScope(scope)).toEqual(scope);
+    expect(parseReviewAttemptScope({ ...scope, headSha: 'HEAD' })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, headSha: 'e'.repeat(64), baseSha: 'f'.repeat(64) })).not.toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, patchSha256: 'short' })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, includedBytes: 301 })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, includedLines: 21 })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, truncated: false })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, fileCount: 1 })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, base: 'empty-tree' })).toBeNull();
+    expect(
+      parseReviewAttemptScope({
+        ...scope,
+        base: 'empty-tree',
+        baseSha: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+        parentCount: 0,
+      }),
+    ).not.toBeNull();
+    expect(
+      parseReviewAttemptScope({ ...scope, files: [{ ...scope.files[0], coverage: 'skimmed' }, scope.files[1]] }),
+    ).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, extra: 1 })).toBeNull();
+    expect(
+      parseReviewAttemptScope({
+        ...scope,
+        fileCount: REVIEW_ATTEMPT_BOUNDS.maxScopeFiles + 5,
+        files: Array.from({ length: REVIEW_ATTEMPT_BOUNDS.maxScopeFiles + 1 }, () => scope.files[0]),
+      }),
+    ).toBeNull();
+
+    expect(parseReviewHarnessGuarantee(guarantee)).toEqual(guarantee);
+    expect(parseReviewHarnessGuarantee({ ...guarantee, settingSources: ['project'] })).toEqual({
+      ...guarantee,
+      settingSources: ['project'],
+    });
+    expect(parseReviewHarnessGuarantee({ ...guarantee, settingSources: ['policy'] })).toBeNull();
+    expect(parseReviewHarnessGuarantee({ ...guarantee, managedSettings: 'maybe' })).toBeNull();
+    expect(parseReviewHarnessGuarantee({ ...guarantee, tools: ['Bash'] })).toBeNull();
+    expect(parseReviewAttempt({ ...attempt, guarantee: { ...guarantee, safeMode: 'yes' } })).toBeNull();
+    expect(parseReviewAttempt({ ...attempt, scope: { ...scope, kind: 'pull-request' } })).toBeNull();
   });
 });

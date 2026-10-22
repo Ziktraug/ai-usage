@@ -2,6 +2,27 @@ import { isRecord } from './datasets';
 import type { ProviderStatus } from './provider-status';
 import { normalizeIsoTimestamp } from './provider-status';
 import { isPrintableSkillObservationText } from './skill-observation';
+/**
+ * Review attempts (ADR 0053, 0055): the one execution the product launches itself, a read-only review
+ * by Claude Code of one commit in a declared checkout. This module holds what is pure:
+ *
+ * - the home-config `routing.reviewTargets[]` parser (which checkouts a review may run in);
+ * - the target resolution rule (Desktop session `worktreePath ?? cwd`, else the served Session's
+ *   `sourcePath`) and the admission rule (equal to a declared checkout or below it);
+ * - the launch policy `decideReviewLaunch`, which refuses with a typed reason unless the chosen
+ *   candidate is declared, bound to this target, observed available and recommended `real` by the
+ *   same qualification the Work view simulates;
+ * - the attempt record (with its reservation, reviewed scope and harness guarantee) and its strict
+ *   re-validation, the idempotency key, the prompt and the `stream-json` line reader.
+ *
+ * Nothing here spawns anything. The engine decides with these functions at launch time, from the
+ * facts in its own store; the browser only renders.
+ */
+import {
+  REVIEW_ATTEMPT_STATES,
+  type ReviewAttemptState,
+  type ReviewLaunchRefusalReason,
+} from './work-attempts-vocabulary';
 import {
   EXECUTOR_HARNESSES,
   type ExecutorDeclaration,
@@ -17,35 +38,16 @@ import {
   simulateWorkReviewRouting,
 } from './work-routing';
 
-/**
- * Review attempts (ADR 0053): the one execution the product launches itself, a read-only review by
- * Claude Code of the latest change in a declared checkout. This module holds what is pure:
- *
- * - the home-config `routing.reviewTargets[]` parser (which checkouts a review may run in);
- * - the target resolution rule (Desktop session `worktreePath ?? cwd`, else the served Session's
- *   `sourcePath`) and the admission rule (equal to a declared checkout or below it);
- * - the launch policy `decideReviewLaunch`, which refuses with a typed reason unless the chosen
- *   candidate is declared, bound to this target, observed available and recommended `real` by the
- *   same qualification the Work view simulates;
- * - the attempt record and its strict re-validation, the idempotency key, the prompt and the
- *   `stream-json` line reader.
- *
- * Nothing here spawns anything. The engine decides with these functions at launch time, from the
- * facts in its own store; the browser only renders.
- */
+export {
+  REVIEW_ATTEMPT_STATES,
+  REVIEW_LAUNCH_REFUSAL_REASONS,
+  type ReviewAttemptState,
+  type ReviewLaunchRefusalReason,
+} from './work-attempts-vocabulary';
+
 export const REVIEW_ATTEMPT_ACTION = 'read-only-review' as const;
 export type ReviewAttemptAction = typeof REVIEW_ATTEMPT_ACTION;
 
-export const REVIEW_ATTEMPT_STATES = [
-  'requested',
-  'starting',
-  'running',
-  'finished',
-  'failed',
-  'refused',
-  'lost',
-] as const;
-export type ReviewAttemptState = (typeof REVIEW_ATTEMPT_STATES)[number];
 export const REVIEW_ATTEMPT_LIVE_STATES = [
   'requested',
   'starting',
@@ -54,23 +56,66 @@ export const REVIEW_ATTEMPT_LIVE_STATES = [
 export const isLiveReviewAttemptState = (state: ReviewAttemptState): boolean =>
   (REVIEW_ATTEMPT_LIVE_STATES as readonly string[]).includes(state);
 
+/**
+ * States in which an attempt may hold its identity's reservation (ADR 0055): the live states, and
+ * `lost` until the reservation is released with evidence. Losing contact with a process proves
+ * nothing about its end, so a lost attempt keeps blocking a second launch on the same identity.
+ */
+export const REVIEW_ATTEMPT_RESERVING_STATES = [
+  ...REVIEW_ATTEMPT_LIVE_STATES,
+  'lost',
+] as const satisfies readonly ReviewAttemptState[];
+
+/**
+ * Why a lost attempt no longer holds its reservation. Age is never one of them:
+ *
+ * - `process-absent`: no process on this machine carries the attempt's launch session id in its
+ *   argument vector (the engine passes it as `--session-id`), so the harness process has ended
+ *   whatever its pid became; only the launching engine could still write, and it is gone;
+ * - `outcome-recorded-late`: the engine that launched the process saw it end and recorded the
+ *   outcome after the attempt had been marked lost;
+ * - `recorded-before-reservations`: the attempt was marked lost by the earlier rule, which kept no
+ *   reservation; the migration says so instead of inventing a process fact.
+ */
+export const REVIEW_RESERVATION_RELEASE_EVIDENCE = [
+  'process-absent',
+  'outcome-recorded-late',
+  'recorded-before-reservations',
+] as const;
+export type ReviewReservationReleaseEvidence = (typeof REVIEW_RESERVATION_RELEASE_EVIDENCE)[number];
+
+/** Whether the attempt still blocks a new launch on its identity. */
+export const holdsReviewReservation = (attempt: {
+  readonly releasedAt: string | null;
+  readonly state: ReviewAttemptState;
+}): boolean => isLiveReviewAttemptState(attempt.state) || (attempt.state === 'lost' && attempt.releasedAt === null);
+
 export const REVIEW_ATTEMPT_RESULT_KINDS = ['review', 'error', 'timeout'] as const;
 export type ReviewAttemptResultKind = (typeof REVIEW_ATTEMPT_RESULT_KINDS)[number];
 export const REVIEW_ATTEMPT_ACCEPTANCES = ['pending', 'accepted', 'rejected'] as const;
 export type ReviewAttemptAcceptance = (typeof REVIEW_ATTEMPT_ACCEPTANCES)[number];
 
-export const REVIEW_LAUNCH_REFUSAL_REASONS = [
-  'no-declaration',
-  'target-not-allowed',
-  'recommendation-not-real',
-  'executor-unavailable',
-  'harness-unsupported',
-  'attempt-already-live',
-] as const;
-export type ReviewLaunchRefusalReason = (typeof REVIEW_LAUNCH_REFUSAL_REASONS)[number];
-
 export const REVIEW_CHECKOUT_ORIGINS = ['desktop-worktree', 'desktop-cwd', 'served-session'] as const;
 export type ReviewCheckoutOrigin = (typeof REVIEW_CHECKOUT_ORIGINS)[number];
+
+/** The tools a launched review may have; the guarantee may name a subset, never another tool. */
+export const REVIEW_READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'] as const;
+export type ReviewReadOnlyTool = (typeof REVIEW_READ_ONLY_TOOLS)[number];
+/** Claude Code setting sources a launch could load (`--setting-sources`); managed policy is not one of them. */
+export const REVIEW_SETTING_SOURCES = ['user', 'project', 'local'] as const;
+export type ReviewSettingSource = (typeof REVIEW_SETTING_SOURCES)[number];
+
+export const REVIEW_SCOPE_FILE_STATUSES = ['added', 'deleted', 'modified', 'renamed', 'copied'] as const;
+export type ReviewScopeFileStatus = (typeof REVIEW_SCOPE_FILE_STATUSES)[number];
+/** How much of one file's patch the review received: all of it, a prefix, none, or a binary notice only. */
+export const REVIEW_SCOPE_FILE_COVERAGES = ['complete', 'partial', 'omitted', 'binary'] as const;
+export type ReviewScopeFileCoverage = (typeof REVIEW_SCOPE_FILE_COVERAGES)[number];
+
+/** Git's empty tree, the base of a root commit, per object format (SHA-1, SHA-256). */
+export const GIT_EMPTY_TREE = {
+  sha1: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+  sha256: '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321',
+} as const;
 
 export const REVIEW_ATTEMPT_BOUNDS = {
   /** Serialized declaration snapshot stored beside the attempt. */
@@ -83,10 +128,17 @@ export const REVIEW_ATTEMPT_BOUNDS = {
   /** Attempts one list read returns. */
   maxListLimit: 50,
   maxPath: 4096,
-  /** Each git summary the prompt carries. */
-  maxPromptContext: 4096,
+  /** Patch bytes the prompt carries; the rest is declared truncated, per file. Fits one argv element. */
+  maxPatchPromptBytes: 64 * 1024,
+  maxPatchPromptLines: 2000,
+  /** Patch bytes read from git at all; a larger commit is refused rather than reviewed blind. */
+  maxPatchReadBytes: 8 * 1024 * 1024,
   maxReviewTargets: 32,
-  /** `projectLabel`, `sessionTitle`, `label`. */
+  /** Files the stored scope lists; `fileCount` keeps the total. */
+  maxScopeFiles: 64,
+  /** Path of one listed file; a longer path is counted, not listed. */
+  maxScopePath: 1024,
+  /** `projectLabel`, `sessionTitle`, `label`, scope subject, CLI version. */
   maxText: 256,
   maxValidationText: 512,
   maxValidations: 32,
@@ -99,6 +151,9 @@ export const REVIEW_ATTEMPT_RUN_LIMITS = {
   maxTurns: 8,
   timeoutMs: 10 * 60_000,
 } as const;
+
+/** The one supported executor for this first execution; Codex is declared, simulated, and refused. */
+export const SUPPORTED_REVIEW_EXECUTOR: ExecutorHarness = 'claude-code';
 
 const isOneOf = <const Values extends readonly string[]>(values: Values, value: unknown): value is Values[number] =>
   typeof value === 'string' && (values as readonly string[]).includes(value);
@@ -323,6 +378,77 @@ export interface ReviewAttemptTarget {
   readonly sourceSessionId: string;
 }
 
+/** One file of the reviewed commit and how much of its patch the review received. */
+export interface ReviewScopeFile {
+  readonly additions: number;
+  readonly coverage: ReviewScopeFileCoverage;
+  readonly deletions: number;
+  /** Repository-relative path after the change (before it, for a deletion). */
+  readonly path: string;
+  /** The source of a rename or copy; `null` otherwise. */
+  readonly previousPath: string | null;
+  readonly status: ReviewScopeFileStatus;
+}
+
+/**
+ * Exactly what a review was given (ADR 0055): one commit, resolved to a SHA before anything else
+ * was read, compared with its first parent (or the empty tree for a root commit), and the bounded
+ * prefix of its patch the prompt carried. A review never claims more than this: not a branch, not
+ * a pull request, not the working tree.
+ */
+export interface ReviewAttemptScope {
+  readonly base: 'empty-tree' | 'first-parent';
+  readonly baseSha: string;
+  /** Files the patch touches in total; `files` lists at most `maxScopeFiles` of them. */
+  readonly fileCount: number;
+  readonly files: readonly ReviewScopeFile[];
+  readonly headSha: string;
+  /** Bytes and lines of the patch prefix the prompt carried. */
+  readonly includedBytes: number;
+  readonly includedLines: number;
+  readonly kind: 'commit';
+  /** 0 for a root commit, 2 or more for a merge (compared with its first parent only). */
+  readonly parentCount: number;
+  readonly patchBytes: number;
+  readonly patchLines: number;
+  /** SHA-256 of the whole patch as git produced it; the prompt carried its first `includedBytes`. */
+  readonly patchSha256: string;
+  /** The checkout's path inside its repository (`git rev-parse --show-prefix`), `''` at the root. */
+  readonly repositoryPrefix: string;
+  readonly subject: string | null;
+  readonly truncated: boolean;
+  /** Tracked files differed from HEAD when the scope was prepared; file reads show the working tree. */
+  readonly workingTreeDirty: boolean;
+}
+
+/**
+ * What the launched harness was qualified for and configured with (ADR 0055), so the attempt says
+ * which guarantee its "read-only" rests on. Read-only means: no repository write and no external
+ * action by the review's tools. The harness still writes its own logs, and no OS sandbox is claimed.
+ */
+export interface ReviewHarnessGuarantee {
+  /** Version `claude --version` answered before the launch. */
+  readonly cliVersion: string;
+  /** The `--effort` the launch passed; `null` when none was (the CLI default applied). */
+  readonly effort: string | null;
+  /**
+   * A managed (policy) settings file on this machine: managed settings cannot be excluded per
+   * invocation, so their hooks, if any, still run. Server-delivered policy is not observable here.
+   */
+  readonly managedSettings: 'absent' | 'present';
+  /**
+   * The `--model` the launch passed; `null` when none was (the CLI default applied). It is the
+   * launched candidate's model, recorded with the scope so a result names what produced it.
+   */
+  readonly model: string | null;
+  /** `--safe-mode`: plugins, skills, CLAUDE.md, hooks and MCP servers from any customization are off. */
+  readonly safeMode: boolean;
+  /** Setting sources the session loaded (`--setting-sources`); empty means none of user, project, local. */
+  readonly settingSources: readonly ReviewSettingSource[];
+  /** The only built-in tools the session had (`--tools`). */
+  readonly tools: readonly ReviewReadOnlyTool[];
+}
+
 export interface ReviewAttempt {
   /** Human acceptance of the result, distinct from the result itself; always `pending` in this version. */
   readonly acceptance: ReviewAttemptAcceptance;
@@ -336,15 +462,27 @@ export interface ReviewAttempt {
   readonly executorHarness: ExecutorHarness;
   readonly exitCode: number | null;
   readonly failureReason: string | null;
+  /** The harness configuration the launch rested on; `null` before a launch or for a refusal. */
+  readonly guarantee: ReviewHarnessGuarantee | null;
   readonly idempotencyKey: string;
+  /**
+   * The session id the engine chose and passed as `--session-id`, recorded before any spawn: the
+   * launched process carries it in its argument vector, which identifies it where a pid cannot.
+   */
+  readonly launchSessionId: string | null;
   readonly machineId: string;
   /** The harness's own session id, read from its `system/init` message; the link to a later collected Session. */
   readonly nativeSessionId: string | null;
   readonly numTurns: number | null;
   readonly pid: number | null;
+  readonly releasedAt: string | null;
+  /** Why a lost attempt stopped holding its reservation; `null` while it holds it, and for every other state. */
+  readonly releaseEvidence: ReviewReservationReleaseEvidence | null;
   readonly requestedAt: string;
   readonly resultExcerpt: string | null;
   readonly resultKind: ReviewAttemptResultKind | null;
+  /** What the review was given; `null` before the scope was prepared or when it could not be. */
+  readonly scope: ReviewAttemptScope | null;
   readonly startedAt: string | null;
   readonly state: ReviewAttemptState;
   readonly target: ReviewAttemptTarget;
@@ -365,20 +503,63 @@ const ATTEMPT_KEYS: ReadonlySet<string> = new Set([
   'executorHarness',
   'exitCode',
   'failureReason',
+  'guarantee',
   'idempotencyKey',
+  'launchSessionId',
   'machineId',
   'nativeSessionId',
   'numTurns',
   'pid',
+  'releaseEvidence',
+  'releasedAt',
   'requestedAt',
   'resultExcerpt',
   'resultKind',
+  'scope',
   'startedAt',
   'state',
   'target',
   'updatedAt',
   'validations',
 ]);
+const SCOPE_KEYS: ReadonlySet<string> = new Set([
+  'base',
+  'baseSha',
+  'fileCount',
+  'files',
+  'headSha',
+  'includedBytes',
+  'includedLines',
+  'kind',
+  'parentCount',
+  'patchBytes',
+  'patchLines',
+  'patchSha256',
+  'repositoryPrefix',
+  'subject',
+  'truncated',
+  'workingTreeDirty',
+]);
+const SCOPE_FILE_KEYS: ReadonlySet<string> = new Set([
+  'additions',
+  'coverage',
+  'deletions',
+  'path',
+  'previousPath',
+  'status',
+]);
+const GUARANTEE_KEYS: ReadonlySet<string> = new Set([
+  'cliVersion',
+  'effort',
+  'managedSettings',
+  'model',
+  'safeMode',
+  'settingSources',
+  'tools',
+]);
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const SHA256_HEX = /^[0-9a-f]{64}$/u;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const TARGET_KEYS: ReadonlySet<string> = new Set([
   'checkoutOrigin',
   'checkoutPath',
@@ -469,12 +650,188 @@ const parseValidations = (value: unknown): readonly string[] | null => {
   return validations;
 };
 
+const isScopePath = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= REVIEW_ATTEMPT_BOUNDS.maxScopePath &&
+  isPrintableSkillObservationText(value);
+
+const parseScopeFile = (value: unknown): ReviewScopeFile | null => {
+  if (!isRecord(value) || hasOnlyKeys(value, SCOPE_FILE_KEYS).length > 0) {
+    return null;
+  }
+  const { additions, coverage, deletions, path, previousPath, status } = value;
+  const moved = status === 'renamed' || status === 'copied';
+  if (
+    !(
+      isNonNegativeInteger(additions) &&
+      isNonNegativeInteger(deletions) &&
+      isOneOf(REVIEW_SCOPE_FILE_COVERAGES, coverage) &&
+      isOneOf(REVIEW_SCOPE_FILE_STATUSES, status) &&
+      isScopePath(path) &&
+      (moved ? isScopePath(previousPath) : previousPath === null)
+    )
+  ) {
+    return null;
+  }
+  return { additions, coverage, deletions, path, previousPath: moved ? (previousPath as string) : null, status };
+};
+
+const isRepositoryPrefix = (value: unknown): value is string =>
+  value === '' ||
+  (typeof value === 'string' &&
+    value.length <= REVIEW_ATTEMPT_BOUNDS.maxPath &&
+    value.endsWith('/') &&
+    !value.startsWith('/') &&
+    isPrintableSkillObservationText(value) &&
+    value
+      .slice(0, -1)
+      .split('/')
+      .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..'));
+
+/** Strict re-validation of a stored scope: one commit, consistent counts, a declared truncation that matches them. */
+export const parseReviewAttemptScope = (value: unknown): ReviewAttemptScope | null => {
+  if (!isRecord(value) || hasOnlyKeys(value, SCOPE_KEYS).length > 0 || value.kind !== 'commit') {
+    return null;
+  }
+  const { base, baseSha, fileCount, headSha, includedBytes, includedLines, parentCount, patchBytes, patchLines } =
+    value;
+  if (
+    !(
+      typeof headSha === 'string' &&
+      OBJECT_ID.test(headSha) &&
+      typeof baseSha === 'string' &&
+      OBJECT_ID.test(baseSha) &&
+      baseSha.length === headSha.length &&
+      isNonNegativeInteger(parentCount) &&
+      isNonNegativeInteger(fileCount) &&
+      isNonNegativeInteger(patchBytes) &&
+      isNonNegativeInteger(patchLines) &&
+      isNonNegativeInteger(includedBytes) &&
+      isNonNegativeInteger(includedLines) &&
+      includedBytes <= patchBytes &&
+      includedLines <= patchLines &&
+      typeof value.truncated === 'boolean' &&
+      value.truncated === (includedBytes < patchBytes || includedLines < patchLines) &&
+      typeof value.workingTreeDirty === 'boolean' &&
+      typeof value.patchSha256 === 'string' &&
+      SHA256_HEX.test(value.patchSha256) &&
+      isRepositoryPrefix(value.repositoryPrefix) &&
+      (value.subject === null || isBoundedText(value.subject, REVIEW_ATTEMPT_BOUNDS.maxText))
+    )
+  ) {
+    return null;
+  }
+  const emptyTree = headSha.length === 40 ? GIT_EMPTY_TREE.sha1 : GIT_EMPTY_TREE.sha256;
+  const baseConsistent =
+    base === 'empty-tree' ? parentCount === 0 && baseSha === emptyTree : base === 'first-parent' && parentCount > 0;
+  if (
+    !(baseConsistent && Array.isArray(value.files)) ||
+    value.files.length > REVIEW_ATTEMPT_BOUNDS.maxScopeFiles ||
+    value.files.length > fileCount
+  ) {
+    return null;
+  }
+  const files: ReviewScopeFile[] = [];
+  for (const entry of value.files) {
+    const file = parseScopeFile(entry);
+    if (file === null) {
+      return null;
+    }
+    files.push(file);
+  }
+  return {
+    base: base === 'empty-tree' ? 'empty-tree' : 'first-parent',
+    baseSha,
+    fileCount,
+    files,
+    headSha,
+    includedBytes,
+    includedLines,
+    kind: 'commit',
+    parentCount,
+    patchBytes,
+    patchLines,
+    patchSha256: value.patchSha256,
+    repositoryPrefix: value.repositoryPrefix,
+    subject: value.subject,
+    truncated: value.truncated,
+    workingTreeDirty: value.workingTreeDirty,
+  };
+};
+
+const isUniqueSubset = <const Values extends readonly string[]>(
+  values: Values,
+  value: unknown,
+): value is Values[number][] =>
+  Array.isArray(value) &&
+  value.every((entry) => isOneOf(values, entry)) &&
+  new Set(value as readonly unknown[]).size === value.length;
+
+/** Strict re-validation of a stored guarantee; a tool outside the read-only set is refused, not shown. */
+export const parseReviewHarnessGuarantee = (value: unknown): ReviewHarnessGuarantee | null => {
+  if (!isRecord(value) || hasOnlyKeys(value, GUARANTEE_KEYS).length > 0) {
+    return null;
+  }
+  const { cliVersion, effort, managedSettings, model, safeMode, settingSources, tools } = value;
+  if (
+    !(
+      isBoundedText(cliVersion, REVIEW_ATTEMPT_BOUNDS.maxText) &&
+      (effort === null || isBoundedText(effort, REVIEW_ATTEMPT_BOUNDS.maxText)) &&
+      (model === null || isBoundedText(model, REVIEW_ATTEMPT_BOUNDS.maxText)) &&
+      (managedSettings === 'absent' || managedSettings === 'present') &&
+      typeof safeMode === 'boolean' &&
+      isUniqueSubset(REVIEW_SETTING_SOURCES, settingSources) &&
+      isUniqueSubset(REVIEW_READ_ONLY_TOOLS, tools) &&
+      tools.length > 0
+    )
+  ) {
+    return null;
+  }
+  return {
+    cliVersion,
+    effort,
+    managedSettings,
+    model,
+    safeMode,
+    settingSources: [...settingSources],
+    tools: [...tools],
+  };
+};
+
+const optionalParsed = <Value>(value: unknown, parse: (input: unknown) => Value | null): Value | null | undefined => {
+  if (value === null) {
+    return null;
+  }
+  return parse(value) ?? undefined;
+};
+
 /**
  * Strict re-validation of one stored attempt. `declaration` is taken as given (the store re-parses
  * it with `parseExecutorDeclarations` before calling this), so only its presence is checked here.
  */
 export const parseReviewAttempt = (value: unknown): ReviewAttempt | null => {
   if (!isRecord(value) || hasOnlyKeys(value, ATTEMPT_KEYS).length > 0) {
+    return null;
+  }
+  const scope = optionalParsed(value.scope, parseReviewAttemptScope);
+  const guarantee = optionalParsed(value.guarantee, parseReviewHarnessGuarantee);
+  const releasedAt = optionalInstant(value.releasedAt);
+  const releaseEvidence = optionalParsed(value.releaseEvidence, (input) =>
+    isOneOf(REVIEW_RESERVATION_RELEASE_EVIDENCE, input) ? input : null,
+  );
+  const launchSessionId = optionalParsed(value.launchSessionId, (input) =>
+    typeof input === 'string' && UUID.test(input) ? input : null,
+  );
+  if (
+    scope === undefined ||
+    guarantee === undefined ||
+    releasedAt === undefined ||
+    releaseEvidence === undefined ||
+    launchSessionId === undefined ||
+    (releasedAt === null) !== (releaseEvidence === null) ||
+    (releasedAt !== null && value.state !== 'lost')
+  ) {
     return null;
   }
   const target = parseAttemptTarget(value.target);
@@ -536,14 +893,19 @@ export const parseReviewAttempt = (value: unknown): ReviewAttempt | null => {
     executorHarness: value.executorHarness,
     exitCode,
     failureReason,
+    guarantee,
     idempotencyKey: value.idempotencyKey,
+    launchSessionId,
     machineId: value.machineId,
     nativeSessionId,
     numTurns,
     pid,
+    releaseEvidence,
+    releasedAt,
     requestedAt,
     resultExcerpt,
     resultKind: value.resultKind,
+    scope,
     startedAt,
     state: value.state,
     target,
@@ -567,7 +929,40 @@ export interface ReviewLaunchDecisionInput {
   readonly providers: readonly ProviderStatus[];
   readonly reviewTargets: readonly ReviewTargetDeclaration[];
   readonly target: ReviewTarget;
+  /** A lost attempt on the target whose reservation the engine could not release with evidence. */
+  readonly unresolvedAttempt: UnresolvedReviewReservation | null;
 }
+
+/**
+ * A lost attempt that still holds its reservation, and what the engine found when it looked:
+ * `process-running` when a process on this machine still carries the attempt's launch session id
+ * (`pids` names them), `process-evidence-unavailable` when this machine offers no process listing
+ * the engine can read, so the end of the process cannot be established.
+ */
+export interface UnresolvedReviewReservation {
+  readonly attemptId: string;
+  readonly evidence: 'process-evidence-unavailable' | 'process-running';
+  readonly launchSessionId: string | null;
+  /** When contact was recorded lost (`endedAt` of the lost row). */
+  readonly lostAt: string | null;
+  readonly pids: readonly number[];
+}
+
+/** The refusal text for a held reservation: what is unresolved, and the evidence that would release it. Bounded. */
+export const describeUnresolvedReviewReservation = (reservation: UnresolvedReviewReservation): string => {
+  const lost = `attempt ${reservation.attemptId} lost contact${reservation.lostAt === null ? '' : ` at ${reservation.lostAt}`}`;
+  const marker =
+    reservation.launchSessionId === null ? 'its launch marker' : `--session-id ${reservation.launchSessionId}`;
+  let text: string;
+  if (reservation.evidence === 'process-running') {
+    text = `${lost}, and a process carrying ${marker} still runs (pid ${reservation.pids.slice(0, 4).join(', ')}). The engine neither adopts nor stops a process it no longer owns. A review is accepted again once no process carries that marker, or once the attempt's outcome is recorded.`;
+  } else if (reservation.launchSessionId === null) {
+    text = `${lost}, and it was recorded before launch markers existed, so its harness process cannot be looked for. The reservation stays until its outcome is recorded; the engine never assumes an end from age.`;
+  } else {
+    text = `${lost}, and this machine offers no process listing the engine can read, so it cannot tell whether its harness process still runs. The reservation stays until its outcome is recorded; the engine never assumes an end from age.`;
+  }
+  return text.slice(0, REVIEW_ATTEMPT_BOUNDS.maxFailureReason);
+};
 
 export type ReviewLaunchDecision =
   | {
@@ -590,15 +985,12 @@ const refusal = (
   missing: readonly string[] = [],
 ): ReviewLaunchDecision => ({ kind: 'refused', message, missing: [...new Set(missing)], reason });
 
-/** The one supported executor for this first execution; Codex is declared, simulated, and refused. */
-export const SUPPORTED_REVIEW_EXECUTOR: ExecutorHarness = 'claude-code';
-
 /**
  * Pure launch policy. Refusals are ordered from the most structural to the most transient so the
- * operator reads the fix that unblocks the next step: an attempt already live for the target, no
- * declaration for the candidate, an executor other than Claude Code, a target outside
- * `routing.reviewTargets`, an executor not observed available, and finally a recommendation that
- * is not `real` under the forced candidate.
+ * operator reads the fix that unblocks the next step: an attempt already live for the target, a
+ * lost attempt whose reservation is unresolved, no declaration for the candidate, an executor other
+ * than Claude Code, a target outside `routing.reviewTargets`, an executor not observed available,
+ * and finally a recommendation that is not `real` under the forced candidate.
  */
 export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaunchDecision => {
   if (input.otherLiveAttempt !== null) {
@@ -606,6 +998,9 @@ export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaun
       'attempt-already-live',
       `a review is already running (attempt ${input.otherLiveAttempt.attemptId}); wait for it to end`,
     );
+  }
+  if (input.unresolvedAttempt !== null) {
+    return refusal('attempt-unresolved', describeUnresolvedReviewReservation(input.unresolvedAttempt));
   }
   const candidates = qualifyReviewCandidates({
     declarations: input.declarations,
@@ -692,36 +1087,70 @@ export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaun
 // ---------------------------------------------------------------------------------------------
 
 export interface ReviewPromptInput {
-  /** `git diff --stat HEAD~1..HEAD`, read by the launcher; `null` when git could not answer. */
-  readonly gitDiffStat: string | null;
-  /** `git log -1 --format='%h %s'`; `null` when git could not answer. */
-  readonly gitLog: string | null;
+  /** The patch prefix the scope declares (`includedBytes`), prepared by the engine with git. */
+  readonly patch: string;
+  readonly scope: ReviewAttemptScope;
   readonly sessionTitle: string | null;
 }
 
-const boundContext = (value: string | null): string => {
-  if (value === null || value.trim().length === 0) {
-    return 'unavailable';
-  }
-  const trimmed = value.trim();
-  return trimmed.length <= REVIEW_ATTEMPT_BOUNDS.maxPromptContext
-    ? trimmed
-    : `${trimmed.slice(0, REVIEW_ATTEMPT_BOUNDS.maxPromptContext)}\n[truncated]`;
+const promptLine = (value: string | null): string => {
+  const trimmed = value?.replace(/\s+/gu, ' ').trim() ?? '';
+  return trimmed.length === 0 ? 'unavailable' : trimmed.slice(0, REVIEW_ATTEMPT_BOUNDS.maxText);
 };
 
-export const REVIEW_PROMPT_INSTRUCTION =
-  'Read-only review of the latest change in this checkout (`git log -1` is already summarized below). List at most five findings with file:line, severity and a one-line failure scenario. Do not modify files.';
+const describeScopeFile = (file: ReviewScopeFile): string =>
+  `- ${file.status} ${file.previousPath === null ? '' : `${file.previousPath} -> `}${file.path} (+${file.additions} -${file.deletions}, ${file.coverage})`;
 
-/** Generic and bounded: the instruction, the target's title and two git summaries. Never a transcript. */
-export const buildReviewPrompt = (input: ReviewPromptInput): string =>
-  [
+/** Bytes of file listing the prompt carries at most; beside the 64 KiB patch the prompt stays far below 128 KiB. */
+const PROMPT_FILE_LIST_BYTES = 16 * 1024;
+
+export const REVIEW_PROMPT_INSTRUCTION =
+  "List at most five findings on this commit's change with file:line, severity and a one-line failure scenario. If the patch is truncated, say which files you could not assess and that the review is partial. Do not modify files.";
+
+/**
+ * The prompt names one commit and carries its patch, so the review compares before and after
+ * rather than reading current files. Never a transcript; the patch is the declared prefix only.
+ */
+export const buildReviewPrompt = (input: ReviewPromptInput): string => {
+  const { scope } = input;
+  const base =
+    scope.base === 'empty-tree'
+      ? `from the empty tree (a root commit) to ${scope.headSha}`
+      : `from its first parent ${scope.baseSha} to ${scope.headSha}${scope.parentCount > 1 ? '; a merge commit, compared with its first parent only' : ''}`;
+  // The listing is bounded on its own, so the whole prompt stays one argv element under 128 KiB.
+  const listed: string[] = [];
+  let listedBytes = 0;
+  const encoder = new TextEncoder();
+  for (const line of scope.files.map(describeScopeFile)) {
+    const bytes = encoder.encode(line).byteLength + 1;
+    if (listedBytes + bytes > PROMPT_FILE_LIST_BYTES) {
+      break;
+    }
+    listed.push(line);
+    listedBytes += bytes;
+  }
+  const unlisted = scope.fileCount - listed.length;
+  return [
+    `Read-only review of one commit, ${scope.headSha} ("${promptLine(scope.subject)}"), in this checkout.`,
+    `Scope: the change ${base}. This is one revision, not a pull request or a branch.`,
+    scope.truncated
+      ? `The patch is truncated: ${scope.includedBytes} of ${scope.patchBytes} bytes, ${scope.includedLines} of ${scope.patchLines} lines. Files marked partial or omitted below were not fully shown.`
+      : `The patch is complete: ${scope.patchBytes} bytes, ${scope.patchLines} lines, ${scope.fileCount} files.`,
+    `Patch paths are relative to the repository root; this checkout is ${scope.repositoryPrefix === '' ? 'that root' : `the subdirectory ${scope.repositoryPrefix} of that repository`}.`,
+    scope.workingTreeDirty
+      ? 'The working tree has uncommitted changes to tracked files: a file you Read shows the working tree, which may differ from this commit.'
+      : 'A file you Read shows the working tree at the time you read it.',
+    `Target session: ${promptLine(input.sessionTitle)}`,
+    'Files:',
+    ...listed,
+    ...(unlisted > 0 ? [`- and ${unlisted} more files not listed`] : []),
+    '',
     REVIEW_PROMPT_INSTRUCTION,
     '',
-    `Target session: ${boundContext(input.sessionTitle)}`,
-    `Latest commit (git log -1): ${boundContext(input.gitLog)}`,
-    'Changed files (git diff --stat HEAD~1..HEAD):',
-    boundContext(input.gitDiffStat),
+    `<<<patch sha256=${scope.patchSha256}`,
+    `${input.patch}>>>end of patch`,
   ].join('\n');
+};
 
 export type ClaudeStreamEvent =
   | { readonly kind: 'init'; readonly sessionId: string }

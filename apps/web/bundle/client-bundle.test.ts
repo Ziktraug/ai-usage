@@ -38,8 +38,8 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// Main at 8f7ac54a: harness provider marks and the header collection status; CI run 39264507656.
-const RECORDED_GZIP_CLOSURE_BYTES = 301_473;
+// Lot K on 759daec1 (312 370 B before): attempt states and refusal reasons now come from an import-free module, so the shell closure no longer pulls the Work policy chunk.
+const RECORDED_GZIP_CLOSURE_BYTES = 305_459;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
