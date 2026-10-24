@@ -7,7 +7,7 @@
     dimensionSwatch,
     groupKeyButton,
     groupPct,
-    groupRow,
+    groupRowStyle,
     groupSub,
     groupValue,
     right,
@@ -36,8 +36,8 @@
     view: BreakdownRowView;
   } = $props();
 
-  const hierarchyRow = css({ borderBottom: '0' });
-  const nested = css({
+  const hierarchyRow = css.raw({ borderBottom: '0' });
+  const nested = css.raw({
     borderTop: '1px solid token(colors.line)',
     pl: { base: '48px', md: '56px' },
     bg: 'surfaceMuted',
@@ -68,7 +68,7 @@
 </script>
 
 <div
-  class={cx(groupRow, hierarchy ? hierarchyRow : undefined, child ? nested : undefined)}
+  class={css(groupRowStyle, hierarchy ? hierarchyRow : undefined, child ? nested : undefined)}
   data-price-state={view.priceState}
   data-provider-child={child ? view.group.provider : undefined}
 >

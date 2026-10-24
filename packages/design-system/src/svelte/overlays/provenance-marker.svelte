@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import { type ProvenanceMarkerFact, provenanceMarkerGlyph, provenanceTitle } from './provenance';
-  import { provenanceMarkerClass, provenanceMarkerWarningClass } from './styles';
+  import { provenanceMarkerStyle, provenanceMarkerWarningStyle } from './styles';
   import Tooltip from './tooltip.svelte';
 
   interface Props {
@@ -20,7 +21,7 @@
       <button
         {..._triggerProps}
         aria-label={title}
-        class={hasWarning ? `${provenanceMarkerClass} ${provenanceMarkerWarningClass}` : provenanceMarkerClass}
+        class={css(provenanceMarkerStyle, hasWarning && provenanceMarkerWarningStyle)}
         type="button"
       >
         {provenanceMarkerGlyph(facts)}

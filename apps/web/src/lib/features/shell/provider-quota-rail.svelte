@@ -62,7 +62,7 @@
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   });
-  const providerValue = css({
+  const providerValue = css.raw({
     display: { md: 'none', xl: 'block' },
     color: 'ink',
     fontSize: '12px',
@@ -72,7 +72,7 @@
   // The product's most glanceable number, restored to the band where the rail has no room for names.
   // Only the number: the "Quota used" heading and the provider name stay at `xl`, and the flyout
   // remains the labelled detail surface.
-  const providerValueCompact = css({
+  const providerValueCompact = css.raw({
     display: { md: 'block', xl: 'none' },
     color: 'ink',
     fontSize: '9px',
@@ -80,10 +80,7 @@
     fontVariantNumeric: 'tabular-nums',
     textAlign: 'center',
   });
-  const providerValueAbsent = css({ color: 'faint', fontWeight: 600 });
-  // An aged reading keeps its number — it is still what the quota was — but drops to muted so it
-  // never sits at the same weight as a live one.
-  const providerValueStale = css({ color: 'muted' });
+  const providerValueAbsent = css.raw({ color: 'faint', fontWeight: 600 });
   // Identity lives on the mark; the ring around it is then free to carry pressure without the two
   // encodings colliding. Claude and Codex wear the colour their own vendor publishes. Cursor and
   // OpenCode publish monochrome marks, so there is no brand hue to be faithful to and they keep the
@@ -275,23 +272,13 @@
     <span aria-hidden="true" class={providerRow} data-provider-quota={entry.key}>
       {@render providerRing(entry, 26)}
       <span
-        class={cx(
-          providerValueCompact,
-          entry.usedPercent === null ? providerValueAbsent : undefined,
-          entry.stale ? providerValueStale : undefined,
-        )}
+        class={css(providerValueCompact, entry.usedPercent === null ? providerValueAbsent : undefined)}
         data-provider-quota-compact-value
       >
         {headline(entry)}
       </span>
       <span class={providerName}>{entry.label}</span>
-      <span
-        class={cx(
-          providerValue,
-          entry.usedPercent === null ? providerValueAbsent : undefined,
-          entry.stale ? providerValueStale : undefined,
-        )}
-      >
+      <span class={css(providerValue, entry.usedPercent === null ? providerValueAbsent : undefined)}>
         {headline(entry)}
       </span>
     </span>

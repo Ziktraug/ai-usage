@@ -143,7 +143,7 @@
     backgroundImage:
       'linear-gradient(to right, transparent 24.8%, token(colors.line) 25%, transparent 25.2%, transparent 49.8%, token(colors.line) 50%, transparent 50.2%, transparent 74.8%, token(colors.line) 75%, transparent 75.2%)',
   });
-  const bar = css({
+  const bar = css.raw({
     position: 'absolute',
     top: '7px',
     h: '14px',
@@ -152,8 +152,8 @@
     borderRadius: '3px',
     bg: 'chart.c2',
   });
-  const rootBar = css({ bg: 'accent' });
-  const reviewBar = css({ bg: 'chart.c4' });
+  const rootBar = css.raw({ bg: 'accent' });
+  const reviewBar = css.raw({ bg: 'chart.c4' });
   const axis = css({
     display: 'flex',
     justifyContent: 'space-between',
@@ -289,7 +289,7 @@
           {#if node.startMs !== null || node.endMs !== null}
             <span aria-hidden="true" class={track}
               ><span
-                class={cx(bar, node.relationship === 'root' && rootBar, node.relationship === 'review' && reviewBar)}
+                class={css(bar, node.relationship === 'root' && rootBar, node.relationship === 'review' && reviewBar)}
                 data-campaign-bar
                 data-timing={node.timingStatus}
                 style:border-radius={node.startMs === null || node.endMs === null ? '50%' : undefined}

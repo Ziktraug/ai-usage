@@ -2,7 +2,7 @@
 
 ## Owns
 
-Reusable Svelte/Panda primitives, report-specific style slots, the Panda preset export, generated Panda build metadata exports, and shared UI styling contracts.
+Reusable Svelte/Panda primitives, report-specific style slots, the Panda preset export, the generated `panda lib` design-system manifest, and shared UI styling contracts.
 
 ## Does Not Own
 
@@ -10,7 +10,9 @@ It does not own app routes, report data, local collection, sync or file-transfer
 
 ## Public Interface
 
-The package exposes declared exports for `.`, `./svelte`, `./preset`, `./report`, `./css`, `./panda.buildinfo.json`, and `./styles.css`.
+The package exposes declared exports for `.`, `./svelte`, `./preset`, `./report`, `./css`, and `./styles.css`. Its build runs `panda lib`, which writes the design-system manifest under `styled-system/panda/` (exported as `./panda/*`, loaded by `apps/web` through Panda's `designSystem` option) and keeps the generated Panda subpaths in `package.json` exports in sync (`./css/*`, `./patterns`, `./patterns/*`, `./tokens`, `./helpers`, `./types`).
+
+A style an app overrides also exports its raw style object as `…Style` (for example `ghostButtonStyle` beside `ghostButton`). Apps merge overrides with `css(ghostButtonStyle, override)`: `cx()` only joins class names, and when two atoms set the same property under the same condition the stylesheet order decides, which Panda 2 sorts by value rather than by authoring order.
 
 ## Depends On
 

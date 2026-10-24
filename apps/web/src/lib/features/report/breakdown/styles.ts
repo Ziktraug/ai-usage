@@ -18,7 +18,7 @@ export const panelHeader = css({
 });
 export const title = css({ fontSize: '18px', fontWeight: 550, letterSpacing: '-0.02em' });
 export const muted = css({ color: 'muted', fontSize: '12px' });
-export const field = css({
+export const fieldStyle = css.raw({
   h: { base: '44px', sm: '36px' },
   border: '1px solid token(colors.lineStrong)',
   borderRadius: 'sm',
@@ -30,7 +30,8 @@ export const field = css({
   _placeholder: { color: 'faint' },
   _focusVisible: { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)' },
 });
-export const button = css({
+export const field = css(fieldStyle);
+export const buttonStyle = css.raw({
   appearance: 'none',
   minH: '32px',
   border: '1px solid token(colors.line)',
@@ -45,6 +46,7 @@ export const button = css({
   _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   _disabled: { cursor: 'not-allowed', opacity: 0.5 },
 });
+export const button = css(buttonStyle);
 export const selectedButton = css({ borderColor: 'accent', bg: 'accentTint', color: 'ink' });
 export const pill = css({
   appearance: 'none',
@@ -165,12 +167,13 @@ export const modelTableViewport = css({
   minW: 0,
   overflowX: 'auto',
 });
-export const modelTable = css({
+export const modelTableStyle = css.raw({
   w: 'full',
   minW: '760px',
   borderCollapse: 'collapse',
   fontSize: '12px',
 });
+export const modelTable = css(modelTableStyle);
 export const modelTableIntro = css({
   display: 'grid',
   gap: '3px',

@@ -17,7 +17,7 @@
   let refreshPending = $state(false);
   let refreshButtonElement = $state<HTMLButtonElement>();
   const refreshBusyAttributes = $derived({ 'aria-busy': refreshPending ? 'true' : 'false' } as const);
-  const headerButton = css({
+  const headerButtonStyle = css.raw({
     appearance: 'none',
     display: 'inline-flex',
     alignItems: 'center',
@@ -36,11 +36,12 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     _disabled: { cursor: 'default', opacity: 0.5 },
   });
-  const primaryHeaderButton = css({
+  const headerButton = css(headerButtonStyle);
+  const primaryHeaderButton = css.raw({
     borderColor: 'ink',
     bg: 'ink',
     color: 'canvas',
-    _hover: { bg: 'inkHover', borderColor: 'inkHover', color: 'canvas' },
+    _hover: { bg: 'inkHover', color: 'canvas' },
   });
 </script>
 
@@ -64,7 +65,7 @@
     Refresh skills
   </button>
   <button
-    class={[headerButton, primaryHeaderButton]}
+    class={css(headerButtonStyle, primaryHeaderButton)}
     data-management-operation="preview-reconcile"
     disabled={refreshPending || reconcileAction === undefined}
     onclick={() => reconcileAction?.()}

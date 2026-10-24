@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { css, cx } from '@ai-usage/design-system/css';
+  import { css } from '@ai-usage/design-system/css';
   import type { Snippet } from 'svelte';
 
   let {
@@ -18,7 +18,7 @@
     atmospheric?: boolean;
   } = $props();
 
-  const header = css({
+  const header = css.raw({
     position: 'relative',
     isolation: 'isolate',
     display: 'flex',
@@ -30,7 +30,7 @@
     minH: { base: '136px', md: '160px' },
     pb: { base: '24px', md: '32px' },
   });
-  const atmosphericHeader = css({ minH: { base: '178px', md: '208px' } });
+  const atmosphericHeader = css.raw({ minH: { base: '178px', md: '208px' } });
   const copy = css({ position: 'relative', zIndex: 1, display: 'grid', gap: '10px', minW: 0, maxW: '100%' });
   const label = css({
     color: 'muted',
@@ -79,7 +79,7 @@
   );
 </script>
 
-<header class={cx(header, atmospheric && atmosphericHeader)} data-workspace-header>
+<header class={css(header, atmospheric && atmosphericHeader)} data-workspace-header>
   {#if atmospheric}
     <div aria-hidden="true" class={atmosphere} data-workspace-atmosphere>
       <svg aria-hidden="true" fill="none" preserveAspectRatio="xMidYMid slice" viewBox="0 0 720 320">

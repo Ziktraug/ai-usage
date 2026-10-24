@@ -1,5 +1,6 @@
 export {
   commandButton,
+  commandButtonStyle,
   drawerClose,
   filterTextButton,
   ghostButton,
@@ -45,11 +46,13 @@ export {
   groupPanel,
   groupPct,
   groupRow,
+  groupRowStyle,
   groupRows,
   groupSub,
   groupTitle,
   groupValue,
   panel,
+  panelStyle,
   panelSub,
   panelTitle,
 } from './components/panel';
@@ -94,10 +97,12 @@ export {
   sessionsTable,
   sessionTitleClamp,
   sessionViewportSurface,
+  sessionViewportSurfaceStyle,
   strongCell,
   table,
   tableControls,
   tableWrap,
+  tableWrapStyle,
 } from './components/table';
 export {
   monthGridline,
@@ -146,6 +151,7 @@ export {
   drawerLegendValue,
   drawerNav,
   drawerPosition,
+  drawerStyle,
   drawerTitle,
   drawerTop,
   provenanceMarkerClass,

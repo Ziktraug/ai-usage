@@ -68,7 +68,7 @@
     lineHeight: 1.4,
   });
   const railCost = css({ textStyle: 'numeric', color: 'ink', fontSize: '11px', whiteSpace: 'nowrap', pt: '2px' });
-  const chip = css({
+  const chip = css.raw({
     display: 'inline-flex',
     alignItems: 'center',
     gap: '4px',
@@ -81,7 +81,7 @@
     fontSize: '10px',
     whiteSpace: 'nowrap',
   });
-  const chipAgent = css({ bg: 'accentTint', color: 'accent' });
+  const chipAgent = css.raw({ bg: 'accentTint', color: 'accent' });
   const pane = css({ display: 'grid', gap: '16px', minW: 0 });
   const paneHeader = css({ display: 'grid', gap: '4px' });
   const paneTitle = css({ color: 'ink', fontSize: '15px', fontWeight: 650, lineHeight: 1.3, m: 0 });
@@ -174,7 +174,7 @@
     textAlign: { base: 'left', md: 'right' },
     whiteSpace: { base: 'normal', md: 'nowrap' },
   });
-  const idChip = css({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
+  const idChip = css.raw({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
   const scopeNote = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
   const preamble = css({ display: 'grid', gap: '10px', mb: '14px' });
   const unroundedBlock = css({
@@ -195,7 +195,6 @@
   const interactionValueSub = css({ display: 'block', color: 'muted', fontSize: '10px' });
   const noteList = css({ display: 'grid', gap: '4px', m: 0, p: 0, listStyle: 'none' });
   const note = css({ color: 'muted', fontSize: '11px', lineHeight: 1.45 });
-  const noteWarning = css({ color: 'status.warn' });
   const empty = css({
     p: '14px',
     border: '1px dashed token(colors.lineStrong)',
@@ -431,7 +430,7 @@
       {#if view.coverageNotes.length > 0}
         <ul class={noteList} data-session-rounds-coverage>
           {#each view.coverageNotes as coverageNote (coverageNote.key)}
-            <li class={cx(note, coverageNote.tone === 'warning' && noteWarning)}>{coverageNote.text}</li>
+            <li class={note}>{coverageNote.text}</li>
           {/each}
         </ul>
       {/if}
@@ -450,7 +449,7 @@
                   <div class={interactionTitleClass}>{childTitle(child)}</div>
                   <div class={interactionMeta}>
                     {child.agentType ?? 'child session'}
-                    · <span class={cx(chip, idChip)}>{child.sourceSessionId}</span>
+                    · <span class={css(chip, idChip)}>{child.sourceSessionId}</span>
                     {#if child.row && onOpenChild}
                       ·
                       <button class={linkButton} onclick={() => onOpenChild?.(child.row!)} type="button">
@@ -515,7 +514,7 @@
                   <span class={cx(railExcerpt, !round.excerpt && railExcerptMuted)}>{roundTitle(round)}</span>
                   <span class={railMeta}>
                     {#each round.interactions as interaction (interaction.toolUseId)}
-                      <span class={cx(chip, chipAgent)}
+                      <span class={css(chip, chipAgent)}
                         >{interaction.child?.agentType ?? (interaction.kind === 'spawn' ? 'agent' : 'message')}</span
                       >
                     {/each}
@@ -608,7 +607,7 @@
                       <div class={interactionMeta}>
                         {#if interaction.child}
                           {interaction.child.agentType ?? 'agent'}
-                          · <span class={cx(chip, idChip)}>{interaction.child.sourceSessionId}</span>
+                          · <span class={css(chip, idChip)}>{interaction.child.sourceSessionId}</span>
                           {#if interaction.child.row && onOpenChild}
                             ·
                             <button

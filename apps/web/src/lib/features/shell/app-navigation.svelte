@@ -128,7 +128,6 @@
     borderColor: 'transparent',
     bg: 'accentSoft',
     color: 'accent',
-    fontWeight: 550,
   });
   // One `mt: auto` for the whole bottom stack: the quota panel renders conditionally, so hanging the
   // push off the panel itself would drop the theme toggle back up against the navigation links
@@ -140,7 +139,7 @@
     justifyContent: { md: 'center', xl: 'space-between' },
     gap: '8px',
   });
-  const mobileNavigation = css({
+  const mobileNavigation = css.raw({
     position: 'fixed',
     insetInline: 0,
     bottom: 0,
@@ -154,7 +153,7 @@
     bg: 'surface',
     _print: { display: 'none' },
   });
-  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
+  const mobileNavigationReportOnly = css.raw({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
   const mobileLink = css({
     display: 'grid',
     placeItems: 'center',
@@ -504,7 +503,7 @@
 
 <nav
   aria-label="Report views"
-  class={cx(mobileNavigation, !showManage && mobileNavigationReportOnly)}
+  class={css(mobileNavigation, !showManage && mobileNavigationReportOnly)}
   data-app-navigation="mobile"
   data-hydrated={navigationHydrated ? 'true' : 'false'}
 >

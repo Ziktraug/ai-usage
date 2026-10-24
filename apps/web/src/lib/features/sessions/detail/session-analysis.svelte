@@ -23,7 +23,7 @@
     fontSize: '12px',
     lineHeight: 1.5,
   });
-  const warningNotice = css({ bg: 'status.warnSoft', borderColor: 'status.warn', color: 'ink' });
+  const warningNotice = css({ borderColor: 'status.warn', color: 'ink' });
   const timelineShell = css({
     display: 'grid',
     gap: '8px',

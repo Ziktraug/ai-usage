@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { css, cx } from '@ai-usage/design-system/css';
+  import { css } from '@ai-usage/design-system/css';
   import { ghostButton } from '@ai-usage/design-system/svelte';
   import {
     browserSharingEnvironment,
@@ -20,7 +20,6 @@
     _print: { display: 'none' },
   });
   const noticeText = css({ color: 'muted', fontSize: '12px' });
-  const errorNoticeText = css({ color: 'status.danger' });
 
   let {
     createExport,
@@ -47,7 +46,7 @@
   <button class={ghostButton} onclick={copyLink} type="button">Copy link</button>
   <button class={ghostButton} onclick={exportCsv} type="button">{exportLabel}</button>
   {#if notice?.tone === 'error'}
-    <span aria-live="assertive" class={cx(noticeText, errorNoticeText)} role="alert">{notice.message}</span>
+    <span aria-live="assertive" class={noticeText} role="alert">{notice.message}</span>
   {:else if notice}
     <span aria-live="polite" class={noticeText} role="status">{notice.message}</span>
   {/if}

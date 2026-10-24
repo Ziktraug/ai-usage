@@ -20,7 +20,7 @@
   } = $props();
 
   const retryForm = css({ m: 0 });
-  const statusPanel = css({ display: 'grid', gap: '12px', maxW: '640px' });
+  const statusPanel = css({ display: 'grid', maxW: '640px' });
   const submitRetry = async (event: SubmitEvent): Promise<void> => {
     if (!onRetry) {
       return;

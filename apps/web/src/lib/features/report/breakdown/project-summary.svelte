@@ -13,15 +13,15 @@
     modelEmpty,
     modelNameButton,
     modelNumericCell,
-    modelTable,
     modelTableCell,
     modelTableHeaderCell,
+    modelTableStyle,
     modelTableViewport,
     modelTextCell,
   } from './styles';
 
   const mobileSummarySurface = css({ display: { base: 'grid', md: 'none' } });
-  const projectTable = css({ minW: '840px' });
+  const projectTable = css.raw({ minW: '840px' });
   const statusPill = css({ px: '7px', py: '2px', borderRadius: 'full', fontSize: '10px' });
   const statusPillInfo = css({ bg: 'accentTint', color: 'accent' });
   const projectSummaryList = css({ display: 'grid', gap: 0, listStyle: 'none', p: 0, m: 0 });
@@ -78,7 +78,7 @@
 </script>
 
 <div class={modelTableViewport}>
-  <table class={cx(modelTable, projectTable)}>
+  <table class={css(modelTableStyle, projectTable)}>
     <thead>
       <tr>
         <th class={cx(modelTableHeaderCell, modelTextCell)} scope="col">Project</th>

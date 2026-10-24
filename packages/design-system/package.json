@@ -23,22 +23,47 @@
     },
     "./css": {
       "types": "./styled-system/css/index.d.ts",
-      "import": "./styled-system/css/index.mjs"
+      "default": "./styled-system/css/index.js"
     },
-    "./panda.buildinfo.json": "./styled-system/panda.buildinfo.json",
-    "./styles.css": "./styled-system/styles.css"
+    "./styles.css": "./styled-system/styles.css",
+    "./panda/*": "./styled-system/panda/*",
+    "./css/*": {
+      "types": "./styled-system/css/*.d.ts",
+      "default": "./styled-system/css/*.js"
+    },
+    "./patterns": {
+      "types": "./styled-system/patterns/index.d.ts",
+      "default": "./styled-system/patterns/index.js"
+    },
+    "./patterns/*": {
+      "types": "./styled-system/patterns/*.d.ts",
+      "default": "./styled-system/patterns/*.js"
+    },
+    "./tokens": {
+      "types": "./styled-system/tokens/index.d.ts",
+      "default": "./styled-system/tokens/index.js"
+    },
+    "./helpers": {
+      "types": "./styled-system/helpers.d.ts",
+      "default": "./styled-system/helpers.js"
+    },
+    "./types": {
+      "types": "./styled-system/types/index.d.ts"
+    }
   },
   "peerDependencies": {
     "svelte": "5.57.2"
   },
   "devDependencies": {
-    "@pandacss/dev": "1.12.0",
+    "@pandacss/dev": "2.3.0",
+    "@pandacss/preset-base": "2.3.0",
+    "@pandacss/preset-panda": "2.3.0",
     "svelte": "5.57.2"
   },
   "scripts": {
-    "ship": "CI=1 bun --bun panda ship --outfile styled-system/panda.buildinfo.json --silent",
-    "build": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent && bun run ship && bun --bun tsc --noEmit",
-    "check": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent && bun run ship && bun --bun tsc --noEmit",
+    "lib": "CI=1 bun --bun panda lib --outdir styled-system --log-level warn",
+    "build": "CI=1 bun --bun panda codegen --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
+    "check": "CI=1 bun --bun panda codegen --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
     "test": "bun test",
     "test:browser": "bun src/svelte/controls/controls.browser.ts && bun src/svelte/overlays/overlays.browser.ts",
     "lint": "biome check .",

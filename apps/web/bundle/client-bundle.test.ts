@@ -38,15 +38,16 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// Main at 8f7ac54a: harness provider marks and the header collection status; CI run 39264507656.
-const RECORDED_GZIP_CLOSURE_BYTES = 301_473;
+// Panda 2.3.0 upgrade, local production build: 298,131 B before and 299,795 B after on the same tree
+// (Panda 2 emits a larger css() runtime and stylesheet).
+const RECORDED_GZIP_CLOSURE_BYTES = 299_795;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
 const REPORT_ENTRY_MAXIMUM_BYTES = 720_000;
 
 const LEADING_SLASH_PATTERN = /^\/+/;
-const TRAILING_MEDIA_QUERY_PATTERN = /@media screen and \(width>=[\d.]+rem\)(?![\s\S]*@media)/;
+const TRAILING_MEDIA_QUERY_PATTERN = /@media \(width>=[\d.]+rem\)(?![\s\S]*@media)/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -164,10 +165,10 @@ describe('report app client bundle', () => {
       return upToAtom.match(TRAILING_MEDIA_QUERY_PATTERN)?.[0];
     };
 
-    expect(mediaQueryFor('md:d_block')).toBe('@media screen and (width>=48rem)');
-    expect(mediaQueryFor('xl:d_none')).toBe('@media screen and (width>=80rem)');
-    expect(mediaQueryFor('md:d_none')).toBe('@media screen and (width>=48rem)');
-    expect(mediaQueryFor('xl:d_block')).toBe('@media screen and (width>=80rem)');
+    expect(mediaQueryFor('md:d_block')).toBe('@media (width>=48rem)');
+    expect(mediaQueryFor('xl:d_none')).toBe('@media (width>=80rem)');
+    expect(mediaQueryFor('md:d_none')).toBe('@media (width>=48rem)');
+    expect(mediaQueryFor('xl:d_block')).toBe('@media (width>=80rem)');
   });
 
   test('splits server-only route UI out of the report entry', () => {

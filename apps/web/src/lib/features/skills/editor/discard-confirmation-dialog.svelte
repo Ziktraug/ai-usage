@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { css, cx } from '@ai-usage/design-system/css';
-  import { commandButton, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import { css } from '@ai-usage/design-system/css';
+  import { commandButtonStyle, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import { Portal } from '@ark-ui/svelte/portal';
   import { onDestroy } from 'svelte';
   import { createDiscardDialogController } from './discard-dialog-controller';
@@ -72,9 +72,7 @@
     _hover: { borderColor: 'accent' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const discardButtonStyle = css({
-    bg: 'status.dangerSoft',
-    color: 'status.danger',
+  const discardButtonStyle = css.raw({
     borderColor: 'transparent',
     _hover: { bg: 'status.dangerSoft', borderColor: 'status.danger' },
   });
@@ -157,7 +155,7 @@
           </button>
           <button
             {...pending ? { 'aria-busy': 'true' as const } : {}}
-            class={cx(commandButton, discardButtonStyle)}
+            class={css(commandButtonStyle, discardButtonStyle)}
             disabled={pending}
             onclick={decision.discard}
             type="button"

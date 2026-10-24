@@ -449,8 +449,13 @@ storage API.
 - `./preset`: Panda preset.
 - `./report`: report-specific styles/primitives.
 - `./css`: generated Panda CSS runtime.
-- `./panda.buildinfo.json`: generated Panda build metadata.
 - `./styles.css`: generated stylesheet.
+- `./panda/*`: the `panda lib` design-system manifest (`lib.json`, its preset,
+  and extracted build info) that `apps/web` loads through Panda's
+  `designSystem` option.
+- `./css/*`, `./patterns`, `./patterns/*`, `./tokens`, `./helpers`, `./types`:
+  generated Panda subpaths that `panda lib` writes into `package.json` on every
+  design-system build; they are not hand-edited.
 
 ## Application dependency rules
 

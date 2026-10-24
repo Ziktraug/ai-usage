@@ -1,7 +1,7 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits string ARIA states verified by the browser regressions -->
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { ghostButton } from '@ai-usage/design-system/report';
+  import { ghostButton, ghostButtonStyle } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
   import { buildCampaignMap, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
   import {
@@ -711,7 +711,7 @@
 
   const toolbar = css({ display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: '12px', mb: '24px' });
   const viewControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', mb: '20px' });
-  const activeViewButton = css({ bg: 'accentTint', borderColor: 'accent', color: 'ink' });
+  const activeViewButton = css.raw({ bg: 'accentTint', borderColor: 'accent', color: 'ink' });
   const field = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '11px' });
   const input = css({
     minH: '40px',
@@ -742,7 +742,7 @@
     '& [data-campaign-scroll]': { h: { base: '65dvh', lg: 'calc(100dvh - 330px)' } },
     pr: '4px',
   });
-  const card = css({
+  const cardStyle = css.raw({
     display: 'grid',
     gap: '7px',
     p: '14px',
@@ -757,7 +757,8 @@
     _hover: { bg: 'accentTint' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
-  const activeCard = css({ bg: 'accentTint', borderColor: 'accent' });
+  const card = css(cardStyle);
+  const activeCard = css.raw({ bg: 'accentTint', borderColor: 'accent' });
   const title = css({ fontSize: '13px', fontWeight: 600, lineHeight: 1.45, overflowWrap: 'anywhere' });
   const muted = css({ color: 'muted', fontSize: '11px', lineHeight: 1.55 });
   const detail = css({
@@ -794,7 +795,7 @@
     <nav aria-label="Campaign view" class={viewControls}>
       <button
         aria-pressed={campaignView === 'list' ? 'true' : 'false'}
-        class={cx(ghostButton, campaignView === 'list' && activeViewButton)}
+        class={css(ghostButtonStyle, campaignView === 'list' && activeViewButton)}
         onclick={() => selectView('list')}
         type="button"
       >
@@ -802,7 +803,7 @@
       </button>
       <button
         aria-pressed={campaignView === 'timeline' ? 'true' : 'false'}
-        class={cx(ghostButton, campaignView === 'timeline' && activeViewButton)}
+        class={css(ghostButtonStyle, campaignView === 'timeline' && activeViewButton)}
         onclick={() => selectView('timeline')}
         type="button"
       >
@@ -1083,7 +1084,7 @@
               {@const item = _entry.item}
               <button
                 aria-pressed={item.campaignKey === selectedKey ? 'true' : 'false'}
-                class={cx(card, item.campaignKey === selectedKey && activeCard)}
+                class={css(cardStyle, item.campaignKey === selectedKey && activeCard)}
                 data-campaign-card
                 data-campaign-key={item.campaignKey}
                 onclick={() => selectCampaign(item.campaignKey)}
