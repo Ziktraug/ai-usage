@@ -16,6 +16,9 @@ export const field = css({
   _focusVisible: {
     borderColor: 'accent',
     boxShadow: '0 0 0 3px token(colors.focusRing)',
+    // Forced colours drop the halo and repaint the border, so the focus draws a system-colour
+    // ring in the halo's footprint instead.
+    _highContrast: { outline: '2px solid Highlight', outlineOffset: '1px' },
   },
 });
 

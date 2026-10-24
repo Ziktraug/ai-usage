@@ -503,9 +503,8 @@ const createClaudeGraphIndex = (events: readonly ClaudeEvent[]): ClaudeGraphInde
     const existingSignature = graphSignatures.get(event.uuid);
     if (existingSignature !== undefined && existingSignature !== signature) {
       conflictingUuids.add(event.uuid);
-      const recorded = conflictingParents.get(event.uuid) ?? [parents.get(event.uuid) ?? null];
+      const recorded = conflictingParents.getOrInsertComputed(event.uuid, (uuid) => [parents.get(uuid) ?? null]);
       recorded.push(event.parentUuid);
-      conflictingParents.set(event.uuid, recorded);
     } else if (existingSignature === undefined) {
       graphSignatures.set(event.uuid, signature);
       parents.set(event.uuid, event.parentUuid);
@@ -1041,9 +1040,8 @@ const collectClaudeLinks = (
       metasByToolUse.set(meta.toolUseId, meta);
     }
     if (meta.workflowRunId) {
-      const run = metasByWorkflowRun.get(meta.workflowRunId) ?? [];
+      const run = metasByWorkflowRun.getOrInsertComputed(meta.workflowRunId, () => []);
       run.push(meta);
-      metasByWorkflowRun.set(meta.workflowRunId, run);
     }
   }
   const children = new Map<string, SessionDetailChildLink>();

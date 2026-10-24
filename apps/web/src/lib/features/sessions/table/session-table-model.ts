@@ -1,14 +1,11 @@
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { constructTable, type ExpandedState, type Row } from '@tanstack/table-core';
-import type { TableSortingState, TableVisibilityState } from '../../../foundation/table/state';
 import { type SessionTableFeatures, sessionTableColumns, sessionTableFeatures } from './session-columns';
 
 export interface SessionTableModelInput {
   readonly canLoadCampaignChildren?: boolean;
   readonly expanded: ExpandedState;
   readonly rows: SessionPresentationRow[];
-  readonly sorting: TableSortingState;
-  readonly visibility: TableVisibilityState;
 }
 
 export type SessionTableRow = Row<SessionTableFeatures, SessionPresentationRow>;
@@ -30,8 +27,6 @@ export const createSessionTableModel = (input: SessionTableModelInput): SessionT
     columns: [...sessionTableColumns],
     // Table Core reads this array; keep the caller-owned reference to avoid a full copy on each append.
     data: input.rows,
-    enableMultiSort: false,
-    enableSortingRemoval: false,
     features: sessionTableFeatures,
     getRowCanExpand: (row) =>
       Boolean(
@@ -41,11 +36,7 @@ export const createSessionTableModel = (input: SessionTableModelInput): SessionT
     getRowId: (row) => row.rowId,
     getSubRows: (row) => row.children ?? [],
     renderFallbackValue: '',
-    state: {
-      columnVisibility: input.visibility,
-      expanded: input.expanded,
-      sorting: input.sorting,
-    },
+    state: { expanded: input.expanded },
   });
 
   return {

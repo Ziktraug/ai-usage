@@ -286,8 +286,16 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
       commandId: randomUUID(),
       protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
     });
-    const child = Bun.spawn([process.execPath, '--no-env-file', engineEntrypoint, 'once', JSON.stringify(request)], {
+    // `--no-orphans`: a CLI killed without cancelling (SIGKILL) takes the
+    // foreground engine, and the writer lock it holds, down with it.
+    const argv = [process.execPath, '--no-orphans', '--no-env-file', engineEntrypoint, 'once', JSON.stringify(request)];
+    const child = Bun.spawn(argv, {
       cwd: options.paths.operatorCwd,
+      // Its own process group: a terminal Ctrl-C reaches the whole foreground
+      // group, and an engine in it would get that SIGINT and then the one this
+      // CLI forwards, and take its second-signal exit without cleanup (locks,
+      // Memory rendezvous left behind). Detached, it sees only the CLI's.
+      detached: process.platform !== 'win32',
       env: {
         ...process.env,
         AI_USAGE_DATABASE_PATH: options.paths.databasePath,

@@ -428,17 +428,28 @@ describe('source-control usage engine proxy', () => {
     adapter.dispose();
   });
 
-  test('health checks turn a reconnecting event client into an explicit disconnected stream', async () => {
+  /**
+   * A live stream whose health probes answer, in order, with `probes` after a successful initial
+   * status. `probe()` runs one health check and waits for the stream to act on its outcome;
+   * `nextChunk()` publishes a fresh source snapshot (or, with `'status'`, a fresh engine status) and
+   * returns the next chunk the stream emits: that snapshot while the stream is live, its closing
+   * control state otherwise.
+   */
+  const healthProbedStream = async (probes: readonly (UsageEngineControlError | 'ready')[]) => {
     const adapter = createInMemoryUsageEngineControlClient({ status: status() });
-    let statusCalls = 0;
+    const outcomes = ['ready' as const, ...probes];
+    let lastProbe: Promise<unknown> = Promise.resolve();
     let runHealthCheck: (() => void) | undefined;
     const control: UsageEngineControlClient = {
       ...adapter.client,
       getStatus: (options) => {
-        statusCalls += 1;
-        return statusCalls === 1
-          ? adapter.client.getStatus(options)
-          : Promise.reject(new UsageEngineControlError('transport-failed', 'status', 'engine stopped'));
+        const outcome = outcomes.shift();
+        if (outcome === undefined) {
+          return Promise.reject(new Error('Unexpected status read.'));
+        }
+        const result = outcome === 'ready' ? adapter.client.getStatus(options) : Promise.reject(outcome);
+        lastProbe = result.catch(() => undefined);
+        return result;
       },
     };
     const response = createSourceControlEventStream(trustedRequest(), {
@@ -455,13 +466,101 @@ describe('source-control usage engine proxy', () => {
     }
     await readTextChunk(reader);
     await readEvent(reader, 'snapshot');
-    await readEvent(reader, 'control-state');
+    const initialControlState = await readEvent(reader, 'control-state');
+    if (initialControlState.state !== 'live') {
+      throw new Error(`The stream started ${JSON.stringify(initialControlState)}, not live.`);
+    }
+    let generation = 0;
+    return {
+      dispose: async () => {
+        await reader.cancel();
+        adapter.dispose();
+      },
+      nextChunk: async (kind: 'source-control' | 'status' = 'source-control') => {
+        generation += 1;
+        adapter.publish(
+          parseUsageEngineEvent(
+            kind === 'status'
+              ? {
+                  event: 'status',
+                  eventId: `status:${generation}`,
+                  instanceId: INSTANCE_ID,
+                  sequence: generation,
+                  status: status(snapshot(generation)),
+                }
+              : {
+                  event: 'source-control',
+                  eventId: `source:${generation}`,
+                  instanceId: INSTANCE_ID,
+                  sequence: generation,
+                  snapshot: snapshot(generation),
+                },
+          ),
+        );
+        return await readTextChunk(reader);
+      },
+      probe: async () => {
+        runHealthCheck?.();
+        await lastProbe;
+        // The stream reacts to the probe's settlement in a later microtask; let it run.
+        await Bun.sleep(1);
+      },
+      reader,
+    };
+  };
 
-    runHealthCheck?.();
+  const unreachable = (): UsageEngineControlError =>
+    new UsageEngineControlError('engine-unavailable', 'status', 'private rendezvous missing');
 
-    expect(await readEvent(reader, 'control-state')).toEqual({ state: 'disconnected' });
-    expect((await reader.read()).done).toBe(true);
-    adapter.dispose();
+  test('health checks turn a reconnecting event client into an explicit disconnected stream', async () => {
+    const stream = await healthProbedStream([
+      new UsageEngineControlError('transport-failed', 'status', 'engine stopped'),
+      new UsageEngineControlError('transport-failed', 'status', 'engine stopped'),
+    ]);
+
+    await stream.probe();
+    expect(await stream.nextChunk()).toContain('event: snapshot\n');
+    await stream.probe();
+
+    expect(await readEvent(stream.reader, 'control-state')).toEqual({ state: 'disconnected' });
+    expect((await stream.reader.read()).done).toBe(true);
+    await stream.dispose();
+  });
+
+  // A development engine restart leaves no reachable engine for a second or two, which the event
+  // client reconnects through; one probe landing in it must not end the stream.
+  test('rides through an engine that is unreachable for one health probe at a time', async () => {
+    const stream = await healthProbedStream([unreachable(), 'ready', unreachable(), 'ready']);
+
+    for (let probe = 0; probe < 4; probe += 1) {
+      await stream.probe();
+      expect(await stream.nextChunk()).toContain('event: snapshot\n');
+    }
+    await stream.dispose();
+  });
+
+  test('counts a status from the reconnected event client as the engine being back', async () => {
+    const stream = await healthProbedStream([unreachable(), unreachable()]);
+
+    await stream.probe();
+    expect(await stream.nextChunk('status')).toContain('event: snapshot\n');
+    await stream.probe();
+
+    expect(await stream.nextChunk()).toContain('event: snapshot\n');
+    await stream.dispose();
+  });
+
+  test.each([
+    ['times out', new UsageEngineControlError('timeout', 'status', 'engine did not answer')],
+    ['answers invalidly', new UsageEngineControlError('invalid-response', 'status', 'engine answered garbage')],
+  ])('reports an engine that %s on a health probe disconnected at once', async (_scenario, failure) => {
+    const stream = await healthProbedStream([failure]);
+
+    await stream.probe();
+
+    expect(await readEvent(stream.reader, 'control-state')).toEqual({ state: 'disconnected' });
+    expect((await stream.reader.read()).done).toBe(true);
+    await stream.dispose();
   });
 
   test('cleans up the engine event subscription and timers on request abort', async () => {

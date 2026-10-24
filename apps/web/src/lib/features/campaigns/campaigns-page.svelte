@@ -19,7 +19,7 @@
   } from '@tanstack/svelte-query';
   import { onDestroy, tick, untrack } from 'svelte';
   import { browser } from '$app/env';
-  import { afterNavigate, beforeNavigate } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, snapshot } from '$app/navigation';
   import { page } from '$app/state';
   import { campaignLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
   import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
@@ -647,7 +647,10 @@
       await exploration.refetch({ cancelRefetch: false });
     }
   };
-  export const capture = () => ({
+  // Back/Forward and a reload return to the exploration the reader left: SvelteKit stores this per
+  // history entry and serialises it with the app transport. The id outlives a rebuild, where the
+  // default call-site id would change with the chunk hashes.
+  const capture = () => ({
     scope,
     anchors,
     matchingRestoration,
@@ -667,7 +670,7 @@
     searchNavigation,
     detailOpenerId,
   });
-  export const restore = (saved: ReturnType<typeof capture>): void => {
+  const restore = (saved: ReturnType<typeof capture>): void => {
     previousScope = saved.scope;
     anchors = saved.anchors;
     matchingRestoration = saved.matchingRestoration;
@@ -687,6 +690,7 @@
     searchNavigation = saved.searchNavigation;
     detailOpenerId = saved.detailOpenerId;
   };
+  snapshot({ capture, id: 'campaigns-page', restore });
 
   const recordedAt = (row: SessionPresentationRow): string => {
     const value = row.activeDate ?? row.endDate ?? row.date;

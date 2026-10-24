@@ -177,7 +177,13 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
   const mobileLinkInactive = css({ color: 'muted' });
-  const mobileLinkActive = css({ color: 'accent' });
+  // Forced colours drop the accent: the links carry aria-current, which the design system's
+  // forced-colours ring keys on, but the Manage button standing for the current management page
+  // has no such state, so its ring is drawn here.
+  const mobileLinkActive = css({
+    color: 'accent',
+    _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
+  });
   const managePopover = css({
     position: 'fixed',
     right: '10px',

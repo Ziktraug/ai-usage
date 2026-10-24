@@ -8,20 +8,10 @@ const CONNECTION_IDLE_TIMEOUT_SECONDS = '45';
 // Graceful drain before the adapter force-closes open streams; stays inside the production
 // supervisor's five-second grace so the shutdown hook still exits the process itself.
 const SHUTDOWN_TIMEOUT_SECONDS = '2';
-
-const untrustedAdapterEnvironmentKeys = new Set([
-  'ADDRESS_HEADER',
-  'BODY_SIZE_LIMIT',
-  'DEVELOPMENT',
-  'HOST_HEADER',
-  'IPV6_ONLY',
-  'ORIGIN',
-  'PORT_HEADER',
-  'PROTOCOL_HEADER',
-  'REUSE_PORT',
-  'SOCKET_PATH',
-  'XFF_DEPTH',
-]);
+// The adapter reads its configuration only under this prefix (`envPrefix` in
+// `sveltekit-loopback-adapter.ts`, whose test pins this copy), so inherited variables under its
+// unprefixed names (`HOST`, `SOCKET_PATH`, `ADDRESS_HEADER`, ...) never configure the server.
+const ADAPTER_ENVIRONMENT_PREFIX = 'AI_USAGE_WEB_ADAPTER_';
 
 if (typeof Bun === 'undefined') {
   throw new Error('The production web server requires the pinned Bun runtime.');
@@ -48,16 +38,27 @@ if (!pinnedBunVersion || Bun.version !== pinnedBunVersion) {
   );
 }
 
-for (const key of untrustedAdapterEnvironmentKeys) {
-  delete process.env[key];
+// This entry owns the prefixed namespace: an inherited prefixed variable is removed rather than
+// passed on (the adapter also refuses to start on a prefixed name it does not read), and only the
+// values below are set.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith(ADAPTER_ENVIRONMENT_PREFIX)) {
+    delete process.env[key];
+  }
 }
-process.env.BODY_SIZE_LIMIT = String(MAX_PORTABLE_USAGE_BYTES);
-process.env.CONNECTION_IDLE_TIMEOUT = CONNECTION_IDLE_TIMEOUT_SECONDS;
-process.env.HOST = LOOPBACK_HOST;
-// Read by the hand-off module `sveltekit-loopback-adapter.ts` puts in front of the adapter. The
+const adapterEnvironment = {
+  BODY_SIZE_LIMIT: String(MAX_PORTABLE_USAGE_BYTES),
+  CONNECTION_IDLE_TIMEOUT: CONNECTION_IDLE_TIMEOUT_SECONDS,
+  HOST: LOOPBACK_HOST,
+  PORT: listenerPort,
+  SHUTDOWN_TIMEOUT: SHUTDOWN_TIMEOUT_SECONDS,
+};
+for (const [key, value] of Object.entries(adapterEnvironment)) {
+  process.env[`${ADAPTER_ENVIRONMENT_PREFIX}${key}`] = value;
+}
+// Read by the hand-off module `sveltekit-loopback-adapter.ts` puts in front of the adapter, never
+// by the adapter itself, so it stays unprefixed; an inherited value is overwritten here. The
 // canonical spelling drops a default port (`PORT=80`), as browsers do in `Origin`.
 process.env.ORIGIN = new URL(`http://${LOOPBACK_HOST}:${listenerPort}`).origin;
-process.env.PORT = listenerPort;
-process.env.SHUTDOWN_TIMEOUT = SHUTDOWN_TIMEOUT_SECONDS;
 
 await import('./.output-build/sveltekit/index.js');

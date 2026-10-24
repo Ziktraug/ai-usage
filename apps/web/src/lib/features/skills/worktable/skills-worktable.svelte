@@ -325,7 +325,17 @@
     cursor: 'not-allowed',
     opacity: 0.7,
   });
-  const selectedRow = css({ bg: 'accentTint', '& > th[scope="row"]': { bg: 'accentTint' } });
+  // The row of the skill open in the drawer has no state attribute for the design system's
+  // forced-colours ring to key on, and forced colours repaint its tint as Canvas, so it draws its own.
+  // The sticky name cell paints over the row's ring, so it carries one too.
+  const selectedRow = css({
+    bg: 'accentTint',
+    '& > th[scope="row"]': {
+      bg: 'accentTint',
+      _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
+    },
+    _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
+  });
   const visuallyHidden = css({
     position: 'absolute',
     w: '1px',

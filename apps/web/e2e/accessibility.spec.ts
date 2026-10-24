@@ -6,6 +6,7 @@ import {
   openHydratedSkills,
   reportViewsFor,
   test,
+  waitForFocusedReportSettled,
   waitForHydratedNavigation,
   waitForHydratedReport,
   waitForHydratedSkills,
@@ -14,6 +15,9 @@ import { encodeRpcResponseBody } from './rpc-test-transport';
 
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
 const ALL_FILTER_PATTERN = /^All —/;
+const HARNESS_FILTER_URL_PATTERN = /[?&]harness=/;
+const CUSTOM_RANGE_URL_PATTERN = /[?&]range=\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}/;
+const EDITED_FROM_RANGE_URL_PATTERN = /[?&]range=2026-05-20\.\./;
 const MAX_PROJECT_EXPANSIONS = 12;
 const NAVIGATION_DESTINATIONS = [
   'Overview',
@@ -38,6 +42,23 @@ const REPORT_AXE_DESTINATIONS = [
   { label: 'Sessions', path: '/?tab=sessions' },
   { label: 'Analysis', path: '/?tab=models' },
 ] as const;
+
+interface AccessibilityMedia {
+  readonly label: string;
+  readonly media: NonNullable<Parameters<Page['emulateMedia']>[0]>;
+}
+
+/**
+ * Every focus-indicator and axe check runs in both colour schemes as authored, under forced colours
+ * (a Windows contrast theme swaps the palette for system colours and drops box-shadows and
+ * background images, so anything drawn only with those disappears), and with a raised contrast
+ * preference.
+ */
+const ACCESSIBILITY_MEDIA: readonly AccessibilityMedia[] = (['light', 'dark'] as const).flatMap((colorScheme) => [
+  { label: `${colorScheme} mode`, media: { colorScheme } },
+  { label: `${colorScheme} forced-colors mode`, media: { colorScheme, forcedColors: 'active' } },
+  { label: `${colorScheme} more-contrast mode`, media: { colorScheme, contrast: 'more' } },
+]);
 
 const overviewTopSessionTrigger = (page: Page): Locator =>
   page
@@ -99,10 +120,48 @@ test.use({
   timezoneId: 'Europe/Paris',
 });
 
+/**
+ * Under forced colours Chromium paints text in the forced system colour, but it resolves the
+ * `currentcolor` of `-webkit-text-fill-color`, which axe reads before `color`, against the authored
+ * colour. axe would then compare light-on-dark labels' authored text with the forced background and
+ * fail them while the page shows CanvasText on Canvas. Pin the fill to the colour Chromium paints.
+ * That only holds while no stylesheet or inline style authors a fill colour, so that is asserted.
+ */
+const pinForcedTextFillToPaintedColor = async (page: Page): Promise<void> => {
+  const authoredFills = await page.evaluate(() => {
+    const fills = [...document.querySelectorAll('[style*="text-fill-color"]')].map((element) => element.outerHTML);
+    const visit = (sheet: CSSStyleSheet): void => {
+      for (const rule of sheet.cssRules) {
+        if (rule instanceof CSSImportRule && rule.styleSheet) {
+          visit(rule.styleSheet);
+        } else if (rule.cssText.includes('text-fill-color')) {
+          fills.push(rule.cssText);
+        }
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      visit(sheet);
+    }
+    return fills;
+  });
+  expect(authoredFills).toEqual([]);
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll<HTMLElement>('body *')) {
+      const style = getComputedStyle(element);
+      if (style.getPropertyValue('-webkit-text-fill-color') !== style.color) {
+        element.style.setProperty('-webkit-text-fill-color', style.color);
+      }
+    }
+  });
+};
+
 const expectNoAxeViolations = async (page: Page): Promise<void> => {
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
+  if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+    await pinForcedTextFillToPaintedColor(page);
+  }
   const results = await new AxeBuilder({ page }).analyze();
   const violations = results.violations.map((violation) => ({
     id: violation.id,
@@ -229,9 +288,9 @@ test('shows the report panel focus indicator only for keyboard navigation', asyn
   await expect(dashboardPanel).toHaveCSS('outline-style', 'solid');
 });
 
-for (const colorScheme of ['light', 'dark'] as const) {
-  test(`draws contrasting timeline and dashboard-panel focus indicators in ${colorScheme} mode`, async ({ page }) => {
-    await page.emulateMedia({ colorScheme });
+for (const { label, media } of ACCESSIBILITY_MEDIA) {
+  test(`draws contrasting timeline and dashboard-panel focus indicators in ${label}`, async ({ page }) => {
+    await page.emulateMedia(media);
     await page.addInitScript(() => {
       localStorage.clear();
     });
@@ -278,10 +337,10 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
   await expect(drawer).not.toBeVisible();
 });
 
-for (const colorScheme of ['light', 'dark'] as const) {
+for (const { label, media } of ACCESSIBILITY_MEDIA) {
   for (const destination of REPORT_AXE_DESTINATIONS) {
-    test(`${destination.label} has no detectable accessibility violations in ${colorScheme} mode`, async ({ page }) => {
-      await page.emulateMedia({ colorScheme });
+    test(`${destination.label} has no detectable accessibility violations in ${label}`, async ({ page }) => {
+      await page.emulateMedia(media);
       await page.addInitScript(() => localStorage.clear());
       await openHydratedReport(page, destination.path);
       await expect(reportViewsFor(page).getByRole('link', { exact: true, name: destination.label })).toHaveAttribute(
@@ -300,10 +359,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
     });
   }
 
-  test(`the open session drawer has no detectable accessibility violations in ${colorScheme} mode`, async ({
-    page,
-  }) => {
-    await page.emulateMedia({ colorScheme });
+  test(`the open session drawer has no detectable accessibility violations in ${label}`, async ({ page }) => {
+    await page.emulateMedia(media);
     await page.addInitScript(() => localStorage.clear());
     await page.setViewportSize({ height: 844, width: 390 });
     await openHydratedReport(page);
@@ -317,12 +374,587 @@ for (const colorScheme of ['light', 'dark'] as const) {
   });
 }
 
-test('Skills has no detectable accessibility violations', async ({ page }) => {
-  await openHydratedSkills(page, '/skills/global/alpha-skill');
-  await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
+for (const { label, media } of ACCESSIBILITY_MEDIA) {
+  test(`Skills has no detectable accessibility violations in ${label}`, async ({ page }) => {
+    await page.emulateMedia(media);
+    await openHydratedSkills(page, '/skills/global/alpha-skill');
+    await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
 
-  await expectNoAxeViolations(page);
+    await expectNoAxeViolations(page);
+  });
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`a Skill switch keeps its on/off thumb in ${colorScheme} forced-colors mode`, async ({ page }) => {
+    // Forced colours repaint backgrounds as Canvas; a thumb drawn only with a background vanishes
+    // with the position that carries the state. axe has no rule for that, so the paint is checked.
+    await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+    await openHydratedSkills(page, '/skills/global/alpha-skill');
+    const toggle = page.getByRole('switch', { name: 'Disable alpha-skill' }).first();
+    await expect(toggle).toBeVisible();
+    const paint = () =>
+      toggle.evaluate((element) => ({
+        thumb: getComputedStyle(element, '::after').backgroundColor,
+        track: getComputedStyle(element).backgroundColor,
+      }));
+
+    const on = await paint();
+    expect(on.thumb).not.toBe(on.track);
+    // The state is styled from aria-checked alone, so flipping it shows the off paint without
+    // toggling the shared fixture skill.
+    await toggle.evaluate((element) => element.setAttribute('aria-checked', 'false'));
+    const off = await paint();
+    expect(off.thumb).not.toBe(off.track);
+  });
+}
+
+/**
+ * Forced colours repaint the tint or accent that marks a selection, which would leave the selected
+ * item looking like its siblings. It must keep a ring of its own: a solid outline at least 2px wide
+ * that no unselected sibling has. Without forced colours the ring is absent, so the authored
+ * rendering is unchanged.
+ */
+const expectForcedSelectionRing = async (page: Page, selected: Locator, siblings: Locator): Promise<void> => {
+  await expect(selected).toBeVisible();
+  const ring = await selected.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.outlineColor, style: style.outlineStyle, width: style.outlineWidth };
+  });
+  expect(ring.style).toBe('solid');
+  expect(Number.parseFloat(ring.width)).toBeGreaterThanOrEqual(2);
+  const siblingOutlines = await siblings.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return { color: style.outlineColor, style: style.outlineStyle, width: style.outlineWidth };
+    }),
+  );
+  expect(siblingOutlines.length).toBeGreaterThan(0);
+  for (const outline of siblingOutlines) {
+    expect(outline).not.toEqual(ring);
+  }
+  await page.emulateMedia({ forcedColors: 'none' });
+  await expect(selected).toHaveCSS('outline-style', 'none');
+  await page.emulateMedia({ forcedColors: 'active' });
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test.describe(`selections stay distinguishable in ${colorScheme} forced-colors mode`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+    });
+
+    test('the current navigation link, the Skills filter and the open skill row', async ({ page }) => {
+      await openHydratedSkills(page, '/skills/global/alpha-skill');
+      const rail = page.locator('[data-app-navigation="desktop"]');
+      await expectForcedSelectionRing(
+        page,
+        rail.locator('a[aria-current="page"]'),
+        rail.locator('a:not([aria-current])'),
+      );
+      await expectForcedSelectionRing(
+        page,
+        page.getByRole('button', { name: ALL_FILTER_PATTERN }),
+        page.locator('[data-worktable-filter][aria-pressed="false"]'),
+      );
+      const openRow = page.locator('tr[data-worktable-row="alpha-skill"]').first();
+      const otherRows = page.locator('tr[data-worktable-row]:not([data-worktable-row="alpha-skill"])');
+      await expectForcedSelectionRing(page, openRow, otherRows);
+      // The sticky name cell paints over the row's ring, so it has to carry its own.
+      await expectForcedSelectionRing(page, openRow.locator('th[scope="row"]'), otherRows.locator('th[scope="row"]'));
+    });
+
+    test('the current mobile navigation link and the Manage button', async ({ page }) => {
+      await page.setViewportSize({ height: 844, width: 390 });
+      const mobile = page.locator('[data-app-navigation="mobile"]');
+      await openHydratedReport(page);
+      await expectForcedSelectionRing(
+        page,
+        mobile.locator('a[aria-current="page"]'),
+        mobile.locator('a:not([aria-current]), button'),
+      );
+      await openHydratedSkills(page, '/skills');
+      await expectForcedSelectionRing(page, mobile.getByRole('button', { name: 'Manage' }), mobile.locator('a'));
+    });
+
+    test('the report period, the Analysis tab and a segmented control', async ({ page }) => {
+      await openHydratedReport(page, '/?tab=models');
+      const period = page.getByRole('region', { name: 'Report period' });
+      await expectForcedSelectionRing(
+        page,
+        period.locator('[aria-pressed="true"]'),
+        period.locator('[aria-pressed="false"]'),
+      );
+      const tabs = page.getByRole('tablist', { name: 'Analysis dimension' });
+      await expectForcedSelectionRing(
+        page,
+        tabs.getByRole('tab', { selected: true }),
+        tabs.getByRole('tab', { selected: false }),
+      );
+      const segments = page.getByRole('radiogroup', { name: 'Sort breakdown' });
+      await expectForcedSelectionRing(
+        page,
+        segments.getByRole('radio', { checked: true }),
+        segments.getByRole('radio', { checked: false }),
+      );
+    });
+
+    test('the session column preset and the selected session row', async ({ page }) => {
+      await openHydratedReport(page, '/?tab=sessions');
+      const presets = page.getByRole('group', { name: 'Session column presets' });
+      await expectForcedSelectionRing(
+        page,
+        presets.locator('[aria-pressed="true"]'),
+        presets.locator('[aria-pressed="false"]'),
+      );
+      await page.locator('tr[data-session-row-id]').first().click();
+      await expect(page.getByRole('dialog', { name: 'Session details' })).toBeVisible();
+      await expectForcedSelectionRing(
+        page,
+        page.locator('tr[data-selected="true"]'),
+        page.locator('tr[data-selected="false"]'),
+      );
+      // The last cell is positioned (it anchors the row's chevron), so it paints over the row's
+      // ring and has to carry its own.
+      await expect(page.locator('tr[data-selected="true"] td:last-child')).toHaveCSS('position', 'relative');
+      await expectForcedSelectionRing(
+        page,
+        page.locator('tr[data-selected="true"] td:last-child'),
+        page.locator('tr[data-selected="false"] td:last-child'),
+      );
+    });
+
+    test('the Campaigns view and the selected campaign', async ({ page }) => {
+      await page.goto('/campaigns');
+      await waitForHydratedNavigation(page);
+      const views = page.getByRole('navigation', { name: 'Campaign view' });
+      await expectForcedSelectionRing(
+        page,
+        views.locator('[aria-pressed="true"]'),
+        views.locator('[aria-pressed="false"]'),
+      );
+      await expectForcedSelectionRing(
+        page,
+        page.locator('[data-campaign-card][aria-pressed="true"]'),
+        page.locator('[data-campaign-card][aria-pressed="false"]'),
+      );
+    });
+  });
+}
+
+/**
+ * Resolves a CSS colour, a system colour keyword or a token variable, against the palette the page
+ * currently paints with.
+ */
+const resolveSystemColor = (page: Page, keyword: string): Promise<string> =>
+  page.evaluate((value) => {
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, keyword);
+
+const focusByKeyboard = async (page: Page, target: Locator): Promise<void> => {
+  await expect(target).toBeVisible();
+  await target.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(target).toBeFocused();
+};
+
+const outlineOf = (target: Locator) =>
+  target.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.outlineColor, style: style.outlineStyle, width: Number.parseFloat(style.outlineWidth) };
+  });
+
+/**
+ * Expects a solid outline at least 2px wide. Reduced motion still runs every style change as a
+ * near-instant transition, so the width is polled until it lands before the ring is read.
+ */
+const expectSolidRing = async (target: Locator): Promise<{ color: string }> => {
+  await expect.poll(async () => (await outlineOf(target)).width).toBeGreaterThanOrEqual(2);
+  const ring = await outlineOf(target);
+  expect(ring.style).toBe('solid');
+  return ring;
+};
+
+/**
+ * A field draws its authored focus as an accent border with a box-shadow halo. Forced colours drop
+ * the halo and repaint the border, which would leave the focused field looking like every other
+ * one, so under forced colours it draws a solid outline at least 2px wide. Without forced colours
+ * the halo stays and no outline is drawn, so the authored rendering is unchanged.
+ */
+const expectForcedFieldFocusRing = async (page: Page, field: Locator): Promise<void> => {
+  await focusByKeyboard(page, field);
+  await expectSolidRing(field);
+  await page.emulateMedia({ forcedColors: 'none' });
+  await expect(field).toBeFocused();
+  await expect(field).toHaveCSS('outline-style', 'none');
+  await expect.poll(() => field.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe('none');
+  await page.emulateMedia({ forcedColors: 'active' });
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test.describe(`keyboard focus on a field stays visible in ${colorScheme} forced-colors mode`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+    });
+
+    test('the report filter fields and the custom period fields', async ({ page }) => {
+      await openHydratedReport(page);
+      await expectForcedFieldFocusRing(
+        page,
+        page.getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' }),
+      );
+      await expectForcedFieldFocusRing(page, page.getByRole('button', { name: 'Filter by harness: All harnesses' }));
+      const period = page.getByRole('region', { name: 'Report period' });
+      await period.getByRole('button', { exact: true, name: 'Choose a custom report period' }).click();
+      await expectForcedFieldFocusRing(page, period.locator('#report-period-from'));
+      await expectForcedFieldFocusRing(page, period.locator('#report-period-to'));
+    });
+
+    test('the breakdown search field', async ({ page }) => {
+      await openHydratedReport(page, '/?tab=models');
+      await expectForcedFieldFocusRing(page, page.getByRole('searchbox', { name: 'Search this breakdown' }));
+    });
+  });
+}
+
+/** Opens the harness filter from the keyboard; its first item, the All row, takes focus. */
+const openHarnessFilterByKeyboard = async (page: Page): Promise<Locator> => {
+  await page.getByRole('button', { name: 'Filter by harness: All harnesses' }).focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { exact: true, name: 'Harness' });
+  await expect(dialog.getByRole('button', { name: 'All harnesses' })).toBeFocused();
+  return dialog;
+};
+
+/** A filter option's visually hidden native checkbox and the box drawn in its place. */
+const filterOptionFor = (dialog: Locator, name: string): { box: Locator; input: Locator } => {
+  // A `has` locator is resolved inside each candidate item, so it starts from the page, not the dialog.
+  const option = dialog.locator('li').filter({ has: dialog.page().getByRole('checkbox', { exact: true, name }) });
+  return { box: option.locator('[data-part="control"]'), input: option.getByRole('checkbox') };
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const forcedColors of ['none', 'active'] as const) {
+    const mode = forcedColors === 'active' ? `${colorScheme} forced-colors` : colorScheme;
+    test(`keyboard focus on a filter option draws a ring on its checkbox box in ${mode} mode`, async ({ page }) => {
+      // Focus lands on the visually hidden native input, so without a ring on the box it mirrors
+      // nothing on screen would show which option has focus (WCAG 2.4.7).
+      await page.emulateMedia({ colorScheme, forcedColors });
+      await openHydratedReport(page);
+      const dialog = await openHarnessFilterByKeyboard(page);
+      const claude = filterOptionFor(dialog, 'Claude');
+      await expect(claude.box).toHaveCSS('outline-style', 'none');
+
+      await page.keyboard.press('Tab');
+      await expect(claude.input).toBeFocused();
+      const ring = await expectSolidRing(claude.box);
+      expect(ring.color).toBe(
+        await resolveSystemColor(page, forcedColors === 'active' ? 'Highlight' : 'var(--colors-accent)'),
+      );
+
+      await page.keyboard.press('Tab');
+      await expect(filterOptionFor(dialog, 'Codex').input).toBeFocused();
+      await expect(claude.box).toHaveCSS('outline-style', 'none');
+    });
+  }
+}
+
+test('a pointer click on a filter option draws no focus ring on its checkbox box', async ({ page }) => {
+  await openHydratedReport(page);
+  // The keyboard opens the popover, so the pointer click below has to take over the modality.
+  const dialog = await openHarnessFilterByKeyboard(page);
+  const codex = filterOptionFor(dialog, 'Codex');
+  // Choosing an option navigates and the navigation moves focus on, so the box is watched from the
+  // click onwards instead of being read once after it.
+  await codex.box.evaluate((box) => {
+    const states: { focused: boolean; focusVisible: boolean; outlineStyle: string }[] = [];
+    new MutationObserver(() => {
+      states.push({
+        focused: box.hasAttribute('data-focus'),
+        focusVisible: box.hasAttribute('data-focus-visible'),
+        outlineStyle: getComputedStyle(box).outlineStyle,
+      });
+    }).observe(box, { attributeFilter: ['data-focus', 'data-focus-visible'] });
+    Reflect.set(window, '__codexBoxFocusStates', states);
+  });
+
+  await dialog.getByTitle('Codex', { exact: true }).click();
+  await expect(page).toHaveURL(HARNESS_FILTER_URL_PATTERN);
+  const states = await page.evaluate(() => Reflect.get(window, '__codexBoxFocusStates') as unknown);
+  expect(states).toContainEqual({ focused: true, focusVisible: false, outlineStyle: 'none' });
+  expect(states).not.toContainEqual(expect.objectContaining({ focusVisible: true }));
+  expect(states).not.toContainEqual(expect.objectContaining({ outlineStyle: 'solid' }));
 });
+
+test('choosing a custom period moves focus to its From date by keyboard and by pointer', async ({ page }) => {
+  await openHydratedReport(page);
+  await waitForFocusedReportSettled(page);
+  const period = page.getByRole('region', { name: 'Report period' });
+  const custom = period.getByRole('button', { exact: true, name: 'Choose a custom report period' });
+  const from = period.getByRole('textbox', { exact: true, name: 'From' });
+  const to = period.getByRole('textbox', { exact: true, name: 'To' });
+
+  // Custom navigates before its fields exist, so focus is read once the report has settled, after
+  // any focus reset the navigation could make.
+  await custom.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(CUSTOM_RANGE_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+  await expect(from).toBeFocused();
+
+  // A From edit completed by Tab commits a new range and leaves focus on To.
+  await from.fill('2026-05-20');
+  await page.keyboard.press('Tab');
+  await expect(page).toHaveURL(EDITED_FROM_RANGE_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+  await expect(to).toBeFocused();
+
+  await period.getByRole('button', { exact: true, name: '30d' }).click();
+  await expect(from).toHaveCount(0);
+  await custom.click();
+  await expect(page).toHaveURL(CUSTOM_RANGE_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+  await expect(from).toBeFocused();
+
+  // Once the fields are open, Custom moves focus straight back to From.
+  await to.focus();
+  await period.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }).click();
+  await expect(from).toBeFocused();
+});
+
+interface MarkPaint {
+  readonly background: string;
+  readonly level: string | null;
+  readonly opacity: string;
+}
+
+const paintOf = (marks: Locator): Promise<MarkPaint[]> =>
+  marks.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        level: element.getAttribute('data-heat-level'),
+        opacity: style.opacity,
+      };
+    }),
+  );
+
+const borderOf = (marks: Locator) =>
+  marks.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return {
+        color: style.borderTopColor,
+        sides: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+        style: style.borderTopStyle,
+      };
+    }),
+  );
+
+type PaintedColor = readonly [red: number, green: number, blue: number, alpha: number];
+
+/**
+ * Each colour as the sRGB bytes a 2D canvas paints for it, so a computed colour in any syntax
+ * (`rgb()`, or the `color(srgb …)` a `color-mix()` resolves to) is compared on what reaches the
+ * screen. A value the canvas cannot parse fails instead of reading as the previous fill.
+ */
+const paintedColors = (page: Page, colors: readonly string[]): Promise<PaintedColor[]> =>
+  page.evaluate((values) => {
+    const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    if (!context) {
+      throw new Error('Expected a 2D canvas context');
+    }
+    const sentinel = '#010203';
+    return values.map((value) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = sentinel;
+      context.fillStyle = value;
+      if (context.fillStyle === sentinel) {
+        throw new Error(`The canvas could not paint the colour ${value}`);
+      }
+      context.fillRect(0, 0, 1, 1);
+      const [red = 0, green = 0, blue = 0, alpha = 0] = context.getImageData(0, 0, 1, 1).data;
+      return [red, green, blue, alpha] as const;
+    });
+  }, colors);
+
+const contrastRatio = (first: PaintedColor, second: PaintedColor): number => {
+  const luminances = [first, second].map(([red, green, blue]) => relativeLuminance([red, green, blue]));
+  return (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+};
+
+const OPAQUE_ALPHA = 255;
+const NON_TEXT_CONTRAST = 3;
+const OPPOSITE_THEME = { dark: 'light', light: 'dark' } as const;
+
+/** A mark as it reaches the screen: a translucent fill shows the canvas through it. */
+const overCanvas = (mark: PaintedColor, canvas: PaintedColor): PaintedColor => {
+  const alpha = mark[3] / OPAQUE_ALPHA;
+  const channel = (index: 0 | 1 | 2): number => Math.round(mark[index] * alpha + canvas[index] * (1 - alpha));
+  return [channel(0), channel(1), channel(2), OPAQUE_ALPHA];
+};
+
+/** Each mark's contrast against the canvas, rounded to hundredths. */
+const contrastsOffCanvas = (canvas: PaintedColor, marks: readonly PaintedColor[]): number[] =>
+  marks.map((mark) => Math.round(contrastRatio(overCanvas(mark, canvas), canvas) * 100) / 100);
+
+/**
+ * Every mark stands at least 3:1 off the canvas and its contrast rises with its level, so the scale
+ * reads the same way whichever palette the page is painted with. The marks are opaque: the strength
+ * lives in the fill, so nothing drawn around a faint mark is faded with it.
+ */
+const expectRisingContrast = (canvas: PaintedColor, marks: readonly PaintedColor[]): void => {
+  const contrasts = contrastsOffCanvas(canvas, marks);
+  expect(Math.min(...contrasts), `contrast by level: ${contrasts.join(', ')}`).toBeGreaterThanOrEqual(
+    NON_TEXT_CONTRAST,
+  );
+  expect(contrasts, 'contrast rises with the level').toEqual(
+    [...new Set(contrasts)].sort((left, right) => left - right),
+  );
+  expect(marks.map((mark) => mark[3])).toEqual(marks.map(() => OPAQUE_ALPHA));
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const themePin of [null, OPPOSITE_THEME[colorScheme]] as const) {
+    const pinned = themePin ? ` with the ${themePin} theme pinned` : '';
+    test(`Rhythm and Punchcard keep their intensity marks in ${colorScheme} forced-colors mode${pinned}`, async ({
+      page,
+    }) => {
+      // Forced colours repaint every authored fill as the canvas colour, which would flatten the
+      // intensity both charts draw as a fill. Their marks keep their own paint, drawn from the forced
+      // palette's system colours: each level stays apart from the canvas and from the other levels,
+      // and the legend still matches the marks. A saved theme that disagrees with the forced palette
+      // (the theme tokens follow the pin, the canvas follows the palette) must not invert the scale.
+      if (themePin) {
+        await page.addInitScript((theme) => localStorage.setItem('ai-usage-theme', theme), themePin);
+      }
+      await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+      await openHydratedReport(page);
+      await waitForFocusedReportSettled(page);
+      if (themePin) {
+        await expect(page.locator('html')).toHaveAttribute('data-theme', themePin);
+      }
+      const canvas = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+      const [canvasPaint] = await paintedColors(page, [canvas]);
+      if (!canvasPaint) {
+        throw new Error('Expected the canvas colour to paint');
+      }
+      // The forced palette follows the emulated scheme, so a pin, when set, is the opposite of it.
+      const canvasLuminance = relativeLuminance([canvasPaint[0], canvasPaint[1], canvasPaint[2]]);
+      if (colorScheme === 'dark') {
+        expect(canvasLuminance).toBeLessThan(0.2);
+      } else {
+        expect(canvasLuminance).toBeGreaterThan(0.8);
+      }
+
+      const calendar = page.getByRole('toolbar', {
+        name: 'Daily activity calendar. Use arrow keys to move by day or week.',
+      });
+      const dayMarks = calendar.locator('button[data-heatmap-day]');
+      const legendMarks = page.locator('[data-heatmap-legend] [data-heat-level]');
+      const days = await paintOf(dayMarks);
+      const legend = await paintOf(legendMarks);
+      expect(legend.map(({ level }) => level)).toEqual(['0', '1', '2', '3', '4']);
+      // The fixture's days are empty or active at one level; the legend carries the whole scale.
+      const emptyDay = days.find(({ level }) => level === '0');
+      const activeDay = days.find(({ level }) => level !== '0');
+      if (!(emptyDay && activeDay)) {
+        throw new Error('Expected the fixture calendar to hold both empty and active days');
+      }
+      expect(emptyDay.background).not.toBe(activeDay.background);
+      const legendBackgroundByLevel = new Map(legend.map((mark) => [mark.level, mark.background]));
+      expect(new Set(legendBackgroundByLevel.values()).size).toBe(legend.length);
+      for (const mark of [...days, ...legend]) {
+        expect(legendBackgroundByLevel.get(mark.level)).toBe(mark.background);
+        // The strength lives in the fill, so nothing drawn around a faint day is faded with it.
+        expect(mark.opacity).toBe('1');
+      }
+      // Level 1 is the faintest active mark and level 4 the strongest, in either palette.
+      const legendPaint = await paintedColors(
+        page,
+        legend.map(({ background }) => background),
+      );
+      expectRisingContrast(canvasPaint, legendPaint.slice(1));
+      // An empty day is the canvas itself, set apart by a system-colour outline on every side.
+      expect(legendPaint[0]).toEqual(canvasPaint);
+      const emptyMarks = page.locator('[data-heatmap-legend] [data-heat-level="0"], button[data-heat-level="0"]');
+      const emptyBorders = await borderOf(emptyMarks);
+      expect(emptyBorders.length).toBeGreaterThan(1);
+      const [grayText, ...emptyOutlines] = await paintedColors(page, [
+        await resolveSystemColor(page, 'GrayText'),
+        ...emptyBorders.map(({ color }) => color),
+      ]);
+      if (!grayText) {
+        throw new Error('Expected GrayText to paint');
+      }
+      expect(contrastRatio(grayText, canvasPaint)).toBeGreaterThanOrEqual(NON_TEXT_CONTRAST);
+      for (const [index, border] of emptyBorders.entries()) {
+        expect(border.style).toBe('solid');
+        expect(border.sides).toEqual(['1px', '1px', '1px', '1px']);
+        expect(emptyOutlines[index]).toEqual(grayText);
+      }
+
+      // Each day keeps its own paint, so its focus ring has to come from the forced palette.
+      const rovingDay = calendar.locator('button[data-heatmap-day][tabindex="0"]');
+      await focusByKeyboard(page, rovingDay);
+      const dayRing = await expectSolidRing(rovingDay);
+      expect(dayRing.color).toBe(await resolveSystemColor(page, 'Highlight'));
+
+      const dotMarks = page.locator('[data-punchcard-cell-fill]');
+      const keyMarks = page.locator('[data-punchcard-intensity-key] span[style]');
+      const dots = await paintOf(dotMarks);
+      const keyDots = await paintOf(keyMarks);
+      expect(dots.length).toBeGreaterThan(0);
+      expect(keyDots).toHaveLength(4);
+      for (const dot of [...dots, ...keyDots]) {
+        expect(dot.opacity).toBe('1');
+      }
+      // The key runs from Low to High, and every dot drawn stands at least 3:1 off the canvas.
+      expectRisingContrast(
+        canvasPaint,
+        await paintedColors(
+          page,
+          keyDots.map(({ background }) => background),
+        ),
+      );
+      const dotPaint = await paintedColors(
+        page,
+        dots.map(({ background }) => background),
+      );
+      expect(Math.min(...contrastsOffCanvas(canvasPaint, dotPaint))).toBeGreaterThanOrEqual(NON_TEXT_CONTRAST);
+      expect(dotPaint.map((dot) => dot[3])).toEqual(dotPaint.map(() => OPAQUE_ALPHA));
+
+      // Without forced colours the authored encoding is untouched: one accent fill, faded per level.
+      // Reduced motion still runs a near-instant transition, so the switch is polled.
+      await page.emulateMedia({ forcedColors: 'none' });
+      await expect
+        .poll(async () => (await paintOf(legendMarks)).map(({ opacity }) => opacity))
+        .toEqual(['1', '0.28', '0.52', '0.76', '1']);
+      const authoredLegend = await paintOf(legendMarks);
+      expect(new Set(authoredLegend.slice(1).map(({ background }) => background)).size).toBe(1);
+      const authoredActiveDay = (await paintOf(dayMarks)).find(({ level }) => level === activeDay.level);
+      expect(authoredActiveDay).toEqual(authoredLegend[Number(activeDay.level)]);
+      await expect(rovingDay).toHaveCSS('outline-width', '1px');
+      expect((await borderOf(emptyMarks)).map(({ sides }) => sides[0])).toEqual(emptyBorders.map(() => '0px'));
+      const authoredKey = await paintOf(keyMarks);
+      expect(authoredKey.map(({ opacity }) => Number(opacity).toFixed(3))).toEqual([
+        '0.259',
+        '0.454',
+        '0.688',
+        '1.000',
+      ]);
+      expect(new Set(authoredKey.map(({ background }) => background))).toEqual(
+        new Set([await resolveSystemColor(page, 'var(--colors-accent)')]),
+      );
+    });
+  }
+}
 
 test('a reused project SKILL.md preview tracks whether the current document is scrollable', async ({ page }) => {
   await openHydratedSkills(page, '/skills/projects/project%2Fopaque/skill-name');

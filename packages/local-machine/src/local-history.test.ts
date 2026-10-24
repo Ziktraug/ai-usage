@@ -3,7 +3,7 @@ import { expect, spyOn, test } from 'bun:test';
 import fs, { type BigIntStats, type PathLike, type StatOptions, type Stats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { zstdDecompressSync } from 'node:zlib';
+import { constants as zlibConstants, zstdCompressSync } from 'node:zlib';
 import {
   HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES,
   HISTORY_JSONL_MAX_BYTES,
@@ -16,7 +16,7 @@ import {
   walkFiles,
 } from '@ai-usage/local-machine/local-history';
 import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
-import { Effect } from 'effect';
+import { Effect, Fiber } from 'effect';
 
 const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;
@@ -476,34 +476,48 @@ test('keys in-memory SQLite fixtures by SQL and positional parameters', async ()
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 
 /**
- * Every way source can reach a Bun zstd decompressor (sync or async): member
- * access, bracket access, a destructuring pattern taken from `Bun`, and a
- * named import from the `bun` module.
+ * Every zstd decoder other than the streaming one the reader qualified, under
+ * any spelling a source can reach it by: Bun's one-shot `zstdDecompress` and
+ * `zstdDecompressSync` (member, bracket, destructured or imported from `bun`)
+ * and `node:zlib`'s one-shot functions, `createZstdDecompress` and its
+ * `ZstdDecompress` class. Matched anywhere in the source, comments included.
  */
-const BUN_ZSTD_DECOMPRESSOR_PATTERNS = [
-  /\bBun\s*\.\s*zstdDecompress(?:Sync)?\b/,
-  /\bBun\s*\[\s*['"`]zstdDecompress(?:Sync)?['"`]\s*\]/,
-  /\{[^}]*\bzstdDecompress(?:Sync)?\b[^}]*\}\s*=\s*Bun\b/,
-  /\bimport\s*\{[^}]*\bzstdDecompress(?:Sync)?\b[^}]*\}\s*from\s*['"]bun['"]/,
-];
+const UNQUALIFIED_ZSTD_DECODER = /\b(?:create)?[Zz]stdDecompress(?:Sync)?\b/;
 
-const DOLLAR_SIGN = /\$/g;
+const STREAMING_DECODER = /\bDecompressionStream\b/;
 
-/** A namespace or default import of the `bun` module, capturing its local name. */
-const BUN_MODULE_BINDINGS = /\bimport\s+(?:\*\s+as\s+)?([A-Za-z_$][\w$]*)\s+from\s*['"]bun['"]/g;
-
-const reachesBunZstdDecompressor = (source: string): boolean =>
-  BUN_ZSTD_DECOMPRESSOR_PATTERNS.some((pattern) => pattern.test(source)) ||
-  [...source.matchAll(BUN_MODULE_BINDINGS)].some(([, binding]) =>
-    new RegExp(`\\b${binding?.replace(DOLLAR_SIGN, '\\$')}\\s*\\.\\s*zstdDecompress(?:Sync)?\\b`).test(source),
-  );
-
-/** One Raw block carrying `payload`, flagged as the frame's last block. */
-const rawLastBlock = (payload: Buffer): Buffer => {
+/** One Raw block carrying `payload`; `last` flags the frame's last block. */
+const rawBlock = (payload: Buffer, last: boolean): Buffer => {
   const header = Buffer.alloc(3);
   // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size above the type and last-block bits.
-  header.writeUIntLE((payload.length << 3) | 1, 0, 3);
+  header.writeUIntLE((payload.length << 3) | (last ? 1 : 0), 0, 3);
   return Buffer.concat([header, payload]);
+};
+
+/** One Raw block carrying `payload`, flagged as the frame's last block. */
+const rawLastBlock = (payload: Buffer): Buffer => rawBlock(payload, true);
+
+/**
+ * The reader's own decoder run directly over `bytes`, outside every check the
+ * reader adds. `lib.dom`'s `CompressionFormat` predates zstd; Bun's runtime
+ * implements it (see `ZSTD_STREAM_FORMAT` in the reader).
+ */
+const decodeWithReaderDecoder = async (bytes: Uint8Array<ArrayBuffer>): Promise<Buffer> =>
+  Buffer.from(
+    await new Response(
+      new Blob([bytes])
+        .stream()
+        .pipeThrough(new DecompressionStream('zstd' satisfies Bun.CompressionFormat as CompressionFormat)),
+    ).arrayBuffer(),
+  );
+
+/** The message the reader's decoder throws for `bytes`, or `undefined` when it accepts them. */
+const readerDecoderFailure = async (bytes: Uint8Array<ArrayBuffer>): Promise<string | undefined> => {
+  try {
+    await decodeWithReaderDecoder(bytes);
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
 };
 
 /**
@@ -617,13 +631,15 @@ test('rejects corrupt and truncated archives as decompression failures with the 
     const compressed = Bun.zstdCompressSync('first\nsecond\nthird\n');
     const corruptPath = path.join(root, 'corrupt.jsonl.zst');
     const truncatedPath = path.join(root, 'truncated.jsonl.zst');
+    const truncatedByOnePath = path.join(root, 'truncated-by-one.jsonl.zst');
     const corruptBytes = Buffer.alloc(64, 0xff);
     const truncatedBytes = compressed.subarray(0, compressed.length - 8);
     fs.writeFileSync(corruptPath, corruptBytes);
     fs.writeFileSync(truncatedPath, truncatedBytes);
+    fs.writeFileSync(truncatedByOnePath, compressed.subarray(0, compressed.length - 1));
     // A frame whose layout is intact (declared size 16, one Compressed block of
     // 8 bytes, last) but whose block is garbage passes every structural check
-    // and fails inside the decompressor.
+    // and fails inside the decoder.
     const garbageBlockPath = path.join(root, 'garbage-block.jsonl.zst');
     const garbageBlockHeader = Buffer.alloc(3);
     // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size, Block_Type and Last_Block.
@@ -635,25 +651,45 @@ test('rejects corrupt and truncated archives as decompression failures with the 
       Buffer.alloc(8, 0xff),
     ]);
     fs.writeFileSync(garbageBlockPath, garbageBlockBytes);
+    // A frame carrying a content checksum whose last byte is flipped: the
+    // layout and the declared size are intact, so only the decoder's checksum
+    // verification can refuse it.
+    const checksummed = zstdCompressSync(Buffer.from('first\nsecond\nthird\n'), {
+      params: { [zlibConstants.ZSTD_c_checksumFlag]: 1 },
+    });
+    const badChecksumBytes = Buffer.from(checksummed);
+    const checksumByte = badChecksumBytes.length - 1;
+    badChecksumBytes.writeUInt8(255 - badChecksumBytes.readUInt8(checksumByte), checksumByte);
+    const badChecksumPath = path.join(root, 'bad-checksum.jsonl.zst');
+    fs.writeFileSync(badChecksumPath, badChecksumBytes);
+    const checksummedPath = path.join(root, 'checksummed.jsonl.zst');
+    fs.writeFileSync(checksummedPath, checksummed);
     const storage = createLocalHistoryStorage(root);
+    await expect(Effect.runPromise(storage.readLines(checksummedPath, () => undefined))).resolves.toEqual({
+      bytes: 19,
+      lines: 3,
+      oversizedLines: 0,
+    });
 
-    // The same call the reader makes: `node:zlib` capped at the declared size.
-    let decompressorMessage: string | undefined;
-    try {
-      zstdDecompressSync(garbageBlockBytes, { maxOutputLength: 16 });
-    } catch (cause) {
-      decompressorMessage = cause instanceof Error ? cause.message : undefined;
-    }
-    expect(decompressorMessage).toBeDefined();
+    // The reader's own decoder over the same bytes.
+    const garbageBlockMessage = await readerDecoderFailure(garbageBlockBytes);
+    const badChecksumMessage = await readerDecoderFailure(badChecksumBytes);
+    expect(garbageBlockMessage).toBeDefined();
+    expect(badChecksumMessage).toBeDefined();
 
     // Bytes without the frame magic and a frame whose last block runs past the
-    // end are refused by the frame walk before the decompressor runs; a frame
-    // with an intact layout and a garbage block fails inside it. All keep
-    // their cause under the same typed operation.
-    for (const [archivePath, expectedCause] of [
-      [corruptPath, 'Missing zstd frame magic number'],
-      [truncatedPath, 'Truncated zstd frame'],
-      [garbageBlockPath, decompressorMessage],
+    // end (by eight bytes or by one) are refused by the frame walk before the
+    // decoder runs; a frame with an intact layout and a garbage block or a
+    // wrong checksum fails inside it. All keep their cause under the same
+    // typed operation. The checksum is verified after the content it covers
+    // has been decoded, so lines may already have been visited when it fails;
+    // a failed read is discarded whole by every caller.
+    for (const [archivePath, expectedCause, refusedBeforeAnyLine] of [
+      [corruptPath, 'Missing zstd frame magic number', true],
+      [truncatedPath, 'Truncated zstd frame', true],
+      [truncatedByOnePath, 'Truncated zstd frame', true],
+      [garbageBlockPath, garbageBlockMessage, true],
+      [badChecksumPath, badChecksumMessage, false],
     ] as const) {
       const visited: string[] = [];
       const result = await Effect.runPromise(
@@ -669,8 +705,123 @@ test('rejects corrupt and truncated archives as decompression failures with the 
       expect(archiveError.message).toBe(`History archive could not be decompressed: ${archivePath}`);
       expect(archiveError.cause).toBeInstanceOf(Error);
       expect((archiveError.cause as Error).message).toBe(expectedCause as string);
-      expect(visited).toEqual([]);
+      if (refusedBeforeAnyLine) {
+        expect(visited).toEqual([]);
+      }
     }
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+/**
+ * The archive decodes as a stream, so its content crosses decoded-chunk
+ * boundaries: a multi-byte character straddling one, and a compressed archive
+ * larger than one fed slice, must read exactly like the plain file.
+ */
+test('streams an archive larger than one decoded chunk exactly like its plain form', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-stream-'));
+  try {
+    // 65,535 ASCII bytes put the 2-byte `é` across the first 64 KiB boundary;
+    // the random lines keep the compressed archive above one 64 KiB slice.
+    const randomLines = Array.from({ length: 2000 }, () =>
+      Buffer.from(crypto.getRandomValues(new Uint8Array(96))).toString('base64'),
+    );
+    const content = `${'a'.repeat(65_535)}é\n${randomLines.join('\n')}\nlast`;
+    const plainPath = path.join(root, 'history.jsonl');
+    const archivePath = path.join(root, 'history.jsonl.zst');
+    fs.writeFileSync(plainPath, content);
+    const archive = zstdCompressSync(Buffer.from(content), { params: { [zlibConstants.ZSTD_c_checksumFlag]: 1 } });
+    expect(archive.length).toBeGreaterThan(64 * 1024);
+    fs.writeFileSync(archivePath, archive);
+    const storage = createLocalHistoryStorage(root);
+    const plainVisited: string[] = [];
+    const archiveVisited: string[] = [];
+    const plain = await Effect.runPromise(storage.readLines(plainPath, (line) => plainVisited.push(line)));
+    const streamed = await Effect.runPromise(storage.readLines(archivePath, (line) => archiveVisited.push(line)));
+    expect(archiveVisited).toEqual(plainVisited);
+    expect(archiveVisited[0]).toBe(`${'a'.repeat(65_535)}é`);
+    expect(streamed).toEqual(plain);
+    expect(streamed).toEqual({ bytes: Buffer.byteLength(content, 'utf8'), lines: 2002, oversizedLines: 0 });
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+/**
+ * Streaming hands lines out before the end of the frame is decoded, so a
+ * block that fails after earlier blocks decoded still fails the whole read
+ * with the typed archive failure; the visited lines are the caller's to
+ * discard, as for a plain file that fails part-way.
+ */
+test('fails an archive whose later block is corrupt after its earlier lines were visited', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-late-'));
+  try {
+    const line = `${'z'.repeat(1023)}\n`;
+    const rawPayload = Buffer.from(line.repeat(100));
+    const garbageBlockHeader = Buffer.alloc(3);
+    // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size, Block_Type and Last_Block.
+    garbageBlockHeader.writeUIntLE((8 << 3) | (2 << 1) | 1, 0, 3);
+    // Single segment with a 4-byte content size covering both Raw blocks and
+    // the 16 bytes the garbage block claims.
+    const contentSize = Buffer.alloc(4);
+    contentSize.writeUInt32LE(rawPayload.length * 2 + 16);
+    const archive = Buffer.concat([
+      ZSTD_MAGIC,
+      Buffer.from([0xa0]),
+      contentSize,
+      rawBlock(rawPayload, false),
+      rawBlock(rawPayload, false),
+      garbageBlockHeader,
+      Buffer.alloc(8, 0xff),
+    ]);
+    const archivePath = path.join(root, 'late-corruption.jsonl.zst');
+    fs.writeFileSync(archivePath, archive);
+    const visited: string[] = [];
+    const result = await Effect.runPromise(
+      Effect.result(createLocalHistoryStorage(root).readLines(archivePath, (visitedLine) => visited.push(visitedLine))),
+    );
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
+      expect(((result.failure.cause as Error).cause as Error).message).toBe(
+        (await readerDecoderFailure(archive)) as string,
+      );
+    }
+    expect(visited.length).toBeGreaterThan(0);
+    expect(visited.length).toBeLessThanOrEqual(200);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('stops decoding an archive when its read is interrupted', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-interrupt-'));
+  try {
+    // 64 MiB of short lines: many decoded chunks, and far more lines than the
+    // first chunk holds.
+    const totalLines = 4 * 1024 * 1024;
+    const archivePath = path.join(root, 'long.jsonl.zst');
+    fs.writeFileSync(archivePath, Bun.zstdCompressSync('{"n":1234567}\n'.repeat(totalLines)));
+    let visitedLines = 0;
+    let firstLineSeen: () => void = () => undefined;
+    const firstLine = new Promise<void>((resolve) => {
+      firstLineSeen = resolve;
+    });
+    const fiber = Effect.runFork(
+      createLocalHistoryStorage(root).readLines(archivePath, () => {
+        visitedLines++;
+        if (visitedLines === 1) {
+          firstLineSeen();
+        }
+      }),
+    );
+    await firstLine;
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    const visitedAtInterrupt = visitedLines;
+    await Bun.sleep(100);
+    expect(visitedLines).toBe(visitedAtInterrupt);
+    expect(visitedLines).toBeLessThan(totalLines);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
@@ -714,14 +865,14 @@ test('rejects a symlink to an archive and an archive that is not exactly one fra
   }
 });
 
-test('refuses a frame that omits its content size even though the decompressor accepts it', async () => {
+test('refuses a frame that omits its content size even though the decoder accepts it', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-undeclared-'));
   try {
     const text = 'first\nsecond\n';
     // Frame_Header_Descriptor 0x00 declares no content size and no single
     // segment, so one Window_Descriptor byte follows it.
     const undeclared = Buffer.concat([ZSTD_MAGIC, Buffer.from([0x00, 0x80]), rawLastBlock(Buffer.from(text))]);
-    expect(zstdDecompressSync(undeclared).toString()).toBe(text);
+    expect((await decodeWithReaderDecoder(undeclared)).toString()).toBe(text);
     const undeclaredPath = path.join(root, 'undeclared.jsonl.zst');
     fs.writeFileSync(undeclaredPath, undeclared);
     // Frame_Header_Descriptor 0x20: single segment with a 1-byte content size
@@ -822,10 +973,14 @@ test('refuses an archive declaring more than the archive budget even under the p
 test('refuses a frame whose blocks would emit more than it declares without decoding them', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-overrun-'));
   try {
-    // An intact layout that lies: a 1-byte content size of 7 followed by
-    // 2,000 RLE blocks of 128 KiB each (an 8 KB archive that would expand to
-    // 256 MiB). The frame walk accepts it, so only the decompressor's output
-    // cap can refuse it, and it must do so before the blocks are decoded.
+    // An intact layout that lies: a small content size followed by 2,000 RLE
+    // blocks of 128 KiB each (an 8 KB archive that would expand to 256 MiB).
+    // The frame walk accepts it, so only the decoder or the running count of
+    // decoded bytes can refuse it, and it must do so before the blocks are
+    // decoded. Two headers: a single segment declaring 7 bytes (its window,
+    // and so its largest block, is those 7 bytes), and a 128 KiB window
+    // declaring 256 bytes, where every block is within the window and only
+    // the declaration is exceeded.
     const RLE_BLOCK_BYTES = 128 * 1024;
     const rleBlock = (last: boolean): Buffer => {
       const header = Buffer.alloc(3);
@@ -834,40 +989,54 @@ test('refuses a frame whose blocks would emit more than it declares without deco
       return Buffer.concat([header, Buffer.from([0x41])]);
     };
     const blocks = Array.from({ length: 2000 }, (_, index) => rleBlock(index === 1999));
-    const overrun = Buffer.concat([ZSTD_MAGIC, Buffer.from([0x20, 7]), ...blocks]);
-    const overrunPath = path.join(root, 'overrun.jsonl.zst');
-    fs.writeFileSync(overrunPath, overrun);
     const storage = createLocalHistoryStorage(root);
-
-    const visited: string[] = [];
-    const result = await Effect.runPromise(
-      Effect.result(storage.readLines(overrunPath, (line) => visited.push(line), { maxBytes: 1024 * 1024 })),
-    );
-    expect(result._tag).toBe('Failure');
-    if (result._tag === 'Failure') {
-      expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: overrunPath });
-      const archiveError = result.failure.cause as Error;
-      expect(archiveError.message).toBe(`History archive could not be decompressed: ${overrunPath}`);
-      // The decompressor's output cap refused the frame (either of its two
-      // error codes for an overrun), not the declared-size check that runs
-      // on a completed output afterwards.
-      const cause = archiveError.cause as Error & { code?: string };
-      expect(['ZSTD_error_dstSize_tooSmall', 'ERR_BUFFER_TOO_LARGE']).toContain(cause.code ?? '');
-      expect(cause.message).not.toContain('does not match its declared size');
+    for (const [name, frameHeader] of [
+      ['single-segment', Buffer.from([0x20, 7])],
+      // Frame_Content_Size_Flag 1 (2 bytes, value + 256), Window_Descriptor 0x38 (2^17).
+      ['windowed', Buffer.from([0x40, 0x38, 0x00, 0x00])],
+    ] as const) {
+      const overrun = Buffer.concat([ZSTD_MAGIC, frameHeader, ...blocks]);
+      const overrunPath = path.join(root, `${name}-overrun.jsonl.zst`);
+      fs.writeFileSync(overrunPath, overrun);
+      const visited: string[] = [];
+      const startedAt = performance.now();
+      const result = await Effect.runPromise(
+        Effect.result(storage.readLines(overrunPath, (line) => visited.push(line), { maxBytes: 1024 * 1024 })),
+      );
+      // Decoding 256 MiB would take far longer than refusing the first block.
+      expect(performance.now() - startedAt).toBeLessThan(2000);
+      expect(result._tag).toBe('Failure');
+      if (result._tag === 'Failure') {
+        expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: overrunPath });
+        const archiveError = result.failure.cause as Error;
+        expect(archiveError.message).toBe(`History archive could not be decompressed: ${overrunPath}`);
+        // The decoder or the running count refused the frame, not the
+        // declared-size check that runs once the stream has ended.
+        const cause = archiveError.cause as Error;
+        expect([
+          await readerDecoderFailure(overrun),
+          `History archive content exceeds its declared size: ${overrunPath}`,
+        ]).toContain(cause.message);
+        expect(cause.message).not.toContain('does not match its declared size');
+      }
+      expect(visited).toEqual([]);
     }
-    expect(visited).toEqual([]);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
 });
 
 /**
- * Bun's own zstd decompressors corrupted the heap when measured on Bun 1.3.13
- * (the engine's runtime at the time): intermittent mimalloc segfaults in later
- * allocations, measured 2026-10-19. Every archive goes through `node:zlib`
- * instead; Bun's compressor is not implicated and stays available to fixtures.
+ * Archives decode through one decoder: `DecompressionStream('zstd')`, pulled
+ * chunk by chunk in `local-history.ts`, re-qualified on Bun 1.4.3 on
+ * 2026-10-24 (40 of 40 parallel suite runs clean). Bun's own one-shot zstd
+ * decoders corrupted the heap on Bun 1.3.13 (intermittent mimalloc segfaults,
+ * measured 2026-10-19) and take no output bound, and `node:zlib`'s one-shot
+ * decoder holds the whole output at once, so no other zstd decoder is reached
+ * from these packages. Compressors are not implicated and stay available to
+ * fixtures.
  */
-test('no local-machine or local-collectors source reaches a Bun zstd decompressor', () => {
+test('no local-machine or local-collectors source reaches a zstd decoder other than the streaming reader', () => {
   const sourceRoots = [import.meta.dir, path.resolve(import.meta.dir, '../../local-collectors/src')];
   const sourceFiles: string[] = [];
   const walk = (directory: string): void => {
@@ -884,13 +1053,16 @@ test('no local-machine or local-collectors source reaches a Bun zstd decompresso
     walk(sourceRoot);
   }
   expect(sourceFiles.length).toBeGreaterThan(0);
-  const offenders = sourceFiles
-    .filter((filePath) => {
-      const source = fs.readFileSync(filePath, 'utf8');
-      return reachesBunZstdDecompressor(source);
-    })
-    .map((filePath) => path.relative(path.resolve(import.meta.dir, '../..'), filePath));
+  const relative = (filePath: string): string => path.relative(path.resolve(import.meta.dir, '../..'), filePath);
+  const sources = sourceFiles.map((filePath) => ({ filePath, source: fs.readFileSync(filePath, 'utf8') }));
+  const offenders = sources
+    .filter(({ source }) => UNQUALIFIED_ZSTD_DECODER.test(source))
+    .map(({ filePath }) => relative(filePath));
   expect(offenders).toEqual([]);
+  const streamingDecoderUsers = sources
+    .filter(({ source }) => STREAMING_DECODER.test(source))
+    .map(({ filePath }) => relative(filePath));
+  expect(streamingDecoderUsers).toEqual([path.join('local-machine', 'src', 'local-history.ts')]);
 });
 
 test('TestMemoryStorage reads byte fixtures and zstd archives through readLines', async () => {
@@ -906,14 +1078,14 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
   const plainVisited: string[] = [];
   const archiveVisited: string[] = [];
   const plain = Effect.runSync(storage.readLines(plainPath, (line) => plainVisited.push(line), { maxLineBytes: 8 }));
-  const archive = Effect.runSync(
+  const archive = await Effect.runPromise(
     storage.readLines(archivePath, (line) => archiveVisited.push(line), { maxLineBytes: 8 }),
   );
   expect(archiveVisited).toEqual(plainVisited);
   expect(archive).toEqual(plain);
   expect(archive.bytes).toBe(Buffer.byteLength(content, 'utf8'));
 
-  const corrupt = Effect.runSync(Effect.result(storage.readLines(corruptPath, () => undefined)));
+  const corrupt = await Effect.runPromise(Effect.result(storage.readLines(corruptPath, () => undefined)));
   expect(corrupt._tag).toBe('Failure');
   if (corrupt._tag === 'Failure') {
     expect(corrupt.failure).toMatchObject({ operation: 'readLines.decompress', path: corruptPath });
@@ -924,7 +1096,7 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
   // them, and the well-formed 9-byte frame of empty input is an empty history.
   storage.writeBytes('.codex/sessions/empty.jsonl.zst', new Uint8Array(0));
   const emptyPath = path.join(storage.home, '.codex/sessions/empty.jsonl.zst');
-  const empty = Effect.runSync(Effect.result(storage.readLines(emptyPath, () => undefined)));
+  const empty = await Effect.runPromise(Effect.result(storage.readLines(emptyPath, () => undefined)));
   expect(empty._tag).toBe('Failure');
   if (empty._tag === 'Failure') {
     expect(empty.failure).toMatchObject({ operation: 'readLines.decompress', path: emptyPath });
@@ -934,7 +1106,7 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
   storage.writeBytes('.codex/sessions/truncated.jsonl.zst', fullArchive.subarray(0, fullArchive.length - 8));
   const truncatedPath = path.join(storage.home, '.codex/sessions/truncated.jsonl.zst');
   const truncatedVisited: string[] = [];
-  const truncated = Effect.runSync(
+  const truncated = await Effect.runPromise(
     Effect.result(storage.readLines(truncatedPath, (line) => truncatedVisited.push(line))),
   );
   expect(truncated._tag).toBe('Failure');
@@ -945,7 +1117,7 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
   expect(truncatedVisited).toEqual([]);
   storage.writeBytes('.codex/sessions/empty-frame.jsonl.zst', Bun.zstdCompressSync(''));
   const emptyFrameVisited: string[] = [];
-  const emptyFrame = Effect.runSync(
+  const emptyFrame = await Effect.runPromise(
     storage.readLines(path.join(storage.home, '.codex/sessions/empty-frame.jsonl.zst'), (line) =>
       emptyFrameVisited.push(line),
     ),
@@ -968,7 +1140,9 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
     [archivePath, 4],
     [compressiblePath, 1024],
   ] as const) {
-    const bounded = Effect.runSync(Effect.result(storage.readLines(boundedPath, () => undefined, { maxBytes })));
+    const bounded = await Effect.runPromise(
+      Effect.result(storage.readLines(boundedPath, () => undefined, { maxBytes })),
+    );
     expect(bounded._tag).toBe('Failure');
     if (bounded._tag === 'Failure') {
       expect(bounded.failure).toMatchObject({ operation: 'readLines', path: boundedPath });
@@ -976,7 +1150,9 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
     }
   }
   expect(
-    Effect.runSync(storage.readLines(compressiblePath, () => undefined, { maxBytes: compressibleText.length })),
+    await Effect.runPromise(
+      storage.readLines(compressiblePath, () => undefined, { maxBytes: compressibleText.length }),
+    ),
   ).toMatchObject({ bytes: compressibleText.length, oversizedLines: 0 });
 
   // Byte fixtures are decoded, never decompressed, by the text reader.

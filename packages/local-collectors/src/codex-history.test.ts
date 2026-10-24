@@ -3797,6 +3797,90 @@ describe('Codex compressed rollouts', () => {
   });
 
   /**
+   * An archive decodes as a stream, so a block that fails late reaches the
+   * parser only after the earlier lines of the rollout were visited. The read
+   * still fails as a whole: the rollout yields no row and no cache entry, is
+   * reported once, and the rollouts beside it are collected.
+   */
+  test('drops a rollout whose archive fails after some of its lines were read', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-archive-late-failure-'));
+    try {
+      const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026', '09', '01');
+      mkdirSync(sessionsDirectory, { recursive: true });
+      writeFileSync(path.join(sessionsDirectory, 'rollout-valid.jsonl'), jsonl(...rolloutEvents('valid-thread', 1)));
+      const padding = Array.from({ length: 96 }, (_, index) => ({
+        timestamp: '2026-09-01T08:59:59.000Z',
+        type: 'padding',
+        payload: { index, text: 'p'.repeat(1000) },
+      }));
+      const payload = Buffer.from(jsonl(...rolloutEvents('late-failure-thread', 2), ...padding));
+      // One Raw block of the rollout (not last), then a Compressed block of
+      // garbage (last) inside a single-segment frame declaring both.
+      const rawHeader = Buffer.alloc(3);
+      // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size above the type and last-block bits.
+      rawHeader.writeUIntLE(payload.length << 3, 0, 3);
+      const garbageHeader = Buffer.alloc(3);
+      // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size, Block_Type and Last_Block.
+      garbageHeader.writeUIntLE((8 << 3) | (2 << 1) | 1, 0, 3);
+      const contentSize = Buffer.alloc(4);
+      contentSize.writeUInt32LE(payload.length + 16);
+      const archivePath = path.join(sessionsDirectory, 'rollout-late-failure.jsonl.zst');
+      writeFileSync(
+        archivePath,
+        Buffer.concat([
+          Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0xa0]),
+          contentSize,
+          rawHeader,
+          payload,
+          garbageHeader,
+          Buffer.alloc(8, 0xff),
+        ]),
+      );
+      const real = createLocalHistoryStorage(home);
+      let archiveLinesVisited = 0;
+      const counting: LocalHistoryStorageService = {
+        ...real,
+        readLines: (filePath, visit, limits) =>
+          real.readLines(
+            filePath,
+            (line) => {
+              if (filePath === archivePath) {
+                archiveLinesVisited++;
+              }
+              visit(line);
+            },
+            limits,
+          ),
+      };
+
+      const result = await Effect.runPromise(
+        collectCodexResult.pipe(Effect.provideService(LocalHistoryStorage, counting)),
+      );
+      expect(archiveLinesVisited).toBeGreaterThan(0);
+      expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['valid-thread']);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toMatchObject({
+        harness: 'codex',
+        operation: 'unreadableHistoryFile',
+        path: archivePath,
+        rejectedRecords: 1,
+      });
+      expect(result.warnings[0]?.message).toContain('readLines.decompress');
+      const db = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
+      try {
+        const row = db
+          .query('SELECT count(*) as count FROM codex_session_cache WHERE file_path = ?')
+          .get(archivePath) as { count: number };
+        expect(row.count).toBe(0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  /**
    * Codex compresses or archives a rollout and removes the listed file while
    * the scan is reading it: the first read of a registered path visits every
    * line, then `move` runs and the read fails as the file is gone.

@@ -253,11 +253,7 @@ const collectFromDb = (
                     continue;
                   }
                   tokenRows++;
-                  let current = agg.get(row.session_id);
-                  if (!current) {
-                    current = { facts: [] };
-                    agg.set(row.session_id, current);
-                  }
+                  const current = agg.getOrInsertComputed(row.session_id, () => ({ facts: [] }));
                   current.facts.push(decoded.value);
                 }
                 return { assistantRows, tokenRows, userRows };

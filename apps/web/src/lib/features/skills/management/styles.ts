@@ -71,11 +71,14 @@ export const switchButton = css({
     borderRadius: 'full',
     bg: 'muted',
     transition: 'transform 0.15s, background-color 0.15s',
+    // Forced colours repaint every background as Canvas, which would erase the thumb and with it
+    // the on/off position. A system colour is kept as authored, so the thumb stays drawn.
+    _highContrast: { bg: 'CanvasText' },
   },
   '&[aria-checked=true]': {
     bg: 'status.okSoft',
     borderColor: 'status.ok',
-    _after: { bg: 'status.ok', transform: 'translateX(14px)' },
+    _after: { bg: 'status.ok', transform: 'translateX(14px)', _highContrast: { bg: 'CanvasText' } },
   },
   '&[data-pending=true]': {
     borderColor: 'accent',

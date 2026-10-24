@@ -4,6 +4,13 @@
 - **Date**: 2026-10-17
 - **Extends**: 0009, 0016
 
+> Amended 2026-10-24 (Bun 1.4.3): archives now decode as a stream through
+> `DecompressionStream('zstd')` instead of one-shot `node:zlib`; the frame
+> walk, the declared-size bounds and the typed `readLines.decompress` failure
+> are unchanged. See "Amendment 2026-10-24" below; decision 1's sentences on
+> whole-buffer decoding and on not using the streaming decoders are
+> superseded by it.
+
 ## Context
 
 Codex CLI 0.163 compresses finished rollouts in place: once a thread is no
@@ -185,3 +192,70 @@ rehydrated plain file after a resume.
   keys, deferred ownership, latest-quota failures, time-sliced yield).
 - Read-only audit of the real `~/.codex` on 2026-10-17 and decompressor
   strictness probes: `.agent-memory/codex-zst-discovery-2026-10-17/`.
+
+## Amendment 2026-10-24: streamed archive decoding
+
+**Context.** The cold pass peaked at 2.6–3.3 GB RSS because each archive was
+decoded whole, and the dependency upgrade moved the engine to Bun 1.4.3 (ADR
+0070), whose `DecompressionStream('zstd')` decodes lazily: it produces at most
+one 64 KiB chunk ahead of the reader and refuses truncated input, trailing
+bytes, a bad content checksum and an output that disagrees with the frame's
+declared size.
+
+**Decision.** `streamHistoryArchive` (`packages/local-machine/src/local-history.ts`)
+replaces `decompressHistoryArchive`:
+
+1. The compressed file is still read whole under the caller's byte budget, with
+   the same hardening, because the frame walk needs all of it: exactly one zstd
+   frame that declares its content size, refused above the smaller of the
+   budget and `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES` before anything is
+   decoded. The 256 MiB archive budget stays; it now bounds decoding work
+   rather than memory, and raising it is a separate decision.
+2. The compressed bytes are fed to `DecompressionStream('zstd')` 64 KiB at a
+   time and its output is pulled one chunk at a time into the same UTF-8
+   decoder and per-line emitter as a plain file. A chunk reaches the parser
+   only while the running total stays within the declaration, and the total
+   must equal it when the stream ends. Every failure of the archive (walk,
+   decoder, either size check) is a `HistoryArchiveError`, so
+   `readLines.decompress`; a failure thrown by the line visitor stays
+   `readLines`.
+3. An archive read is asynchronous (`Effect.tryPromise`) and stops between
+   chunks when its fiber is interrupted. Every caller already ran the Codex
+   readers with `Effect.runPromise`.
+4. Lines before a late failure (a corrupt later block, a bad checksum) may
+   already have been visited, as for a plain file that fails part-way. Every
+   caller discards a failed read whole: the collector keeps no row and no cache
+   entry for it and reports it as before.
+5. The in-memory test double reads archive fixtures through the same
+   `streamHistoryArchive`. The reader test now forbids every zstd decoder
+   other than this one (Bun's and `node:zlib`'s one-shot decoders,
+   `createZstdDecompress`) in `local-machine` and `local-collectors`, and
+   allows `DecompressionStream` only in `local-history.ts`.
+
+**Consequences.** Archive memory follows the compressed size plus one decoded
+chunk instead of the declared size. Bun's one-shot decoder is still unused: it
+takes no output bound.
+
+**Evidence (2026-10-24, Bun 1.4.3, synthetic archives, no real history).**
+
+- Peak RSS of one `readLines` over an archive, three runs each, HEAD reader
+  (one-shot `node:zlib`) against the streamed reader: 198 MB decoded from
+  1.1 MB compressed, VmHWM 715–716 MB → 85–86 MB and 361–376 ms → 236–264 ms;
+  235 MB decoded from 37 MB compressed (6.3×), VmHWM 785–786 MB →
+  202–206 MB and 495–529 ms → 344–353 ms.
+- Heap-corruption stress, the one that caught the Bun 1.3.13 decoder (11–20 of
+  40 runs segfaulted): 40 parallel runs of the `local-machine` suite in scratch
+  copies with symlinked `node_modules`, 40 of 40 clean (200 tests each, no
+  crash); and 40 parallel processes each reading 60 synthetic archives four
+  times (mixed sizes, checksummed and not, a quarter corrupted) through the
+  real reader, 40 of 40 clean, no crash and no mismatch.
+- Decoder probes: a frame that declares 7 or 256 bytes and carries 2,000 RLE
+  blocks of 128 KiB is refused at once with about 2 MB RSS growth; a valid
+  256 MiB RLE frame read one chunk and left for 300 ms grew RSS by 2 MB (the
+  decoder does not run ahead); a frame whose declaration is off by one byte in
+  either direction fails at its end.
+- Tests: `packages/local-machine/src/local-history.test.ts` (truncation by one
+  byte, bad checksum, chunk-straddling multi-byte characters, a late corrupt
+  block, interruption, overrun, the decoder guard) and
+  `packages/local-collectors/src/codex-history.test.ts` (a rollout that fails
+  after its first lines were read yields no row and no cache entry).

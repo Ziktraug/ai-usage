@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { createContext } from 'svelte';
 
 /**
  * The shell annotates the current history entry from more than one place: the navigation rail
@@ -35,16 +35,4 @@ export const createPageStateWriter = (port: {
   };
 };
 
-const pageStateWriterContextKey = Symbol('ai-usage-page-state-writer');
-
-export const providePageStateWriter = (writer: PageStateWriter): void => {
-  setContext(pageStateWriterContextKey, writer);
-};
-
-export const usePageStateWriter = (): PageStateWriter => {
-  const writer = getContext<PageStateWriter | undefined>(pageStateWriterContextKey);
-  if (!writer) {
-    throw new Error('Page state writer context is unavailable');
-  }
-  return writer;
-};
+export const [usePageStateWriter, providePageStateWriter] = createContext<PageStateWriter>();

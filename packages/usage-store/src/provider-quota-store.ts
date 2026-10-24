@@ -507,9 +507,8 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
       throw new Error('Corrupt provider quota projection exceeds its window budget');
     }
     for (const window of windowRows) {
-      const windows = windowsByObservation.get(window.observation_id) ?? [];
+      const windows = windowsByObservation.getOrInsertComputed(window.observation_id, () => []);
       windows.push(window);
-      windowsByObservation.set(window.observation_id, windows);
     }
     return windowsByObservation;
   };

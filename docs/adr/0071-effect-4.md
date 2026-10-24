@@ -111,3 +111,14 @@ interruption, rejection shape, fork start) behind familiar names.
 - `packages/effect-runtime/src/wide-event.ts` (`currentWideEventHop` reference).
 - `packages/usage-engine-runtime/src/source-control.test.ts`
   (`makeRecordingTestClockLayer`).
+
+### Evidence added 2026-10-24
+
+- Engine CPU and RSS of `main` (Bun 1.3.13, Effect 3) against this branch
+  (Bun 1.4.3, Effect 4) on `tools/measure-usage-runtime-io.ts`'s synthetic
+  fixture, two alternating runs each: cold start 3.31–3.67 → 2.01–2.02 CPU s,
+  10 s cold idle 0.13–0.16 → 0.07–0.12, one-rollout collection and publication
+  0.21–0.24 → 0.13–0.14, 10 s warm idle 0.21–0.31 → 0.08–0.11; the largest
+  engine process at idle 212–269 MB → 303–334 MB. The table, the method and
+  its limits are in ADR 0070's evidence of the same date; the figures cover both
+  upgrades together and do not isolate Effect 4.

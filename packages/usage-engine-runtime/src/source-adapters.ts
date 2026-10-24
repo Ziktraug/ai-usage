@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { annotateWideEventIfAvailable } from '@ai-usage/effect-runtime';
 import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
 import {
   collectClaudeRetentionWarnings,
@@ -675,7 +676,8 @@ export const createScheduledSourceRegistry = (
           // No Claude quota history exists locally, so there is nothing to backfill.
           backfillSource: null,
           identity: CLAUDE_QUOTA_SOURCE_IDENTITY,
-          liveSource: createClaudeAgentSdkBatchSource(),
+          // The CLI version, or its typed startup refusal, lands on the read's `quota.refresh` hop.
+          liveSource: createClaudeAgentSdkBatchSource({ annotate: annotateWideEventIfAvailable }),
         },
         storage,
       }),

@@ -25,13 +25,12 @@ export interface AiUsageConfig {
   sourcePolicies?: SourcePolicyOverrides;
 }
 
-const escapeRegex = (value: string) => value.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-
+// Only `*` is a wildcard; every other character, `?` included, matches itself.
 const globToRegex = (glob: string) => {
   const normalized = path.normalize(glob).replaceAll(path.sep, '/');
   const pattern = normalized
     .split('*')
-    .map((part) => escapeRegex(part))
+    .map((part) => RegExp.escape(part))
     .join('.*');
   return new RegExp(`^${pattern}$`, 'i');
 };

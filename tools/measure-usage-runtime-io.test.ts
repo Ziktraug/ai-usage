@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  APPLICATION_SHELL_MARKER,
   collectionPathMutationsAreAttributable,
   copyWorktreeSource,
   createUsageRuntimeMeasurementEnvironment,
@@ -254,4 +255,13 @@ describe('usage runtime I/O measurement helpers', () => {
       await rm(fixtureRoot, { force: true, recursive: true });
     }
   });
+});
+
+test('probes the development page for a marker every page of the shell renders', async () => {
+  const repositoryDirectory = path.resolve(import.meta.dir, '..');
+  const layout = await readFile(
+    path.join(repositoryDirectory, 'apps', 'web', 'src', 'routes', '+layout.svelte'),
+    'utf8',
+  );
+  expect(layout).toContain(APPLICATION_SHELL_MARKER);
 });

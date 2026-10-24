@@ -248,16 +248,19 @@ test('matches the initial narrow dark Overview at 390x844', async ({ page }) => 
   expect(kpiBottom).toBeLessThanOrEqual(navigationTop);
   expect(metricsTop).toBeGreaterThanOrEqual(kpiBottom);
 
-  const presetGeometry = await period.locator('button:visible').evaluateAll((elements) =>
-    elements.map((element) => {
-      const box = element.getBoundingClientRect();
-      return {
-        bottom: Math.ceil(box.bottom),
-        clipped: element.scrollWidth > element.clientWidth + 1,
-        height: Math.floor(box.height),
-      };
-    }),
-  );
+  const presetGeometry = await period
+    .locator('button')
+    .visible()
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          bottom: Math.ceil(box.bottom),
+          clipped: element.scrollWidth > element.clientWidth + 1,
+          height: Math.floor(box.height),
+        };
+      }),
+    );
   expect(presetGeometry).toHaveLength(6);
   expect(
     presetGeometry.every(
@@ -324,7 +327,7 @@ test('matches the mobile light session drawer at 390x844', async ({ page }) => {
   expect(layerOrder.backdrop).toBeGreaterThan(layerOrder.navigation);
   expect(layerOrder.content).toBeGreaterThan(layerOrder.navigation);
 
-  const headerActions = drawer.locator('[data-session-drawer-header] button:visible');
+  const headerActions = drawer.locator('[data-session-drawer-header] button').visible();
   const headerActionGeometry = await headerActions.evaluateAll((elements) =>
     elements.map((element) => {
       const box = element.getBoundingClientRect();

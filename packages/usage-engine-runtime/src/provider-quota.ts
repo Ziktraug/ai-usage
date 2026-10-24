@@ -151,9 +151,8 @@ const coverageForPoints = (points: ProviderQuotaHistoryPoint[]): ProviderQuotaCo
   const groups = new Map<string, ProviderQuotaHistoryPoint[]>();
   for (const point of points) {
     const key = `${point.providerKey}|${point.machineId}|${point.accountScope ?? ''}|${point.source.key}|${point.windowId}`;
-    const rows = groups.get(key) ?? [];
+    const rows = groups.getOrInsertComputed(key, () => []);
     rows.push(point);
-    groups.set(key, rows);
   }
   return [...groups.values()].map((rows) => {
     rows.sort((left, right) => left.firstObservedAt.localeCompare(right.firstObservedAt));

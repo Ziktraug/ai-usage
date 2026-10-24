@@ -21,6 +21,7 @@
     "production-clock.test.ts",
     "rpc-test-transport.test.ts",
     "sveltekit-*.ts",
+    "theme-token-references.test.ts",
     "vite-*.ts",
     "vite.config.ts"
   ]

@@ -36,19 +36,19 @@ type SkillsPrefetchRuntime = Pick<WebQueryRuntime, 'queryClient'> & {
 export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime, pathname: string): Promise<string> => {
   const client = createSkillsClient(runtime.rpc.skills);
   const [snapshot, knownProjectPaths] = await Promise.all([
-    runtime.queryClient.fetchQuery(skillsSnapshotQueryOptions(client, serverQueryContext)),
-    runtime.queryClient.fetchQuery(skillsKnownProjectPathsQueryOptions(client, serverQueryContext)),
+    runtime.queryClient.query(skillsSnapshotQueryOptions(client, serverQueryContext)),
+    runtime.queryClient.query(skillsKnownProjectPathsQueryOptions(client, serverQueryContext)),
     // Prefetched with the rest so the first paint carries observations rather than a spinner. A
     // failed read is a failed section, not a failed page, so it must not reject this load.
-    runtime.queryClient.fetchQuery(skillObservationsQueryOptions(client, serverQueryContext)).catch(() => undefined),
+    runtime.queryClient.query(skillObservationsQueryOptions(client, serverQueryContext)).catch(() => undefined),
   ]);
   const source = snapshot.config.sourceRepoPath ?? 'not configured';
   const inventories = snapshot.configured
-    ? await runtime.queryClient.fetchQuery(skillsProjectInventoriesQueryOptions(client, serverQueryContext))
+    ? await runtime.queryClient.query(skillsProjectInventoriesQueryOptions(client, serverQueryContext))
     : [];
   const view = createSkillsShellViewModel({ inventories, knownProjectPaths, pathname, snapshot });
   if (view.selectionDetail.kind === 'global-skill') {
-    await runtime.queryClient.fetchQuery(
+    await runtime.queryClient.query(
       managedSkillMarkdownQueryOptions(client, view.selectionDetail.skill.name, serverQueryContext),
     );
     return source;
@@ -60,7 +60,7 @@ export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime,
   if (observation === undefined) {
     return source;
   }
-  await runtime.queryClient.fetchQuery(
+  await runtime.queryClient.query(
     projectSkillMarkdownQueryOptions(
       client,
       {

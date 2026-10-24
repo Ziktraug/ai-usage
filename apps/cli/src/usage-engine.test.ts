@@ -425,3 +425,75 @@ test('maps a foreground process crash without a control outcome to engine unavai
     await rm(fixture.root, { force: true, recursive: true });
   }
 });
+
+/**
+ * A foreground engine holds the writer lock for the whole command. When the
+ * CLI dies without cancelling it (SIGKILL, a closed terminal that kills only
+ * the CLI), the engine must exit with it rather than finish the command for
+ * nobody while a later CLI run finds the lock held.
+ */
+test('a foreground engine exits when its CLI process is killed', async () => {
+  const fixture = await createForegroundFixture();
+  const entrypoint = path.join(fixture.root, 'idle-engine.ts');
+  const pidPath = path.join(fixture.root, 'foreground.pid');
+  const cliPath = path.join(fixture.root, 'cli.ts');
+  await writeFile(
+    entrypoint,
+    `await Bun.write(${JSON.stringify(pidPath)}, String(process.pid));\nsetInterval(() => undefined, 1000);\n`,
+  );
+  await writeFile(
+    cliPath,
+    `import { createLiveCliUsageEngine } from ${JSON.stringify(path.join(import.meta.dir, 'usage-engine.ts'))};
+const engine = createLiveCliUsageEngine({
+  engineEntrypoint: ${JSON.stringify(entrypoint)},
+  paths: ${JSON.stringify(fixture.paths)},
+  writeDiagnostics: () => Promise.resolve(),
+});
+engine.execute({ command: 'publish' }).catch(() => undefined);
+setInterval(() => undefined, 1000);
+`,
+  );
+  const isAlive = (processId: number): boolean => {
+    try {
+      process.kill(processId, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let pid: number | undefined;
+  try {
+    const cli = Bun.spawn([process.execPath, '--no-env-file', cliPath], {
+      stderr: 'inherit',
+      stdin: 'ignore',
+      stdout: 'ignore',
+    });
+    const publishDeadline = Date.now() + 10_000;
+    while (pid === undefined && Date.now() < publishDeadline) {
+      if (await Bun.file(pidPath).exists()) {
+        const text = await Bun.file(pidPath).text();
+        pid = text === '' ? undefined : Number(text);
+      }
+      await Bun.sleep(10);
+    }
+    if (pid === undefined) {
+      throw new Error('Foreground child did not publish its isolated PID fixture.');
+    }
+    // Alive under a live CLI: the parent-death watch does not fire early.
+    await Bun.sleep(200);
+    expect(isAlive(pid)).toBe(true);
+
+    cli.kill('SIGKILL');
+    await cli.exited;
+    const exitDeadline = Date.now() + 5000;
+    while (isAlive(pid) && Date.now() < exitDeadline) {
+      await Bun.sleep(10);
+    }
+    expect(isAlive(pid)).toBe(false);
+  } finally {
+    if (pid !== undefined && isAlive(pid)) {
+      process.kill(pid, 'SIGKILL');
+    }
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+}, 20_000);

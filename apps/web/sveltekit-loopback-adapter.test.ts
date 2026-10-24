@@ -3,7 +3,14 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindRuntimeOrigin, RUNTIME_ORIGIN_VARIABLE, runtimeOriginHandoffSource } from './sveltekit-loopback-adapter';
+import {
+  ADAPTER_ENVIRONMENT_PREFIX,
+  bindRuntimeOrigin,
+  LOOPBACK_HOSTNAME,
+  loopbackBunAdapterOptions,
+  RUNTIME_ORIGIN_VARIABLE,
+  runtimeOriginHandoffSource,
+} from './sveltekit-loopback-adapter';
 
 // The shape `@sveltejs/adapter-bun@1.0.0` writes to `<out>/adapter-bun.js` when `paths.origin` is unset.
 const generatedHandoff = [
@@ -115,5 +122,69 @@ describe('loopback Bun adapter origin binding', () => {
     expect(() => runtimeOriginHandoffSource(source)).toThrow(
       'The Bun adapter hand-off module no longer exports exactly one unconfigured origin',
     );
+  });
+});
+
+const ENVIRONMENT_PREFIX_SHAPE = /^[A-Z][A-Z0-9_]*_$/;
+// The statement in `start.mjs` that writes each adapter value under the prefix, spelled as source.
+const PREFIXED_WRITE = ['process.env[`$', '{ADAPTER_ENVIRONMENT_PREFIX}$', '{key}`] = value;'].join('');
+
+describe('loopback Bun adapter environment', () => {
+  // Every variable `@sveltejs/adapter-bun@1.0.0` reads, without its prefix. It refuses to start
+  // when a variable carries the prefix but names none of these, so the runtime origin stays
+  // outside the prefixed namespace.
+  const adapterVariables = [
+    'ADDRESS_HEADER',
+    'BODY_SIZE_LIMIT',
+    'CONNECTION_IDLE_TIMEOUT',
+    'DEVELOPMENT',
+    'HOST',
+    'HOST_HEADER',
+    'IPV6_ONLY',
+    'PORT',
+    'PORT_HEADER',
+    'PROTOCOL_HEADER',
+    'REUSE_PORT',
+    'SHUTDOWN_TIMEOUT',
+    'SOCKET_PATH',
+    'XFF_DEPTH',
+  ];
+
+  test('reads the adapter configuration only under a prefix the runtime origin stays outside', () => {
+    expect(ADAPTER_ENVIRONMENT_PREFIX).toMatch(ENVIRONMENT_PREFIX_SHAPE);
+    expect(RUNTIME_ORIGIN_VARIABLE.startsWith(ADAPTER_ENVIRONMENT_PREFIX)).toBe(false);
+    expect(adapterVariables.some((name) => name.startsWith(ADAPTER_ENVIRONMENT_PREFIX))).toBe(false);
+  });
+
+  test('start.mjs purges every inherited prefixed variable before writing its own under the same prefix', async () => {
+    const start = await readFile(path.join(import.meta.dir, 'start.mjs'), 'utf8');
+
+    expect(start).toContain(`const ADAPTER_ENVIRONMENT_PREFIX = '${ADAPTER_ENVIRONMENT_PREFIX}';`);
+    const purge = start.indexOf('key.startsWith(ADAPTER_ENVIRONMENT_PREFIX)');
+    const write = start.indexOf(PREFIXED_WRITE);
+    expect(purge).toBeGreaterThanOrEqual(0);
+    expect(write).toBeGreaterThan(purge);
+    // Unprefixed names never reach the adapter, so no deny-list of them is kept.
+    expect(start).not.toContain('untrustedAdapterEnvironmentKeys');
+  });
+});
+
+describe('loopback Bun adapter listener default', () => {
+  // The adapter serialises `serverOptions` into the build as Bun.serve's defaults; only a prefixed
+  // HOST overrides the hostname, so the built server listens on loopback even without start.mjs.
+  test('builds numeric loopback in as the listener hostname, beside the prefix and output options', () => {
+    expect(loopbackBunAdapterOptions({ out: '.output-build/sveltekit', precompress: true })).toEqual({
+      envPrefix: ADAPTER_ENVIRONMENT_PREFIX,
+      out: '.output-build/sveltekit',
+      precompress: true,
+      serverOptions: { hostname: '127.0.0.1' },
+    });
+  });
+
+  test('start.mjs sets the same loopback address at runtime', async () => {
+    const start = await readFile(path.join(import.meta.dir, 'start.mjs'), 'utf8');
+
+    expect(start).toContain(`const LOOPBACK_HOST = '${LOOPBACK_HOSTNAME}';`);
+    expect(start).toContain('HOST: LOOPBACK_HOST,');
   });
 });

@@ -13,7 +13,11 @@ import {
   isCancelledSvelteKitRouteDataRequest,
 } from './browser-request-abort-allowance';
 import { createBrowserScriptResponseAllowance } from './browser-script-response-allowance';
-import { isExpectedSkillsSaveFailureResponse, RPC_PATH_PREFIX } from './rpc-test-transport';
+import {
+  isExpectedCampaignLabelsFailureResponse,
+  isExpectedSkillsSaveFailureResponse,
+  RPC_PATH_PREFIX,
+} from './rpc-test-transport';
 
 const CRITICAL_RESOURCE_TYPES = new Set(['document', 'fetch', 'xhr']);
 const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
@@ -207,13 +211,12 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
               expectedShellErrorUrls.add(response.url());
               return;
             }
-            if (
-              isExpectedSkillsSaveFailureResponse({
-                headers: response.headers(),
-                pathname: requestPath(response.request()),
-                status: response.status(),
-              })
-            ) {
+            const identity = {
+              headers: response.headers(),
+              pathname: requestPath(response.request()),
+              status: response.status(),
+            };
+            if (isExpectedSkillsSaveFailureResponse(identity) || isExpectedCampaignLabelsFailureResponse(identity)) {
               expectedShellErrorUrls.add(response.url());
               return;
             }

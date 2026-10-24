@@ -22,6 +22,6 @@ export const loadMemoryPageData = async (
 ): Promise<MemoryPageData> => ({
   queryState: await createAwaitedRouteQueryState(options, async (runtime) => {
     const client = dependencies.createClient?.(runtime) ?? createMemoryBrowserAdapter(runtime.rpc.memory);
-    await runtime.queryClient.fetchQuery(memoryProposalReviewsQueryOptions(client, { browser: false, enabled: true }));
+    await runtime.queryClient.query(memoryProposalReviewsQueryOptions(client, { browser: false, enabled: true }));
   }),
 });

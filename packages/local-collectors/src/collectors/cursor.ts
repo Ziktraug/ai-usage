@@ -163,11 +163,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                 if (total.value === 0) {
                   continue;
                 }
-                let current = agg.get(composerId);
-                if (!current) {
-                  current = { in: 0, out: 0, cr: 0, cw: 0, calls: 0 };
-                  agg.set(composerId, current);
-                }
+                const current = agg.getOrInsertComputed(composerId, () => ({ in: 0, out: 0, cr: 0, cw: 0, calls: 0 }));
                 const nextInput = addNonNegativeSafeIntegers(current.in, input.value);
                 const nextOutput = addNonNegativeSafeIntegers(current.out, output.value);
                 const nextCacheRead = addNonNegativeSafeIntegers(current.cr, cacheRead.value);

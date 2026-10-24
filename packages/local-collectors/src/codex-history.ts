@@ -833,9 +833,8 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     const children = new Map<string, CodexSession[]>();
     for (const session of sessions) {
       if (session.id && session.parent && byId.has(session.parent)) {
-        const siblings = children.get(session.parent) ?? [];
+        const siblings = children.getOrInsertComputed(session.parent, () => []);
         siblings.push(session);
-        children.set(session.parent, siblings);
       }
     }
 
