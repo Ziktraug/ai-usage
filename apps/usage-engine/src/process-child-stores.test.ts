@@ -107,10 +107,19 @@ const createFixture = async (
   const stateDirectory = options.stateDirectory ?? path.join(root, 'state');
   const temporaryRoot = path.join(root, 'temporary');
   const databasePath = options.databasePath ?? path.join(root, 'store', 'usage.sqlite');
+  const fixtureBinDirectory = path.join(root, 'bin');
   await Promise.all([
     mkdir(homeDirectory, { mode: 0o700, recursive: true }),
     mkdir(temporaryRoot, { mode: 0o700, recursive: true }),
+    mkdir(fixtureBinDirectory, { mode: 0o700, recursive: true }),
   ]);
+  // The engine observes and discovers pull requests and Jira issues through the operator's CLIs. A
+  // store lifecycle test must never reach them: these stand-ins answer "not signed in" at once.
+  await Promise.all(
+    ['gh', 'acli'].map(async (command) => {
+      await writeFile(path.join(fixtureBinDirectory, command), '#!/bin/sh\nexit 4\n', { mode: 0o700 });
+    }),
+  );
   cleanupTasks.push(async () => {
     await rm(root, { force: true, recursive: true });
   });
@@ -127,7 +136,7 @@ const createFixture = async (
       HOME: homeDirectory,
       NODE_ENV: 'test',
       NO_COLOR: '1',
-      PATH: process.env.PATH,
+      PATH: `${fixtureBinDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
       TMPDIR: temporaryRoot,
       XDG_CACHE_HOME: path.join(homeDirectory, '.cache'),
       XDG_CONFIG_HOME: path.join(homeDirectory, '.config'),
