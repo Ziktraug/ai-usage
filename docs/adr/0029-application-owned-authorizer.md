@@ -36,9 +36,17 @@ Space and denies or fails non-local and organization contexts.
 
 Application services authorize before content access or mutation. HTTP routes,
 MCP tools, serializers, jobs, and UI filtering do not implement permission
-logic. The single-user authorizer pins every allow and deny decision in its own tests,
-including aggregate versus content separation and complete authorized-resource listing (the
-shared multi-adapter conformance suite went with the organization model, ADR 0074).
+logic. The single-user authorizer's own tests pin, against an allow set written
+out in the test rather than read from the code, its check, list and scope
+result for the local Person over every permission and resource kind: an
+allowed pair lists and scopes exactly the personal-Space resources of its
+kind, a local permission over another kind is denied and an unsupported query,
+and every organization-era permission is denied and lists and scopes nothing.
+That pins aggregate versus content separation. They also pin the check
+denials for another Person, a service principal and a foreign or mismatched
+Space, and an infrastructure failure as an error, never an allow or a deny.
+The shared multi-adapter conformance suite went with the organization model
+(ADR 0074).
 
 Authorization-aware persistence queries re-evaluate current relations in the
 same transaction as protected reads when stale scope could otherwise race a
@@ -60,8 +68,8 @@ background jobs or search could bypass them.
 ## Reversal condition
 
 Revise the port only if measured domain scenarios cannot express a bounded
-check or complete resource listing without leakage; preserve the golden suite
-and migrate every adapter atomically.
+check or complete resource listing without leakage, and change the
+single-user authorizer and its pinned decisions in the same change.
 
 ## Evidence
 
