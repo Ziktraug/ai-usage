@@ -2,6 +2,15 @@
 
 - **Status**: Accepted
 - **Date**: 2026-08-09
+- **Amended by**: [ADR 0057](0057-sveltekit-3-official-bun-adapter.md)
+
+> Amended 2026-10-22 (SvelteKit 3): the adapter selection is superseded by
+> ADR 0057. Web runs SvelteKit 3.1.0 on the official `@sveltejs/adapter-bun`
+> 1.0.0, so the TypeScript 5.9.3 peer pin and `IDLE_TIMEOUT=45` no longer
+> apply; production sets `CONNECTION_IDLE_TIMEOUT=45` and the adapter exempts
+> event streams from it. The lifecycle requirements below (numeric loopback,
+> SSE beyond 30 seconds, `Request.signal` cancellation, exit after
+> `sveltekit:shutdown`, isolated outputs) and the committed fixture stay.
 
 ## Context
 

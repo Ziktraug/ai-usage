@@ -75,6 +75,7 @@ dependency upgrade of plan 119 therefore starts at 0055; the gap is left for the
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
 | [0055](0055-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011 |
 | [0056](0056-effect-4.md) | Run every Effect surface on Effect 4 | 2026-10-22 | Accepted; amends 0001 |
+| [0057](0057-sveltekit-3-official-bun-adapter.md) | Run SvelteKit 3 on the official `@sveltejs/adapter-bun` | 2026-10-22 | Accepted; amends 0011 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

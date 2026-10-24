@@ -276,6 +276,8 @@
       return;
     }
     const request = createSkillsFallbackNavigationRequest(window.location.href, navigationState);
+    // A URL rewrite in place, as in SvelteKit 2: the deprecated `replaceState` runs no navigation
+    // hooks, where a shallow `goto` would run the dirty-editor guard and could be cancelled by it.
     replaceState(request.intent.url, request.state);
   });
 </script>

@@ -2,12 +2,12 @@
   import { css } from '@ai-usage/design-system/css';
   import { meta } from '@ai-usage/design-system/svelte';
   import { untrack } from 'svelte';
+  import RouteFrame from '#lib/features/shell/route-frame.svelte';
+  import SkillsEditorSlot from '#lib/features/skills/editor/skills-editor-slot.svelte';
+  import SkillsHealthSlot from '#lib/features/skills/management/skills-health-slot.svelte';
+  import SkillsShell from '#lib/features/skills/shell/skills-shell.svelte';
+  import type { SkillsShellSlotContext } from '#lib/features/skills/shell/slot-context.ts';
   import { page } from '$app/state';
-  import RouteFrame from '$lib/features/shell/route-frame.svelte';
-  import SkillsEditorSlot from '$lib/features/skills/editor/skills-editor-slot.svelte';
-  import SkillsHealthSlot from '$lib/features/skills/management/skills-health-slot.svelte';
-  import SkillsShell from '$lib/features/skills/shell/skills-shell.svelte';
-  import type { SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
   import type { LayoutProps } from './$types';
 
   let { children, data }: LayoutProps = $props();

@@ -49,7 +49,8 @@
   });
   const worktable = $derived(createSkillsWorktableModel({ presentation, view }));
   const closeDrawer = async (): Promise<void> => {
-    await goto('/skills', { noScroll: true });
+    // Keeps the worktable scroll position; the closing drawer hands focus back to its trigger.
+    await goto('/skills', { reset: false });
   };
 
   const page = css({ display: 'grid', gap: '20px', minW: 0 });

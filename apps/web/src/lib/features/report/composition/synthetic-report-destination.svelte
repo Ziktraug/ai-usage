@@ -16,7 +16,7 @@
   } from '@ai-usage/report-core/session-query';
   import type { QueryClient } from '@tanstack/svelte-query';
   import { onDestroy, untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import {
     campaignLabelFor,
     focusedCampaignLabelContext,

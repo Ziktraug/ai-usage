@@ -6,7 +6,7 @@
   import type { SessionDistillationBrowseRequest } from '@ai-usage/web-contract/session-distillation';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { acknowledgeMemoryProposalReview, memoryProposalReviewsKey } from '../../query/options/memory';
   import { memoryWorkspaceProjectsOptions } from '../../query/options/memory-workspace';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
@@ -148,21 +148,21 @@
         <a
           aria-current={location.view === 'analyses' ? 'page' : undefined}
           class={location.view === 'analyses' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
+          data-ai-usage-preserve-scroll
           href={memoryHref(address, { view: 'analyses', cursor: null, proposal: null })}
           >Analysed sessions</a
         >
         <a
           aria-current={location.view === 'review' ? 'page' : undefined}
           class={location.view === 'review' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
+          data-ai-usage-preserve-scroll
           href={memoryHref(address, { view: 'review', cursor: null, proposal: null })}
           >Pending review</a
         >
         <a
           aria-current={location.view === 'knowledge' ? 'page' : undefined}
           class={location.view === 'knowledge' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
+          data-ai-usage-preserve-scroll
           href={memoryHref(address, { view: 'knowledge', cursor: null, proposal: null })}
           >Knowledge</a
         >
@@ -297,7 +297,7 @@
             {#if snapshot.nextCursor}
               <a
                 class={memoryButton}
-                data-sveltekit-noscroll
+                data-ai-usage-preserve-scroll
                 href={memoryHref(address, { cursor: snapshot.nextCursor, proposal: null })}
                 >More proposals</a
               >

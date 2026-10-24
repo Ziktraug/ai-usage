@@ -13,6 +13,7 @@
     shellManagementDestinations,
   } from './navigation';
   import { createShellNavigationOwner, provideShellNavigationOwner } from './navigation-owner-context';
+  import { createPageStateWriter, providePageStateWriter } from './page-state-writer';
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import { createSessionWindowAnchorOwner, provideSessionWindowAnchorOwner } from './session-window-anchor-context';
@@ -28,18 +29,26 @@
     runtimeMode: RuntimeMode;
     sourceControlSummary?: Snippet;
   } = $props();
+  // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
+  const pageUrl = $derived(new URL(page.url.href));
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
-  provideShellNavigationOwner(createShellNavigationOwner({ currentUrl: () => page.url, goto }));
+  provideShellNavigationOwner(createShellNavigationOwner({ currentUrl: () => pageUrl, goto }));
+  const pageState = createPageStateWriter({
+    href: () => page.url.href,
+    read: () => page.state,
+    // These writes only annotate the current history entry, sometimes from inside a navigation.
+    // SvelteKit 3's deprecated `replaceState` does that without running navigation hooks; a
+    // shallow `goto` would run every hook and abort the navigation in progress.
+    write: (href, state) => replaceState(href, state),
+  });
+  providePageStateWriter(pageState);
   provideSessionWindowAnchorOwner(
-    createSessionWindowAnchorOwner({
-      replace: (state) => replaceState(page.url, state),
-      state: () => page.state,
-    }),
+    createSessionWindowAnchorOwner({ replace: pageState.replace, state: pageState.current }),
   );
 
   const destination = $derived(
     page.url.pathname === '/'
-      ? reportDestinationHeading(activeReportTab(page.url))
+      ? reportDestinationHeading(activeReportTab(pageUrl))
       : (shellManagementDestinations.find(({ href }) => isActiveManagementDestination(page.url.pathname, href))
           ?.label ?? 'Workspace'),
   );

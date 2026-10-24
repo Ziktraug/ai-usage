@@ -49,7 +49,7 @@ const viteServer = await createServer({
   plugins: [...svelte()],
   resolve: {
     alias: {
-      '$app/environment': environmentFixture,
+      '$app/env': environmentFixture,
       '$app/navigation': navigationFixture,
       '$app/state': stateFixture,
     },

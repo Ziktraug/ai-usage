@@ -80,10 +80,7 @@
   {#if proposalId}
     <p class={memoryCopy} role="status">
       Proposal saved for review.
-      <a
-        data-sveltekit-keepfocus
-        data-sveltekit-noscroll
-        href={memoryHref('/memory', { view: 'review', proposal: proposalId })}
+      <a data-sveltekit-reset="false" href={memoryHref('/memory', { view: 'review', proposal: proposalId })}
         >Open Pending review</a
       >
     </p>

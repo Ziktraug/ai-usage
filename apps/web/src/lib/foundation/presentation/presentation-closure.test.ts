@@ -60,7 +60,7 @@ const importSpecifiers = (source: string): readonly string[] =>
 
 const isForbiddenRuntimeSpecifier = (specifier: string): boolean =>
   specifier.startsWith('node:') ||
-  specifier.startsWith('$lib/server') ||
+  specifier.startsWith('#lib/server') ||
   FORBIDDEN_RUNTIME_PREFIXES.some((forbidden) => specifier.startsWith(forbidden));
 
 const isForbiddenLocalSource = (sourcePath: string): boolean =>
@@ -105,7 +105,7 @@ describe('framework-neutral presentation closure', () => {
       '@tanstack/solid-table',
       '@tanstack/svelte-query',
       '$app/state',
-      '$lib/server/report',
+      '#lib/server/report',
       'node:path',
     ]) {
       expect(isForbiddenRuntimeSpecifier(specifier), specifier).toBe(true);

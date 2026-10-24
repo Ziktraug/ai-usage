@@ -141,9 +141,9 @@ const workspaceStableModuleId = (moduleId: string): string => moduleId.replace(W
 
 const INITIAL_VITE_ENTRY_KEYS = [
   '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
-  '.svelte-kit/build/generated/client-optimized/app.js',
-  '.svelte-kit/build/generated/client-optimized/nodes/0.js',
-  '.svelte-kit/build/generated/client-optimized/nodes/3.js',
+  '.svelte-kit/build/generated/build/client-optimized/app.js',
+  '.svelte-kit/build/generated/build/client-optimized/nodes/0.js',
+  '.svelte-kit/build/generated/build/client-optimized/nodes/3.js',
 ] as const;
 
 const deriveInitialClosure = (viteManifest: ReadonlyMap<string, ViteManifestEntry>): ReadonlySet<string> => {

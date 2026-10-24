@@ -18,7 +18,7 @@
     useQueryClient,
   } from '@tanstack/svelte-query';
   import { onDestroy, tick, untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { afterNavigate, beforeNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import { campaignLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
@@ -129,7 +129,9 @@
       : null;
   });
   const revision = $derived(inspected?.revision ?? latest?.revision);
-  const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
+  const pageUrl = $derived(new URL(page.url.href));
+  const search = $derived(parseDashboardSearchUrl(pageUrl, dashboardSearchCodec));
   const scope = $derived(JSON.stringify(search));
   const harnessSelection = $derived(search.harness.length > 1 ? MULTIPLE_HARNESSES : (search.harness[0] ?? ''));
   const campaignView = $derived(page.url.searchParams.get('campaignView') === 'timeline' ? 'timeline' : 'list');
@@ -149,7 +151,7 @@
   const requestedTimelineRange = $derived(
     campaignTimelineRange(search.range, inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt),
   );
-  const urlSelection = $derived(readCampaignSelection(page.url, request));
+  const urlSelection = $derived(readCampaignSelection(pageUrl, request));
   let requestedCampaign = $state(
     untrack(() => {
       if (urlSelection.status === 'selected') {
@@ -469,23 +471,23 @@
     timelineNavigation = {};
     timelineAxis = null;
     inspected = latest;
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.delete('selectedSession');
     navigate(url);
   };
   const navigate = async (
     url: URL,
-    options: { readonly replaceState?: boolean; readonly state?: App.PageState } = {},
+    options: { readonly replace?: boolean; readonly state?: App.PageState } = {},
   ): Promise<void> => {
     navigationError = null;
     try {
-      await shellNavigation.goto(url, { keepFocus: true, noScroll: true, ...options });
+      await shellNavigation.goto(url, { reset: false, ...options });
     } catch (cause) {
       navigationError = cause instanceof Error ? cause.message : 'Campaign navigation failed.';
     }
   };
   const selectCampaign = (campaignKey: string): void => {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.set('selectedCampaign', campaignKey);
     if (campaignKey !== selectedKey) {
       matchingRestoration = null;
@@ -498,7 +500,7 @@
     navigate(url);
   };
   const selectView = (view: 'list' | 'timeline'): void => {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     if (view === 'timeline') {
       url.searchParams.set('campaignView', 'timeline');
     } else {
@@ -508,13 +510,13 @@
   };
   const clearSelection = (): void => {
     automaticCampaign = '';
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
     navigate(url);
   };
   const clearFilters = (): void => {
-    const url = dashboardUrlFor(page.url, dashboardSearchDefaultsFor('date'), dashboardSearchCodec);
+    const url = dashboardUrlFor(pageUrl, dashboardSearchDefaultsFor('date'), dashboardSearchCodec);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
     navigate(url);
@@ -540,7 +542,7 @@
           ? search.range
           : { mode: range === '7d' || range === '90d' || range === 'all' || range === 'today' ? range : '30d' },
     };
-    const url = dashboardUrlFor(page.url, next, dashboardSearchCodec);
+    const url = dashboardUrlFor(pageUrl, next, dashboardSearchCodec);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
     navigate(url);
@@ -555,12 +557,12 @@
     if (!selectedSessionId) {
       detailOpenerId = row.rowId;
     }
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.set('selectedCampaign', selectedKey);
     url.searchParams.set('selectedSession', row.rowId);
     const replacing = Boolean(selectedSessionId);
     navigate(url, {
-      replaceState: replacing,
+      replace: replacing,
       state: replacing && !panelOpenedFromReport(page.state) ? page.state : sessionPanelHistoryState(page.state),
     });
   };
@@ -629,9 +631,9 @@
       window.history.back();
       return;
     }
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.delete('selectedSession');
-    navigate(url, { replaceState: true });
+    navigate(url, { replace: true });
   };
   const retry = async (): Promise<void> => {
     if (recoveryBusy) {

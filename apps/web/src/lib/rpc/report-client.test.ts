@@ -224,7 +224,7 @@ describe('report client adapter', () => {
 
     expect(source).toContain('@ai-usage/web-contract/report');
     expect(source).not.toContain('@orpc/server');
-    expect(source).not.toContain('$lib/server');
+    expect(source).not.toContain('#lib/server');
     expect(source).not.toContain('.server');
     expect(source).not.toContain('@ai-usage/usage-store');
     expect(source).not.toContain('@ai-usage/report-data');

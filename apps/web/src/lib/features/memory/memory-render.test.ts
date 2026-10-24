@@ -62,7 +62,7 @@ const viteServer = await createServer({
   configFile: false,
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [...svelte()],
-  resolve: { alias: { '$app/environment': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
+  resolve: { alias: { '$app/env': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
   root: repositoryDirectory,
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },

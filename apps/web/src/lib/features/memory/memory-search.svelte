@@ -1,7 +1,7 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import type { MemorySearchInput } from '@ai-usage/web-contract/memory';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { createMemorySearchQuery } from './memory-query.svelte';
 
   let {

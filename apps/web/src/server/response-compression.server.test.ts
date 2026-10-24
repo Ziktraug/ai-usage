@@ -12,7 +12,7 @@ const eventFor = (acceptEncoding?: string): RequestEvent =>
 const run = async (acceptEncoding: string | undefined, response: Response): Promise<Response> =>
   await handleResponseCompression({
     event: eventFor(acceptEncoding),
-    resolve: () => response,
+    resolve: () => Promise.resolve(response),
   } as unknown as Parameters<typeof handleResponseCompression>[0]);
 
 const htmlResponse = (body: string): Response =>

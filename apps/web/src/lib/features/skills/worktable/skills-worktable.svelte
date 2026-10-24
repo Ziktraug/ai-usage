@@ -398,7 +398,7 @@
   <th scope="row">
     <span class={cx(nameCell, _row.enabled ? undefined : dimmed)}>
       {#if _row.href}
-        <a class={nameLink} data-sveltekit-noscroll href={_row.href}>{_row.name}</a>
+        <a class={nameLink} data-ai-usage-preserve-scroll href={_row.href}>{_row.name}</a>
       {:else}
         <span class={nameText}>{_row.name}</span>
       {/if}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SourcedAssertion } from '@ai-usage/web-contract/session-distillation';
   import { createQuery } from '@tanstack/svelte-query';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { finiteSwrKey } from '../../query/keys';
   import { sessionDistillationGetOptions } from '../../query/options/session-distillation';
   import { webQueryPolicies } from '../../query/policies';
@@ -59,7 +59,7 @@
     <h2 class={memoryHeading}>Session account</h2>
     <a
       class={memoryButton}
-      data-sveltekit-noscroll
+      data-ai-usage-preserve-scroll
       href={memoryHref(address, { analysis: null, analysisProject: null, episode: null, element: null })}
       >Close account</a
     >
@@ -87,7 +87,7 @@
           {#each historyQuery.data.items as revision (revision.id)}
             <a
               class={memoryButton}
-              data-sveltekit-noscroll
+              data-ai-usage-preserve-scroll
               href={memoryHref(address, { analysis: revision.id, episode: null })}
               >Revision {revision.revision} · {new Date(revision.createdAt).toLocaleDateString()}</a
             >
@@ -113,7 +113,7 @@
     {#if query.data.content.episodes.length > 0}
       <nav aria-label="Analysis episodes" class={memoryRow}>
         {#each query.data.content.episodes as episode, index (episode.id)}
-          <a class={memoryButton} data-sveltekit-noscroll href={memoryHref(address, { episode: episode.id })}
+          <a class={memoryButton} data-ai-usage-preserve-scroll href={memoryHref(address, { episode: episode.id })}
             >Episode {index + 1}</a
           >
         {/each}

@@ -95,7 +95,8 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   }
   const trailingSlash = await request.get('/sources/', { maxRedirects: 0 });
   expect(trailingSlash.status()).toBe(308);
-  expect(trailingSlash.headers().location).toBe('/sources');
+  // SvelteKit 3 writes the trailing-slash redirect relative to the requested path (`../sources`).
+  expect(new URL(trailingSlash.headers().location ?? '', 'http://127.0.0.1/sources/').pathname).toBe('/sources');
 
   for (const route of shellRoutes) {
     await page.goto(route.path);
@@ -331,6 +332,39 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
   await page.goForward();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(1200);
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
+});
+
+// SvelteKit 3 turns a click on a link to the current URL into a `refreshAll()` navigation that
+// reruns every load. Re-selecting the destination the reader is on must still leave the mounted
+// report, its scroll position and the history alone.
+test('re-selecting the active report destination keeps the mounted report in place', async ({ page }) => {
+  await page.goto('/?tab=sessions');
+  await waitForFocusedReportSettled(page);
+  await waitForHydratedNavigation(page);
+  const sessions = page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Sessions' });
+  await expect(sessions).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('[data-session-table-owner]')).toBeVisible();
+  await page.evaluate(() => {
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 600);
+    document.querySelector('[data-session-table-owner]')?.setAttribute('data-e2e-mounted', 'before-reselect');
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(600);
+  const historyLength = await page.evaluate(() => history.length);
+  const refresh = page.waitForResponse((response) => new URL(response.url()).pathname === '/__data.json');
+
+  await sessions.click();
+  expect((await refresh).ok()).toBe(true);
+  // The refreshed data commits, renders and settles its navigation within a few frames.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 250)))),
+  );
+  await waitForFocusedReportSettled(page);
+
+  await expect(page.locator('[data-session-table-owner][data-e2e-mounted="before-reselect"]')).toHaveCount(1);
+  expect(await page.evaluate(() => window.scrollY)).toBe(600);
+  expect(await page.evaluate(() => history.length)).toBe(historyLength);
+  await expect(sessions).toHaveAttribute('aria-current', 'page');
 });
 
 test('restores Session scroll after a cross-route history remount', async ({ page }) => {

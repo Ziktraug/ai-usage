@@ -63,9 +63,9 @@
 {/snippet}
 
 {#if active}
-  <a aria-current="page" class={className} data-sveltekit-noscroll={preserveScroll ? '' : undefined} {href}
+  <a aria-current="page" class={className} data-ai-usage-preserve-scroll={preserveScroll ? '' : undefined} {href}
     >{@render body()}</a
   >
 {:else}
-  <a class={className} data-sveltekit-noscroll={preserveScroll ? '' : undefined} {href}>{@render body()}</a>
+  <a class={className} data-ai-usage-preserve-scroll={preserveScroll ? '' : undefined} {href}>{@render body()}</a>
 {/if}

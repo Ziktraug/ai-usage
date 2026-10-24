@@ -1,17 +1,15 @@
 {
-  "extends": "./.svelte-kit/check/tsconfig.json",
+  "extends": "$app/tsconfig",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,
+    "rootDirs": [".", "./.svelte-kit/check/types"],
     "skipLibCheck": true,
     "strict": true,
-    "types": ["bun", "vite/client"]
+    "types": ["$app/types", "bun", "vite/client"]
   },
   "include": [
-    ".svelte-kit/check/ambient.d.ts",
-    ".svelte-kit/check/env.d.ts",
-    ".svelte-kit/check/non-ambient.d.ts",
     ".svelte-kit/check/types/**/$types.d.ts",
     "src/**/*.svelte",
     "src/**/*.ts",

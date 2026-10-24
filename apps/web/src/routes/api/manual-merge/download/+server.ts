@@ -1,4 +1,4 @@
-import { handleManualMergeDownloadEndpoint } from '$lib/features/sync/server/manual-merge-endpoints.server';
+import { handleManualMergeDownloadEndpoint } from '#lib/features/sync/server/manual-merge-endpoints.server.ts';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ locals, request }) =>

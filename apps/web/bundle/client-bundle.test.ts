@@ -19,7 +19,7 @@ const CLIENT_PUBLIC_DIRECTORY = '.output-build/sveltekit/client';
  */
 const INITIAL_CLOSURE_ENTRY_KEYS = [
   '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
-  '.svelte-kit/build/generated/client-optimized/app.js',
+  '.svelte-kit/build/generated/build/client-optimized/app.js',
   ...reportRouteClientEntryKeys(APP_DIRECTORY),
 ] as const;
 

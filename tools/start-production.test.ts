@@ -373,7 +373,10 @@ describe('production environment', () => {
     const environment = createProductionEnvironment(rootDirectory, {
       AI_USAGE_HOME: homeDirectory,
       HOST: '0.0.0.0',
+      DEVELOPMENT: '1',
+      IPV6_ONLY: '1',
       ORIGIN: 'https://attacker.example',
+      REUSE_PORT: '1',
       SOCKET_PATH: '/tmp/attacker.sock',
       PATH: '/fixture/bin',
       TMPDIR: '/var/tmp/ai-usage-fixture',
@@ -385,9 +388,9 @@ describe('production environment', () => {
       AI_USAGE_HOME: homeDirectory,
       AI_USAGE_ROOT_DIR: rootDirectory,
       BODY_SIZE_LIMIT: String(64 * 1024 * 1024),
+      CONNECTION_IDLE_TIMEOUT: '45',
       HOME: homeDirectory,
       HOST: '127.0.0.1',
-      IDLE_TIMEOUT: '45',
       NODE_ENV: 'production',
       PATH: '/fixture/bin',
       TMPDIR: '/var/tmp/ai-usage-fixture',
@@ -397,7 +400,10 @@ describe('production environment', () => {
     expect(environment.AI_USAGE_ENGINE_INSTANCE_ID).toMatch(uuidV4Pattern);
     expect(environment.AI_USAGE_TEMP_ROOT).toBe('/var/tmp/ai-usage-fixture');
     expect(environment.AI_USAGE_LOG_DIR).toBe(path.join(rootDirectory, 'logs'));
+    expect(environment.DEVELOPMENT).toBeUndefined();
+    expect(environment.IPV6_ONLY).toBeUndefined();
     expect(environment.ORIGIN).toBeUndefined();
+    expect(environment.REUSE_PORT).toBeUndefined();
     expect(environment.SOCKET_PATH).toBeUndefined();
   });
 

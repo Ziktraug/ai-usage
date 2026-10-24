@@ -1,7 +1,7 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { meta, panel } from '@ai-usage/design-system/svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';
   import { sourceToneClass } from './presentation';
   import { createReplicationStatusQuery } from './replication-query.svelte';

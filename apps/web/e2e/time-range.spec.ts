@@ -82,15 +82,40 @@ const readBrushGeometry = (element: Element): BrushGeometry => {
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 const ninetyDayReportUrl = (): string => `/?${new URLSearchParams({ range: JSON.stringify({ mode: '90d' }) })}`;
 
+// SvelteKit 3 keeps `page.state` devalue-serialised in `history.state['sveltekit:metadata'].state`:
+// a JSON array whose first item maps each property to the index of its value.
 const navigationEntryKey = async (page: Page): Promise<string | null> =>
   await page.evaluate(() => {
-    const states = Reflect.get(history.state ?? {}, 'sveltekit:states');
-    if (!(states && typeof states === 'object')) {
+    const metadata = Reflect.get(history.state ?? {}, 'sveltekit:metadata');
+    const serialized = metadata && typeof metadata === 'object' ? Reflect.get(metadata, 'state') : undefined;
+    if (typeof serialized !== 'string') {
       return null;
     }
-    const key = Reflect.get(states, 'aiUsageNavigationKey');
+    const flattened: unknown = JSON.parse(serialized);
+    const root: unknown = Array.isArray(flattened) ? flattened[0] : undefined;
+    if (!(Array.isArray(flattened) && root && typeof root === 'object')) {
+      return null;
+    }
+    const index = Reflect.get(root, 'aiUsageNavigationKey');
+    const key: unknown = typeof index === 'number' ? flattened[index] : undefined;
     return typeof key === 'string' ? key : null;
   });
+
+// The shell seeds a new history entry's key just after its navigation settles, through SvelteKit's
+// asynchronous `replaceState`. Wait for the seeded key instead of reading the entry before it.
+const nextNavigationEntryKey = async (page: Page, previous: string | null): Promise<string> => {
+  await expect
+    .poll(async () => {
+      const key = await navigationEntryKey(page);
+      return key !== null && key !== previous;
+    })
+    .toBe(true);
+  const key = await navigationEntryKey(page);
+  if (key === null) {
+    throw new Error('The seeded history entry key disappeared.');
+  }
+  return key;
+};
 
 const reportPeriodFor = (page: Page): Locator => page.getByRole('region', { name: 'Report period' });
 const activityFor = (page: Page): Locator => page.getByRole('region', { name: 'Activity' });
@@ -658,18 +683,14 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await custom.from.fill('2026-05-20');
   await custom.from.press('Tab');
   await expect.poll(() => reportRangeValue(page)).toContain('2026-05-20..');
-  await expect.poll(() => navigationEntryKey(page)).not.toBe(beforeFirstBlurKey);
-  const firstBlurredEditKey = await navigationEntryKey(page);
-  expect(firstBlurredEditKey).not.toBeNull();
+  const firstBlurredEditKey = await nextNavigationEntryKey(page, beforeFirstBlurKey);
   const firstBlurredEditUrl = page.url();
 
   await custom.from.fill('2026-05-21');
   await custom.to.fill('2026-06-05');
   await custom.to.press('Tab');
   await expect.poll(() => reportRangeValue(page)).toContain('2026-05-21..');
-  await expect.poll(() => navigationEntryKey(page)).not.toBe(firstBlurredEditKey);
-  const secondBlurredEditKey = await navigationEntryKey(page);
-  expect(secondBlurredEditKey).not.toBeNull();
+  const secondBlurredEditKey = await nextNavigationEntryKey(page, firstBlurredEditKey);
   const secondBlurredEditUrl = page.url();
   expect(secondBlurredEditUrl).not.toBe(firstBlurredEditUrl);
 
@@ -848,6 +869,10 @@ test('holds the brush scale still while dragging a range that starts before the 
   const custom = await openCustomPeriod(page);
   await waitForFocusedReportSettled(page);
   await custom.from.fill('2026-01-01');
+  // The field commits on blur. Commit it here and wait for the URL, rather than letting the
+  // explorer click below blur it and race the navigation against the scale read.
+  await custom.from.press('Tab');
+  await expect.poll(() => reportRangeValue(page)).toContain('2026-01-01..');
   await waitForFocusedReportSettled(page);
 
   const explorer = await openActivityExplorer(page);

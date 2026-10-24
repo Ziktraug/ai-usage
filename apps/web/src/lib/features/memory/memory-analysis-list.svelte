@@ -5,7 +5,7 @@
   import type { SessionDistillationBrowseRequest } from '@ai-usage/web-contract/session-distillation';
   import { createInfiniteQuery } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { finiteSwrKey } from '../../query/keys';
   import { browserMemoryClient, continueMemoryAnalysisWindow } from '../../query/options/memory-workspace';
   import { webQueryPolicies } from '../../query/policies';
@@ -184,8 +184,7 @@
           class={`${row} ${item.id === selectedAnalysisId ? selectedRow : ''}`}
           data-analysis-index={index}
           data-memory-analysis={item.id}
-          data-sveltekit-keepfocus
-          data-sveltekit-noscroll
+          data-sveltekit-reset="false"
           href={memoryHref(address, {
             view: 'analyses',
             analysis: item.id,

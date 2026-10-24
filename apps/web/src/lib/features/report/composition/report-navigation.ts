@@ -18,6 +18,6 @@ export const createReportNavigation =
     // detail has no list entry to return to, so closing replaces that entry too.
     return port.goto(
       url,
-      detailOpen && (browsingDetail || closingDirectDetail) ? { ...options, replaceState: true, state } : options,
+      detailOpen && (browsingDetail || closingDirectDetail) ? { ...options, replace: true, state } : options,
     );
   };

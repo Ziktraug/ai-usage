@@ -18,14 +18,14 @@ describe('shell navigation ownership', () => {
     const navigation = pendingNavigation();
     const first = createShellNavigationOwner({ currentUrl, goto: () => navigation.promise });
     const second = createShellNavigationOwner({ currentUrl, goto: () => navigation.promise });
-    const opening = first.goto(detailUrl, { replaceState: true });
+    const opening = first.goto(detailUrl, { replace: true });
 
-    expect(second.consumeReplacement('goto', detailUrl)).toBe(false);
-    expect(first.consumeReplacement('popstate', detailUrl)).toBe(false);
-    expect(first.consumeReplacement('link', detailUrl)).toBe(false);
-    expect(first.consumeReplacement('goto', otherUrl)).toBe(false);
-    expect(first.consumeReplacement('goto', detailUrl)).toBe(true);
-    expect(first.consumeReplacement('goto', detailUrl)).toBe(false);
+    expect(second.consumeIntent('goto', detailUrl).replace).toBe(false);
+    expect(first.consumeIntent('popstate', detailUrl).replace).toBe(false);
+    expect(first.consumeIntent('link', detailUrl).replace).toBe(false);
+    expect(first.consumeIntent('goto', otherUrl).replace).toBe(false);
+    expect(first.consumeIntent('goto', detailUrl).replace).toBe(true);
+    expect(first.consumeIntent('goto', detailUrl).replace).toBe(false);
     navigation.resolve();
     await opening;
   });
@@ -33,10 +33,10 @@ describe('shell navigation ownership', () => {
   test('cleans up cancellation before beforeNavigate without marking the next navigation', async () => {
     const navigation = pendingNavigation();
     const owner = createShellNavigationOwner({ currentUrl, goto: () => navigation.promise });
-    const cancelled = owner.goto(detailUrl, { replaceState: true });
+    const cancelled = owner.goto(detailUrl, { replace: true });
     navigation.resolve();
     await cancelled;
-    expect(owner.consumeReplacement('goto', detailUrl)).toBe(false);
+    expect(owner.consumeIntent('goto', detailUrl).replace).toBe(false);
   });
 
   test('cleans up a rejected goto and preserves the original failure', async () => {
@@ -45,8 +45,8 @@ describe('shell navigation ownership', () => {
       currentUrl,
       goto: () => Promise.reject(failure),
     });
-    await expect(owner.goto(detailUrl, { replaceState: true })).rejects.toBe(failure);
-    expect(owner.consumeReplacement('goto', detailUrl)).toBe(false);
+    await expect(owner.goto(detailUrl, { replace: true })).rejects.toBe(failure);
+    expect(owner.consumeIntent('goto', detailUrl).replace).toBe(false);
   });
 
   test('an older cancellation cannot clear a newer replacement to the same destination', async () => {
@@ -57,11 +57,11 @@ describe('shell navigation ownership', () => {
       currentUrl,
       goto: () => (++calls === 1 ? first.promise : second.promise),
     });
-    const older = owner.goto(detailUrl, { replaceState: true });
-    const newer = owner.goto(detailUrl, { replaceState: true });
+    const older = owner.goto(detailUrl, { replace: true });
+    const newer = owner.goto(detailUrl, { replace: true });
     first.resolve();
     await older;
-    expect(owner.consumeReplacement('goto', detailUrl)).toBe(true);
+    expect(owner.consumeIntent('goto', detailUrl).replace).toBe(true);
     second.resolve();
     await newer;
   });
@@ -77,13 +77,31 @@ describe('shell navigation ownership', () => {
       },
     });
     const options = {
-      keepFocus: true,
-      noScroll: true,
+      reset: false,
       state: { aiUsageNavigationKey: 'entry-1' },
     };
     const opening = owner.goto('/sessions/row-1?tab=sessions', options);
-    expect(owner.consumeReplacement('goto', detailUrl)).toBe(false);
+    expect(owner.consumeIntent('goto', detailUrl).replace).toBe(false);
     expect(calls).toEqual([{ options, url: '/sessions/row-1?tab=sessions' }]);
+    navigation.resolve();
+    await opening;
+  });
+
+  test('keeps scroll preservation for the shell instead of passing it to SvelteKit', async () => {
+    const navigation = pendingNavigation();
+    const calls: unknown[] = [];
+    const owner = createShellNavigationOwner({
+      currentUrl,
+      goto: (url, options) => {
+        calls.push({ options, url });
+        return navigation.promise;
+      },
+    });
+    const opening = owner.goto(detailUrl, { preserveScroll: true, replace: true });
+    expect(calls).toEqual([{ options: { replace: true }, url: detailUrl }]);
+    expect(owner.consumeIntent('link', detailUrl)).toEqual({ preserveScroll: false, replace: false });
+    expect(owner.consumeIntent('goto', detailUrl)).toEqual({ preserveScroll: true, replace: true });
+    expect(owner.consumeIntent('goto', detailUrl)).toEqual({ preserveScroll: false, replace: false });
     navigation.resolve();
     await opening;
   });
@@ -91,9 +109,9 @@ describe('shell navigation ownership', () => {
   test('a newer push to the same URL supersedes an unconsumed replacement intent', async () => {
     const navigation = pendingNavigation();
     const owner = createShellNavigationOwner({ currentUrl, goto: () => navigation.promise });
-    const replaced = owner.goto(detailUrl, { replaceState: true });
+    const replaced = owner.goto(detailUrl, { replace: true });
     const pushed = owner.goto(detailUrl);
-    expect(owner.consumeReplacement('goto', detailUrl)).toBe(false);
+    expect(owner.consumeIntent('goto', detailUrl).replace).toBe(false);
     navigation.resolve();
     await Promise.all([replaced, pushed]);
   });

@@ -24,11 +24,17 @@ adapter, and Turborepo. The ownership rules are:
   `apps/web/.svelte-kit/build` are separate check, development, and production
   intermediate trees.
 - Each command sets `AI_USAGE_SVELTEKIT_PHASE` and owns only its matching phase.
+- SvelteKit 3 also writes `apps/web/node_modules/$app/` (the `$app/tsconfig`
+  parent configuration and the `$app/types` declarations). Every phase rewrites
+  that one directory, so `apps/web/tsconfig.json` pins `rootDirs` to the check
+  phase's route types; type-checking never depends on which phase synced last.
 - Non-production adapter scratch output stays below its phase intermediate tree.
 - The production client build writes its private module-graph manifest to
   `apps/web/.svelte-kit/build/private/client-modules.json`; the fail-closed
   scanner consumes it before the generated tree is discarded.
 - The production Bun adapter writes only `apps/web/.output-build/sveltekit/`.
+  Its generated hand-off module is kept as `adapter-bun.generated.js` behind the
+  `adapter-bun.js` module that binds the runtime origin (ADR 0057).
 - `apps/web/.output-build/build.lock` serializes production builders. The build
   wrapper validates the private container before deleting only the canonical
   production adapter and production intermediate children.

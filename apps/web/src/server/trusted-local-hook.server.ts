@@ -1,4 +1,4 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 
 export const handleTrustedLocalRequest: Handle = async ({ event, resolve }) => {
