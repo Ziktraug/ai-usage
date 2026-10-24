@@ -334,6 +334,63 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
 });
 
+// SvelteKit 3 runs no `beforeNavigate` for a navigation that starts while another one is in flight,
+// so a link that asks to keep the scroll position must be honoured from its own click. SvelteKit 2
+// carried `noScroll` on each navigation.
+test('a preserve-scroll link keeps the scroll position while it supersedes a pending navigation', async ({ page }) => {
+  await page.goto('/memory?view=analyses');
+  await waitForHydratedNavigation(page);
+  const views = page.getByRole('navigation', { name: 'Memory views' });
+  const viewLink = (name: string): Locator => views.getByRole('link', { name, exact: true });
+  // Playwright's own click scrolls an in-flow link into view and hovers it first, which would move
+  // the very position under test and preload the destination; the element's click activates the
+  // link without either.
+  const activate = (link: Locator): Promise<void> => link.evaluate((element: HTMLElement) => element.click());
+  const settledScrollY = (): Promise<number> =>
+    page.evaluate(async () => {
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 250))),
+      );
+      return window.scrollY;
+    });
+  await page.evaluate(() => {
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 700);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(700);
+
+  await activate(viewLink('Knowledge'));
+  await expect(viewLink('Knowledge')).toHaveAttribute('aria-current', 'page');
+  expect(await settledScrollY()).toBe(700);
+
+  // Hold the data of a Sync navigation, so the next link click starts while it is in flight. Memory
+  // view changes reuse the page's server data and fetch nothing that could be held instead.
+  let markSyncHeld: () => void = () => undefined;
+  const syncHeld = new Promise<void>((resolve) => {
+    markSyncHeld = resolve;
+  });
+  let releaseSync: () => Promise<void> = () => Promise.resolve();
+  await page.route(
+    (url) => url.pathname === '/sync/__data.json',
+    (route) => {
+      releaseSync = () => route.continue();
+      markSyncHeld();
+    },
+    { times: 1 },
+  );
+  try {
+    await activate(page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Sync' }));
+    await syncHeld;
+    await activate(viewLink('Analysed sessions'));
+    await expect(viewLink('Analysed sessions')).toHaveAttribute('aria-current', 'page');
+    expect(new URL(page.url()).pathname).toBe('/memory');
+    expect(new URL(page.url()).searchParams.get('view')).toBe('analyses');
+    expect(await settledScrollY()).toBe(700);
+  } finally {
+    await releaseSync();
+  }
+});
+
 // SvelteKit 3 turns a click on a link to the current URL into a `refreshAll()` navigation that
 // reruns every load. Re-selecting the destination the reader is on must still leave the mounted
 // report, its scroll position and the history alone.

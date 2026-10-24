@@ -106,6 +106,38 @@ describe('shell navigation ownership', () => {
     await opening;
   });
 
+  // SvelteKit 3 skips `beforeNavigate` for a goto that starts while another navigation is in
+  // flight, so `onNavigate` reads the goto's intent instead and must not take it from the goto.
+  test('peeks at a pending goto intent without consuming it', async () => {
+    const navigation = pendingNavigation();
+    const owner = createShellNavigationOwner({ currentUrl, goto: () => navigation.promise });
+    const opening = owner.goto(detailUrl, { preserveScroll: true });
+
+    expect(owner.peekIntent('link', detailUrl)).toEqual({ preserveScroll: false, replace: false });
+    expect(owner.peekIntent('goto', otherUrl)).toEqual({ preserveScroll: false, replace: false });
+    expect(owner.peekIntent('goto', null)).toEqual({ preserveScroll: false, replace: false });
+    expect(owner.peekIntent('goto', detailUrl)).toEqual({ preserveScroll: true, replace: false });
+    expect(owner.peekIntent('goto', detailUrl)).toEqual({ preserveScroll: true, replace: false });
+    expect(owner.consumeIntent('goto', detailUrl)).toEqual({ preserveScroll: true, replace: false });
+    expect(owner.peekIntent('goto', detailUrl)).toEqual({ preserveScroll: false, replace: false });
+    navigation.resolve();
+    await opening;
+  });
+
+  test('a settled or rejected goto leaves no intent to peek at', async () => {
+    const navigation = pendingNavigation();
+    const settled = createShellNavigationOwner({ currentUrl, goto: () => navigation.promise });
+    const opening = settled.goto(detailUrl, { preserveScroll: true });
+    navigation.resolve();
+    await opening;
+    const failure = new Error('navigation aborted');
+    const rejected = createShellNavigationOwner({ currentUrl, goto: () => Promise.reject(failure) });
+    await expect(rejected.goto(detailUrl, { preserveScroll: true })).rejects.toBe(failure);
+
+    expect(settled.peekIntent('goto', detailUrl)).toEqual({ preserveScroll: false, replace: false });
+    expect(rejected.peekIntent('goto', detailUrl)).toEqual({ preserveScroll: false, replace: false });
+  });
+
   test('a newer push to the same URL supersedes an unconsumed replacement intent', async () => {
     const navigation = pendingNavigation();
     const owner = createShellNavigationOwner({ currentUrl, goto: () => navigation.promise });

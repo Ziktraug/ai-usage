@@ -48,6 +48,11 @@ startup hang whose root cause is not identified (PR #48, #60).
   `bun:sqlite` `close()` finalises every `query()` statement, `prepare('')`
   throws, `.json()` error text changed, HTTP parsing is stricter, and
   `localhost` resolves to loopback without the resolver.
+- `lint-staged` is held at `~17.5.1`. Release 17.6.0 stages every tracked file
+  that changed while its tasks ran, not only the staged ones; several sessions
+  share this checkout, so a peer's edit made during the pre-commit hook would be
+  committed. Move past 17.5 only if a later release can be limited to the staged
+  set.
 
 ## Rejected alternative
 

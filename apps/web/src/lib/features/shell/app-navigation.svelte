@@ -227,11 +227,14 @@
   // focus, which is what SvelteKit 2's `noScroll` alone did. Navigations that ask for it (a shell
   // goto with `preserveScroll`, or a link marked `data-ai-usage-preserve-scroll`) keep SvelteKit's
   // focus reset and skip only its scroll handling.
-  const frameworkScrollPreservation = createFrameworkScrollPreservation();
-  // Back and Forward reset focus after every traversal, as SvelteKit 2 did (`history-focus.ts`).
-  const historyFocus = createHistoryFocusReset(documentHistoryFocusPort());
   const linkPreservesScroll = (target: EventTarget | null): boolean =>
     target instanceof Element && target.closest('a[data-ai-usage-preserve-scroll]') !== null;
+  const frameworkScrollPreservation = createFrameworkScrollPreservation({
+    linkAsks: linkPreservesScroll,
+    pendingGotoAsks: (href) => shellNavigation.peekIntent('goto', { href }).preserveScroll,
+  });
+  // Back and Forward reset focus after every traversal, as SvelteKit 2 did (`history-focus.ts`).
+  const historyFocus = createHistoryFocusReset(documentHistoryFocusPort());
 
   const reportPageStateFailure = (): void => {
     navigationFailure = true;
@@ -293,7 +296,7 @@
 
   onNavigate((navigation) => {
     historyFocus.beforeUpdate(navigation.type);
-    if (frameworkScrollPreservation.consume(navigation.to?.url.href)) {
+    if (frameworkScrollPreservation.decide(navigation)) {
       disableScrollHandling();
     }
   });

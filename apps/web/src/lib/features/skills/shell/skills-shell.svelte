@@ -271,11 +271,14 @@
     return () => window.cancelAnimationFrame(activationFrame);
   });
 
-  let fallbackFailure = $state<string | undefined>();
+  let fallbackFailed = $state(false);
   const fallbackNavigator = createSkillsFallbackNavigator({
     currentHref: () => window.location.href,
-    onFailure: (cause) => {
-      fallbackFailure = cause instanceof Error ? cause.message : 'The skills address could not be updated.';
+    onAccepted: () => {
+      fallbackFailed = false;
+    },
+    onFailure: () => {
+      fallbackFailed = true;
     },
     // A URL rewrite in place, as in SvelteKit 2: the deprecated `replaceState` runs no navigation
     // hooks, where a shallow `goto` would run the dirty-editor guard and could be cancelled by it.
@@ -283,7 +286,12 @@
   });
 
   $effect(() => {
-    if (!(mounted && view?.fallbackHref)) {
+    if (!(mounted && view)) {
+      return;
+    }
+    if (!view.fallbackHref) {
+      // The address names no missing skill any more, so an earlier rejected rewrite no longer applies.
+      fallbackFailed = false;
       return;
     }
     // Reading the history state re-arms the fallback after a navigation; the navigator turns the
@@ -292,8 +300,8 @@
   });
 </script>
 
-{#if fallbackFailure}
-  <p aria-live="polite" role="status">{fallbackFailure}</p>
+{#if fallbackFailed}
+  <p aria-live="polite" role="status">Navigation failed. Try again.</p>
 {/if}
 {#if view && presentation}
   <SkillsWorkspace

@@ -65,7 +65,9 @@ no Fetch Metadata) and the server-side subrequest normalisation all read it.
   shell calls `disableScrollHandling()` from `onNavigate` for them, marked by a shell `goto`
   with `preserveScroll` or by `data-ai-usage-preserve-scroll` on a link. That request is keyed
   to its target URL: SvelteKit skips `beforeNavigate` for a navigation that starts while another
-  is in flight but still runs `onNavigate` for it, so a bare flag would leak into it. Back and
+  is in flight but still runs `onNavigate` for it, so a bare flag would leak into it, and the
+  decision is made in `onNavigate` (from the click target or the still-pending shell `goto`
+  intent) so a superseding navigation that asks to keep the scroll position keeps it. Back and
   Forward reset focus after every traversal, as in SvelteKit 2: SvelteKit 3 resets only across
   entries with different reset indexes, which left focus on the departed page's control after
   Back across a `reset: false` entry. The shell blurs before the traversal renders and resets
@@ -157,3 +159,12 @@ Gathered on 2026-10-22 in the `chore/upgrade-dependencies` worktree under `nix d
   `POST` from `Origin: http://localhost:<PORT>` with its form CSRF 403, and the browser export
   from a `localhost` tab succeed. `benchmark:session-scroll` 4 passed and the plan 072 benchmark
   43 passed with the perf reset sending the listener `Origin`.
+- Round-2 review fixes (logs `logs/r2fix-*.log`). A link or shell `goto` that asks to keep the
+  scroll position and starts while another navigation is in flight gets no `beforeNavigate`, so
+  `onNavigate` also reads its own click and its still-pending `goto` intent (without consuming
+  it); a superseding navigation that does not ask still gets SvelteKit's scroll handling. The new
+  `e2e/svelte-shell.spec.ts` case (a Memory view link clicked while a Sync navigation's data is
+  held) ended at `scrollY` 0 instead of 700 without that reading and passed 3 of 3 with it;
+  `test:e2e` 246 passed. A rejected Skills fallback rewrite now shows "Navigation failed. Try
+  again." instead of the framework's error text, and clears once a later rewrite is accepted or
+  the address names no missing skill.

@@ -11,8 +11,15 @@ export interface ShellNavigationIntent {
 }
 
 export interface ShellNavigationOwner {
+  /** From `beforeNavigate`: takes the intent of the shell goto to `url`, once. */
   readonly consumeIntent: (type: string, url: { readonly href: string } | null) => ShellNavigationIntent;
   readonly goto: ShellGoto;
+  /**
+   * From `onNavigate`: the intent of a shell goto to `url` that is still pending, left in place.
+   * SvelteKit 3 skips `beforeNavigate` for a goto that starts while another navigation is in
+   * flight, so no `consumeIntent` takes that goto's intent; it lasts until the goto settles.
+   */
+  readonly peekIntent: (type: string, url: { readonly href: string } | null) => ShellNavigationIntent;
 }
 
 const navigationOwnerContextKey = Symbol('ai-usage-navigation-owner');
@@ -64,6 +71,10 @@ export const createShellNavigationOwner = (port: {
           pending.delete(href);
         }
       }
+    },
+    peekIntent: (type, url) => {
+      const intent = type === 'goto' && url !== null ? pending.get(url.href) : undefined;
+      return intent ? { preserveScroll: intent.preserveScroll, replace: intent.replace } : unmarkedNavigation;
     },
   };
 };

@@ -10,10 +10,15 @@ const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve
 const deferredHistory = (initialHref: string) => {
   let href = initialHref;
   const failures: unknown[] = [];
+  const outcomes: ('accepted' | 'failed')[] = [];
   const writes: { settle: (failure?: unknown) => void; state: App.PageState; url: string }[] = [];
   const navigator = createSkillsFallbackNavigator({
     currentHref: () => href,
-    onFailure: (cause) => failures.push(cause),
+    onAccepted: () => outcomes.push('accepted'),
+    onFailure: (cause) => {
+      failures.push(cause);
+      outcomes.push('failed');
+    },
     replace: (url, state) =>
       new Promise((resolve, reject) => {
         writes.push({
@@ -36,6 +41,7 @@ const deferredHistory = (initialHref: string) => {
       href = next;
     },
     navigator,
+    outcomes,
     writes,
   };
 };
@@ -71,6 +77,7 @@ describe('Skills fallback navigator', () => {
 
     expect(history.writes).toHaveLength(1);
     expect(history.failures).toEqual([]);
+    expect(history.outcomes).toEqual(['accepted']);
   });
 
   test('falls back again after a later navigation names a missing skill', async () => {
@@ -96,5 +103,20 @@ describe('Skills fallback navigator', () => {
     expect(history.failures).toEqual([rejection]);
     history.navigator.apply({});
     expect(history.writes).toHaveLength(2);
+  });
+
+  test('reports a later accepted rewrite after a rejected one, so the shown failure can clear', async () => {
+    const history = deferredHistory(MISSING_SKILL);
+
+    history.navigator.apply({});
+    history.writes[0]?.settle(new Error('replaceState rejected'));
+    await settled();
+    expect(history.outcomes).toEqual(['failed']);
+
+    history.navigator.apply({});
+    history.writes[1]?.settle();
+    await settled();
+
+    expect(history.outcomes).toEqual(['failed', 'accepted']);
   });
 });

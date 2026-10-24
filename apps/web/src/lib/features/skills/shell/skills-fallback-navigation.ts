@@ -21,7 +21,8 @@ export const createSkillsFallbackNavigationRequest = (
  * `replaceState` hands SvelteKit 3's re-parsed state back as a new object while `page.url` stays on
  * the missing skill, so that effect runs again after every write. The navigator makes those runs
  * no-ops: it writes nothing while a write is in flight or once the address is already the
- * fallback, and it reports a rejected write instead of dropping it.
+ * fallback. It reports a rejected write instead of dropping it, and every accepted write, which
+ * supersedes an earlier rejection.
  */
 export interface SkillsFallbackNavigator {
   readonly apply: (state: App.PageState) => void;
@@ -29,6 +30,7 @@ export interface SkillsFallbackNavigator {
 
 export const createSkillsFallbackNavigator = (port: {
   readonly currentHref: () => string;
+  readonly onAccepted: () => void;
   readonly onFailure: (cause: unknown) => void;
   readonly replace: (url: URL, state: App.PageState) => Promise<void>;
 }): SkillsFallbackNavigator => {
@@ -47,7 +49,7 @@ export const createSkillsFallbackNavigator = (port: {
       writing = true;
       port
         .replace(url, request.state)
-        .catch(port.onFailure)
+        .then(port.onAccepted, port.onFailure)
         .finally(() => {
           writing = false;
         });
