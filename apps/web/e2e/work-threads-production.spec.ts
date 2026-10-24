@@ -107,11 +107,10 @@ const expectDone = async (page: Page): Promise<void> => {
   await expect(page.locator('[data-follow-state="done"]')).toBeVisible();
   await expect(page.getByText('Nothing in GitHub, Jira or any session was changed.', { exact: true })).toBeVisible();
 };
-const endAnalysisWithKnownUncertainty = async (page: Page): Promise<void> => {
+// The analysis has no PR and its session recorded no branch matching its checkout, so that checkout
+// is not a remainder of this task: the follow-up ends without an acknowledgement step.
+const endAnalysis = async (page: Page): Promise<void> => {
   await clickEnd(page);
-  await expect(page.getByRole('heading', { name: 'These remainders will stay', exact: true })).toBeVisible();
-  await expect(page.getByRole('region', { name: "What's left", exact: true })).toContainText('Local state is unknown');
-  await page.getByRole('button', { name: 'End anyway', exact: true }).click();
   await expectDone(page);
 };
 
@@ -248,45 +247,31 @@ const createAnalysisFromServedSession = async (
   expect(data.row.thread.intent).toBe('analysis');
   expect(data.row.links).toHaveLength(1);
   expect(data.row.links[0]).toMatchObject({ kind: 'session', key: ROOT_SESSION_KEY, detachedAt: null });
-  // One linked session is one episode; sessions it delegated nest under it and count as sessions
-  // of the task (as in the v3 reference), never as separate episodes or tasks.
+  // One linked session is one episode; sessions it delegated nest under it and are counted apart,
+  // never as separate episodes, sessions to follow or tasks.
   expect(data.episodes).toHaveLength(1);
-  expect(data.row.sessionCount).toBe(1 + (data.episodes[0]?.children.length ?? 0));
+  expect(data.row.sessionCount).toBe(1);
+  expect(data.row.delegatedSessionCount).toBe(data.episodes[0]?.children.length ?? 0);
   expect(data.episodes[0]?.endedAt).not.toBeNull();
   expect(data.row.markers.pullRequests).toEqual([]);
   expect(data.row.markers.jiraIssues).toEqual([]);
-  // A session-checkout observation is expected even though no branch/PR/Jira is linked.
-  // Wait for the actual clean checkout fact; never dismiss an unknown source as no remainder.
+  // A session's checkout is a Local marker only on the PR head branch, or, without a PR, on the
+  // branch the session recorded; this collected session recorded none that matches, so the analysis
+  // carries no local remainder once the checkout source has run.
   await expect
     .poll(
       async () => {
         const current = await readDetail(request, created.threadId);
-        return (
-          current.row.markers.local.length > 0 &&
-          current.row.markers.local.every(
-            (marker) =>
-              marker.latest?.outcome === 'observed' &&
-              marker.latest.dirty === false &&
-              marker.latest.modifiedCount === 0 &&
-              marker.latest.stagedCount === 0 &&
-              marker.latest.untrackedCount === 0,
-          )
-        );
+        return current.sources.find((source) => source.source === 'checkouts')?.lastRunAt != null;
       },
-      {
-        message: 'The seeded repository checkout must be observed clean before the analysis ends',
-        timeout: COLLECTION_TIMEOUT_MS,
-      },
+      { message: 'The checkout source must run before the analysis ends', timeout: COLLECTION_TIMEOUT_MS },
     )
     .toBe(true);
-  // The browser gets those same current facts on reload, independently of polling assertions.
   await page.reload();
   await hydrated(page);
   const observed = await readDetail(request, created.threadId);
-  // The existing fixture has an unborn branch without an upstream. No artifact link is required
-  // for analysis, but an unknown ahead count must remain an acknowledged local remainder.
-  expect(observed.row.markers.local.every((marker) => marker.latest?.ahead === null)).toBe(true);
-  await expect(page.getByRole('region', { name: "What's left", exact: true })).toContainText('Local state is unknown');
+  expect(observed.row.markers.local).toEqual([]);
+  await expect(page.getByText('Analysis only · no branch, PR or ticket needed')).toBeVisible();
   return observed;
 };
 
@@ -427,12 +412,10 @@ test('production Work threads survive source refresh, follow-up transitions and 
   await test.step('C: a collected session starts an analysis with no artifact links, then ends and reopens', async () => {
     analysis = await createAnalysisFromServedSession(page, request);
     const analysisId = analysis.row.thread.threadId;
-    await endAnalysisWithKnownUncertainty(page);
+    await endAnalysis(page);
     const ended = await readDetail(request, analysisId);
     expect(ended.row.thread.followRevision).toBe(analysis.row.thread.followRevision + 1);
-    expect(ended.events.at(-1)?.acknowledgedRemainders.some((item) => item.includes('Local state is unknown'))).toBe(
-      true,
-    );
+    expect(ended.events.at(-1)?.acknowledgedRemainders).toEqual([]);
     await page.getByRole('link', { name: '← My work', exact: true }).click();
     await page.getByRole('tab', { name: DONE_TAB }).click();
     await expect(page.getByRole('tab', { name: DONE_TAB })).toHaveAttribute('aria-selected', 'true');
@@ -471,7 +454,7 @@ test('production Work threads survive source refresh, follow-up transitions and 
       await hydrated(second);
       await second.getByRole('button', { name: 'Mark as waiting', exact: true }).click();
       await second.getByRole('textbox', { name: 'Waiting for', exact: true }).fill('A product answer');
-      await endAnalysisWithKnownUncertainty(page);
+      await endAnalysis(page);
       const commandResponse = second.waitForResponse((response) => new URL(response.url()).pathname === COMMAND_PATH);
       await second.getByRole('button', { name: 'Wait', exact: true }).click();
       const response = await commandResponse;
