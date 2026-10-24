@@ -24,7 +24,7 @@ const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
 const TOKEN = 'a'.repeat(43);
 const NOW = '2026-07-29T12:00:00.000Z';
 const SSE_FRAME_ID_PATTERN = /^id: ([^\n]+)$/m;
-const servers: Array<{ dispose(): Promise<void> }> = [];
+const servers: Array<{ dispose: () => Promise<void> }> = [];
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.dispose()));

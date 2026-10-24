@@ -63,8 +63,13 @@ export class UsageEngineControlError extends Error {
   readonly code: UsageEngineErrorCode;
   readonly retry: UsageEngineRetryDisposition;
 
-  constructor(code: UsageEngineErrorCode, operation: UsageEngineRetryOperation, message: string) {
-    super(message);
+  constructor(
+    code: UsageEngineErrorCode,
+    operation: UsageEngineRetryOperation,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.code = code;
     this.retry = classifyUsageEngineRetry(code, operation);
   }
@@ -87,7 +92,8 @@ const controlError = (
   code: UsageEngineErrorCode,
   operation: UsageEngineRetryOperation,
   message: string,
-): UsageEngineControlError => new UsageEngineControlError(code, operation, message);
+  options?: ErrorOptions,
+): UsageEngineControlError => new UsageEngineControlError(code, operation, message, options);
 
 const mapContractResponseFailure = (
   error: unknown,
@@ -217,13 +223,13 @@ const decodeJson = (bytes: Uint8Array, operation: UsageEngineRetryOperation): un
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    throw controlError('invalid-response', operation, 'Usage engine response is not valid UTF-8.');
+  } catch (error) {
+    throw controlError('invalid-response', operation, 'Usage engine response is not valid UTF-8.', { cause: error });
   }
   try {
     return JSON.parse(text) as unknown;
-  } catch {
-    throw controlError('invalid-response', operation, 'Usage engine response is not valid JSON.');
+  } catch (error) {
+    throw controlError('invalid-response', operation, 'Usage engine response is not valid JSON.', { cause: error });
   }
 };
 
@@ -492,8 +498,10 @@ const parseSseFrames = async function* (
       }
       try {
         buffer += decoder.decode(value, { stream: true });
-      } catch {
-        throw controlError('invalid-response', 'events', 'Usage engine event stream is not valid UTF-8.');
+      } catch (error) {
+        throw controlError('invalid-response', 'events', 'Usage engine event stream is not valid UTF-8.', {
+          cause: error,
+        });
       }
       if (encoder.encode(buffer).byteLength > usageEngineControlBounds.maxStatusEventBytes * 2) {
         throw controlError('response-too-large', 'events', 'Usage engine event stream line exceeds its byte limit.');
@@ -511,8 +519,10 @@ const parseSseFrames = async function* (
     }
     try {
       buffer += decoder.decode();
-    } catch {
-      throw controlError('invalid-response', 'events', 'Usage engine event stream is not valid UTF-8.');
+    } catch (error) {
+      throw controlError('invalid-response', 'events', 'Usage engine event stream is not valid UTF-8.', {
+        cause: error,
+      });
     }
   } finally {
     if (!completed) {
@@ -602,8 +612,10 @@ const openEventStream = async function* (
       let rawEvent: unknown;
       try {
         rawEvent = JSON.parse(frame.data) as unknown;
-      } catch {
-        throw controlError('invalid-response', 'events', 'Usage engine event data is not valid JSON.');
+      } catch (error) {
+        throw controlError('invalid-response', 'events', 'Usage engine event data is not valid JSON.', {
+          cause: error,
+        });
       }
       let event: UsageEngineEvent;
       try {

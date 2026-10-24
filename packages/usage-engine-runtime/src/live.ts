@@ -216,7 +216,7 @@ export const createTerminalSourceControlPort = (
         return current;
       } catch (error) {
         if (startupTimedOut) {
-          throw new Error('The usage engine initial source-control publication timed out.');
+          throw new Error('The usage engine initial source-control publication timed out.', { cause: error });
         }
         throw error;
       } finally {
@@ -303,11 +303,14 @@ export const createTerminalSourceControlPort = (
         error instanceof SourceControlCommandError &&
         (error.reason === 'disabled' || error.reason === 'not-detected')
       ) {
-        throw new UsageEngineSoftSourceError({
-          reason: error.reason,
-          snapshot: await currentSnapshot(signal),
-          sourceId,
-        });
+        throw new UsageEngineSoftSourceError(
+          {
+            reason: error.reason,
+            snapshot: await currentSnapshot(signal),
+            sourceId,
+          },
+          { cause: error },
+        );
       }
       throw error;
     }
@@ -841,6 +844,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
               ...(options.now === undefined ? {} : { updatedAt: options.now() }),
             });
           } catch (rollbackCause) {
+            // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
             throw new UsageEngineFatalConsistencyError(
               [cause, rollbackCause],
               'Machine label config write and usage-store rollback both failed.',

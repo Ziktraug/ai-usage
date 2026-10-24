@@ -178,10 +178,12 @@ export const readCodexSessionAnalysis = (
     const parser = targetRead.parser;
     const parsedSession = targetRead.session;
     const initialRemainingBytes = Math.max(0, CODEX_DETAIL_MAX_TOTAL_BYTES - targetRead.bytes);
-    const analyzeWithMetadata = (database: LocalHistoryDatabase | null) =>
+    const analyzeWithMetadata = (historyDatabase: LocalHistoryDatabase | null) =>
       Effect.gen(function* () {
         let remainingBytes = initialRemainingBytes;
-        const metadata = database ? yield* readCodexThreadMetadataForSession(database, sourceSessionId) : null;
+        const metadata = historyDatabase
+          ? yield* readCodexThreadMetadataForSession(historyDatabase, sourceSessionId)
+          : null;
         mergeMetadata(parsedSession, metadata ?? undefined);
 
         const sessionsById = new Map<string, CodexSession>([[sourceSessionId, parsedSession]]);
@@ -213,8 +215,8 @@ export const readCodexSessionAnalysis = (
           if (!ancestor) {
             break;
           }
-          const ancestorMetadata = database
-            ? yield* readCodexThreadMetadataForSession(database, currentAncestorId)
+          const ancestorMetadata = historyDatabase
+            ? yield* readCodexThreadMetadataForSession(historyDatabase, currentAncestorId)
             : null;
           mergeMetadata(ancestor, ancestorMetadata ?? undefined);
           sessionsById.set(currentAncestorId, ancestor);
@@ -227,7 +229,9 @@ export const readCodexSessionAnalysis = (
         } else if (isCodexUsageOwnedByRoot(parsedSession, sessionsById)) {
           usageOwnership = 'root';
         }
-        const links = database ? yield* readCodexChildLinksForSession(database, sourceSessionId) : undefined;
+        const links = historyDatabase
+          ? yield* readCodexChildLinksForSession(historyDatabase, sourceSessionId)
+          : undefined;
         return parser.analysis(usageOwnership, links);
       });
 

@@ -80,6 +80,7 @@ const applyMigration = async (client: PoolClient, migration: PlatformMigration):
     await client.query('ROLLBACK').catch(() => undefined);
     // The database error (SQLSTATE, message) is what tells an operator why a
     // migration refused to apply; the public message stays generic.
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new PlatformStoreError('migration-failed', 'apply-migration', { cause: error });
   }
 };
@@ -151,8 +152,9 @@ export const runPlatformMigrations = async (
   let client: PoolClient;
   try {
     client = await pool.connect();
-  } catch {
-    throw new PlatformStoreError('connection-failed', 'connect-for-migrations');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new PlatformStoreError('connection-failed', 'connect-for-migrations', { cause: error });
   }
 
   try {

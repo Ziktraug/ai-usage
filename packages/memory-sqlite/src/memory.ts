@@ -264,7 +264,8 @@ const jsonValue = (value: unknown, operation: string): MemoryJsonValue => {
     if (error instanceof MemoryRepositoryError) {
       throw error;
     }
-    throw new MemoryRepositoryError('unavailable', operation);
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryRepositoryError('unavailable', operation, { cause: error });
   }
 };
 
@@ -664,8 +665,9 @@ const decodeCursor = (cursor: string | null | undefined, query: ListMemoryItemsQ
       throw new Error('invalid cursor');
     }
     return parseMemoryItemId(candidate.afterItemId);
-  } catch {
-    throw new MemoryRepositoryError('invalid-input', 'list-items');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryRepositoryError('invalid-input', 'list-items', { cause: error });
   }
 };
 
@@ -689,8 +691,9 @@ const decodeProposalCursor = (cursor: string | null | undefined, query: ListMemo
       throw new Error('invalid cursor');
     }
     return parseMemoryProposalId(candidate.afterItemId);
-  } catch {
-    throw new MemoryRepositoryError('invalid-input', 'list-proposals');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryRepositoryError('invalid-input', 'list-proposals', { cause: error });
   }
 };
 
@@ -720,8 +723,9 @@ const authorizedMemoryIds = (
   }
   try {
     return readAuthorizedResourceScopeIds(authorizationScope);
-  } catch {
-    throw new MemoryRepositoryError('invalid-input', operation);
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryRepositoryError('invalid-input', operation, { cause: error });
   }
 };
 
@@ -784,7 +788,8 @@ const decodeMemorySearchCursor = (
     if (error instanceof MemoryRepositoryError) {
       throw error;
     }
-    throw new MemoryRepositoryError('invalid-input', 'search-items-cursor');
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryRepositoryError('invalid-input', 'search-items-cursor', { cause: error });
   }
 };
 
@@ -803,8 +808,9 @@ const authorizedSearchMemoryIds = (query: SearchMemoryRepositoryQuery): readonly
     return readAuthorizedResourceScopeIds(authorizationScope)
       .map((id) => parseMemoryItemId(id))
       .sort();
-  } catch {
-    throw new MemoryRepositoryError('invalid-input', 'search-items-authorization');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryRepositoryError('invalid-input', 'search-items-authorization', { cause: error });
   }
 };
 

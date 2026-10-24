@@ -142,11 +142,13 @@ export const createInMemoryUsageEngineControlClient = (
             ok: true,
             protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           } as const);
-      } catch {
+      } catch (error) {
+        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'transport-failed',
           'command',
           stableUsageEngineErrorMessages['transport-failed'],
+          { cause: error },
         );
       }
       let parsedResult: UsageEngineCommandResult;
@@ -154,16 +156,20 @@ export const createInMemoryUsageEngineControlClient = (
         parsedResult = stabilizeUsageEngineCommandResult(parseUsageEngineCommandResult(cloneJson(result)));
       } catch (error) {
         if (error instanceof UsageEngineContractError && error.reason === 'protocol-mismatch') {
+          // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
           throw new UsageEngineControlError(
             'protocol-mismatch',
             'command',
             stableUsageEngineErrorMessages['protocol-mismatch'],
+            { cause: error },
           );
         }
+        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'invalid-response',
           'command',
           stableUsageEngineErrorMessages['invalid-response'],
+          { cause: error },
         );
       }
       if (parsedResult.commandId !== commandId || parsedResult.instanceId !== status.instanceId) {
@@ -197,21 +203,25 @@ export const createInMemoryUsageEngineControlClient = (
             instanceId: status.instanceId,
             protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           });
-      } catch {
+      } catch (error) {
+        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'transport-failed',
           'command',
           stableUsageEngineErrorMessages['transport-failed'],
+          { cause: error },
         );
       }
       let parsedResult: UsageEngineCommandCancellationResult;
       try {
         parsedResult = parseUsageEngineCommandCancellationResult(cloneJson(result));
-      } catch {
+      } catch (error) {
+        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'invalid-response',
           'command',
           stableUsageEngineErrorMessages['invalid-response'],
+          { cause: error },
         );
       }
       if (parsedResult.commandId !== commandId || parsedResult.instanceId !== status.instanceId) {

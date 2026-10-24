@@ -31,10 +31,13 @@
         "noExcessiveCognitiveComplexity": "off"
       },
       "performance": {
+        "noAwaitInLoops": "off",
         "noBarrelFile": "off"
       },
       "style": {
+        "noIncrementDecrement": "off",
         "noNonNullAssertion": "off",
+        "useDestructuring": "off",
         "noRestrictedImports": {
           "level": "error",
           "options": {
@@ -55,6 +58,11 @@
             ]
           }
         }
+      },
+      "suspicious": {
+        "noEqualsToNull": "off",
+        "noReturnAssign": "off",
+        "noUnnecessaryConditions": "off"
       }
     }
   },

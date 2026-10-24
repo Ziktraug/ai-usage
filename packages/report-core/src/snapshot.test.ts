@@ -550,8 +550,8 @@ describe('usage snapshots', () => {
         },
       },
     ];
-    for (const datasets of invalidDatasets) {
-      expect(parseSnapshot({ ...snapshot, datasets })).toThrow('datasets');
+    for (const invalid of invalidDatasets) {
+      expect(parseSnapshot({ ...snapshot, datasets: invalid })).toThrow('datasets');
     }
     expect(() =>
       parseUsageSnapshot(JSON.stringify(snapshot).replace('"rows"', '"datasets":{"future":1e400},"rows"')),

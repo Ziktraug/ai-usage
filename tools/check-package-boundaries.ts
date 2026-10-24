@@ -469,7 +469,6 @@ const targetDependencyReason = (
   ) {
     return 'usage-store must remain independent from engine contracts, runtime, and applications.';
   }
-  return;
 };
 
 const targetImportReason = (
@@ -645,7 +644,6 @@ const targetImportReason = (
   ) {
     return 'report-data may import only the usage-store reader facade.';
   }
-  return;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

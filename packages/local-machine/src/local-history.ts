@@ -30,10 +30,10 @@ export interface LocalHistoryDirEntry {
 export type LocalHistorySqlParameter = bigint | boolean | null | number | string | Uint8Array;
 
 export interface LocalHistoryDatabase {
-  all<T extends object = Record<string, unknown>>(
+  all: <T extends object = Record<string, unknown>>(
     sql: string,
     parameters?: readonly LocalHistorySqlParameter[],
-  ): Effect.Effect<T[], LocalHistoryError>;
+  ) => Effect.Effect<T[], LocalHistoryError>;
   close: Effect.Effect<void>;
 }
 
@@ -48,18 +48,18 @@ export interface LocalHistoryTextRange {
 }
 
 export interface LocalHistoryStorage {
-  exists(filePath: string): Effect.Effect<boolean, LocalHistoryError>;
+  exists: (filePath: string) => Effect.Effect<boolean, LocalHistoryError>;
   home: string;
-  openDatabase(dbPath: string): Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
+  openDatabase: (dbPath: string) => Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
   /**
    * Read a user-managed config file, following symlinks. Dotfiles managers
    * (home-manager, stow, …) commonly install configs as symlinks, so unlike
    * history inputs these must be resolved before the hardened regular-file
    * read applies to the target.
    */
-  readConfigText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
-  readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
-  readFileMetadata?(filePath: string): Effect.Effect<LocalHistoryFileMetadata, LocalHistoryError>;
+  readConfigText: (filePath: string, maxBytes?: number) => Effect.Effect<string, LocalHistoryError>;
+  readDir: (dirPath: string) => Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
+  readFileMetadata?: (filePath: string) => Effect.Effect<LocalHistoryFileMetadata, LocalHistoryError>;
   /**
    * `oversizedLines` counts records dropped for exceeding `maxLineBytes`. They
    * are reported rather than thrown so one unreadable record costs its own
@@ -71,17 +71,17 @@ export interface LocalHistoryStorage {
    * Only this reader understands archives; `readText` and `readTextRange`
    * never decompress.
    */
-  readLines(
+  readLines: (
     filePath: string,
     visit: (line: string) => void,
     limits?: { maxBytes?: number; maxLineBytes?: number },
-  ): Effect.Effect<{ bytes: number; lines: number; oversizedLines: number }, LocalHistoryError>;
-  readText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
-  readTextRange?(
+  ) => Effect.Effect<{ bytes: number; lines: number; oversizedLines: number }, LocalHistoryError>;
+  readText: (filePath: string, maxBytes?: number) => Effect.Effect<string, LocalHistoryError>;
+  readTextRange?: (
     filePath: string,
     offset: number,
     maximumBytes: number,
-  ): Effect.Effect<LocalHistoryTextRange, LocalHistoryError>;
+  ) => Effect.Effect<LocalHistoryTextRange, LocalHistoryError>;
 }
 
 export const LocalHistoryStorage = Context.Service<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
@@ -108,18 +108,25 @@ interface SqliteHistoryIdentity {
   readonly wal: SqliteFileIdentity | null;
 }
 
-const sqliteIdentityError = (operation: string, filePath: string, message: string): LocalHistoryError =>
+const sqliteIdentityError = (
+  operation: string,
+  filePath: string,
+  message: string,
+  options?: ErrorOptions,
+): LocalHistoryError =>
   new LocalHistoryError({
     operation,
     path: filePath,
-    cause: new Error(message),
+    cause: new Error(message, options),
   });
 
 const lstatSqlitePath = (filePath: string): BigIntStats | undefined => {
   try {
     return fs.lstatSync(filePath, { bigint: true, throwIfNoEntry: false });
-  } catch {
-    throw sqliteIdentityError('sqlite.identity', filePath, 'SQLite history identity could not be inspected.');
+  } catch (error) {
+    throw sqliteIdentityError('sqlite.identity', filePath, 'SQLite history identity could not be inspected.', {
+      cause: error,
+    });
   }
 };
 
@@ -283,11 +290,11 @@ export interface BoundedLineEmitter {
    * Close the stream: an unterminated trailing record is emitted, or counted
    * as oversized when it had already passed the bound.
    */
-  finish(): void;
+  finish: () => void;
   readonly lines: number;
   readonly oversizedLines: number;
   /** Append decoded text and emit every newline-terminated record it completes. */
-  push(text: string): void;
+  push: (text: string) => void;
 }
 
 /**
@@ -600,6 +607,7 @@ export const decompressHistoryArchive = (compressed: Buffer, filePath: string, m
   try {
     decompressed = zstdDecompressSync(compressed, { maxOutputLength: Math.max(1, layout.declaredContentSize) });
   } catch (cause) {
+    // biome-ignore lint/style/useErrorCause: HistoryArchiveError receives the cause as its second positional argument
     throw new HistoryArchiveError(filePath, cause);
   }
   if (decompressed.length !== layout.declaredContentSize) {

@@ -200,8 +200,9 @@ const priorBatchResult = (
   }
   try {
     return { ack: parseReplicationAck(row.stored_ack), kind: 'ack' };
-  } catch {
-    throw new PlatformStoreError('validation-failed', 'map-replication-batch-ack');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new PlatformStoreError('validation-failed', 'map-replication-batch-ack', { cause: error });
   }
 };
 

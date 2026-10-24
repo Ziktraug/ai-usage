@@ -218,7 +218,7 @@ const removeCursorHandoffIfUnchanged = async (opened: OpenedCursorUsageInput): P
     await unlink(opened.path);
   } catch (error) {
     if (errorHasCode(error, 'ENOENT')) {
-      throw new Error('Usage engine inbox handoff changed before removal and was preserved.');
+      throw new Error('Usage engine inbox handoff changed before removal and was preserved.', { cause: error });
     }
     throw error;
   }
@@ -321,8 +321,8 @@ export const readUsageEngineInput = async (
     let text: string;
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-      throw new Error('Usage engine input must contain valid UTF-8.');
+    } catch (error) {
+      throw new Error('Usage engine input must contain valid UTF-8.', { cause: error });
     }
     let removed = false;
     return {
@@ -648,8 +648,8 @@ const writeCompleteChunk = async (file: FileHandle, chunk: Uint8Array): Promise<
 const decodeCursorChunk = (decoder: TextDecoder, bytes?: Uint8Array): string => {
   try {
     return bytes === undefined ? decoder.decode() : decoder.decode(bytes, { stream: true });
-  } catch {
-    throw new Error('Usage engine input must contain valid UTF-8.');
+  } catch (error) {
+    throw new Error('Usage engine input must contain valid UTF-8.', { cause: error });
   }
 };
 
@@ -1003,6 +1003,7 @@ const runWithCursorInputCleanup = async <Value>(
     }
   } catch (cleanupError) {
     if (!outcome.ok) {
+      // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
       throw new AggregateError([outcome.error, cleanupError], 'Cursor import and private handoff cleanup both failed.');
     }
     try {

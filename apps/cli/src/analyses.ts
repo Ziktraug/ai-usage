@@ -100,8 +100,8 @@ export const parseAnalysesCommand = (args: readonly string[]): AnalysesCommand =
   if (command === 'submit') {
     return finish({ kind: 'submit-file', file: take('--file') });
   }
-  const discovery = (request: unknown) =>
-    finish({ kind: 'request' as const, request: parseDistillationDiscoveryRequest(request), episodeId: null });
+  const discovery = (discoveryRequest: unknown) =>
+    finish({ kind: 'request' as const, request: parseDistillationDiscoveryRequest(discoveryRequest), episodeId: null });
   if (command === 'projects') {
     return discovery({ kind: command, limit: Number(take('--limit', '50')), cursor: take('--cursor', '') || null });
   }

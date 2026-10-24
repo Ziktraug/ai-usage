@@ -264,8 +264,9 @@ const requiredText = (value: unknown, operation: string): string => {
 const parseJson = (value: unknown, operation: string): unknown => {
   try {
     return JSON.parse(requiredText(value, operation)) as unknown;
-  } catch {
-    throw new MemoryIdentityStoreError('migration-incompatible', operation);
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryIdentityStoreError('migration-incompatible', operation, { cause: error });
   }
 };
 

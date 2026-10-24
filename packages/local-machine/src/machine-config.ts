@@ -81,9 +81,8 @@ const configLockMetadataFrom = (text: string): ConfigLockMetadata | undefined =>
       return value as ConfigLockMetadata;
     }
   } catch {
-    return;
+    // Unparseable lock metadata reads as absent.
   }
-  return;
 };
 
 const localProcessIsAlive = (pid: number): boolean => {
@@ -136,13 +135,13 @@ const withConfigFileLock = async <A>(filePath: string, update: () => A | Promise
       }
       const lockStat = await lstat(lockPath).catch(() => undefined);
       if (lockStat?.isSymbolicLink()) {
-        throw new Error(`ai-usage config lock must not be a symlink: ${lockPath}`);
+        throw new Error(`ai-usage config lock must not be a symlink: ${lockPath}`, { cause: error });
       }
       if (await removeStaleConfigLock(lockPath)) {
         continue;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`timed out waiting for ai-usage config lock: ${canonicalFilePath}`);
+        throw new Error(`timed out waiting for ai-usage config lock: ${canonicalFilePath}`, { cause: error });
       }
       await delay(configLockRetryMs);
     }

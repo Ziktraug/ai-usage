@@ -152,11 +152,14 @@ const resolveLiveDaemon = async (paths: CliUsagePaths): Promise<CliUsageDaemonRe
     };
   } catch (error) {
     if (error instanceof UsageEngineRendezvousError && error.reason === 'protocol-mismatch') {
+      // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
       throw new CliUsageEngineError('protocol-mismatch', 'Usage engine protocol version mismatch.', { cause: error });
     }
     if (error instanceof UsageEngineRendezvousError && error.reason === 'target-mismatch') {
+      // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
       throw new CliUsageEngineError('protocol-mismatch', 'Usage engine target mismatch.', { cause: error });
     }
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new CliUsageEngineError('invalid-response', 'Usage engine rendezvous is invalid.', { cause: error });
   }
 };
@@ -318,7 +321,11 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
     processSettlement.catch(() => undefined);
     try {
       const settlement = await Promise.race([
-        processSettlement.then(([stdout, exitCode]) => ({ exitCode, kind: 'settled' as const, stdout })),
+        processSettlement.then(([settledStdout, settledExitCode]) => ({
+          exitCode: settledExitCode,
+          kind: 'settled' as const,
+          stdout: settledStdout,
+        })),
         abort.then(() => ({ kind: 'aborted' as const })),
         timedOut.then(() => ({ kind: 'timed-out' as const })),
       ]);
@@ -334,10 +341,12 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
         value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(stdout)) as unknown;
       } catch (error) {
         if (exitCode !== 0) {
+          // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
           throw new CliUsageEngineError('engine-unavailable', 'Usage engine foreground process failed.', {
             cause: error,
           });
         }
+        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new CliUsageEngineError('invalid-response', 'Usage engine foreground response is invalid.', {
           cause: error,
         });
@@ -359,6 +368,7 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
       return { completion: outcome.completion, mode: 'foreground' };
     } catch (error) {
       if (signal?.aborted) {
+        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new CliUsageEngineError('aborted', 'Usage engine command was cancelled.', { cause: error });
       }
       throw error;

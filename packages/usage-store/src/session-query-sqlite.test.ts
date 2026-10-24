@@ -25,7 +25,7 @@ import {
 import { localTimeRowFields } from '@ai-usage/report-core/test-fixtures/local-time-row';
 import { Effect } from 'effect';
 import { queryServedRevisionData } from './reader';
-import { createServedRevisionQueryDatabase } from './served-revision';
+import { createServedRevisionQueryDatabase, type SqliteQueryBinding } from './served-revision';
 import {
   assertSessionQueryDatabase,
   executeMaterializedSessionQuery,
@@ -722,7 +722,7 @@ describe('durable session query SQLite projections', () => {
       throw new Error('Expected a lookup target');
     }
     const lookupRequest = { revision: 'revision-a', rowId: sessionRowIdentity(target) };
-    const traces: { params: readonly unknown[]; sql: string }[] = [];
+    const traces: { params: readonly SqliteQueryBinding[]; sql: string }[] = [];
     try {
       expect(
         executeMaterializedSessionQuery(database, 'session-lookup', lookupRequest, (query) => traces.push(query)),
@@ -789,8 +789,14 @@ describe('durable session query SQLite projections', () => {
     const secondRows = [row('same-session', 20), row('only-in-b', 1)];
     const { database, dbPath } = await openRowsDatabase(firstRows);
     database.close();
-    const lookup = (revision: string, rowId: string, now = 2001) =>
-      queryServedRevisionData({ dbPath, kind: 'session-lookup', now, request: { revision, rowId }, revision });
+    const lookup = (revision: string, targetRowId: string, now = 2001) =>
+      queryServedRevisionData({
+        dbPath,
+        kind: 'session-lookup',
+        now,
+        request: { revision, rowId: targetRowId },
+        revision,
+      });
     const rowId = sessionRowIdentity(firstRows[0]!);
     const before = await Effect.runPromise(lookup('revision-a', rowId, 1001));
     await Effect.runPromise(

@@ -9,18 +9,18 @@
     "./testing": "./src/testing.ts",
     "./writer": "./src/writer.ts"
   },
-  "dependencies": {
-    "@ai-usage/platform-core": "workspace:*",
-    "@ai-usage/report-core": "workspace:*",
-    "@ai-usage/replication-outbox": "workspace:*",
-    "@ai-usage/replication-protocol": "workspace:*",
-    "effect": "^4.0.5"
-  },
   "scripts": {
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
-    "test": "bun test",
+    "format": "biome format --write .",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ai-usage/platform-core": "workspace:*",
+    "@ai-usage/replication-outbox": "workspace:*",
+    "@ai-usage/replication-protocol": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
+    "effect": "^4.0.5"
   }
 }

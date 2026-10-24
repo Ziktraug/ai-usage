@@ -12,8 +12,8 @@
   "scripts": {
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
-    "test": "bun test",
+    "format": "biome format --write .",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "test": "bun test"
   }
 }

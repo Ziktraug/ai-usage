@@ -102,8 +102,8 @@ export class ReplicationOutboxError extends Error {
   readonly code: ReplicationOutboxErrorCode;
   readonly operation: string;
 
-  constructor(code: ReplicationOutboxErrorCode, operation: string) {
-    super('The replication outbox operation failed.');
+  constructor(code: ReplicationOutboxErrorCode, operation: string, options?: ErrorOptions) {
+    super('The replication outbox operation failed.', options);
     this.name = 'ReplicationOutboxError';
     this.code = code;
     this.operation = operation;
@@ -310,7 +310,8 @@ const mapHistoryRow = (row: EventRow): ReplicationOutboxHistoryItem => {
     if (error instanceof ReplicationOutboxError) {
       throw error;
     }
-    throw new ReplicationOutboxError('stored-value-invalid', 'map-history');
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new ReplicationOutboxError('stored-value-invalid', 'map-history', { cause: error });
   }
 };
 
@@ -347,8 +348,9 @@ const optionalInstant = (value: unknown, field: string): Instant | null => {
   }
   try {
     return parseInstant(value, field);
-  } catch {
-    throw new ReplicationOutboxError('stored-value-invalid', `read-${field}`);
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new ReplicationOutboxError('stored-value-invalid', `read-${field}`, { cause: error });
   }
 };
 
@@ -393,8 +395,9 @@ const parseStoredEnvelope = (value: unknown): StoredPayloadEnvelope => {
       captureContext: parseCaptureContextSnapshot(parsed.captureContext),
       payload: parseReplicationPayload(parsed.payload),
     };
-  } catch {
-    throw new ReplicationOutboxError('stored-value-invalid', 'read-payload');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new ReplicationOutboxError('stored-value-invalid', 'read-payload', { cause: error });
   }
 };
 
@@ -423,7 +426,8 @@ const mapEventRow = (row: EventRow): ReplicationOutboxEventRecord => {
     if (error instanceof ReplicationOutboxError) {
       throw error;
     }
-    throw new ReplicationOutboxError('stored-value-invalid', 'map-event');
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new ReplicationOutboxError('stored-value-invalid', 'map-event', { cause: error });
   }
 };
 
@@ -501,7 +505,8 @@ const ensureIdentity = (
     if (error instanceof ReplicationOutboxError) {
       throw error;
     }
-    throw new ReplicationOutboxError('stored-value-invalid', 'map-state');
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new ReplicationOutboxError('stored-value-invalid', 'map-state', { cause: error });
   }
 };
 
@@ -797,7 +802,8 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
           }
           const dropped = selected.pop();
           if (dropped === undefined) {
-            throw new ReplicationOutboxError('batch-state-conflict', 'claim-empty');
+            // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+            throw new ReplicationOutboxError('batch-state-conflict', 'claim-empty', { cause: error });
           }
           if (selected.length === 0) {
             blockOversized(dropped.event.eventId);

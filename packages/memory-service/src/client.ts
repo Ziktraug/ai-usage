@@ -100,8 +100,8 @@ export class MemoryServiceClientError extends Error {
   override readonly name = 'MemoryServiceClientError';
   readonly code: MemoryServiceErrorCode;
 
-  constructor(code: MemoryServiceErrorCode, message: string) {
-    super(message);
+  constructor(code: MemoryServiceErrorCode, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.code = code;
   }
 }
@@ -147,8 +147,9 @@ const readBoundedResponse = async (response: Response, signal: AbortSignal): Pro
   }
   try {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
-  } catch {
-    throw new MemoryServiceClientError('invalid-response', 'Memory service response is invalid.');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new MemoryServiceClientError('invalid-response', 'Memory service response is invalid.', { cause: error });
   }
 };
 
@@ -209,6 +210,7 @@ export const createMemoryServiceClient = ({
       if (error instanceof MemoryServiceClientError) {
         throw error;
       }
+      // biome-ignore lint/style/useErrorCause: redaction boundary, this can be a parse error quoting the token-bearing rendezvous file
       throw new MemoryServiceClientError('service-unavailable', 'Memory service is unavailable.');
     } finally {
       linked.cleanup();

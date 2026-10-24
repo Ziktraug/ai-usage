@@ -271,7 +271,8 @@ const readCandidate = (request: CodexDistillationEvidenceRequest, storage: Stora
     const files = yield* listCodexSessionFiles.pipe(Effect.provideService(LocalHistoryStorage, storage));
     const sessionId = request.selection.sourceSessionId;
     const candidates = files.filter(
-      (file) => path.basename(file) === `${sessionId}.jsonl` || path.basename(file).endsWith(`-${sessionId}.jsonl`),
+      (candidate) =>
+        path.basename(candidate) === `${sessionId}.jsonl` || path.basename(candidate).endsWith(`-${sessionId}.jsonl`),
     );
     if (candidates.length !== 1) {
       return {
@@ -767,7 +768,8 @@ export const prepareCodexDistillationWindow = async (
     );
     const sessionId = request.selection.sourceSessionId;
     const matches = files.filter(
-      (file) => path.basename(file) === `${sessionId}.jsonl` || path.basename(file).endsWith(`-${sessionId}.jsonl`),
+      (candidate) =>
+        path.basename(candidate) === `${sessionId}.jsonl` || path.basename(candidate).endsWith(`-${sessionId}.jsonl`),
     );
     if (matches.length !== 1) {
       return { status: 'unavailable', reason: matches.length ? 'source-ambiguous' : 'source-unavailable' };

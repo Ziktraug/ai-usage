@@ -72,19 +72,19 @@ const producerProofValidUntilFrom = (minimumProducerCollectedAt: string | undefi
 };
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  finalize(): void;
-  get(...params: unknown[]): unknown;
-  iterate(...params: unknown[]): IterableIterator<unknown>;
-  run(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  finalize: () => void;
+  get: (...params: unknown[]) => unknown;
+  iterate: (...params: unknown[]) => IterableIterator<unknown>;
+  run: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  clearStatements(): void;
-  close(throwOnError?: boolean): void;
-  exec(sql: string): unknown;
+  clearStatements: () => void;
+  close: (throwOnError?: boolean) => void;
+  exec: (sql: string) => unknown;
   readonly inTransaction: boolean;
-  query(sql: string): SqliteStatement;
+  query: (sql: string) => SqliteStatement;
 }
 
 interface SkillObservationRecord {

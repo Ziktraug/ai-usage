@@ -73,13 +73,13 @@ export interface ResolvedProviderQuotaRefreshInput<SourceError = unknown> {
 }
 
 export interface ProviderQuotaPersistence<Error> {
-  importBatch(input: ImportProviderQuotaBatchInput): Effect.Effect<ProviderQuotaImportResult, Error>;
-  queryBackfillStates(input: QueryProviderQuotaSourceStatesInput): Effect.Effect<ProviderQuotaSourceState[], Error>;
-  queryLatest(
+  importBatch: (input: ImportProviderQuotaBatchInput) => Effect.Effect<ProviderQuotaImportResult, Error>;
+  queryBackfillStates: (input: QueryProviderQuotaSourceStatesInput) => Effect.Effect<ProviderQuotaSourceState[], Error>;
+  queryLatest: (
     input: QueryLatestProviderQuotaObservationsInput,
-  ): Effect.Effect<QueryProviderQuotaObservationsResult, Error>;
-  queryLiveState(input: QueryProviderQuotaSourceStateInput): Effect.Effect<ProviderQuotaSourceState | null, Error>;
-  recordAttempt(input: RecordProviderQuotaSourceAttemptInput): Effect.Effect<void, Error>;
+  ) => Effect.Effect<QueryProviderQuotaObservationsResult, Error>;
+  queryLiveState: (input: QueryProviderQuotaSourceStateInput) => Effect.Effect<ProviderQuotaSourceState | null, Error>;
+  recordAttempt: (input: RecordProviderQuotaSourceAttemptInput) => Effect.Effect<void, Error>;
 }
 
 interface ProviderQuotaFlight<Error> {

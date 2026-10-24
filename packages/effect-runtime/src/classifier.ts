@@ -16,7 +16,6 @@ const readOwnString = (value: object, key: string): string | undefined => {
   } catch {
     // Hostile proxies must not throw into classification.
   }
-  return;
 };
 
 export const sanitizeAllowedTaggedError = (

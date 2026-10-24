@@ -12,17 +12,17 @@
     "./device-tokens": "./src/device-tokens.ts",
     "./testing": "./src/testing.ts"
   },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "test": "bun test"
+  },
   "dependencies": {
     "@ai-usage/authorization": "workspace:*",
     "@ai-usage/platform-core": "workspace:*",
     "@better-auth/core": "1.7.12",
     "better-auth": "1.7.12"
-  },
-  "scripts": {
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit",
-    "test": "bun test",
-    "lint": "biome check .",
-    "format": "biome format --write ."
   }
 }

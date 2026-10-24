@@ -163,6 +163,7 @@ export const createRuntimeLifecycle = (dependencies: RuntimeLifecycleDependencie
         try {
           await cleanupOwnedResources(true);
         } catch (cleanupError) {
+          // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
           throw new AggregateError(
             [error, cleanupError],
             'The usage engine failed to start and could not safely clean up.',

@@ -163,23 +163,23 @@ describe('bounded Codex distillation evidence', () => {
   });
 
   test('reloads exact evidence and refuses an updated or removed source', async () => {
-    const { packet, file, options } = await prepare();
+    const { packet, file, options: preparedOptions } = await prepare();
     const reference = {
       packetDigest: packet.packetDigest,
       sourceDigest: packet.source.version.digest,
       eventIds: [packet.events[0]?.id ?? 'missing'],
     };
-    expect(await reloadCodexDistillationEvidence(request, packet, reference, options)).toEqual({
+    expect(await reloadCodexDistillationEvidence(request, packet, reference, preparedOptions)).toEqual({
       status: 'available',
       events: packet.events.slice(0, 1),
     });
     await writeFile(file, (await readFile(file, 'utf8')).replace('ENOENT', 'EACCES'));
-    expect(await reloadCodexDistillationEvidence(request, packet, reference, options)).toEqual({
+    expect(await reloadCodexDistillationEvidence(request, packet, reference, preparedOptions)).toEqual({
       status: 'unavailable',
       reason: 'source-changed',
     });
     await rm(file);
-    expect(await reloadCodexDistillationEvidence(request, packet, reference, options)).toEqual({
+    expect(await reloadCodexDistillationEvidence(request, packet, reference, preparedOptions)).toEqual({
       status: 'unavailable',
       reason: 'source-unavailable',
     });
@@ -483,7 +483,7 @@ describe('bounded Codex distillation evidence', () => {
   });
 
   test('rejects invalid schema and forged references without opening files', async () => {
-    const { packet, options } = await prepare();
+    const { packet, options: preparedOptions } = await prepare();
     expect(() => parseDistillationEvidencePacket({ ...packet, schemaVersion: 2 })).toThrow();
     expect(() => parseDistillationEvidencePacket({ ...packet, path: '/arbitrary' })).toThrow();
     expect(() =>
@@ -501,7 +501,7 @@ describe('bounded Codex distillation evidence', () => {
         request,
         packet,
         { packetDigest: packet.packetDigest, sourceDigest: packet.source.version.digest, eventIds: ['made-up'] },
-        options,
+        preparedOptions,
       ),
     ).toEqual({ status: 'unavailable', reason: 'invalid-reference' });
   });

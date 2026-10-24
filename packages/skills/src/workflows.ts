@@ -202,7 +202,7 @@ const planReconcileActions = (
 };
 
 interface ReconcileWorkflowHooks {
-  afterPlanning?(actions: readonly ProjectionAction[]): Promise<void>;
+  afterPlanning?: (actions: readonly ProjectionAction[]) => Promise<void>;
 }
 
 type MutableProjectionAction = Extract<
@@ -317,7 +317,7 @@ export const createSkillTargetDirectory = async (input: CreateSkillTargetDirecto
       }
       const parent = path.dirname(existingParent);
       if (parent === existingParent) {
-        throw new Error('Skill target has no observable directory ancestor');
+        throw new Error('Skill target has no observable directory ancestor', { cause: error });
       }
       existingParent = parent;
     }

@@ -16,7 +16,7 @@ afterEach(async () => {
   }
 });
 
-const jsonl = (...records: unknown[]): string => `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
+const jsonl = (...records: unknown[]): string => `${records.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
 
 const skillCall = (id: string) => ({ type: 'tool_use', id, name: 'Skill', input: { skill: 'review' } });
 

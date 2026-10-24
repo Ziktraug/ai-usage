@@ -115,7 +115,7 @@ const parseWorkspaceSpecifier = (specifier: string) => {
   };
 };
 
-async function collectViolations(packages: Map<string, PackageInterface>) {
+async function collectViolations(workspacePackages: Map<string, PackageInterface>) {
   const files = await collectSourceFiles(root);
   const violations: Violation[] = [];
 
@@ -131,7 +131,7 @@ async function collectViolations(packages: Map<string, PackageInterface>) {
         continue;
       }
 
-      const packageInterface = packages.get(parsed.packageName);
+      const packageInterface = workspacePackages.get(parsed.packageName);
       if (!packageInterface) {
         violations.push({
           file: path.relative(root, file),

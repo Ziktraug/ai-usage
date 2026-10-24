@@ -1,7 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 
 const mode = process.argv[2];
-// biome-ignore lint/suspicious/noUndeclaredEnvVars: This is direct subprocess fixture input, not a Turbo cache input.
 const pidFile = process.env.PLAN052_SUPERVISOR_PID_FILE;
 
 if (mode === 'grandchild') {

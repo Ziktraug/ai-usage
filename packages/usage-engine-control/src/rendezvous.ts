@@ -54,8 +54,8 @@ export class UsageEngineRendezvousError extends Error {
   override readonly name = 'UsageEngineRendezvousError';
   readonly reason: UsageEngineRendezvousErrorReason;
 
-  constructor(reason: UsageEngineRendezvousErrorReason, message: string) {
-    super(message);
+  constructor(reason: UsageEngineRendezvousErrorReason, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.reason = reason;
   }
 }
@@ -107,8 +107,11 @@ export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvou
   let protocolVersion: UsageEngineProtocolVersion;
   try {
     protocolVersion = parseUsageEngineProtocolVersion(value.protocolVersion);
-  } catch {
-    throw new UsageEngineRendezvousError('protocol-mismatch', 'Usage engine protocol version mismatch.');
+  } catch (error) {
+    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
+    throw new UsageEngineRendezvousError('protocol-mismatch', 'Usage engine protocol version mismatch.', {
+      cause: error,
+    });
   }
   return Object.freeze({
     instanceId: parseUsageEngineInstanceId(value.instanceId),
@@ -158,8 +161,8 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
   while (true) {
     try {
       file = await open(absolutePath, fs.constants.O_RDONLY + fs.constants.O_NOFOLLOW + fs.constants.O_NONBLOCK);
-    } catch {
-      throw new Error('Usage engine rendezvous must be an owner-only regular file.');
+    } catch (error) {
+      throw new Error('Usage engine rendezvous must be an owner-only regular file.', { cause: error });
     }
     opened = await file.stat();
     const transientPublicationLink =
@@ -217,13 +220,14 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
     let text: string;
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-      throw new Error('Usage engine rendezvous must contain valid UTF-8 JSON.');
+    } catch (error) {
+      throw new Error('Usage engine rendezvous must contain valid UTF-8 JSON.', { cause: error });
     }
     let value: unknown;
     try {
       value = JSON.parse(text) as unknown;
     } catch {
+      // biome-ignore lint/style/useErrorCause: redaction boundary, JSON parse errors quote the token-bearing rendezvous document
       throw new Error('Usage engine rendezvous must contain valid JSON.');
     }
     return parseUsageEngineRendezvous(value);

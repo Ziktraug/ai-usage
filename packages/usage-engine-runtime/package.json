@@ -11,24 +11,24 @@
     "./source-adapters": "./src/source-adapters.ts",
     "./source-control": "./src/source-control.ts"
   },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "test": "bun test"
+  },
   "dependencies": {
     "@ai-usage/effect-runtime": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
     "@ai-usage/local-machine": "workspace:*",
-    "@ai-usage/report-core": "workspace:*",
-    "@ai-usage/report-data": "workspace:*",
     "@ai-usage/replication-outbox": "workspace:*",
     "@ai-usage/replication-protocol": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/report-data": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-merge": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
     "effect": "^4.0.5"
-  },
-  "scripts": {
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit",
-    "test": "bun test",
-    "lint": "biome check .",
-    "format": "biome format --write ."
   }
 }

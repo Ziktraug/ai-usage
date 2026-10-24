@@ -132,15 +132,15 @@ interface CodexSessionCacheRow {
 }
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  run(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  get: (...params: unknown[]) => unknown;
+  run: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  close(): void;
-  exec(sql: string): unknown;
-  query(sql: string): SqliteStatement;
+  close: () => void;
+  exec: (sql: string) => unknown;
+  query: (sql: string) => SqliteStatement;
 }
 
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an

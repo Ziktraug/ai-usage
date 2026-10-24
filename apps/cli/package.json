@@ -6,6 +6,15 @@
   "bin": {
     "ai-usage": "./src/main.ts"
   },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "quota": "bun src/main.ts quota",
+    "start": "bun src/main.ts",
+    "test": "bun test"
+  },
   "dependencies": {
     "@ai-usage/effect-runtime": "workspace:*",
     "@ai-usage/memory-service": "workspace:*",
@@ -16,14 +25,5 @@
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
     "effect": "^4.0.5"
-  },
-  "scripts": {
-    "start": "bun src/main.ts",
-    "quota": "bun src/main.ts quota",
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit",
-    "test": "bun test",
-    "lint": "biome check .",
-    "format": "biome format --write ."
   }
 }
