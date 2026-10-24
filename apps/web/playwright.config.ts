@@ -24,6 +24,7 @@ export default defineConfig({
     'work-codex-production.spec.ts',
     'work-codex-native.spec.ts',
     'work-production.spec.ts',
+    'work-threads-production.spec.ts',
   ],
   use: {
     baseURL: 'http://127.0.0.1:4174',

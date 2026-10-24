@@ -244,8 +244,10 @@ const createAnalysisFromServedSession = async (
   expect(data.row.thread.intent).toBe('analysis');
   expect(data.row.links).toHaveLength(1);
   expect(data.row.links[0]).toMatchObject({ kind: 'session', key: ROOT_SESSION_KEY, detachedAt: null });
-  expect(data.row.sessionCount).toBe(1);
+  // One linked session is one episode; sessions it delegated nest under it and count as sessions
+  // of the task (as in the v3 reference), never as separate episodes or tasks.
   expect(data.episodes).toHaveLength(1);
+  expect(data.row.sessionCount).toBe(1 + (data.episodes[0]?.children.length ?? 0));
   expect(data.episodes[0]?.endedAt).not.toBeNull();
   expect(data.row.markers.pullRequests).toEqual([]);
   expect(data.row.markers.jiraIssues).toEqual([]);
