@@ -262,6 +262,12 @@ test('links a recent served session of the project, detaches it, and can undo th
   await expect(picker.getByRole('heading', { name: 'Recent sessions · ai-usage', exact: true })).toBeVisible();
   await picker.getByRole('button', { name: 'Link Build report UI', exact: true }).click();
   await expect(page.getByText('1 linked session · one task', { exact: true })).toBeVisible();
+  const linkedEvent = page.locator('.wt-event').filter({ hasText: 'Source linked' });
+  await expect(linkedEvent.getByText('Build report UI · Codex', { exact: true })).toHaveAttribute(
+    'title',
+    'session:fixture-machine/codex/campaign-root',
+  );
+  await expect(linkedEvent).not.toContainText('session:fixture-machine/codex/campaign-root');
   const linked = await detail(request, task.threadId);
   expect(linked.episodes.map((episode) => episode.sourceSessionId)).toContain('campaign-root');
   const episode = page.locator('[data-session-key="session:fixture-machine/codex/campaign-root"]');
@@ -269,6 +275,12 @@ test('links a recent served session of the project, detaches it, and can undo th
   await expect(episode.getByText('Resume unavailable: Synthetic demo')).toBeVisible();
   await episode.getByRole('button', { name: 'Detach session', exact: true }).click();
   await expect(page.getByText('0 linked sessions · one task', { exact: true })).toBeVisible();
+  const detachedEvent = page.locator('.wt-event').filter({ hasText: 'Source detached' });
+  await expect(detachedEvent.getByText('a session (no longer readable)', { exact: true })).toHaveAttribute(
+    'title',
+    'session:fixture-machine/codex/campaign-root',
+  );
+  await expect(detachedEvent).not.toContainText('session:fixture-machine/codex/campaign-root');
   const detached = await detail(request, task.threadId);
   expect(detached.detachedLinks).toHaveLength(1);
   expect(detached.events.at(-1)?.kind).toBe('link-detached');
@@ -312,6 +324,7 @@ test('searches PR and session titles and preserves filters through task navigati
   await open(page);
   await page.getByRole('searchbox', { name: 'Search tasks' }).fill('1487');
   await expect(row(page, ids.payments)).toBeVisible();
+  await expect(row(page, ids.payments)).toContainText('4 sessions · 1 delegated');
   await page.getByRole('searchbox', { name: 'Search tasks' }).fill('Compare retry approaches');
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('Compare retry approaches');
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('Example shop');
@@ -319,6 +332,7 @@ test('searches PR and session titles and preserves filters through task navigati
   const listUrl = page.url();
   await row(page, ids.payments).getByRole('link', { name: 'Prevent duplicate payments' }).first().click();
   await expect(page.getByRole('heading', { name: 'Prevent duplicate payments', exact: true })).toBeVisible();
+  await expect(page.getByText('4 linked sessions · 1 delegated · one task', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '+ 1 delegated session', exact: true }).click();
   await expect(page.getByRole('button', { name: '− 1 delegated session', exact: true })).toHaveAttribute(
     'aria-expanded',

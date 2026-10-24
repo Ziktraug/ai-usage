@@ -15,6 +15,7 @@ import {
   parseWorkThreadsDetailOutput,
   parseWorkThreadsListOutput,
 } from '@ai-usage/web-contract/work-threads';
+import { threadSituationCopy } from '../lib/features/work/work-thread-model';
 import {
   bindLiveWorkThreadPorts,
   executeWorkThreadCommandForServer,
@@ -27,6 +28,7 @@ import {
 import {
   createSyntheticWorkThreadStore,
   getSyntheticWorkThreadPorts,
+  projectSyntheticWorkThreadEpisodes,
   WORK_THREADS_FIXTURE_IDS,
   WORK_THREADS_SYNTHETIC_NOW,
 } from './work-threads-e2e-fixture.server';
@@ -157,10 +159,136 @@ describe('synthetic task dataset', () => {
       }
     }
     const payment = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments);
-    expect(payment?.row.sessionCount).toBe(5);
+    expect(payment?.row.sessionCount).toBe(4);
+    expect(payment?.row.delegatedSessionCount).toBe(1);
     expect(payment?.episodes).toHaveLength(4);
     expect(payment?.episodes.flatMap((episode) => episode.children)).toHaveLength(1);
     expect(payment?.episodes.every((episode) => episode.resume.kind === 'none')).toBe(true);
+  });
+
+  test('counts recursive delegation once even when descendants also have explicit links', async () => {
+    const ports = createSyntheticWorkThreadStore();
+    const payment = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments);
+    const parent = payment?.episodes.find((episode) => episode.children.length > 0);
+    const child = parent?.children[0];
+    const parentLink = payment?.row.links.find((link) => link.key === parent?.linkKey);
+    if (!(parent && child && parentLink)) {
+      throw new Error('Missing the declared fixture delegation.');
+    }
+    const grandchild = {
+      ...child,
+      children: [],
+      linkKey: 'session:fixture-machine/codex/nested-review',
+      sourceSessionId: 'nested-review',
+    };
+    const nestedChild = { ...child, children: [grandchild] };
+    const nestedParent = { ...parent, children: [nestedChild, nestedChild] };
+    const linked = [nestedParent, nestedChild, grandchild].map((episode) => ({
+      ...parentLink,
+      key: episode.linkKey,
+      linkId: crypto.randomUUID(),
+    }));
+    const projected = projectSyntheticWorkThreadEpisodes([nestedParent, nestedChild, grandchild], linked);
+    expect(projected).toMatchObject({ sessionCount: 1, delegatedSessionCount: 2 });
+    expect(projected.episodes).toHaveLength(1);
+    expect(projected.episodes[0]?.children).toHaveLength(1);
+    expect(projected.episodes[0]?.children[0]?.children.map((episode) => episode.linkKey)).toEqual([
+      grandchild.linkKey,
+    ]);
+    expect(projectSyntheticWorkThreadEpisodes([nestedParent], [parentLink])).toMatchObject({
+      sessionCount: 1,
+      delegatedSessionCount: 2,
+    });
+  });
+
+  test('a linked parent retains its declared child until explicitly detached; reattachment restores delegation', async () => {
+    const ports = createSyntheticWorkThreadStore();
+    const payment = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments);
+    const parent = payment?.episodes.find((episode) => episode.children.length > 0);
+    const child = parent?.children[0];
+    if (!(parent && child)) {
+      throw new Error('Missing the declared fixture delegation.');
+    }
+    const created = await ports.executeCommand({ ...create(), links: [{ kind: 'session', key: parent.linkKey }] });
+    if (!created.ok) {
+      throw new Error('Could not link the parent session.');
+    }
+    const threadId = created.threadId;
+    expect((await ports.readDetail(threadId))?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
+    const linkChild = {
+      commandId: crypto.randomUUID(),
+      op: 'link' as const,
+      threadId,
+      kind: 'session' as const,
+      key: child.linkKey,
+    };
+    await ports.executeCommand(linkChild);
+    const linked = await ports.readDetail(threadId);
+    expect(linked?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
+    expect(linked?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
+    const association = linked?.row.links.find((link) => link.key === child.linkKey);
+    if (!association) {
+      throw new Error('The explicit child link is missing.');
+    }
+    await ports.executeCommand({
+      commandId: crypto.randomUUID(),
+      op: 'detach-link',
+      threadId,
+      linkId: association.linkId,
+    });
+    const detached = await ports.readDetail(threadId);
+    expect(detached?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 0 });
+    expect(detached?.episodes[0]?.children).toEqual([]);
+    await ports.executeCommand({ ...linkChild, commandId: crypto.randomUUID() });
+    const restored = await ports.readDetail(threadId);
+    expect(restored?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
+    expect(restored?.episodes[0]?.children.map((episode) => episode.linkKey)).toEqual([child.linkKey]);
+    expect(parseWorkThreadsDetailOutput({ ok: true, data: restored }).ok).toBe(true);
+    expect(parseWorkThreadsListOutput({ ok: true, data: await ports.readList(query) }).ok).toBe(true);
+  });
+
+  test.each([
+    'ok',
+    'failed',
+    'unavailable',
+  ] as const)('delegation never conceals a missing explicit session (source=%s)', async (state) => {
+    const sources = [
+      { source: 'sessions' as const, state, lastRunAt: WORK_THREADS_SYNTHETIC_NOW, message: 'Synthetic source status' },
+    ];
+    const ports = createSyntheticWorkThreadStore({ sources });
+    const payment = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments);
+    const parent = payment?.episodes.find((episode) => episode.children.length > 0);
+    if (!parent) {
+      throw new Error('Missing the declared fixture delegation.');
+    }
+    const input = {
+      ...create(),
+      title: 'Analysis with incomplete session evidence',
+      links: [parent.linkKey, 'session:fixture-machine/codex/missing-review-check'].map((key) => ({
+        kind: 'session' as const,
+        key,
+      })),
+    };
+    const created = await ports.executeCommand(input);
+    if (!created.ok) {
+      throw new Error('Could not create the analysis.');
+    }
+    const detail = await ports.readDetail(created.threadId);
+    if (!detail) {
+      throw new Error('Missing the created analysis.');
+    }
+    expect(detail.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
+    const expectedState = state === 'ok' ? 'truncated' : state;
+    expect(detail.sources[0]?.state).toBe(expectedState);
+    const situation = threadSituationCopy(detail.row, detail.generatedAt, detail.sources);
+    expect(situation.hint).toBe('undecided');
+    expect(situation.remainders).toContainEqual(
+      expect.objectContaining({ source: 'sessions', kind: 'source-unavailable', outcome: expectedState }),
+    );
+    const list = await ports.readList({ ...query, search: input.title });
+    expect(list.sources).toEqual(detail.sources);
+    expect(list.rows).toHaveLength(1);
+    expect((await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments))?.sources).toEqual(sources);
   });
 
   test('searches PR numbers and linked session titles; filters, pagination and cursor scope agree', async () => {

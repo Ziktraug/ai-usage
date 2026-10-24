@@ -455,13 +455,13 @@
                   {timeZone}
                 />
               {:else}
-                {@const eventCopy = threadEventCopy(entry.event)}
+                {@const eventCopy = threadEventCopy(entry.event, data.episodes)}
                 <div class="wt-event">
                   <span class="wt-event-source">{threadEventActor(entry.event)}</span>
                   <div>
                     <strong>{eventCopy.title}</strong>
                     {#if eventCopy.detail}
-                      <p>{eventCopy.detail}</p>
+                      <p title={entry.event.linkKey ?? undefined}>{eventCopy.detail}</p>
                     {/if}
                     {#if entry.event.acknowledgedRemainders.length}
                       <details>
@@ -488,7 +488,11 @@
   </div>
 </section>
 <div class="wt-minor-ops">
-  <span>{row.sessionCount} linked {row.sessionCount === 1 ? 'session' : 'sessions'} · one task</span
+  <span
+    >{row.sessionCount}
+    linked {row.sessionCount === 1 ? 'session' : 'sessions'}
+    {row.delegatedSessionCount > 0 ? ` · ${row.delegatedSessionCount} delegated` : ''}
+    · one task</span
   ><button
     class="wt-link"
     onclick={() => { panel = panel === 'link' ? null : 'link'; if (panel === 'link') { onPickerOpen(); } }}

@@ -140,6 +140,9 @@ export const threadRefs = (row: WorkThreadRow): string => {
     refs.push('Local branch');
   }
   refs.push(`${row.sessionCount} ${row.sessionCount === 1 ? 'session' : 'sessions'}`);
+  if (row.delegatedSessionCount > 0) {
+    refs.push(`${row.delegatedSessionCount} delegated`);
+  }
   return refs.join(' · ');
 };
 
@@ -221,7 +224,7 @@ const sessionSourceRemainder = (
   now: string,
 ): WorkThreadRemainder | null => {
   const link = row.links.find((item) => item.kind === 'session' && item.detachedAt === null);
-  if (!link && row.sessionCount === 0) {
+  if (!link && row.sessionCount === 0 && row.delegatedSessionCount === 0) {
     return null;
   }
   const source = sources.find((item) => item.source === 'sessions');
@@ -239,15 +242,8 @@ const sessionSourceRemainder = (
 };
 
 export const threadSituationCopy = (row: WorkThreadRow, now: string, sources: readonly WorkThreadSourceStatus[]) => {
-  let situation = deriveWorkThreadSituation(row, now);
   const sessionRemainder = sessionSourceRemainder(row, sources, now);
-  if (sessionRemainder) {
-    const remainders = [...situation.remainders, sessionRemainder];
-    situation =
-      row.thread.followState !== 'following' || row.runningSessions > 0
-        ? { ...situation, remainders }
-        : { hint: 'undecided', reason: sessionRemainder.kind, action: 'copy-context', remainders };
-  }
+  const situation = deriveWorkThreadSituation(row, now, sessionRemainder ? [sessionRemainder] : []);
   const label = {
     'to-resume': 'To resume',
     'in-progress': 'In progress',
@@ -367,7 +363,42 @@ export const threadContext = (data: WorkThreadDetailDataset): string =>
     .filter((part) => part !== null)
     .join('\n\n');
 
-export const threadEventCopy = (event: WorkThreadEvent): { title: string; detail: string | null } => {
+const episodeForLink = (episodes: readonly WorkThreadEpisode[], key: string): WorkThreadEpisode | null => {
+  for (const episode of episodes) {
+    if (episode.linkKey === key) {
+      return episode;
+    }
+    const child = episodeForLink(episode.children, key);
+    if (child) {
+      return child;
+    }
+  }
+  return null;
+};
+
+const eventLinkLabel = (key: string, episodes: readonly WorkThreadEpisode[]): string => {
+  if (parseWorkThreadLinkKey('session', key)) {
+    const episode = episodeForLink(episodes, key);
+    return episode
+      ? `${episode.title ?? 'Untitled session'} · ${harnessName(episode.harness)}`
+      : 'a session (no longer readable)';
+  }
+  const pr = parseWorkThreadLinkKey('pull-request', key);
+  if (pr?.kind === 'pull-request') {
+    return `PR #${pr.number} · ${pr.repository}`;
+  }
+  const jira = parseWorkThreadLinkKey('jira-issue', key);
+  if (jira?.kind === 'jira-issue') {
+    return jira.key;
+  }
+  const branch = parseWorkThreadLinkKey('branch', key);
+  return branch?.kind === 'branch' ? branch.ref : 'a source (no longer readable)';
+};
+
+export const threadEventCopy = (
+  event: WorkThreadEvent,
+  episodes: readonly WorkThreadEpisode[],
+): { title: string; detail: string | null } => {
   const titles: Record<WorkThreadEvent['kind'], string> = {
     created: 'Task created',
     'follow-state': { done: 'Follow-up ended', waiting: 'Marked as waiting', following: 'Follow-up reopened' }[
@@ -379,7 +410,10 @@ export const threadEventCopy = (event: WorkThreadEvent): { title: string; detail
     renamed: 'Task renamed',
     'wait-satisfied': 'New response observed',
   };
-  return { title: titles[event.kind], detail: event.reason ?? event.linkKey };
+  const linkLabel = event.linkKey ? eventLinkLabel(event.linkKey, episodes) : null;
+  const detail =
+    event.kind === 'link-added' || event.kind === 'link-detached' ? linkLabel : (event.reason ?? linkLabel);
+  return { title: titles[event.kind], detail };
 };
 
 export type ThreadHistoryEntry =

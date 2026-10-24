@@ -3,6 +3,7 @@ import { parseWorkThreadCommand } from '@ai-usage/report-core/work-thread';
 import { parse, safeParse } from 'valibot';
 import {
   workThreadEpisodeSchema,
+  workThreadRowSchema,
   workThreadsCommandInputSchema,
   workThreadsCommandOutputSchema,
   workThreadsDetailInputSchema,
@@ -45,8 +46,58 @@ const episode = {
   startedAt: at,
   title: 'Synthetic session',
 };
+const row = {
+  afterDone: null,
+  delegatedSessionCount: 20,
+  lastActivityAt: at,
+  links: [],
+  markers: { jiraIssues: [], local: [], pullRequests: [] },
+  marks: [],
+  runningSessions: 0,
+  sessionCount: 1,
+  thread: {
+    createdAt: at,
+    updatedAt: at,
+    doneAt: null,
+    doneReason: null,
+    followRevision: 1,
+    followState: 'following',
+    intent: 'analysis',
+    machineId: 'test',
+    note: null,
+    objective: null,
+    origin: 'user',
+    originKey: null,
+    projectLabel: 'Test',
+    threadId: id,
+    title: 'Synthetic analysis',
+    waitingFor: null,
+    waitingOn: null,
+  },
+};
 
 describe('Work thread wire contract', () => {
+  test('delegated count is required and remains separate from linked roots', () => {
+    expect(parse(workThreadRowSchema, row)).toMatchObject({ sessionCount: 1, delegatedSessionCount: 20 });
+    expect(parse(workThreadRowSchema, { ...row, delegatedSessionCount: 0 }).delegatedSessionCount).toBe(0);
+    expect(
+      parse(workThreadRowSchema, { ...row, delegatedSessionCount: Number.MAX_SAFE_INTEGER }).delegatedSessionCount,
+    ).toBe(Number.MAX_SAFE_INTEGER);
+    const { delegatedSessionCount: _omitted, ...missingCount } = row;
+    expect(safeParse(workThreadRowSchema, missingCount).success).toBe(false);
+    for (const delegatedSessionCount of [
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      Number.POSITIVE_INFINITY,
+      Number.NaN,
+      '2',
+      null,
+      undefined,
+    ]) {
+      expect(safeParse(workThreadRowSchema, { ...row, delegatedSessionCount }).success).toBe(false);
+    }
+  });
   test('list identities are bounded and exact, detail requires a UUID', () => {
     expect(parse(workThreadsListInputSchema, query)).toEqual(query);
     for (const patch of [

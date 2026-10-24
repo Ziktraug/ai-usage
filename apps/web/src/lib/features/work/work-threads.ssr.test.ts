@@ -100,6 +100,110 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain('Resume note, if needed');
     expect(body).not.toContain('Human review decision');
   });
+  test('list and task footer keep delegated counts separate and omit a zero delegated count', () => {
+    const row = { ...payments.row, sessionCount: 1, delegatedSessionCount: 20 };
+    const listBody = html(List, {
+      dataset: list,
+      rows: [row],
+      query,
+      timeZone: 'UTC',
+      href: () => '/work',
+      onOpen: noop,
+      onFilter: noop,
+      onMore: noop,
+    });
+    expect(listBody).toContain('1 session · 20 delegated');
+    expect(listBody.split('data-work-thread=').length - 1).toBe(1);
+    expect(html(Detail, { ...baseDetailProps, data: { ...payments, row } })).toContain(
+      '1 linked session · 20 delegated · one task',
+    );
+    expect(
+      html(Detail, { ...baseDetailProps, data: { ...payments, row: { ...row, delegatedSessionCount: 0 } } }),
+    ).toContain('1 linked session · one task');
+  });
+  test('truncated sessions stay visible while failing PR checks remain the task and list headline', () => {
+    const marker = payments.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected a PR observation');
+    }
+    const row = {
+      ...payments.row,
+      markers: {
+        ...payments.row.markers,
+        pullRequests: [{ ...marker, latest: { ...marker.latest, checksRollup: 'failure', reviewDecision: null } }],
+      },
+    };
+    const sources = [
+      {
+        source: 'sessions',
+        state: 'truncated',
+        lastRunAt: payments.generatedAt,
+        message: 'Session read limit reached',
+      },
+    ];
+    expect(html(Detail, { ...baseDetailProps, data: { ...payments, row, sources } })).toContain(
+      '<h2>PR checks are failing</h2>',
+    );
+    expect(
+      html(List, {
+        dataset: { ...list, sources },
+        rows: [row],
+        query,
+        timeZone: 'UTC',
+        href: () => '/work',
+        onOpen: noop,
+        onFilter: noop,
+        onMore: noop,
+      }),
+    ).toContain('PR checks are failing');
+    const banner = html(Sources, { sources, now: payments.generatedAt, timeZone: 'UTC' });
+    expect(banner).toContain('Sessions: truncated');
+    expect(banner).toContain('does not establish that nothing is left');
+  });
+  test('source events show escaped readable labels and reserve raw keys for title attributes', () => {
+    const episode = payments.episodes[0];
+    const event = payments.events[0];
+    if (!(episode && event)) {
+      throw new Error('Expected episode and event');
+    }
+    const nested = {
+      ...episode,
+      linkKey: 'session:fixture-machine/codex/nested-label',
+      harness: 'codex',
+      title: '<Check> retry & result',
+      children: [],
+    };
+    const keys = [
+      nested.linkKey,
+      'session:fixture-machine/claude/missing',
+      'github.example/team/repo#68',
+      'jira:example/XLB-2085',
+      'branch:github.example/team/repo@fix/payment/retry',
+    ];
+    const data = {
+      ...payments,
+      episodes: [{ ...episode, children: [{ ...episode, children: [nested] }] }],
+      events: keys.map((linkKey, index) => ({
+        ...event,
+        eventId: `${event.eventId}-${index}`,
+        kind: 'link-detached',
+        linkKey,
+        reason: null,
+      })),
+    };
+    const body = html(Detail, { ...baseDetailProps, data });
+    const visible = body.replaceAll(/<[^>]*>/g, '');
+    expect(visible).toContain('&lt;Check> retry &amp; result · Codex');
+    expect(body).not.toContain('<Check>');
+    expect(visible).toContain('a session (no longer readable)');
+    expect(visible).toContain('PR #68 · team/repo');
+    expect(visible).toContain('XLB-2085');
+    expect(visible).toContain('fix/payment/retry');
+    for (const key of keys) {
+      expect(body).toContain(`title="${key}"`);
+      expect(visible).not.toContain(key);
+    }
+  });
   test('episode context labels span, verified resume copy, and unknown origin honestly', () => {
     const episode = payments.episodes[0];
     if (!episode) {

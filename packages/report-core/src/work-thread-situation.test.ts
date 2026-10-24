@@ -34,6 +34,7 @@ const row = (patch: Partial<WorkThreadRow> = {}): WorkThreadRow => ({
   markers: { jiraIssues: [], local: [], pullRequests: [] },
   marks: [],
   runningSessions: 0,
+  delegatedSessionCount: 0,
   sessionCount: 0,
   thread,
   ...patch,
@@ -213,6 +214,61 @@ describe('Work thread situation', () => {
         at,
       ),
     ).toMatchObject({ hint: 'to-resume', reason: 'jira-open', action: 'open-jira' });
+  });
+  test('known failing checks stay actionable while a truncated session read remains visible', () => {
+    const unavailable = {
+      key: 'session:test/codex/one',
+      source: 'sessions' as const,
+      observedAt: at,
+      kind: 'source-unavailable' as const,
+      outcome: 'truncated',
+    };
+    const result = deriveWorkThreadSituation(withPr(pr({ checksRollup: 'failure' })), at, [unavailable]);
+    expect(result).toMatchObject({ hint: 'to-resume', reason: 'failing-checks', action: 'open-pr' });
+    expect(result.remainders).toContainEqual(unavailable);
+    expect(result.remainders.map((item) => item.kind)).toEqual(['open-pr', 'failing-checks', 'source-unavailable']);
+  });
+  test('Jira work, pending checks and an open PR rank ahead of missing or stale reads', () => {
+    const issue = jira({ statusCategory: 'in-progress', observedAt: older });
+    const value = row({
+      markers: {
+        local: [{ key: 'checkout', latest: null, latestSuccessful: null, via: 'session-checkout' }],
+        jiraIssues: [{ key: 'jira:default/TEST-1', latest: issue, latestSuccessful: issue }],
+        pullRequests: [],
+      },
+    });
+    const result = deriveWorkThreadSituation(value, at);
+    expect(result).toMatchObject({ hint: 'to-resume', reason: 'jira-open', action: 'open-jira' });
+    expect(result.remainders.map((item) => item.kind)).toEqual(['source-unknown', 'source-stale', 'jira-open']);
+    const unknown = { key: id, source: 'sessions' as const, observedAt: null, kind: 'source-unknown' as const };
+    expect(deriveWorkThreadSituation(withPr(pr({ checksRollup: 'pending' })), at, [unknown])).toMatchObject({
+      hint: 'waiting',
+      reason: 'pending-checks',
+      action: 'open-pr',
+    });
+    expect(deriveWorkThreadSituation(withPr(pr()), at, [unknown])).toMatchObject({
+      reason: 'open-pr',
+      action: 'open-pr',
+    });
+    expect(deriveWorkThreadSituation(row({ thread: { ...thread, intent: 'analysis' } }), at, [unknown])).toMatchObject({
+      hint: 'undecided',
+      reason: 'source-unknown',
+      remainders: [unknown],
+    });
+  });
+  test('explicitly linked children count as observed sessions without becoming root work', () => {
+    const links = ['root', 'child'].map((key) => ({
+      createdAt: at,
+      detachedAt: null,
+      key: `session:test/codex/${key}`,
+      kind: 'session' as const,
+      linkId: id,
+      provenance: 'user' as const,
+      threadId: id,
+    }));
+    const observed = row({ links, sessionCount: 1, delegatedSessionCount: 1 });
+    expect(kinds(observed)).toEqual([]);
+    expect(kinds({ ...observed, delegatedSessionCount: 0 })).toEqual(['source-unknown']);
   });
   test('failed latest read preserves previous fact with both observation dates', () => {
     const previous = pr({ state: 'MERGED', observedAt: older });

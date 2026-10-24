@@ -171,7 +171,12 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
       });
     }
   }
-  if (row.links.filter((link) => link.kind === 'session' && link.detachedAt === null).length > row.sessionCount) {
+  // A linked child may already be nested below another linked session. Counts can establish
+  // insufficient observed evidence, but cannot identify which particular key is missing.
+  if (
+    row.links.filter((link) => link.kind === 'session' && link.detachedAt === null).length >
+    row.sessionCount + row.delegatedSessionCount
+  ) {
     remainders.push({ key: row.thread.threadId, observedAt: null, source: 'sessions', kind: 'source-unknown' });
   }
   if (row.runningSessions > 0) {
@@ -194,21 +199,25 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'review-requested',
   'local-files',
   'unpushed-commits',
+  'jira-open',
+  'pending-checks',
+  'open-pr',
   'source-unavailable',
   'source-stale',
   'source-unknown',
-  'pending-checks',
-  'jira-open',
-  'open-pr',
 ];
 
 /** Facts can suggest an end, but only an operator command ends the follow-up. */
-export const deriveWorkThreadSituation = (row: WorkThreadRow, now: string | number | Date): WorkThreadSituation => {
+export const deriveWorkThreadSituation = (
+  row: WorkThreadRow,
+  now: string | number | Date,
+  additionalRemainders: readonly WorkThreadRemainder[] = [],
+): WorkThreadSituation => {
   const epoch = typeof now === 'number' ? now : new Date(now).getTime();
   if (!Number.isFinite(epoch)) {
     throw new RangeError('A valid observation time is required.');
   }
-  const remainders = deriveRemainders(row, epoch);
+  const remainders = [...deriveRemainders(row, epoch), ...additionalRemainders];
   if (row.thread.followState === 'done') {
     return { hint: 'done', reason: 'follow-up-ended', action: 'reopen', remainders };
   }

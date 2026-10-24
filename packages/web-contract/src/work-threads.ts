@@ -108,6 +108,7 @@ const markers = strictObject({
 });
 export const workThreadRowSchema = strictObject({
   afterDone: nullable(strictObject({ count, latestAt: instant })),
+  delegatedSessionCount: count,
   lastActivityAt: instant,
   links: pipe(array(link), maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread)),
   markers,

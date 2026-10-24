@@ -17,6 +17,7 @@ import {
   threadDayKey,
   threadDisplayMarkers,
   threadEventActor,
+  threadEventCopy,
   threadHistory,
   threadListQuery,
   threadMoreUrl,
@@ -52,6 +53,12 @@ describe('task presentation model', () => {
     expect(groups.some((group) => group.project === 'ai-usage')).toBe(true);
     expect(threadRefs(review.row)).toContain('0 sessions');
     expect(threadRefs(review.row)).toContain('PR #');
+  });
+  test('task references count linked sessions separately from delegated sessions and omit zero delegations', () => {
+    expect(threadRefs({ ...review.row, sessionCount: 1, delegatedSessionCount: 20 })).toBe(
+      'PR #1492 · 1 session · 20 delegated',
+    );
+    expect(threadRefs({ ...review.row, sessionCount: 2, delegatedSessionCount: 0 })).toBe('PR #1492 · 2 sessions');
   });
   test('filters and scroll survive task links and the return URL', () => {
     const url = new URL('http://localhost/work?tab=done&project=Example+shop&q=1487&cursor=next&scroll=550');
@@ -148,7 +155,7 @@ describe('task presentation model', () => {
         (item) => item.kind === 'source-stale',
       ),
     ).toBe(true);
-    const noSessions = { ...analysis.row, links: [], sessionCount: 0 };
+    const noSessions = { ...analysis.row, links: [], sessionCount: 0, delegatedSessionCount: 0 };
     expect(threadSituationCopy(noSessions, analysis.generatedAt, failed)).toMatchObject({
       hint: 'ready-to-close',
       remainders: [],
@@ -165,6 +172,9 @@ describe('task presentation model', () => {
       hint: 'ready-to-close',
       remainders: [],
     });
+    expect(
+      threadSituationCopy({ ...noSessions, delegatedSessionCount: 1 }, analysis.generatedAt, failed).remainders,
+    ).toContainEqual(expect.objectContaining({ source: 'sessions', kind: 'source-unavailable' }));
   });
   test('a linked artifact without a read stays visible and unknown', () => {
     const display = threadDisplayMarkers({ ...payment.row, markers: { local: [], pullRequests: [], jiraIssues: [] } });
@@ -176,6 +186,43 @@ describe('task presentation model', () => {
         payment.generatedAt,
         payment.sources,
       ).remainders.some((item) => item.kind === 'source-unknown'),
+    ).toBe(true);
+  });
+  test('failing PR checks remain actionable when the sessions read is truncated', () => {
+    const marker = payment.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected a PR observation');
+    }
+    const situation = threadSituationCopy(
+      {
+        ...payment.row,
+        markers: {
+          ...payment.row.markers,
+          pullRequests: [{ ...marker, latest: { ...marker.latest, checksRollup: 'failure', reviewDecision: null } }],
+        },
+      },
+      payment.generatedAt,
+      [
+        {
+          source: 'sessions',
+          state: 'truncated',
+          lastRunAt: payment.generatedAt,
+          message: 'Session read limit reached',
+        },
+      ],
+    );
+    expect(situation).toMatchObject({
+      hint: 'to-resume',
+      headline: 'PR checks are failing',
+      reason: 'failing-checks',
+      action: 'open-pr',
+    });
+    expect(situation.remainders).toContainEqual(
+      expect.objectContaining({ source: 'sessions', kind: 'source-unavailable', outcome: 'truncated' }),
+    );
+    expect(situation.remainders).toContainEqual(expect.objectContaining({ source: 'github', kind: 'failing-checks' }));
+    expect(
+      acknowledgedRemainderCopy(situation.remainders).some((item) => item.includes('Sessions latest read: truncated')),
     ).toBe(true);
   });
   test('a long confirmation acknowledges the full shown set within the command bound', () => {
@@ -248,5 +295,40 @@ describe('task presentation model', () => {
     }
     expect(threadEventActor({ ...event, kind: 'created' })).toBe('Work event');
     expect(threadEventActor({ ...event, kind: 'wait-satisfied', linkKey: 'jira:example/EX-1' })).toBe('Jira');
+  });
+  test('link and detach events resolve nested session titles and harnesses', () => {
+    const event = payment.events[0];
+    if (!event) {
+      throw new Error('Expected a test event');
+    }
+    const child: WorkThreadEpisode = {
+      ...episode,
+      linkKey: 'session:fixture-machine/codex/nested',
+      title: 'Verify the retry invariant',
+      harness: 'codex',
+      children: [],
+    };
+    const episodes = [{ ...episode, children: [{ ...episode, children: [child] }] }];
+    for (const kind of ['link-added', 'link-detached'] as const) {
+      expect(threadEventCopy({ ...event, kind, linkKey: child.linkKey, reason: null }, episodes).detail).toBe(
+        'Verify the retry invariant · Codex',
+      );
+    }
+    expect(threadEventCopy({ ...event, kind: 'link-detached', linkKey: child.linkKey, reason: null }, []).detail).toBe(
+      'a session (no longer readable)',
+    );
+  });
+  test('source event labels use PR, Jira and branch references instead of qualified keys', () => {
+    const event = payment.events[0];
+    if (!event) {
+      throw new Error('Expected a test event');
+    }
+    for (const [linkKey, label] of [
+      ['github.example/team/repo#68', 'PR #68 · team/repo'],
+      ['jira:example/XLB-2085', 'XLB-2085'],
+      ['branch:github.example/team/repo@fix/payment/retry', 'fix/payment/retry'],
+    ] as const) {
+      expect(threadEventCopy({ ...event, kind: 'link-detached', linkKey, reason: null }, []).detail).toBe(label);
+    }
   });
 });

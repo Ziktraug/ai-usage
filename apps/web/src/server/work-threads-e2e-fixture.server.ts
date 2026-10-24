@@ -418,6 +418,72 @@ const result = (thread: WorkThread, applied = true): WorkThreadCommandResult => 
   threadId: thread.threadId,
 });
 
+/** Declared descendants stay under their linked parent unless explicitly detached. */
+export const projectSyntheticWorkThreadEpisodes = (
+  available: readonly WorkThreadEpisode[],
+  links: readonly WorkThreadLink[],
+): {
+  readonly episodes: WorkThreadEpisode[];
+  readonly sessionCount: number;
+  readonly delegatedSessionCount: number;
+  readonly hasUnresolvedSessionLinks: boolean;
+} => {
+  const known = new Map<string, WorkThreadEpisode>();
+  const index = (episode: WorkThreadEpisode): void => {
+    if (known.has(episode.linkKey)) {
+      return;
+    }
+    known.set(episode.linkKey, episode);
+    for (const child of episode.children) {
+      index(child);
+    }
+  };
+  for (const episode of available) {
+    index(episode);
+  }
+  const active = new Set(
+    links.filter((link) => link.kind === 'session' && link.detachedAt === null).map((link) => link.key),
+  );
+  const detached = new Set(
+    links
+      .filter((link) => link.kind === 'session' && link.detachedAt !== null && !active.has(link.key))
+      .map((link) => link.key),
+  );
+  const candidates = [...active].flatMap((key) => {
+    const episode = known.get(key);
+    return episode ? [episode] : [];
+  });
+  const descendants = new Set<string>();
+  const visitChildren = (episode: WorkThreadEpisode, path: ReadonlySet<string>): void => {
+    const ancestors = new Set([...path, episode.linkKey]);
+    for (const child of episode.children) {
+      if (ancestors.has(child.linkKey) || detached.has(child.linkKey)) {
+        continue;
+      }
+      descendants.add(child.linkKey);
+      visitChildren(child, ancestors);
+    }
+  };
+  for (const episode of candidates) {
+    visitChildren(episode, new Set());
+  }
+  const rendered = new Set<string>();
+  const nest = (episode: WorkThreadEpisode): WorkThreadEpisode[] => {
+    if (rendered.has(episode.linkKey) || detached.has(episode.linkKey)) {
+      return [];
+    }
+    rendered.add(episode.linkKey);
+    return [{ ...episode, children: episode.children.flatMap(nest) }];
+  };
+  const projected = candidates.filter((episode) => !descendants.has(episode.linkKey)).flatMap(nest);
+  return {
+    episodes: projected,
+    sessionCount: projected.length,
+    delegatedSessionCount: rendered.size - projected.length,
+    hasUnresolvedSessionLinks: [...active].some((key) => !rendered.has(key)),
+  };
+};
+
 /** No disk, harness or source API is consulted. Each instance owns its commands and fictional facts. */
 export const createSyntheticWorkThreadStore = (
   options: {
@@ -444,21 +510,19 @@ export const createSyntheticWorkThreadStore = (
 
   const activeLinks = (record: FixtureRecord): WorkThreadLink[] =>
     record.links.filter((link) => link.detachedAt === null);
-  const linkedEpisodes = (record: FixtureRecord): WorkThreadEpisode[] => {
-    const keys = new Set(
-      activeLinks(record)
-        .filter((link) => link.kind === 'session')
-        .map((link) => link.key),
-    );
-    const visible = [...keys].flatMap((key) => {
-      const episode = episodes.get(key);
-      return episode ? [{ ...episode, children: episode.children.filter((child) => keys.has(child.linkKey)) }] : [];
-    });
-    const children = new Set(visible.flatMap((episode) => episode.children.map((child) => child.linkKey)));
-    return visible.filter((episode) => !children.has(episode.linkKey));
-  };
+  const linkedEpisodes = (record: FixtureRecord) =>
+    projectSyntheticWorkThreadEpisodes([...episodes.values()], record.links);
+  const sourcesFor = (scope: readonly FixtureRecord[]): readonly WorkThreadSourceStatus[] =>
+    scope.some((record) => linkedEpisodes(record).hasUnresolvedSessionLinks)
+      ? sources.map((source) =>
+          source.source === 'sessions' && source.state === 'ok'
+            ? { ...source, state: 'truncated', message: 'Synthetic demo: some linked sessions could not be read.' }
+            : source,
+        )
+      : sources;
   const toRow = (record: FixtureRecord): WorkThreadRow => {
     const links = activeLinks(record);
+    const projected = linkedEpisodes(record);
     const sessionEpisodes = links.flatMap((link) => {
       const episode = link.kind === 'session' ? episodes.get(link.key) : undefined;
       return episode ? [episode] : [];
@@ -529,7 +593,8 @@ export const createSyntheticWorkThreadStore = (
       markers,
       marks,
       runningSessions: sessionEpisodes.filter((episode) => episode.running === true).length,
-      sessionCount: sessionEpisodes.length,
+      delegatedSessionCount: projected.delegatedSessionCount,
+      sessionCount: projected.sessionCount,
       thread: record.thread,
     };
   };
@@ -722,11 +787,11 @@ export const createSyntheticWorkThreadStore = (
             detachedLinks: record.links
               .filter((link) => link.detachedAt !== null)
               .slice(-WORK_THREAD_BOUNDS.maxLinksPerThread),
-            episodes: linkedEpisodes(record).slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodes),
+            episodes: linkedEpisodes(record).episodes.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodes),
             events: record.events.slice(-WORK_THREAD_BOUNDS.maxEventsPerThread),
             generatedAt: now(),
             row: toRow(record),
-            sources,
+            sources: sourcesFor([record]),
           }
         : null;
       return Promise.resolve(structuredClone(data));
@@ -753,6 +818,7 @@ export const createSyntheticWorkThreadStore = (
       }
       const limit = Math.max(1, Math.min(query.limit, WORK_THREAD_VIEW_BOUNDS.maxPageSize));
       const next = offset + limit;
+      const page = rows.slice(offset, next);
       return Promise.resolve(
         structuredClone({
           counts,
@@ -768,8 +834,8 @@ export const createSyntheticWorkThreadStore = (
           ]
             .sort()
             .slice(0, WORK_THREAD_VIEW_BOUNDS.maxProjects),
-          rows: rows.slice(offset, next).map(toRow),
-          sources,
+          rows: page.map(toRow),
+          sources: sourcesFor(page),
         }),
       );
     },
