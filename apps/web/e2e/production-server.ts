@@ -61,16 +61,23 @@ try {
     fakeGhPath,
     [
       '#!/usr/bin/env bun',
+      'import { appendFileSync } from "node:fs";',
       `process.stderr.write(${JSON.stringify(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL)});`,
       // The same fake answers the web resolver (pr list), the engine's pull request source
-      // (pr view, then api on failure) and the account path (auth token); anything else fails.
-      'const [command, subcommand, ...rest] = process.argv.slice(2);',
+      // (personal searches, pr view, then api on failure); unsupported commands still fail.
+      // Record only argv, never environment or token output, inside this disposable HOME.
+      'const args = process.argv.slice(2);',
+      'appendFileSync(import.meta.dirname + "/../work-thread-gh-argv.jsonl", JSON.stringify(args) + "\\n", { mode: 0o600 });',
+      'const [command, subcommand, ...rest] = args;',
       'if (command === "pr" && subcommand === "list") {',
       '  process.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));',
+      '} else if (command === "search" && subcommand === "prs" && (rest.includes("--author=@me") || rest.includes("--review-requested=@me"))) {',
+      '  process.stdout.write(JSON.stringify(rest.includes("--author=@me") ? [{ number: 77, repository: { nameWithOwner: "fixture/discovered" }, title: "Discovered fixture pull request", url: "https://github.com/fixture/discovered/pull/77", updatedAt: "2026-07-03T11:00:00Z", isDraft: false }] : []));',
       '} else if (command === "pr" && subcommand === "view") {',
       '  const repository = rest[rest.indexOf("--repo") + 1] ?? "fixture/ai-usage";',
       '  const number = Number(rest[0] ?? "42");',
-      '  process.stdout.write(JSON.stringify({ baseRefName: "main", headRefName: "fixture/topic", isDraft: false, mergedAt: null, reviewDecision: "REVIEW_REQUIRED", state: "OPEN", statusCheckRollup: [], title: "Fixture pull request", updatedAt: "2026-07-03T11:00:00Z", url: "https://github.com/" + repository + "/pull/" + String(number) }));',
+      '  const discovered = repository === "fixture/discovered" && number === 77;',
+      '  process.stdout.write(JSON.stringify({ baseRefName: "main", headRefName: "fixture/topic", isDraft: false, mergedAt: null, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "REVIEW_REQUIRED", state: "OPEN", statusCheckRollup: discovered ? [{ status: "COMPLETED", conclusion: "SUCCESS" }] : [], title: discovered ? "Discovered fixture pull request" : "Fixture pull request", updatedAt: "2026-07-03T11:00:00Z", url: "https://github.com/" + repository + "/pull/" + String(number) }));',
       '} else if (command === "api") {',
       '  process.stdout.write(JSON.stringify({ message: "Not Found", status: "404" }));',
       '  process.exitCode = 1;',
