@@ -90,8 +90,11 @@ const BLOCKED_DECLARED_AT = 'Jul 03, 2026, 13:00 GMT+2';
 // A worktree removed since its session is a fact about that session, stated in words, never a failed read.
 const MISSING_WORKTREE = '/.claude/worktrees/checkout-3: no longer on disk (removed since the session)';
 const CHECKOUTS_FAILED_PATTERN = /Checkouts: .* failed/;
-const CHECKOUTS_UNREAD_PATTERN =
-  /Checkouts: [1-9]\d*\s+observed, [1-9]\d* not read\s[^·]*· of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
+// A checkout path that no longer exists is a fact about the path, not an unread checkout (plan 120):
+// it is named as gone, never counted as "not read".
+const CHECKOUTS_GONE_PATTERN =
+  /Checkouts: [1-9]\d*\s+observed[^·]*· of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
+const CHECKOUTS_UNREAD_PATTERN = /Checkouts: [^·]*not read/;
 const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_CHILD_TITLE = 'Fixture: open the collector pull request';
@@ -252,7 +255,8 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(coverage.locator('[data-work-harness-coverage="other"]')).toHaveText('Other harnesses: not read here');
   await expect(coverage).toContainText(PULL_REQUESTS_OBSERVED_PATTERN);
   await expect(coverage).toContainText(CHECKOUTS_OBSERVED_PATTERN);
-  await expect(coverage).toContainText(CHECKOUTS_UNREAD_PATTERN);
+  await expect(coverage).toContainText(CHECKOUTS_GONE_PATTERN);
+  await expect(coverage).not.toContainText(CHECKOUTS_UNREAD_PATTERN);
   await expect(coverage).not.toContainText(CHECKOUTS_FAILED_PATTERN);
   await expect(coverage.locator('[data-work-jira-coverage]')).toContainText('Jira: not observed');
   await expect(coverage.locator('[data-work-window]')).toContainText(
