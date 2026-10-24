@@ -1825,7 +1825,7 @@ const idleSourceControlPort = (
 
 // Effect 3 rejected `runPromise` with a `FiberFailure` wrapper, so typed mutation errors thrown under the
 // writer gate reached the command coordinator wrapped and its typed branches never matched. These pin the
-// Effect 4 behaviour, where the coordinator sees the typed error itself (ADR 0056).
+// Effect 4 behaviour, where the coordinator sees the typed error itself (ADR 0071).
 describe('live mutation command outcomes through the writer gate', () => {
   test('completes typed mutation failures with their own codes instead of command-failed', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'effect4-engine-typed-command-failures-'));

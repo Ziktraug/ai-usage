@@ -1,4 +1,4 @@
-# ADR 0057: Run SvelteKit 3 on the official `@sveltejs/adapter-bun`
+# ADR 0072: Run SvelteKit 3 on the official `@sveltejs/adapter-bun`
 
 - **Status**: Accepted
 - **Date**: 2026-10-22

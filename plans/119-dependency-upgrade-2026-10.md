@@ -6,8 +6,10 @@ the operator's `nix flake update nixpkgs`, commit/PR, and the CI-only evidence l
 "Not covered".
 Baseline: `main` at `3fde5ae6`, 2026-10-22. `bun run verify` green on Bun 1.3.13 under
 `nix develop` (3,840 tests pass, 0 fail; Ultracite checks 1,510 files).
-Depends on: nothing. Independent of the in-flight work-resume cockpit branches, which own
-ADR numbers 0049–0054; this plan's ADRs start at 0055.
+Depends on: nothing. Independent of the in-flight work-resume and work-continuity
+branches, which own ADR numbers 0049–0062 (0049–0069 left to them); this plan's ADRs are
+0070–0073 (first numbered 0055–0058, renumbered 2026-10-24 after the cockpit branch took
+0055–0059).
 Authorization: local implementation and isolated verification in the dedicated worktree;
 no real-store upgrade, commit, push or PR unless the operator asks.
 Evidence: research reports and probes in the session scratchpad (2026-10-22); the facts
@@ -29,9 +31,9 @@ out, and better-auth patches since 1.7.2 include security fixes.
 | --- | --- | --- | --- |
 | D1 | Bun | 1.4.3, `packageManager` is the only version source (CI `setup-bun` reads it); `flake.nix` overrides nixpkgs' 1.4.2 until NixOS/nixpkgs#574334 lands | first Rust-ported line; 1.4.3 fixes spawn/pipe hangs, zstd, mimalloc RSS and a TLS CVE |
 | D2 | Biome | 2.5.15, **not** 2.6.x | Biome 2.6 renamed `useSortedClasses`; both Ultracite 7.8.3 and 8.0.1 presets still set it, so every Biome 2.6 command fails on configuration. Revisit when Ultracite ships a 2.6 preset |
-| D3 | Ultracite | 8.0.1; seven rules off (ADR 0058), the rest fixed | entry names and CLI unchanged; 1,844 new diagnostics, none auto-fixable. Off: `noAwaitInLoops`, `useDestructuring`, `noIncrementDecrement`, `noEqualsToNull`, `noReturnAssign`, `noUnnecessaryConditions` (style churn or behaviour change) and `useErrorCause` (Biome 2.5 only sees `{ cause }` as the second constructor argument; 53 of its 61 hits were correct code). Property-style signatures exposed `unknown` SQLite bindings, now `SqliteQueryBinding` |
+| D3 | Ultracite | 8.0.1; seven rules off (ADR 0073), the rest fixed | entry names and CLI unchanged; 1,844 new diagnostics, none auto-fixable. Off: `noAwaitInLoops`, `useDestructuring`, `noIncrementDecrement`, `noEqualsToNull`, `noReturnAssign`, `noUnnecessaryConditions` (style churn or behaviour change) and `useErrorCause` (Biome 2.5 only sees `{ cause }` as the second constructor argument; 53 of its 61 hits were correct code). Property-style signatures exposed `unknown` SQLite bindings, now `SqliteQueryBinding` |
 | D4 | TypeScript | `typescript` 6.0.3 everywhere (web and fixture leave 5.9.3); TS 7 deferred to 7.1 | TS 7.0 ships no JS API; `svelte-check`, `svelte-kit sync` and `tools/check-typescript-coverage.ts` need it. The dual install svelte-check documents (`@typescript/native@npm:typescript@7`) makes `node_modules/.bin/tsc` depend on link order, which is not a contract. TS 7.0.2 found 0 errors on all 33 projects (7–8× faster), so the move is mechanical once 7.1 ships its API and Svelte content mappers |
-| D5 | SvelteKit | 3.1.0 with `@sveltejs/adapter-bun` 1.0.0 (ADR 0057) | the old adapter is Kit-2-only and archived. The new adapter reads no `ORIGIN`; `apps/web/sveltekit-loopback-adapter.ts` binds the request origin to the loopback listener (build fails if the adapter's hand-off module changes shape), so Kit 3's stricter CSRF keeps the ADR 0011 contract. Deprecated `replaceState` kept on purpose (shallow `goto` runs navigation hooks) |
+| D5 | SvelteKit | 3.1.0 with `@sveltejs/adapter-bun` 1.0.0 (ADR 0072) | the old adapter is Kit-2-only and archived. The new adapter reads no `ORIGIN`; `apps/web/sveltekit-loopback-adapter.ts` binds the request origin to the loopback listener (build fails if the adapter's hand-off module changes shape), so Kit 3's stricter CSRF keeps the ADR 0011 contract. Deprecated `replaceState` kept on purpose (shallow `goto` runs navigation hooks) |
 | D6 | Panda CSS | 2.3.0 with `panda lib` + `designSystem`, rendering identical to Panda 1 | v2 drops buildinfo-in-`include` and `panda ship`, sorts atoms and condition groups differently and drops `screen` from breakpoints. Same-property `cx()` compositions became ordered `css()` merges; Panda 1 output is cleaned file by file before codegen; generated breakpoints are re-scoped to `screen` (`packages/design-system/src/screen-breakpoints.ts`) so print keeps the Panda 1 layout |
 | D7 | TanStack Table | 9.3.1 | contained to the Sessions table model |
 | D8 | Effect | 4.0.5, one atomic bump | GA, LTS to 2029; types cross package boundaries, so no dual-version workspace |
@@ -45,7 +47,7 @@ Everything else moves to its latest release within its major: svelte 5.57.2, vit
 vite-plugin-svelte 7.3.1, svelte-check 4.7.7, Ark UI 5.24.3, svelte-query 6.3.5, oRPC
 1.16.0 (all four in lockstep), valibot 1.5.0, Playwright 1.64.1, axe-core/playwright
 4.14.0, pg 8.23.1, zod 4.6.7, turbo 2.11.10 (first to read Bun lockfile v2), lefthook
-2.2.2, lint-staged 17.5.1 (17.6.0 would stage peer sessions' edits; ADR 0055), nixpkgs
+2.2.2, lint-staged 17.5.1 (17.6.0 would stage peer sessions' edits; ADR 0070), nixpkgs
 (postgresql 17.11, biome 2.5.15).
 
 ## Batches
@@ -57,7 +59,7 @@ parallel in detached worktrees beside the repository (`../ai-usage-effect4-upgra
 diffs are applied to the upgrade worktree and re-verified there on Bun 1.4.3.
 
 1. **Runtime and toolchain** — Bun 1.4.3, turbo, lefthook, lint-staged, Actions, flake;
-   comments that call 1.3.13 "the pinned Bun" become measurements; ADR 0055. Gates:
+   comments that call 1.3.13 "the pinned Bun" become measurements; ADR 0070. Gates:
    `verify`, production/lifecycle smokes, `test:local-platform`, `test:postgres`, e2e and
    demo e2e, ten isolated `bun run dev` cold starts (the 1.4.0 hang topology).
 2. **In-major bumps** — the web, test and Agent SDK entries of the list above, Biome
@@ -118,7 +120,7 @@ Behaviour changes kept on purpose:
   in `FiberFailure`, so its classification was dead code): an invalid-JSON merge now reports
   `merge-invalid-json` (HTTP 400), a stale selection `command-rejected`, and a
   fatal-consistency failure degrades the engine; `engine check` reports the store's real
-  reason (ADR 0056).
+  reason (ADR 0071).
 - Accessible names follow axe 4.14 `label-content-name-mismatch`: content-named campaign,
   timeline and round buttons; "Collection status: …", "Filter by …: …".
 - Panda 2: when hover and focus-visible set the same property, focus-visible wins.

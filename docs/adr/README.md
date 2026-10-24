@@ -20,8 +20,9 @@ without a numbering collision.
 ADR 0047 belongs to the concurrent Codex compressed-rollout discovery work. The
 publication settle window therefore takes 0048.
 
-ADRs 0049–0054 belong to the concurrent work-resume cockpit branches. The
-dependency upgrade of plan 119 therefore starts at 0055; the gap is left for them.
+ADRs 0049–0069 are left to the concurrent work-resume and work-continuity
+branches, which held 0049–0062 on 2026-10-24. The dependency upgrade of plan 119
+therefore takes 0070–0073, and the follow-up local-only programme starts at 0074.
 
 | ADR | Decision | Date | Status |
 | --- | --- | --- | --- |
@@ -35,7 +36,7 @@ dependency upgrade of plan 119 therefore starts at 0055; the gap is left for the
 | [0008](0008-wide-event-presentation-provenance-and-delivery.md) | Wide-event presentation, provenance, delivery diagnostics | 2026-07-22 | Accepted; supersedes clauses of 0014 |
 | [0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md) | Sole-writer usage engine, direct SQLite readers | 2026-07-31 | Accepted; amends 0001, 0002, 0007, 0008, 0014; amended by 0024 |
 | [0010](0010-sveltekit-contract-first-browser-boundary.md) | SvelteKit with a contract-first oRPC browser boundary | 2026-08-02 | Accepted, superseded in part by 0012 |
-| [0011](0011-sveltekit-bun-runtime.md) | Run SvelteKit with svelte-adapter-bun | 2026-08-09 | Accepted; extended by 0055; adapter superseded by 0057 |
+| [0011](0011-sveltekit-bun-runtime.md) | Run SvelteKit with svelte-adapter-bun | 2026-08-09 | Accepted; extended by 0070; adapter superseded by 0072 |
 | [0012](0012-tanstack-query-browser-server-state-ownership.md) | TanStack Query owns browser server state | 2026-08-08 | Accepted; supersedes lifecycle clauses of 0010; amended by 0037 |
 | [0013](0013-direct-rhythm-day-controls.md) | Direct Rhythm day controls | 2026-08-01 | Accepted (formerly 0009); supersedes a clause of 0005 |
 | [0014](0014-effect-runtime-package-for-wide-events.md) | `@ai-usage/effect-runtime` owns wide-event primitives | 2026-07-21 | Accepted (formerly 0002); amended by 0008 and 0009 |
@@ -73,10 +74,10 @@ dependency upgrade of plan 119 therefore starts at 0055; the gap is left for the
 | [0046](0046-hourly-fleet-freshness-heartbeat.md) | Row freshness heartbeats are recorded at hour granularity | 2026-10-17 | Accepted; extends 0009 |
 | [0047](0047-codex-compressed-rollout-discovery.md) | Discover Codex rollouts in their compressed and archived forms | 2026-10-17 | Accepted; extends 0009, 0016 |
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
-| [0055](0055-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011 |
-| [0056](0056-effect-4.md) | Run every Effect surface on Effect 4 | 2026-10-22 | Accepted; amends 0001 |
-| [0057](0057-sveltekit-3-official-bun-adapter.md) | Run SvelteKit 3 on the official `@sveltejs/adapter-bun` | 2026-10-22 | Accepted; amends 0011 |
-| [0058](0058-ultracite-8-rule-policy.md) | Ultracite 8 rule policy: rules that churn style, misread the code or change behaviour stay off | 2026-10-22 | Accepted |
+| [0070](0070-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011 |
+| [0071](0071-effect-4.md) | Run every Effect surface on Effect 4 | 2026-10-22 | Accepted; amends 0001 |
+| [0072](0072-sveltekit-3-official-bun-adapter.md) | Run SvelteKit 3 on the official `@sveltejs/adapter-bun` | 2026-10-22 | Accepted; amends 0011 |
+| [0073](0073-ultracite-8-rule-policy.md) | Ultracite 8 rule policy: rules that churn style, misread the code or change behaviour stay off | 2026-10-22 | Accepted |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

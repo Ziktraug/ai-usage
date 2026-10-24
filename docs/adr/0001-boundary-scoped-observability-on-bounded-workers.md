@@ -3,7 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-07-21
 - **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md),
-  [ADR 0056](0056-effect-4.md)
+  [ADR 0071](0071-effect-4.md)
 
 > Amended 2026-10-22 (Effect 4): the current-hop carrier is a fiber-local
 > `Context.Reference` scoped with `Effect.provideService`; Effect 4 removed

@@ -1,4 +1,4 @@
-# ADR 0056: Run every Effect surface on Effect 4
+# ADR 0071: Run every Effect surface on Effect 4
 
 - **Status**: Accepted
 - **Date**: 2026-10-22

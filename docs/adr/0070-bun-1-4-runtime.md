@@ -1,4 +1,4 @@
-# ADR 0055: Run on the Bun 1.4 line, pinned once in `packageManager`
+# ADR 0070: Run on the Bun 1.4 line, pinned once in `packageManager`
 
 - **Status**: Accepted
 - **Date**: 2026-10-22

@@ -42,7 +42,7 @@ adapter, and Turborepo. The ownership rules are:
   scanner consumes it before the generated tree is discarded.
 - The production Bun adapter writes only `apps/web/.output-build/sveltekit/`.
   Its generated hand-off module is kept as `adapter-bun.generated.js` behind the
-  `adapter-bun.js` module that binds the runtime origin (ADR 0057).
+  `adapter-bun.js` module that binds the runtime origin (ADR 0072).
 - `apps/web/.output-build/build.lock` serializes production builders. The build
   wrapper validates the private container before deleting only the canonical
   production adapter and production intermediate children.
