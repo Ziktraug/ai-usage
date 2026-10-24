@@ -97,6 +97,12 @@ export interface WorkThreadRow {
   readonly marks: readonly WorkThreadMark[];
   /** Linked sessions still active by their own last activity, when the reader can tell. */
   readonly runningSessions: number;
+  /**
+   * Sessions those linked sessions delegated (subagents, automated reviews), nested under their
+   * parent and counted apart: they are part of the work, not more work to follow.
+   */
+  readonly delegatedSessionCount: number;
+  /** Linked sessions themselves (the episodes of the thread), without their delegated children. */
   readonly sessionCount: number;
   readonly thread: WorkThread;
 }
