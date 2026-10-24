@@ -53,7 +53,8 @@
     "./work-attempts-vocabulary": "./src/work-attempts-vocabulary.ts",
     "./work-executors": "./src/work-executors.ts",
     "./work-routing": "./src/work-routing.ts",
-    "./work-routing-vocabulary": "./src/work-routing-vocabulary.ts"
+    "./work-routing-vocabulary": "./src/work-routing-vocabulary.ts",
+    "./work-thread": "./src/work-thread.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

@@ -84,6 +84,7 @@ per-turn no-credit guarantee. Earlier delivery records remain historical.
 | Plan | Title | Priority | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 119 | Work continuity and Codex review | P1 | L | 118 at `6bf89308` | BLOCKED for B10 native no-credit guarantee; L1/L3/L4/L5 delivered locally and verified at `bdccc108` |
+| 120 | Work thread convergence (Unité de travail v3) | P1 | L | 119 at `7b133724` + main `3fde5ae6` | IN PROGRESS |
 | 001 | Integrate Skill Management Into ai-usage | P1 | L | - | DONE |
 | 002 | Skills Inventory UI — Multi-Axis Redesign of `/skills` | P1 | L | 001 | DONE |
 | 003 | Skills UX Polish — Fix the `/skills` Presentation Defects | P2 | M | 002 | DONE |
