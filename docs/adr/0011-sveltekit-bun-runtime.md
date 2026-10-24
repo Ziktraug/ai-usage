@@ -1,6 +1,14 @@
 # ADR 0011: Run SvelteKit with svelte-adapter-bun
 
-- **Status**: Accepted
+- **Status**: Superseded 2026-10-24 by
+  [ADR 0072](0072-sveltekit-3-official-bun-adapter.md). Its adapter, pins and
+  idle timeout were already replaced there, and 0072's Decision restates the
+  lifecycle requirements it kept (numeric loopback and the adapter
+  environment, SSE outliving the idle timeout, `Request.signal` aborts and the
+  exit after `sveltekit:shutdown`, phase-isolated outputs), while its Evidence
+  carries the committed lifecycle fixture. ADR 0070's extension of this record
+  applies to ADR 0072.
+- **Superseded by**: [ADR 0072](0072-sveltekit-3-official-bun-adapter.md)
 - **Date**: 2026-08-09
 - **Amended by**: [ADR 0072](0072-sveltekit-3-official-bun-adapter.md)
 

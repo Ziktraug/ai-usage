@@ -1,7 +1,14 @@
 # ADR 0073: Ultracite 8 rule policy
 
 - **Status**: Accepted
-- **Date**: 2026-10-22
+- **Date**: 2026-10-22; amended 2026-10-24 (platform-only text removed,
+  [ADR 0074](0074-local-only-single-operator-product.md))
+
+> Amended 2026-10-24: plan 120 phase A deletes `apps/server` and Better Auth, so
+> this record no longer names the server's diagnostics, the root `pg` and
+> `@types/pg` declarations, or the server's database URL, base URL and Device
+> token key ring parsers and shared authentication's base URL parser as
+> redaction boundaries. The rule decisions are unchanged.
 
 ## Context
 
@@ -81,9 +88,9 @@ comments in `biome.json`, so the reasons are recorded here:
 - `correctness/noUndeclaredDependencies`: every workspace declares what it
   imports. Root scripts and `tools/` belong to the root package, so it declares
   the `@ai-usage/*` packages they import as `workspace:*` devDependencies, and
-  `effect`, `pg` and `@types/pg` with the same specifiers as the workspaces
-  that own them. `tools/check-package-boundaries.ts` polices only
-  `@ai-usage/*` workspaces, so the root declarations do not weaken it.
+  `effect` with the same specifier as the workspaces that own it.
+  `tools/check-package-boundaries.ts` polices only `@ai-usage/*` workspaces,
+  so the root declarations do not weaken it.
   `packages/design-system` declares `vite`, `playwright` and
   `@sveltejs/vite-plugin-svelte`, which its browser and SSR tests import, as
   devDependencies with the versions `apps/web` pins.
@@ -96,9 +103,9 @@ comments in `biome.json`, so the reasons are recorded here:
 
 An error created in a `catch` carries the caught error as `cause`. Typed error
 classes take a trailing `options?: ErrorOptions` and pass it to `super`. Their
-public messages and codes do not change. The engine, server and MCP
-diagnostics print a closed vocabulary. CLI output prints the error's own
-message, and wide events classify errors without walking the `cause` chain.
+public messages and codes do not change. The engine and MCP diagnostics print
+a closed vocabulary. CLI output prints the error's own message, and wide
+events classify errors without walking the `cause` chain.
 The `cause` is still visible wherever a whole error object is printed to the
 local terminal, for example SvelteKit's default log of an unexpected server
 error or Bun's report of an uncaught error.
@@ -107,13 +114,11 @@ That is why a redaction boundary never attaches a cause. There the caught
 error can carry secret material, so the thrown error stays deliberately
 opaque, and a plain `// No cause: redaction boundary, ...` comment above the
 `throw` says what the cause would leak. A Bun URL parse error keeps the raw
-input, a database password included, in `input`. A JSON parse error quotes
-the document it rejects, such as the private Device credential or a
-token-bearing rendezvous file. The Device token key ring is secret by
-definition. The boundaries are the server's database URL, base URL and Device
-token key ring parsers, the replication client's and shared authentication's
-base URL parsers, the private Device credential reader, the usage-engine
-rendezvous reader and the Memory service client.
+input, credentials included, in `input`. A JSON parse error quotes the
+document it rejects, such as the private Device credential or a token-bearing
+rendezvous file. The boundaries are the replication client's base URL parser,
+the private Device credential reader, the usage-engine rendezvous reader and
+the Memory service client.
 
 `AggregateError` and its subclasses keep the caught errors in `errors` and
 take no separate `cause`.

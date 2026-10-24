@@ -1,6 +1,7 @@
 # ADR 0030: PostgreSQL domain authorization before OpenFGA
 
-- **Status**: Accepted
+- **Status**: Superseded on 2026-10-24: the connected platform is deleted (plan 120)
+- **Superseded by**: [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
 
 ## Context

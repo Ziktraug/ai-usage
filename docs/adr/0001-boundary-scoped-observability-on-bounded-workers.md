@@ -8,6 +8,14 @@
 > Amended 2026-10-22 (Effect 4): the current-hop carrier is a fiber-local
 > `Context.Reference` scoped with `Effect.provideService`; Effect 4 removed
 > `FiberRef` and `Effect.locally`. The decision is unchanged.
+>
+> Consolidation note 2026-10-24: the wide-event rules this ADR relies on (one
+> canonical event per real boundary, fresh state per execution, process-scoped
+> sinks) are stated once in the current statement of
+> [ADR 0014](0014-effect-runtime-package-for-wide-events.md). This record stays
+> the owner of the worker decision: bounded long-lived workers, a boundary only
+> after the start transition admits a job, and no fork-per-job without its own
+> operational reason.
 
 ## Context
 

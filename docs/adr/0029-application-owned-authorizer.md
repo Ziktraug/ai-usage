@@ -1,15 +1,26 @@
 # ADR 0029: Application-owned Authorizer
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by
+  [ADR 0074](0074-local-only-single-operator-product.md); retires with accepted
+  Memory in plan 120 phase B
 - **Date**: 2026-08-29
+- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
+
+> Amended 2026-10-24 (ADR 0074): only the local half remains.
+> `SingleUserAuthorizer` stays as a fail-closed fence for the one local Person
+> and personal Space while accepted Memory exists; the organization model and
+> its PostgreSQL adapters are withdrawn (plan 120 phase A strips them from
+> `packages/authorization`), so the connected-mode sentence and the connected
+> motivation are removed below. Local Memory search keeps joining the complete
+> authorized scope before ranking, the one rule carried from the superseded
+> ADR 0034. When phase B removes accepted Memory, this record retires with the
+> package if nothing else needs it.
 
 ## Context
 
-Local single-user services and connected organization services need one way to
-make permission decisions without putting policy in routes, MCP tools, UI
-filters, or database adapters. Local Memory must not wait for the full
-organization model, but an unconditional allow-all stub would hide Space and
-principal errors.
+Local services need one way to make permission decisions without putting
+policy in routes, MCP tools, UI filters, or database adapters. An
+unconditional allow-all stub would hide Space and principal errors.
 
 ## Decision
 
@@ -21,9 +32,7 @@ arbitrary pre-ranking cap and is consumed only by persistence adapters.
 
 Local mode composes `SingleUserAuthorizer` for the bootstrapped Person and
 personal Space. It permits only the local principal over resources in that
-Space and denies or fails non-local and organization contexts. Connected mode
-composes explicit PostgreSQL organization queries constrained by the shared
-relationship model and conformance suite.
+Space and denies or fails non-local and organization contexts.
 
 Application services authorize before content access or mutation. HTTP routes,
 MCP tools, serializers, jobs, and UI filtering do not implement permission

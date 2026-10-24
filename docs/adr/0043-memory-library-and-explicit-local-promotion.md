@@ -1,6 +1,11 @@
 # ADR 0043: Browse Session accounts and explicitly promote local knowledge
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR 0049 on `feat/work-resume-cockpit` (lands with
+  PR #67), which retires the analyzed-Session library and promotion. The
+  `local-only` publication policy only guarded against replication, which
+  [ADR 0074](0074-local-only-single-operator-product.md) removes; the
+  no-deletion obligation is the general rule of
+  [ADR 0075](0075-local-store-schema-evolution.md).
 - **Date**: 2026-10-06
 - **Amends**: 0042
 

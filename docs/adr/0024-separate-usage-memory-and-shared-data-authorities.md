@@ -1,10 +1,21 @@
 # ADR 0024: Separate usage, Memory, and shared data authorities
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by
+  [ADR 0074](0074-local-only-single-operator-product.md) (shared PostgreSQL
+  authority withdrawn); retires with accepted Memory in plan 120 phase B
 - **Date**: 2026-08-29
 - **Amends**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
   only by limiting its database and direct-reader clauses to the existing usage
   SQLite data plane
+- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
+
+> Amended 2026-10-24 (ADR 0074): two local authorities remain, the usage SQLite
+> database and the Memory SQLite database. The third bullet (PostgreSQL), the
+> sentence "The shared server has one PostgreSQL write composition root" and
+> the replication motivation no longer apply: there is no shared server, and
+> the Memory store's outbox is removed with replication in plan 120 phase B.
+> When phase B also removes accepted Memory, this record retires and ADR 0009
+> alone describes the data plane.
 
 ## Context
 

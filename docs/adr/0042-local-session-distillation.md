@@ -1,6 +1,9 @@
 # ADR 0042: Keep generated session accounts local and distinct from accepted Memory
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR 0049 on `feat/work-resume-cockpit` (lands with
+  PR #67), which retires the generated Session-account feature. Its
+  data-preservation obligation, keeping the analysis tables and rows, is the
+  general rule of [ADR 0075](0075-local-store-schema-evolution.md).
 - **Date**: 2026-10-04
 - **Extends**: 0024, 0026, 0038, 0040, 0041
 

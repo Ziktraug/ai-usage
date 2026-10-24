@@ -1,6 +1,10 @@
 # ADR 0012: TanStack Query owns browser server state
 
-- **Status**: Accepted
+- **Status**: Superseded 2026-10-24 by
+  [ADR 0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md), which
+  restates these decisions, including ADR 0037's `collection-swr` amendment,
+  as one browser-boundary record
+- **Superseded by**: [ADR 0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md)
 - **Date**: 2026-08-08
 - **Supersedes**: ADR 0010 only where it assigns report visibility, retry,
   paging, or replay to `ServedReportSession` and the Session table owner
