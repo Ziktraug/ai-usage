@@ -126,10 +126,9 @@ export const reconcileCursorSessions = (
       continue;
     }
 
-    const assignment = assignments.get(best.index) ?? { turns: [], ambiguous: false };
+    const assignment = assignments.getOrInsertComputed(best.index, () => ({ turns: [], ambiguous: false }));
     assignment.turns.push(turn);
     assignment.ambiguous = assignment.ambiguous || candidates.length > 1 || nearbyCandidateCount > 1;
-    assignments.set(best.index, assignment);
   }
 
   const reconciledSessions = new Map<number, CollectedSession>();

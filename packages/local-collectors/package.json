@@ -16,7 +16,7 @@
     "check": "tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome check .",
-    "test": "bun test"
+    "test": "bun test --parallel"
   },
   "dependencies": {
     "@ai-usage/local-machine": "workspace:*",

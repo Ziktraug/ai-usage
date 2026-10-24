@@ -256,13 +256,12 @@ export const collectProjectSources = (
   );
 };
 
-const escapeRegex = (value: string): string => value.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-
+// Only `*` is a wildcard; every other character, `?` included, matches itself.
 const globToRegex = (glob: string): RegExp => {
   const normalized = path.normalize(glob).replaceAll(path.sep, '/');
   const pattern = normalized
     .split('*')
-    .map((part) => escapeRegex(part))
+    .map((part) => RegExp.escape(part))
     .join('.*');
   return new RegExp(`^${pattern}$`, 'i');
 };
@@ -343,9 +342,8 @@ export const buildProjectProjection = (
   const rowsBySourceId = new Map<string, SourcedRow[]>();
   for (const { authority, row } of candidates) {
     const sourceId = projectSourceId(sourceInputFromRow(row, authority, resolveCanonicalProjectSource));
-    const sourceRows = rowsBySourceId.get(sourceId) ?? [];
+    const sourceRows = rowsBySourceId.getOrInsertComputed(sourceId, () => []);
     sourceRows.push(row);
-    rowsBySourceId.set(sourceId, sourceRows);
   }
 
   const warnings: UsageReportWarning[] = [];

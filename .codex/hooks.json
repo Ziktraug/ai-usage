@@ -2,11 +2,11 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "apply_patch",
         "hooks": [
           {
             "type": "command",
-            "command": "bun run fix --skip=correctness/noUnusedImports"
+            "command": "bun x ultracite fix --skip=correctness/noUnusedImports --hook"
           }
         ]
       }

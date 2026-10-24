@@ -14,6 +14,16 @@ import type { Adapter } from '@sveltejs/kit';
  */
 export const RUNTIME_ORIGIN_VARIABLE = 'ORIGIN';
 
+/**
+ * The adapter reads its configuration only from variables with this prefix (`<prefix>HOST`,
+ * `<prefix>PORT`, ...), so a variable a shell or a supervisor happens to export under one of the
+ * adapter's names (`HOST`, `SOCKET_PATH`, `ADDRESS_HEADER`, or one a later adapter adds) never
+ * configures the server. `start.mjs` owns the namespace: it removes every inherited prefixed
+ * variable, because the adapter refuses to start on a prefixed name it does not read, and sets
+ * the ones it needs. `ORIGIN` stays outside it: the adapter itself never reads the origin.
+ */
+export const ADAPTER_ENVIRONMENT_PREFIX = 'AI_USAGE_WEB_ADAPTER_';
+
 const HANDOFF_MODULE = 'adapter-bun.js';
 const GENERATED_HANDOFF_MODULE = 'adapter-bun.generated.js';
 const UNCONFIGURED_ORIGIN_EXPORT = 'export const origin = undefined;';
@@ -71,7 +81,11 @@ export interface LoopbackBunAdapterOptions {
 }
 
 export const loopbackBunAdapter = (options: LoopbackBunAdapterOptions): Adapter => {
-  const adapter = bunAdapter({ out: options.out, precompress: options.precompress });
+  const adapter = bunAdapter({
+    envPrefix: ADAPTER_ENVIRONMENT_PREFIX,
+    out: options.out,
+    precompress: options.precompress,
+  });
   return {
     ...adapter,
     adapt: async (builder) => {

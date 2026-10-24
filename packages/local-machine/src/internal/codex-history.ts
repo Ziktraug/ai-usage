@@ -402,9 +402,8 @@ export const codexParentsFromEdges = (edges: readonly CodexThreadSpawnEdgeRow[])
     if (!(child && parent)) {
       continue;
     }
-    const parents = candidates.get(child) ?? new Set<string>();
+    const parents = candidates.getOrInsertComputed(child, () => new Set<string>());
     parents.add(parent);
-    candidates.set(child, parents);
   }
 
   const parents = new Map<string, string>();
@@ -1010,9 +1009,8 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       return;
     }
     addDetailTokens(task.tokens, delta);
-    const bucket = task.modelTokens.get(currentModel) ?? emptyDetailTokens();
+    const bucket = task.modelTokens.getOrInsertComputed(currentModel, () => emptyDetailTokens());
     addDetailTokens(bucket, delta);
-    task.modelTokens.set(currentModel, bucket);
   };
 
   const finishUnanchoredTokens = (startedAt: Date | null, completedAt: Date | null): void => {

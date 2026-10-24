@@ -16,6 +16,7 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
   createMemoryMcpServer,
   type MemoryMcpReadService,
+  memoryMcpBounds,
   memoryMcpToolNames,
   reservedMemoryMcpToolNames,
 } from './index';
@@ -236,6 +237,59 @@ describe('Memory MCP adapter', () => {
       const text = firstText(result.content);
       expect(text).toBe('Memory retrieval failed (authorization-denied).');
       expect(text).not.toContain('private-query-value');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test('refuses a tool input with more elements than the bound before any schema or handler runs', async () => {
+    let calls = 0;
+    const service: MemoryMcpReadService = {
+      ...readService(),
+      searchMemory: (input, signal) => {
+        calls += 1;
+        return readService().searchMemory(input, signal);
+      },
+    };
+    const fixture = await connected(service);
+    try {
+      // The largest valid input: every member, every array at its schema maximum (24 elements).
+      const largestValid = {
+        cursor: null,
+        historyMode: 'include',
+        includeSpaceWide: true,
+        kinds: ['decision', 'pattern', 'pitfall', 'command', 'constraint', 'handoff', 'lesson', 'preference'],
+        limit: 10,
+        matchingMode: 'hybrid',
+        projectId: null,
+        query: 'release checklist',
+        statuses: ['active', 'archived', 'rejected', 'superseded'],
+        trust: ['explicit', 'harvest-accepted'],
+      };
+      const accepted = await fixture.client.callTool(
+        { arguments: largestValid, name: 'memory.search' },
+        CallToolResultSchema,
+      );
+      expect(accepted.isError).not.toBe(true);
+      expect(calls).toBe(1);
+
+      // One array past the bound: the schema would also refuse it, but only after walking it.
+      const oversized = await fixture.client.callTool(
+        {
+          arguments: {
+            kinds: Array.from({ length: memoryMcpBounds.maxToolInputElements }, () => 'decision'),
+            limit: 10,
+            query: 'release checklist',
+          },
+          name: 'memory.search',
+        },
+        CallToolResultSchema,
+      );
+      expect(oversized.isError).toBe(true);
+      expect(firstText(oversized.content)).toContain(
+        `more than the maximum of ${memoryMcpBounds.maxToolInputElements} elements`,
+      );
+      expect(calls).toBe(1);
     } finally {
       await fixture.close();
     }

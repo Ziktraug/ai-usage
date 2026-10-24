@@ -1,6 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
+    "target": "ES2025",
+    "lib": [
+      "ES2025",
+      "ESNext.Collection",
+      "DOM",
+      "DOM.Iterable",
+      "DOM.AsyncIterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,

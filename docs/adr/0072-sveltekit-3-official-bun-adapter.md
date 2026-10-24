@@ -5,6 +5,10 @@
 - **Amends**: [ADR 0011](0011-sveltekit-bun-runtime.md) (supersedes its adapter selection, its
   TypeScript 5.9.3 peer pin and `IDLE_TIMEOUT=45`)
 
+> Amended 2026-10-24 (adapter `envPrefix`): the adapter reads its configuration only under
+> `AI_USAGE_WEB_ADAPTER_`, so the "Adapter environment" deny-list below is superseded. See
+> "Amendment 2026-10-24" at the end.
+
 ## Context
 
 ADR 0011 chose `svelte-adapter-bun@1.0.1` after `@sveltejs/adapter-node` failed the Bun
@@ -168,3 +172,39 @@ Gathered on 2026-10-22 in the `chore/upgrade-dependencies` worktree under `nix d
   `test:e2e` 246 passed. A rejected Skills fallback rewrite now shows "Navigation failed. Try
   again." instead of the framework's error text, and clears once a later rewrite is accepted or
   the address names no missing skill.
+
+## Amendment 2026-10-24: a prefixed adapter environment
+
+**Context.** The "Adapter environment" decision kept a deny-list: `start.mjs` deleted the
+inherited adapter variables it knew of and the production supervisor filtered the same keys. A
+variable the deny-list missed, including one a later adapter release adds, reached the adapter
+from whatever shell or supervisor started the server: fail-open.
+
+**Decision.** `loopbackBunAdapter` passes `envPrefix: 'AI_USAGE_WEB_ADAPTER_'`
+(`ADAPTER_ENVIRONMENT_PREFIX` in `apps/web/sveltekit-loopback-adapter.ts`), so the adapter reads
+`AI_USAGE_WEB_ADAPTER_HOST`, `…_PORT` and the rest, and no unprefixed variable configures it.
+`apps/web/start.mjs` owns that namespace: it deletes every inherited `AI_USAGE_WEB_ADAPTER_*`
+variable (the adapter refuses to start on a prefixed name it does not read) and sets exactly
+`…_BODY_SIZE_LIMIT`, `…_CONNECTION_IDLE_TIMEOUT=45`, `…_HOST=127.0.0.1`, `…_PORT` and
+`…_SHUTDOWN_TIMEOUT=2`. `PORT` stays the operator's input to `start.mjs`. `ORIGIN` stays
+unprefixed: the adapter never reads it, only the hand-off module in front of it does, and the
+adapter would refuse `AI_USAGE_WEB_ADAPTER_ORIGIN`; `start.mjs` still overwrites any inherited
+value. The production supervisor (`tools/start-production.ts`) no longer filters adapter names
+nor sets `HOST`, `BODY_SIZE_LIMIT` or `CONNECTION_IDLE_TIMEOUT`: inherited ones pass through
+inert.
+
+**Consequences.** Every way of starting the built server must go through `start.mjs`, as
+before; running `.output-build/sveltekit/index.js` directly now binds the adapter's defaults
+(port 3000, all interfaces) instead of reading `HOST`/`PORT`. The prefix and the copy of it in
+`start.mjs` are pinned against each other by `apps/web/sveltekit-loopback-adapter.test.ts`.
+
+**Evidence (2026-10-24, Bun 1.4.3, `nix develop`).** `bun run build` → exit 0, and the built
+`apps/web/.output-build/sveltekit/adapter-bun.generated.js` exports
+`env_prefix = "AI_USAGE_WEB_ADAPTER_"`. `bun run test:web-production` → exit 0 with the
+production smoke's environment now also carrying `SOCKET_PATH`, `ADDRESS_HEADER`,
+`PROTOCOL_HEADER`, `XFF_DEPTH=9`, `DEVELOPMENT=1`, `SHUTDOWN_TIMEOUT=600`,
+`CONNECTION_IDLE_TIMEOUT=1`, `AI_USAGE_WEB_ADAPTER_PORT=1` and an unknown
+`AI_USAGE_WEB_ADAPTER_INHERITED` besides `HOST=0.0.0.0`: "Production web routes are healthy,
+trusted-local only, and bound to IPv4 loopback", and both port-collision smokes failed cleanly.
+`bun test tools/check-sveltekit-runtime-lifecycle.test.ts` → 3 pass (its fixture uses the
+adapter without a prefix and is unchanged).

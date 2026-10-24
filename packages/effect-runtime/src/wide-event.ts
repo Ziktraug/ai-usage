@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Ref } from 'effect';
+import { Context, Effect, Layer, Option, Ref } from 'effect';
 import type {
   BoundaryOutcome,
   LogValue,
@@ -306,3 +306,12 @@ export const makeWideEventLayer = (wideEvent: WideEventShape) => Layer.succeed(W
 
 export const annotateWideEvent = (fields: Readonly<Record<string, LogValue>>) =>
   WideEventService.pipe(Effect.flatMap((wideEvent) => wideEvent.annotate(fields)));
+
+/**
+ * Annotate the wide event the caller runs under, if it runs under one. For code handed to a layer
+ * that owns no observability (a collector), which must not require the service in its type.
+ */
+export const annotateWideEventIfAvailable = (fields: Readonly<Record<string, LogValue>>): Effect.Effect<void> =>
+  Effect.serviceOption(WideEventService).pipe(
+    Effect.flatMap((wideEvent) => (Option.isNone(wideEvent) ? Effect.void : wideEvent.value.annotate(fields))),
+  );

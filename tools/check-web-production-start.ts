@@ -611,6 +611,25 @@ const isolatedInheritedEnvironment = (): Record<string, string> => ({
   TURBO_TELEMETRY_DISABLED: '1',
 });
 
+/**
+ * Inherited under the web adapter's own, unprefixed names, none of which may configure the
+ * production listener: a socket path would take it off TCP, the headers would make client input a
+ * trusted address or scheme, the shutdown timeout would outlive the supervisor's grace and the
+ * idle timeout would cut keep-alive connections. Stray variables under the adapter's prefix would
+ * stop it from starting unless `apps/web/start.mjs` purges them.
+ */
+const inheritedWebAdapterEnvironment = (homeDirectory: string): Record<string, string> => ({
+  ADDRESS_HEADER: 'x-forwarded-for',
+  AI_USAGE_WEB_ADAPTER_INHERITED: '1',
+  AI_USAGE_WEB_ADAPTER_PORT: '1',
+  CONNECTION_IDLE_TIMEOUT: '1',
+  DEVELOPMENT: '1',
+  PROTOCOL_HEADER: 'x-forwarded-proto',
+  SHUTDOWN_TIMEOUT: '600',
+  SOCKET_PATH: path.join(homeDirectory, 'inherited-adapter.sock'),
+  XFF_DEPTH: '9',
+});
+
 const createProductionRuntimeFixture = async (
   prefix: string,
   webPort: number,
@@ -778,7 +797,7 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
         {
           command: ['bun', '--no-env-file', 'run', 'start'],
           cwd: rootDir,
-          env: childEnvironment,
+          env: { ...childEnvironment, ...inheritedWebAdapterEnvironment(homeDirectory) },
           port,
         },
         async (child, logs) =>

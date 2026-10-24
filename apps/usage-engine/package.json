@@ -13,7 +13,7 @@
     "format": "biome format --write .",
     "lint": "biome check .",
     "start": "bun --no-env-file src/main.ts serve",
-    "test": "bun test"
+    "test": "bun test --parallel"
   },
   "dependencies": {
     "@ai-usage/authorization": "workspace:*",

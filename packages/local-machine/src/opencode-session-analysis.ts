@@ -323,9 +323,8 @@ const turnsFromRows = (
     if (!(messageId && promptId && retainedPromptIds.has(promptId))) {
       continue;
     }
-    const current = promptIdsByMessage.get(messageId) ?? [];
+    const current = promptIdsByMessage.getOrInsertComputed(messageId, () => []);
     current.push(promptId);
-    promptIdsByMessage.set(messageId, current);
   }
 
   const turns: ParsedOpenCodeTurn[] = [];
@@ -407,9 +406,8 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
   const groups = new Map<string, ParsedOpenCodeTurn[]>();
   for (const message of messages) {
     const key = message.parentKind === 'unresolved' ? `message:${message.turn.index}` : `parent:${message.parentId}`;
-    const group = groups.get(key) ?? [];
+    const group = groups.getOrInsertComputed(key, () => []);
     group.push(message);
-    groups.set(key, group);
   }
   if (groups.size > MAX_TURNS) {
     throw detailError('readOpenCodeSessionAnalysis.turnLimit', dbPath, 'OpenCode session exceeds its turn limit');

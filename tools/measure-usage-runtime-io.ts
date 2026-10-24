@@ -45,6 +45,9 @@ import {
   parseProcessIo,
 } from './measure-process-tree-io';
 
+// Rendered into every page's head by `apps/web/src/routes/+layout.svelte`; the visible heading
+// text it replaced ('Usage report') left the shell with the 2026-09 interface refresh.
+export const APPLICATION_SHELL_MARKER = '<title>ai-usage report</title>';
 const BLOCK_DEVICE_SECTOR_BYTES = 512;
 const BUILD_DEADLINE_MS = 180_000;
 const CHILD_STOP_DEADLINE_MS = 3000;
@@ -1627,7 +1630,7 @@ const requestApplication = async (baseUrl: string, signal?: AbortSignal, pathnam
     signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
   });
   const body = await response.text();
-  if (!(response.status === 200 && body.includes('Usage report'))) {
+  if (!(response.status === 200 && body.includes(APPLICATION_SHELL_MARKER))) {
     throw new Error(`Development application ${pathname} returned HTTP ${response.status} without the report shell.`);
   }
 };
