@@ -22,7 +22,11 @@ const BUILD_DEADLINE_MS = 180_000;
  * lock is not doing its job, which is exactly what this check exists to catch.
  */
 const CONTENDING_BUILD_EXIT_DEADLINE_MS = 30_000;
-const REQUEST_TIMEOUT_MS = 5000;
+/**
+ * A probe asks whether the dev server still answers correctly, not how fast. On a 4-CPU runner the
+ * build's svelte-check starves it for up to ~4.3 s, so the bound only has to catch a hung request.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
 const PROCESS_STOP_DEADLINE_MS = 3000;
 const LOG_DRAIN_DEADLINE_MS = 3000;
 const MAX_CAPTURED_LOG_BYTES = 128 * 1024;
