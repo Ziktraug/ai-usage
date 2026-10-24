@@ -295,51 +295,70 @@ export interface BoundedLineEmitter {
  * reader: CRLF stripping, a per-record byte bound, and discarding of a record
  * over that bound as its bytes arrive, so peak memory stays at the bound
  * rather than following the size of the offending record.
+ *
+ * The unterminated record is kept as the pieces it arrived in and joined once,
+ * when its newline arrives; only the newly pushed text is searched, and each
+ * piece is measured once. Appending to one string and searching it again on
+ * every push re-copied the whole buffered record per chunk (JSC flattens the
+ * rope to search it), which made a multi-megabyte record quadratic and drove a
+ * cold Codex pass to gigabytes of discarded copies. Pushed text comes from a
+ * streaming `TextDecoder`, so a piece never splits a surrogate pair and the
+ * per-piece UTF-8 byte counts add up to the record's.
  */
 export const createBoundedLineEmitter = (visit: (line: string) => void, maxLineBytes: number): BoundedLineEmitter => {
   let lines = 0;
   let oversizedLines = 0;
-  let pending = '';
+  let pendingPieces: string[] = [];
+  let pendingBytes = 0;
   // Set once the buffered record has already passed `maxLineBytes`. Its bytes
   // are discarded as they arrive instead of being retained until the closing
   // newline.
   let discardingOversizedLine = false;
-  const emitCompleteLines = (): void => {
-    for (;;) {
-      const separatorIndex = pending.indexOf('\n');
-      if (discardingOversizedLine) {
-        if (separatorIndex < 0) {
-          pending = '';
-          return;
-        }
-        pending = pending.slice(separatorIndex + 1);
-        discardingOversizedLine = false;
-        oversizedLines++;
-        continue;
-      }
-      if (separatorIndex < 0) {
-        break;
-      }
-      const line = pending.slice(0, separatorIndex).replace(TRAILING_CARRIAGE_RETURN, '');
-      pending = pending.slice(separatorIndex + 1);
-      if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
-        oversizedLines++;
-        continue;
-      }
-      visit(line);
-      lines++;
-    }
-    // Nothing arriving later can shrink an unterminated record that is already
-    // over the bound, so commit to discarding it now.
-    if (Buffer.byteLength(pending, 'utf8') > maxLineBytes) {
-      discardingOversizedLine = true;
-      pending = '';
-    }
+  const clearPending = (): void => {
+    pendingPieces = [];
+    pendingBytes = 0;
   };
   return {
     push: (text) => {
-      pending += text;
-      emitCompleteLines();
+      let start = 0;
+      for (;;) {
+        const separatorIndex = text.indexOf('\n', start);
+        if (separatorIndex < 0) {
+          break;
+        }
+        const tail = text.slice(start, separatorIndex);
+        start = separatorIndex + 1;
+        if (discardingOversizedLine) {
+          discardingOversizedLine = false;
+          oversizedLines++;
+          continue;
+        }
+        let record = tail;
+        if (pendingPieces.length > 0) {
+          pendingPieces.push(tail);
+          record = pendingPieces.join('');
+        }
+        clearPending();
+        const line = record.replace(TRAILING_CARRIAGE_RETURN, '');
+        if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
+          oversizedLines++;
+          continue;
+        }
+        visit(line);
+        lines++;
+      }
+      if (discardingOversizedLine || start === text.length) {
+        return;
+      }
+      const rest = text.slice(start);
+      pendingPieces.push(rest);
+      pendingBytes += Buffer.byteLength(rest, 'utf8');
+      // Nothing arriving later can shrink an unterminated record that is
+      // already over the bound, so commit to discarding it now.
+      if (pendingBytes > maxLineBytes) {
+        discardingOversizedLine = true;
+        clearPending();
+      }
     },
     finish: () => {
       if (discardingOversizedLine) {
@@ -347,13 +366,11 @@ export const createBoundedLineEmitter = (visit: (line: string) => void, maxLineB
         // its newline, so it closes here.
         oversizedLines++;
         discardingOversizedLine = false;
-        pending = '';
-      }
-      if (pending.length > 0) {
-        visit(pending.replace(TRAILING_CARRIAGE_RETURN, ''));
+      } else if (pendingPieces.length > 0) {
+        visit(pendingPieces.join('').replace(TRAILING_CARRIAGE_RETURN, ''));
         lines++;
-        pending = '';
       }
+      clearPending();
     },
     get lines() {
       return lines;
