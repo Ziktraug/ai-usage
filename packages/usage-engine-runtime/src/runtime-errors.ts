@@ -33,12 +33,15 @@ export class UsageEngineSoftSourceError extends Error {
   readonly snapshot: SourceControlView;
   readonly sourceId: CollectionSourceId;
 
-  constructor(input: {
-    readonly reason: UsageEngineSoftSourceErrorReason;
-    readonly snapshot: SourceControlView;
-    readonly sourceId: CollectionSourceId;
-  }) {
-    super(`Usage source ${input.sourceId} completed with ${input.reason}.`);
+  constructor(
+    input: {
+      readonly reason: UsageEngineSoftSourceErrorReason;
+      readonly snapshot: SourceControlView;
+      readonly sourceId: CollectionSourceId;
+    },
+    options?: ErrorOptions,
+  ) {
+    super(`Usage source ${input.sourceId} completed with ${input.reason}.`, options);
     this.reason = input.reason;
     this.snapshot = input.snapshot;
     this.sourceId = input.sourceId;

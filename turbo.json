@@ -24,7 +24,11 @@
     },
     "@ai-usage/web#check": {
       "dependsOn": ["^build"],
-      "outputs": [".svelte-kit/check/**", "styled-system/**"]
+      "outputs": [
+        ".svelte-kit/check/**",
+        "node_modules/$app/**",
+        "styled-system/**"
+      ]
     },
     "test": {
       "dependsOn": ["^build"],

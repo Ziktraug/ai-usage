@@ -87,7 +87,7 @@
       </div>
     </header>
     <ProjectSummary
-      {...(payload.projectGroups === undefined ? {} : { catalogue: payload.projectGroups })}
+      {...payload.projectGroups === undefined ? {} : { catalogue: payload.projectGroups }}
       emptyMessage={projectsEmptyMessage(query)}
       groups={visible}
       onManageProjectGroups={openManagement}

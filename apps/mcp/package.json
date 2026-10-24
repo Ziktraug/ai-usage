@@ -6,17 +6,17 @@
   "bin": {
     "ai-usage-memory-mcp": "./src/main.ts"
   },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "start": "bun --no-env-file src/main.ts",
+    "test": "bun test"
+  },
   "dependencies": {
     "@ai-usage/mcp-adapter": "workspace:*",
     "@ai-usage/memory-service": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*"
-  },
-  "scripts": {
-    "start": "bun --no-env-file src/main.ts",
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit",
-    "test": "bun test",
-    "lint": "biome check .",
-    "format": "biome format --write ."
   }
 }

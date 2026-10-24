@@ -15,7 +15,6 @@
   };
 </script>
 
-<!-- biome-ignore lint/a11y/noStaticElementInteractions: the fixture keyboard shortcut preserves row focus while publishing synthetic data -->
 <svelte:window onkeydown={changeRevision} />
 <SessionTable
   columnVisibility={columnVisibilityForSessionPreset('work')}

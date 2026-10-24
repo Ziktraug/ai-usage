@@ -6,6 +6,15 @@
   "exports": {
     "./main": "./src/main.ts"
   },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "dev": "bun --no-env-file src/dev.ts",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "start": "bun --no-env-file src/main.ts serve",
+    "test": "bun test"
+  },
   "dependencies": {
     "@ai-usage/authorization": "workspace:*",
     "@ai-usage/effect-runtime": "workspace:*",
@@ -18,19 +27,10 @@
     "@ai-usage/replication-client": "workspace:*",
     "@ai-usage/replication-outbox": "workspace:*",
     "@ai-usage/replication-protocol": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-engine-runtime": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
-    "effect": "^3.21.4",
-    "@ai-usage/report-core": "workspace:*"
-  },
-  "scripts": {
-    "dev": "bun --no-env-file src/dev.ts",
-    "start": "bun --no-env-file src/main.ts serve",
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit",
-    "test": "bun test",
-    "lint": "biome check .",
-    "format": "biome format --write ."
+    "effect": "^4.0.5"
   }
 }

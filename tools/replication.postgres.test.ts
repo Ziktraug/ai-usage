@@ -958,13 +958,13 @@ if (runPostgresTests) {
           context: ReturnType<typeof projectContext>,
           generation: number,
           sessionName: string,
-          key = factKey,
+          upsertKey = factKey,
         ): ReplicationEvent =>
           createReplicationEvent({
             captureContextId: context.id,
             changeKind: 'usage-session-upsert',
             eventId: createReplicationEventId(),
-            factKey: key,
+            factKey: upsertKey,
             generation: parseReplicationGeneration(generation),
             payload: {
               harness: 'codex',

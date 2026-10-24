@@ -3,12 +3,11 @@ import {
   readSessionQueryPerformanceCapture,
   resetSessionQueryPerformanceCapture,
 } from '@ai-usage/usage-store/performance-testing';
-import type { Handle, HandleFetch } from '@sveltejs/kit';
-import { sequence } from '@sveltejs/kit/hooks';
-import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
-import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server';
-import { resetReportHydrationBytes, snapshotReportHydrationBytes } from '$lib/server/perf/report-hydration-perf';
-import { E2E_SKILLS_FIXTURE_HEADER } from '$lib/server/rpc/e2e-fixture-profile';
+import { type Handle, type HandleFetch, sequence } from '@sveltejs/kit/hooks';
+import { demoRouteDecision } from '#lib/features/shell/demo-policy.server.ts';
+import { webReadObservabilityLifecycle } from '#lib/server/observability/web-read-lifecycle.server.ts';
+import { resetReportHydrationBytes, snapshotReportHydrationBytes } from '#lib/server/perf/report-hydration-perf.ts';
+import { E2E_SKILLS_FIXTURE_HEADER } from '#lib/server/rpc/e2e-fixture-profile.ts';
 import { handleResponseCompression } from '../src/server/response-compression.server';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
 import { handleTrustedLocalRequest } from '../src/server/trusted-local-hook.server';

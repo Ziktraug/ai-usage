@@ -10,6 +10,7 @@ import { APIError, betterAuth, type DBAdapter, type DBAdapterInstance, type DBTr
 import { createAuthMiddleware } from 'better-auth/api';
 import type { IdentityServiceResult, SharedAuthenticationPrincipal, SharedSessionResolution } from './index';
 import { SHARED_AUTHENTICATION_PROVIDER } from './index';
+import { carrySchemaCheck } from './internal/adapter-schema-check';
 import { getInjectedSharedAuthenticationServiceFactory } from './internal/shared-authentication-factory';
 import { withWebSessionTokenDigests } from './session-digest-adapter';
 
@@ -101,10 +102,29 @@ const withProviderAccountGuards =
       id: `${adapter.id}-provider-account-guards`,
       transaction: (run) => adapter.transaction((transaction) => run(guardAccountWrites(transaction))),
     };
-    return result;
+    return carrySchemaCheck(adapter, result, options);
   };
 
-export const BETTER_AUTH_VERSION = '1.7.2' as const;
+/**
+ * Better Auth calls the database factory while `betterAuth()` runs, but inside
+ * an asynchronous initialization: a factory error only rejects that
+ * initialization, which nothing awaits before the first request. The factory
+ * records what it throws so the service construction can rethrow it.
+ */
+const recordingFactoryFailures =
+  (database: DBAdapterInstance, failures: Error[]): DBAdapterInstance =>
+  (options) => {
+    try {
+      return database(options);
+    } catch (error) {
+      if (error instanceof Error) {
+        failures.push(error);
+      }
+      throw error;
+    }
+  };
+
+export const BETTER_AUTH_VERSION = '1.7.12' as const;
 export const SHARED_SESSION_ABSOLUTE_LIFETIME_SECONDS = 24 * 60 * 60;
 export const SHARED_SESSION_FRESH_LIFETIME_SECONDS = 15 * 60;
 
@@ -224,6 +244,7 @@ const parseAuthenticationBaseUrl = (value: string): URL => {
     }
     return url;
   } catch {
+    // No cause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`.
     throw new AuthenticationRejectedError();
   }
 };
@@ -332,6 +353,7 @@ export const createSharedAuthenticationService = (
     }
   };
 
+  const databaseFactoryFailures: Error[] = [];
   const options = {
     account: {
       accountLinking: {
@@ -348,7 +370,6 @@ export const createSharedAuthenticationService = (
         accountId: 'accountId',
         createdAt: 'createdAt',
         idToken: 'idToken',
-        issuer: 'issuer',
         password: 'password',
         providerId: 'providerId',
         refreshToken: 'refreshToken',
@@ -373,7 +394,14 @@ export const createSharedAuthenticationService = (
           }
         : undefined,
       crossSubDomainCookies: { enabled: false },
-      database: { generateId: 'uuid' as const, joins: false },
+      // The Drizzle adapter's schema check compares the tables Better Auth
+      // writes with the Drizzle schema. Better Auth starts it at
+      // initialization (a mismatch there is only logged, and logging is
+      // disabled here) and awaits it before every authentication request, so
+      // a mismatch refuses those requests instead of failing at an insert.
+      // `/health/ready` probes only the store and does not run it. An adapter
+      // with no check to carry fails the service construction instead.
+      database: { generateId: 'uuid' as const, joins: false, validateSchema: true },
       defaultCookieAttributes: {
         httpOnly: true,
         path: '/',
@@ -388,7 +416,10 @@ export const createSharedAuthenticationService = (
     appName: 'ai-usage',
     basePath: '/api/auth',
     baseURL: baseUrl.origin,
-    database: withProviderAccountGuards(withWebSessionTokenDigests(config.database)),
+    database: recordingFactoryFailures(
+      withProviderAccountGuards(withWebSessionTokenDigests(config.database)),
+      databaseFactoryFailures,
+    ),
     databaseHooks: {
       account: {
         create: {
@@ -605,6 +636,16 @@ export const createSharedAuthenticationService = (
     },
   };
   const auth = betterAuth(options);
+  const [databaseFactoryFailure] = databaseFactoryFailures;
+  if (databaseFactoryFailure) {
+    // The adapter could not be composed (an `AuthenticationAdapterError` when
+    // it carries no schema check). The caller fails now, at startup, instead
+    // of on every request; Better Auth's initialization rejected with this
+    // same error, so that rejection is marked handled rather than left to end
+    // the process as an unhandled rejection.
+    auth.$context.catch(() => undefined);
+    throw databaseFactoryFailure;
+  }
 
   const service: SharedAuthenticationService = {
     handle: (request) => {

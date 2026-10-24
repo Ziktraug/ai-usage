@@ -659,7 +659,7 @@ const waitForSetupAbort = (signal: AbortSignal | undefined): Effect.Effect<void>
   if (!signal) {
     return Effect.never;
   }
-  return Effect.async<void>((resume) => {
+  return Effect.callback<void>((resume) => {
     const finish = (): void => resume(Effect.void);
     if (signal.aborted) {
       finish();

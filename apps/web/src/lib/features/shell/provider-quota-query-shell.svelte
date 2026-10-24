@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
   import type { Snippet } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import type { RuntimeMode } from '../../../runtime-mode';
   import { type QuotaQueryClient, quotaRailQueryOptions } from '../../query/options/quota';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';

@@ -72,7 +72,7 @@ export const sessionsTable = css({
   },
 });
 
-export const tableWrap = css({
+export const tableWrapStyle = css.raw({
   overflow: 'auto',
   maxH: 'var(--ai-usage-table-max-height, calc(100dvh - 240px))',
   minH: 'var(--ai-usage-table-min-height, 320px)',
@@ -89,8 +89,9 @@ export const tableWrap = css({
   backgroundAttachment: 'local, local, scroll, scroll',
   _print: { maxH: 'none', overflow: 'visible', boxShadow: 'none' },
 });
+export const tableWrap = css(tableWrapStyle);
 
-export const sessionViewportSurface = css({
+export const sessionViewportSurfaceStyle = css.raw({
   '--ai-usage-table-max-height': 'none',
   '--ai-usage-table-min-height': '0px',
   h: 'var(--session-surface-height, 100dvh)',
@@ -98,6 +99,7 @@ export const sessionViewportSurface = css({
   overflowAnchor: 'none',
   _print: { h: 'auto' },
 });
+export const sessionViewportSurface = css(sessionViewportSurfaceStyle);
 
 export const desktopTableSurface = css({
   display: { base: 'none', md: 'block' },
@@ -122,7 +124,8 @@ export const tableControls = css({
 
 export const right = css({ textAlign: 'right' });
 export const muted = css({ color: 'muted' });
-export const strongCell = css({ fontWeight: 550, overflowWrap: 'anywhere' });
+export const strongCellStyle = css.raw({ fontWeight: 550, overflowWrap: 'anywhere' });
+export const strongCell = css(strongCellStyle);
 export const numCell = css({
   textStyle: 'numeric',
   textAlign: 'right',

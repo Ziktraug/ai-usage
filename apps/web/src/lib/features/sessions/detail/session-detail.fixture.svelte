@@ -66,14 +66,21 @@
   <button onclick={refresh} type="button">Publish revision</button>
   <button onclick={() => release?.()} type="button">Release detail</button>
   <button onclick={() => reject?.()} type="button">Fail detail</button>
-  <button onclick={() => { selection = { revision: `revision-${revision}`, row: rows[1]! }; }} type="button">
+  <button
+    onclick={() => {
+      selection = { revision: `revision-${revision}`, row: rows[1]! };
+    }}
+    type="button"
+  >
     Select other session
   </button>
 </div>
 <QueryClientProvider client={queryClient}>
   <SessionDetailQuerySlot
     {client}
-    onSelectionChange={(next) => { selection = next; }}
+    onSelectionChange={(next) => {
+      selection = next;
+    }}
     {queryClient}
     {rows}
     {selection}

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { Effect, Exit } from 'effect';
 import {
   type ClaudeUsageQuery,
+  type ClaudeUsageReadOptions,
   createClaudeAgentSdkBatchSource,
   createClaudeQuotaQueryOptions,
 } from './claude-agent-sdk';
@@ -76,6 +77,23 @@ describe('Claude Agent SDK quota source', () => {
       strictMcpConfig: true,
       tools: [],
     });
+  });
+
+  test('reads plan limits without scanning local transcripts', async () => {
+    const reads: Array<ClaudeUsageReadOptions | undefined> = [];
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () =>
+        Promise.resolve({
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: (options?: ClaudeUsageReadOptions) => {
+            reads.push(options);
+            return Promise.resolve(livePayload());
+          },
+        } satisfies ClaudeUsageQuery),
+    });
+
+    await Effect.runPromise(source.collect(REQUEST));
+
+    expect(reads).toEqual([{ skipBehaviors: true }]);
   });
 
   test('maps the limits array into provider windows', async () => {

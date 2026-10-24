@@ -217,7 +217,7 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
         warnings: metricWarnings,
       };
     }).pipe(
-      Effect.catchAll((error: LocalHistoryError) =>
+      Effect.catch((error: LocalHistoryError) =>
         Effect.succeed({
           rows,
           warnings: [

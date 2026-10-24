@@ -75,8 +75,8 @@ export const parseMemoryItemsBrowsePage = (value: unknown): MemoryItemsBrowsePag
   }
   return {
     nextCursor: page.nextCursor === null ? null : text(page.nextCursor, 4096),
-    items: page.items.map((value): MemoryItemsBrowseEntry => {
-      const entry = distillationObject(value),
+    items: page.items.map((rawItem): MemoryItemsBrowseEntry => {
+      const entry = distillationObject(rawItem),
         provenance = distillationObject(entry.provenance);
       if (
         !Array.isArray(entry.guidance) ||

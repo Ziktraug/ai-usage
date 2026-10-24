@@ -51,7 +51,7 @@
     textTransform: 'uppercase',
     fontWeight: 600,
   });
-  const dropZone = css({
+  const dropZone = css.raw({
     bg: 'accentTint',
     border: '1px dashed token(colors.lineStrong)',
     borderRadius: 'md',
@@ -67,10 +67,10 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     _disabled: { cursor: 'not-allowed', bg: 'surfaceMuted', borderColor: 'line' },
   });
-  const dropZoneActive = css({ bg: 'surfaceElevated', borderColor: 'accent' });
-  const dropZoneCompact = css({ minH: '140px' });
-  const errorPanel = css({ bg: 'status.dangerSoft', color: 'status.danger', borderColor: 'status.danger' });
-  const operationPanel = css({
+  const dropZoneActive = css.raw({ bg: 'surfaceElevated', borderColor: 'accent' });
+  const dropZoneCompact = css.raw({ minH: '140px' });
+  const errorPanel = css({ color: 'status.danger', borderColor: 'status.danger' });
+  const operationPanelStyle = css.raw({
     bg: 'surface',
     border: '1px solid token(colors.line)',
     borderRadius: 'md',
@@ -78,7 +78,8 @@
     gap: '8px',
     p: '18px 20px',
   });
-  const previewPanel = css({ borderLeft: '2px solid token(colors.accent)', bg: 'accentTint' });
+  const operationPanel = css(operationPanelStyle);
+  const previewPanel = css.raw({ borderLeft: '2px solid token(colors.accent)', bg: 'accentTint' });
   const cursorSection = css({
     borderTop: '1px solid token(colors.line)',
     display: 'grid',
@@ -297,27 +298,27 @@
       disabled={!mutationAvailable || pending !== null}
       hidden
       onchange={async (event) => {
-      const input = event.currentTarget;
-      await previewFile(input.files?.[0]);
-      input.value = '';
-    }}
+        const input = event.currentTarget;
+        await previewFile(input.files?.[0]);
+        input.value = '';
+      }}
       type="file"
       bind:this={fileInput}
     >
     <button
-      class={cx(dropZone, dragActive && dropZoneActive, preview && dropZoneCompact)}
+      class={css(dropZone, dragActive && dropZoneActive, preview && dropZoneCompact)}
       disabled={!mutationAvailable || pending !== null}
       onclick={() => fileInput.click()}
       ondragenter={() => (dragActive = true)}
       ondragleave={() => (dragActive = false)}
       ondragover={(event) => event.preventDefault()}
       ondrop={async (event) => {
-      event.preventDefault();
-      dragActive = false;
-      if (mutationAvailable && pending === null) {
-        await previewFile(event.dataTransfer?.files[0]);
-      }
-    }}
+        event.preventDefault();
+        dragActive = false;
+        if (mutationAvailable && pending === null) {
+          await previewFile(event.dataTransfer?.files[0]);
+        }
+      }}
       type="button"
     >
       <span class={sectionLabel}>Import</span>
@@ -326,7 +327,7 @@
     </button>
   </div>
   {#if preview}
-    <div class={cx(operationPanel, previewPanel)} data-merge-import-preview role="status">
+    <div class={css(operationPanelStyle, previewPanel)} data-merge-import-preview role="status">
       <div class={strongCell}>Review merge import</div>
       <div>
         {preview.file.name}

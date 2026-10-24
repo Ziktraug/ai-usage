@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { deferredSkillsShellRoute, loadSkillsShellRoute } from '$lib/features/skills/shell/data';
+import { deferredSkillsShellRoute, loadSkillsShellRoute } from '#lib/features/skills/shell/data.ts';
 import type { LayoutServerLoad } from './$types';
 
 export const load: LayoutServerLoad = async ({ fetch, isDataRequest, parent, url }) => {

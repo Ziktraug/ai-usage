@@ -44,7 +44,7 @@ const cursorValue = (
     if (error instanceof DistillationError) {
       throw error;
     }
-    throw new DistillationError('invalid-cursor');
+    throw new DistillationError('invalid-cursor', { cause: error });
   }
 };
 const cursorFor = (scope: unknown, cutoff: number, offset: number, mutationFingerprint?: string) =>

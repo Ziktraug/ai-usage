@@ -29,11 +29,11 @@ interface EventSourceMessage {
 }
 
 export interface SourceControlEventSource {
-  addEventListener(
+  addEventListener: (
     type: 'control-state' | 'report-published' | 'snapshot',
     listener: (event: EventSourceMessage) => void,
-  ): void;
-  close(): void;
+  ) => void;
+  close: () => void;
   onerror: ((event: Event) => void) | null;
   onopen: ((event: Event) => void) | null;
 }

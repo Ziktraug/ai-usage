@@ -306,6 +306,57 @@ const requireRejected = async (label: string, response: Promise<HttpResponse>): 
   }
 };
 
+const SVELTEKIT_FORM_CSRF_REJECTION = 'Cross-site POST form submissions are forbidden';
+const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
+
+/**
+ * `@sveltejs/adapter-bun` would otherwise derive `https://<Host>` as every request's origin; the
+ * Web build binds it to `http://127.0.0.1:<PORT>` at start. These requests fail unless the
+ * request URL, SvelteKit's CSRF self-origin and the RPC origin policy all see that origin.
+ */
+const assertRuntimeOriginContract = async (port: number): Promise<void> => {
+  const listenerHost = `${LOOPBACK_HOST}:${port}`;
+  const listenerOrigin = `http://${listenerHost}`;
+  const metadataFreeCommand = await sendHttpRequest(port, {
+    body: '{"command":"detect-all"}',
+    headers: { 'content-type': 'application/json', host: listenerHost, origin: listenerOrigin },
+    method: 'POST',
+    path: SOURCE_CONTROL_COMMAND_PATH,
+  });
+  if (metadataFreeCommand.status !== 200 || !metadataFreeCommand.body.includes('"ok":true')) {
+    throw new Error(
+      `A same-origin command without fetch metadata was rejected (status ${metadataFreeCommand.status}); the request origin is not the listener origin.`,
+    );
+  }
+  const sameOriginForm = await sendHttpRequest(port, {
+    body: 'detect-all',
+    headers: { 'content-type': 'text/plain', host: listenerHost, origin: listenerOrigin },
+    method: 'POST',
+    path: SOURCE_CONTROL_COMMAND_PATH,
+  });
+  if (sameOriginForm.status !== 415 || sameOriginForm.body.includes(SVELTEKIT_FORM_CSRF_REJECTION)) {
+    throw new Error(
+      `A same-origin plain-text POST did not reach the command route (status ${sameOriginForm.status}); SvelteKit's CSRF self-origin is not the listener origin.`,
+    );
+  }
+  for (const [label, origin] of [
+    ['cross-site', 'http://attacker.example'],
+    ['missing', undefined],
+  ] as const) {
+    const formRequest = await sendHttpRequest(port, {
+      body: 'detect-all',
+      headers: { 'content-type': 'text/plain', host: listenerHost, ...(origin === undefined ? {} : { origin }) },
+      method: 'POST',
+      path: SOURCE_CONTROL_COMMAND_PATH,
+    });
+    if (formRequest.status !== 403 || !formRequest.body.includes(SVELTEKIT_FORM_CSRF_REJECTION)) {
+      throw new Error(
+        `A plain-text POST with a ${label} Origin was not rejected by SvelteKit's CSRF check (status ${formRequest.status}).`,
+      );
+    }
+  }
+};
+
 const requireNonLoopbackConnectionFailure = async (host: string, port: number): Promise<void> => {
   try {
     await sendHttpRequest(port, { connectHost: host });
@@ -586,9 +637,9 @@ const createProductionRuntimeFixture = async (
       AI_USAGE_PRODUCTION_SMOKE: '1',
       AI_USAGE_ROOT_DIR: rootDir,
       AI_USAGE_TEMP_ROOT: temporaryDirectory,
+      CONNECTION_IDLE_TIMEOUT: '45',
       HOME: homeDirectory,
       HOST: '0.0.0.0',
-      IDLE_TIMEOUT: '45',
       PORT: String(webPort),
       TMPDIR: temporaryDirectory,
       TURBO_CACHE_DIR: path.join(homeDirectory, 'turbo-cache'),
@@ -697,7 +748,9 @@ const runRootDevelopmentSmoke = async (): Promise<void> => {
     process.stdout.write('Root development starts one shared engine/Web target and reaps both task trees.\n');
   } catch (error) {
     const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`, {
+      cause: error,
+    });
   } finally {
     await fixture.dispose();
   }
@@ -763,6 +816,7 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
               if (commandResponse.status !== 200 || !commandResponse.body.includes('"ok":true')) {
                 throw new Error(`Source-control command route did not converge (status ${commandResponse.status}).`);
               }
+              await assertRuntimeOriginContract(port);
               const probeStartedAt = performance.now();
               const probe = await sendHttpRequest(port, { path: '/' });
               const probeDurationMs = performance.now() - probeStartedAt;
@@ -840,7 +894,9 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
       await assertRuntimeReleased(fixture, 'Production supervisor');
     } catch (error) {
       const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
-      throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`, {
+        cause: error,
+      });
     }
   } finally {
     await fixture.dispose();

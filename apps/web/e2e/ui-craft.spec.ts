@@ -1,12 +1,14 @@
 import { expect, openHydratedReport, test } from './browser-test';
 
 const FILTER_TOGGLE = /^Filters/;
+/** The filter trigger is named "Filter by harness: <current selection>" so its visible text is part of the name. */
+const HARNESS_FILTER = /^Filter by harness: /;
 
 test('mobile filters retain their selection when folded and remain available on desktop', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openHydratedReport(page);
   const toggle = page.getByRole('button', { name: FILTER_TOGGLE });
-  const harness = page.getByRole('button', { name: 'Filter by harness', exact: true });
+  const harness = page.getByRole('button', { name: HARNESS_FILTER });
   await expect(harness).toBeHidden();
   await toggle.click();
   await harness.click();

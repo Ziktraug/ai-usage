@@ -1,7 +1,7 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits string ARIA states verified by the browser regressions -->
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { ghostButton } from '@ai-usage/design-system/report';
+  import { ghostButton, ghostButtonStyle } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
   import { buildCampaignMap, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
   import {
@@ -18,7 +18,7 @@
     useQueryClient,
   } from '@tanstack/svelte-query';
   import { onDestroy, tick, untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { afterNavigate, beforeNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import { campaignLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
@@ -129,7 +129,9 @@
       : null;
   });
   const revision = $derived(inspected?.revision ?? latest?.revision);
-  const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
+  const pageUrl = $derived(new URL(page.url.href));
+  const search = $derived(parseDashboardSearchUrl(pageUrl, dashboardSearchCodec));
   const scope = $derived(JSON.stringify(search));
   const harnessSelection = $derived(search.harness.length > 1 ? MULTIPLE_HARNESSES : (search.harness[0] ?? ''));
   const campaignView = $derived(page.url.searchParams.get('campaignView') === 'timeline' ? 'timeline' : 'list');
@@ -149,7 +151,7 @@
   const requestedTimelineRange = $derived(
     campaignTimelineRange(search.range, inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt),
   );
-  const urlSelection = $derived(readCampaignSelection(page.url, request));
+  const urlSelection = $derived(readCampaignSelection(pageUrl, request));
   let requestedCampaign = $state(
     untrack(() => {
       if (urlSelection.status === 'selected') {
@@ -469,23 +471,23 @@
     timelineNavigation = {};
     timelineAxis = null;
     inspected = latest;
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.delete('selectedSession');
     navigate(url);
   };
   const navigate = async (
     url: URL,
-    options: { readonly replaceState?: boolean; readonly state?: App.PageState } = {},
+    navigationOptions: { readonly replace?: boolean; readonly state?: App.PageState } = {},
   ): Promise<void> => {
     navigationError = null;
     try {
-      await shellNavigation.goto(url, { keepFocus: true, noScroll: true, ...options });
+      await shellNavigation.goto(url, { reset: false, ...navigationOptions });
     } catch (cause) {
       navigationError = cause instanceof Error ? cause.message : 'Campaign navigation failed.';
     }
   };
   const selectCampaign = (campaignKey: string): void => {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.set('selectedCampaign', campaignKey);
     if (campaignKey !== selectedKey) {
       matchingRestoration = null;
@@ -498,7 +500,7 @@
     navigate(url);
   };
   const selectView = (view: 'list' | 'timeline'): void => {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     if (view === 'timeline') {
       url.searchParams.set('campaignView', 'timeline');
     } else {
@@ -508,13 +510,13 @@
   };
   const clearSelection = (): void => {
     automaticCampaign = '';
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
     navigate(url);
   };
   const clearFilters = (): void => {
-    const url = dashboardUrlFor(page.url, dashboardSearchDefaultsFor('date'), dashboardSearchCodec);
+    const url = dashboardUrlFor(pageUrl, dashboardSearchDefaultsFor('date'), dashboardSearchCodec);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
     navigate(url);
@@ -540,7 +542,7 @@
           ? search.range
           : { mode: range === '7d' || range === '90d' || range === 'all' || range === 'today' ? range : '30d' },
     };
-    const url = dashboardUrlFor(page.url, next, dashboardSearchCodec);
+    const url = dashboardUrlFor(pageUrl, next, dashboardSearchCodec);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
     navigate(url);
@@ -555,12 +557,12 @@
     if (!selectedSessionId) {
       detailOpenerId = row.rowId;
     }
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.set('selectedCampaign', selectedKey);
     url.searchParams.set('selectedSession', row.rowId);
     const replacing = Boolean(selectedSessionId);
     navigate(url, {
-      replaceState: replacing,
+      replace: replacing,
       state: replacing && !panelOpenedFromReport(page.state) ? page.state : sessionPanelHistoryState(page.state),
     });
   };
@@ -629,9 +631,9 @@
       window.history.back();
       return;
     }
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.delete('selectedSession');
-    navigate(url, { replaceState: true });
+    navigate(url, { replace: true });
   };
   const retry = async (): Promise<void> => {
     if (recoveryBusy) {
@@ -700,16 +702,16 @@
   };
   const sessionCount = (row: SessionPresentationRow): string => {
     const total = row.campaignTotalCount ?? 1;
-    const visible = row.campaignVisibleCount ?? total;
-    if (visible !== total) {
-      return `${visible} of ${total} sessions`;
+    const visibleCount = row.campaignVisibleCount ?? total;
+    if (visibleCount !== total) {
+      return `${visibleCount} of ${total} sessions`;
     }
     return `${total} ${total === 1 ? 'session' : 'sessions'}`;
   };
 
   const toolbar = css({ display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: '12px', mb: '24px' });
   const viewControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', mb: '20px' });
-  const activeViewButton = css({ bg: 'accentTint', borderColor: 'accent', color: 'ink' });
+  const activeViewButton = css.raw({ bg: 'accentTint', borderColor: 'accent', color: 'ink' });
   const field = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '11px' });
   const input = css({
     minH: '40px',
@@ -740,7 +742,7 @@
     '& [data-campaign-scroll]': { h: { base: '65dvh', lg: 'calc(100dvh - 330px)' } },
     pr: '4px',
   });
-  const card = css({
+  const cardStyle = css.raw({
     display: 'grid',
     gap: '7px',
     p: '14px',
@@ -755,7 +757,8 @@
     _hover: { bg: 'accentTint' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
-  const activeCard = css({ bg: 'accentTint', borderColor: 'accent' });
+  const card = css(cardStyle);
+  const activeCard = css.raw({ bg: 'accentTint', borderColor: 'accent' });
   const title = css({ fontSize: '13px', fontWeight: 600, lineHeight: 1.45, overflowWrap: 'anywhere' });
   const muted = css({ color: 'muted', fontSize: '11px', lineHeight: 1.55 });
   const detail = css({
@@ -792,7 +795,7 @@
     <nav aria-label="Campaign view" class={viewControls}>
       <button
         aria-pressed={campaignView === 'list' ? 'true' : 'false'}
-        class={cx(ghostButton, campaignView === 'list' && activeViewButton)}
+        class={css(ghostButtonStyle, campaignView === 'list' && activeViewButton)}
         onclick={() => selectView('list')}
         type="button"
       >
@@ -800,7 +803,7 @@
       </button>
       <button
         aria-pressed={campaignView === 'timeline' ? 'true' : 'false'}
-        class={cx(ghostButton, campaignView === 'timeline' && activeViewButton)}
+        class={css(ghostButtonStyle, campaignView === 'timeline' && activeViewButton)}
         onclick={() => selectView('timeline')}
         type="button"
       >
@@ -862,7 +865,9 @@
       </p>
     {:else if detailLookupFailed}
       <p class={notice} data-session-route-status="failed" role="status">
-        {selectedLookup.data?.ok === false ? selectedLookup.data.error.message : 'The selected session could not be loaded.'}
+        {selectedLookup.data?.ok === false
+          ? selectedLookup.data.error.message
+          : 'The selected session could not be loaded.'}
         <button class={ghostButton} onclick={() => selectedLookup.refetch()} type="button">Retry session</button>
         <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close session details</button>
       </p>
@@ -955,7 +960,7 @@
           {/each}
         {/if}
         {#if matchedRows.length > 3 || matching.hasNextPage || searchExpanded}
-          <button class={ghostButton} onclick={() => searchExpanded = !searchExpanded} type="button">
+          <button class={ghostButton} onclick={() => (searchExpanded = !searchExpanded)} type="button">
             {searchExpanded ? 'Return to full campaign' : 'Explore matching sessions'}
           </button>
         {/if}
@@ -976,7 +981,9 @@
         bind:this={searchVirtualList}
         bind:navigation={searchNavigation}
       >
-        {#snippet children(_entry)}
+        {#snippet children(
+          _entry,
+        )}
           <button
             class={card}
             data-matching-row-id={_entry.row.rowId}
@@ -1003,7 +1010,11 @@
       {#if visible && (visible.timelineRange.from === null || visible.timelineRange.to === null)}
         <button
           class={ghostButton}
-          onclick={() => timelineAxis = { context: timelineContext, axis: buildCampaignTimeline(items, visible.timelineRange).axis }}
+          onclick={() =>
+            (timelineAxis = {
+              context: timelineContext,
+              axis: buildCampaignTimeline(items, visible.timelineRange).axis,
+            })}
           type="button"
         >
           Fit loaded campaigns
@@ -1018,7 +1029,13 @@
         mapError={exploration.error?.message ?? null}
         mapLoading={isRefreshing}
         onLoadMoreCampaigns={loadCampaigns}
-        onLoadMoreSessions={() => { if (exploration.error) {retry(); return false;} return loadMembers(); }}
+        onLoadMoreSessions={() => {
+          if (exploration.error) {
+            retry();
+            return false;
+          }
+          return loadMembers();
+        }}
         onOpenSession={openSession}
         onSelectCampaign={selectCampaign}
         selectedCampaignKey={selectedKey}
@@ -1046,7 +1063,7 @@
         </p>
       {/if}
     {:else}
-      <button class={mobileBack} onclick={() => mobileMap = !mobileMap} type="button">
+      <button class={mobileBack} onclick={() => (mobileMap = !mobileMap)} type="button">
         {mobileMap ? 'Back to campaigns' : 'View selected campaign'}
       </button>
       <div class={layout} data-mobile-map={mobileMap ? 'true' : 'false'}>
@@ -1061,11 +1078,13 @@
             surface="list"
             bind:navigation={listNavigation}
           >
-            {#snippet children(_entry)}
+            {#snippet children(
+              _entry,
+            )}
               {@const item = _entry.item}
               <button
                 aria-pressed={item.campaignKey === selectedKey ? 'true' : 'false'}
-                class={cx(card, item.campaignKey === selectedKey && activeCard)}
+                class={css(cardStyle, item.campaignKey === selectedKey && activeCard)}
                 data-campaign-card
                 data-campaign-key={item.campaignKey}
                 onclick={() => selectCampaign(item.campaignKey)}
@@ -1079,7 +1098,9 @@
                   ·
                   {item.row.partial || item.row.usageUnavailable ? '≥ ' : ''}
                   {fmtCompact(item.row.tokenTotal)}
-                  recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount ? '' : ' in filter'}</span
+                  recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount
+                    ? ''
+                    : ' in filter'}</span
                 >
               </button>
             {/snippet}

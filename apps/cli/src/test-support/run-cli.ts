@@ -4,7 +4,7 @@ import path from 'node:path';
 
 export interface CliRunResult {
   exitCode: number;
-  signalCode: string | null;
+  signalCode: NodeJS.Signals | number | null;
   stderr: string;
   stdout: string;
 }

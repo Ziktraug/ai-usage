@@ -22,6 +22,16 @@ export class ClaudeQuotaCollectionError extends Data.TaggedError('ClaudeQuotaCol
 const collectionError = (reason: ClaudeQuotaCollectionErrorReason, message: string): ClaudeQuotaCollectionError =>
   new ClaudeQuotaCollectionError({ message, reason });
 
+/** The options this source passes to the SDK usage read. */
+export interface ClaudeUsageReadOptions {
+  /**
+   * Since SDK 0.3.308 the usage read also scans every local transcript touched in the last seven days
+   * to fill a `behaviors` section unless told not to. The quota path wants the plan rate limits only and
+   * must never pay for, or depend on, that scan.
+   */
+  readonly skipBehaviors?: boolean;
+}
+
 /**
  * The surface this source needs from the SDK, named so the unstable parts are visible here. `Query`
  * is an `AsyncGenerator`, and the two teardown calls are not interchangeable: `interrupt` ends the
@@ -31,7 +41,7 @@ const collectionError = (reason: ClaudeQuotaCollectionErrorReason, message: stri
 export interface ClaudeUsageQuery {
   interrupt?: () => Promise<unknown>;
   return?: (value?: unknown) => Promise<unknown>;
-  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise<unknown>;
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: (options?: ClaudeUsageReadOptions) => Promise<unknown>;
 }
 
 export interface ClaudeAgentSdkSourceOptions {
@@ -167,7 +177,8 @@ const readUsage = async (
       throw collectionError(reason, `The Claude quota read ${reason === 'aborted' ? 'was aborted' : 'timed out'}.`);
     }
     session = openedSession;
-    return await openedSession.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
+    // Plan limits only: the default read also scans a week of local transcripts for `behaviors`.
+    return await openedSession.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
   })();
   let result: unknown;
   try {

@@ -13,7 +13,7 @@ export interface CliRuntime {
   readonly usageEngine: CliUsageEngine;
 }
 
-export const CliRuntime = Context.GenericTag<CliRuntime>('@ai-usage/CliRuntime');
+export const CliRuntime = Context.Service<CliRuntime>('@ai-usage/CliRuntime');
 
 export interface CreateCliRuntimeLayerOptions {
   readonly argv?: string[];

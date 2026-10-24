@@ -5,6 +5,9 @@ const webClientModuleManifestFormat = 'ai-usage-web-client-modules' as const;
 const webClientModuleManifestVersion = 2 as const;
 const moduleQueryPattern = /[?#].*$/u;
 const serverModulePattern = /\.server(?:\.|\/|\?|$)/u;
+// SvelteKit 3 treats every `server` directory inside the Web app as server-only, except under
+// `src/routes` and `static`; manifest ids inside the app start with `./`.
+const appServerDirectoryPattern = /^\.\/(?!node_modules\/|src\/routes\/|static\/)(?:[^/]+\/)*server\//u;
 const nodeBuiltinSpecifiers = new Set(
   builtinModules.map((specifier) => (specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier)),
 );
@@ -100,9 +103,14 @@ const forbiddenModuleRules: readonly ForbiddenModuleRule[] = [
   {
     matches: (moduleId) => {
       const normalized = normalizedModuleId(moduleId);
-      return normalized.includes('$lib/server') || normalized.includes('/src/lib/server/');
+      return (
+        normalized.includes('$lib/server') ||
+        normalized.includes('#lib/server') ||
+        normalized.includes('/src/lib/server/') ||
+        appServerDirectoryPattern.test(normalized)
+      );
     },
-    name: '$lib/server',
+    name: 'server-only directory',
   },
   {
     matches: (moduleId) => serverModulePattern.test(normalizedModuleId(moduleId)),

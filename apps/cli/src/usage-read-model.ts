@@ -290,25 +290,25 @@ export const readServedUsageSupport = async (dbPath: string, revision: string): 
 
 export const readServedPortableConfig = async (dbPath: string, revision?: string) => {
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       queryServedReportRevisionPortableConfig({
         dbPath,
         ...(revision === undefined ? {} : { revision }),
       }),
     ),
   );
-  if (result._tag === 'Left') {
-    throw result.left;
+  if (result._tag === 'Failure') {
+    throw result.failure;
   }
-  return result.right;
+  return result.success;
 };
 
 export const readUsageMachine = async (dbPath: string): Promise<UsageMachine> => {
-  const result = await Effect.runPromise(Effect.either(queryUsageLocalMachine({ dbPath })));
-  if (result._tag === 'Left') {
-    throw result.left;
+  const result = await Effect.runPromise(Effect.result(queryUsageLocalMachine({ dbPath })));
+  if (result._tag === 'Failure') {
+    throw result.failure;
   }
-  return result.right;
+  return result.success;
 };
 
 /**
@@ -317,13 +317,13 @@ export const readUsageMachine = async (dbPath: string): Promise<UsageMachine> =>
  * and the renderer could already draw it, but the query in between asked for one provider by name.
  */
 export const readLatestProviderQuotas = async (dbPath: string) => {
-  // Either-then-throw so `quota --stored` can tell a never-collected machine (store-missing) from a
-  // real read failure; Effect.runPromise alone would reject with an opaque fiber failure.
-  const result = await Effect.runPromise(Effect.either(queryLatestLocalProviderQuotaObservations({ dbPath })));
-  if (result._tag === 'Left') {
-    throw result.left;
+  // Result-then-throw keeps the typed UsageStoreError explicit at the Promise boundary, so
+  // `quota --stored` can tell a never-collected machine (store-missing) from a real read failure.
+  const result = await Effect.runPromise(Effect.result(queryLatestLocalProviderQuotaObservations({ dbPath })));
+  if (result._tag === 'Failure') {
+    throw result.failure;
   }
-  return result.right.observations.map(projectLatestProviderQuotaObservation);
+  return result.success.observations.map(projectLatestProviderQuotaObservation);
 };
 
 /** The web history read bounds itself by observation count rather than by point count; match it. */
@@ -356,10 +356,10 @@ export const readProviderQuotaHistory = async (input: {
   readonly from: string;
   readonly to: string;
 }): Promise<CliProviderQuotaHistory> => {
-  // Either-then-throw like the other readers here, so callers still receive the typed UsageStoreError
-  // rather than the fiber failure Effect.runPromise would otherwise reject with.
+  // Result-then-throw like the other readers here, so callers receive the typed UsageStoreError
+  // as a value before it is rethrown.
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       queryProviderQuotaObservations({
         dbPath: input.dbPath,
         from: input.from,
@@ -368,10 +368,10 @@ export const readProviderQuotaHistory = async (input: {
       }),
     ),
   );
-  if (result._tag === 'Left') {
-    throw result.left;
+  if (result._tag === 'Failure') {
+    throw result.failure;
   }
-  const stored = result.right;
+  const stored = result.success;
   const points = stored.observations.flatMap(({ firstObservedAt, lastObservedAt, observation }) =>
     observation.windows.map((window) => ({
       accountScope: observation.accountScope,

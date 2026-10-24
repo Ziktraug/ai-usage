@@ -4,7 +4,7 @@
 
   // Wide enough for the rounds rail beside its reading column; the table stays
   // visible on the left so j/k browsing keeps its context.
-  const readingDrawer = css({ w: { base: 'full', md: 'min(960px, max(480px, calc(100vw - 360px)))' } });
+  const readingDrawer = css.raw({ w: { base: 'full', md: 'min(960px, max(480px, calc(100vw - 360px)))' } });
   const sessionIdentity = css({ display: 'grid', gap: '6px', minW: 0 });
   const sessionProject = css({ color: 'accent', fontSize: '11px', letterSpacing: '0.02em', overflowWrap: 'anywhere' });
   // Four tiles when the panel is wide, two when it is not: labels never wrap.
@@ -33,7 +33,6 @@
   import {
     type BarSegment,
     Drawer,
-    drawer,
     drawerActions,
     drawerBody,
     drawerClose,
@@ -45,6 +44,7 @@
     drawerLegendValue,
     drawerNav,
     drawerPosition,
+    drawerStyle,
     drawerTitle,
     drawerTop,
     ghostButton,
@@ -549,7 +549,7 @@
 <Drawer
   closeOnInteractOutside={mobileDrawer}
   contentAriaLabel="Session details"
-  contentClass={cx(drawer, readingDrawer)}
+  contentClass={css(drawerStyle, readingDrawer)}
   finalFocusEl={previousFocusElement}
   initialFocusEl={() => (mobileDrawer ? (closeButton ?? null) : previousFocusElement())}
   modal={mobileDrawer}
@@ -648,7 +648,13 @@
         {#key `${row.rowId}:${target?.kind}`}
           <Tabs
             ariaLabel="Session detail views"
-            items={tabItems({ analysis: analysisPane, members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
+            items={tabItems({
+              analysis: analysisPane,
+              members: membersPane,
+              rounds: roundsPane,
+              summary: summaryPane,
+              timeline: timelinePane,
+            })}
             onValueChange={changeTab}
             unmountOnExit={false}
             value={selectedTab}

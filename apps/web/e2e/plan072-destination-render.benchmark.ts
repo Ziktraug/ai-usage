@@ -181,7 +181,12 @@ const readPerfSnapshot = async (request: APIRequestContext): Promise<PerfSnapsho
 };
 
 const resetPerfSnapshot = async (request: APIRequestContext): Promise<void> => {
-  const response = await request.delete(PERF_PATH);
+  // SvelteKit 3 refuses a production DELETE without a content type unless its Origin is the listener.
+  const origin = test.info().project.use.baseURL;
+  if (origin === undefined) {
+    throw new Error('The plan 072 benchmark needs the configured listener baseURL.');
+  }
+  const response = await request.delete(PERF_PATH, { headers: { origin } });
   expect(response.status()).toBe(PERF_RESET_STATUS);
 };
 

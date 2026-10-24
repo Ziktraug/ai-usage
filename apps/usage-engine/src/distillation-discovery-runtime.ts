@@ -52,8 +52,8 @@ export const executeDistillationDiscovery = async (
     let selection: Record<string, unknown>;
     try {
       selection = distillationObject(JSON.parse(Buffer.from(request.selectionToken, 'base64url').toString('utf8')));
-    } catch {
-      throw new DistillationError('invalid-selection-token');
+    } catch (error) {
+      throw new DistillationError('invalid-selection-token', { cause: error });
     }
     if (selection.version !== 1) {
       throw new DistillationError('selection-version-mismatch');

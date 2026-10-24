@@ -1,6 +1,6 @@
 import { css } from '@ai-usage/design-system/css';
 
-export const panel = css({
+export const panelStyle = css.raw({
   display: 'grid',
   gap: '14px',
   alignContent: 'start',
@@ -10,6 +10,7 @@ export const panel = css({
   bg: 'surface',
   minW: 0,
 });
+export const panel = css(panelStyle);
 
 // Same reading rhythm as `panel` without the card chrome: for sections that are read, not operated.
 // Containment stays reserved for interactive charts, tables, forms, alerts, and overlays.
@@ -33,11 +34,12 @@ export const panelTitle = css({
   letterSpacing: '-0.015em',
 });
 
-export const panelSub = css({
+export const panelSubStyle = css.raw({
   color: 'muted',
   fontSize: '12px',
   lineHeight: 1.5,
 });
+export const panelSub = css(panelSubStyle);
 
 export const groupPanel = css({
   border: '1px solid token(colors.line)',
@@ -71,7 +73,7 @@ export const groupRows = css({
   display: 'grid',
 });
 
-export const groupRow = css({
+export const groupRowStyle = css.raw({
   display: 'grid',
   gridTemplateColumns: 'minmax(0, 1fr) 96px',
   gap: '14px',
@@ -83,6 +85,7 @@ export const groupRow = css({
     borderBottom: '0',
   },
 });
+export const groupRow = css(groupRowStyle);
 
 export const groupSub = css({
   color: 'muted',

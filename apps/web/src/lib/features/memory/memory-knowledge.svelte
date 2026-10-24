@@ -51,20 +51,32 @@
 </script>
 <div class={memoryStack}>
   <label class={memoryField}
-    >Knowledge type<select class={memoryInput} onchange={()=>{cursor=null;}} bind:value={kind}>
+    >Knowledge type<select
+      class={memoryInput}
+      onchange={() => {
+        cursor = null;
+      }}
+      bind:value={kind}
+    >
       <option value={null}>All types</option>
-      {#each ['decision','pattern','pitfall','command','constraint','handoff','lesson','preference'] as value}
+      {#each ['decision', 'pattern', 'pitfall', 'command', 'constraint', 'handoff', 'lesson', 'preference'] as value}
         <option {value}>{value}</option>
       {/each}
     </select></label
   >
-  <MemorySearch {kind} onActiveChange={(active)=>{searching=active;}} {projectId} />
+  <MemorySearch
+    {kind}
+    onActiveChange={(active) => {
+      searching = active;
+    }}
+    {projectId}
+  />
   {#if !searching}
     {#if query.isPending}
       <p class={memoryCopy} role="status">Reading accepted knowledge…</p>
     {:else if query.error}
       <p class={memoryCopy} role="alert">Accepted knowledge is temporarily unavailable. Check the Memory service.</p>
-    {:else if query.data?.items.length===0}
+    {:else if query.data?.items.length === 0}
       <section class={memoryPanel}>
         <h2 class={memoryHeading}>No accepted knowledge in this scope</h2>
         <p class={memoryCopy}>
@@ -84,7 +96,7 @@
             {item.kind}
             · {item.trust} · {item.sensitivity} · Accepted revision {item.revisionNumber}
           </p>
-          {#if item.guidance.length>0}
+          {#if item.guidance.length > 0}
             <ul>
               {#each item.guidance as guidance}
                 <li class={memoryCopy}>{guidance}</li>
@@ -94,13 +106,15 @@
           {#if item.contentOmitted}
             <button
               class={memoryButton}
-              onclick={()=>{selected={itemId:item.id,revisionId:item.revisionId};}}
+              onclick={() => {
+                selected = { itemId: item.id, revisionId: item.revisionId };
+              }}
               type="button"
             >
               Read complete accepted revision
             </button>
           {/if}
-          {#if selected?.revisionId===item.revisionId}
+          {#if selected?.revisionId === item.revisionId}
             {#if detail.data}
               <section aria-label="Complete accepted revision" class={memoryStack}>
                 <p class={memoryCopy}>{detail.data.summary}</p>
@@ -111,7 +125,7 @@
                 </ul>
                 <details>
                   <summary class={memoryCopy}>Retained structured evidence</summary>
-                  <pre class={memoryCopy}>{JSON.stringify(detail.data.structuredContent,null,2)}</pre>
+                  <pre class={memoryCopy}>{JSON.stringify(detail.data.structuredContent, null, 2)}</pre>
                 </details>
               </section>
             {:else if detail.error}
@@ -129,10 +143,24 @@
       {/each}
       <div class={memoryRow}>
         {#if cursor}
-          <button class={memoryButton} onclick={()=>{cursor=null;}} type="button">Back to newest knowledge</button>
+          <button
+            class={memoryButton}
+            onclick={() => {
+              cursor = null;
+            }}
+            type="button"
+          >
+            Back to newest knowledge
+          </button>
         {/if}
         {#if query.data.nextCursor}
-          <button class={memoryButton} onclick={()=>{cursor=query.data?.nextCursor ?? null;}} type="button">
+          <button
+            class={memoryButton}
+            onclick={() => {
+              cursor = query.data?.nextCursor ?? null;
+            }}
+            type="button"
+          >
             More accepted knowledge
           </button>
         {/if}

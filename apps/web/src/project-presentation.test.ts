@@ -13,7 +13,7 @@ const source = (
   id: string,
   machineId: string,
   machineLabel: string,
-  project: string,
+  projectName: string,
   sessions = 1,
   tokens = 0,
 ): UsageReportProjectSource => ({
@@ -21,9 +21,9 @@ const source = (
   id,
   machineId,
   machineLabel,
-  project,
+  project: projectName,
   sessions,
-  sourcePath: `/home/alex/${project || 'unknown'}`,
+  sourcePath: `/home/alex/${projectName || 'unknown'}`,
   tokens,
 });
 

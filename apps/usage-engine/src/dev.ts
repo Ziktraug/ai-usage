@@ -215,8 +215,8 @@ export const createUsageEngineDevWatchTargets = (engineDirectoryValue: string): 
 };
 
 export interface UsageEngineDevSignalEmitter {
-  off(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
-  on(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
+  off: (signal: 'SIGINT' | 'SIGTERM', listener: () => void) => void;
+  on: (signal: 'SIGINT' | 'SIGTERM', listener: () => void) => void;
 }
 
 export const createUsageEngineDevTermination = (

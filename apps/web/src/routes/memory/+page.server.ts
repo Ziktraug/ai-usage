@@ -1,4 +1,4 @@
-import { deferredMemoryPageData, loadMemoryPageData } from '$lib/features/memory/memory-load';
+import { deferredMemoryPageData, loadMemoryPageData } from '#lib/features/memory/memory-load.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, isDataRequest, url }) => {

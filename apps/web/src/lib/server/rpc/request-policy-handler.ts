@@ -174,7 +174,6 @@ const maximumRequestBodyBytes = (policy: RequestPolicy): number | undefined => {
   if (policy.requestSize === 'portable-usage-json' || policy.requestSize === 'portable-usage-upload') {
     return MAX_PORTABLE_USAGE_BYTES;
   }
-  return;
 };
 
 export const enforceRequestPolicy = async (

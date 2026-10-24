@@ -5,6 +5,40 @@ import { startPostgresCluster } from './pg-harness';
 
 const runPostgresTests = process.env.AI_USAGE_RUN_POSTGRES_TESTS === '1';
 const foundationMigrations = PLATFORM_MIGRATIONS.slice(0, 1);
+// Ordinals 1 to 10: the schema that required an issuer on every provider account.
+const issuerSchemaMigrations = PLATFORM_MIGRATIONS.slice(0, 10);
+const providerKeyConstraintSql = `
+  SELECT 1 FROM pg_constraint
+  WHERE conname = 'authentication_provider_accounts_provider_id_account_id_key'
+    AND conrelid = 'authentication_provider_accounts'::regclass AND contype = 'u'
+`;
+const issuerKeyConstraintSql = `
+  SELECT 1 FROM pg_constraint
+  WHERE conname = 'authentication_provider_accounts_issuer_account_id_key'
+    AND conrelid = 'authentication_provider_accounts'::regclass
+`;
+const issuerColumnSql = `
+  SELECT 1 FROM information_schema.columns
+  WHERE table_name = 'authentication_provider_accounts' AND column_name = 'issuer' AND is_nullable = $1
+`;
+
+const insertPrincipalWithAccount = async (
+  database: PlatformTestingDatabase,
+  principalId: string,
+  subject: string,
+  issuer: string | null,
+): Promise<void> => {
+  await database.query(
+    `INSERT INTO authentication_principals (id, name, email, email_verified, created_at, updated_at)
+     VALUES ($1, $2, $3, TRUE, now(), now())`,
+    [principalId, subject, `${principalId}@github.auth.ai-usage.invalid`],
+  );
+  await database.query(
+    `INSERT INTO authentication_provider_accounts (issuer, account_id, provider_id, user_id, created_at, updated_at)
+     VALUES ($1, $2, 'github', $3, now(), now())`,
+    [issuer, subject, principalId],
+  );
+};
 
 const ledgerSql = `
   CREATE TABLE platform_migrations (
@@ -150,17 +184,17 @@ if (runPostgresTests) {
       }
     }, 30_000);
 
-    test('applies the compiled ledger to ordinal 10 and verifies it cleanly', async () => {
+    test('applies the compiled ledger to ordinal 11 and verifies it cleanly', async () => {
       const { database, stop } = await startDatabase('migrations-compiled-verify');
       try {
         expect(await database.runMigrations({ mode: 'apply' })).toEqual({
           appliedIds: PLATFORM_MIGRATIONS.map(({ id }) => id),
-          currentOrdinal: 10,
+          currentOrdinal: 11,
         });
-        expect(await database.runMigrations({ mode: 'verify' })).toEqual({ appliedIds: [], currentOrdinal: 10 });
+        expect(await database.runMigrations({ mode: 'verify' })).toEqual({ appliedIds: [], currentOrdinal: 11 });
         expect(
           await database.queryRowCount(
-            "SELECT 1 FROM platform_schema_metadata WHERE key = 'foundation_schema_version' AND value = '10'",
+            "SELECT 1 FROM platform_schema_metadata WHERE key = 'foundation_schema_version' AND value = '11'",
           ),
         ).toBe(1);
         expect(
@@ -170,6 +204,79 @@ if (runPostgresTests) {
                AND tgrelid = 'authentication_provider_accounts'::regclass`,
           ),
         ).toBe(2);
+        expect(await database.queryRowCount(providerKeyConstraintSql)).toBe(1);
+        expect(await database.queryRowCount(issuerKeyConstraintSql)).toBe(0);
+        expect(await database.queryRowCount(issuerColumnSql, ['YES'])).toBe(1);
+      } finally {
+        await stop();
+      }
+    }, 30_000);
+
+    test('carries provider accounts written under the issuer schema over to the provider key', async () => {
+      const { database, stop } = await startDatabase('migrations-provider-key');
+      try {
+        expect(await database.runMigrations({ migrations: issuerSchemaMigrations, mode: 'apply' })).toMatchObject({
+          currentOrdinal: 10,
+        });
+        expect(await database.queryRowCount(issuerKeyConstraintSql)).toBe(1);
+        const first = crypto.randomUUID();
+        const second = crypto.randomUUID();
+        await insertPrincipalWithAccount(database, first, 'first-subject', 'local:oauth:github');
+        await insertPrincipalWithAccount(database, second, 'second-subject', 'local:oauth:github');
+
+        expect(await database.runMigrations({ mode: 'apply' })).toEqual({
+          appliedIds: ['0011_provider_key_account_identity'],
+          currentOrdinal: 11,
+        });
+
+        // Rows of the earlier schema survive with their issuer; new rows leave it NULL.
+        expect(
+          await database.queryRowCount(
+            "SELECT 1 FROM authentication_provider_accounts WHERE issuer = 'local:oauth:github'",
+          ),
+        ).toBe(2);
+        await insertPrincipalWithAccount(database, crypto.randomUUID(), 'third-subject', null);
+        expect(
+          await database.queryRowCount('SELECT 1 FROM authentication_provider_accounts WHERE issuer IS NULL'),
+        ).toBe(1);
+        // The provider key is unique, whatever the issuer.
+        await expect(
+          database.query(
+            `INSERT INTO authentication_provider_accounts
+               (account_id, provider_id, user_id, created_at, updated_at)
+             VALUES ('first-subject', 'github', $1, now(), now())`,
+            [second],
+          ),
+        ).rejects.toMatchObject({ code: '23505' });
+        expect(await database.queryRowCount(providerKeyConstraintSql)).toBe(1);
+        expect(await database.queryRowCount(issuerKeyConstraintSql)).toBe(0);
+        expect(await database.queryRowCount(issuerColumnSql, ['YES'])).toBe(1);
+      } finally {
+        await stop();
+      }
+    }, 30_000);
+
+    test('refuses the provider-key migration while a provider key maps to more than one row', async () => {
+      const { database, stop } = await startDatabase('migrations-provider-key-duplicates');
+      try {
+        await database.runMigrations({ migrations: issuerSchemaMigrations, mode: 'apply' });
+        await insertPrincipalWithAccount(database, crypto.randomUUID(), 'shared-subject', 'local:oauth:github');
+        // The issuer schema could not hold this pair twice; a hand-edited
+        // deployment can. The migration must refuse it, not the constraint.
+        await database.query(
+          'ALTER TABLE authentication_provider_accounts DROP CONSTRAINT authentication_provider_accounts_issuer_account_id_key',
+        );
+        await insertPrincipalWithAccount(database, crypto.randomUUID(), 'shared-subject', 'local:oauth:github');
+
+        const failure = await database.runMigrations({ mode: 'apply' }).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        expect(failure).toMatchObject({ code: 'migration-failed', operation: 'apply-migration' });
+        expect(failure instanceof Error ? failure.cause : undefined).toMatchObject({ code: 'IA003' });
+        expect(await database.queryRowCount('SELECT 1 FROM platform_migrations WHERE ordinal = 11')).toBe(0);
+        expect(await database.queryRowCount(providerKeyConstraintSql)).toBe(0);
+        expect(await database.queryRowCount(issuerColumnSql, ['NO'])).toBe(1);
       } finally {
         await stop();
       }

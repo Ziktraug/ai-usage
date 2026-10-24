@@ -24,6 +24,22 @@ account linking. That evidence supports the accepted decision; the runtime is
 not available on `main` until plan 104 reaches `DONE`. Auth-library rows and
 APIs remain adapter-private.
 
+### Amended 2026-10-22
+
+Better Auth and `@better-auth/drizzle-adapter` are pinned to `1.7.12`. Better
+Auth `1.7.3` reverted the `1.7.0`–`1.7.2` account identity to
+`(providerId, accountId)`; migration ordinal 11 makes the `issuer` column
+nullable and replaces the `(issuer, account_id)` key with
+`(provider_id, account_id)`, refusing to apply while a provider key maps to
+more than one row (SQLSTATE `IA003`, reported in the server's start-failure
+diagnostic). Schema validation, enabled by default since `1.7.3`, stays on:
+the identity adapter wrappers carry the library's schema check so it is
+enforced before authentication requests rather than skipped, and an adapter
+with no check to carry fails the shared-authentication construction. Every
+`better-auth` and `@better-auth/*` import stays inside identity's
+adapter-private modules, except the Drizzle adapter, which stays private to the
+PostgreSQL authentication adapter. The rest of the decision is unchanged.
+
 GitHub is the only normal shared login. It requests exactly `read:user` and
 `user:email`, identifies an Authentication identity by the stable GitHub
 subject, disables implicit/email-based linking, and requires an authenticated

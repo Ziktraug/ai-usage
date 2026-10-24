@@ -1,4 +1,4 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
 
 /**
  * Content types worth compressing. Everything else the app serves is already compressed (fonts,

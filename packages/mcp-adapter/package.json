@@ -8,19 +8,19 @@
     "./registration": "./src/registration.ts",
     "./stdio": "./src/stdio.ts"
   },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "test": "bun test"
+  },
   "dependencies": {
     "@ai-usage/authorization-contract": "workspace:*",
     "@ai-usage/memory-service": "workspace:*",
     "@ai-usage/platform-core": "workspace:*",
     "@ai-usage/skills": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^4.4.3"
-  },
-  "scripts": {
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit",
-    "test": "bun test",
-    "lint": "biome check .",
-    "format": "biome format --write ."
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
   }
 }

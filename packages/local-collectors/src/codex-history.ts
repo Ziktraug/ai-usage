@@ -42,7 +42,7 @@ import {
 } from '@ai-usage/report-core/skill-observation';
 import type { SessionOrigin } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
-import { Effect, Either } from 'effect';
+import { Effect, Result } from 'effect';
 import type { CollectedSession } from './collected-session';
 import { reviveSkillObservationsResult } from './collector-cache';
 import { parseNonNegativeSafeInteger } from './metric-validation';
@@ -132,15 +132,15 @@ interface CodexSessionCacheRow {
 }
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  run(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  get: (...params: unknown[]) => unknown;
+  run: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  close(): void;
-  exec(sql: string): unknown;
-  query(sql: string): SqliteStatement;
+  close: () => void;
+  exec: (sql: string) => unknown;
+  query: (sql: string) => SqliteStatement;
 }
 
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
@@ -167,13 +167,14 @@ interface SqliteDatabase {
 // An unchanged rollout must also recover lost generations and partial status.
 const CODEX_SESSION_CACHE_VERSION = 25;
 
-// `Effect.yieldNow()` re-schedules within the Effect runtime but never reaches
-// the macrotask queue, so a cold pass over thousands of rollouts (each one a
-// synchronous decompression and parse) would still starve timers and I/O
-// callbacks; `Effect.sleep(0)` does reach it. The slice counts accumulated
-// read-and-parse time, not wall-clock since the last sleep, so cache hits, GC
-// pauses and a loaded runner cannot push a small `Effect.runSync` fixture over
-// it, while a cold pass still yields regularly.
+// The runtime's op-count yielding cannot split one long synchronous
+// decompress-and-parse, and a cold pass over thousands of rollouts chains many
+// of them, so the loop yields explicitly: `Effect.sleep(0)` suspends the fiber
+// and resumes it from the scheduler's macrotask dispatch (`setImmediate`),
+// which lets timers and I/O callbacks run in between. The slice counts
+// accumulated read-and-parse time, not wall-clock since the last sleep, so
+// cache hits, GC pauses and a loaded runner cannot push a small
+// `Effect.runSync` fixture over it, while a cold pass still yields regularly.
 const CODEX_PARSE_YIELD_SLICE_MS = 50;
 
 const THREAD_SPAWN_EDGES_SQL = `
@@ -226,7 +227,7 @@ const readCodexThreadMetadata: Effect.Effect<
           return metadata;
         }),
       (db) => db.close,
-    ).pipe(Effect.catchAll(() => Effect.succeed(new Map<string, CodexThreadMetadata>())));
+    ).pipe(Effect.catch(() => Effect.succeed(new Map<string, CodexThreadMetadata>())));
   }),
   (metadata) => ({ rows: metadata.size }),
 );
@@ -615,7 +616,7 @@ const readCodexSessions = (
             ? yield* Effect.tryPromise({
                 try: () => loadCodexSessionCache(storage),
                 catch: (error) => error,
-              }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+              }).pipe(Effect.catch(() => Effect.succeed(null)))
             : null;
           cacheReadMs = Date.now() - cacheReadStartedAt;
           return sessionCache;
@@ -644,7 +645,7 @@ const readCodexSessions = (
               const readStartedAt = Date.now();
               // Codex may compress or archive the rollout after it was listed;
               // the read follows it to its next form with a fresh parser.
-              const read = yield* Effect.either(
+              const read = yield* Effect.result(
                 readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
                   const parser = createCodexSessionParser();
                   return storage
@@ -653,13 +654,13 @@ const readCodexSessions = (
                 }),
               );
               readMs += Date.now() - readStartedAt;
-              if (Either.isLeft(read)) {
+              if (Result.isFailure(read)) {
                 // A rollout that cannot be read (a corrupt or truncated
                 // archive, a file that vanished mid-scan) costs itself, not
                 // the collection source: it is reported, left out of the
                 // cache so the next scan retries it, and the scan goes on.
                 unreadableFiles++;
-                readFailures.push(read.left);
+                readFailures.push(read.failure);
                 unreadablePaths.add(filePath);
                 // The rollout is missing evidence for both skill tiers, so each
                 // bound weakens by one source; persisting them as complete
@@ -667,7 +668,7 @@ const readCodexSessions = (
                 observationCompleteness.exposure.rejected += 1;
                 observationCompleteness.invocation.rejected += 1;
               } else {
-                const { parser, result: readResult } = read.right.value;
+                const { parser, result: readResult } = read.success.value;
                 bytes += readResult.bytes;
 
                 const parsed = parser.finish();
@@ -685,7 +686,7 @@ const readCodexSessions = (
                 mergeObservationCompleteness(session.skillObservationCompleteness);
                 // A rollout read under another path is cached under that path
                 // by the next pass, which lists it there.
-                if (stat && read.right.path === filePath) {
+                if (stat && read.success.path === filePath) {
                   parsedForCache.push({ filePath, session: cloneCodexSession(session), stat });
                 }
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
@@ -974,7 +975,7 @@ const findLatestRawCodexRateLimits = (
 
     for (const filePath of [...files].sort().slice(-recentFileLimit).reverse()) {
       let candidate: RawCodexRateLimitSnapshot | null = null;
-      const read = yield* Effect.either(
+      const read = yield* Effect.result(
         readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
           candidate = null;
           return storage.readLines(candidatePath, (line) => {
@@ -1000,14 +1001,14 @@ const findLatestRawCodexRateLimits = (
           });
         }),
       );
-      if (Either.isLeft(read)) {
+      if (Result.isFailure(read)) {
         // An archive that does not decompress, or a rollout gone in every
         // form, is skipped for the next (older) one; the sessions collector
         // reports the same file. Any other failure is the reader's to report.
-        if (!(read.left.operation === 'readLines.decompress' || isMissingHistoryFileError(read.left))) {
-          return yield* Effect.fail(read.left);
+        if (!(read.failure.operation === 'readLines.decompress' || isMissingHistoryFileError(read.failure))) {
+          return yield* Effect.fail(read.failure);
         }
-        skippedFailures.push(read.left);
+        skippedFailures.push(read.failure);
         continue;
       }
       if (candidate) {

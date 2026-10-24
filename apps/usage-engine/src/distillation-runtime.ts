@@ -29,7 +29,7 @@ import { createCompactDistillationContext } from './distillation-context';
 import { executeDistillationDiscovery } from './distillation-discovery-runtime';
 
 export interface DistillationRuntime {
-  execute(input: unknown, signal?: AbortSignal): Promise<unknown>;
+  execute: (input: unknown, signal?: AbortSignal) => Promise<unknown>;
 }
 export interface DistillationRuntimeOptions {
   connected: boolean;

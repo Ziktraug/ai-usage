@@ -6,8 +6,8 @@ export interface ReportQueryIdentity {
 }
 
 export interface ReportIdentityChannel {
-  clear(identity: ReportQueryIdentity): void;
-  publish(identity: ReportQueryIdentity): void;
+  clear: (identity: ReportQueryIdentity) => void;
+  publish: (identity: ReportQueryIdentity) => void;
 }
 
 const reportIdentityKey = Symbol('ai-usage-report-query-identity');

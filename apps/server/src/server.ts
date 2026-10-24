@@ -8,8 +8,8 @@ export type PlatformServerErrorCode = 'http-start-failed' | 'shutdown-failed' | 
 export class PlatformServerError extends Error {
   readonly code: PlatformServerErrorCode;
 
-  constructor(code: PlatformServerErrorCode) {
-    super('The platform server operation failed.');
+  constructor(code: PlatformServerErrorCode, options?: ErrorOptions) {
+    super('The platform server operation failed.', options);
     this.name = 'PlatformServerError';
     this.code = code;
   }
@@ -138,8 +138,8 @@ export const startPlatformServer = async (
       host: config.host,
       port: config.port,
     });
-  } catch {
-    throw new PlatformServerError('http-start-failed');
+  } catch (error) {
+    throw new PlatformServerError('http-start-failed', { cause: error });
   }
 
   try {
@@ -162,12 +162,12 @@ export const startPlatformServer = async (
       operation: 'security',
     });
     dependencies.onDiagnostic?.({ code: 'ready', operation: 'startup' });
-  } catch {
+  } catch (error) {
     lifecycle = 'closed';
     dependencies.onDiagnostic?.({ code: 'startup-failed', operation: 'startup' });
     await runWithTimeout(Promise.resolve(httpServer.stop(true)), config.shutdownTimeoutMs);
     await runWithTimeout(store?.close() ?? Promise.resolve(), config.shutdownTimeoutMs);
-    throw new PlatformServerError('startup-failed');
+    throw new PlatformServerError('startup-failed', { cause: error });
   }
 
   let closeOperation: Promise<void> | undefined;

@@ -982,7 +982,7 @@ const focusedExecutiveGroupFromAnalytics = (group: AnalyticsGroup): FocusedExecu
 };
 
 const unusedExecutiveGroupKey = (groups: readonly FocusedExecutiveGroup[]): string => {
-  const keys = new Set(groups.map(({ key }) => key));
+  const keys = new Set(groups.map(({ key: groupKey }) => groupKey));
   let key = OTHER_EXECUTIVE_GROUP_KEY;
   while (keys.has(key)) {
     key = `_${key}`;
@@ -2603,8 +2603,8 @@ const assertFocusedMachineFreshness = (value: unknown): void => {
     throw new Error('support machine freshness.machines must be a bounded array');
   }
   const machineIds = new Set<string>();
-  for (const [index, value] of freshness.machines.entries()) {
-    const machine = requireRecord(value, `support machine freshness.machines[${index}]`);
+  for (const [index, rawMachine] of freshness.machines.entries()) {
+    const machine = requireRecord(rawMachine, `support machine freshness.machines[${index}]`);
     assertExactKeys(machine, ['id', 'label', 'lastSeenAt'], `support machine freshness.machines[${index}]`);
     const id = requireString(machine.id, `support machine freshness.machines[${index}].id`);
     const label = requireString(machine.label, `support machine freshness.machines[${index}].label`);
@@ -2780,11 +2780,11 @@ export function parseFocusedReportQueryResult(
     const option = requireRecord(entry, `support filter options.machine[${index}]`);
     assertExactKeys(option, ['label', 'value'], `support filter options.machine[${index}]`);
     const label = requireString(option.label, `support filter options.machine[${index}].label`);
-    const value = requireString(option.value, `support filter options.machine[${index}].value`);
-    if (label === '' || value === '' || machineValues.has(value)) {
+    const optionValue = requireString(option.value, `support filter options.machine[${index}].value`);
+    if (label === '' || optionValue === '' || machineValues.has(optionValue)) {
       throw new Error('Support machine filter options must have unique non-empty values and labels');
     }
-    machineValues.add(value);
+    machineValues.add(optionValue);
   }
   if (!Array.isArray(record.providerRows) || record.providerRows.length > 100) {
     throw new Error('Support provider rows are invalid');

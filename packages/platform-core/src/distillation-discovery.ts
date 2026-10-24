@@ -70,20 +70,25 @@ export interface DistillationHistoryPage {
 export type DistillationDiscoveryPreview = DistillationDiscoveryResult;
 export type DistillationBrowsePage = DistillationBrowseResult;
 export interface DistillationCatalog {
-  browse(request: DistillationBrowseRequest): Promise<DistillationBrowseResult>;
-  history(
+  browse: (request: DistillationBrowseRequest) => Promise<DistillationBrowseResult>;
+  history: (
     projectId: string,
     analysisId: string,
     limit: number,
     cursor: string | null,
-  ): Promise<DistillationHistoryPage>;
-  jobs(projectId: string, limit: number, cursor: string | null): Promise<DistillationJobsResult>;
-  projects(
+  ) => Promise<DistillationHistoryPage>;
+  jobs: (projectId: string, limit: number, cursor: string | null) => Promise<DistillationJobsResult>;
+  projects: (
     limit: number,
     cursor: string | null,
     selector?: DistillationProjectSelector,
-  ): Promise<DistillationProjectsPage>;
-  search(projectId: string, query: string, limit: number, mode?: 'literal' | 'task'): Promise<DistillationSearchResult>;
+  ) => Promise<DistillationProjectsPage>;
+  search: (
+    projectId: string,
+    query: string,
+    limit: number,
+    mode?: 'literal' | 'task',
+  ) => Promise<DistillationSearchResult>;
 }
 export type DistillationDiscoveryRequest =
   | { kind: 'history'; projectId: string; analysisId: string; limit: number; cursor: string | null }
@@ -226,13 +231,13 @@ export const parseDistillationProjectsPage = (value: unknown): DistillationProje
   const entry = distillationObject(value);
   return {
     nextCursor: nullableText(entry.nextCursor, 4096),
-    items: array(entry.items, 50).map((value) => {
-      const project = distillationObject(value);
+    items: array(entry.items, 50).map((rawProject) => {
+      const project = distillationObject(rawProject);
       return {
         projectId: distillationText(project.projectId, 128),
         displayName: distillationText(project.displayName, 256),
-        checkouts: array(project.checkouts, 100).map((value) => {
-          const checkout = distillationObject(value);
+        checkouts: array(project.checkouts, 100).map((rawCheckout) => {
+          const checkout = distillationObject(rawCheckout);
           return {
             path: distillationText(checkout.path, 4096),
             projectSourceId: distillationText(checkout.projectSourceId, 4096),
@@ -254,8 +259,8 @@ export const parseDistillationBrowsePage = (value: unknown): DistillationBrowseP
   const entry = distillationObject(value);
   return {
     nextCursor: nullableText(entry.nextCursor, 4096),
-    items: array(entry.items, 50).map((value) => {
-      const item = distillationObject(value);
+    items: array(entry.items, 50).map((rawItem) => {
+      const item = distillationObject(rawItem);
       if (item.coverage !== 'complete' && item.coverage !== 'partial') {
         throw new DistillationError('invalid-coverage');
       }
@@ -275,8 +280,8 @@ export const parseDistillationDiscoveryPreview = (value: unknown): DistillationD
   if (entry.version !== 1) {
     throw new DistillationError('selection-version-mismatch');
   }
-  const selections = array(entry.selections, 10).map((value) => {
-    const selection = distillationObject(value);
+  const selections = array(entry.selections, 10).map((rawSelection) => {
+    const selection = distillationObject(rawSelection);
     return { revision: distillationText(selection.revision), rowId: distillationText(selection.rowId, 4096) };
   });
   return {
@@ -289,8 +294,8 @@ export const parseDistillationDiscoveryPreview = (value: unknown): DistillationD
     selectionToken: distillationText(entry.selectionToken, 32 * 1024),
     prepareCommand: distillationText(entry.prepareCommand, 40 * 1024),
     selections,
-    candidates: array(entry.candidates, 10).map((value) => {
-      const candidate = distillationObject(value);
+    candidates: array(entry.candidates, 10).map((rawCandidate) => {
+      const candidate = distillationObject(rawCandidate);
       const selection = distillationObject(candidate.selection);
       if (typeof candidate.eligible !== 'boolean') {
         throw new DistillationError('invalid-candidate');

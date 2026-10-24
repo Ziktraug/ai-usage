@@ -9,7 +9,9 @@ export interface SessionWindowAnchorOwner {
 }
 
 interface SessionWindowAnchorPort {
-  readonly replace: (state: App.PageState) => void;
+  /** Receives a history write that SvelteKit rejected; the owner never drops one silently. */
+  readonly onFailure: (cause: unknown) => void;
+  readonly replace: (state: App.PageState) => Promise<void>;
   readonly state: () => App.PageState;
 }
 
@@ -22,7 +24,7 @@ export const createSessionWindowAnchorOwner = (port: SessionWindowAnchorPort): S
     if (state.aiUsageSessionWindowAnchorConsumed === true) {
       return;
     }
-    port.replace({ ...state, aiUsageSessionWindowAnchorConsumed: true });
+    port.replace({ ...state, aiUsageSessionWindowAnchorConsumed: true }).catch(port.onFailure);
   };
   return {
     available: () => !pendingPreservedEntry && port.state().aiUsageSessionWindowAnchorConsumed !== true,

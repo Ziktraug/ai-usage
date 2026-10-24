@@ -1435,6 +1435,47 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
       WHERE key = '${PLATFORM_SCHEMA_METADATA_KEY}';
     `,
   }),
+  Object.freeze({
+    id: '0011_provider_key_account_identity',
+    ordinal: 11,
+    up: `
+      -- Better Auth 1.7.3 restored the 1.6 account identity: an account is the
+      -- pair (provider_id, account_id). The issuer column that 1.7.0 through
+      -- 1.7.2 required is no longer written by the library, so a NOT NULL
+      -- issuer would refuse every new account, and the (issuer, account_id)
+      -- key no longer names what the library looks up. Rows written under the
+      -- earlier schema keep their issuer; new rows leave it NULL. The library
+      -- refuses a lookup that matches more than one row per key, so the
+      -- migration stops while such rows exist instead of leaving the new
+      -- constraint to fail with a bare unique violation.
+      DO $$
+      DECLARE
+        duplicate_keys INTEGER;
+      BEGIN
+        SELECT count(*) INTO duplicate_keys
+        FROM (
+          SELECT 1
+          FROM authentication_provider_accounts
+          GROUP BY provider_id, account_id
+          HAVING count(*) > 1
+        ) duplicates;
+        IF duplicate_keys > 0 THEN
+          RAISE EXCEPTION 'authentication_provider_accounts holds % (provider_id, account_id) key(s) with more than one row; resolve them before migrating', duplicate_keys
+            USING ERRCODE = 'IA003';
+        END IF;
+      END $$;
+
+      ALTER TABLE authentication_provider_accounts
+        ALTER COLUMN issuer DROP NOT NULL,
+        DROP CONSTRAINT authentication_provider_accounts_issuer_account_id_key,
+        ADD CONSTRAINT authentication_provider_accounts_provider_id_account_id_key
+          UNIQUE (provider_id, account_id);
+
+      UPDATE platform_schema_metadata
+      SET value = '${PLATFORM_SCHEMA_VERSION}', updated_at = now()
+      WHERE key = '${PLATFORM_SCHEMA_METADATA_KEY}';
+    `,
+  }),
 ]);
 
 const migrationIdPattern = /^[a-z0-9][a-z0-9_]{2,127}$/u;

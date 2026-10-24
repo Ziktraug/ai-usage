@@ -54,6 +54,30 @@ describe('SvelteKit manual merge endpoint adapter', () => {
     expect(observed.every((value) => value.signal === abort.signal)).toBe(true);
   });
 
+  it('admits the bodyless JSON-typed export a localhost tab sends through the real request policy', async () => {
+    // Production request URLs carry the listener origin while the tab may use `localhost`.
+    const browserRequest = new Request('http://127.0.0.1:4177/api/manual-merge/download', {
+      headers: {
+        'content-type': 'application/json',
+        host: 'localhost:4177',
+        origin: 'http://localhost:4177',
+        'sec-fetch-site': 'same-origin',
+      },
+      method: 'POST',
+    });
+    const observed: Request[] = [];
+    const response = await handleManualMergeDownloadEndpoint(browserRequest, 'live', {
+      loadDownload: () =>
+        Promise.resolve((value) => {
+          observed.push(value);
+          return Promise.resolve(new Response('accepted'));
+        }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(observed).toEqual([browserRequest]);
+  });
+
   it('rejects demo mode before loading the dynamic upload handler', async () => {
     let loads = 0;
     const response = await handleManualMergeUploadEndpoint(request('/api/manual-merge/upload'), 'demo', {

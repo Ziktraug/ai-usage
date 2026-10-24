@@ -145,9 +145,8 @@ const parseFileLockMetadata = (metadataText: string): FileLockMetadata | undefin
       return metadata as unknown as FileLockMetadata;
     }
   } catch {
-    return;
+    // Unparseable lock metadata reads as absent.
   }
-  return;
 };
 
 const writeFileLockMetadata = async (
@@ -251,13 +250,13 @@ const withFileSystemLock = async <Result>(lockPath: string, mutation: () => Prom
       }
       const lockStat = await lstat(lockPath).catch(() => undefined);
       if (lockStat?.isSymbolicLink()) {
-        throw new Error(`filesystem mutation lock must not be a symlink: ${lockPath}`);
+        throw new Error(`filesystem mutation lock must not be a symlink: ${lockPath}`, { cause: error });
       }
       if (await tryRemoveStaleLock(lockPath)) {
         continue;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`timed out waiting for filesystem mutation lock: ${lockPath}`);
+        throw new Error(`timed out waiting for filesystem mutation lock: ${lockPath}`, { cause: error });
       }
       await delay(fileLockRetryMs);
       continue;

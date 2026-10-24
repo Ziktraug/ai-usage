@@ -37,11 +37,12 @@
     sessionSummaryViewport,
     sessionsTable,
     sessionViewportSurface,
+    sessionViewportSurfaceStyle,
     sortArrow,
     sortButton,
     table as tableClass,
     tableControls,
-    tableWrap,
+    tableWrapStyle,
   } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
@@ -570,7 +571,7 @@
 
     {#if activeMode === 'desktop'}
       <div
-        class={cx(tableWrap, sessionViewportSurface, desktopTableSurface)}
+        class={cx(css(tableWrapStyle, sessionViewportSurfaceStyle), desktopTableSurface)}
         data-session-surface="desktop"
         onscroll={updateViewport}
         bind:this={surfaceElement}
@@ -788,7 +789,9 @@
       </ul>
     {/if}
 
-    {#each rows.filter((row) => row.campaignKey && (typeof expanded === 'object' && expanded[row.rowId])) as row (row.rowId)}
+    {#each rows.filter(
+      (row) => row.campaignKey && typeof expanded === 'object' && expanded[row.rowId],
+    ) as row (row.rowId)}
       {@const campaign = row.campaignKey ? campaignChildren.get(row.campaignKey) : undefined}
       {#if row.campaignKey && (campaign?.loading || campaign?.nextCursor)}
         <div class={sessionPagingLoadMore}>

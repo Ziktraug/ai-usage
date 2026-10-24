@@ -83,7 +83,7 @@
     Choose a recognized Project and preview its local Codex sessions. Discovery reads metadata only. The active harness
     performs generation after your separate authorization for local reading and provider processing.
   </p>
-  {#if projects.length===0}
+  {#if projects.length === 0}
     <p class={memoryCopy}>
       No acknowledged local Project mapping is available.
       <a href="/projects">Resolve the Project and Checkout</a>
@@ -111,7 +111,10 @@
   {/if}
   {#if query.error}
     <p class={memoryCopy} role="alert">
-      {memoryAnalysisError(query.error,'Sessions could not be discovered. Check the Project mapping, then refresh this preview explicitly.')}
+      {memoryAnalysisError(
+        query.error,
+        'Sessions could not be discovered. Check the Project mapping, then refresh this preview explicitly.',
+      )}
     </p>
   {/if}
   {#if preview}
@@ -119,7 +122,7 @@
       Selection for {preview.projectName} · previewed {new Date(preview.createdAt).toLocaleString()}. Preparing this
       selection verifies the same report and mappings; a stale selection must be previewed again.
     </p>
-    {#if preview.candidates.length===0}
+    {#if preview.candidates.length === 0}
       <p class={memoryCopy}>No eligible local Codex sessions in this period.</p>
     {/if}
     <div class={memoryStack}>
@@ -128,7 +131,7 @@
           <input
             checked={selectedRows.includes(candidate.selection.rowId)}
             disabled={!candidate.eligible}
-            onchange={(event)=>toggle(candidate.selection.rowId,event.currentTarget.checked)}
+            onchange={(event) => toggle(candidate.selection.rowId, event.currentTarget.checked)}
             type="checkbox"
           >
           {candidate.label}
@@ -140,9 +143,11 @@
         </label>
       {/each}
     </div>
-    {#if selectedRows.length>0}
+    {#if selectedRows.length > 0}
       <button class={memoryButton} onclick={copy} type="button">
-        {copied ? 'Instruction copied' : `Copy skill instruction for ${selectedRows.length} session${selectedRows.length===1 ? '' : 's'}`}
+        {copied
+          ? 'Instruction copied'
+          : `Copy skill instruction for ${selectedRows.length} session${selectedRows.length === 1 ? '' : 's'}`}
       </button>
       <p class={memoryCopy}>
         Copying an instruction does not start generation. Give it to your active coding agent; the browser does not run

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { onMount, tick } from 'svelte';
-  import { afterNavigate, beforeNavigate, replaceState } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, disableScrollHandling, onNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import type { RuntimeMode } from '../../../runtime-mode';
   import {
@@ -19,6 +19,8 @@
   import { isReportPathname } from '../sessions/detail/session-route';
   import { useDirtyGuardRegistry } from './dirty-navigation-context';
   import DiscardNavigationDialog from './discard-navigation-dialog.svelte';
+  import { createFrameworkScrollPreservation } from './framework-scroll-preservation';
+  import { createHistoryFocusReset, documentHistoryFocusPort } from './history-focus';
   import ManageButton from './manage-button.svelte';
   import {
     activeReportTab,
@@ -31,6 +33,7 @@
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
   import { useShellNavigationOwner } from './navigation-owner-context';
+  import { usePageStateWriter } from './page-state-writer';
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import ProviderQuotaRail from './provider-quota-rail.svelte';
@@ -38,9 +41,15 @@
   import ThemeToggle from './theme-toggle.svelte';
 
   let {
+    pageStateFailure = false,
     providerQuota = [],
     runtimeMode,
-  }: { providerQuota?: readonly ProviderQuotaRailEntry[]; runtimeMode: RuntimeMode } = $props();
+  }: {
+    /** A history annotation written outside the rail was rejected. */
+    pageStateFailure?: boolean;
+    providerQuota?: readonly ProviderQuotaRailEntry[];
+    runtimeMode: RuntimeMode;
+  } = $props();
 
   // Both rails render on the server; the viewport breakpoint alone decides which one is visible, so
   // navigation is present in the very first paint instead of waiting for matchMedia after hydration.
@@ -127,7 +136,6 @@
     borderColor: 'transparent',
     bg: 'accentSoft',
     color: 'accent',
-    fontWeight: 550,
   });
   // One `mt: auto` for the whole bottom stack: the quota panel renders conditionally, so hanging the
   // push off the panel itself would drop the theme toggle back up against the navigation links
@@ -139,7 +147,7 @@
     justifyContent: { md: 'center', xl: 'space-between' },
     gap: '8px',
   });
-  const mobileNavigation = css({
+  const mobileNavigation = css.raw({
     position: 'fixed',
     insetInline: 0,
     bottom: 0,
@@ -153,7 +161,7 @@
     bg: 'surface',
     _print: { display: 'none' },
   });
-  const mobileNavigationReportOnly = css({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
+  const mobileNavigationReportOnly = css.raw({ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' });
   const mobileLink = css({
     display: 'grid',
     placeItems: 'center',
@@ -194,6 +202,7 @@
   const showManage = $derived(runtimeMode !== 'demo');
   const dirtyRegistry = useDirtyGuardRegistry();
   const shellNavigation = useShellNavigationOwner();
+  const pageState = usePageStateWriter();
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
 
   let manageOpen = $state(false);
@@ -212,17 +221,34 @@
   const beforeScrollListeners = new Set<(event: ScrollLifecycleEvent) => void>();
   const afterScrollListeners = new Set<(event: Pick<ScrollLifecycleEvent, 'toKey'>) => void>();
   const beforeDirtyListeners = new Set<(event: DirtyBeforeNavigate) => void>();
+  // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
+  const pageUrl = $derived(new URL(page.url.href));
+  // SvelteKit 3 has no goto or link option that keeps the scroll position while still resetting
+  // focus, which is what SvelteKit 2's `noScroll` alone did. Navigations that ask for it (a shell
+  // goto with `preserveScroll`, or a link marked `data-ai-usage-preserve-scroll`) keep SvelteKit's
+  // focus reset and skip only its scroll handling.
+  const linkPreservesScroll = (target: EventTarget | null): boolean =>
+    target instanceof Element && target.closest('a[data-ai-usage-preserve-scroll]') !== null;
+  const frameworkScrollPreservation = createFrameworkScrollPreservation({
+    linkAsks: linkPreservesScroll,
+    pendingGotoAsks: (href) => shellNavigation.peekIntent('goto', { href }).preserveScroll,
+  });
+  // Back and Forward reset focus after every traversal, as SvelteKit 2 did (`history-focus.ts`).
+  const historyFocus = createHistoryFocusReset(documentHistoryFocusPort());
 
+  const reportPageStateFailure = (): void => {
+    navigationFailure = true;
+  };
   const createEntryKey = (): string => `web-${Date.now().toString(36)}-${(++entrySequence).toString(36)}`;
   const seedCurrentEntry = (preferredKey?: string): string => {
-    const currentState = page.state;
+    const currentState = pageState.current();
     if (preferredKey && currentState.aiUsageNavigationKey !== preferredKey) {
-      replaceState(page.url, { ...currentState, aiUsageNavigationKey: preferredKey });
+      pageState.replace({ ...currentState, aiUsageNavigationKey: preferredKey }).catch(reportPageStateFailure);
       return preferredKey;
     }
     const result = ensureHistoryEntryKey(currentState, () => preferredKey ?? createEntryKey());
     if (result.state !== currentState) {
-      replaceState(page.url, result.state);
+      pageState.replace(result.state).catch(reportPageStateFailure);
     }
     return result.key;
   };
@@ -230,9 +256,14 @@
   beforeNavigate((navigation) => {
     const fromKey = currentEntryKey || seedCurrentEntry();
     const isHistoryTraversal = navigation.type === 'popstate' && navigation.delta !== undefined;
-    const isReplacement = shellNavigation.consumeReplacement(navigation.type, navigation.to?.url ?? null);
+    const intent = shellNavigation.consumeIntent(navigation.type, navigation.to?.url ?? null);
+    const isReplacement = intent.replace;
     const preserveReportScroll = shouldPreserveReportScroll(navigation.from?.url ?? null, navigation.to?.url ?? null);
     sessionWindowAnchorOwner.beginNavigation(preserveReportScroll);
+    frameworkScrollPreservation.request(
+      navigation.to?.url.href,
+      intent.preserveScroll || (navigation.type === 'link' && linkPreservesScroll(navigation.event.target)),
+    );
     if (isReplacement) {
       pendingHistoryCursor = historyCursor;
       pendingEntryKey = fromKey;
@@ -253,7 +284,7 @@
     }
     const dirtyEvent: DirtyBeforeNavigate = {
       cancel: navigation.cancel,
-      ...(navigation.delta === undefined ? {} : { delta: navigation.delta }),
+      ...(navigation.type === 'popstate' ? { delta: navigation.delta } : {}),
       to: navigation.to ? { url: navigation.to.url } : null,
       type: navigation.type,
       willUnload: navigation.willUnload,
@@ -263,7 +294,15 @@
     }
   });
 
-  afterNavigate(() => {
+  onNavigate((navigation) => {
+    historyFocus.beforeUpdate(navigation.type);
+    if (frameworkScrollPreservation.decide(navigation)) {
+      disableScrollHandling();
+    }
+  });
+
+  afterNavigate((navigation) => {
+    historyFocus.afterUpdate(navigation.type, navigation.to?.url ?? pageUrl);
     queueMicrotask(() => {
       currentEntryKey = seedCurrentEntry(pendingEntryKey || undefined);
       if (pendingEntryKey) {
@@ -340,11 +379,12 @@
       scrollTo: ({ x, y }) => window.scrollTo(x, y),
     });
     const port = createSvelteNavigationPort({
-      getCurrentUrl: () => page.url,
+      getCurrentUrl: () => pageUrl,
       goto: shellNavigation.goto,
       history: window.history,
       onFailure: () => {
         sessionWindowAnchorOwner.cancelNavigation();
+        frameworkScrollPreservation.cancel();
         navigationFailure = true;
       },
     });
@@ -380,6 +420,7 @@
           if (blocked) {
             scrollLifecycle?.cancel();
             sessionWindowAnchorOwner.cancelNavigation();
+            frameworkScrollPreservation.cancel();
             blockedNavigation = controller.pending() !== undefined;
           }
           return blocked;
@@ -422,7 +463,7 @@
   };
 </script>
 
-{#if navigationFailure}
+{#if navigationFailure || pageStateFailure}
   <p aria-live="polite" class={css({ srOnly: true })}>Navigation failed. Try again.</p>
 {/if}
 
@@ -441,9 +482,9 @@
     <div class={navigationGroupLabel}>Report</div>
     {#each reportTabs as destination (destination.tab)}
       <NavigationLink
-        active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}
-        class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab)}
-        href={reportDestinationUrl(page.url, destination.tab).href}
+        active={isReportPathname(page.url.pathname) && activeReportTab(pageUrl) === destination.tab}
+        class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(pageUrl) === destination.tab)}
+        href={reportDestinationUrl(pageUrl, destination.tab).href}
         icon={destination.icon}
         label={destination.label}
         preserveScroll
@@ -479,15 +520,15 @@
 
 <nav
   aria-label="Report views"
-  class={cx(mobileNavigation, !showManage && mobileNavigationReportOnly)}
+  class={css(mobileNavigation, !showManage && mobileNavigationReportOnly)}
   data-app-navigation="mobile"
   data-hydrated={navigationHydrated ? 'true' : 'false'}
 >
   {#each reportTabs as destination (destination.tab)}
     <NavigationLink
-      active={isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab}
-      class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(page.url) === destination.tab, true)}
-      href={reportDestinationUrl(page.url, destination.tab).href}
+      active={isReportPathname(page.url.pathname) && activeReportTab(pageUrl) === destination.tab}
+      class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(pageUrl) === destination.tab, true)}
+      href={reportDestinationUrl(pageUrl, destination.tab).href}
       label={destination.label}
       preserveScroll
     />
@@ -501,13 +542,15 @@
   {#if showManage}
     <ManageButton
       class={cx(
-          mobileLink,
-          shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
-            ? mobileLinkActive
-            : mobileLinkInactive,
-        )}
+        mobileLink,
+        shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
+          ? mobileLinkActive
+          : mobileLinkInactive,
+      )}
       controls={managePopoverId}
-      onToggle={() => { manageOpen = !manageOpen; }}
+      onToggle={() => {
+        manageOpen = !manageOpen;
+      }}
       open={manageOpen}
       bind:element={manageButton}
     />
@@ -526,7 +569,16 @@
       />
     {/each}
     <div
-      class={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid token(colors.line)', pt: '10px', px: '10px', color: 'muted', fontSize: '12px' })}
+      class={css({
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderTop: '1px solid token(colors.line)',
+        pt: '10px',
+        px: '10px',
+        color: 'muted',
+        fontSize: '12px',
+      })}
     >
       <span>Appearance</span><ThemeToggle />
     </div>

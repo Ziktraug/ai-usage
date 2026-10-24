@@ -224,7 +224,7 @@ setInterval(() => undefined, 1000);
     paths: fixture.paths,
     writeDiagnostics: () => Promise.resolve(),
   });
-  const execution = engine.execute({ command: 'publish' }, { signal: controller.signal });
+  const publishExecution = engine.execute({ command: 'publish' }, { signal: controller.signal });
   let pid: number | undefined;
   try {
     for (let attempt = 0; attempt < 200; attempt++) {
@@ -241,7 +241,7 @@ setInterval(() => undefined, 1000);
 
     controller.abort();
     const outcome = await Promise.race([
-      execution.then(
+      publishExecution.then(
         () => ({ kind: 'resolved' as const }),
         (error: unknown) => ({ error, kind: 'rejected' as const }),
       ),
@@ -249,7 +249,7 @@ setInterval(() => undefined, 1000);
     ]);
     if (outcome.kind === 'timed-out') {
       process.kill(childPid, 'SIGKILL');
-      await execution.catch(() => undefined);
+      await publishExecution.catch(() => undefined);
     }
     expect(outcome).toMatchObject({ error: { code: 'aborted' }, kind: 'rejected' });
 

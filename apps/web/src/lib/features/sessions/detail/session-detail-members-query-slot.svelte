@@ -131,6 +131,13 @@
     closing = value;
     onClosingChange?.(value);
   };
+  // Canonical members take the slot once a revision is pinned; otherwise the caller's slot, if any, passes through.
+  const campaignSlotProps = (canonical: Snippet): { readonly campaignSlot?: Snippet } => {
+    if (snapshot.revision && campaignKey) {
+      return { campaignSlot: canonical };
+    }
+    return campaignSlot ? { campaignSlot } : {};
+  };
 </script>
 
 {#snippet canonicalMembers()}
@@ -151,12 +158,12 @@
 {/snippet}
 
 <SessionDrawer
-  {...(campaignLabelSlot === undefined ? {} : { campaignLabelSlot })}
-  {...(snapshot.revision && campaignKey ? { campaignSlot: canonicalMembers } : campaignSlot ? { campaignSlot } : {})}
+  {...campaignLabelSlot === undefined ? {} : { campaignLabelSlot }}
+  {...campaignSlotProps(canonicalMembers)}
   {controller}
   memberRows={snapshot.revision ? joinedRows : memberRows}
   onClosingChange={handleClosingChange}
-  {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
+  {...onFieldFilter === undefined ? {} : { onFieldFilter }}
   onSelectMember={selectMember}
   {rows}
   {snapshot}

@@ -161,7 +161,6 @@ const tokenDiagnosticFor = (
       { ...details, tokenMeasurement: { observed: tokenCount, threshold: threshold.warn, unit: 'tokens' } },
     );
   }
-  return;
 };
 
 export const scanOneSkill = async (

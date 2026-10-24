@@ -18,7 +18,7 @@ const MAX_COMMAND_RESPONSE_BYTES = sourceControlBounds.maxSnapshotBytes + source
 export type ControlFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface ControlEventSource {
-  close(): void;
+  close: () => void;
 }
 
 export interface ControlBrowserDependencies {

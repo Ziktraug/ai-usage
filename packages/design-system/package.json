@@ -2,8 +2,8 @@
   "name": "@ai-usage/design-system",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "sideEffects": false,
+  "type": "module",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -23,28 +23,58 @@
     },
     "./css": {
       "types": "./styled-system/css/index.d.ts",
-      "import": "./styled-system/css/index.mjs"
+      "default": "./styled-system/css/index.js"
     },
-    "./panda.buildinfo.json": "./styled-system/panda.buildinfo.json",
-    "./styles.css": "./styled-system/styles.css"
-  },
-  "peerDependencies": {
-    "svelte": "5.56.8"
-  },
-  "devDependencies": {
-    "@pandacss/dev": "1.12.0",
-    "svelte": "5.56.8"
+    "./styles.css": "./styled-system/styles.css",
+    "./panda/*": "./styled-system/panda/*",
+    "./css/*": {
+      "types": "./styled-system/css/*.d.ts",
+      "default": "./styled-system/css/*.js"
+    },
+    "./patterns": {
+      "types": "./styled-system/patterns/index.d.ts",
+      "default": "./styled-system/patterns/index.js"
+    },
+    "./patterns/*": {
+      "types": "./styled-system/patterns/*.d.ts",
+      "default": "./styled-system/patterns/*.js"
+    },
+    "./tokens": {
+      "types": "./styled-system/tokens/index.d.ts",
+      "default": "./styled-system/tokens/index.js"
+    },
+    "./helpers": {
+      "types": "./styled-system/helpers.d.ts",
+      "default": "./styled-system/helpers.js"
+    },
+    "./types": {
+      "types": "./styled-system/types/index.d.ts"
+    }
   },
   "scripts": {
-    "ship": "CI=1 bun --bun panda ship --outfile styled-system/panda.buildinfo.json --silent",
-    "build": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent && bun run ship && bun --bun tsc --noEmit",
-    "check": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent && bun run ship && bun --bun tsc --noEmit",
-    "test": "bun test",
-    "test:browser": "bun src/svelte/controls/controls.browser.ts && bun src/svelte/overlays/overlays.browser.ts",
+    "build": "bun src/remove-panda-1-output.ts library styled-system && CI=1 bun --bun panda codegen --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
+    "check": "bun src/remove-panda-1-output.ts library styled-system && CI=1 bun --bun panda codegen --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
+    "format": "biome format --write .",
+    "lib": "CI=1 bun --bun panda lib --outdir styled-system --log-level warn",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "remove-panda-1-output": "bun src/remove-panda-1-output.ts",
+    "scope-breakpoints-to-screen": "bun src/screen-breakpoints.ts",
+    "test": "bun test",
+    "test:browser": "bun src/svelte/controls/controls.browser.ts && bun src/svelte/overlays/overlays.browser.ts"
   },
   "dependencies": {
-    "@ark-ui/svelte": "5.22.1"
+    "@ark-ui/svelte": "5.24.3"
+  },
+  "devDependencies": {
+    "@pandacss/dev": "2.3.0",
+    "@pandacss/preset-base": "2.3.0",
+    "@pandacss/preset-panda": "2.3.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "playwright": "1.64.1",
+    "svelte": "5.57.2",
+    "vite": "8.3.5"
+  },
+  "peerDependencies": {
+    "svelte": "5.57.2"
   }
 }

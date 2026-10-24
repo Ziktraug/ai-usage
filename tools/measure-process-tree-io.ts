@@ -88,14 +88,13 @@ export const parseDiskSectorsWritten = (text: string, device: string): number | 
     const sectorsWritten = Number(fields[9]);
     return Number.isSafeInteger(sectorsWritten) ? sectorsWritten : undefined;
   }
-  return;
 };
 
 const readText = async (filePath: string): Promise<string | undefined> => {
   try {
     return await Bun.file(filePath).text();
   } catch {
-    return;
+    // An unreadable file has no text.
   }
 };
 

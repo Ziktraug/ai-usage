@@ -183,7 +183,9 @@ try {
     process.stdout.write('Setup listener is healthy and restricted to IPv4 loopback.\n');
   } catch (error) {
     const logs = `${stdout.text()}${stderr.text()}`.trim();
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`, {
+      cause: error,
+    });
   } finally {
     await stopChild(child);
     await Promise.all([stdout.done, stderr.done]);

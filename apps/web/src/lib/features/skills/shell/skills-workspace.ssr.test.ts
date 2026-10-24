@@ -273,7 +273,7 @@ describe('Svelte Skills workspace SSR', () => {
     const row = worktableRow(html, 'alpha-skill');
 
     expect(html).toContain('data-skill-observations-refresh-error');
-    expect(html).not.toContain('aria-label="All — skill observations unavailable"');
+    expect(html).not.toContain('aria-label="All — —, skill observations unavailable"');
     expect(row).not.toContain('observations unavailable');
     expect(row).toContain('data-evidence-tier');
     expect(html).toContain('provisional managed deletion candidates');
@@ -333,7 +333,9 @@ describe('Svelte Skills workspace SSR', () => {
     const invocationNormalized = invocationHtml.replace(/\s+/gu, ' ');
     expect(invocationNormalized).toContain('Invocation evidence has an unattributed gap');
     expect(invocationNormalized).toContain('at least 2 recorded');
-    expect(invocationNormalized).toContain('aria-label="To delete — 1 provisional managed deletion candidates"');
+    expect(invocationNormalized).toContain(
+      'aria-label="To delete — 1 provisional, 1 provisional managed deletion candidates"',
+    );
     expect(invocationNormalized).not.toContain('reached its bound');
   });
 

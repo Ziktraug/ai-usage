@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Option, TestClock, TestContext } from 'effect';
+import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Option } from 'effect';
+import { TestClock } from 'effect/testing';
 import { annotateWideEvent, runBoundaryEffect, withMeasured, withMeasuredIfAvailable } from './index';
 import {
   testWideEventResource,
@@ -35,7 +36,7 @@ describe('boundary runner and hop tree', () => {
       runBoundaryEffect(
         { boundary: 'nested' },
         withMeasured('outer')(
-          withMeasured('inner')(Effect.succeed(1)).pipe(Effect.zipLeft(withMeasured('sibling')(Effect.succeed(2)))),
+          withMeasured('inner')(Effect.succeed(1)).pipe(Effect.tap(withMeasured('sibling')(Effect.succeed(2)))),
         ),
       ),
     );
@@ -81,14 +82,14 @@ describe('boundary runner and hop tree', () => {
     const sink = makeCaptureWideEventSink();
     const startedAt = new Date('2026-07-25T12:34:56.000Z');
     const program = Effect.gen(function* () {
-      yield* TestClock.setTime(startedAt);
+      yield* TestClock.setTime(startedAt.getTime());
       yield* runBoundaryEffect(
         { boundary: 'injected-clock' },
         Effect.gen(function* () {
           yield* TestClock.adjust(Duration.millis(1500));
         }),
       );
-    }).pipe(Effect.provide(Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(sink))));
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), makeTestWideEventSinkLayer(sink))));
 
     await Effect.runPromise(program);
 

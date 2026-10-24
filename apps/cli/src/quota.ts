@@ -304,9 +304,9 @@ export const renderQuotaHistory = (
 
   const lines: string[] = [];
   let renderedProvider: string | null = null;
-  for (const points of series) {
-    const first = points[0] as ProviderQuotaHistoryPoint;
-    const last = points.at(-1) as ProviderQuotaHistoryPoint;
+  for (const seriesPoints of series) {
+    const first = seriesPoints[0] as ProviderQuotaHistoryPoint;
+    const last = seriesPoints.at(-1) as ProviderQuotaHistoryPoint;
     if (first.providerLabel !== renderedProvider) {
       if (renderedProvider !== null) {
         lines.push('');
@@ -316,7 +316,7 @@ export const renderQuotaHistory = (
     }
     const qualifier = qualifiers.get(`${first.providerLabel}|${first.windowLabel}`)?.(first);
     lines.push(
-      `  ${pad(trunc(first.windowLabel, WINDOW_LABEL_WIDTH), WINDOW_LABEL_WIDTH)} ${historySparkline(points)}  ` +
+      `  ${pad(trunc(first.windowLabel, WINDOW_LABEL_WIDTH), WINDOW_LABEL_WIDTH)} ${historySparkline(seriesPoints)}  ` +
         `${historyPercent(first.usedPercent)} → ${historyPercent(last.usedPercent)}` +
         (last.resetAt ? clr.dim(`   resets ${fmtDate(new Date(last.resetAt))}`) : '') +
         (qualifier ? clr.dim(`   ${qualifier}`) : ''),

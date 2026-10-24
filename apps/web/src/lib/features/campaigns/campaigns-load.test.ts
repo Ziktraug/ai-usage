@@ -147,15 +147,15 @@ describe('Campaign session metadata SSR', () => {
     }
   });
 
-  test.each([
-    sessionRowIdentity(root),
-    sessionRowIdentity(rows[1]!),
-  ])('does not look up an already acquired member %s', async (rowId) => {
-    const fixture = ssrFixture(rowId);
-    await loadCampaignsPageData(fixture.options, 'live');
-    expect(fixture.lookups).toEqual([]);
-    expect(fixture.memberPages).toEqual([100]);
-  });
+  test.each([sessionRowIdentity(root), sessionRowIdentity(rows[1]!)])(
+    'does not look up an already acquired member %s',
+    async (rowId) => {
+      const fixture = ssrFixture(rowId);
+      await loadCampaignsPageData(fixture.options, 'live');
+      expect(fixture.lookups).toEqual([]);
+      expect(fixture.memberPages).toEqual([100]);
+    },
+  );
 
   test.each(['', '   ', ' leading-space'])('does not issue a malformed session lookup %j', async (rowId) => {
     const fixture = ssrFixture(rowId);

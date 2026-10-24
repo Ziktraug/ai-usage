@@ -68,7 +68,9 @@
   </Popover>
 
   <Tooltip content="Tooltip fixture content">
-    {#snippet trigger(_triggerProps)}
+    {#snippet trigger(
+      _triggerProps,
+    )}
       <button {..._triggerProps} type="button">Tooltip target</button>
     {/snippet}
   </Tooltip>

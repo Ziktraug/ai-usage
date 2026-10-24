@@ -16,7 +16,7 @@
     letterSpacing: '0.1em',
     textTransform: 'uppercase',
   });
-  const preset = css({
+  const preset = css.raw({
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -30,7 +30,7 @@
     _hover: { bg: 'surfaceMuted', color: 'ink' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const selectedPreset = css({ bg: 'accentTint', color: 'accent', fontWeight: 500 });
+  const selectedPreset = css.raw({ bg: 'accentTint', color: 'accent', fontWeight: 500 });
   const periodSummary = css({ color: 'muted', fontSize: '12px' });
   const customFields = css({
     display: 'flex',
@@ -178,7 +178,7 @@
   {#each directPresetModes as mode (mode)}
     <button
       aria-pressed={range.mode === mode}
-      class={cx(preset, range.mode === mode ? selectedPreset : undefined)}
+      class={css(preset, range.mode === mode ? selectedPreset : undefined)}
       onclick={() => selectPreset(mode)}
       type="button"
     >
@@ -187,7 +187,7 @@
   {/each}
   <button
     aria-pressed={range.mode === 'today'}
-    class={cx(preset, range.mode === 'today' ? selectedPreset : undefined)}
+    class={css(preset, range.mode === 'today' ? selectedPreset : undefined)}
     onclick={() => selectPreset('today')}
     type="button"
   >
@@ -195,7 +195,7 @@
   </button>
   <button
     aria-pressed={range.mode === 'all'}
-    class={cx(preset, range.mode === 'all' ? selectedPreset : undefined)}
+    class={css(preset, range.mode === 'all' ? selectedPreset : undefined)}
     onclick={() => selectPreset('all')}
     type="button"
   >
@@ -204,7 +204,7 @@
   <button
     aria-label={range.mode === 'custom' ? 'Choose a custom report period, selected' : 'Choose a custom report period'}
     aria-pressed={range.mode === 'custom'}
-    class={cx(preset, range.mode === 'custom' ? selectedPreset : undefined)}
+    class={css(preset, range.mode === 'custom' ? selectedPreset : undefined)}
     onclick={selectCustom}
     type="button"
   >
@@ -222,9 +222,9 @@
           id="report-period-from"
           maxlength="10"
           onchange={(event) => {
-          draftFrom = event.currentTarget.value;
-          commitDraftEdit();
-        }}
+            draftFrom = event.currentTarget.value;
+            commitDraftEdit();
+          }}
           onkeydown={restoreOnEscape}
           placeholder="YYYY-MM-DD"
           spellcheck="false"
@@ -244,9 +244,9 @@
           id="report-period-to"
           maxlength="10"
           onchange={(event) => {
-          draftTo = event.currentTarget.value;
-          commitDraftEdit();
-        }}
+            draftTo = event.currentTarget.value;
+            commitDraftEdit();
+          }}
           onkeydown={restoreOnEscape}
           placeholder="YYYY-MM-DD"
           spellcheck="false"

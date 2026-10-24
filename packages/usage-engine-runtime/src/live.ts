@@ -123,7 +123,7 @@ export const createTerminalSourceControlPort = (
 ): UsageEngineSourceControlPort => {
   const controlLayer = options.sourceControlService
     ? Layer.succeed(SourceControl, options.sourceControlService)
-    : Layer.scoped(
+    : Layer.effect(
         SourceControl,
         createSourceControl({
           autonomousCollection: options.initialDetection !== 'deferred',
@@ -216,7 +216,7 @@ export const createTerminalSourceControlPort = (
         return current;
       } catch (error) {
         if (startupTimedOut) {
-          throw new Error('The usage engine initial source-control publication timed out.');
+          throw new Error('The usage engine initial source-control publication timed out.', { cause: error });
         }
         throw error;
       } finally {
@@ -303,11 +303,14 @@ export const createTerminalSourceControlPort = (
         error instanceof SourceControlCommandError &&
         (error.reason === 'disabled' || error.reason === 'not-detected')
       ) {
-        throw new UsageEngineSoftSourceError({
-          reason: error.reason,
-          snapshot: await currentSnapshot(signal),
-          sourceId,
-        });
+        throw new UsageEngineSoftSourceError(
+          {
+            reason: error.reason,
+            snapshot: await currentSnapshot(signal),
+            sourceId,
+          },
+          { cause: error },
+        );
       }
       throw error;
     }

@@ -79,7 +79,7 @@
   });
   const modelsTitle = css({ fontSize: '14px', fontWeight: 650, m: 0 });
   const action = css({ minH: '44px', textDecoration: 'none' });
-  const emptyState = css({ alignContent: 'center', display: 'grid', gap: '8px', justifyItems: 'start', minH: '180px' });
+  const emptyState = css({ alignContent: 'center', display: 'grid', justifyItems: 'start', minH: '180px' });
   const emptyTitle = css({ fontSize: '20px', fontWeight: 650, m: 0 });
   const srOnly = css({ srOnly: true });
 </script>

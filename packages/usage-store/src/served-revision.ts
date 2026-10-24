@@ -27,23 +27,26 @@ import {
 export const SERVED_REPORT_PROJECTION_SCHEMA_VERSION = 17;
 export const SERVED_REPORT_REVISION_PATTERN = SERVED_REVISION_PATTERN;
 
+/** A value `bun:sqlite` can bind to a statement parameter. */
+export type SqliteQueryBinding = bigint | boolean | null | number | string | Uint8Array;
+
 export interface ServedRevisionReadStatement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  iterate(...params: unknown[]): IterableIterator<unknown>;
+  all: (...params: SqliteQueryBinding[]) => unknown[];
+  get: (...params: SqliteQueryBinding[]) => unknown;
+  iterate: (...params: SqliteQueryBinding[]) => IterableIterator<unknown>;
 }
 
 export interface ServedRevisionWriteStatement extends ServedRevisionReadStatement {
-  run(...params: unknown[]): unknown;
+  run: (...params: SqliteQueryBinding[]) => unknown;
 }
 
 export interface ServedRevisionReadDatabase {
-  query(sql: string): ServedRevisionReadStatement;
+  query: (sql: string) => ServedRevisionReadStatement;
 }
 
 export interface ServedRevisionWriteDatabase extends ServedRevisionReadDatabase {
-  exec(sql: string): unknown;
-  query(sql: string): ServedRevisionWriteStatement;
+  exec: (sql: string) => unknown;
+  query: (sql: string) => ServedRevisionWriteStatement;
 }
 
 export class ServedRevisionQueryValidationError extends Error {
@@ -595,7 +598,7 @@ const rewriteServedRevisionSql = (sql: string): string => {
   return `EXPLAIN QUERY PLAN ${rewriteServedRevisionQuerySql(querySql)}`;
 };
 
-const scopedParams = (revision: string, params: readonly unknown[]): unknown[] => [
+const scopedParams = (revision: string, params: readonly SqliteQueryBinding[]): SqliteQueryBinding[] => [
   revision,
   revision,
   revision,
@@ -636,7 +639,7 @@ export const createServedRevisionQueryDatabase = (
       }
       const scopedSql = rewriteServedRevisionSql(sql);
       const statement = database.query(scopedSql);
-      const bind = (params: readonly unknown[]): unknown[] => {
+      const bind = (params: readonly SqliteQueryBinding[]): SqliteQueryBinding[] => {
         if (params.length > MAX_SERVED_REVISION_QUERY_PARAMETERS) {
           throw new ServedRevisionQueryValidationError('Served revision query exceeded its parameter budget');
         }

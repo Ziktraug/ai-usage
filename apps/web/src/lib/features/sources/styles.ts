@@ -69,4 +69,4 @@ export const banner = css({
   color: 'ink',
   fontSize: '13px',
 });
-export const bannerError = css({ bg: 'status.dangerSoft', borderColor: 'status.danger' });
+export const bannerError = css({ borderColor: 'status.danger' });

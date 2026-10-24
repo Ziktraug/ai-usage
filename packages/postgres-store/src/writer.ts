@@ -112,9 +112,9 @@ export const createPlatformStore = async (config: PlatformStoreConfig): Promise<
       lifecycle = 'closing';
       try {
         await pool.end();
-      } catch {
+      } catch (error) {
         lifecycle = 'closed';
-        throw new PlatformStoreError('shutdown-failed', 'close-store');
+        throw new PlatformStoreError('shutdown-failed', 'close-store', { cause: error });
       }
       lifecycle = 'closed';
       config.onDiagnostic?.({ code: 'store-closed', operation: 'shutdown' });
@@ -141,7 +141,7 @@ export const createPlatformStore = async (config: PlatformStoreConfig): Promise<
   });
 };
 
-export type { PlatformStoreErrorCode } from './errors';
-export { isPlatformStoreError, PlatformStoreError } from './errors';
+export type { PlatformStoreErrorCode, PlatformStoreFailureDiagnostic } from './errors';
+export { isPlatformStoreError, PlatformStoreError, platformStoreFailureDiagnostic } from './errors';
 export type { PlatformMigrationMode } from './migrations';
 export type { PlatformReadiness, PlatformStoreReader } from './reader';

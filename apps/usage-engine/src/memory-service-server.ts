@@ -417,18 +417,18 @@ export const createLocalMemoryServiceHandler = async ({
         }
         return successResponse({
           nextCursor: result.value.nextCursor,
-          proposals: result.value.items.map(({ observationSources, proposal }) => ({
-            guidance: proposal.guidance,
+          proposals: result.value.items.map(({ observationSources, proposal: memoryProposal }) => ({
+            guidance: memoryProposal.guidance,
             observationSources,
-            projectId: proposal.projectId,
-            proposalId: proposal.id,
-            proposedByKind: proposal.proposedByPrincipal.kind,
-            proposedKind: proposal.proposedKind,
-            sensitivity: proposal.sensitivity,
-            structuredContent: proposal.structuredContent,
-            summary: proposal.summary,
-            title: proposal.title,
-            trustCandidate: proposal.trustCandidate,
+            projectId: memoryProposal.projectId,
+            proposalId: memoryProposal.id,
+            proposedByKind: memoryProposal.proposedByPrincipal.kind,
+            proposedKind: memoryProposal.proposedKind,
+            sensitivity: memoryProposal.sensitivity,
+            structuredContent: memoryProposal.structuredContent,
+            summary: memoryProposal.summary,
+            title: memoryProposal.title,
+            trustCandidate: memoryProposal.trustCandidate,
           })),
           spaceId: bootstrap.space.id,
         });

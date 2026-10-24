@@ -489,7 +489,7 @@ const readText = async (filePath: string): Promise<string | undefined> => {
   try {
     return await Bun.file(filePath).text();
   } catch {
-    return;
+    // An unreadable file has no text.
   }
 };
 
@@ -1212,8 +1212,8 @@ export const validateContainedSourceSymlinks = async (sourceDirectory: string): 
         let resolvedTarget: string;
         try {
           resolvedTarget = await realpath(entryPath);
-        } catch {
-          throw new Error('The source snapshot contains a broken or cyclic symlink.');
+        } catch (error) {
+          throw new Error('The source snapshot contains a broken or cyclic symlink.', { cause: error });
         }
         if (!isContainedPath(resolvedTarget, canonicalSourceDirectory)) {
           throw new Error('The source snapshot contains a symlink that escapes its private root.');

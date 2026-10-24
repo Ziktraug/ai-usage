@@ -14,6 +14,7 @@ describe('platform migration registry', () => {
       { id: '0008_device_outbox_replication', ordinal: 8 },
       { id: '0009_last_authentication_provider_account_guard', ordinal: 9 },
       { id: '0010_revoked_authentication_identity_relink_guard', ordinal: 10 },
+      { id: '0011_provider_key_account_identity', ordinal: 11 },
     ]);
     expect(validatePlatformMigrations(PLATFORM_MIGRATIONS)).toBe(PLATFORM_MIGRATIONS);
   });

@@ -120,15 +120,15 @@ const writeMinimalManifests = (manifestPath: string, viteManifestPath: string): 
       file: '_app/immutable/entry/start.hash.js',
       imports: ['shared-runtime'],
     },
-    '.svelte-kit/build/generated/client-optimized/app.js': {
+    '.svelte-kit/build/generated/build/client-optimized/app.js': {
       file: '_app/immutable/entry/app.hash.js',
       imports: ['shared-runtime'],
     },
-    '.svelte-kit/build/generated/client-optimized/nodes/0.js': {
+    '.svelte-kit/build/generated/build/client-optimized/nodes/0.js': {
       file: '_app/immutable/nodes/0.hash.js',
       imports: ['shared-runtime'],
     },
-    '.svelte-kit/build/generated/client-optimized/nodes/3.js': {
+    '.svelte-kit/build/generated/build/client-optimized/nodes/3.js': {
       file: '_app/immutable/nodes/3.hash.js',
       imports: ['shared-runtime'],
     },

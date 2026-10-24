@@ -318,7 +318,11 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
     processSettlement.catch(() => undefined);
     try {
       const settlement = await Promise.race([
-        processSettlement.then(([stdout, exitCode]) => ({ exitCode, kind: 'settled' as const, stdout })),
+        processSettlement.then(([settledStdout, settledExitCode]) => ({
+          exitCode: settledExitCode,
+          kind: 'settled' as const,
+          stdout: settledStdout,
+        })),
         abort.then(() => ({ kind: 'aborted' as const })),
         timedOut.then(() => ({ kind: 'timed-out' as const })),
       ]);

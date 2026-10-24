@@ -7,8 +7,8 @@ import {
 export type WebReadRuntimeFactory = () => Promise<WebReadObservabilityRuntime>;
 
 export interface WebReadObservabilityLifecycle {
-  dispose(): Promise<void>;
-  initialize(): Promise<WebReadObservabilityRuntime>;
+  dispose: () => Promise<void>;
+  initialize: () => Promise<WebReadObservabilityRuntime>;
 }
 
 const defaultFactory: WebReadRuntimeFactory = async () => {

@@ -6,7 +6,7 @@
   import type { SessionDistillationBrowseRequest } from '@ai-usage/web-contract/session-distillation';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { acknowledgeMemoryProposalReview, memoryProposalReviewsKey } from '../../query/options/memory';
   import { memoryWorkspaceProjectsOptions } from '../../query/options/memory-workspace';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
@@ -136,7 +136,7 @@
     }
   };
 </script>
-<div class={shell} data-query-state={data.queryState.dehydratedState.queries.length>0 ? 'hydrated':'deferred'}>
+<div class={shell} data-query-state={data.queryState.dehydratedState.queries.length > 0 ? 'hydrated' : 'deferred'}>
   <main class={page} data-route-shell="memory">
     <WorkspaceHeader
       description="Read what happened across your sessions. Propose the lessons worth reusing, then decide explicitly which become accepted knowledge."
@@ -146,28 +146,28 @@
     <div class={memoryStack}>
       <nav aria-label="Memory views" class={navigation}>
         <a
-          aria-current={location.view==='analyses' ? 'page':undefined}
-          class={location.view==='analyses' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
-          href={memoryHref(address,{view:'analyses',cursor:null,proposal:null})}
+          aria-current={location.view === 'analyses' ? 'page' : undefined}
+          class={location.view === 'analyses' ? memoryCurrentButton : memoryButton}
+          data-ai-usage-preserve-scroll
+          href={memoryHref(address, { view: 'analyses', cursor: null, proposal: null })}
           >Analysed sessions</a
         >
         <a
-          aria-current={location.view==='review' ? 'page':undefined}
-          class={location.view==='review' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
-          href={memoryHref(address,{view:'review',cursor:null,proposal:null})}
+          aria-current={location.view === 'review' ? 'page' : undefined}
+          class={location.view === 'review' ? memoryCurrentButton : memoryButton}
+          data-ai-usage-preserve-scroll
+          href={memoryHref(address, { view: 'review', cursor: null, proposal: null })}
           >Pending review</a
         >
         <a
-          aria-current={location.view==='knowledge' ? 'page':undefined}
-          class={location.view==='knowledge' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
-          href={memoryHref(address,{view:'knowledge',cursor:null,proposal:null})}
+          aria-current={location.view === 'knowledge' ? 'page' : undefined}
+          class={location.view === 'knowledge' ? memoryCurrentButton : memoryButton}
+          data-ai-usage-preserve-scroll
+          href={memoryHref(address, { view: 'knowledge', cursor: null, proposal: null })}
           >Knowledge</a
         >
       </nav>
-      {#if location.view!=='review'}
+      {#if location.view !== 'review'}
         <form class={memoryRow} onsubmit={filter}>
           <label class={memoryField}
             >Project filter<select class={memoryInput} bind:value={project}>
@@ -177,7 +177,7 @@
               {/each}
             </select></label
           >
-          {#if location.view==='analyses'}
+          {#if location.view === 'analyses'}
             <label class={memoryField}
               >Search session accounts<input
                 class={memoryInput}
@@ -197,7 +197,9 @@
           {#if projectsQuery.data?.nextCursor}
             <button
               class={memoryButton}
-              onclick={()=>{projectsCursor=projectsQuery.data?.nextCursor ?? null;}}
+              onclick={() => {
+                projectsCursor = projectsQuery.data?.nextCursor ?? null;
+              }}
               type="button"
             >
               More Projects
@@ -208,7 +210,7 @@
           <p class={memoryCopy} role="alert">{filterError}</p>
         {/if}
       {/if}
-      {#if location.view==='analyses'}
+      {#if location.view === 'analyses'}
         <div class={location.analysisId ? layout : memoryStack}>
           <div class={memoryStack}>
             {#if location.periodError}
@@ -220,7 +222,10 @@
             {/if}
             {#if projectsQuery.error}
               <p class={memoryCopy} role="alert">
-                {memoryAnalysisError(projectsQuery.error,'Recognized Projects could not be read. Retry after checking the local Memory service.')}
+                {memoryAnalysisError(
+                  projectsQuery.error,
+                  'Recognized Projects could not be read. Retry after checking the local Memory service.',
+                )}
               </p>
             {:else if projectsQuery.data}
               <MemoryDiscovery projectId={location.projectId} projects={projectsQuery.data.items} />
@@ -230,7 +235,7 @@
           </div>
           {#if location.analysisId && location.analysisProjectId}
             {#if detailModule}
-              {@const Detail=detailModule.default}
+              {@const Detail = detailModule.default}
               {#key location.analysisId}
                 <Detail
                   {address}
@@ -238,12 +243,13 @@
                   elementKey={location.elementKey}
                   episodeId={location.episodeId}
                   projectId={location.analysisProjectId}
-                  projectName={projectsQuery.data?.items.find(item=>item.projectId===location.analysisProjectId)?.displayName ?? 'Selected Project'}
+                  projectName={projectsQuery.data?.items.find((item) => item.projectId === location.analysisProjectId)
+                    ?.displayName ?? 'Selected Project'}
                 />
               {/key}
             {:else if detailFailed}
               <p class={memoryCopy}>The account reader could not load.</p>
-              <button class={memoryButton} onclick={()=>detailLoader.retry()} type="button">Retry reader</button>
+              <button class={memoryButton} onclick={() => detailLoader.retry()} type="button">Retry reader</button>
             {:else}
               <p class={memoryCopy} role="status">Opening account reader…</p>
             {/if}
@@ -253,7 +259,7 @@
             </p>
           {/if}
         </div>
-      {:else if location.view==='review'}
+      {:else if location.view === 'review'}
         <p class={memoryCopy}>
           Only voluntarily submitted proposals appear here. Review their source and edit the guidance before accepting
           it. Saved session accounts need no acceptance.
@@ -264,13 +270,15 @@
               This Memory proposal is not pending review or is not accessible. It may already have been accepted or
               rejected.
             </p>
-            <a class={memoryButton} href={memoryHref(address,{proposal:null,cursor:null})}>Open the review queue</a>
+            <a class={memoryButton} href={memoryHref(address, { proposal: null, cursor: null })}
+              >Open the review queue</a
+            >
           </section>
         {:else if snapshot}
           {#if targetProposalId}
             <p class={memoryCopy} role="status">The requested proposal is shown first, followed by later proposals.</p>
           {/if}
-          {#if snapshot.proposals.length===0}
+          {#if snapshot.proposals.length === 0}
             <section aria-live="polite" class={memoryPanel}>No Memory proposals need review.</section>
           {:else}
             {#each snapshot.proposals as proposal (proposal.proposalId)}
@@ -278,19 +286,19 @@
                 {onAction}
                 {proposal}
                 spaceId={snapshot.spaceId}
-                targeted={proposal.proposalId===targetProposalId}
+                targeted={proposal.proposalId === targetProposalId}
               />
             {/each}
           {/if}
           <div class={memoryRow}>
             {#if location.cursor || targetProposalId}
-              <a class={memoryButton} href={memoryHref(address,{cursor:null,proposal:null})}>Newest proposals</a>
+              <a class={memoryButton} href={memoryHref(address, { cursor: null, proposal: null })}>Newest proposals</a>
             {/if}
             {#if snapshot.nextCursor}
               <a
                 class={memoryButton}
-                data-sveltekit-noscroll
-                href={memoryHref(address,{cursor:snapshot.nextCursor,proposal:null})}
+                data-ai-usage-preserve-scroll
+                href={memoryHref(address, { cursor: snapshot.nextCursor, proposal: null })}
                 >More proposals</a
               >
             {/if}

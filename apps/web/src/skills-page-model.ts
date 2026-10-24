@@ -247,7 +247,7 @@ export const globalSkillAttention = (snapshot: SkillManagementSnapshot, skill: S
   let pendingLinkCount = 0;
 
   if (skill.enabled && skill.validationStatus !== 'invalid') {
-    for (const target of snapshot.targets.filter((target) => target.enabled)) {
+    for (const target of snapshot.targets.filter((candidate) => candidate.enabled)) {
       const state = projectionFor(snapshot.projections, skill.name, target.id)?.state ?? 'missing';
       if (state === 'missing') {
         pendingLinkCount += 1;

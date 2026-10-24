@@ -209,7 +209,7 @@ const detectConfiguredCursorInputs = (
         (inputPath) => (inputPath ? detected() : notDetected()),
       );
     }),
-    Effect.catchAll(() => Effect.succeed(misconfigured())),
+    Effect.catch(() => Effect.succeed(misconfigured())),
   );
 
 const detectPathCandidates = (

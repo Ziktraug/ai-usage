@@ -96,7 +96,7 @@
 
 <div class={overviewGrid} data-report-overview data-report-revision={result.revision}>
   <ExecutiveOverview
-    {...(activity === undefined ? {} : { activity })}
+    {...activity === undefined ? {} : { activity }}
     {draggedWindowApiValue}
     model={executiveModel}
     {modelsHref}
@@ -117,7 +117,13 @@
         topSessions={result.view.topSessions}
       />
       <div
-        class={css({ display: 'grid', gridTemplateColumns: { base: 'minmax(0, 1fr)', xl: 'minmax(0, 1fr) minmax(0, 1fr)' }, gap: '24px', alignItems: 'start', minW: 0 })}
+        class={css({
+          display: 'grid',
+          gridTemplateColumns: { base: 'minmax(0, 1fr)', xl: 'minmax(0, 1fr) minmax(0, 1fr)' },
+          gap: '24px',
+          alignItems: 'start',
+          minW: 0,
+        })}
       >
         <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
         <TokenAnatomy summary={result.summary} />
@@ -148,10 +154,7 @@
   {/if}
   {#if providers.length > 0}
     <div class={sectionDivider}>
-      <ProviderStatus
-        {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })}
-        {providers}
-      />
+      <ProviderStatus {...onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory }} {providers} />
     </div>
   {/if}
 </div>

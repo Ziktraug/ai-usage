@@ -99,8 +99,8 @@ export const installDirtyNavigationBridge = (dependencies: {
   readonly controller: DirtyNavigationController;
   readonly dirty: StateSubscription<boolean>;
   readonly window: {
-    addEventListener(type: 'beforeunload', listener: (event: BeforeUnloadEventLike) => void): void;
-    removeEventListener(type: 'beforeunload', listener: (event: BeforeUnloadEventLike) => void): void;
+    addEventListener: (type: 'beforeunload', listener: (event: BeforeUnloadEventLike) => void) => void;
+    removeEventListener: (type: 'beforeunload', listener: (event: BeforeUnloadEventLike) => void) => void;
   };
 }): Disposer => {
   let listening = false;

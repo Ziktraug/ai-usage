@@ -3,8 +3,8 @@ import {
   acquireLiveReportQueryState,
   deferredLiveReportQueryState,
   ReportBootstrapUnavailableError,
-} from '$lib/features/report/core/report-bootstrap';
-import { recordReportHydrationBytes } from '$lib/server/perf/report-hydration-perf';
+} from '#lib/features/report/core/report-bootstrap.ts';
+import { recordReportHydrationBytes } from '#lib/server/perf/report-hydration-perf.ts';
 import type { LayoutServerLoad } from './$types';
 
 /**

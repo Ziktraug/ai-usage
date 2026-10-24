@@ -723,7 +723,9 @@
     <CampaignLabelEditor editor={selectedCampaignEditor} />
   {/if}
 {/snippet}
-{#snippet activeFilterSummary(_filterPending: boolean)}
+{#snippet activeFilterSummary(
+  _filterPending: boolean,
+)}
   <ActiveFilters
     hidden={Math.max(0, totalSessions - visibleSessions)}
     {navigation}
@@ -739,7 +741,7 @@
   cleanupDisabled={!mutationsEnabled}
   {omittedSupportItemCount}
   {presentMachineLabel}
-  {...(cleaningProjectWarningGroupId === undefined ? {} : { cleaningProjectWarningGroupId })}
+  {...cleaningProjectWarningGroupId === undefined ? {} : { cleaningProjectWarningGroupId }}
   onCleanupProjectWarning={(warning) =>
     cleanupProjectWarning(warning, async () => {
       await destinationQuery.refetch();
@@ -803,9 +805,7 @@
       onFieldFilter={navigation.setFieldFilter}
       onHarnessFilter={(value) =>
         navigation.setHarness(
-          search.harness.includes(value)
-            ? search.harness.filter((item) => item !== value)
-            : [...search.harness, value],
+          search.harness.includes(value) ? search.harness.filter((item) => item !== value) : [...search.harness, value],
         )}
       projectEditor={{
         disabled: !mutationsEnabled,
@@ -923,7 +923,9 @@
 <SessionDetailQuerySlot
   {campaignLabelSlot}
   client={sessionClient}
-  memberRows={campaignSessionControls?.query.revision === (selection?.query?.revision ?? selection?.revision) ? campaignSessionControls?.collection.items ?? [] : []}
+  memberRows={campaignSessionControls?.query.revision === (selection?.query?.revision ?? selection?.revision)
+    ? (campaignSessionControls?.collection.items ?? [])
+    : []}
   onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={(key, value) => navigation.setFieldFilter(key, value)}
   onSelectionChange={(nextSelection) => {

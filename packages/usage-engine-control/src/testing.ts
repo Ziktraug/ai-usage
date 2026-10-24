@@ -142,11 +142,12 @@ export const createInMemoryUsageEngineControlClient = (
             ok: true,
             protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           } as const);
-      } catch {
+      } catch (error) {
         throw new UsageEngineControlError(
           'transport-failed',
           'command',
           stableUsageEngineErrorMessages['transport-failed'],
+          { cause: error },
         );
       }
       let parsedResult: UsageEngineCommandResult;
@@ -158,12 +159,14 @@ export const createInMemoryUsageEngineControlClient = (
             'protocol-mismatch',
             'command',
             stableUsageEngineErrorMessages['protocol-mismatch'],
+            { cause: error },
           );
         }
         throw new UsageEngineControlError(
           'invalid-response',
           'command',
           stableUsageEngineErrorMessages['invalid-response'],
+          { cause: error },
         );
       }
       if (parsedResult.commandId !== commandId || parsedResult.instanceId !== status.instanceId) {
@@ -197,21 +200,23 @@ export const createInMemoryUsageEngineControlClient = (
             instanceId: status.instanceId,
             protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           });
-      } catch {
+      } catch (error) {
         throw new UsageEngineControlError(
           'transport-failed',
           'command',
           stableUsageEngineErrorMessages['transport-failed'],
+          { cause: error },
         );
       }
       let parsedResult: UsageEngineCommandCancellationResult;
       try {
         parsedResult = parseUsageEngineCommandCancellationResult(cloneJson(result));
-      } catch {
+      } catch (error) {
         throw new UsageEngineControlError(
           'invalid-response',
           'command',
           stableUsageEngineErrorMessages['invalid-response'],
+          { cause: error },
         );
       }
       if (parsedResult.commandId !== commandId || parsedResult.instanceId !== status.instanceId) {

@@ -739,16 +739,16 @@ export const readOpenCodeSessionAnalysis = (
     const paths = [...new Set([...candidates.liveDb, ...candidates.stableDb])];
     let firstError: LocalHistoryError | null = null;
     for (const dbPath of paths) {
-      const exists = yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false)));
+      const exists = yield* storage.exists(dbPath).pipe(Effect.catch(() => Effect.succeed(false)));
       if (!exists) {
         continue;
       }
-      const result = yield* detailFromDatabase(dbPath, sourceSessionId, storage).pipe(Effect.either);
-      if (result._tag === 'Right' && result.right) {
-        return result.right;
+      const result = yield* detailFromDatabase(dbPath, sourceSessionId, storage).pipe(Effect.result);
+      if (result._tag === 'Success' && result.success) {
+        return result.success;
       }
-      if (result._tag === 'Left') {
-        firstError = firstError ?? result.left;
+      if (result._tag === 'Failure') {
+        firstError = firstError ?? result.failure;
       }
     }
     if (firstError) {

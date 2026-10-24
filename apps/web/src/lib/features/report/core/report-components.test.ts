@@ -21,7 +21,7 @@ const liveAcquisitionOptions = () => ({
 });
 
 interface SvelteServerModule {
-  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+  render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
 const componentFrom = (loaded: unknown, label: string): Component => {
@@ -49,7 +49,7 @@ const viteServer = await createServer({
   plugins: [...svelte()],
   resolve: {
     alias: {
-      '$app/environment': environmentFixture,
+      '$app/env': environmentFixture,
       '$app/navigation': navigationFixture,
       '$app/state': stateFixture,
     },

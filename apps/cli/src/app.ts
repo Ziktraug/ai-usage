@@ -584,12 +584,12 @@ const renderProjectSources = (items: ProjectSource[]): string => {
 };
 
 const writeStdout = (text: string): Effect.Effect<void> =>
-  Effect.async<void>((resume) => {
+  Effect.callback<void>((resume) => {
     process.stdout.write(text, () => resume(Effect.void));
   });
 
 const writeStderr = (text: string): Effect.Effect<void> =>
-  Effect.async<void>((resume) => {
+  Effect.callback<void>((resume) => {
     process.stderr.write(text, () => resume(Effect.void));
   });
 
@@ -641,12 +641,12 @@ const isAppError = (error: unknown): error is AppError =>
 
 export const runnableApp = app.pipe(
   Effect.as(0 as number),
-  Effect.catchAll((error: unknown) =>
+  Effect.catch((error: unknown) =>
     Console.error(
       error instanceof CliAnalysesError
         ? JSON.stringify({ error: { code: error.code } })
         : `Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`,
     ).pipe(Effect.as(1)),
   ),
-  Effect.catchAllDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
+  Effect.catchDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
 );

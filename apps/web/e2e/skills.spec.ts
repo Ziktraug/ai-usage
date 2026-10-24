@@ -28,6 +28,13 @@ const TO_DELETE_FILTER_PATTERN = /^To delete —/;
 const APPLY_ACTION_PATTERN = /^Apply \d+ action/;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const ADOPTION_GATE_PATTERN = /waits on the approved file-operation plan/;
+const REPLACE_STATE_QUIET_WINDOW_MS = 1000;
+
+declare global {
+  interface Window {
+    __aiUsageReplaceStatePathnames?: string[];
+  }
+}
 
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
 
@@ -193,6 +200,37 @@ test('opens the skill drawer from its URL, closes it with Escape, and restores f
   await expect(page).toHaveURL(SKILLS_WORKTABLE_URL);
   await expect(drawer).toBeHidden();
   await expect(alphaLink).toBeFocused();
+});
+
+test('rewrites a missing skill URL to the worktable exactly once', async ({ page }) => {
+  await page.addInitScript(() => {
+    const replaceState = History.prototype.replaceState;
+    const pathnames: string[] = [];
+    window.__aiUsageReplaceStatePathnames = pathnames;
+    History.prototype.replaceState = function (
+      this: History,
+      data: unknown,
+      unused: string,
+      url?: string | URL | null,
+    ) {
+      pathnames.push(new URL(url ?? window.location.href, window.location.href).pathname);
+      replaceState.call(this, data, unused, url);
+    };
+  });
+  const replacedPathnames = (): Promise<string[]> =>
+    page.evaluate(() => [...(window.__aiUsageReplaceStatePathnames ?? [])]);
+
+  await openHydratedSkills(page, '/skills/global/missing-skill');
+
+  await expect(page).toHaveURL(SKILLS_WORKTABLE_URL);
+  await expect(worktableRow(page, 'alpha-skill')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // SvelteKit 3 hands every `replaceState` back as a new `page.state`, which re-runs the fallback
+  // effect. A history write that answers its own re-run never settles, so hold a quiet window.
+  const settled = await replacedPathnames();
+  await page.waitForTimeout(REPLACE_STATE_QUIET_WINDOW_MS);
+  expect(await replacedPathnames()).toEqual(settled);
+  expect(settled.filter((pathname) => pathname === '/skills')).toHaveLength(1);
 });
 
 test('states the exposure of a managed skill in the drawer with its per-target action', async ({ page }) => {

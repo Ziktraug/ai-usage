@@ -13,14 +13,14 @@ const SNAPSHOT_READ_CHUNK_BYTES = 64 * 1024;
 const snapshotOpenFlags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
 
 interface SnapshotFileStat {
-  isFile(): boolean;
+  isFile: () => boolean;
   size: number;
 }
 
 export interface UsageSnapshotFileHandle {
-  close(): Promise<void>;
-  read(buffer: Uint8Array, offset: number, length: number, position: null): Promise<{ bytesRead: number }>;
-  stat(): Promise<SnapshotFileStat>;
+  close: () => Promise<void>;
+  read: (buffer: Uint8Array, offset: number, length: number, position: null) => Promise<{ bytesRead: number }>;
+  stat: () => Promise<SnapshotFileStat>;
 }
 
 export type OpenUsageSnapshotFile = (filePath: string) => Promise<UsageSnapshotFileHandle>;

@@ -14,9 +14,9 @@ const ANY_VALUE_PATTERN = /.+/;
 const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync/;
 
 const navigateAndWaitForRouteData = async (page: Page, link: Locator, pathname: string): Promise<void> => {
-  const responsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return url.pathname === pathname && response.request().resourceType() === 'fetch';
+  const responsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return url.pathname === pathname && candidate.request().resourceType() === 'fetch';
   });
   await link.click();
   const response = await responsePromise;
@@ -95,7 +95,8 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   }
   const trailingSlash = await request.get('/sources/', { maxRedirects: 0 });
   expect(trailingSlash.status()).toBe(308);
-  expect(trailingSlash.headers().location).toBe('/sources');
+  // SvelteKit 3 writes the trailing-slash redirect relative to the requested path (`../sources`).
+  expect(new URL(trailingSlash.headers().location ?? '', 'http://127.0.0.1/sources/').pathname).toBe('/sources');
 
   for (const route of shellRoutes) {
     await page.goto(route.path);
@@ -331,6 +332,96 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
   await page.goForward();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(1200);
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
+});
+
+// SvelteKit 3 runs no `beforeNavigate` for a navigation that starts while another one is in flight,
+// so a link that asks to keep the scroll position must be honoured from its own click. SvelteKit 2
+// carried `noScroll` on each navigation.
+test('a preserve-scroll link keeps the scroll position while it supersedes a pending navigation', async ({ page }) => {
+  await page.goto('/memory?view=analyses');
+  await waitForHydratedNavigation(page);
+  const views = page.getByRole('navigation', { name: 'Memory views' });
+  const viewLink = (name: string): Locator => views.getByRole('link', { name, exact: true });
+  // Playwright's own click scrolls an in-flow link into view and hovers it first, which would move
+  // the very position under test and preload the destination; the element's click activates the
+  // link without either.
+  const activate = (link: Locator): Promise<void> => link.evaluate((element: HTMLElement) => element.click());
+  const settledScrollY = (): Promise<number> =>
+    page.evaluate(async () => {
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 250))),
+      );
+      return window.scrollY;
+    });
+  await page.evaluate(() => {
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 700);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(700);
+
+  await activate(viewLink('Knowledge'));
+  await expect(viewLink('Knowledge')).toHaveAttribute('aria-current', 'page');
+  expect(await settledScrollY()).toBe(700);
+
+  // Hold the data of a Sync navigation, so the next link click starts while it is in flight. Memory
+  // view changes reuse the page's server data and fetch nothing that could be held instead.
+  let markSyncHeld: () => void = () => undefined;
+  const syncHeld = new Promise<void>((resolve) => {
+    markSyncHeld = resolve;
+  });
+  let releaseSync: () => Promise<void> = () => Promise.resolve();
+  await page.route(
+    (url) => url.pathname === '/sync/__data.json',
+    (route) => {
+      releaseSync = () => route.continue();
+      markSyncHeld();
+    },
+    { times: 1 },
+  );
+  try {
+    await activate(page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Sync' }));
+    await syncHeld;
+    await activate(viewLink('Analysed sessions'));
+    await expect(viewLink('Analysed sessions')).toHaveAttribute('aria-current', 'page');
+    expect(new URL(page.url()).pathname).toBe('/memory');
+    expect(new URL(page.url()).searchParams.get('view')).toBe('analyses');
+    expect(await settledScrollY()).toBe(700);
+  } finally {
+    await releaseSync();
+  }
+});
+
+// SvelteKit 3 turns a click on a link to the current URL into a `refreshAll()` navigation that
+// reruns every load. Re-selecting the destination the reader is on must still leave the mounted
+// report, its scroll position and the history alone.
+test('re-selecting the active report destination keeps the mounted report in place', async ({ page }) => {
+  await page.goto('/?tab=sessions');
+  await waitForFocusedReportSettled(page);
+  await waitForHydratedNavigation(page);
+  const sessions = page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Sessions' });
+  await expect(sessions).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('[data-session-table-owner]')).toBeVisible();
+  await page.evaluate(() => {
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 600);
+    document.querySelector('[data-session-table-owner]')?.setAttribute('data-e2e-mounted', 'before-reselect');
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(600);
+  const historyLength = await page.evaluate(() => history.length);
+  const refresh = page.waitForResponse((response) => new URL(response.url()).pathname === '/__data.json');
+
+  await sessions.click();
+  expect((await refresh).ok()).toBe(true);
+  // The refreshed data commits, renders and settles its navigation within a few frames.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 250)))),
+  );
+  await waitForFocusedReportSettled(page);
+
+  await expect(page.locator('[data-session-table-owner][data-e2e-mounted="before-reselect"]')).toHaveCount(1);
+  expect(await page.evaluate(() => window.scrollY)).toBe(600);
+  expect(await page.evaluate(() => history.length)).toBe(historyLength);
+  await expect(sessions).toHaveAttribute('aria-current', 'page');
 });
 
 test('restores Session scroll after a cross-route history remount', async ({ page }) => {

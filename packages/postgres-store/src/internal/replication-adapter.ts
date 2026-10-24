@@ -200,8 +200,8 @@ const priorBatchResult = (
   }
   try {
     return { ack: parseReplicationAck(row.stored_ack), kind: 'ack' };
-  } catch {
-    throw new PlatformStoreError('validation-failed', 'map-replication-batch-ack');
+  } catch (error) {
+    throw new PlatformStoreError('validation-failed', 'map-replication-batch-ack', { cause: error });
   }
 };
 

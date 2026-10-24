@@ -271,7 +271,8 @@ const readCandidate = (request: CodexDistillationEvidenceRequest, storage: Stora
     const files = yield* listCodexSessionFiles.pipe(Effect.provideService(LocalHistoryStorage, storage));
     const sessionId = request.selection.sourceSessionId;
     const candidates = files.filter(
-      (file) => path.basename(file) === `${sessionId}.jsonl` || path.basename(file).endsWith(`-${sessionId}.jsonl`),
+      (candidate) =>
+        path.basename(candidate) === `${sessionId}.jsonl` || path.basename(candidate).endsWith(`-${sessionId}.jsonl`),
     );
     if (candidates.length !== 1) {
       return {
@@ -654,7 +655,7 @@ export const prepareCodexDistillationEvidence = (
       (result): DistillationEvidenceReadResult =>
         result.status === 'unavailable' ? result : normalizeSnapshot(result.snapshot, request, options),
     ),
-    Effect.catchAll(() => Effect.succeed({ status: 'unavailable' as const, reason: 'source-unavailable' as const })),
+    Effect.catch(() => Effect.succeed({ status: 'unavailable' as const, reason: 'source-unavailable' as const })),
   );
   return Effect.runPromise(effect, options.signal === undefined ? undefined : { signal: options.signal });
 };
@@ -767,7 +768,8 @@ export const prepareCodexDistillationWindow = async (
     );
     const sessionId = request.selection.sourceSessionId;
     const matches = files.filter(
-      (file) => path.basename(file) === `${sessionId}.jsonl` || path.basename(file).endsWith(`-${sessionId}.jsonl`),
+      (candidate) =>
+        path.basename(candidate) === `${sessionId}.jsonl` || path.basename(candidate).endsWith(`-${sessionId}.jsonl`),
     );
     if (matches.length !== 1) {
       return { status: 'unavailable', reason: matches.length ? 'source-ambiguous' : 'source-unavailable' };

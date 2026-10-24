@@ -71,8 +71,8 @@ export interface SessionAnalysisContent {
 export class DistillationError extends Error {
   override readonly name = 'DistillationError';
   readonly code: string;
-  constructor(code: string) {
-    super(`Session distillation: ${code}`);
+  constructor(code: string, options?: ErrorOptions) {
+    super(`Session distillation: ${code}`, options);
     this.code = code;
   }
 }

@@ -137,7 +137,11 @@
                   <button
                     {...currentDayAria(item.date)}
                     aria-label={`${description}. Focus dashboard on this day.`}
-                    class={cx(heatCell, item.level === 0 ? heatCellZero : accentFill, key === heatmap.todayKey ? heatCellToday : undefined)}
+                    class={cx(
+                      heatCell,
+                      item.level === 0 ? heatCellZero : accentFill,
+                      key === heatmap.todayKey ? heatCellToday : undefined,
+                    )}
                     data-heatmap-day={key}
                     data-price-state={item.priceMeasurement.state}
                     onclick={() => onSelectDay(key)}

@@ -145,7 +145,7 @@ const loadProviderAccounts = async (client: PoolClient, authenticationPrincipalI
   const result = await client.query<ProviderAccountRow>(
     `SELECT id, account_id
      FROM authentication_provider_accounts
-     WHERE user_id = $1 AND provider_id = 'github' AND issuer = 'local:oauth:github'
+     WHERE user_id = $1 AND provider_id = 'github'
      ORDER BY created_at ASC, id ASC`,
     [authenticationPrincipalId],
   );

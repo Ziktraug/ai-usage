@@ -16,13 +16,13 @@ import { runRevisionQueryForServer } from './revision-query-runner.server';
 import { resolveUsageReadModelForServer } from './usage-read-model-resolver.server';
 
 export interface SessionDetailServerDependencies {
-  readAnalysis(
+  readAnalysis: (
     harnessKey: SessionDetailHarnessKey,
     sourceSessionId: string,
     signal?: AbortSignal,
-  ): Promise<LocalSessionAnalysis | null>;
-  readMachine(): Promise<{ id: string }>;
-  resolveAnchor(request: SessionDetailRequest): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
+  ) => Promise<LocalSessionAnalysis | null>;
+  readMachine: () => Promise<{ id: string }>;
+  resolveAnchor: (request: SessionDetailRequest) => Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
 }
 
 const defaultDependencies = (signal?: AbortSignal): SessionDetailServerDependencies => ({

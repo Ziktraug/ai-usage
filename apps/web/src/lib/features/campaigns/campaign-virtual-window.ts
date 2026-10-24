@@ -74,7 +74,7 @@ export const campaignRestoreAnchor = (
       }
     }
     if (replacement === undefined && previousIndex >= 0) {
-      replacement = previousKeys.slice(previousIndex + 1).find((key) => available.has(key));
+      replacement = previousKeys.slice(previousIndex + 1).find((candidateKey) => available.has(candidateKey));
     }
     index = replacement === undefined ? -1 : keys.indexOf(replacement);
     offset = 0;

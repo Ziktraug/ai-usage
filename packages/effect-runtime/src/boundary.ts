@@ -53,8 +53,8 @@ export const runBoundaryEffect = <A, E, R>(
             error: classification.error ?? null,
             ...(classification.annotations === undefined ? {} : { annotations: classification.annotations }),
           });
-          yield* submitWideEventBestEffort(sink, event).pipe(Effect.catchAllCause(() => Effect.void));
-        }).pipe(Effect.catchAllCause(() => Effect.void)),
+          yield* submitWideEventBestEffort(sink, event).pipe(Effect.catchCause(() => Effect.void));
+        }).pipe(Effect.catchCause(() => Effect.void)),
       );
 
     const body = Effect.gen(function* () {
@@ -71,7 +71,7 @@ export const runBoundaryEffect = <A, E, R>(
       Effect.onExit(finalize),
       Effect.withSpan(options.boundary, { root: true }),
       Effect.withTracerEnabled(true),
-      Effect.locally(currentWideEventHop, undefined),
+      Effect.provideService(currentWideEventHop, undefined),
     );
 
     return yield* body;

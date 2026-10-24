@@ -39,7 +39,7 @@ const resolveSkillMarkdownLocation = async (
     }
     return { filePath, markdownPath: path.join(realSkillPath, 'SKILL.md') };
   } catch {
-    return;
+    // An unresolvable skill path has no markdown location.
   }
 };
 

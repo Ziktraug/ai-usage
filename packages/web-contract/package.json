@@ -17,18 +17,18 @@
     "./control": "./src/control.ts",
     "./sync": "./src/sync.ts"
   },
-  "dependencies": {
-    "@ai-usage/report-core": "workspace:*",
-    "@ai-usage/skills": "workspace:*",
-    "@orpc/contract": "1.14.13",
-    "valibot": "1.4.2",
-    "@ai-usage/platform-core": "workspace:*"
-  },
   "scripts": {
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
-    "test": "bun test",
+    "format": "biome format --write .",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ai-usage/platform-core": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/skills": "workspace:*",
+    "@orpc/contract": "1.16.0",
+    "valibot": "1.5.0"
   }
 }

@@ -76,8 +76,9 @@
     requestedAt = new Date();
   });
   $effect(() => {
-    if (open && !panelModule) {
-      panelLoad ??= import('./quota-history-panel.svelte')
+    // `panelLoad` is deliberately not reactive: it only guards against a second import while one is in flight.
+    if (open && !panelModule && !panelLoad) {
+      panelLoad = import('./quota-history-panel.svelte')
         .then((module) => {
           panelModule = module;
         })

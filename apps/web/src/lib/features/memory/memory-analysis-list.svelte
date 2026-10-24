@@ -5,7 +5,7 @@
   import type { SessionDistillationBrowseRequest } from '@ai-usage/web-contract/session-distillation';
   import { createInfiniteQuery } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { finiteSwrKey } from '../../query/keys';
   import { browserMemoryClient, continueMemoryAnalysisWindow } from '../../query/options/memory-workspace';
   import { webQueryPolicies } from '../../query/policies';
@@ -146,15 +146,20 @@
 </script>
 {#if query.isError}
   <p class={memoryCopy} role="alert">
-    {memoryAnalysisError(query.error,'The analysis library could not be read. Retry after checking the local Memory service.')}
+    {memoryAnalysisError(
+      query.error,
+      'The analysis library could not be read. Retry after checking the local Memory service.',
+    )}
   </p>
-  <button class={memoryButton} onclick={()=>query.refetch()} type="button">Retry library</button>
+  <button class={memoryButton} onclick={() => query.refetch()} type="button">Retry library</button>
 {:else if query.isPending}
   <p class={memoryCopy} role="status">Reading saved analyses…</p>
-{:else if rows.length===0}
+{:else if rows.length === 0}
   <section>
     <h2 class={memoryHeading}>
-      {input.query || input.projectId || input.since || input.until ? 'No analyses match these filters' : 'Your session library starts here'}
+      {input.query || input.projectId || input.since || input.until
+        ? 'No analyses match these filters'
+        : 'Your session library starts here'}
     </h2>
     <p class={memoryCopy}>
       Saved accounts appear here without review. Discover a Project below and give its selected sessions to the
@@ -166,34 +171,47 @@
     aria-label="Analysed sessions"
     class={`${scroller} analysis-list`}
     data-memory-analysis-list
-    onscroll={(event)=>{scrollTop=event.currentTarget.scrollTop;}}
+    onscroll={(event) => {
+      scrollTop = event.currentTarget.scrollTop;
+    }}
     bind:this={viewport}
     bind:clientHeight={height}
   >
-    <div style={`height:${(highestCount+(query.hasNextPage ? 1:0))*ROW_HEIGHT}px;position:relative`}>
+    <div style={`height:${(highestCount + (query.hasNextPage ? 1 : 0)) * ROW_HEIGHT}px;position:relative`}>
       {#each visibleRows as { item, index } (item.id)}
         <a
-          aria-current={item.id===selectedAnalysisId ? 'true':undefined}
-          class={`${row} ${item.id===selectedAnalysisId ? selectedRow : ''}`}
+          aria-current={item.id === selectedAnalysisId ? 'true' : undefined}
+          class={`${row} ${item.id === selectedAnalysisId ? selectedRow : ''}`}
           data-analysis-index={index}
           data-memory-analysis={item.id}
-          data-sveltekit-keepfocus
-          data-sveltekit-noscroll
-          href={memoryHref(address,{view:'analyses',analysis:item.id,analysisProject:item.projectId,episode:null,element:null})}
+          data-sveltekit-reset="false"
+          href={memoryHref(address, {
+            view: 'analyses',
+            analysis: item.id,
+            analysisProject: item.projectId,
+            episode: null,
+            element: null,
+          })}
           onkeydown={handleKey}
-          style={`top:${index*ROW_HEIGHT}px;height:${ROW_HEIGHT}px`}
+          style={`top:${index * ROW_HEIGHT}px;height:${ROW_HEIGHT}px`}
         >
           <span class={metadata}
             >{item.projectName}
             ·
-            {item.sessionDate ? new Date(item.sessionDate).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}) : 'Session date unknown'}</span
+            {item.sessionDate
+              ? new Date(item.sessionDate).toLocaleDateString(undefined, {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })
+              : 'Session date unknown'}</span
           >
           <strong class={title}>{analysisTitle(item.summary)}</strong>
           <span class={summary}>{item.summary}</span>
           <span class={metadata}
             >{item.episodeIds.length}
-            episode{item.episodeIds.length===1 ? '' : 's'}
-            · {item.coverage==='partial' ? 'Partial source coverage' : 'Snapshot covered'} · Generated
+            episode{item.episodeIds.length === 1 ? '' : 's'}
+            · {item.coverage === 'partial' ? 'Partial source coverage' : 'Snapshot covered'} · Generated
             {new Date(item.createdAt).toLocaleDateString()}</span
           >
         </a>

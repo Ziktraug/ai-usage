@@ -239,6 +239,23 @@ describe('manual merge explicit HTTP adapters', () => {
     expect(receivedSignal).toBe(request.signal);
   });
 
+  test('accepts the explicit JSON content type a browser export declares without a body', async () => {
+    const handlers = createManualMergeExplicitHandlers({
+      canonicalizeExport,
+      exportBundle: () => Promise.resolve(exportSuccess()),
+      handleUpload: () => Promise.resolve(new Response()),
+    });
+    const response = await handlers.download(
+      new Request('http://localhost/api/manual-merge/download', {
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(bundleText);
+  });
+
   test('rejects unsafe metadata, bodies, and methods without leaking private data', async () => {
     const privatePath = '/private/export.json';
     let exports = 0;
