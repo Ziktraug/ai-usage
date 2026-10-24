@@ -169,7 +169,7 @@ export const firstExisting = (
 ): Effect.Effect<string | null, never, never> =>
   Effect.gen(function* () {
     for (const candidate of candidates) {
-      const exists = yield* storage.exists(candidate).pipe(Effect.catchAll(() => Effect.succeed(false)));
+      const exists = yield* storage.exists(candidate).pipe(Effect.catch(() => Effect.succeed(false)));
       if (exists) {
         return candidate;
       }

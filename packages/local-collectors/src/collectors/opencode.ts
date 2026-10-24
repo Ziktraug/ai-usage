@@ -136,7 +136,7 @@ const collectFromDb = (
     Effect.gen(function* () {
       const exists = yield* withPerfSpan(
         'aiUsage.collect.opencode.db.exists',
-        storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))),
+        storage.exists(dbPath).pipe(Effect.catch(() => Effect.succeed(false))),
         (value) => ({ db: source, exists: value }),
       );
       if (!exists) {

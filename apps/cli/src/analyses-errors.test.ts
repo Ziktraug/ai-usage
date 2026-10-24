@@ -43,12 +43,11 @@ for (const code of [
     };
     const exit = await Effect.runPromise(
       Console.consoleWith((console) =>
-        Console.withConsole(runnableApp, {
+        Effect.provideService(runnableApp, Console.Console, {
           ...console,
-          error: (message: unknown) =>
-            Effect.sync(() => {
-              stderr.push(message);
-            }),
+          error: (message: unknown) => {
+            stderr.push(message);
+          },
         }),
       ).pipe(Effect.provideService(CliRuntime, runtime), Effect.provide(makeTestWideEventSinkLayer(noopWideEventSink))),
     );

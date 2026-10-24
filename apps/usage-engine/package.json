@@ -21,7 +21,7 @@
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-engine-runtime": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
-    "effect": "^3.21.4",
+    "effect": "^4.0.5",
     "@ai-usage/report-core": "workspace:*"
   },
   "scripts": {

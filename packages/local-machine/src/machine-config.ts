@@ -431,7 +431,7 @@ export const readAiUsageConfig: Effect.Effect<AiUsageConfig, LocalHistoryError, 
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const filePath = aiUsageConfigPath(storage);
-    if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
+    if (!(yield* storage.exists(filePath).pipe(Effect.catch(() => Effect.succeed(false))))) {
       return {};
     }
     assertPrivateAuthoritativeFile(filePath);

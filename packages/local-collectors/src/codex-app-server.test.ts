@@ -43,14 +43,14 @@ describe('Codex app-server quota collector', () => {
     });
 
     const result = await Effect.runPromise(
-      Effect.either(source.collect({ machineId: 'machine-1', observedAt: new Date() })),
+      Effect.result(source.collect({ machineId: 'machine-1', observedAt: new Date() })),
     );
 
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left).toBeInstanceOf(CodexQuotaCollectionError);
-      expect(result.left.reason).toBe('auth-required');
-      expect(result.left.message).not.toContain('secret fixture detail');
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure).toBeInstanceOf(CodexQuotaCollectionError);
+      expect(result.failure.reason).toBe('auth-required');
+      expect(result.failure.message).not.toContain('secret fixture detail');
     }
   });
 });

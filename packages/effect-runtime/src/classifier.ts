@@ -47,7 +47,7 @@ export const classifyExit = <A, E>(
     return { outcome: 'success', error: null };
   }
 
-  const failure = Option.getOrUndefined(Cause.failureOption(exit.cause));
+  const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
   if (failure !== undefined) {
     const tagged =
       taggedErrorPolicy === undefined ? null : sanitizeAllowedTaggedError(failure, taggedErrorPolicy.allowedTags);
@@ -60,7 +60,7 @@ export const classifyExit = <A, E>(
     };
   }
 
-  if (Cause.isInterruptedOnly(exit.cause)) {
+  if (Cause.hasInterruptsOnly(exit.cause)) {
     return { outcome: 'interrupted', error: null };
   }
 

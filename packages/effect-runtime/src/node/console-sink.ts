@@ -242,7 +242,7 @@ export const makeConsoleWideEventSink = (options?: {
   const format = options?.format ?? selectConsoleLogFormat();
   const level = options?.level ?? selectConsoleLogLevel();
   const write = options?.write ?? defaultConsoleWideEventWriter;
-  const diagnostics = Ref.unsafeMake(makeEmptyWideEventSinkDiagnostics());
+  const diagnostics = Ref.makeUnsafe(makeEmptyWideEventSinkDiagnostics());
 
   return {
     submit: (event) =>

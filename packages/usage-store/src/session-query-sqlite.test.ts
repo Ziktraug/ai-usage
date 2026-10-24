@@ -827,9 +827,9 @@ describe('durable session query SQLite projections', () => {
       revision: 'revision-b',
       row: null,
     });
-    expect(await Effect.runPromise(Effect.either(lookup('revision-a', rowId, 301_001)))).toMatchObject({
-      _tag: 'Left',
-      left: { reason: 'revision-expired' },
+    expect(await Effect.runPromise(Effect.result(lookup('revision-a', rowId, 301_001)))).toMatchObject({
+      _tag: 'Failure',
+      failure: { reason: 'revision-expired' },
     });
     expect(await Effect.runPromise(lookup('revision-b', rowId, 301_001))).toMatchObject({
       found: true,

@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Semaphore } from 'effect';
 
 export interface UsageEngineWriterGate {
   readonly close: () => void;
@@ -17,7 +17,7 @@ export class UsageEngineWriterGateClosedError extends Error {
 }
 
 export const createUsageEngineWriterGate = (): UsageEngineWriterGate => {
-  const semaphore = Effect.runSync(Effect.makeSemaphore(1));
+  const semaphore = Semaphore.makeUnsafe(1);
   let closed = false;
   const withPermit: UsageEngineWriterGate['withPermit'] = (effect) => semaphore.withPermits(1)(effect);
   const withEffect: UsageEngineWriterGate['withEffect'] = (effect) =>

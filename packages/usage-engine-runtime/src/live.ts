@@ -123,7 +123,7 @@ export const createTerminalSourceControlPort = (
 ): UsageEngineSourceControlPort => {
   const controlLayer = options.sourceControlService
     ? Layer.succeed(SourceControl, options.sourceControlService)
-    : Layer.scoped(
+    : Layer.effect(
         SourceControl,
         createSourceControl({
           autonomousCollection: options.initialDetection !== 'deferred',

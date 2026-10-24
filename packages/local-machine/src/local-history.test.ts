@@ -286,9 +286,9 @@ test('discovers large streaming histories without treating total bytes as reside
     ['four', 'one', 'three', 'two'].map((name) => path.join(root, `${name}.jsonl`)).sort(),
   );
   const explicitlyBounded = await Effect.runPromise(
-    Effect.either(walkFiles(storage, root, () => true, { maxBytes: PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES })),
+    Effect.result(walkFiles(storage, root, () => true, { maxBytes: PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES })),
   );
-  expect(explicitlyBounded._tag).toBe('Left');
+  expect(explicitlyBounded._tag).toBe('Failure');
 });
 
 test('accepts a regular SQLite main without a WAL and rejects unsafe identities', async () => {
@@ -331,14 +331,14 @@ test('accepts a regular SQLite main without a WAL and rejects unsafe identities'
       [directoryPath, directoryPath],
       [absentPath, absentPath],
     ] as const) {
-      const result = await Effect.runPromise(Effect.either(storage.openDatabase(candidatePath)));
-      expect(result._tag).toBe('Left');
-      if (result._tag === 'Right') {
-        await Effect.runPromise(result.right.close);
+      const result = await Effect.runPromise(Effect.result(storage.openDatabase(candidatePath)));
+      expect(result._tag).toBe('Failure');
+      if (result._tag === 'Success') {
+        await Effect.runPromise(result.success.close);
         throw new Error(`Expected SQLite identity rejection for ${candidatePath}`);
       }
-      expect(result.left).toMatchObject({ operation: 'sqlite.identity', path: rejectedPath });
-      expect(String(result.left.cause)).not.toContain('regular-row');
+      expect(result.failure).toMatchObject({ operation: 'sqlite.identity', path: rejectedPath });
+      expect(String(result.failure.cause)).not.toContain('regular-row');
     }
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
@@ -374,14 +374,14 @@ test('rejects a main identity replacement after BEGIN and closes the opened data
   const closeSpy = spyOn(Database.prototype, 'close');
   try {
     const storage = createLocalHistoryStorage(root);
-    const result = await Effect.runPromise(Effect.either(storage.openDatabase(dbPath)));
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Right') {
-      await Effect.runPromise(result.right.close);
+    const result = await Effect.runPromise(Effect.result(storage.openDatabase(dbPath)));
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Success') {
+      await Effect.runPromise(result.success.close);
       throw new Error('Expected replacement to reject openDatabase');
     }
-    expect(result.left).toMatchObject({ operation: 'sqlite.identityChanged', path: dbPath });
-    expect(String(result.left.cause)).not.toContain('redirected-row');
+    expect(result.failure).toMatchObject({ operation: 'sqlite.identityChanged', path: dbPath });
+    expect(String(result.failure.cause)).not.toContain('redirected-row');
     expect(mainIdentityReads).toBe(2);
     expect(closeSpy).toHaveBeenCalledTimes(1);
   } finally {
@@ -412,13 +412,13 @@ test('rejects an absent-to-present WAL transition for the current collection att
   const lstatSpy = spyOn(fs, 'lstatSync').mockImplementation(instrumentedLstatSync);
   try {
     const storage = createLocalHistoryStorage(root);
-    const result = await Effect.runPromise(Effect.either(storage.openDatabase(dbPath)));
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Right') {
-      await Effect.runPromise(result.right.close);
+    const result = await Effect.runPromise(Effect.result(storage.openDatabase(dbPath)));
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Success') {
+      await Effect.runPromise(result.success.close);
       throw new Error('Expected new WAL identity to reject openDatabase');
     }
-    expect(result.left).toMatchObject({ operation: 'sqlite.identityChanged', path: walPath });
+    expect(result.failure).toMatchObject({ operation: 'sqlite.identityChanged', path: walPath });
     expect(walIdentityReads).toBe(2);
   } finally {
     beforeLstatRead = undefined;
@@ -541,12 +541,12 @@ test('reads a zstd archive of history lines exactly like its plain form', async 
     fs.writeFileSync(emptyPath, new Uint8Array(0));
     const emptyVisited: string[] = [];
     const empty = await Effect.runPromise(
-      Effect.either(storage.readLines(emptyPath, (line) => emptyVisited.push(line))),
+      Effect.result(storage.readLines(emptyPath, (line) => emptyVisited.push(line))),
     );
-    expect(empty._tag).toBe('Left');
-    if (empty._tag === 'Left') {
-      expect(empty.left).toMatchObject({ operation: 'readLines.decompress', path: emptyPath });
-      expect(String((empty.left.cause as Error).cause)).toContain('Missing zstd frame magic number');
+    expect(empty._tag).toBe('Failure');
+    if (empty._tag === 'Failure') {
+      expect(empty.failure).toMatchObject({ operation: 'readLines.decompress', path: emptyPath });
+      expect(String((empty.failure.cause as Error).cause)).toContain('Missing zstd frame magic number');
     }
     expect(emptyVisited).toEqual([]);
     const emptyPlainPath = path.join(root, 'empty.jsonl');
@@ -586,21 +586,21 @@ test('bounds an archive by its declared content size and by its compressed size'
     // Between the compressed and the decompressed size: the frame declares its
     // content size, so the bound fires before any decompression.
     const declared = await Effect.runPromise(
-      Effect.either(storage.readLines(archivePath, () => undefined, { maxBytes: 1024 })),
+      Effect.result(storage.readLines(archivePath, () => undefined, { maxBytes: 1024 })),
     );
-    expect(declared._tag).toBe('Left');
-    if (declared._tag === 'Left') {
-      expect(declared.left).toMatchObject({ operation: 'readLines', path: archivePath });
-      expect(String(declared.left.cause)).toContain('exceeds');
+    expect(declared._tag).toBe('Failure');
+    if (declared._tag === 'Failure') {
+      expect(declared.failure).toMatchObject({ operation: 'readLines', path: archivePath });
+      expect(String(declared.failure.cause)).toContain('exceeds');
     }
 
     const compressedBound = await Effect.runPromise(
-      Effect.either(storage.readLines(archivePath, () => undefined, { maxBytes: compressed.length - 1 })),
+      Effect.result(storage.readLines(archivePath, () => undefined, { maxBytes: compressed.length - 1 })),
     );
-    expect(compressedBound._tag).toBe('Left');
-    if (compressedBound._tag === 'Left') {
-      expect(compressedBound.left).toMatchObject({ operation: 'readLines', path: archivePath });
-      expect(String(compressedBound.left.cause)).toContain('exceeds');
+    expect(compressedBound._tag).toBe('Failure');
+    if (compressedBound._tag === 'Failure') {
+      expect(compressedBound.failure).toMatchObject({ operation: 'readLines', path: archivePath });
+      expect(String(compressedBound.failure.cause)).toContain('exceeds');
     }
 
     await expect(
@@ -657,15 +657,15 @@ test('rejects corrupt and truncated archives as decompression failures with the 
     ] as const) {
       const visited: string[] = [];
       const result = await Effect.runPromise(
-        Effect.either(storage.readLines(archivePath, (line) => visited.push(line))),
+        Effect.result(storage.readLines(archivePath, (line) => visited.push(line))),
       );
-      expect(result._tag).toBe('Left');
-      if (result._tag !== 'Left') {
+      expect(result._tag).toBe('Failure');
+      if (result._tag !== 'Failure') {
         throw new Error(`Expected ${archivePath} to fail`);
       }
-      expect(result.left).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
-      expect(result.left.cause).toBeInstanceOf(Error);
-      const archiveError = result.left.cause as Error;
+      expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
+      expect(result.failure.cause).toBeInstanceOf(Error);
+      const archiveError = result.failure.cause as Error;
       expect(archiveError.message).toBe(`History archive could not be decompressed: ${archivePath}`);
       expect(archiveError.cause).toBeInstanceOf(Error);
       expect((archiveError.cause as Error).message).toBe(expectedCause as string);
@@ -688,11 +688,11 @@ test('rejects a symlink to an archive and an archive that is not exactly one fra
     fs.symlinkSync(multiFramePath, linkPath);
     const storage = createLocalHistoryStorage(root);
 
-    const linked = await Effect.runPromise(Effect.either(storage.readLines(linkPath, () => undefined)));
-    expect(linked._tag).toBe('Left');
-    if (linked._tag === 'Left') {
-      expect(linked.left).toMatchObject({ operation: 'readLines', path: linkPath });
-      expect(String(linked.left.cause)).toContain('not a regular file');
+    const linked = await Effect.runPromise(Effect.result(storage.readLines(linkPath, () => undefined)));
+    expect(linked._tag).toBe('Failure');
+    if (linked._tag === 'Failure') {
+      expect(linked.failure).toMatchObject({ operation: 'readLines', path: linkPath });
+      expect(String(linked.failure.cause)).toContain('not a regular file');
     }
 
     // The output bound is proven by the one frame's declared size; a second
@@ -700,12 +700,12 @@ test('rejects a symlink to an archive and an archive that is not exactly one fra
     for (const archivePath of [multiFramePath, trailingPath]) {
       const visited: string[] = [];
       const result = await Effect.runPromise(
-        Effect.either(storage.readLines(archivePath, (line) => visited.push(line))),
+        Effect.result(storage.readLines(archivePath, (line) => visited.push(line))),
       );
-      expect(result._tag).toBe('Left');
-      if (result._tag === 'Left') {
-        expect(result.left).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
-        expect(String((result.left.cause as Error).cause)).toContain('not a single zstd frame');
+      expect(result._tag).toBe('Failure');
+      if (result._tag === 'Failure') {
+        expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
+        expect(String((result.failure.cause as Error).cause)).toContain('not a single zstd frame');
       }
       expect(visited).toEqual([]);
     }
@@ -733,17 +733,17 @@ test('refuses a frame that omits its content size even though the decompressor a
     );
     const storage = createLocalHistoryStorage(root);
 
-    const result = await Effect.runPromise(Effect.either(storage.readLines(undeclaredPath, () => undefined)));
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left).toMatchObject({ operation: 'readLines.decompress', path: undeclaredPath });
-      expect(String((result.left.cause as Error).cause)).toContain('does not declare its content size');
+    const result = await Effect.runPromise(Effect.result(storage.readLines(undeclaredPath, () => undefined)));
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: undeclaredPath });
+      expect(String((result.failure.cause as Error).cause)).toContain('does not declare its content size');
     }
 
-    const mismatched = await Effect.runPromise(Effect.either(storage.readLines(mismatchedPath, () => undefined)));
-    expect(mismatched._tag).toBe('Left');
-    if (mismatched._tag === 'Left') {
-      expect(mismatched.left).toMatchObject({ operation: 'readLines.decompress', path: mismatchedPath });
+    const mismatched = await Effect.runPromise(Effect.result(storage.readLines(mismatchedPath, () => undefined)));
+    expect(mismatched._tag).toBe('Failure');
+    if (mismatched._tag === 'Failure') {
+      expect(mismatched.failure).toMatchObject({ operation: 'readLines.decompress', path: mismatchedPath });
     }
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
@@ -763,20 +763,20 @@ test('refuses a declared content size over the bound before decompressing anythi
     const storage = createLocalHistoryStorage(root);
 
     const bounded = await Effect.runPromise(
-      Effect.either(storage.readLines(archivePath, () => undefined, { maxBytes: 1024 * 1024 })),
+      Effect.result(storage.readLines(archivePath, () => undefined, { maxBytes: 1024 * 1024 })),
     );
-    expect(bounded._tag).toBe('Left');
-    if (bounded._tag === 'Left') {
-      expect(bounded.left).toMatchObject({ operation: 'readLines', path: archivePath });
-      expect(String(bounded.left.cause)).toContain('exceeds');
+    expect(bounded._tag).toBe('Failure');
+    if (bounded._tag === 'Failure') {
+      expect(bounded.failure).toMatchObject({ operation: 'readLines', path: archivePath });
+      expect(String(bounded.failure.cause)).toContain('exceeds');
     }
 
     const unbounded = await Effect.runPromise(
-      Effect.either(storage.readLines(archivePath, () => undefined, { maxBytes: 64 * 1024 * 1024 })),
+      Effect.result(storage.readLines(archivePath, () => undefined, { maxBytes: 64 * 1024 * 1024 })),
     );
-    expect(unbounded._tag).toBe('Left');
-    if (unbounded._tag === 'Left') {
-      expect(unbounded.left).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
+    expect(unbounded._tag).toBe('Failure');
+    if (unbounded._tag === 'Failure') {
+      expect(unbounded.failure).toMatchObject({ operation: 'readLines.decompress', path: archivePath });
     }
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
@@ -799,20 +799,20 @@ test('refuses an archive declaring more than the archive budget even under the p
     expect(HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES).toBeLessThan(HISTORY_JSONL_MAX_BYTES);
 
     const real = await Effect.runPromise(
-      Effect.either(createLocalHistoryStorage(root).readLines(archivePath, () => undefined)),
+      Effect.result(createLocalHistoryStorage(root).readLines(archivePath, () => undefined)),
     );
-    expect(real._tag).toBe('Left');
-    if (real._tag === 'Left') {
-      expect(real.left).toMatchObject({ operation: 'readLines', path: archivePath });
-      expect(String(real.left.cause)).toContain(`${HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES}-byte limit`);
+    expect(real._tag).toBe('Failure');
+    if (real._tag === 'Failure') {
+      expect(real.failure).toMatchObject({ operation: 'readLines', path: archivePath });
+      expect(String(real.failure.cause)).toContain(`${HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES}-byte limit`);
     }
 
     const memory = new TestMemoryStorage(root);
     memory.writeBytes('declares-too-much.jsonl.zst', header);
-    const fixture = await Effect.runPromise(Effect.either(memory.readLines(archivePath, () => undefined)));
-    expect(fixture._tag).toBe('Left');
-    if (fixture._tag === 'Left') {
-      expect(fixture.left).toMatchObject({ operation: 'readLines', path: archivePath });
+    const fixture = await Effect.runPromise(Effect.result(memory.readLines(archivePath, () => undefined)));
+    expect(fixture._tag).toBe('Failure');
+    if (fixture._tag === 'Failure') {
+      expect(fixture.failure).toMatchObject({ operation: 'readLines', path: archivePath });
     }
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
@@ -841,12 +841,12 @@ test('refuses a frame whose blocks would emit more than it declares without deco
 
     const visited: string[] = [];
     const result = await Effect.runPromise(
-      Effect.either(storage.readLines(overrunPath, (line) => visited.push(line), { maxBytes: 1024 * 1024 })),
+      Effect.result(storage.readLines(overrunPath, (line) => visited.push(line), { maxBytes: 1024 * 1024 })),
     );
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left).toMatchObject({ operation: 'readLines.decompress', path: overrunPath });
-      const archiveError = result.left.cause as Error;
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: overrunPath });
+      const archiveError = result.failure.cause as Error;
       expect(archiveError.message).toBe(`History archive could not be decompressed: ${overrunPath}`);
       // The decompressor's output cap refused the frame (either of its two
       // error codes for an overrun), not the declared-size check that runs
@@ -913,10 +913,10 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
   expect(archive).toEqual(plain);
   expect(archive.bytes).toBe(Buffer.byteLength(content, 'utf8'));
 
-  const corrupt = Effect.runSync(Effect.either(storage.readLines(corruptPath, () => undefined)));
-  expect(corrupt._tag).toBe('Left');
-  if (corrupt._tag === 'Left') {
-    expect(corrupt.left).toMatchObject({ operation: 'readLines.decompress', path: corruptPath });
+  const corrupt = Effect.runSync(Effect.result(storage.readLines(corruptPath, () => undefined)));
+  expect(corrupt._tag).toBe('Failure');
+  if (corrupt._tag === 'Failure') {
+    expect(corrupt.failure).toMatchObject({ operation: 'readLines.decompress', path: corruptPath });
   }
 
   // The double reads through the reader's frame walk, so a zero-byte archive
@@ -924,23 +924,23 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
   // them, and the well-formed 9-byte frame of empty input is an empty history.
   storage.writeBytes('.codex/sessions/empty.jsonl.zst', new Uint8Array(0));
   const emptyPath = path.join(storage.home, '.codex/sessions/empty.jsonl.zst');
-  const empty = Effect.runSync(Effect.either(storage.readLines(emptyPath, () => undefined)));
-  expect(empty._tag).toBe('Left');
-  if (empty._tag === 'Left') {
-    expect(empty.left).toMatchObject({ operation: 'readLines.decompress', path: emptyPath });
-    expect(String((empty.left.cause as Error).cause)).toContain('Missing zstd frame magic number');
+  const empty = Effect.runSync(Effect.result(storage.readLines(emptyPath, () => undefined)));
+  expect(empty._tag).toBe('Failure');
+  if (empty._tag === 'Failure') {
+    expect(empty.failure).toMatchObject({ operation: 'readLines.decompress', path: emptyPath });
+    expect(String((empty.failure.cause as Error).cause)).toContain('Missing zstd frame magic number');
   }
   const fullArchive = Bun.zstdCompressSync(content);
   storage.writeBytes('.codex/sessions/truncated.jsonl.zst', fullArchive.subarray(0, fullArchive.length - 8));
   const truncatedPath = path.join(storage.home, '.codex/sessions/truncated.jsonl.zst');
   const truncatedVisited: string[] = [];
   const truncated = Effect.runSync(
-    Effect.either(storage.readLines(truncatedPath, (line) => truncatedVisited.push(line))),
+    Effect.result(storage.readLines(truncatedPath, (line) => truncatedVisited.push(line))),
   );
-  expect(truncated._tag).toBe('Left');
-  if (truncated._tag === 'Left') {
-    expect(truncated.left).toMatchObject({ operation: 'readLines.decompress', path: truncatedPath });
-    expect(String((truncated.left.cause as Error).cause)).toContain('Truncated zstd frame');
+  expect(truncated._tag).toBe('Failure');
+  if (truncated._tag === 'Failure') {
+    expect(truncated.failure).toMatchObject({ operation: 'readLines.decompress', path: truncatedPath });
+    expect(String((truncated.failure.cause as Error).cause)).toContain('Truncated zstd frame');
   }
   expect(truncatedVisited).toEqual([]);
   storage.writeBytes('.codex/sessions/empty-frame.jsonl.zst', Bun.zstdCompressSync(''));
@@ -968,11 +968,11 @@ test('TestMemoryStorage reads byte fixtures and zstd archives through readLines'
     [archivePath, 4],
     [compressiblePath, 1024],
   ] as const) {
-    const bounded = Effect.runSync(Effect.either(storage.readLines(boundedPath, () => undefined, { maxBytes })));
-    expect(bounded._tag).toBe('Left');
-    if (bounded._tag === 'Left') {
-      expect(bounded.left).toMatchObject({ operation: 'readLines', path: boundedPath });
-      expect(String(bounded.left.cause)).toContain('exceeds');
+    const bounded = Effect.runSync(Effect.result(storage.readLines(boundedPath, () => undefined, { maxBytes })));
+    expect(bounded._tag).toBe('Failure');
+    if (bounded._tag === 'Failure') {
+      expect(bounded.failure).toMatchObject({ operation: 'readLines', path: boundedPath });
+      expect(String(bounded.failure.cause)).toContain('exceeds');
     }
   }
   expect(

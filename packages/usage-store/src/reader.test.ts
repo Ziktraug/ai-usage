@@ -60,11 +60,11 @@ const fixtureRow = (): UsageRowWithOptionalSource => ({
 const failureReason = async (
   effect: Effect.Effect<unknown, UsageStoreError>,
 ): Promise<UsageStoreErrorReason | undefined> => {
-  const outcome = await Effect.runPromise(Effect.either(effect));
-  if (outcome._tag === 'Right') {
+  const outcome = await Effect.runPromise(Effect.result(effect));
+  if (outcome._tag === 'Success') {
     throw new Error('Expected the read to fail.');
   }
-  return outcome.left.reason;
+  return outcome.failure.reason;
 };
 
 interface FileSnapshot {

@@ -1589,7 +1589,7 @@ describe('live usage engine publication', () => {
     let eventSinkAcquisitions = 0;
     let eventSinkReleases = 0;
     const wideEventSinkLayer = Layer.merge(
-      Layer.scoped(
+      Layer.effect(
         WideEventSink,
         Effect.acquireRelease(
           Effect.sync(() => {

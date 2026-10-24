@@ -84,7 +84,7 @@ export interface LocalHistoryStorage {
   ): Effect.Effect<LocalHistoryTextRange, LocalHistoryError>;
 }
 
-export const LocalHistoryStorage = Context.GenericTag<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
+export const LocalHistoryStorage = Context.Service<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
 
 interface LocalHistoryErrorDetails {
   readonly path?: string;

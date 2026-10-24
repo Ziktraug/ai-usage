@@ -14,7 +14,7 @@
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/replication-outbox": "workspace:*",
     "@ai-usage/replication-protocol": "workspace:*",
-    "effect": "^3.21.4"
+    "effect": "^4.0.5"
   },
   "scripts": {
     "build": "tsc --noEmit",

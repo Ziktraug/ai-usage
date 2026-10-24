@@ -263,7 +263,7 @@ const runParsedRevisionQuery = <Result extends RevisionQueryResult>(
       catch: (error) => error,
     }).pipe(withMeasuredIfAvailable('revision.parse'));
     return successfulQueryResult(request, data);
-  }).pipe(Effect.catchAll(() => Effect.succeed(queryFailedResult(request))));
+  }).pipe(Effect.catch(() => Effect.succeed(queryFailedResult(request))));
 
 const withSessionQueryBoundary = (
   request: ParsedRevisionRequest<SessionPageResult>,

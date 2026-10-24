@@ -654,7 +654,7 @@ export const prepareCodexDistillationEvidence = (
       (result): DistillationEvidenceReadResult =>
         result.status === 'unavailable' ? result : normalizeSnapshot(result.snapshot, request, options),
     ),
-    Effect.catchAll(() => Effect.succeed({ status: 'unavailable' as const, reason: 'source-unavailable' as const })),
+    Effect.catch(() => Effect.succeed({ status: 'unavailable' as const, reason: 'source-unavailable' as const })),
   );
   return Effect.runPromise(effect, options.signal === undefined ? undefined : { signal: options.signal });
 };

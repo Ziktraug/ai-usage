@@ -3682,14 +3682,14 @@ export const queryUsageSyncFleet = (
         });
         return { currentMachine, ...fleet };
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             try {
               db.exec('ROLLBACK');
             } catch {
               // The read failure remains authoritative.
             }
-          }).pipe(Effect.zipRight(Effect.fail(error))),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
     }),
@@ -3772,14 +3772,14 @@ export const queryLocalMergeBundle = (
         });
         return bundle;
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             try {
               db.exec('ROLLBACK');
             } catch {
               // The read failure remains authoritative.
             }
-          }).pipe(Effect.zipRight(Effect.fail(error))),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
     }),
@@ -3937,14 +3937,14 @@ export const queryStoredReportCapture = (
         });
         return { generations, machineFleet, reportRows };
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             try {
               db.exec('ROLLBACK');
             } catch {
               // The capture failure remains authoritative.
             }
-          }).pipe(Effect.zipRight(Effect.fail(error))),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
     }),

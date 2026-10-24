@@ -208,18 +208,18 @@ const runConcurrentConfirms = async (
     };
     const { Effect } = await import('effect');
     const { confirmPeerMergeBundle } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
-    const outcome = await Effect.runPromise(Effect.either(confirmPeerMergeBundle({
+    const outcome = await Effect.runPromise(Effect.result(confirmPeerMergeBundle({
       bundle: ${JSON.stringify(bundle)},
       confirmationToken: ${JSON.stringify(confirmationToken)},
       dbPath: ${JSON.stringify(dbPath)},
       localMachineId: ${JSON.stringify(machineA.id)},
     })));
-    if (outcome._tag === 'Right') {
-      process.stdout.write('result:success:' + JSON.stringify(outcome.right) + '\\n');
-    } else if (outcome.left.reason === 'preview-stale') {
+    if (outcome._tag === 'Success') {
+      process.stdout.write('result:success:' + JSON.stringify(outcome.success) + '\\n');
+    } else if (outcome.failure.reason === 'preview-stale') {
       process.stdout.write('result:preview-stale\\n');
     } else {
-      throw outcome.left;
+      throw outcome.failure;
     }
   `;
   const children = await Promise.all([startBarrierChild(program), startBarrierChild(program)]);
@@ -2488,7 +2488,7 @@ describe('usage-store public boundary', () => {
     const dbPath = usageStorePath(home);
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         importPeerMergeBundle({
           dbPath,
           localMachineId: machineA.id,
@@ -2497,9 +2497,9 @@ describe('usage-store public boundary', () => {
       ),
     );
 
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left.reason).toBe('self-import');
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure.reason).toBe('self-import');
     }
   });
 
@@ -2512,7 +2512,7 @@ describe('usage-store public boundary', () => {
     };
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         importPeerMergeBundle({
           dbPath,
           localMachineId: 'local-machine',
@@ -2521,9 +2521,9 @@ describe('usage-store public boundary', () => {
       ),
     );
 
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left.reason).toBe('invalid-input');
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure.reason).toBe('invalid-input');
     }
   });
 

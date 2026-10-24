@@ -22,7 +22,7 @@
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-merge": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
-    "effect": "^3.21.4"
+    "effect": "^4.0.5"
   },
   "scripts": {
     "build": "tsc --noEmit",

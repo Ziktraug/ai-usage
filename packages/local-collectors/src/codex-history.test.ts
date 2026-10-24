@@ -3608,12 +3608,12 @@ describe('Codex compressed rollouts', () => {
     // could not observe, so the skipped archive's failure is the answer.
     const corruptOnly = new TestMemoryStorage();
     corruptOnly.writeBytes('.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
-    const quotaRead = await runWithStorage(Effect.either(findLatestCodexQuotaSnapshot()), corruptOnly);
-    const statusRead = await runWithStorage(Effect.either(findLatestCodexProviderStatus()), corruptOnly);
+    const quotaRead = await runWithStorage(Effect.result(findLatestCodexQuotaSnapshot()), corruptOnly);
+    const statusRead = await runWithStorage(Effect.result(findLatestCodexProviderStatus()), corruptOnly);
     for (const read of [quotaRead, statusRead]) {
-      expect(read._tag).toBe('Left');
-      if (read._tag === 'Left') {
-        expect(read.left).toMatchObject({
+      expect(read._tag).toBe('Failure');
+      if (read._tag === 'Failure') {
+        expect(read.failure).toMatchObject({
           operation: 'readLines.decompress',
           path: path.join(corruptOnly.home, '.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst'),
         });
@@ -3650,11 +3650,11 @@ describe('Codex compressed rollouts', () => {
     );
     storage.writeText('.codex/sessions/2026/09/02/rollout-2026-09-02-denied.jsonl', jsonl(...rolloutEvents('d', 1)));
 
-    const read = await runWithStorage(Effect.either(findLatestCodexQuotaSnapshot()), storage);
-    expect(read._tag).toBe('Left');
-    if (read._tag === 'Left') {
-      expect(read.left).toMatchObject({ operation: 'readLines' });
-      expect(read.left.path?.endsWith('rollout-2026-09-02-denied.jsonl')).toBe(true);
+    const read = await runWithStorage(Effect.result(findLatestCodexQuotaSnapshot()), storage);
+    expect(read._tag).toBe('Failure');
+    if (read._tag === 'Failure') {
+      expect(read.failure).toMatchObject({ operation: 'readLines' });
+      expect(read.failure.path?.endsWith('rollout-2026-09-02-denied.jsonl')).toBe(true);
     }
   });
 
@@ -3999,10 +3999,10 @@ describe('Codex compressed rollouts', () => {
       const activeDetail = await runWithRealStorage(readCodexDetailForTest('active-thread'), home);
       expect(activeDetail?.turns).toHaveLength(1);
       // An id missing from a partial listing is not "no such session".
-      const archivedDetail = await runWithRealStorage(Effect.either(readCodexDetailForTest('archived-thread')), home);
-      expect(archivedDetail._tag).toBe('Left');
-      if (archivedDetail._tag === 'Left') {
-        expect(archivedDetail.left).toMatchObject({ operation: 'readDir', path: archivedDirectory });
+      const archivedDetail = await runWithRealStorage(Effect.result(readCodexDetailForTest('archived-thread')), home);
+      expect(archivedDetail._tag).toBe('Failure');
+      if (archivedDetail._tag === 'Failure') {
+        expect(archivedDetail.failure).toMatchObject({ operation: 'readDir', path: archivedDirectory });
       }
 
       rmSync(archivedDirectory);
