@@ -6,6 +6,7 @@ import {
   openHydratedSkills,
   reportViewsFor,
   test,
+  waitForFocusedReportSettled,
   waitForHydratedNavigation,
   waitForHydratedReport,
   waitForHydratedSkills,
@@ -14,6 +15,9 @@ import { encodeRpcResponseBody } from './rpc-test-transport';
 
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
 const ALL_FILTER_PATTERN = /^All —/;
+const HARNESS_FILTER_URL_PATTERN = /[?&]harness=/;
+const CUSTOM_RANGE_URL_PATTERN = /[?&]range=\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}/;
+const EDITED_FROM_RANGE_URL_PATTERN = /[?&]range=2026-05-20\.\./;
 const MAX_PROJECT_EXPANSIONS = 12;
 const NAVIGATION_DESTINATIONS = [
   'Overview',
@@ -526,6 +530,273 @@ for (const colorScheme of ['light', 'dark'] as const) {
         page.locator('[data-campaign-card][aria-pressed="false"]'),
       );
     });
+  });
+}
+
+/**
+ * Resolves a CSS colour, a system colour keyword or a token variable, against the palette the page
+ * currently paints with.
+ */
+const resolveSystemColor = (page: Page, keyword: string): Promise<string> =>
+  page.evaluate((value) => {
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, keyword);
+
+const focusByKeyboard = async (page: Page, target: Locator): Promise<void> => {
+  await expect(target).toBeVisible();
+  await target.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(target).toBeFocused();
+};
+
+const outlineOf = (target: Locator) =>
+  target.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.outlineColor, style: style.outlineStyle, width: Number.parseFloat(style.outlineWidth) };
+  });
+
+/**
+ * Expects a solid outline at least 2px wide. Reduced motion still runs every style change as a
+ * near-instant transition, so the width is polled until it lands before the ring is read.
+ */
+const expectSolidRing = async (target: Locator): Promise<{ color: string }> => {
+  await expect.poll(async () => (await outlineOf(target)).width).toBeGreaterThanOrEqual(2);
+  const ring = await outlineOf(target);
+  expect(ring.style).toBe('solid');
+  return ring;
+};
+
+/**
+ * A field draws its authored focus as an accent border with a box-shadow halo. Forced colours drop
+ * the halo and repaint the border, which would leave the focused field looking like every other
+ * one, so under forced colours it draws a solid outline at least 2px wide. Without forced colours
+ * the halo stays and no outline is drawn, so the authored rendering is unchanged.
+ */
+const expectForcedFieldFocusRing = async (page: Page, field: Locator): Promise<void> => {
+  await focusByKeyboard(page, field);
+  await expectSolidRing(field);
+  await page.emulateMedia({ forcedColors: 'none' });
+  await expect(field).toBeFocused();
+  await expect(field).toHaveCSS('outline-style', 'none');
+  await expect.poll(() => field.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe('none');
+  await page.emulateMedia({ forcedColors: 'active' });
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test.describe(`keyboard focus on a field stays visible in ${colorScheme} forced-colors mode`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+    });
+
+    test('the report filter fields and the custom period fields', async ({ page }) => {
+      await openHydratedReport(page);
+      await expectForcedFieldFocusRing(
+        page,
+        page.getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' }),
+      );
+      await expectForcedFieldFocusRing(page, page.getByRole('button', { name: 'Filter by harness: All harnesses' }));
+      const period = page.getByRole('region', { name: 'Report period' });
+      await period.getByRole('button', { exact: true, name: 'Choose a custom report period' }).click();
+      await expectForcedFieldFocusRing(page, period.locator('#report-period-from'));
+      await expectForcedFieldFocusRing(page, period.locator('#report-period-to'));
+    });
+
+    test('the breakdown search field', async ({ page }) => {
+      await openHydratedReport(page, '/?tab=models');
+      await expectForcedFieldFocusRing(page, page.getByRole('searchbox', { name: 'Search this breakdown' }));
+    });
+  });
+}
+
+/** Opens the harness filter from the keyboard; its first item, the All row, takes focus. */
+const openHarnessFilterByKeyboard = async (page: Page): Promise<Locator> => {
+  await page.getByRole('button', { name: 'Filter by harness: All harnesses' }).focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { exact: true, name: 'Harness' });
+  await expect(dialog.getByRole('button', { name: 'All harnesses' })).toBeFocused();
+  return dialog;
+};
+
+/** A filter option's visually hidden native checkbox and the box drawn in its place. */
+const filterOptionFor = (dialog: Locator, name: string): { box: Locator; input: Locator } => {
+  // A `has` locator is resolved inside each candidate item, so it starts from the page, not the dialog.
+  const option = dialog.locator('li').filter({ has: dialog.page().getByRole('checkbox', { exact: true, name }) });
+  return { box: option.locator('[data-part="control"]'), input: option.getByRole('checkbox') };
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const forcedColors of ['none', 'active'] as const) {
+    const mode = forcedColors === 'active' ? `${colorScheme} forced-colors` : colorScheme;
+    test(`keyboard focus on a filter option draws a ring on its checkbox box in ${mode} mode`, async ({ page }) => {
+      // Focus lands on the visually hidden native input, so without a ring on the box it mirrors
+      // nothing on screen would show which option has focus (WCAG 2.4.7).
+      await page.emulateMedia({ colorScheme, forcedColors });
+      await openHydratedReport(page);
+      const dialog = await openHarnessFilterByKeyboard(page);
+      const claude = filterOptionFor(dialog, 'Claude');
+      await expect(claude.box).toHaveCSS('outline-style', 'none');
+
+      await page.keyboard.press('Tab');
+      await expect(claude.input).toBeFocused();
+      const ring = await expectSolidRing(claude.box);
+      expect(ring.color).toBe(
+        await resolveSystemColor(page, forcedColors === 'active' ? 'Highlight' : 'var(--colors-accent)'),
+      );
+
+      await page.keyboard.press('Tab');
+      await expect(filterOptionFor(dialog, 'Codex').input).toBeFocused();
+      await expect(claude.box).toHaveCSS('outline-style', 'none');
+    });
+  }
+}
+
+test('a pointer click on a filter option draws no focus ring on its checkbox box', async ({ page }) => {
+  await openHydratedReport(page);
+  // The keyboard opens the popover, so the pointer click below has to take over the modality.
+  const dialog = await openHarnessFilterByKeyboard(page);
+  const codex = filterOptionFor(dialog, 'Codex');
+  // Choosing an option navigates and the navigation moves focus on, so the box is watched from the
+  // click onwards instead of being read once after it.
+  await codex.box.evaluate((box) => {
+    const states: { focused: boolean; focusVisible: boolean; outlineStyle: string }[] = [];
+    new MutationObserver(() => {
+      states.push({
+        focused: box.hasAttribute('data-focus'),
+        focusVisible: box.hasAttribute('data-focus-visible'),
+        outlineStyle: getComputedStyle(box).outlineStyle,
+      });
+    }).observe(box, { attributeFilter: ['data-focus', 'data-focus-visible'] });
+    Reflect.set(window, '__codexBoxFocusStates', states);
+  });
+
+  await dialog.getByTitle('Codex', { exact: true }).click();
+  await expect(page).toHaveURL(HARNESS_FILTER_URL_PATTERN);
+  const states = await page.evaluate(() => Reflect.get(window, '__codexBoxFocusStates') as unknown);
+  expect(states).toContainEqual({ focused: true, focusVisible: false, outlineStyle: 'none' });
+  expect(states).not.toContainEqual(expect.objectContaining({ focusVisible: true }));
+  expect(states).not.toContainEqual(expect.objectContaining({ outlineStyle: 'solid' }));
+});
+
+test('choosing a custom period moves focus to its From date by keyboard and by pointer', async ({ page }) => {
+  await openHydratedReport(page);
+  await waitForFocusedReportSettled(page);
+  const period = page.getByRole('region', { name: 'Report period' });
+  const custom = period.getByRole('button', { exact: true, name: 'Choose a custom report period' });
+  const from = period.getByRole('textbox', { exact: true, name: 'From' });
+  const to = period.getByRole('textbox', { exact: true, name: 'To' });
+
+  // Custom navigates before its fields exist, so focus is read once the report has settled, after
+  // any focus reset the navigation could make.
+  await custom.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(CUSTOM_RANGE_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+  await expect(from).toBeFocused();
+
+  // A From edit completed by Tab commits a new range and leaves focus on To.
+  await from.fill('2026-05-20');
+  await page.keyboard.press('Tab');
+  await expect(page).toHaveURL(EDITED_FROM_RANGE_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+  await expect(to).toBeFocused();
+
+  await period.getByRole('button', { exact: true, name: '30d' }).click();
+  await expect(from).toHaveCount(0);
+  await custom.click();
+  await expect(page).toHaveURL(CUSTOM_RANGE_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+  await expect(from).toBeFocused();
+
+  // Once the fields are open, Custom moves focus straight back to From.
+  await to.focus();
+  await period.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }).click();
+  await expect(from).toBeFocused();
+});
+
+interface MarkPaint {
+  readonly background: string;
+  readonly level: string | null;
+  readonly opacity: string;
+}
+
+const paintOf = (marks: Locator): Promise<MarkPaint[]> =>
+  marks.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        level: element.getAttribute('data-heat-level'),
+        opacity: style.opacity,
+      };
+    }),
+  );
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`Rhythm and Punchcard keep their intensity marks in ${colorScheme} forced-colors mode`, async ({ page }) => {
+    // Forced colours repaint every authored fill as the canvas colour, which would flatten the
+    // intensity both charts draw as a fill. Their marks keep their own paint, so each level stays
+    // apart from the canvas and from the other levels, and the legend still matches the marks.
+    await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+    await openHydratedReport(page);
+    await waitForFocusedReportSettled(page);
+    const canvas = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+
+    const calendar = page.getByRole('toolbar', {
+      name: 'Daily activity calendar. Use arrow keys to move by day or week.',
+    });
+    const dayMarks = calendar.locator('button[data-heatmap-day]');
+    const legendMarks = page.locator('[data-heatmap-legend] [data-heat-level]');
+    const days = await paintOf(dayMarks);
+    const legend = await paintOf(legendMarks);
+    expect(legend.map(({ level }) => level)).toEqual(['0', '1', '2', '3', '4']);
+    // The fixture's days are empty or active at one level; the legend carries the whole scale.
+    const emptyDay = days.find(({ level }) => level === '0');
+    const activeDay = days.find(({ level }) => level !== '0');
+    if (!(emptyDay && activeDay)) {
+      throw new Error('Expected the fixture calendar to hold both empty and active days');
+    }
+    expect(emptyDay.background).not.toBe(activeDay.background);
+    const legendBackgroundByLevel = new Map(legend.map((mark) => [mark.level, mark.background]));
+    expect(new Set(legendBackgroundByLevel.values()).size).toBe(legend.length);
+    for (const mark of [...days, ...legend]) {
+      expect(mark.background).not.toBe(canvas);
+      expect(legendBackgroundByLevel.get(mark.level)).toBe(mark.background);
+      // The strength lives in the fill, so nothing drawn around a faint day is faded with it.
+      expect(mark.opacity).toBe('1');
+    }
+
+    // Each day keeps its own paint, so its focus ring has to come from the forced palette.
+    const rovingDay = calendar.locator('button[data-heatmap-day][tabindex="0"]');
+    await focusByKeyboard(page, rovingDay);
+    const dayRing = await expectSolidRing(rovingDay);
+    expect(dayRing.color).toBe(await resolveSystemColor(page, 'Highlight'));
+
+    // Without forced colours the authored encoding is untouched: one accent fill, faded per level.
+    // Reduced motion still runs a near-instant transition, so the switch is polled.
+    await page.emulateMedia({ forcedColors: 'none' });
+    await expect
+      .poll(async () => (await paintOf(legendMarks)).map(({ opacity }) => opacity))
+      .toEqual(['1', '0.28', '0.52', '0.76', '1']);
+    const authoredLegend = await paintOf(legendMarks);
+    expect(new Set(authoredLegend.slice(1).map(({ background }) => background)).size).toBe(1);
+    const authoredActiveDay = (await paintOf(dayMarks)).find(({ level }) => level === activeDay.level);
+    expect(authoredActiveDay).toEqual(authoredLegend[Number(activeDay.level)]);
+    await expect(rovingDay).toHaveCSS('outline-width', '1px');
+    await page.emulateMedia({ forcedColors: 'active' });
+
+    const dots = await paintOf(page.locator('[data-punchcard-cell-fill]'));
+    const keyDots = await paintOf(page.locator('[data-punchcard-intensity-key] span[style]'));
+    expect(dots.length).toBeGreaterThan(0);
+    expect(keyDots).toHaveLength(4);
+    for (const dot of [...dots, ...keyDots]) {
+      expect(dot.background).not.toBe(canvas);
+    }
   });
 }
 

@@ -106,6 +106,20 @@ describe('Svelte basic controls fixture', () => {
     expect(fixtureHtml).toContain('✓');
   });
 
+  test('Checkbox draws a keyboard focus ring on its visible box, in Highlight under forced colours', () => {
+    // Focus lands on the visually hidden native input, so the box it mirrors carries the ring.
+    // Ark marks the box with data-focus-visible only for keyboard focus, which `_focusVisible` matches.
+    const controlClasses = [...fixtureHtml.matchAll(/<[^>]*data-part="control"[^>]*\sclass="([^"]*)"/g)].map(
+      ([, classes]) => classes ?? '',
+    );
+    expect(controlClasses).toHaveLength(2);
+    for (const classes of controlClasses) {
+      expect(classes).toContain('focusVisible:ring_2px_solid_token(colors.accent)');
+      expect(classes).toContain('focusVisible:ring-o_2px');
+      expect(classes).toContain('focusVisible:highContrast:ring_2px_solid_Highlight');
+    }
+  });
+
   test('renders only positive SegmentBar entries with stable widths and titles', () => {
     expect(fixtureHtml).toContain('aria-label="Synthetic proportions"');
     expect(fixtureHtml).toContain('role="img"');

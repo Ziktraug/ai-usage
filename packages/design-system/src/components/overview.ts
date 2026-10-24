@@ -180,6 +180,9 @@ export const heatWeekColumn = css({
   gap: '3px',
 });
 
+// A day's fill is its data. Forced colours would repaint every fill as the canvas and flatten the
+// intensity the marks carry, so the calendar and Punchcard marks and their legends keep their own
+// paint; their text labels, and the controls around them, still take the forced palette.
 export const heatCell = css({
   w: { base: '18px', md: '12px' },
   h: { base: '18px', md: '12px' },
@@ -187,6 +190,7 @@ export const heatCell = css({
   border: '0',
   borderRadius: '3px',
   cursor: 'pointer',
+  forcedColorAdjust: 'none',
   transition: 'transform 0.1s',
   _hover: {
     transform: 'scale(1.25)',
@@ -194,6 +198,8 @@ export const heatCell = css({
   _focusVisible: {
     outline: '1px solid token(colors.accent)',
     outlineOffset: '1px',
+    // Keeping the day's paint keeps the accent ring too, so the focus takes the forced palette's.
+    _highContrast: { outline: '2px solid Highlight' },
   },
 });
 
@@ -216,6 +222,7 @@ export const heatLegendCell = css({
   w: '10px',
   h: '10px',
   borderRadius: '3px',
+  forcedColorAdjust: 'none',
 });
 
 export const heatDayControl = css({
@@ -288,6 +295,7 @@ export const punchDot = css({
   w: 'var(--punch-size)',
   h: 'var(--punch-size)',
   borderRadius: 'full',
+  forcedColorAdjust: 'none',
   transition: 'transform 0.16s ease-out',
 });
 
@@ -305,6 +313,7 @@ export const punchIntensityKeyCell = css({
   w: 'var(--punch-size)',
   h: 'var(--punch-size)',
   borderRadius: 'full',
+  forcedColorAdjust: 'none',
 });
 
 export const punchHourLabel = css({

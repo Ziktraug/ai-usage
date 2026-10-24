@@ -59,7 +59,14 @@
     bg: 'surfaceMuted',
     color: 'ink',
     fontSize: '13px',
-    _focusVisible: { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)', outline: 'none' },
+    _focusVisible: {
+      borderColor: 'accent',
+      boxShadow: '0 0 0 3px token(colors.focusRing)',
+      outline: 'none',
+      // Forced colours drop the halo and repaint the border, so the focus draws a system-colour
+      // ring in the halo's footprint instead.
+      _highContrast: { outline: '2px solid Highlight', outlineOffset: '1px' },
+    },
   });
   const invalidInput = css({ borderColor: 'status.danger' });
   const validationMessage = css({ color: 'status.danger', fontSize: '12px' });
@@ -69,7 +76,6 @@
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
   import type { FocusedDateDomain } from '@ai-usage/report-core/focused-report-query';
-  import { tick } from 'svelte';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import { dateFromIndex } from '../../../../date-range';
   import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
@@ -139,19 +145,45 @@
     commitRange({ mode });
   };
 
-  // Entering custom mode keeps the currently effective window, so the report does not move —
-  // the two date fields appear inline, seeded and ready to edit.
-  const selectCustom = async (): Promise<void> => {
-    if (range.mode !== 'custom') {
-      validationError = null;
-      commitRange({ from: committedInput('start'), mode: 'custom', to: committedInput('end') });
+  // The range Custom committed, until it lands and its From field takes focus. The fields render
+  // only once the navigation lands, after the click handler has returned, so the request waits for
+  // that range; any other range landing first drops it.
+  let pendingFromFocusKey: string | null = null;
+
+  $effect(() => {
+    const key = reportRangeEditKey(range);
+    const element = fromInputElement;
+    if (pendingFromFocusKey === null) {
+      return;
     }
-    await tick();
-    fromInputElement?.focus();
+    if (key !== pendingFromFocusKey) {
+      pendingFromFocusKey = null;
+      return;
+    }
+    if (element) {
+      pendingFromFocusKey = null;
+      element.focus();
+    }
+  });
+
+  // Entering custom mode keeps the currently effective window, so the report does not move —
+  // the two date fields appear inline, seeded and ready to edit, and the From field takes focus.
+  // The navigation keeps focus: a reset would blur the field and leave focus on the document.
+  const selectCustom = (): void => {
+    if (range.mode === 'custom') {
+      fromInputElement?.focus();
+      return;
+    }
+    validationError = null;
+    const next: DashboardDateRangeSearch = { from: committedInput('start'), mode: 'custom', to: committedInput('end') };
+    pendingFromFocusKey = reportRangeEditKey(next);
+    commitRange(next, { keepFocus: true });
   };
 
   // Each completed field edit commits on its own, like the original range control: a valid pair
   // navigates immediately, an invalid one announces why and leaves the committed range alone.
+  // The navigation keeps focus, like the brush's edits: an edit completed by Tab has already moved
+  // focus to the next field, and a reset would blur it.
   const commitDraftEdit = (): void => {
     const validation = validateCustomRangeInputs(draftFrom, draftTo);
     if (validation.status === 'invalid') {
@@ -162,7 +194,7 @@
     if (reportRangeEditKey(validation.range) === reportRangeEditKey(range)) {
       return;
     }
-    commitRange(validation.range);
+    commitRange(validation.range, { keepFocus: true });
   };
 
   const restoreOnEscape = (event: KeyboardEvent): void => {
