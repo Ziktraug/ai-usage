@@ -70,6 +70,11 @@ export const sessionsTable = css({
   '& tbody tr[data-selected="true"] td:first-child': {
     boxShadow: 'inset 2px 0 0 token(colors.accent)',
   },
+  // Forced colours mark the selected row with the design system's Highlight ring (preset globalCss).
+  // The positioned last cell paints over that ring, so it carries the ring itself.
+  '& tbody tr[data-selected="true"]:not(:focus-visible) td:last-child': {
+    _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
+  },
 });
 
 export const tableWrapStyle = css.raw({

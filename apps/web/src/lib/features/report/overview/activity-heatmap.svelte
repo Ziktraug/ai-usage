@@ -14,23 +14,13 @@
     heatScroll,
     heatWeekColumn,
     heatWeekdays,
+    intensityFill,
     panel,
     panelHeader,
     panelSub,
     panelTitle,
   } from '@ai-usage/design-system/report';
 
-  // A day's intensity is the strength of its fill, drawn as the cell's opacity. Under forced
-  // colours the cell stays opaque and the strength moves into the fill's alpha instead, so the
-  // forced-palette focus ring around a faint day is not faded with it.
-  const accentFill = css({
-    bg: 'accent',
-    opacity: 'var(--heat-strength)',
-    _highContrast: {
-      bg: 'color-mix(in srgb, token(colors.accent) var(--heat-strength), transparent)',
-      opacity: 1,
-    },
-  });
   const emptyPanel = css({ color: 'muted', fontSize: '12px' });
   const heatStrength = ['28%', '52%', '76%', '100%'] as const;
 </script>
@@ -149,7 +139,7 @@
                     aria-label={`${description}. Focus dashboard on this day.`}
                     class={cx(
                       heatCell,
-                      item.level === 0 ? heatCellZero : accentFill,
+                      item.level === 0 ? heatCellZero : intensityFill,
                       key === heatmap.todayKey ? heatCellToday : undefined,
                     )}
                     data-heat-level={item.level}
@@ -161,7 +151,7 @@
                     tabindex={focusedDay?.date === item.date ? 0 : -1}
                     title={description}
                     type="button"
-                    style:--heat-strength={item.level > 0 ? heatStrength[item.level - 1] : undefined}
+                    style:--mark-strength={item.level > 0 ? heatStrength[item.level - 1] : undefined}
                     use:registerCell={key}
                   ></button>
                 {:else}
@@ -182,9 +172,9 @@
       <span>Less</span><span class={cx(heatLegendCell, heatCellZero)} data-heat-level="0"></span>
       {#each heatStrength as strength, index (strength)}
         <span
-          class={cx(heatLegendCell, accentFill)}
+          class={cx(heatLegendCell, intensityFill)}
           data-heat-level={index + 1}
-          style:--heat-strength={strength}
+          style:--mark-strength={strength}
         ></span>
       {/each}
       <span>More</span><span style="margin-left: auto">scaled by sessions</span>

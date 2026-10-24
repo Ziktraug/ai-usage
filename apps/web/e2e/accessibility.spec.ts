@@ -513,6 +513,14 @@ for (const colorScheme of ['light', 'dark'] as const) {
         page.locator('tr[data-selected="true"]'),
         page.locator('tr[data-selected="false"]'),
       );
+      // The last cell is positioned (it anchors the row's chevron), so it paints over the row's
+      // ring and has to carry its own.
+      await expect(page.locator('tr[data-selected="true"] td:last-child')).toHaveCSS('position', 'relative');
+      await expectForcedSelectionRing(
+        page,
+        page.locator('tr[data-selected="true"] td:last-child'),
+        page.locator('tr[data-selected="false"] td:last-child'),
+      );
     });
 
     test('the Campaigns view and the selected campaign', async ({ page }) => {
@@ -737,67 +745,215 @@ const paintOf = (marks: Locator): Promise<MarkPaint[]> =>
     }),
   );
 
-for (const colorScheme of ['light', 'dark'] as const) {
-  test(`Rhythm and Punchcard keep their intensity marks in ${colorScheme} forced-colors mode`, async ({ page }) => {
-    // Forced colours repaint every authored fill as the canvas colour, which would flatten the
-    // intensity both charts draw as a fill. Their marks keep their own paint, so each level stays
-    // apart from the canvas and from the other levels, and the legend still matches the marks.
-    await page.emulateMedia({ colorScheme, forcedColors: 'active' });
-    await openHydratedReport(page);
-    await waitForFocusedReportSettled(page);
-    const canvas = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+const borderOf = (marks: Locator) =>
+  marks.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return {
+        color: style.borderTopColor,
+        sides: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+        style: style.borderTopStyle,
+      };
+    }),
+  );
 
-    const calendar = page.getByRole('toolbar', {
-      name: 'Daily activity calendar. Use arrow keys to move by day or week.',
+type PaintedColor = readonly [red: number, green: number, blue: number, alpha: number];
+
+/**
+ * Each colour as the sRGB bytes a 2D canvas paints for it, so a computed colour in any syntax
+ * (`rgb()`, or the `color(srgb …)` a `color-mix()` resolves to) is compared on what reaches the
+ * screen. A value the canvas cannot parse fails instead of reading as the previous fill.
+ */
+const paintedColors = (page: Page, colors: readonly string[]): Promise<PaintedColor[]> =>
+  page.evaluate((values) => {
+    const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    if (!context) {
+      throw new Error('Expected a 2D canvas context');
+    }
+    const sentinel = '#010203';
+    return values.map((value) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = sentinel;
+      context.fillStyle = value;
+      if (context.fillStyle === sentinel) {
+        throw new Error(`The canvas could not paint the colour ${value}`);
+      }
+      context.fillRect(0, 0, 1, 1);
+      const [red = 0, green = 0, blue = 0, alpha = 0] = context.getImageData(0, 0, 1, 1).data;
+      return [red, green, blue, alpha] as const;
     });
-    const dayMarks = calendar.locator('button[data-heatmap-day]');
-    const legendMarks = page.locator('[data-heatmap-legend] [data-heat-level]');
-    const days = await paintOf(dayMarks);
-    const legend = await paintOf(legendMarks);
-    expect(legend.map(({ level }) => level)).toEqual(['0', '1', '2', '3', '4']);
-    // The fixture's days are empty or active at one level; the legend carries the whole scale.
-    const emptyDay = days.find(({ level }) => level === '0');
-    const activeDay = days.find(({ level }) => level !== '0');
-    if (!(emptyDay && activeDay)) {
-      throw new Error('Expected the fixture calendar to hold both empty and active days');
-    }
-    expect(emptyDay.background).not.toBe(activeDay.background);
-    const legendBackgroundByLevel = new Map(legend.map((mark) => [mark.level, mark.background]));
-    expect(new Set(legendBackgroundByLevel.values()).size).toBe(legend.length);
-    for (const mark of [...days, ...legend]) {
-      expect(mark.background).not.toBe(canvas);
-      expect(legendBackgroundByLevel.get(mark.level)).toBe(mark.background);
-      // The strength lives in the fill, so nothing drawn around a faint day is faded with it.
-      expect(mark.opacity).toBe('1');
-    }
+  }, colors);
 
-    // Each day keeps its own paint, so its focus ring has to come from the forced palette.
-    const rovingDay = calendar.locator('button[data-heatmap-day][tabindex="0"]');
-    await focusByKeyboard(page, rovingDay);
-    const dayRing = await expectSolidRing(rovingDay);
-    expect(dayRing.color).toBe(await resolveSystemColor(page, 'Highlight'));
+const contrastRatio = (first: PaintedColor, second: PaintedColor): number => {
+  const luminances = [first, second].map(([red, green, blue]) => relativeLuminance([red, green, blue]));
+  return (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+};
 
-    // Without forced colours the authored encoding is untouched: one accent fill, faded per level.
-    // Reduced motion still runs a near-instant transition, so the switch is polled.
-    await page.emulateMedia({ forcedColors: 'none' });
-    await expect
-      .poll(async () => (await paintOf(legendMarks)).map(({ opacity }) => opacity))
-      .toEqual(['1', '0.28', '0.52', '0.76', '1']);
-    const authoredLegend = await paintOf(legendMarks);
-    expect(new Set(authoredLegend.slice(1).map(({ background }) => background)).size).toBe(1);
-    const authoredActiveDay = (await paintOf(dayMarks)).find(({ level }) => level === activeDay.level);
-    expect(authoredActiveDay).toEqual(authoredLegend[Number(activeDay.level)]);
-    await expect(rovingDay).toHaveCSS('outline-width', '1px');
-    await page.emulateMedia({ forcedColors: 'active' });
+const OPAQUE_ALPHA = 255;
+const NON_TEXT_CONTRAST = 3;
+const OPPOSITE_THEME = { dark: 'light', light: 'dark' } as const;
 
-    const dots = await paintOf(page.locator('[data-punchcard-cell-fill]'));
-    const keyDots = await paintOf(page.locator('[data-punchcard-intensity-key] span[style]'));
-    expect(dots.length).toBeGreaterThan(0);
-    expect(keyDots).toHaveLength(4);
-    for (const dot of [...dots, ...keyDots]) {
-      expect(dot.background).not.toBe(canvas);
-    }
-  });
+/** A mark as it reaches the screen: a translucent fill shows the canvas through it. */
+const overCanvas = (mark: PaintedColor, canvas: PaintedColor): PaintedColor => {
+  const alpha = mark[3] / OPAQUE_ALPHA;
+  const channel = (index: 0 | 1 | 2): number => Math.round(mark[index] * alpha + canvas[index] * (1 - alpha));
+  return [channel(0), channel(1), channel(2), OPAQUE_ALPHA];
+};
+
+/** Each mark's contrast against the canvas, rounded to hundredths. */
+const contrastsOffCanvas = (canvas: PaintedColor, marks: readonly PaintedColor[]): number[] =>
+  marks.map((mark) => Math.round(contrastRatio(overCanvas(mark, canvas), canvas) * 100) / 100);
+
+/**
+ * Every mark stands at least 3:1 off the canvas and its contrast rises with its level, so the scale
+ * reads the same way whichever palette the page is painted with. The marks are opaque: the strength
+ * lives in the fill, so nothing drawn around a faint mark is faded with it.
+ */
+const expectRisingContrast = (canvas: PaintedColor, marks: readonly PaintedColor[]): void => {
+  const contrasts = contrastsOffCanvas(canvas, marks);
+  expect(Math.min(...contrasts), `contrast by level: ${contrasts.join(', ')}`).toBeGreaterThanOrEqual(
+    NON_TEXT_CONTRAST,
+  );
+  expect(contrasts, 'contrast rises with the level').toEqual(
+    [...new Set(contrasts)].sort((left, right) => left - right),
+  );
+  expect(marks.map((mark) => mark[3])).toEqual(marks.map(() => OPAQUE_ALPHA));
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const themePin of [null, OPPOSITE_THEME[colorScheme]] as const) {
+    const pinned = themePin ? ` with the ${themePin} theme pinned` : '';
+    test(`Rhythm and Punchcard keep their intensity marks in ${colorScheme} forced-colors mode${pinned}`, async ({
+      page,
+    }) => {
+      // Forced colours repaint every authored fill as the canvas colour, which would flatten the
+      // intensity both charts draw as a fill. Their marks keep their own paint, drawn from the forced
+      // palette's system colours: each level stays apart from the canvas and from the other levels,
+      // and the legend still matches the marks. A saved theme that disagrees with the forced palette
+      // (the theme tokens follow the pin, the canvas follows the palette) must not invert the scale.
+      if (themePin) {
+        await page.addInitScript((theme) => localStorage.setItem('ai-usage-theme', theme), themePin);
+      }
+      await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+      await openHydratedReport(page);
+      await waitForFocusedReportSettled(page);
+      if (themePin) {
+        await expect(page.locator('html')).toHaveAttribute('data-theme', themePin);
+      }
+      const canvas = await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor);
+      const [canvasPaint] = await paintedColors(page, [canvas]);
+      if (!canvasPaint) {
+        throw new Error('Expected the canvas colour to paint');
+      }
+      // The forced palette follows the emulated scheme, so a pin, when set, is the opposite of it.
+      const canvasLuminance = relativeLuminance([canvasPaint[0], canvasPaint[1], canvasPaint[2]]);
+      if (colorScheme === 'dark') {
+        expect(canvasLuminance).toBeLessThan(0.2);
+      } else {
+        expect(canvasLuminance).toBeGreaterThan(0.8);
+      }
+
+      const calendar = page.getByRole('toolbar', {
+        name: 'Daily activity calendar. Use arrow keys to move by day or week.',
+      });
+      const dayMarks = calendar.locator('button[data-heatmap-day]');
+      const legendMarks = page.locator('[data-heatmap-legend] [data-heat-level]');
+      const days = await paintOf(dayMarks);
+      const legend = await paintOf(legendMarks);
+      expect(legend.map(({ level }) => level)).toEqual(['0', '1', '2', '3', '4']);
+      // The fixture's days are empty or active at one level; the legend carries the whole scale.
+      const emptyDay = days.find(({ level }) => level === '0');
+      const activeDay = days.find(({ level }) => level !== '0');
+      if (!(emptyDay && activeDay)) {
+        throw new Error('Expected the fixture calendar to hold both empty and active days');
+      }
+      expect(emptyDay.background).not.toBe(activeDay.background);
+      const legendBackgroundByLevel = new Map(legend.map((mark) => [mark.level, mark.background]));
+      expect(new Set(legendBackgroundByLevel.values()).size).toBe(legend.length);
+      for (const mark of [...days, ...legend]) {
+        expect(legendBackgroundByLevel.get(mark.level)).toBe(mark.background);
+        // The strength lives in the fill, so nothing drawn around a faint day is faded with it.
+        expect(mark.opacity).toBe('1');
+      }
+      // Level 1 is the faintest active mark and level 4 the strongest, in either palette.
+      const legendPaint = await paintedColors(
+        page,
+        legend.map(({ background }) => background),
+      );
+      expectRisingContrast(canvasPaint, legendPaint.slice(1));
+      // An empty day is the canvas itself, set apart by a system-colour outline on every side.
+      expect(legendPaint[0]).toEqual(canvasPaint);
+      const emptyMarks = page.locator('[data-heatmap-legend] [data-heat-level="0"], button[data-heat-level="0"]');
+      const emptyBorders = await borderOf(emptyMarks);
+      expect(emptyBorders.length).toBeGreaterThan(1);
+      const [grayText, ...emptyOutlines] = await paintedColors(page, [
+        await resolveSystemColor(page, 'GrayText'),
+        ...emptyBorders.map(({ color }) => color),
+      ]);
+      if (!grayText) {
+        throw new Error('Expected GrayText to paint');
+      }
+      expect(contrastRatio(grayText, canvasPaint)).toBeGreaterThanOrEqual(NON_TEXT_CONTRAST);
+      for (const [index, border] of emptyBorders.entries()) {
+        expect(border.style).toBe('solid');
+        expect(border.sides).toEqual(['1px', '1px', '1px', '1px']);
+        expect(emptyOutlines[index]).toEqual(grayText);
+      }
+
+      // Each day keeps its own paint, so its focus ring has to come from the forced palette.
+      const rovingDay = calendar.locator('button[data-heatmap-day][tabindex="0"]');
+      await focusByKeyboard(page, rovingDay);
+      const dayRing = await expectSolidRing(rovingDay);
+      expect(dayRing.color).toBe(await resolveSystemColor(page, 'Highlight'));
+
+      const dotMarks = page.locator('[data-punchcard-cell-fill]');
+      const keyMarks = page.locator('[data-punchcard-intensity-key] span[style]');
+      const dots = await paintOf(dotMarks);
+      const keyDots = await paintOf(keyMarks);
+      expect(dots.length).toBeGreaterThan(0);
+      expect(keyDots).toHaveLength(4);
+      for (const dot of [...dots, ...keyDots]) {
+        expect(dot.opacity).toBe('1');
+      }
+      // The key runs from Low to High, and every dot drawn stands at least 3:1 off the canvas.
+      expectRisingContrast(
+        canvasPaint,
+        await paintedColors(
+          page,
+          keyDots.map(({ background }) => background),
+        ),
+      );
+      const dotPaint = await paintedColors(
+        page,
+        dots.map(({ background }) => background),
+      );
+      expect(Math.min(...contrastsOffCanvas(canvasPaint, dotPaint))).toBeGreaterThanOrEqual(NON_TEXT_CONTRAST);
+      expect(dotPaint.map((dot) => dot[3])).toEqual(dotPaint.map(() => OPAQUE_ALPHA));
+
+      // Without forced colours the authored encoding is untouched: one accent fill, faded per level.
+      // Reduced motion still runs a near-instant transition, so the switch is polled.
+      await page.emulateMedia({ forcedColors: 'none' });
+      await expect
+        .poll(async () => (await paintOf(legendMarks)).map(({ opacity }) => opacity))
+        .toEqual(['1', '0.28', '0.52', '0.76', '1']);
+      const authoredLegend = await paintOf(legendMarks);
+      expect(new Set(authoredLegend.slice(1).map(({ background }) => background)).size).toBe(1);
+      const authoredActiveDay = (await paintOf(dayMarks)).find(({ level }) => level === activeDay.level);
+      expect(authoredActiveDay).toEqual(authoredLegend[Number(activeDay.level)]);
+      await expect(rovingDay).toHaveCSS('outline-width', '1px');
+      expect((await borderOf(emptyMarks)).map(({ sides }) => sides[0])).toEqual(emptyBorders.map(() => '0px'));
+      const authoredKey = await paintOf(keyMarks);
+      expect(authoredKey.map(({ opacity }) => Number(opacity).toFixed(3))).toEqual([
+        '0.259',
+        '0.454',
+        '0.688',
+        '1.000',
+      ]);
+      expect(new Set(authoredKey.map(({ background }) => background))).toEqual(
+        new Set([await resolveSystemColor(page, 'var(--colors-accent)')]),
+      );
+    });
+  }
 }
 
 test('a reused project SKILL.md preview tracks whether the current document is scrollable', async ({ page }) => {

@@ -1,8 +1,8 @@
 <script lang="ts" module>
   import { css, cx } from '@ai-usage/design-system/css';
   import {
-    accentFill,
     emptyPanel,
+    intensityFill,
     panel,
     panelHeader,
     panelSub,
@@ -19,6 +19,8 @@
 
   const srOnly = css({ srOnly: true });
   const legendLevels = [0.05, 0.3, 0.6, 1];
+  // A dot's opacity is the strength its intensity fill draws.
+  const markStrength = (opacity: number): string => `${opacity * 100}%`;
   const tooltip = css({
     display: 'grid',
     gap: '4px',
@@ -104,10 +106,10 @@
                     type="button"
                   >
                     <span
-                      class={cx(punchDot, accentFill)}
+                      class={cx(punchDot, intensityFill)}
                       data-punchcard-cell-fill
+                      style:--mark-strength={markStrength(mark.opacity)}
                       style:--punch-size={`${mark.sizePx}px`}
-                      style:opacity={mark.opacity}
                     ></span>
                   </button>
                 {/snippet}
@@ -138,9 +140,9 @@
       {#each legendLevels as level (level)}
         {@const mark = punchcardSessionMark(level, 1)}
         <span
-          class={cx(punchIntensityKeyCell, accentFill)}
+          class={cx(punchIntensityKeyCell, intensityFill)}
+          style:--mark-strength={markStrength(mark.opacity)}
           style:--punch-size={`${mark.sizePx}px`}
-          style:opacity={mark.opacity}
         ></span>
       {/each}
       <span>High</span>
