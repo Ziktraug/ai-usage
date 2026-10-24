@@ -15,6 +15,13 @@ describe('Svelte shell demo route policy', () => {
     expect(demoRouteDecision('/api/source-control', 'demo')).toBe('not-found');
   });
 
+  test('serves only the synthetic task procedures over RPC', () => {
+    expect(demoRouteDecision('/rpc/workThreads/list', 'demo')).toBe('allow');
+    expect(demoRouteDecision('/rpc/workThreads/command', 'demo')).toBe('allow');
+    expect(demoRouteDecision('/rpc/workThreads', 'demo')).toBe('not-found');
+    expect(demoRouteDecision('/rpc/workAttempts/start', 'demo')).toBe('not-found');
+  });
+
   test('leaves the synthetic report and every live-mode route available', () => {
     expect(demoRouteDecision('/', 'demo')).toBe('allow');
     expect(demoRouteDecision('/skills', 'live')).toBe('allow');

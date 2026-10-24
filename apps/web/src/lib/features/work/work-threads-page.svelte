@@ -9,6 +9,7 @@
   import { workSessionsOptions } from '../../query/options/work';
   import {
     invalidateWorkThreadQueries,
+    loadNextLinkableSessionPage,
     workThreadDetailQueryOptions,
     workThreadListQueryOptions,
   } from '../../query/options/work-threads';
@@ -230,7 +231,7 @@
             nextHref={next ? href(next) : null}
             onBack={back}
             onCommand={command}
-            onMoreSessions={() => { sessions.fetchNextPage(); }}
+            onMoreSessions={() => loadNextLinkableSessionPage(sessions)}
             onPickerOpen={() => pickerOpen = true}
             previousHref={previous ? href(previous) : null}
             selectedDay={page.url.searchParams.get('day')}

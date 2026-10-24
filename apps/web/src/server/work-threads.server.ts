@@ -8,9 +8,15 @@ import type {
   WorkThreadListDataset,
   WorkThreadListQuery,
 } from '@ai-usage/report-core/work-thread-view';
+import { queryWorkThreadDetail, queryWorkThreadList } from '@ai-usage/report-data/work-thread-read';
+import { usageStoreErrorReasonFrom } from '@ai-usage/usage-store/reader';
+import { Effect } from 'effect';
 import type { RuntimeMode } from '../runtime-mode';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { getServerRuntimeMode } from './runtime-mode.server';
+import { executeUsageEngineCommandToCompletion } from './usage-engine-command.server';
+import { resolveUsageEngineControlClientForServer } from './usage-engine-control-resolver.server';
+import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 /** The Web process reads projections and forwards commands; it never owns a live store writer. */
 export interface WorkThreadServerPorts {
@@ -33,17 +39,45 @@ export class WorkThreadServiceUnavailableError extends Error {
   readonly tag = 'Unavailable';
 }
 
-/**
- * INTEGRATION BINDING: the supervisor binds readList/readDetail to report-data's read-only
- * queryWorkThreadList/queryWorkThreadDetail and executeCommand to the engine control command
- * { command: 'work-thread', input }. Those parallel implementations are deliberately not
- * imported here yet. An unbound live service is visibly unavailable, never synthetic or empty.
- */
-export const bindLiveWorkThreadPorts = (): WorkThreadServerPorts => {
-  const unavailable = (): Promise<never> =>
-    Promise.reject(new WorkThreadServiceUnavailableError('Task storage is not connected in this build.'));
-  return { executeCommand: unavailable, readDetail: unavailable, readList: unavailable };
+const STORE_NOT_UPGRADED_MESSAGE =
+  'The usage store has not been upgraded for this version yet; the engine upgrades it when it next starts.';
+
+const readFromStore = async <Data>(operation: Effect.Effect<Data, unknown>): Promise<Data> => {
+  const result = await Effect.runPromise(Effect.either(operation));
+  if (result._tag === 'Right') {
+    return result.right;
+  }
+  throw new WorkThreadServiceUnavailableError(
+    usageStoreErrorReasonFrom(result.left) === 'schema-too-old'
+      ? STORE_NOT_UPGRADED_MESSAGE
+      : 'Tasks could not be read from the usage store.',
+  );
 };
+
+/**
+ * Live mode reads threads through read-only connections and sends every change to the usage
+ * engine, the store's only writer (ADR 0009). A refused change (stale revision, unknown thread)
+ * is an answer of the engine, not an error; an engine that cannot be reached is.
+ */
+export const bindLiveWorkThreadPorts = (
+  dbPath: string = resolveUsageWebRuntimePaths().databasePath,
+  resolveControl: typeof resolveUsageEngineControlClientForServer = resolveUsageEngineControlClientForServer,
+): WorkThreadServerPorts => ({
+  executeCommand: async (command) => {
+    const control = await resolveControl().catch(() => {
+      throw new WorkThreadServiceUnavailableError('The usage engine is not running; the task was not changed.');
+    });
+    const completion = await executeUsageEngineCommandToCompletion(control, { command: 'work-thread', input: command });
+    if (completion.state === 'succeeded' && completion.command === 'work-thread') {
+      return completion.output.result;
+    }
+    throw new WorkThreadServiceUnavailableError(
+      completion.state === 'failed' ? completion.error.message : 'The usage engine returned an unexpected answer.',
+    );
+  },
+  readDetail: (threadId) => readFromStore(queryWorkThreadDetail({ dbPath, threadId })),
+  readList: (query) => readFromStore(queryWorkThreadList({ dbPath, query })),
+});
 
 const portsFor = async (options: WorkThreadServerOptions): Promise<WorkThreadServerPorts> => {
   if (options.ports) {

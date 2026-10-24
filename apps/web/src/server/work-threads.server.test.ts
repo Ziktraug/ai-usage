@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import {
   parseWorkThread,
@@ -9,6 +12,7 @@ import {
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { parseWorkThreadsDetailOutput, parseWorkThreadsListOutput } from '@ai-usage/web-contract/work-threads';
 import {
+  bindLiveWorkThreadPorts,
   executeWorkThreadCommandForServer,
   executeWorkThreadCommandFromRequestForServer,
   readWorkThreadDetailForServer,
@@ -67,14 +71,22 @@ describe('injected work thread service', () => {
     });
   });
 
-  test('live unbound reads are visibly unavailable, never empty or synthetic', async () => {
-    expect(await readWorkThreadListForServer(query, { mode: 'live' })).toEqual({
-      error: { message: 'Task storage is not connected in this build.', tag: 'Unavailable' },
-      ok: false,
-    });
-    await expect(executeWorkThreadCommandForServer(close(), { mode: 'live' })).rejects.toBeInstanceOf(
-      WorkThreadServiceUnavailableError,
-    );
+  test('live reads of a missing store and commands without an engine are visibly unavailable', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'work-threads-live-'));
+    try {
+      const ports = bindLiveWorkThreadPorts(join(directory, 'absent.sqlite'), () =>
+        Promise.reject(new Error('no rendezvous')),
+      );
+      expect(await readWorkThreadListForServer(query, { mode: 'live', ports })).toEqual({
+        error: { message: 'Tasks could not be read from the usage store.', tag: 'Unavailable' },
+        ok: false,
+      });
+      await expect(executeWorkThreadCommandForServer(close(), { mode: 'live', ports })).rejects.toThrow(
+        new WorkThreadServiceUnavailableError('The usage engine is not running; the task was not changed.'),
+      );
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   test('distinguishes not found from sanitized read failure', async () => {

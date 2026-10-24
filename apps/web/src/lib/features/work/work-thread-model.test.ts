@@ -153,8 +153,10 @@ describe('task presentation model', () => {
       hint: 'ready-to-close',
       remainders: [],
     });
+    const sessionKey = analysis.row.links.find((link) => link.kind === 'session')?.key;
+    expect(sessionKey).toBeDefined();
     expect(threadSituationCopy(analysis.row, analysis.generatedAt, []).remainders).toContainEqual({
-      key: analysis.row.links.find((link) => link.kind === 'session')?.key,
+      key: sessionKey ?? '',
       source: 'sessions',
       observedAt: null,
       kind: 'source-unknown',

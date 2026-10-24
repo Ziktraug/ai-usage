@@ -56,6 +56,7 @@
     "./work-routing-vocabulary": "./src/work-routing-vocabulary.ts",
     "./work-thread": "./src/work-thread.ts",
     "./work-thread-seeds": "./src/work-thread-seeds.ts",
+    "./work-thread-situation": "./src/work-thread-situation.ts",
     "./work-thread-view": "./src/work-thread-view.ts"
   },
   "scripts": {

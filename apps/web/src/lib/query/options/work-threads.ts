@@ -47,3 +47,34 @@ export const invalidateWorkThreadQueries = async (
     client.invalidateQueries({ queryKey: workThreadDetailKey(threadId) }),
   ]);
 };
+
+/**
+ * The task route's SSR read: every list page the URL's cursors name (so a returning operator sees
+ * the same window) and the open task's detail, awaited before the page renders.
+ */
+export const prefetchWorkThreadRoute = async (
+  queryClient: Pick<QueryClient, 'fetchQuery'>,
+  client: Pick<WorkThreadsClient, 'detail' | 'list'>,
+  input: {
+    readonly cursors: readonly (string | null)[];
+    readonly query: WorkThreadsListInput;
+    readonly threadId: string | null;
+  },
+): Promise<void> => {
+  const context = { browser: true, enabled: true };
+  await Promise.all([
+    ...input.cursors.map((cursor) =>
+      queryClient.fetchQuery(workThreadListQueryOptions(client, { ...input.query, cursor }, context)),
+    ),
+    ...(input.threadId === null
+      ? []
+      : [queryClient.fetchQuery(workThreadDetailQueryOptions(client, input.threadId, context))]),
+  ]);
+};
+
+/** Query exposes acquisition errors to the picker's own message; event handlers need no rejected promise. */
+export const loadNextLinkableSessionPage = async (query: {
+  readonly fetchNextPage: (options: { cancelRefetch: false; throwOnError: false }) => Promise<unknown>;
+}): Promise<void> => {
+  await query.fetchNextPage({ cancelRefetch: false, throwOnError: false });
+};
