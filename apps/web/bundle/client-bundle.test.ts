@@ -230,7 +230,8 @@ describe('report app client bundle', () => {
     // apps/web/panda.config.ts sets optimize.removeUnusedTokens and removeUnusedKeyframes: Panda
     // drops the preset palettes, scales and keyframes no extracted style reaches. The stylesheet is
     // the only consumer of a token variable (no runtime code builds `var(--…)` names or calls the
-    // generated `token()`), so a variable it references but does not declare is a lost token.
+    // generated `token()`; theme-token-references.test.ts scans the sources for both), so a variable
+    // it references but does not declare is a lost token.
     const css = readInitialStylesheet();
     const tokens = tokenLayers(css);
     const themeTokens = tokenLayers(readThemeStylesheet());

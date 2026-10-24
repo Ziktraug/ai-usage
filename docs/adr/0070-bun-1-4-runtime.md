@@ -4,6 +4,15 @@
 - **Date**: 2026-10-22
 - **Extends**: 0011
 
+> Amended 2026-10-24 (zstd decoder): the decision that `node:zlib` stays the
+> zstd decoder is superseded by "Amendment 2026-10-24" in
+> [ADR 0047](0047-codex-compressed-rollout-discovery.md). Bun 1.4.3's
+> `DecompressionStream('zstd')` was re-qualified that day (40 of 40
+> parallel `local-machine` suite runs clean), Codex archives now decode as a
+> stream through it in `packages/local-machine/src/local-history.ts`, and the
+> guard test now forbids every other zstd decoder, `node:zlib`'s included.
+> The Context and Decision text below is kept as decided on 2026-10-22.
+
 ## Context
 
 The repository ran on Bun 1.3.13, pinned in four places: `packageManager`,
@@ -14,7 +23,8 @@ earlier attempt (`8968ceee`, branch `chore/bun-1.4.0`) stopped at 1.4.0 because
 `bun --bun vite` could fail to reach ready when started concurrently under
 `turbo watch dev`. Two measurements made on 1.3.13 shaped code that still
 runs: `node:zlib` decodes Codex zstd archives because Bun's decompressor
-corrupted the heap (2026-10-19), and the CI dev-server retry wrapper absorbs a
+corrupted the heap (2026-10-19; no longer so since 2026-10-24, see the
+amendment note above), and the CI dev-server retry wrapper absorbs a
 startup hang whose root cause is not identified (PR #48, #60).
 
 ## Decision
@@ -29,7 +39,10 @@ startup hang whose root cause is not identified (PR #48, #60).
   archives). It is deleted, not maintained, once nixpkgs ships bun >= 1.4.3.
 - `node:zlib` stays the zstd decoder and the guard test stays. The 1.3.13
   measurement is recorded as a measurement; nothing has re-qualified Bun's
-  decompressor on 1.4.
+  decompressor on 1.4. *Superseded 2026-10-24 (ADR 0047 amendment):
+  `DecompressionStream('zstd')` was re-qualified on 1.4.3 and replaced
+  `node:zlib`; the guard test stays, now forbidding `node:zlib`'s decoders.
+  Bun's one-shot decoder is still unused: it takes no output bound.*
 - `tools/retry-on-dev-server-hang.ts` and its two signatures stay unchanged
   until the hang signature stops appearing in CI.
 - The lockfile stays at whatever version Bun 1.4.3 writes for the existing

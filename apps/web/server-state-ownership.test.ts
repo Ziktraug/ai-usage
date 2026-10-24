@@ -8,8 +8,29 @@ const SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
 const TEST_FILE_PATTERN = /(?:\.test|\.fixture|\.ssr\.test)\.(?:svelte|ts)$/;
 // TanStack Query 5.102 folds fetch/prefetch/ensure into `query()` and `infiniteQuery()`; the deprecated
 // names stay listed so a call written against either API is caught.
-const IMPERATIVE_QUERY_PATTERN =
-  /\.(ensureInfiniteQueryData|ensureQueryData|fetchInfiniteQuery|fetchNextPage|fetchQuery|getQueryData|getQueryState|infiniteQuery|prefetchInfiniteQuery|prefetchQuery|query)\(/g;
+const IMPERATIVE_QUERY_METHODS: ReadonlySet<string> = new Set([
+  'ensureInfiniteQueryData',
+  'ensureQueryData',
+  'fetchInfiniteQuery',
+  'fetchNextPage',
+  'fetchQuery',
+  'getQueryData',
+  'getQueryState',
+  'infiniteQuery',
+  'prefetchInfiniteQuery',
+  'prefetchQuery',
+  'query',
+]);
+// A member call, also with type arguments (`.query<Report>(`), with whitespace or a line break
+// before the call, or through `.call`/`.apply`/`.bind`.
+const IMPERATIVE_QUERY_PATTERN = new RegExp(
+  `\\.(${[...IMPERATIVE_QUERY_METHODS].join('|')})\\s*(?:<[^()]*>)?\\s*(?:\\.(?:apply|bind|call)\\s*)?\\(`,
+  'g',
+);
+// A method destructured off a client (`const { fetchQuery } = queryClient`) leaves no member call
+// for the pattern above, so the names destructured from a `…Client`/`…client` binding are read.
+const CLIENT_DESTRUCTURING_PATTERN = /\{([^{}]*)\}\s*=\s*(?:await\s+)?[\w$.]*[Cc]lient\b/g;
+const DESTRUCTURED_NAME_PATTERN = /(?:^|,)\s*(?:\.\.\.)?([\w$]+)/g;
 
 const SERVER_PREFETCH_HELPERS = new Set([
   'lib/features/campaigns/campaigns-load.ts',
@@ -42,7 +63,13 @@ const imperativeQueryFindings = (relativePath: string, source: string): string[]
   if (relativePath.startsWith('lib/query/') || SERVER_PREFETCH_HELPERS.has(relativePath)) {
     return [];
   }
-  return [...source.matchAll(IMPERATIVE_QUERY_PATTERN)].map((match) => `${relativePath}:${match[1]}`);
+  const calls = [...source.matchAll(IMPERATIVE_QUERY_PATTERN)].flatMap((match) => (match[1] ? [match[1]] : []));
+  const destructured = [...source.matchAll(CLIENT_DESTRUCTURING_PATTERN)].flatMap((match) =>
+    [...(match[1] ?? '').matchAll(DESTRUCTURED_NAME_PATTERN)].flatMap((name) =>
+      name[1] && IMPERATIVE_QUERY_METHODS.has(name[1]) ? [name[1]] : [],
+    ),
+  );
+  return [...calls, ...destructured].map((method) => `${relativePath}:${method}`);
 };
 
 describe('browser server-state ownership boundary', () => {
@@ -80,6 +107,29 @@ describe('browser server-state ownership boundary', () => {
     ]);
     expect(imperativeQueryFindings('lib/query/options/report.ts', source)).toEqual([]);
     expect(imperativeQueryFindings('lib/features/campaigns/campaigns-load.ts', source)).toEqual([]);
+  });
+
+  test('flags acquisitions written with type arguments, across lines, bound or destructured', () => {
+    const source = [
+      'const report = await queryClient.query<Report>(reportOptions);',
+      'const pages = await queryClient.infiniteQuery<Page, Error, Data, Key, Cursor>(pageOptions);',
+      'const cached = queryClient.getQueryData<Map<string, Report>>(reportKey);',
+      'await queryClient',
+      '  .fetchQuery <Report> (legacyOptions);',
+      'await queryClient.prefetchQuery.call(queryClient, prefetchOptions);',
+      'const { ensureQueryData, setQueryData: write } = queryClient;',
+      'const typed = queryOptions<Report>({ queryKey, queryFn });',
+      'const { query, text } = $props();',
+    ].join('\n');
+
+    expect(imperativeQueryFindings('lib/features/report/report-page.svelte', source)).toEqual([
+      'lib/features/report/report-page.svelte:query',
+      'lib/features/report/report-page.svelte:infiniteQuery',
+      'lib/features/report/report-page.svelte:getQueryData',
+      'lib/features/report/report-page.svelte:fetchQuery',
+      'lib/features/report/report-page.svelte:prefetchQuery',
+      'lib/features/report/report-page.svelte:ensureQueryData',
+    ]);
   });
 
   test('constructs TanStack QueryClient only inside the document/request-scoped client factory', async () => {

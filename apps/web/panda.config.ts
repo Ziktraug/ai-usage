@@ -11,7 +11,8 @@ export default defineConfig({
   // Set here, not in the design system: this is the stylesheet the app serves, and its extraction
   // covers the app sources plus the design system's published styles, so only here is "unused"
   // known. bundle/client-bundle.test.ts checks the served stylesheet declares exactly the tokens
-  // and keyframes it references; no runtime code reads a token variable by name.
+  // and keyframes it references; no runtime code reads a token variable by name, which
+  // theme-token-references.test.ts checks on the app and design-system sources.
   optimize: {
     removeUnusedTokens: true,
     removeUnusedKeyframes: true,
