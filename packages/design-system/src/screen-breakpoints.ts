@@ -1,4 +1,4 @@
-import { rename } from 'node:fs/promises';
+import { readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
@@ -8,7 +8,10 @@ import path from 'node:path';
  * which also matches a printed page box (about 720px wide in portrait, 960px or more in landscape). A
  * printed report would then take its `sm:`, `md:` and `lg:` layouts instead of the base one. Panda 2.3
  * has no setting for the media type: `theme.breakpoints` only takes a length, and a `conditions` entry
- * named after a breakpoint is ignored. So the generated stylesheet is rewritten after `panda cssgen`.
+ * named after a breakpoint is ignored. So `panda cssgen` writes a raw stylesheet outside the app, and
+ * the CLI below writes its scoped content to the app's stylesheet only when that content changed: a
+ * running dev server imports the stylesheet and re-transforms it on every write, which a build that
+ * changes nothing must not cause.
  *
  * A media query made only of `width` ranges is what Panda generates for a breakpoint condition (`md`,
  * `mdDown`, `mdToLg`, `mdOnly`); authored queries in this codebase already name their media type.
@@ -35,15 +38,42 @@ export const scopeBreakpointsToScreen = (css: string): string => {
   return scoped;
 };
 
-if (import.meta.main) {
-  const [stylesheet, ...extra] = process.argv.slice(2);
-  if (stylesheet === undefined || extra.length > 0) {
-    throw new Error('Usage: screen-breakpoints.ts <stylesheet>');
+const isMissing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
+
+// `undefined` before the first build writes the stylesheet.
+const readIfPresent = async (file: string): Promise<string | undefined> => {
+  try {
+    return await readFile(file, 'utf8');
+  } catch (error) {
+    if (isMissing(error)) {
+      return undefined;
+    }
+    throw error;
   }
+};
+
+if (import.meta.main) {
+  const [rawStylesheet, stylesheet, ...extra] = process.argv.slice(2);
+  if (rawStylesheet === undefined || stylesheet === undefined || extra.length > 0) {
+    throw new Error('Usage: screen-breakpoints.ts <raw stylesheet> <stylesheet>');
+  }
+  const raw = path.resolve(rawStylesheet);
   const file = path.resolve(stylesheet);
-  const scoped = scopeBreakpointsToScreen(await Bun.file(file).text());
-  // Replace the file in one step: the dev server and concurrent builds read it.
-  const temporary = `${file}.${process.pid}.tmp`;
-  await Bun.write(temporary, scoped);
-  await rename(temporary, file);
+  // The raw stylesheet is removed below, which would delete the stylesheet just written.
+  if (raw === file) {
+    throw new Error(
+      `The raw stylesheet and the stylesheet resolve to the same path (${file}); pass a separate raw stylesheet, which this CLI removes.`,
+    );
+  }
+  try {
+    const scoped = scopeBreakpointsToScreen(await readFile(raw, 'utf8'));
+    if (scoped !== (await readIfPresent(file))) {
+      // Replace the file in one step: the dev server and concurrent builds read it.
+      const temporary = `${file}.${process.pid}.tmp`;
+      await Bun.write(temporary, scoped);
+      await rename(temporary, file);
+    }
+  } finally {
+    await rm(raw, { force: true });
+  }
 }
