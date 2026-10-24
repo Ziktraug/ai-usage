@@ -37,6 +37,8 @@ export const WORK_THREADS_SYNTHETIC_LABEL = 'Synthetic demo';
 export const WORK_THREADS_SYNTHETIC_NOW = parseCanonicalInstant('2026-10-24T11:00:00.000Z');
 export const WORK_THREADS_SYNTHETIC_MACHINE = 'fixture-machine';
 const MAX_SYNTHETIC_THREADS = 200;
+/** Recorded answers kept for replay; the oldest go first, so refused retries cannot grow the process. */
+const MAX_SYNTHETIC_RECEIPTS = 2000;
 export const WORK_THREADS_FIXTURE_IDS = {
   payments: '12000000-0000-4000-8000-000000000001',
   tests: '12000000-0000-4000-8000-000000000002',
@@ -704,6 +706,12 @@ export const createSyntheticWorkThreadStore = (
       }
       const outcome = apply(command);
       commands.set(command.commandId, structuredClone(outcome));
+      if (commands.size > MAX_SYNTHETIC_RECEIPTS) {
+        const oldest = commands.keys().next().value;
+        if (oldest !== undefined) {
+          commands.delete(oldest);
+        }
+      }
       return Promise.resolve(structuredClone(outcome));
     },
     readDetail: (threadId) => {

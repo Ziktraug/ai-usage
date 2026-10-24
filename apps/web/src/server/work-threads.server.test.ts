@@ -273,6 +273,16 @@ describe('synthetic work thread commands', () => {
     expect((await ports.readDetail(accepted.threadId))?.events).toHaveLength(2);
     expect((await ports.readList({ ...query, search: overflow.title })).rows).toEqual([]);
 
+    // Refused retries with fresh command ids cannot grow the process: the oldest receipts give way
+    // and the store still answers with the same counts.
+    for (let retry = 0; retry < 2100; retry += 1) {
+      await ports.executeCommand(create());
+    }
+    expect((await ports.readList(query)).counts).toEqual({ done: atCapacity.done + 1, open: atCapacity.open - 1 });
+    // An evicted receipt is re-evaluated: the capacity refuses it, so it still creates no duplicate.
+    expect(await ports.executeCommand(firstCommand)).toMatchObject({ ok: false });
+    expect((await ports.readList(query)).counts).toEqual({ done: atCapacity.done + 1, open: atCapacity.open - 1 });
+
     const independent = createSyntheticWorkThreadStore({ seed });
     expect(await independent.executeCommand(create())).toMatchObject({ applied: true, ok: true });
     expect((await independent.readList(query)).counts).toEqual({ done: initial.done, open: initial.open + 1 });
