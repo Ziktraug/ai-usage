@@ -72,7 +72,7 @@ simulated actions are fiction and never ship as real data.
 | --- | --- | --- |
 | A | Thread store, engine command, reader, `/work` list + detail + end/reopen, PR discovery without sessions | Delivered and verified |
 | B | Local/GitHub/Jira markers, session episodes and delegations in one thread history, search | Delivered; Jira real path unavailable (no `acli`), fixture-tested |
-| C | Resume: open the exact source, copy contextual continuation, waits satisfied once, close despite remainders | Delivered except automatic wait satisfaction (in progress) |
+| C | Resume: open the exact source, copy contextual continuation, waits satisfied once, close despite remainders | Delivered; running state of real sessions stays unknown (no native lifecycle evidence stored) |
 | D | Independent review, visual comparison with v3, bounded real-source observation, simplification | Two reviews; real GitHub observed read-only; plain CSS file to fold into Panda remains |
 
 ## Acceptance

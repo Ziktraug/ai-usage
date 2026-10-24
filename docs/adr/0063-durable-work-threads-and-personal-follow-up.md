@@ -58,8 +58,18 @@ the connected platform.
 ### Provisional
 
 A new fact after a thread is Done keeps it Done; the thread shows the change and
-the operator may reopen it. A wait identified on a linked pull request review is
-recorded but not yet satisfied automatically.
+the operator may reopen it.
+
+A wait that names a linked pull request review or Jira issue returns the thread
+to Following once, by the engine, when a successful observation proves it: a
+merge, or a review decision or Jira status that differs from a successful
+baseline observed since the wait began. The transition is guarded by the
+current state and revision and records a `wait-satisfied` event naming the
+evidence. A comment, an update time alone or an agent review never qualifies;
+without a baseline the wait stays and says why.
+
+Whether a linked session is still running is unknown: no native lifecycle
+evidence is stored yet, so no "in progress" hint is derived from real sessions.
 
 ## Consequences
 
