@@ -141,7 +141,13 @@ Gathered on 2026-10-22 in the `chore/upgrade-dependencies` worktree under
   Web's 5 s health check closes the stream on any failed status read, so a
   check that lands inside a restart window is the likely cause) and `main`
   fails the later `sessions-query` browser check. Logs: session scratchpad
-  `logs/opp2b-measure-*.log`.
+  `logs/opp2b-measure-*.log`. A later bisect confirmed the cause and showed it
+  predates this branch: 7 of 20 failures on the upgrade tip, 6 of 20 after the
+  platform removal, 7 of 20 with the opportunities (Fisher p = 1.0 pairwise),
+  every one closed by the health-check path while no engine answered for about
+  2.4 s across the two restarts. The stream now ends only when two consecutive
+  checks cannot reach the engine and no status arrived between them; afterwards
+  35 of 35 runs passed.
 - **Orphaned development engine.** The `SIGTERM` case above is fixed: every
   engine the repository spawns (the development supervisor's child, the CLI's
   foreground `once` engine, the production supervisor's engine and web
@@ -156,7 +162,13 @@ Gathered on 2026-10-22 in the `chore/upgrade-dependencies` worktree under
   `ok` on both stores. Killing only the supervisor with `SIGKILL` left the engine
   running for minutes before the change (and turbo waiting on its output); with
   it, the engine was gone within 3 s. Tests: `apps/usage-engine/src/dev.test.ts`,
-  `apps/cli/src/usage-engine.test.ts`, `tools/start-production.test.ts`.
+  `apps/cli/src/usage-engine.test.ts`, `tools/start-production.test.ts`. The
+  CLI's foreground engine also starts in its own process group, like the
+  supervised ones: a terminal Ctrl-C signals the whole group, and the engine
+  used to receive it twice (terminal and CLI) and take its forced-exit path,
+  leaving its locks and Memory listener file behind (5 of 5 probes). Now only
+  the CLI's forwarded signal reaches it; `apps/cli/src/main.integration.test.ts`
+  covers both the CLI-only and the process-group Ctrl-C.
 - **Profiling.** Bun 1.4 writes CPU and heap profiles as Markdown summaries
   on exit (`--cpu-prof-md`, `--heap-prof-md`, next to the Chrome-format
   `--cpu-prof`/`--heap-prof`). A process another one starts, such as the

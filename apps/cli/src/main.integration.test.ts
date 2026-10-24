@@ -347,9 +347,14 @@ test('fails an empty stored read without starting an engine and can then publish
   });
 });
 
-test(
-  'forwards Ctrl-C through a foreground engine held mid-command and leaves no writer, listener or process behind',
-  async () => {
+// A terminal delivers Ctrl-C to its whole foreground process group, not only to the CLI. The engine
+// must still see one SIGINT, the CLI's, or its second-signal path exits it without cleanup.
+test.each([
+  ['the CLI', 'cli'],
+  ['its whole foreground process group (as a terminal does)', 'process-group'],
+] as const)(
+  'forwards Ctrl-C sent to %s through a foreground engine held mid-command and leaves no writer, listener or process behind',
+  async (_recipient, target) => {
     await withCliSandbox(async ({ root, runCli }) => {
       const profile = path.join(root, 'profile');
       const binaryDirectory = path.join(root, 'bin');
@@ -366,6 +371,7 @@ test(
         env: { PATH: `${binaryDirectory}:${process.env.PATH ?? ''}` },
         interrupt: {
           signal: 'SIGINT',
+          target,
           when: async (cli) => {
             const held = await waitForHeldProvider(markerPath, cli);
             if (held.enginePid === cli.pid) {

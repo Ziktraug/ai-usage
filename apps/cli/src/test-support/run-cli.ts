@@ -17,6 +17,12 @@ export interface RunningCli {
 export interface CliInterruption {
   readonly signal: Extract<NodeJS.Signals, 'SIGINT' | 'SIGTERM'>;
   /**
+   * `cli` (the default) signals the CLI process alone. `process-group` starts the CLI as the
+   * leader of its own process group and signals the whole group, as a terminal does on Ctrl-C:
+   * every process the CLI left in its group receives the signal alongside it.
+   */
+  readonly target?: 'cli' | 'process-group';
+  /**
    * Resolves once the running CLI has reached the state the test interrupts, and rejects when it
    * cannot. The signal is sent only after it resolves, so the interruption follows an observed state
    * rather than elapsed time.
@@ -43,7 +49,12 @@ const interruptWhenReached = async (
     child.kill('SIGTERM');
     return { error, ok: false };
   }
-  child.kill(interruption.signal);
+  if (interruption.target === 'process-group') {
+    // The CLI was spawned detached, so it leads its own group and the test runner is outside it.
+    process.kill(-child.pid, interruption.signal);
+  } else {
+    child.kill(interruption.signal);
+  }
   return { ok: true };
 };
 
@@ -94,6 +105,7 @@ export const withCliSandbox = async <Value>(
   const runCli = async (argv: string[], options: CliRunOptions = {}): Promise<CliRunResult> => {
     const child = Bun.spawn(['bun', path.join(cliRoot, 'src', 'main.ts'), ...argv], {
       cwd: root,
+      detached: options.interrupt?.target === 'process-group',
       env: {
         ...environment,
         ...options.env,
