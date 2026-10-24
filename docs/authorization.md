@@ -1,9 +1,16 @@
 # Authorization model
 
 > **Implementation status:** Integrated on `main` via PR #53 (plan 103
-> `DONE`). Plan 120 removed the organization model, the in-memory and
-> PostgreSQL adapters, and their conformance fixture; only the local
-> single-user policy remains.
+> `DONE`). Plan 120 removed the organization authorizer and policy model, the
+> in-memory and PostgreSQL adapters, and their conformance fixture; only the
+> local single-user policy remains. `@ai-usage/authorization-contract` still
+> lists the organization-era permissions `manage_authorization`,
+> `manage_members`, `manage_organization`, `manage_teams`, `view_organization`,
+> and `view_organization_usage_aggregate`. None of them is in the single-user
+> allow set, so each fails closed with
+> `single-user.permission-resource-mismatch`. Plan 120 phase B removes them,
+> and the authorization packages if nothing outside accepted Memory still
+> needs them.
 
 This is the reference for the local authorization seam: the application-owned
 `Authorizer` port and the `SingleUserAuthorizer` policy that the local Memory
@@ -41,7 +48,9 @@ bootstrapped local Person and personal Space of the identity kernel
 - allows only that Person, and only over resources in that personal Space whose
   kind the permission supports;
 - denies a foreign Space, an active-Space mismatch, a non-local or service
-  principal, and a permission/resource mismatch, each with its own rule ID;
+  principal, and a permission/resource mismatch, each with its own rule ID
+  (`packages/authorization/src/single-user.test.ts` pins the local operator's
+  decision for every supported permission/resource pair);
 - turns an unavailable store into an `error` decision, never into allow or deny;
 - lists resources Space-scoped, sorted by ID, cursor-paged, at most 100 items
   per page.

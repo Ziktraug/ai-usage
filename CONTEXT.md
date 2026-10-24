@@ -210,8 +210,10 @@ alone. It records the chosen source and never infers another Space.
 _Avoid_: auto-assignment, project guess, unresolved warning
 
 **Capture context**:
-The explicit Device, Person, Space, and optional Project context the dormant
-replication client attaches before or during publication of a fact. Its assignment source is
+The explicit Device, Person, Space, optional Project, and optional SCM account
+or installation context attached before or during replication publication of a
+fact. The replication protocol carries the SCM fields until phase B removes it;
+local producers always leave them empty. Its assignment source is
 recorded; unresolved work stays personal or explicitly unassigned rather than
 being reassigned later from repository or Device clues.
 _Avoid_: inferred tenant, post-storage ownership repair, project source

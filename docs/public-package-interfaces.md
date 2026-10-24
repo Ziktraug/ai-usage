@@ -112,10 +112,8 @@ and owns no persistence or transport.
 Imported only by the dormant replication client and the engine's replication
 runtime; plan 120 phase B removes the package.
 
-- `.`: Device credential/grant metadata and typed identity-service result
-  contracts.
-- `./device-enrollment`: authorization-aware grant, exchange, authentication,
-  list, rename, rotation, and revocation application service.
+- `.`: Device credential metadata and the `DeviceCredentialResolution` the
+  replication client parses from the server's Device answer.
 - `./device-tokens`: redacted public-ID/HMAC token and deployment-key-ring
   values with narrow transport accessors and constant-time verification.
 - `./private-device-credential`: Node-only owner/no-follow private-file adapter

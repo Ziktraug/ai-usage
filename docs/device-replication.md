@@ -150,6 +150,9 @@ metadata/history design described in plan 107 and is not performed silently.
 
 ## Server apply and replay boundary
 
+This section and the server storage paragraph under "Operations and fallback"
+describe the removed `apps/server`.
+
 `POST /api/replication/batches` accepts exact `application/json`, identity
 encoding, a bounded body, and protocol/count/string bounds. A Bearer Device
 credential is resolved by public token ID and constant-time HMAC comparison.
@@ -233,17 +236,16 @@ counted in the backfill result's `unpublishable` field; the usage side has no
 audit log, so that count is the only trace until the Sources panel surfaces it
 ([`future-work.md`](future-work.md)).
 
-Focused verification:
+Focused verification covers the client side only:
 
 ```sh
 bun test packages/replication-protocol packages/replication-outbox packages/replication-client
 bun test packages/usage-store/src/replication.test.ts packages/usage-engine-runtime/src/replication.test.ts
 bun test packages/memory-sqlite apps/usage-engine/src/replication-runtime.test.ts
-nix develop --command bun run test:postgres
-bun run test:local-platform
 ```
 
-The PostgreSQL suite covers exact and concurrent duplicates, correction,
-tombstone, gap/overlap/conflict, fact ownership across Devices, all-or-nothing
-apply, revocation, bounded HTTP, SQLite-to-HTTP-to-PostgreSQL ACK, and
-continuity while another Device is offline.
+The server-apply suites (duplicates, correction, tombstone,
+gap/overlap/conflict, fact ownership across Devices, all-or-nothing apply,
+revocation, and the end-to-end ACK) were removed with `apps/server` in plan
+120; nothing verifies "Server apply and replay boundary" or the server
+storage paragraph above any more, and git history keeps them.

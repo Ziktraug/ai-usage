@@ -473,8 +473,12 @@ packages and `@ai-usage/identity`.
 ### `@ai-usage/platform-core`
 
 Owns canonical branded UUID identity types, canonical instants, bounded identity
-text, and the shared Space, Person, Device, Repository, Project, Checkout,
-and Capture Context contracts. It is pure and exports no storage or transport
+text, and the shared Space, Person, Device, Repository, Project, and Checkout
+contracts. Of Capture contexts it keeps only ID types: `CaptureContextId`,
+which Memory observations and the replication snapshot reference, and the SCM
+account/installation IDs that snapshot carries. The snapshot contract itself
+lives in `@ai-usage/replication-protocol`; phase B removes both with
+replication and Memory. It is pure and exports no storage or transport
 implementation. Its Session distillation contracts validate evidence packets,
 generated assertions, analysis revisions and bounded operation requests;
 Memory services can use them without importing the usage-report domain.
@@ -496,11 +500,11 @@ integration.
 
 ### `@ai-usage/identity`
 
-Owns the redacted public-ID/HMAC Device tokens, the Device
-enrollment/lifecycle application service, and the Node-only private local
-credential-file adapter. Only the dormant replication client and the engine's
-replication runtime import it; plan 120 phase B removes it. The package imports
-domain contracts and `Authorizer`, but no database adapter or HTTP router.
+Owns the redacted public-ID/HMAC Device tokens, the Device credential metadata
+and resolution contracts, and the Node-only private local credential-file
+adapter. Only the dormant replication client and the engine's replication
+runtime import it; plan 120 phase B removes it. The package depends only on
+`@ai-usage/platform-core` and owns no database adapter or HTTP router.
 
 ### `@ai-usage/project-registry`
 
