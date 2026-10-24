@@ -862,10 +862,10 @@ test('refuses a frame whose blocks would emit more than it declares without deco
 });
 
 /**
- * Bun's own zstd decompressors corrupt the heap on the pinned Bun 1.3.13 (the
- * engine's runtime): intermittent mimalloc segfaults in later allocations,
- * measured 2026-10-19. Every archive goes through `node:zlib` instead; Bun's
- * compressor is not implicated and stays available to fixtures.
+ * Bun's own zstd decompressors corrupted the heap when measured on Bun 1.3.13
+ * (the engine's runtime at the time): intermittent mimalloc segfaults in later
+ * allocations, measured 2026-10-19. Every archive goes through `node:zlib`
+ * instead; Bun's compressor is not implicated and stays available to fixtures.
  */
 test('no local-machine or local-collectors source reaches a Bun zstd decompressor', () => {
   const sourceRoots = [import.meta.dir, path.resolve(import.meta.dir, '../../local-collectors/src')];

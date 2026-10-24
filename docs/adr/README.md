@@ -20,6 +20,9 @@ without a numbering collision.
 ADR 0047 belongs to the concurrent Codex compressed-rollout discovery work. The
 publication settle window therefore takes 0048.
 
+ADRs 0049–0054 belong to the concurrent work-resume cockpit branches. The Bun
+1.4 runtime decision therefore takes 0055; the gap is left for them.
+
 | ADR | Decision | Date | Status |
 | --- | --- | --- | --- |
 | [0001](0001-boundary-scoped-observability-on-bounded-workers.md) | Bounded workers; observability isolated per execution | 2026-07-21 | Accepted, amended by 0009 |
@@ -70,6 +73,7 @@ publication settle window therefore takes 0048.
 | [0046](0046-hourly-fleet-freshness-heartbeat.md) | Row freshness heartbeats are recorded at hour granularity | 2026-10-17 | Accepted; extends 0009 |
 | [0047](0047-codex-compressed-rollout-discovery.md) | Discover Codex rollouts in their compressed and archived forms | 2026-10-17 | Accepted; extends 0009, 0016 |
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
+| [0055](0055-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

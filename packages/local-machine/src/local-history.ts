@@ -578,9 +578,9 @@ const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: numb
  * a 9-byte frame, and Codex removes the plain source only after writing the
  * archive, so an empty one is damage rather than an empty history.
  *
- * `node:zlib`, not Bun's own `zstdDecompressSync`: on the pinned Bun 1.3.13
- * the Bun decompressor corrupts the heap (intermittent mimalloc segfaults in later
- * allocations, measured 2026-10-19), and the engine runs on that Bun.
+ * `node:zlib`, not Bun's own `zstdDecompressSync`: measured on Bun 1.3.13
+ * (2026-10-19), the Bun decompressor corrupted the heap (intermittent mimalloc
+ * segfaults in later allocations), and nothing since has re-qualified it.
  * Truncation safety comes from the frame walk and the length check, not from
  * the decompressor. `maxOutputLength` caps what a frame can emit at its
  * declaration (the option refuses 0, so an empty declaration is capped at one
