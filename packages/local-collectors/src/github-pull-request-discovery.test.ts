@@ -62,7 +62,7 @@ describe('personal pull request discovery', () => {
       [14, 'review-requested'],
     ]);
     expect(fake.calls).toHaveLength(3);
-    expect(fake.calls[0]?.args).toEqual(['auth', 'status', '--active', '--hostname', 'github.com']);
+    expect(fake.calls[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
     for (const call of fake.calls.slice(1)) {
       expect(call.command).toBe('gh');
       expect(call.maximumOutputBytes).toBe(1024 * 1024);
@@ -182,6 +182,6 @@ test('an unauthenticated active account never searches', async () => {
     const fake = fakeGh({ auth: response });
     const result = await Effect.runPromise(discoverPullRequests({ run: fake.run }));
     expect(result.outcome).toBe('unauthenticated');
-    expect(fake.calls.map(({ args }) => args)).toEqual([['auth', 'status', '--active', '--hostname', 'github.com']]);
+    expect(fake.calls.map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
   }
 });

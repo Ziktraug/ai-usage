@@ -66,8 +66,8 @@ const fakeRunner =
       const subcommand = options.args[options.args.indexOf('-C') + 2];
       return subcommand === 'status' ? respond(cleanPorcelain) : respond('2026-10-20T10:00:00+00:00\n');
     }
-    if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'status') {
-      return respond('');
+    if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'token') {
+      return respond('fixture-token\n');
     }
     if (options.command === 'gh' && options.args[0] === 'search') {
       return respond('[]');

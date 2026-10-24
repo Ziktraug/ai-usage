@@ -1464,7 +1464,8 @@ describe('live usage engine publication', () => {
         ghAvailable: () => true,
         workFactProcessRunner: (options) => {
           factCalls.push(options.args);
-          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: options.args[0] === 'search' ? '[]' : '' });
+          const answers: Record<string, string> = { auth: 'fixture-token\n', search: '[]' };
+          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: answers[options.args[0] ?? ''] ?? '' });
         },
       },
       acquireWriterLease: async () => ({ release: async () => undefined }),
@@ -1523,7 +1524,7 @@ describe('live usage engine publication', () => {
     await runtime.dispose();
 
     expect(factCalls.map((args) => args.slice(0, 2))).toEqual([
-      ['auth', 'status'],
+      ['auth', 'token'],
       ['search', 'prs'],
       ['search', 'prs'],
     ]);

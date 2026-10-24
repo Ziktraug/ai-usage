@@ -345,7 +345,7 @@ const assertReadOnlyGhCalls = async (log: string): Promise<void> => {
       expect(args).toHaveLength(2); // No --method/-X, body, fields or other mutating API options.
       expect(subcommand).toMatch(API_PULL_REQUEST_READ);
     } else if (command === 'auth') {
-      expect(['status', 'token']).toContain(subcommand); // Reads only: no login, logout, setup-git or token writes.
+      expect(subcommand).toBe('token'); // No login, logout, setup-git or token writes.
     } else {
       throw new Error(`The production journey invoked an unexpected gh command: ${command ?? '(empty)'}`);
     }

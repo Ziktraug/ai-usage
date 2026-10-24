@@ -853,8 +853,8 @@ const fakeWorkFactRunner =
       const subcommand = options.args[options.args.indexOf('-C') + 2];
       return subcommand === 'status' ? respond(cleanPorcelain) : respond('2026-10-20T10:00:00+00:00\n');
     }
-    if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'status') {
-      return respond('');
+    if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'token') {
+      return respond('fixture-token\n');
     }
     if (options.command === 'gh' && options.args[0] === 'search') {
       return respond('[]');
@@ -1745,7 +1745,7 @@ describe('discovered work fact sources', () => {
         outputCount: 0,
         warnings: [{ code: 'pull-request-discovery-unauthenticated' }],
       });
-      expect(calls.map(({ args }) => args)).toEqual([['auth', 'status', '--active', '--hostname', 'github.com']]);
+      expect(calls.map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
       const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
       expect(runs).toContainEqual(
         expect.objectContaining({

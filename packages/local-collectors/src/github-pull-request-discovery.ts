@@ -151,33 +151,29 @@ export const discoverPullRequests = (
       timeoutMs: options.timeoutMs ?? GITHUB_PULL_REQUEST_DEFAULTS.timeoutMs,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     };
-    if (options.account === undefined) {
-      const authentication = yield* read(run, {
-        ...base,
-        env,
-        args: ['auth', 'status', '--active', '--hostname', SUPPORTED_GITHUB_HOST],
-      });
-      if (authentication.outcome !== 'observed') {
-        return authentication.outcome === 'network'
-          ? batch('unauthenticated', 'gh active account is unauthenticated')
-          : batch(authentication.outcome, authentication.outcomeMessage);
-      }
-    } else {
-      const token = yield* read(run, {
-        ...base,
-        env,
-        args: ['auth', 'token', '--user', options.account.ghUser, '--hostname', SUPPORTED_GITHUB_HOST],
-      });
-      if (token.outcome !== 'observed') {
-        return token.outcome === 'network'
-          ? batch('unauthenticated', 'gh has no stored account token')
-          : batch(token.outcome, token.outcomeMessage);
-      }
-      if (token.stdout.trim().length === 0) {
-        return batch('unauthenticated', 'gh has no stored account token');
-      }
-      env = { ...env, GH_TOKEN: token.stdout.trim() };
+    // One token read for the active or the named account, handed to the searches as GH_TOKEN. Unlike
+    // `gh auth status`, it does not validate every stored account over the network, which timed out
+    // under the bounded environment on a machine with two accounts.
+    const token = yield* read(run, {
+      ...base,
+      env,
+      args: [
+        'auth',
+        'token',
+        ...(options.account === undefined ? [] : ['--user', options.account.ghUser]),
+        '--hostname',
+        SUPPORTED_GITHUB_HOST,
+      ],
+    });
+    if (token.outcome !== 'observed') {
+      return token.outcome === 'network'
+        ? batch('unauthenticated', 'gh has no stored account token')
+        : batch(token.outcome, token.outcomeMessage);
     }
+    if (token.stdout.trim().length === 0) {
+      return batch('unauthenticated', 'gh has no stored account token');
+    }
+    env = { ...env, GH_TOKEN: token.stdout.trim() };
     const seen = new Set<string>();
     for (const discoveryRole of ['author', 'review-requested'] as const) {
       const result = yield* read(run, {

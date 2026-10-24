@@ -73,9 +73,9 @@ try {
       '  process.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));',
       '} else if (command === "search" && subcommand === "prs" && (rest.includes("--author=@me") || rest.includes("--review-requested=@me"))) {',
       '  process.stdout.write(JSON.stringify(rest.includes("--author=@me") ? [{ number: 77, repository: { nameWithOwner: "fixture/discovered" }, title: "Discovered fixture pull request", url: "https://github.com/fixture/discovered/pull/77", updatedAt: "2026-07-03T11:00:00Z", isDraft: false }] : []));',
-      // Discovery checks the active account before searching; the fixture account is signed in.
-      '} else if (command === "auth" && subcommand === "status") {',
-      '  process.stdout.write("github.com\\n  Logged in to github.com account fixture\\n");',
+      // Discovery reads the active account token before searching; the fixture account has one.
+      '} else if (command === "auth" && subcommand === "token") {',
+      '  process.stdout.write("fixture-token\\n");',
       '} else if (command === "pr" && subcommand === "view") {',
       '  const repository = rest[rest.indexOf("--repo") + 1] ?? "fixture/ai-usage";',
       '  const number = Number(rest[0] ?? "42");',
