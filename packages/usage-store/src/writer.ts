@@ -143,6 +143,7 @@ export {
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
   queryWorkFactRunStates,
+  queryWorkThreadsPage,
   quiesceUsageStoreForShutdown,
   recordProviderQuotaSourceAttempt,
   recordWorkFactRun,

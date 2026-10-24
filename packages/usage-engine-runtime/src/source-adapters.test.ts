@@ -31,6 +31,7 @@ import {
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryWorkFactRunStates,
+  queryWorkThreadsPage,
 } from '@ai-usage/usage-store/writer';
 import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
@@ -1623,6 +1624,21 @@ describe('discovered work fact sources', () => {
         [12, 'author'],
         [13, 'review-requested'],
       ]);
+      // Repeated discovery seeds one thread per pull request, with no session behind it.
+      const threads = await Effect.runPromise(
+        queryWorkThreadsPage({
+          dbPath: usageStorePath(home),
+          query: { cursor: null, limit: 50, project: null, search: null, tab: 'open' },
+        }),
+      );
+      expect(
+        threads.rows
+          .map(({ thread }) => [thread.originKey, thread.intent, thread.followState])
+          .sort(([left], [right]) => String(left).localeCompare(String(right))),
+      ).toEqual([
+        ['github.com/fixture/project#12', 'change', 'following'],
+        ['github.com/fixture/project#13', 'review', 'following'],
+      ]);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
@@ -1747,6 +1763,15 @@ describe('discovered work fact sources', () => {
       expect(calls.map(({ args }) => args[2])).toEqual(['search', 'view']);
       const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => [latest.key, latest.outcome])).toEqual([['DEMO-12', 'observed']]);
+      const threads = await Effect.runPromise(
+        queryWorkThreadsPage({
+          dbPath: usageStorePath(home),
+          query: { cursor: null, limit: 50, project: null, search: null, tab: 'open' },
+        }),
+      );
+      expect(threads.rows.map(({ thread }) => [thread.origin, thread.originKey])).toEqual([
+        ['jira-issue', 'jira:default/DEMO-12'],
+      ]);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

@@ -59,6 +59,10 @@ import {
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
 import {
+  workThreadSeedsFromJiraIssues,
+  workThreadSeedsFromPullRequests,
+} from '@ai-usage/report-core/work-thread-seeds';
+import {
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importCodexWorkObservations,
@@ -80,6 +84,7 @@ import {
   type RtkSavingsContribution,
   recordWorkFactRun,
   type ServedLocalProjectSource,
+  seedWorkThreads,
   type UsageStoreError,
   upsertRtkSavingsContributions,
   usageStorePath,
@@ -1192,6 +1197,16 @@ const createPullRequestSource = (input: {
       yield* importPullRequestObservations({ dbPath: input.dbPath, observations }).pipe(
         Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
       );
+      // A discovered pull request becomes a Work thread once; the store keys it by origin (plan 120).
+      const pullRequestSeeds = workThreadSeedsFromPullRequests(observations);
+      if (pullRequestSeeds.length > 0) {
+        yield* seedWorkThreads({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          now: input.now().toISOString(),
+          seeds: pullRequestSeeds,
+        }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      }
       const observed = observations.filter(({ outcome }) => outcome === 'observed').length;
       const failed =
         discoveryFailures +
@@ -1340,6 +1355,20 @@ const createJiraIssueSource = (input: {
       yield* importJiraIssueObservations({ dbPath: input.dbPath, observations: batch.observations }).pipe(
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
+      // Only assigned issues the discovery returned become threads; a key read from a branch name
+      // stays a fact of the sessions that wrote it.
+      const discoveredKeys = new Set(discovery.keys);
+      const jiraSeeds = workThreadSeedsFromJiraIssues(
+        batch.observations.filter((observation) => discoveredKeys.has(observation.key)),
+      );
+      if (jiraSeeds.length > 0) {
+        yield* seedWorkThreads({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          now: input.now().toISOString(),
+          seeds: jiraSeeds,
+        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+      }
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
       const failed =
         discoveryWarnings.length +

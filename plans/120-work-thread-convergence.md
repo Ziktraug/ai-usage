@@ -49,6 +49,23 @@ simulated actions are fiction and never ship as real data.
    links one. The session attention board stays reachable as an intake, off
    the main view.
 
+## Inventory at the starting head
+
+| Verdict | What | Where |
+| --- | --- | --- |
+| Keep | Fact producers and stores: GitHub PR, checkout status, Jira (ADR 0050/0051/0054), run states | `local-collectors/src/{github-pull-requests,checkout-status,jira-issues}.ts`, `usage-store/src/work-fact-store.ts`, `usage-engine-runtime/src/source-adapters.ts` |
+| Keep | Session sources for episodes: Claude Desktop registry store, Codex work observations, served session join | `usage-store/src/{claude-desktop-session-store,codex-work-store,work-session-join}.ts` |
+| Keep | Review routing and attempts behind task actions (ADR 0052–0062) | `report-core/src/work-{routing,attempts,executors}.ts`, `apps/web/src/lib/features/work/work-{routing,attempts}*` |
+| Keep | Bounded Work context for CLI/MCP (ADR 0058) | `report-data/src/work-context-read.ts` |
+| Keep | Engine-only write path and command pattern | `usage-engine-control/src/contracts.ts`, `usage-engine-runtime/src/runtime-command-executor.ts`, `review-attempt-store.ts` |
+| Adapt | PR discovery: explicit links only today; add bounded author/review-requested discovery and mergeability | `github.pull-requests` source |
+| Adapt | Jira: keys from branch names only, `acli` absent here; add assigned-issue discovery, fixture-tested | `jira.issues` source |
+| Adapt | Attention board (one row per session family): kept as the intake at `/work/sessions` | `work-attention-board.svelte` and friends |
+| Replace | Main `/work` composition (board + bottom session list) by My work (one row per Work thread) and the task page | `apps/web/src/routes/work`, `work-page.svelte` |
+| New | Work thread store, command and reader | `usage-store/src/work-thread-store.ts`, `report-data/src/work-thread-read.ts` |
+| Defer | Cross-harness Claude → Codex delegation: not declared natively today (Codex roots are never folded under Desktop roots); only declared same-harness lineage nests | ADR 0059 |
+| Defer | Controlled execution channel for messages to a running session; resume is a verified CLI command to copy | — |
+
 ## Lots
 
 | Lot | Scope | Status |
