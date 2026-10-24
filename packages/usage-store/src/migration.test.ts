@@ -78,6 +78,72 @@ const readCounts = (db: Database): Record<string, number> =>
   );
 
 describe('usage-store forward migration', () => {
+  test('adds Work thread tables under the current version without changing durable rows or generations', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-work-thread-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const machine = { id: 'work-thread-migration', label: 'Work thread migration' };
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine,
+        rows: [
+          normalizeUsageRow({
+            calls: 1,
+            cost: actualCost(null),
+            date: new Date('2026-10-24T10:00:00.000Z'),
+            durationMs: 1000,
+            endDate: new Date('2026-10-24T10:01:00.000Z'),
+            harness: 'Codex',
+            model: 'fixture-model',
+            name: 'Preserved usage',
+            project: 'fixture',
+            provider: 'OpenAI',
+            tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+          }),
+        ],
+      }),
+    );
+    const legacy = new Database(dbPath);
+    legacy.exec(
+      'DROP TABLE work_thread_commands; DROP TABLE work_thread_events; DROP TABLE work_thread_links; DROP TABLE work_threads',
+    );
+    const version = readUserVersion(legacy);
+    const metadata = readMetadata(legacy);
+    const counts = readCounts(legacy);
+    const rows = legacy.query('SELECT * FROM usage_rows ORDER BY row_key').all();
+    const outbox = legacy.query('SELECT * FROM replication_outbox_events ORDER BY rowid').all();
+    legacy.close();
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(version);
+    const migrated = new Database(dbPath, { readonly: true });
+    expect(readUserVersion(migrated)).toBe(version);
+    expect(readMetadata(migrated)).toEqual(metadata);
+    expect(readCounts(migrated)).toEqual(counts);
+    expect(migrated.query('SELECT * FROM usage_rows ORDER BY row_key').all()).toEqual(rows);
+    expect(migrated.query('SELECT * FROM replication_outbox_events ORDER BY rowid').all()).toEqual(outbox);
+    expect(
+      migrated
+        .query(
+          "SELECT name FROM sqlite_schema WHERE type = 'table' AND (name = 'work_threads' OR name LIKE 'work_thread_%') ORDER BY name",
+        )
+        .all(),
+    ).toEqual([
+      { name: 'work_thread_commands' },
+      { name: 'work_thread_events' },
+      { name: 'work_thread_links' },
+      { name: 'work_threads' },
+    ]);
+    const schema = readSchema(migrated);
+    migrated.close();
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const reopened = new Database(dbPath, { readonly: true });
+    expect(readSchema(reopened)).toEqual(schema);
+    expect(readMetadata(reopened)).toEqual(metadata);
+    reopened.close();
+  });
+
   test('preserves an incompatible served projection instead of deleting its current revision', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-store-served-schema-preservation-'));
     temporaryRoots.push(root);

@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import type { WorkThreadCommand, WorkThreadCommandResult } from '@ai-usage/report-core/work-thread';
 import {
   classifyUsageEngineRetry,
   parseUsageEngineCommand,
   parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandCompletion,
+  parseUsageEngineCommandId,
   parseUsageEngineCommandResult,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
@@ -13,11 +16,130 @@ import {
   parseUsageEngineReplayCursor,
   parseUsageEngineReplicationStatusOutput,
   parseUsageEngineStatus,
+  parseUsageEngineWorkThreadOutput,
   parseWebUsageEngineCommand,
   USAGE_ENGINE_PROTOCOL_VERSION,
+  type UsageEngineCommandCompletion,
   usageEngineControlBounds,
 } from './contracts';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
+
+const WORK_THREAD_ID = '11111111-1111-4111-8111-111111111111';
+const WORK_THREAD_COMMAND_ID = '22222222-2222-4222-8222-222222222222';
+const WORK_THREAD_LINK_ID = '33333333-3333-4333-8333-333333333333';
+
+describe('work-thread control contracts', () => {
+  const create: WorkThreadCommand = {
+    commandId: WORK_THREAD_COMMAND_ID,
+    intent: 'change',
+    links: [{ key: 'github.com/owner/repo#7', kind: 'pull-request' }],
+    objective: null,
+    op: 'create',
+    projectLabel: 'Project',
+    title: 'Follow the change',
+  };
+  const wait: Extract<WorkThreadCommand, { op: 'set-follow-state' }> = {
+    acknowledgedRemainders: [],
+    commandId: WORK_THREAD_COMMAND_ID,
+    expectedRevision: 1,
+    op: 'set-follow-state',
+    reason: null,
+    threadId: WORK_THREAD_ID,
+    to: 'waiting',
+    waitingFor: 'A review',
+    waitingOn: {
+      kind: 'pull-request-review',
+      linkKey: 'github.com/owner/repo#7',
+      since: parseCanonicalInstant(fixtureGeneratedAt),
+    },
+  };
+
+  test('round-trips every operation through the engine and browser parsers', () => {
+    const inputs: readonly WorkThreadCommand[] = [
+      create,
+      wait,
+      {
+        commandId: WORK_THREAD_COMMAND_ID,
+        key: 'session:machine/claude/session',
+        kind: 'session',
+        op: 'link',
+        threadId: WORK_THREAD_ID,
+      },
+      { commandId: WORK_THREAD_COMMAND_ID, linkId: WORK_THREAD_LINK_ID, op: 'detach-link', threadId: WORK_THREAD_ID },
+      { commandId: WORK_THREAD_COMMAND_ID, note: 'Keep following', op: 'set-note', threadId: WORK_THREAD_ID },
+      { commandId: WORK_THREAD_COMMAND_ID, op: 'rename', threadId: WORK_THREAD_ID, title: 'Renamed' },
+    ];
+    for (const input of inputs) {
+      const command = { command: 'work-thread', input } as const;
+      expect(parseUsageEngineCommand(JSON.parse(JSON.stringify(command)))).toEqual(command);
+      expect(parseWebUsageEngineCommand(command)).toEqual(command);
+    }
+  });
+
+  test('rejects unknown wrapper, command, link, and waiting fields and malformed inputs', () => {
+    expect(() => parseUsageEngineCommand({ command: 'work-thread', input: create, extra: true })).toThrow();
+    expect(() => parseUsageEngineCommand({ command: 'work-thread' })).toThrow();
+    const invalidInputs = [
+      { ...create, extra: true },
+      { ...create, commandId: 'not-an-id' },
+      { ...create, links: [{ ...create.links[0], extra: true }] },
+      { ...create, links: [{ key: '/local/path', kind: 'pull-request' }] },
+      { ...wait, expectedRevision: 0 },
+      { ...wait, waitingOn: { ...wait.waitingOn, extra: true } },
+      { ...wait, to: 'done' },
+    ];
+    for (const input of invalidInputs) {
+      expect(() => parseUsageEngineCommand({ command: 'work-thread', input })).toThrow();
+    }
+  });
+
+  test('successes, replay, and typed failures all round-trip as succeeded completions', () => {
+    const results: readonly WorkThreadCommandResult[] = [
+      { applied: true, followRevision: 2, ok: true, threadId: WORK_THREAD_ID },
+      { applied: false, followRevision: 2, ok: true, threadId: WORK_THREAD_ID },
+      { currentRevision: 2, failure: 'revision-conflict', message: 'Refresh the thread.', ok: false },
+      { currentRevision: null, failure: 'not-found', message: 'Thread is missing.', ok: false },
+      { currentRevision: 2, failure: 'invalid-transition', message: 'Already following.', ok: false },
+      { currentRevision: 2, failure: 'invalid-link', message: 'Link is unavailable.', ok: false },
+    ];
+    for (const result of results) {
+      const completion: UsageEngineCommandCompletion = {
+        command: 'work-thread',
+        commandId: parseUsageEngineCommandId(WORK_THREAD_COMMAND_ID),
+        completedAt: fixtureGeneratedAt,
+        output: { kind: 'work-thread', result },
+        state: 'succeeded',
+      };
+      expect(parseUsageEngineCommandCompletion(JSON.parse(JSON.stringify(completion)))).toEqual(completion);
+    }
+  });
+
+  test('rejects malformed outputs and unknown nested result fields', () => {
+    const success = { applied: true, followRevision: 1, ok: true, threadId: WORK_THREAD_ID };
+    const failure = { currentRevision: 1, failure: 'revision-conflict', message: 'Refresh.', ok: false };
+    const results = [
+      { ...success, extra: true },
+      { ...success, applied: 1 },
+      { ...success, followRevision: 0 },
+      { ...success, followRevision: 1.5 },
+      { ...success, followRevision: Number.MAX_SAFE_INTEGER + 1 },
+      { ...success, threadId: 'not-an-id' },
+      { ...failure, extra: true },
+      { ...failure, currentRevision: 0 },
+      { ...failure, currentRevision: undefined },
+      { ...failure, failure: 'unknown' },
+      { ...failure, message: '' },
+      { ...failure, message: 'x'.repeat(usageEngineControlBounds.maxMessageBytes + 1) },
+      { ...failure, ok: 'false' },
+    ];
+    for (const result of results) {
+      expect(() => parseUsageEngineWorkThreadOutput({ kind: 'work-thread', result })).toThrow();
+    }
+    expect(() => parseUsageEngineWorkThreadOutput({ kind: 'work-thread', result: success, extra: true })).toThrow();
+    expect(() => parseUsageEngineWorkThreadOutput({ kind: 'none', result: success })).toThrow();
+    expect(() => parseUsageEngineWorkThreadOutput({ kind: 'work-thread' })).toThrow();
+  });
+});
 
 describe('usage engine control contracts', () => {
   test('parses replay identity and sequence as one cursor', () => {

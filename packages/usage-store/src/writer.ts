@@ -96,6 +96,7 @@ export type {
 } from './index';
 export {
   acknowledgeUsageReplicationBatch,
+  applyWorkThreadCommand,
   backfillUsageReplicationOutbox,
   blockUsageReplicationBatch,
   checkpointUsageStore,
@@ -152,6 +153,7 @@ export {
   retainServedReportRevisions,
   retainSkillObservations,
   retryUsageReplicationBatch,
+  seedWorkThreads,
   transitionReviewAttempt,
   updateUsageMachineLabel,
   upsertRtkSavingsContributions,
@@ -173,3 +175,4 @@ export type {
   TransitionReviewAttemptResult,
 } from './review-attempt-store';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
+export type { WorkThreadSeed } from './work-thread-store';

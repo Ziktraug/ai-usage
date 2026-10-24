@@ -31,6 +31,13 @@ import type { ReviewAttemptState, ReviewLaunchRefusalReason } from '@ai-usage/re
 import { REVIEW_ATTEMPT_STATES, REVIEW_LAUNCH_REFUSAL_REASONS } from '@ai-usage/report-core/work-attempts-vocabulary';
 // Likewise for the routing qualification: the parser without the routing policy (ADR 0057).
 import { parseRoutingQualification, type RoutingQualification } from '@ai-usage/report-core/work-routing-vocabulary';
+import {
+  isWorkThreadId,
+  parseWorkThreadCommand,
+  WORK_THREAD_COMMAND_FAILURES,
+  type WorkThreadCommand,
+  type WorkThreadCommandResult,
+} from '@ai-usage/report-core/work-thread';
 
 declare const usageEngineBrand: unique symbol;
 
@@ -272,6 +279,7 @@ export type UsageEngineFileInput =
     };
 
 export type UsageEngineCommand =
+  | { readonly command: 'work-thread'; readonly input: WorkThreadCommand }
   | { readonly command: 'detect-all' }
   | { readonly command: 'collect-fresh-report'; readonly harness: HarnessKey | null; readonly includeCursor: boolean }
   | { readonly command: 'replication-status' }
@@ -511,6 +519,16 @@ const requireCommandRecord = (value: unknown): Record<string, unknown> => {
 export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
   const command = requireCommandRecord(value);
   switch (command.command) {
+    case 'work-thread': {
+      if (!hasExactKeys(command, ['command', 'input'])) {
+        return fail('Usage engine work-thread command contains unknown or missing fields.');
+      }
+      const input = parseWorkThreadCommand(command.input);
+      if (input === null) {
+        return fail('Usage engine work-thread input is invalid or contains unknown fields.');
+      }
+      return { command: 'work-thread', input };
+    }
     case 'detect-all':
     case 'run-all-enabled':
     case 'publish':
@@ -668,7 +686,11 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
 
 export const parseWebUsageEngineCommand = (value: unknown): WebUsageEngineCommand => {
   const command = parseUsageEngineCommand(value);
-  if ('input' in command) {
+  if (
+    command.command === 'import-cursor' ||
+    command.command === 'preview-merge' ||
+    command.command === 'confirm-merge'
+  ) {
     if (command.input.kind === 'operator-file') {
       return fail('Web usage engine commands cannot name operator file paths.');
     }
@@ -1018,12 +1040,22 @@ export interface UsageEngineReplicationStatusOutput {
   readonly usage: UsageEngineReplicationStreamStatus | null;
 }
 
+export interface UsageEngineWorkThreadOutput {
+  readonly kind: 'work-thread';
+  readonly result: WorkThreadCommandResult;
+}
+
 interface UsageEngineCommandCompletionBase {
   readonly commandId: UsageEngineCommandId;
   readonly completedAt: string;
 }
 
 export type UsageEngineCommandCompletion =
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'work-thread';
+      readonly output: UsageEngineWorkThreadOutput;
+      readonly state: 'succeeded';
+    })
   | (UsageEngineCommandCompletionBase & {
       readonly command: 'preview-merge';
       readonly output: UsageEngineMergePreviewOutput;
@@ -1088,6 +1120,7 @@ export type UsageEngineCommandCompletion =
         | 'qualify-review-routing'
         | 'release-review-reservation'
         | 'stop-review-attempt'
+        | 'work-thread'
       >;
       readonly output: { readonly kind: 'none' };
       readonly state: 'succeeded';
@@ -1119,6 +1152,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'set-source-enabled',
   'start-review-attempt',
   'stop-review-attempt',
+  'work-thread',
 ]);
 
 const parseUsageEngineCommandName = (value: unknown): UsageEngineCommandName => {
@@ -1636,6 +1670,59 @@ export const parseUsageEngineReplicationStatusOutput = (value: unknown): UsageEn
   };
 };
 
+const isWorkThreadRevision = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+
+export const parseUsageEngineWorkThreadOutput = (value: unknown): UsageEngineWorkThreadOutput => {
+  if (!(isRecord(value) && hasExactKeys(value, ['kind', 'result']) && value.kind === 'work-thread')) {
+    return fail('Usage engine work-thread output is invalid.');
+  }
+  const result = value.result;
+  if (!isRecord(result)) {
+    return fail('Usage engine work-thread result is invalid.');
+  }
+  if (result.ok === true) {
+    if (
+      !(
+        hasExactKeys(result, ['applied', 'followRevision', 'ok', 'threadId']) &&
+        typeof result.applied === 'boolean' &&
+        isWorkThreadRevision(result.followRevision) &&
+        isWorkThreadId(result.threadId)
+      )
+    ) {
+      return fail('Usage engine work-thread success is invalid.');
+    }
+    return {
+      kind: 'work-thread',
+      result: { applied: result.applied, followRevision: result.followRevision, ok: true, threadId: result.threadId },
+    };
+  }
+  const failure = WORK_THREAD_COMMAND_FAILURES.find((candidate) => candidate === result.failure);
+  if (
+    !(
+      result.ok === false &&
+      hasExactKeys(result, ['currentRevision', 'failure', 'message', 'ok']) &&
+      failure !== undefined &&
+      (result.currentRevision === null || isWorkThreadRevision(result.currentRevision))
+    )
+  ) {
+    return fail('Usage engine work-thread failure is invalid.');
+  }
+  return {
+    kind: 'work-thread',
+    result: {
+      currentRevision: result.currentRevision,
+      failure,
+      message: parseBoundedString(
+        result.message,
+        usageEngineControlBounds.maxMessageBytes,
+        'Work thread failure message',
+      ),
+      ok: false,
+    },
+  };
+};
+
 export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCommandCompletion => {
   assertSerializedBound(
     value,
@@ -1661,6 +1748,9 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
   }
   if (!hasExactKeys(value, ['command', 'commandId', 'completedAt', 'output', 'state'])) {
     return fail('Usage engine successful command completion contains unknown or missing fields.');
+  }
+  if (command === 'work-thread') {
+    return { ...base, command, output: parseUsageEngineWorkThreadOutput(value.output), state: 'succeeded' };
   }
   if (command === 'preview-merge') {
     return { ...base, command, output: parseUsageEngineMergePreviewOutput(value.output), state: 'succeeded' };

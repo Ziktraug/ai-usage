@@ -6,6 +6,7 @@ import {
   type SourceControlEntryView,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
+import type { WorkThreadCommand } from '@ai-usage/report-core/work-thread';
 import {
   parseUsageEngineInstanceId,
   parseUsageEnginePublicationRevision,
@@ -26,6 +27,7 @@ import {
   type UsageEngineReviewReservationReleaseOutput,
   type UsageEngineRoutingQualificationOutput,
   type UsageEngineStatus,
+  type UsageEngineWorkThreadOutput,
 } from '@ai-usage/usage-engine-control';
 import { createRuntimeCommandCoordinator, type RuntimeCommandCoordinator } from './runtime-command-coordinator';
 import { createRuntimeCommandExecutor } from './runtime-command-executor';
@@ -154,6 +156,10 @@ export interface UsageEngineReviewAttemptPort {
   ) => Promise<UsageEngineReviewAttemptStopOutput>;
 }
 
+export interface UsageEngineWorkThreadPort {
+  readonly execute: (command: WorkThreadCommand, signal?: AbortSignal) => Promise<UsageEngineWorkThreadOutput>;
+}
+
 export interface UsageEngineRuntimeDependencies {
   readonly acquireWriterLease: () => Promise<UsageEngineWriterLease>;
   readonly initializeStore: () => Promise<number>;
@@ -182,6 +188,7 @@ export interface UsageEngineRuntimeDependencies {
     ) => Promise<void>;
   };
   readonly validateConfig: () => Promise<void>;
+  readonly workThreads?: UsageEngineWorkThreadPort;
 }
 
 type RuntimeReadiness = UsageEngineStatus['readiness'];

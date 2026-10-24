@@ -95,6 +95,7 @@ import {
 import { createSkillObservationStore } from './skill-observation-store';
 import { createWorkFactStore, WORK_FACT_TABLES, type WorkFactSourceId, workFactSchemaSql } from './work-fact-store';
 import { createWorkSessionJoinStore } from './work-session-join';
+import { createWorkThreadStore, WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-store';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -1473,6 +1474,10 @@ const migrate = (db: SqliteDatabase): boolean => {
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
   schemaChanged ||= reviewAttemptsMissing;
+  const workThreadsMissing = WORK_THREAD_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= workThreadsMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1768,6 +1773,7 @@ const migrate = (db: SqliteDatabase): boolean => {
       ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
     db.exec(workFactSchemaSql);
+    db.exec(workThreadSchemaSql);
     // Additive under the same user_version: a store that created executor_observations before the
     // sign-in method was recorded gains the nullable column; older rows read as "no method".
     const executorColumns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
@@ -4465,6 +4471,36 @@ export const { importCodexWorkObservations, queryCodexWorkObservations } = creat
   withUsageStoreReader,
   withUsageStoreWriter,
 });
+
+export const {
+  applyWorkThreadCommand,
+  countWorkThreads,
+  queryWorkThreadById,
+  queryWorkThreadEvents,
+  queryWorkThreadLinks,
+  queryWorkThreadProjects,
+  queryWorkThreadSessionEvidence,
+  queryWorkThreadsPage,
+  seedWorkThreads,
+} = createWorkThreadStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export type {
+  ApplyWorkThreadCommandInput,
+  QueryWorkThreadByIdInput,
+  QueryWorkThreadLinksInput,
+  QueryWorkThreadSessionEvidenceInput,
+  QueryWorkThreadsPageInput,
+  QueryWorkThreadsPageResult,
+  SeedWorkThreadsInput,
+  SeedWorkThreadsResult,
+  WorkThreadPageRow,
+  WorkThreadSeed,
+  WorkThreadSessionEvidence,
+} from './work-thread-store';
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,

@@ -83,6 +83,7 @@ import {
   type SourcePolicyStore,
 } from './source-control';
 import { createSourceSnapshotBroker } from './source-snapshot-broker';
+import { createWorkThreadService } from './work-threads';
 import { createUsageEngineWriterGate, type UsageEngineWriterGate } from './writer-gate';
 
 const TERMINAL_SOURCE_OUTCOMES = new Set(['failed', 'timed-out']);
@@ -1035,6 +1036,13 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     setMachineLabel: async (label, signal) => await requireMutation().setMachineLabel(label, signal),
   };
 
+  const workThreads = createWorkThreadService({
+    dbPath: options.dbPath,
+    machine: requireMachine,
+    now,
+    runWithWriter: (operation, signal) => writerGate.run(operation, signal),
+  });
+
   // The review launcher writes short rows through the gate and runs the harness outside it; its
   // startup recovery is called from the gated `recover` below, so that path writes ungated.
   const reviewAttempts = createReviewAttemptService({
@@ -1095,6 +1103,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     ...(options.readReplicationStatus === undefined ? {} : { readReplicationStatus: options.readReplicationStatus }),
     reviewAttempts,
     routingQualification,
+    workThreads,
     recover: async () =>
       await writerGate.run(async () => {
         await observe(

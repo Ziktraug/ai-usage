@@ -76,6 +76,7 @@ export type {
 } from './index';
 export {
   countClaudeDesktopSessions,
+  countWorkThreads,
   MAX_USAGE_MACHINE_FLEET_MACHINES,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
@@ -116,6 +117,12 @@ export {
   queryUsageStoreGenerations,
   queryUsageSyncFleet,
   queryWorkFactRunStates,
+  queryWorkThreadById,
+  queryWorkThreadEvents,
+  queryWorkThreadLinks,
+  queryWorkThreadProjects,
+  queryWorkThreadSessionEvidence,
+  queryWorkThreadsPage,
   USAGE_STORE_SCHEMA_VERSION,
   usageStorePath,
 } from './index';
@@ -155,5 +162,13 @@ export {
   MAX_WORK_HARNESS_SESSION_MEMBERS,
   MAX_WORK_SESSION_JOIN_IDS,
 } from './work-session-join';
-
 export { MAX_WORK_SCOPE_CHECKOUTS, type WorkSessionReadScope } from './work-session-scope';
+export type {
+  QueryWorkThreadByIdInput,
+  QueryWorkThreadLinksInput,
+  QueryWorkThreadSessionEvidenceInput,
+  QueryWorkThreadsPageInput,
+  QueryWorkThreadsPageResult,
+  WorkThreadPageRow,
+  WorkThreadSessionEvidence,
+} from './work-thread-store';

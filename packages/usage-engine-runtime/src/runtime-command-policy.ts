@@ -11,7 +11,8 @@ export type UsageEngineCommandOutputKind =
   | 'review-attempt'
   | 'review-attempt-stop'
   | 'review-reservation-release'
-  | 'routing-qualification';
+  | 'routing-qualification'
+  | 'work-thread';
 
 interface UsageEngineCommandPolicy {
   readonly interruptible: boolean;
@@ -42,4 +43,5 @@ export const usageEngineCommandPolicies = {
   // The command returns once the attempt is recorded and spawned; aborting it never kills the review.
   'start-review-attempt': { interruptible: false, outputKind: 'review-attempt' },
   'stop-review-attempt': { interruptible: false, outputKind: 'review-attempt-stop' },
+  'work-thread': { interruptible: false, outputKind: 'work-thread' },
 } as const satisfies Record<UsageEngineCommandName, UsageEngineCommandPolicy>;

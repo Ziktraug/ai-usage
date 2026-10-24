@@ -16,6 +16,7 @@ import {
   type UsageEngineReviewAttemptStopOutput,
   type UsageEngineReviewReservationReleaseOutput,
   type UsageEngineRoutingQualificationOutput,
+  type UsageEngineWorkThreadOutput,
   usageEngineReportSourceIdsFor,
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineRuntimeDependencies } from './runtime';
@@ -32,6 +33,7 @@ export type UsageEngineCommandOutput =
   | UsageEngineReviewReservationReleaseOutput
   | UsageEngineReviewAttemptStopOutput
   | UsageEngineRoutingQualificationOutput
+  | UsageEngineWorkThreadOutput
   | undefined;
 
 interface RuntimeCommandExecutorState {
@@ -83,6 +85,12 @@ export const createRuntimeCommandExecutor = (
     };
 
     switch (command.command) {
+      case 'work-thread': {
+        if (!dependencies.workThreads) {
+          throw new Error('Work threads are not available in this engine composition.');
+        }
+        return await dependencies.workThreads.execute(command.input, signal);
+      }
       case 'detect-all':
         await dependencies.sourceControl.detectAll(signal);
         return;
