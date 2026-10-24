@@ -257,7 +257,7 @@ test('wait records its linked PR expectation and resume note survives reload', a
   await open(page, task.threadId);
   await page.getByRole('button', { name: 'Mark as waiting', exact: true }).click();
   await page.getByLabel('Waiting for', { exact: true }).fill('Human PR review');
-  await page.getByLabel('Linked PR review (optional)', { exact: true }).selectOption(prKey);
+  await page.getByRole('combobox', { name: 'Linked PR review (optional)', exact: true }).selectOption(prKey);
   await page.getByRole('button', { name: 'Wait', exact: true }).click();
   await expect(page.locator('[data-follow-state="waiting"]')).toBeVisible();
   expect((await detail(request, task.threadId)).row.thread.waitingOn).toMatchObject({
@@ -293,7 +293,7 @@ test('session intake creates a task through the inline form and opens its linked
   await expect(session.getByLabel('Task title', { exact: true })).toHaveValue('Build report UI');
   const title = `Intake analysis ${crypto.randomUUID().slice(0, 8)}`;
   await session.getByLabel('Task title', { exact: true }).fill(title);
-  await session.getByLabel('Intent', { exact: true }).selectOption('analysis');
+  await session.getByRole('combobox', { name: 'Intent', exact: true }).selectOption('analysis');
   const createdResponse = page.waitForResponse((response) => new URL(response.url()).pathname === commandPath);
   await session.getByRole('button', { name: 'Create task', exact: true }).click();
   const response = await createdResponse;

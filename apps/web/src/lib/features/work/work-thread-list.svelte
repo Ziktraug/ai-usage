@@ -5,6 +5,7 @@
     WorkThreadListQuery,
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
+  import { tick } from 'svelte';
   import {
     bucketThreadMarks,
     groupThreadRows,
@@ -33,14 +34,15 @@
     timeZone: string;
     href: (id: string, day?: string) => string;
     onOpen: (event: MouseEvent, id: string, day?: string) => void;
-    onFilter: (patch: Partial<WorkThreadListQuery>) => void;
+    onFilter: (patch: Partial<WorkThreadListQuery>) => Promise<void>;
     onMore: () => void;
     loadingMore?: boolean;
     continuation?: boolean;
   } = $props();
   const week = $derived(threadWeek(dataset.generatedAt, timeZone));
   const groups = $derived(groupThreadRows(rows));
-  const keyTabs = (event: KeyboardEvent): void => {
+  // The selected tab keeps focus across the navigation that loads its list (APG tabs pattern).
+  const keyTabs = async (event: KeyboardEvent): Promise<void> => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
       return;
     }
@@ -52,9 +54,9 @@
     if (event.key === 'End') {
       tab = 'done';
     }
-    onFilter({ tab });
-    const parent = event.currentTarget instanceof HTMLElement ? event.currentTarget.parentElement : null;
-    parent?.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)?.focus();
+    await onFilter({ tab });
+    await tick();
+    document.getElementById(`work-tab-${tab}`)?.focus();
   };
 </script>
 

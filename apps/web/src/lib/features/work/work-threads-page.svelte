@@ -69,7 +69,16 @@
       workThreadListQueryOptions(clients.threads, { ...query, cursor }, { browser, enabled: true }),
     ),
   }));
-  const datasets = $derived(listQueries.flatMap((result) => (result.data?.ok ? [result.data.data] : [])));
+  const answered = $derived(listQueries.flatMap((result) => (result.data?.ok ? [result.data.data] : [])));
+  // A tab, search or project change starts new queries with no data yet; the previous pages stay on
+  // screen until they answer, so the toolbar (and the focused tab) is never unmounted for a spinner.
+  let lastAnswered = $state<typeof answered>([]);
+  $effect(() => {
+    if (answered.length > 0) {
+      lastAnswered = answered;
+    }
+  });
+  const datasets = $derived(answered.length > 0 ? answered : lastAnswered);
   const dataset = $derived(datasets.at(-1) ?? null);
   const rows = $derived([
     ...new Map(datasets.flatMap((value) => value.rows).map((row) => [row.thread.threadId, row])).values(),
@@ -97,7 +106,7 @@
   const navigate = (url: string | URL, replaceState = false): Promise<void> =>
     navigation.goto(url, { keepFocus: true, noScroll: true, replaceState });
   const href = (id: string, day?: string): string => threadUrl(page.url, id, day);
-  const updateFilter = (patch: Partial<ReturnType<typeof threadListQuery>>): void => {
+  const updateFilter = (patch: Partial<ReturnType<typeof threadListQuery>>): Promise<void> => {
     const url = new URL(page.url);
     url.searchParams.delete('cursor');
     url.searchParams.delete('start');
@@ -119,7 +128,7 @@
         url.searchParams.delete('project');
       }
     }
-    navigate(url, true);
+    return navigate(url, true);
   };
   const open = async (event: MouseEvent, id: string, day?: string): Promise<void> => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
