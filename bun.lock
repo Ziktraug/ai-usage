@@ -159,7 +159,6 @@
       "name": "@ai-usage/identity",
       "version": "0.1.0",
       "dependencies": {
-        "@ai-usage/authorization": "workspace:*",
         "@ai-usage/platform-core": "workspace:*",
       },
     },

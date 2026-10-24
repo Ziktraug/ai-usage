@@ -277,12 +277,8 @@ const targetDependencyReason = (
     return;
   }
   const dependencyPackage = workspacePackageNameFor(specifier);
-  if (
-    packageName === identityPackage &&
-    dependencyPackage !== authorizationPackage &&
-    dependencyPackage !== platformCorePackage
-  ) {
-    return 'identity may depend only on authorization and portable platform-core workspace contracts.';
+  if (packageName === identityPackage && dependencyPackage !== platformCorePackage) {
+    return 'identity may depend only on portable platform-core workspace contracts.';
   }
   if (packageName === authorizationContractPackage && dependencyPackage !== platformCorePackage) {
     return 'authorization-contract may depend only on portable platform-core contracts.';

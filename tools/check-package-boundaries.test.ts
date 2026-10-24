@@ -829,7 +829,7 @@ describe('package boundary guard', () => {
       root,
       'packages',
       'identity',
-      { dependencies: { pg: '1.0.0' }, name: identityPackage },
+      { dependencies: { '@ai-usage/authorization': 'workspace:*', pg: '1.0.0' }, name: identityPackage },
       "import 'pg';\n",
     );
 
@@ -844,6 +844,11 @@ describe('package boundary guard', () => {
           file: 'packages/identity/package.json',
           packageName: identityPackage,
           specifier: 'pg',
+        }),
+        expect.objectContaining({
+          file: 'packages/identity/package.json',
+          packageName: identityPackage,
+          specifier: '@ai-usage/authorization',
         }),
         expect.objectContaining({
           file: 'packages/identity/src/index.ts',

@@ -1,13 +1,4 @@
-import type {
-  DeviceCredentialId,
-  DeviceEnrollmentGrantId,
-  DeviceId,
-  Instant,
-  PersonId,
-  SpaceId,
-} from '@ai-usage/platform-core/identity';
-
-export const DEVICE_ENROLLMENT_GRANT_LIFETIME_SECONDS = 15 * 60;
+import type { Device, DeviceCredentialId, DeviceId, Instant } from '@ai-usage/platform-core/identity';
 
 export interface DeviceCredentialMetadata {
   readonly createdAt: Instant;
@@ -19,40 +10,8 @@ export interface DeviceCredentialMetadata {
   readonly rotatedAt: Instant | null;
 }
 
-export interface DeviceEnrollmentGrantMetadata {
-  readonly consumedAt: Instant | null;
-  readonly createdAt: Instant;
-  readonly expiresAt: Instant;
-  readonly id: DeviceEnrollmentGrantId;
-  readonly keyVersion: number;
-  readonly label: string;
-  readonly personId: PersonId;
-  readonly spaceId: SpaceId;
+/** The server's answer to an authenticated Device credential: its metadata and the shared Device it names. */
+export interface DeviceCredentialResolution {
+  readonly credential: DeviceCredentialMetadata;
+  readonly device: Device;
 }
-
-export type IdentityOperation =
-  | 'authenticate-device'
-  | 'create-enrollment-grant'
-  | 'exchange-enrollment-grant'
-  | 'list-devices'
-  | 'rename-device'
-  | 'revoke-all-devices'
-  | 'revoke-device'
-  | 'rotate-device-credential';
-
-export type IdentityServiceErrorCode =
-  | 'identity-conflict'
-  | 'identity-denied'
-  | 'identity-expired'
-  | 'identity-invalid-input'
-  | 'identity-revoked'
-  | 'identity-unavailable';
-
-export interface IdentityServiceError {
-  readonly code: IdentityServiceErrorCode;
-  readonly operation: IdentityOperation;
-}
-
-export type IdentityServiceResult<Value> =
-  | { readonly kind: 'error'; readonly error: IdentityServiceError }
-  | { readonly kind: 'success'; readonly value: Value };
