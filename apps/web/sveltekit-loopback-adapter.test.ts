@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 import {
   ADAPTER_ENVIRONMENT_PREFIX,
   bindRuntimeOrigin,
+  LOOPBACK_HOSTNAME,
+  loopbackBunAdapterOptions,
   RUNTIME_ORIGIN_VARIABLE,
   runtimeOriginHandoffSource,
 } from './sveltekit-loopback-adapter';
@@ -164,5 +166,25 @@ describe('loopback Bun adapter environment', () => {
     expect(write).toBeGreaterThan(purge);
     // Unprefixed names never reach the adapter, so no deny-list of them is kept.
     expect(start).not.toContain('untrustedAdapterEnvironmentKeys');
+  });
+});
+
+describe('loopback Bun adapter listener default', () => {
+  // The adapter serialises `serverOptions` into the build as Bun.serve's defaults; only a prefixed
+  // HOST overrides the hostname, so the built server listens on loopback even without start.mjs.
+  test('builds numeric loopback in as the listener hostname, beside the prefix and output options', () => {
+    expect(loopbackBunAdapterOptions({ out: '.output-build/sveltekit', precompress: true })).toEqual({
+      envPrefix: ADAPTER_ENVIRONMENT_PREFIX,
+      out: '.output-build/sveltekit',
+      precompress: true,
+      serverOptions: { hostname: '127.0.0.1' },
+    });
+  });
+
+  test('start.mjs sets the same loopback address at runtime', async () => {
+    const start = await readFile(path.join(import.meta.dir, 'start.mjs'), 'utf8');
+
+    expect(start).toContain(`const LOOPBACK_HOST = '${LOOPBACK_HOSTNAME}';`);
+    expect(start).toContain('HOST: LOOPBACK_HOST,');
   });
 });

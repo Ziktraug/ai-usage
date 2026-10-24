@@ -24,6 +24,13 @@ export const RUNTIME_ORIGIN_VARIABLE = 'ORIGIN';
  */
 export const ADAPTER_ENVIRONMENT_PREFIX = 'AI_USAGE_WEB_ADAPTER_';
 
+/**
+ * Built into the server as its `Bun.serve` hostname default, which only `<prefix>HOST` overrides.
+ * `start.mjs` sets that variable to this same address; without it (the built `index.js` launched
+ * directly) the adapter would otherwise fall back to Bun's default and listen on every interface.
+ */
+export const LOOPBACK_HOSTNAME = '127.0.0.1';
+
 const HANDOFF_MODULE = 'adapter-bun.js';
 const GENERATED_HANDOFF_MODULE = 'adapter-bun.generated.js';
 const UNCONFIGURED_ORIGIN_EXPORT = 'export const origin = undefined;';
@@ -80,12 +87,17 @@ export interface LoopbackBunAdapterOptions {
   readonly precompress: boolean;
 }
 
+type BunAdapterOptions = NonNullable<Parameters<typeof bunAdapter>[0]>;
+
+export const loopbackBunAdapterOptions = (options: LoopbackBunAdapterOptions): BunAdapterOptions => ({
+  envPrefix: ADAPTER_ENVIRONMENT_PREFIX,
+  out: options.out,
+  precompress: options.precompress,
+  serverOptions: { hostname: LOOPBACK_HOSTNAME },
+});
+
 export const loopbackBunAdapter = (options: LoopbackBunAdapterOptions): Adapter => {
-  const adapter = bunAdapter({
-    envPrefix: ADAPTER_ENVIRONMENT_PREFIX,
-    out: options.out,
-    precompress: options.precompress,
-  });
+  const adapter = bunAdapter(loopbackBunAdapterOptions(options));
   return {
     ...adapter,
     adapt: async (builder) => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -971,11 +971,120 @@ const runProductionPortCollisionSmoke = async (role: CollisionRole): Promise<voi
   }
 };
 
+const TCP_LISTEN_STATE = '0A';
+const PROCFS_IPV4_ADDRESS_PATTERN = /^[0-9A-F]{8}$/;
+const PROCFS_FIELD_SEPARATOR = /\s+/;
+const PROCFS_OCTET_PATTERN = /../g;
+
+/**
+ * Local addresses of every TCP socket listening on `port`, from Linux procfs: IPv4 as dotted
+ * quads, IPv6 as procfs's raw hex (any IPv6 listener on the port is already a failure here).
+ */
+export const parseProcfsListeningAddresses = (table: string, port: number): string[] =>
+  table
+    .split('\n')
+    .slice(1)
+    .flatMap((line) => {
+      const [, localAddress, , state] = line.trim().split(PROCFS_FIELD_SEPARATOR);
+      const [address, hexPort] = localAddress?.split(':') ?? [];
+      if (state !== TCP_LISTEN_STATE || address === undefined || Number.parseInt(hexPort ?? '', 16) !== port) {
+        return [];
+      }
+      if (!PROCFS_IPV4_ADDRESS_PATTERN.test(address)) {
+        return [`ipv6:${address}`];
+      }
+      const octets = (address.match(PROCFS_OCTET_PATTERN) ?? []).map((octet) => Number.parseInt(octet, 16)).reverse();
+      return [octets.join('.')];
+    });
+
+const readIpv6ListenerTable = async (): Promise<string> => {
+  try {
+    return await readFile('/proc/net/tcp6', 'utf8');
+  } catch (error) {
+    // A kernel without IPv6 has no tcp6 table, and so no IPv6 listener.
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return '';
+    }
+    throw error;
+  }
+};
+
+const readListeningAddresses = async (port: number): Promise<string[]> =>
+  [await readFile('/proc/net/tcp', 'utf8'), await readIpv6ListenerTable()]
+    .flatMap((table) => parseProcfsListeningAddresses(table, port))
+    .sort();
+
+const BUILT_SERVER_ENTRY = path.join(rootDir, 'apps', 'web', '.output-build', 'sveltekit', 'index.js');
+
+/**
+ * Waits for the listener to answer HTTP at all. Without an engine or a store a page is a 500,
+ * which is still the listener answering: this smoke checks where it listens, not what it serves.
+ */
+const waitForHttpListener = async (port: number, child: Bun.Subprocess): Promise<void> => {
+  const deadline = Date.now() + START_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`The built server exited before it listened (code ${child.exitCode}).`);
+    }
+    try {
+      await sendHttpRequest(port, { method: 'HEAD' });
+      return;
+    } catch {
+      // The bounded retry loop reports one stable failure below.
+    }
+    await Bun.sleep(100);
+  }
+  throw new Error('The directly launched built server did not answer HTTP before its deadline.');
+};
+
+/**
+ * The built server launched directly, without `apps/web/start.mjs` and so without any of the
+ * adapter's prefixed variables except its port: the unprefixed `HOST=0.0.0.0` it inherits must not
+ * configure it, and the hostname built into it keeps the listener on numeric loopback.
+ */
+const runDirectBuiltServerSmoke = async (): Promise<void> => {
+  const port = await reserveFreePort();
+  const fixture = await createProductionRuntimeFixture('plan052-direct-built-server-', port);
+  try {
+    if (fixture.childEnvironment.HOST !== '0.0.0.0') {
+      throw new Error('The direct built-server smoke must inherit an unprefixed all-interfaces HOST.');
+    }
+    await withOwnedProcess(
+      {
+        command: ['bun', '--no-env-file', BUILT_SERVER_ENTRY],
+        cwd: path.join(rootDir, 'apps', 'web'),
+        env: {
+          ...fixture.childEnvironment,
+          AI_USAGE_WEB_ADAPTER_PORT: String(port),
+          ORIGIN: `http://${LOOPBACK_HOST}:${port}`,
+        },
+        port,
+      },
+      async (child) => {
+        await waitForHttpListener(port, child);
+        if (process.platform === 'linux') {
+          const addresses = await readListeningAddresses(port);
+          if (JSON.stringify(addresses) !== JSON.stringify([LOOPBACK_HOST])) {
+            throw new Error(
+              `The directly launched built server listens on ${JSON.stringify(addresses)}, not only ${LOOPBACK_HOST}.`,
+            );
+          }
+        }
+        await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
+        process.stdout.write('The directly launched built server listens on IPv4 loopback only.\n');
+      },
+    );
+  } finally {
+    await fixture.dispose();
+  }
+};
+
 const runProductionSmoke = async (): Promise<void> => {
   await runRootDevelopmentSmoke();
   await runHealthyProductionSmoke();
   await runProductionPortCollisionSmoke('engine');
   await runProductionPortCollisionSmoke('web');
+  await runDirectBuiltServerSmoke();
 };
 
 if (import.meta.main) {

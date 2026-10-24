@@ -194,8 +194,9 @@ nor sets `HOST`, `BODY_SIZE_LIMIT` or `CONNECTION_IDLE_TIMEOUT`: inherited ones 
 inert.
 
 **Consequences.** Every way of starting the built server must go through `start.mjs`, as
-before; running `.output-build/sveltekit/index.js` directly now binds the adapter's defaults
-(port 3000, all interfaces) instead of reading `HOST`/`PORT`. The prefix and the copy of it in
+before; running `.output-build/sveltekit/index.js` directly ignores inherited `HOST`/`PORT` and
+binds the build-time default `serverOptions.hostname` `127.0.0.1` on the adapter's port 3000 (a
+direct-launch smoke in `test:web-production` checks it listens on loopback only). The prefix and the copy of it in
 `start.mjs` are pinned against each other by `apps/web/sveltekit-loopback-adapter.test.ts`.
 
 **Evidence (2026-10-24, Bun 1.4.3, `nix develop`).** `bun run build` → exit 0, and the built
