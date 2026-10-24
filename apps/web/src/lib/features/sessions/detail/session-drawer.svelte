@@ -648,7 +648,13 @@
         {#key `${row.rowId}:${target?.kind}`}
           <Tabs
             ariaLabel="Session detail views"
-            items={tabItems({ analysis: analysisPane, members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
+            items={tabItems({
+              analysis: analysisPane,
+              members: membersPane,
+              rounds: roundsPane,
+              summary: summaryPane,
+              timeline: timelinePane,
+            })}
             onValueChange={changeTab}
             unmountOnExit={false}
             value={selectedTab}

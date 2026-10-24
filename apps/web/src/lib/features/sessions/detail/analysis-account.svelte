@@ -32,11 +32,9 @@
   let {
     analysis,
     onPromote,
-    episodeId = null,
   }: {
     analysis: SessionAnalysis;
     onPromote?: (key: string, assertion: SourcedAssertion) => void;
-    episodeId?: string | null;
   } = $props();
   const client = createSessionDistillationClient(useWebQueryRpcContext().rpc.sessionDistillation);
   const queryClient = useQueryClient();
@@ -89,7 +87,10 @@
     selectedEvidence = { key, eventId };
   };
 </script>
-{#snippet assertion(_value: SourcedAssertion, _key: string)}
+{#snippet assertion(
+  _value: SourcedAssertion,
+  _key: string,
+)}
   <div class={assertionStyle} id={`analysis-element-${encodeURIComponent(_key)}`}>
     <p class={prose}>{_value.text}</p>
     <div class={controls}>
@@ -147,13 +148,25 @@
           {/each}
           <button class={ghostButton} onclick={() => evidenceQuery.refetch()} type="button">Recheck source</button>
         {/if}
-        <button class={ghostButton} onclick={() => { selectedEvidence = null; }} type="button">Close evidence</button>
+        <button
+          class={ghostButton}
+          onclick={() => {
+            selectedEvidence = null;
+          }}
+          type="button"
+        >
+          Close evidence
+        </button>
       </section>
     {/if}
   </div>
 {/snippet}
 
-{#snippet claims(_label: string, _values: SourcedAssertion[], _key: string)}
+{#snippet claims(
+  _label: string,
+  _values: SourcedAssertion[],
+  _key: string,
+)}
   {#if _values.length > 0}
     <section class={stack}>
       <h4 class={heading}>{_label}</h4>

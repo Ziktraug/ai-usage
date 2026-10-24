@@ -75,10 +75,12 @@
           >
             <title>
               {[
-              `${item.label} — ${fmtMoney(item.costApprox)} · ${fmtDuration(item.durationMs)} · ${item.harness}`,
-              item.kind === 'campaign' ? `${fmtNum(item.sessionCount)} sessions` : '',
-              item.aggregateCount > 1 ? `${fmtNum(item.aggregateCount)} nearby sessions` : '',
-            ].filter(Boolean).join(' · ')}
+                `${item.label} — ${fmtMoney(item.costApprox)} · ${fmtDuration(item.durationMs)} · ${item.harness}`,
+                item.kind === 'campaign' ? `${fmtNum(item.sessionCount)} sessions` : '',
+                item.aggregateCount > 1 ? `${fmtNum(item.aggregateCount)} nearby sessions` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </title>
           </circle>
         {/each}

@@ -20,8 +20,8 @@
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/skills": "workspace:*",
-    "@orpc/contract": "1.14.13",
-    "valibot": "1.4.2",
+    "@orpc/contract": "1.16.0",
+    "valibot": "1.5.0",
     "@ai-usage/platform-core": "workspace:*"
   },
   "scripts": {

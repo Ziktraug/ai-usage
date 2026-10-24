@@ -360,31 +360,28 @@
 
 <Drawer
   closeOnInteractOutside
-  contentAriaLabel={`${selected.name ?? "Skill"} detail`}
+  contentAriaLabel={`${selected.name ?? 'Skill'} detail`}
   contentClass={cx(
     css({
-      position: "fixed",
+      position: 'fixed',
       top: 0,
       right: 0,
       zIndex: 60,
-      display: "flex",
-      flexDirection: "column",
+      display: 'flex',
+      flexDirection: 'column',
       // Below the labelled breakpoint the application navigation is a fixed bar at the bottom of
       // the viewport. The drawer stops short of it so the rest of the app stays one tap away.
-      h: { base: "calc(100dvh - 64px)", md: "100dvh" },
-      overflow: "auto",
-      p: { base: "20px", md: "28px 32px" },
-      bg: "surface",
-      borderLeft: "1px solid token(colors.line)",
-      boxShadow: "overlay",
+      h: { base: 'calc(100dvh - 64px)', md: '100dvh' },
+      overflow: 'auto',
+      p: { base: '20px', md: '28px 32px' },
+      bg: 'surface',
+      borderLeft: '1px solid token(colors.line)',
+      boxShadow: 'overlay',
     }),
     drawerContent,
-    "skills-drawer-panel",
+    'skills-drawer-panel',
   )}
-  finalFocusEl={() =>
-    previousFocus instanceof HTMLElement && previousFocus.isConnected
-      ? previousFocus
-      : null}
+  finalFocusEl={() => (previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null)}
   initialFocusEl={initialDrawerFocus}
   modal={false}
   onFocusOutside={(event) => {
@@ -392,10 +389,7 @@
     // interaction and dismisses this drawer — re-attempting the navigation it just refused. The
     // question is about this drawer, so it counts as part of it.
     const target = event.detail.originalEvent.target;
-    if (
-      target instanceof Element &&
-      target.closest('[role="alertdialog"]') !== null
-    ) {
+    if (target instanceof Element && target.closest('[role="alertdialog"]') !== null) {
       event.preventDefault();
     }
   }}
@@ -405,11 +399,7 @@
     // front of the unsaved-draft guard at once, and the one it keeps is decided by which arrives
     // first — so discarding could replay the worktable rather than the link that was clicked.
     const target = event.detail.originalEvent.target;
-    if (
-      target instanceof Element &&
-      target.closest("[data-app-navigation], [data-discard-confirmation]") !==
-        null
-    ) {
+    if (target instanceof Element && target.closest('[data-app-navigation], [data-discard-confirmation]') !== null) {
       event.preventDefault();
     }
   }}
@@ -425,13 +415,13 @@
     <div class={header}>
       <p
         class={css({
-          color: "accent",
-          fontSize: "10px",
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
+          color: 'accent',
+          fontSize: '10px',
+          letterSpacing: '0.14em',
+          textTransform: 'uppercase',
         })}
       >
-        {globalSkill ? "Managed skill" : "Project skill"}
+        {globalSkill ? 'Managed skill' : 'Project skill'}
       </p>
       <div class={titleRow}>
         <h2 class={drawerTitleText}>{selected.name}</h2>
@@ -444,19 +434,14 @@
             pending={pendingOperation === `toggle:${globalSkill.name}`}
             showTitle
           />
-          <span
-            class={cx(
-              statusPill,
-              globalSkill.enabled ? statusPillOk : statusPillInfo,
-            )}
-          >
-            {globalSkill.enabled ? "Enabled" : "Kept in source"}
+          <span class={cx(statusPill, globalSkill.enabled ? statusPillOk : statusPillInfo)}>
+            {globalSkill.enabled ? 'Enabled' : 'Kept in source'}
           </span>
           <span class={cx(statusPill, statusPillInfo)}>
-            {skillInvocation(globalSkill) === "auto" ? "Auto" : "Manual"}
+            {skillInvocation(globalSkill) === 'auto' ? 'Auto' : 'Manual'}
           </span>
           {#if issueCount > 0}
-            <span class={cx(statusPill, statusPillWarn)}>{count(issueCount, "issue")}</span>
+            <span class={cx(statusPill, statusPillWarn)}>{count(issueCount, 'issue')}</span>
           {/if}
         {:else}
           <span class={cx(statusPill, statusPillInfo)}>Project-owned · read-only</span>
@@ -472,9 +457,7 @@
         </button>
       </div>
       <p class={muted}>
-        {globalSkill?.description ||
-          projectSkill?.description ||
-          "No description provided."}
+        {globalSkill?.description || projectSkill?.description || 'No description provided.'}
       </p>
       <p class={pathLine} data-skill-drawer-residence>{residenceLine}</p>
     </div>
@@ -495,36 +478,24 @@
         <div class={placementList}>
           {#each selected.exposure as item (item.targetId)}
             {@const tone = matrixDotTone(item.state)}
-            {@const action = placementActionLabel(
-              item.state,
-              item.canReconcile,
-            )}
+            {@const action = placementActionLabel(item.state, item.canReconcile)}
             <div class={placementRow} data-skill-drawer-placement={item.targetId}>
               <span class={strongCell}>
                 <span aria-hidden="true" class={glyphMark} data-tone={tone}>{MATRIX_DOT_GLYPHS[tone]}</span>
-                {presentation.targetLabelById.get(item.targetId) ??
-                  item.targetId}
+                {presentation.targetLabelById.get(item.targetId) ?? item.targetId}
               </span>
               <span class={muted}>{item.label} — {item.expectedPath}</span>
               {#if action}
                 <button
                   class={actionButton}
                   disabled={pendingOperation !== null}
-                  onclick={() =>
-                    execute(
-                      `reconcile:${globalSkill.name}`,
-                      reconcileSkillOperation(globalSkill.name),
-                    )}
+                  onclick={() => execute(`reconcile:${globalSkill.name}`, reconcileSkillOperation(globalSkill.name))}
                   type="button"
                 >
                   {action}
                 </button>
               {:else}
-                <span class={meta}
-                  >{tone === "copy"
-                    ? "Unmanaged content is never overwritten"
-                    : "No action"}</span
-                >
+                <span class={meta}>{tone === 'copy' ? 'Unmanaged content is never overwritten' : 'No action'}</span>
               {/if}
             </div>
           {/each}
@@ -561,7 +532,7 @@
           <p class={panelSub}>SKILL.md editor integration slot</p>
         {/if}
       </section>
-    {:else if selectedDocument && "truncated" in selectedDocument}
+    {:else if selectedDocument && 'truncated' in selectedDocument}
       <section
         aria-label={`${selectedDocument.skillName} SKILL.md preview`}
         class={preview}
@@ -585,14 +556,7 @@
           data-severity={diagnostic.severity}
           data-validation-finding={index + 1}
         >
-          <span
-            class={cx(
-              statusPill,
-              diagnostic.severity === "error"
-                ? statusPillDanger
-                : statusPillWarn,
-            )}
-          >
+          <span class={cx(statusPill, diagnostic.severity === 'error' ? statusPillDanger : statusPillWarn)}>
             {diagnostic.severity}
           </span>
           <code>{skillDiagnosticLabel(diagnostic.code)}</code>

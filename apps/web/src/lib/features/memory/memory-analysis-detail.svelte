@@ -60,7 +60,7 @@
     <a
       class={memoryButton}
       data-sveltekit-noscroll
-      href={memoryHref(address,{analysis:null,analysisProject:null,episode:null,element:null})}
+      href={memoryHref(address, { analysis: null, analysisProject: null, episode: null, element: null })}
       >Close account</a
     >
   </div>
@@ -68,12 +68,19 @@
     <p class={memoryCopy} role="status">Reading the saved revision…</p>
   {:else if query.error}
     <p class={memoryCopy} role="alert">
-      {memoryAnalysisError(query.error,'This saved analysis could not be read. It may have been withdrawn or its access may have changed.')}
+      {memoryAnalysisError(
+        query.error,
+        'This saved analysis could not be read. It may have been withdrawn or its access may have changed.',
+      )}
     </p>
-    <button class={memoryButton} onclick={()=>query.refetch()} type="button">Retry saved account</button>
+    <button class={memoryButton} onclick={() => query.refetch()} type="button">Retry saved account</button>
   {:else if query.data}
     <p class={memoryCopy}>{projectName} · Generated account, separate from accepted guidance.</p>
-    <details ontoggle={(event)=>{historyOpen=event.currentTarget.open;}}>
+    <details
+      ontoggle={(event) => {
+        historyOpen = event.currentTarget.open;
+      }}
+    >
       <summary class={memoryCopy}>Analysis revision history</summary>
       {#if historyQuery.data}
         <nav aria-label="Saved analysis revisions" class={memoryRow}>
@@ -81,7 +88,7 @@
             <a
               class={memoryButton}
               data-sveltekit-noscroll
-              href={memoryHref(address,{analysis:revision.id,episode:null})}
+              href={memoryHref(address, { analysis: revision.id, episode: null })}
               >Revision {revision.revision} · {new Date(revision.createdAt).toLocaleDateString()}</a
             >
           {/each}
@@ -89,7 +96,9 @@
         {#if historyQuery.data.nextCursor}
           <button
             class={memoryButton}
-            onclick={()=>{historyCursor=historyQuery.data?.nextCursor ?? null;}}
+            onclick={() => {
+              historyCursor = historyQuery.data?.nextCursor ?? null;
+            }}
             type="button"
           >
             Older revisions
@@ -101,22 +110,29 @@
         <p class={memoryCopy} role="status">Reading revision history…</p>
       {/if}
     </details>
-    {#if query.data.content.episodes.length>0}
+    {#if query.data.content.episodes.length > 0}
       <nav aria-label="Analysis episodes" class={memoryRow}>
         {#each query.data.content.episodes as episode, index (episode.id)}
-          <a class={memoryButton} data-sveltekit-noscroll href={memoryHref(address,{episode:episode.id})}
-            >Episode {index+1}</a
+          <a class={memoryButton} data-sveltekit-noscroll href={memoryHref(address, { episode: episode.id })}
+            >Episode {index + 1}</a
           >
         {/each}
       </nav>
     {/if}
-    <AnalysisAccount analysis={query.data} {episodeId} onPromote={(key,assertion)=>{promotion={key,assertion};}} />
+    <AnalysisAccount
+      analysis={query.data}
+      onPromote={(key, assertion) => {
+        promotion = { key, assertion };
+      }}
+    />
     {#if promotion}
       <MemoryPromotion
         analysis={query.data}
         assertion={promotion.assertion}
         elementKey={promotion.key}
-        onClose={()=>{promotion=null;}}
+        onClose={() => {
+          promotion = null;
+        }}
         {projectName}
       />
     {/if}

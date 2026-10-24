@@ -205,7 +205,9 @@
                 <span class={axisLabel}>Last publish</span
                 ><span class={axisValue} data-publication-outcome={snapshot.publication.lastOutcome}
                   >{publicationOutcomeLabel(snapshot.publication)}
-                  {snapshot.publication.lastPublishedAt ? ` · ${fmtDate(snapshot.publication.lastPublishedAt)}` : ''}</span
+                  {snapshot.publication.lastPublishedAt
+                    ? ` · ${fmtDate(snapshot.publication.lastPublishedAt)}`
+                    : ''}</span
                 >
               </div>
               <div class={axis}>

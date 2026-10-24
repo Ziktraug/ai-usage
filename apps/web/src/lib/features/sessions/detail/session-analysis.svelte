@@ -446,7 +446,9 @@
   );
 </script>
 
-{#snippet renderTimelineAxis(_showTokens: boolean)}
+{#snippet renderTimelineAxis(
+  _showTokens: boolean,
+)}
   {#if detail && scale}
     <div class={timelineAxis}>
       <span aria-hidden="true" class={timelineAxisSpacer}></span>
@@ -566,7 +568,9 @@
               aria-label="Show real gaps"
               aria-pressed={scaleMode === 'wall-clock' ? 'true' : 'false'}
               class={scaleButton}
-              onclick={() => { scaleMode = scaleMode === 'compressed' ? 'wall-clock' : 'compressed'; }}
+              onclick={() => {
+                scaleMode = scaleMode === 'compressed' ? 'wall-clock' : 'compressed';
+              }}
               type="button"
             >
               {scaleMode === 'compressed' ? 'Show real gaps' : 'Compress gaps'}

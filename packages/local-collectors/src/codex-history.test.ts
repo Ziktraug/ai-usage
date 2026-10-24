@@ -2473,50 +2473,50 @@ Preserve the existing aggregation semantics.`,
     { contextual: true, completeLastUsage: true, rejected: 0 },
     { contextual: true, completeLastUsage: false, rejected: 1 },
     { contextual: false, completeLastUsage: true, rejected: 1 },
-  ])('only clears a counter-reset warning when its usage is fully attributable: %j', ({
-    contextual,
-    completeLastUsage,
-    rejected,
-  }) => {
-    const parser = createCodexSessionParser();
-    const visit = (event: object) => parser.visit(JSON.stringify({ timestamp: '2026-10-01T12:00:00.000Z', ...event }));
-    visit({ type: 'session_meta', payload: { id: 'reset-session' } });
-    if (contextual) {
-      visit({ payload: { type: 'task_started', turn_id: 'task' } });
-      visit({ type: 'turn_context', payload: { turn_id: 'task', model: 'gpt-5.6-sol' } });
-    }
-    const usage = (input: number, cache: number, output: number) => ({
-      input_tokens: input,
-      cached_input_tokens: cache,
-      output_tokens: output,
-      total_tokens: input + output,
-    });
-    visit({
-      payload: {
-        type: 'token_count',
-        info: { total_token_usage: usage(100, 60, 20), last_token_usage: usage(100, 60, 20) },
-      },
-    });
-    const reset = {
-      payload: {
-        type: 'token_count',
-        info: {
-          total_token_usage: usage(10, 6, 2),
-          last_token_usage: completeLastUsage ? usage(10, 6, 2) : usage(5, 3, 1),
+  ])(
+    'only clears a counter-reset warning when its usage is fully attributable: %j',
+    ({ contextual, completeLastUsage, rejected }) => {
+      const parser = createCodexSessionParser();
+      const visit = (event: object) =>
+        parser.visit(JSON.stringify({ timestamp: '2026-10-01T12:00:00.000Z', ...event }));
+      visit({ type: 'session_meta', payload: { id: 'reset-session' } });
+      if (contextual) {
+        visit({ payload: { type: 'task_started', turn_id: 'task' } });
+        visit({ type: 'turn_context', payload: { turn_id: 'task', model: 'gpt-5.6-sol' } });
+      }
+      const usage = (input: number, cache: number, output: number) => ({
+        input_tokens: input,
+        cached_input_tokens: cache,
+        output_tokens: output,
+        total_tokens: input + output,
+      });
+      visit({
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: usage(100, 60, 20), last_token_usage: usage(100, 60, 20) },
         },
-      },
-    };
-    visit(reset);
-    visit(reset); // Repeated snapshots must not double-count the recovery.
-    const result = parser.finish();
-    expect(result.rejectedMetricRecords).toBe(rejected);
-    if (contextual && completeLastUsage) {
-      expect([result.session.tin, result.session.tcr, result.session.tout]).toEqual([44, 66, 22]);
-      expect(result.session.lastRejectedMetricAt).toBeUndefined();
-    } else {
-      expect(result.session.lastRejectedMetricAt).toBe('2026-10-01T12:00:00.000Z');
-    }
-  });
+      });
+      const reset = {
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: usage(10, 6, 2),
+            last_token_usage: completeLastUsage ? usage(10, 6, 2) : usage(5, 3, 1),
+          },
+        },
+      };
+      visit(reset);
+      visit(reset); // Repeated snapshots must not double-count the recovery.
+      const result = parser.finish();
+      expect(result.rejectedMetricRecords).toBe(rejected);
+      if (contextual && completeLastUsage) {
+        expect([result.session.tin, result.session.tcr, result.session.tout]).toEqual([44, 66, 22]);
+        expect(result.session.lastRejectedMetricAt).toBeUndefined();
+      } else {
+        expect(result.session.lastRejectedMetricAt).toBe('2026-10-01T12:00:00.000Z');
+      }
+    },
+  );
 
   test('resets cumulative token baselines without producing negative deltas', async () => {
     const storage = new TestMemoryStorage();
@@ -3331,23 +3331,22 @@ describe('Codex child token ownership', () => {
   test.each([
     { resetLast: 40, partial: false, expected: 190 },
     { resetLast: 30, partial: true, expected: 180 },
-  ])('only treats an owned reset as complete when its snapshot is the last generation: %j', async ({
-    resetLast,
-    partial,
-    expected,
-  }) => {
-    const { session, total } = await read([
-      task('own'),
-      context('own'),
-      tokens(100, 100),
-      tokens(40, resetLast),
-      tokens(40, resetLast),
-      tokens(90, 50),
-      complete('own'),
-    ]);
-    expect(total).toBe(expected);
-    expect(session.partial).toBe(partial);
-  });
+  ])(
+    'only treats an owned reset as complete when its snapshot is the last generation: %j',
+    async ({ resetLast, partial, expected }) => {
+      const { session, total } = await read([
+        task('own'),
+        context('own'),
+        tokens(100, 100),
+        tokens(40, resetLast),
+        tokens(40, resetLast),
+        tokens(90, 50),
+        complete('own'),
+      ]);
+      expect(total).toBe(expected);
+      expect(session.partial).toBe(partial);
+    },
+  );
 
   test('rejects an inconsistent last usage as evidence of an owned generation', async () => {
     const { session, total } = await read(

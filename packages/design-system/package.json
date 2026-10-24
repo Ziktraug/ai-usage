@@ -29,11 +29,11 @@
     "./styles.css": "./styled-system/styles.css"
   },
   "peerDependencies": {
-    "svelte": "5.56.8"
+    "svelte": "5.57.2"
   },
   "devDependencies": {
     "@pandacss/dev": "1.12.0",
-    "svelte": "5.56.8"
+    "svelte": "5.57.2"
   },
   "scripts": {
     "ship": "CI=1 bun --bun panda ship --outfile styled-system/panda.buildinfo.json --silent",
@@ -45,6 +45,6 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ark-ui/svelte": "5.22.1"
+    "@ark-ui/svelte": "5.24.3"
   }
 }

@@ -28,10 +28,19 @@ const collectionError = (reason: ClaudeQuotaCollectionErrorReason, message: stri
  * current turn, while `return` — the generator protocol's disposal — ends the *session* and tears
  * down the transport. Interrupting alone leaves handles open that keep the host process alive.
  */
+export interface ClaudeUsageReadOptions {
+  /**
+   * Since SDK 0.3.308 the usage read also scans every local transcript touched in the last seven days
+   * to fill a `behaviors` section unless told not to. The quota path wants the plan rate limits only and
+   * must never pay for, or depend on, that scan.
+   */
+  readonly skipBehaviors?: boolean;
+}
+
 export interface ClaudeUsageQuery {
   interrupt?: () => Promise<unknown>;
   return?: (value?: unknown) => Promise<unknown>;
-  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise<unknown>;
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: (options?: ClaudeUsageReadOptions) => Promise<unknown>;
 }
 
 export interface ClaudeAgentSdkSourceOptions {
@@ -167,7 +176,8 @@ const readUsage = async (
       throw collectionError(reason, `The Claude quota read ${reason === 'aborted' ? 'was aborted' : 'timed out'}.`);
     }
     session = openedSession;
-    return await openedSession.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
+    // Plan limits only: the default read also scans a week of local transcripts for `behaviors`.
+    return await openedSession.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
   })();
   let result: unknown;
   try {

@@ -26,6 +26,8 @@ const DEEP_SESSIONS = `${SESSIONS}&q=${encodeURIComponent(DETAIL_EXPLORATION_TIT
 const CAMPAIGN = '/campaigns?range=all&q=Continuity%20root';
 const FAR_CHILD = 'Continuity child 0359';
 const LINK_PARENT = 'Continuity child 0250';
+/** Agent Map nodes are named by their content: "Open session <title>" followed by the node's metadata. */
+const OPEN_LINK_PARENT_PATTERN = /^Open session Continuity child 0250(?:\s|$)/;
 const LINK_CHILD = 'Continuity child 0013';
 const ROUNDS = /^Rounds/;
 const OPEN_SESSION = /^Open session/;
@@ -330,7 +332,7 @@ test('follows a linked child from Rounds and returns to the virtualized Agent Ma
   await waitForHydratedNavigation(page);
   const revision = await reportRevision(page);
   const map = page.locator('[data-campaign-scroll="map"]');
-  const parent = map.getByRole('button', { name: `Open session ${LINK_PARENT}`, exact: true });
+  const parent = map.getByRole('button', { name: OPEN_LINK_PARENT_PATTERN });
   for (let step = 0; step < 70 && !(await parent.isVisible()); step++) {
     await wheel(page, map, 600);
   }

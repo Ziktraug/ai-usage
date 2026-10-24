@@ -788,7 +788,9 @@
       </ul>
     {/if}
 
-    {#each rows.filter((row) => row.campaignKey && (typeof expanded === 'object' && expanded[row.rowId])) as row (row.rowId)}
+    {#each rows.filter(
+      (row) => row.campaignKey && typeof expanded === 'object' && expanded[row.rowId],
+    ) as row (row.rowId)}
       {@const campaign = row.campaignKey ? campaignChildren.get(row.campaignKey) : undefined}
       {#if row.campaignKey && (campaign?.loading || campaign?.nextCursor)}
         <div class={sessionPagingLoadMore}>

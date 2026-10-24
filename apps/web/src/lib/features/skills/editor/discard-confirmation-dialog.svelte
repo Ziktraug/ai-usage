@@ -156,7 +156,7 @@
             Keep editing
           </button>
           <button
-            {...(pending ? { 'aria-busy': 'true' as const } : {})}
+            {...pending ? { 'aria-busy': 'true' as const } : {}}
             class={cx(commandButton, discardButtonStyle)}
             disabled={pending}
             onclick={decision.discard}

@@ -51,7 +51,7 @@
     timeline: result.timeline,
     value: 'cost',
   }}
-  {...(presentSessionItem ? { presentSessionItem } : {})}
+  {...presentSessionItem ? { presentSessionItem } : {}}
   modelsHref="?tab=models"
   onOpenModels={openModels}
   {providers}

@@ -249,7 +249,10 @@
   });
 </script>
 
-{#snippet providerRing(_entry: ProviderQuotaRailEntry, _size: number)}
+{#snippet providerRing(
+  _entry: ProviderQuotaRailEntry,
+  _size: number,
+)}
   {#snippet centerMark()}
     <span class={cx(markTones[_entry.key], _entry.measured ? undefined : markUnmeasured)}>
       <ProviderMark name={_entry.key} size={_size <= 26 ? 12 : 13} />

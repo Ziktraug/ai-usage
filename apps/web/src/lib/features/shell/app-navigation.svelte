@@ -501,13 +501,15 @@
   {#if showManage}
     <ManageButton
       class={cx(
-          mobileLink,
-          shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
-            ? mobileLinkActive
-            : mobileLinkInactive,
-        )}
+        mobileLink,
+        shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
+          ? mobileLinkActive
+          : mobileLinkInactive,
+      )}
       controls={managePopoverId}
-      onToggle={() => { manageOpen = !manageOpen; }}
+      onToggle={() => {
+        manageOpen = !manageOpen;
+      }}
       open={manageOpen}
       bind:element={manageButton}
     />
@@ -526,7 +528,16 @@
       />
     {/each}
     <div
-      class={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid token(colors.line)', pt: '10px', px: '10px', color: 'muted', fontSize: '12px' })}
+      class={css({
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderTop: '1px solid token(colors.line)',
+        pt: '10px',
+        px: '10px',
+        color: 'muted',
+        fontSize: '12px',
+      })}
     >
       <span>Appearance</span><ThemeToggle />
     </div>

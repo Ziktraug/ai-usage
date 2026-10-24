@@ -350,7 +350,9 @@
   const stack = css({ display: 'grid', gap: '16px', minW: 0 });
 </script>
 
-{#snippet evidenceCells(_row: SkillsWorktableSkillRow)}
+{#snippet evidenceCells(
+  _row: SkillsWorktableSkillRow,
+)}
   {#each _row.cells as cell (cell.columnKey)}
     <td data-worktable-cell={cell.columnKey}>
       <span class={cx(cellStack, _row.enabled ? undefined : dimmed)}>
@@ -375,7 +377,9 @@
   {/each}
 {/snippet}
 
-{#snippet activityCellFor(_row: SkillsWorktableSkillRow)}
+{#snippet activityCellFor(
+  _row: SkillsWorktableSkillRow,
+)}
   <td class={activityCell} data-observation-recency={_row.lastSignalRecency}>
     {#if _row.lastObservedAt}
       <time datetime={_row.lastObservedAt} title={formatObservedAt(_row.lastObservedAt)}>{_row.lastSignalText}</time>
@@ -388,7 +392,9 @@
   </td>
 {/snippet}
 
-{#snippet skillNameCell(_row: SkillsWorktableSkillRow)}
+{#snippet skillNameCell(
+  _row: SkillsWorktableSkillRow,
+)}
   <th scope="row">
     <span class={cx(nameCell, _row.enabled ? undefined : dimmed)}>
       {#if _row.href}
@@ -408,7 +414,7 @@
     {#each model.filters as entry (entry.id)}
       {@const provisional = entry.value.endsWith(provisionalSuffix)}
       <button
-        aria-label={`${entry.label} — ${entry.accessibleValue}`}
+        aria-label={`${entry.label} — ${entry.value}, ${entry.accessibleValue}`}
         aria-pressed={filter === entry.id ? 'true' : 'false'}
         class={chip}
         data-worktable-filter={entry.id}

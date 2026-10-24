@@ -222,9 +222,9 @@
           id="report-period-from"
           maxlength="10"
           onchange={(event) => {
-          draftFrom = event.currentTarget.value;
-          commitDraftEdit();
-        }}
+            draftFrom = event.currentTarget.value;
+            commitDraftEdit();
+          }}
           onkeydown={restoreOnEscape}
           placeholder="YYYY-MM-DD"
           spellcheck="false"
@@ -244,9 +244,9 @@
           id="report-period-to"
           maxlength="10"
           onchange={(event) => {
-          draftTo = event.currentTarget.value;
-          commitDraftEdit();
-        }}
+            draftTo = event.currentTarget.value;
+            commitDraftEdit();
+          }}
           onkeydown={restoreOnEscape}
           placeholder="YYYY-MM-DD"
           spellcheck="false"

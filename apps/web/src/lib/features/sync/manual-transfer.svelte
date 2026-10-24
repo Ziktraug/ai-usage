@@ -297,10 +297,10 @@
       disabled={!mutationAvailable || pending !== null}
       hidden
       onchange={async (event) => {
-      const input = event.currentTarget;
-      await previewFile(input.files?.[0]);
-      input.value = '';
-    }}
+        const input = event.currentTarget;
+        await previewFile(input.files?.[0]);
+        input.value = '';
+      }}
       type="file"
       bind:this={fileInput}
     >
@@ -312,12 +312,12 @@
       ondragleave={() => (dragActive = false)}
       ondragover={(event) => event.preventDefault()}
       ondrop={async (event) => {
-      event.preventDefault();
-      dragActive = false;
-      if (mutationAvailable && pending === null) {
-        await previewFile(event.dataTransfer?.files[0]);
-      }
-    }}
+        event.preventDefault();
+        dragActive = false;
+        if (mutationAvailable && pending === null) {
+          await previewFile(event.dataTransfer?.files[0]);
+        }
+      }}
       type="button"
     >
       <span class={sectionLabel}>Import</span>

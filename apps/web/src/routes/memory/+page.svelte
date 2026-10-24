@@ -7,4 +7,4 @@
   let { data }: PageProps = $props();
 </script>
 
-<MemoryPage address={page.url.href} {data} onNavigate={(href)=>goto(href,{noScroll:true,keepFocus:true})} />
+<MemoryPage address={page.url.href} {data} onNavigate={(href) => goto(href, { noScroll: true, keepFocus: true })} />

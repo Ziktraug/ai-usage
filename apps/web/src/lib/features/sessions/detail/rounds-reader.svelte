@@ -41,7 +41,15 @@
     '&[aria-current="true"]': { bg: 'accentTint', borderColor: 'line' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
-  const railIndex = css({ textStyle: 'numeric', color: 'muted', fontSize: '11px', pt: '2px' });
+  // The ordinal is decorative: it is drawn from a data attribute so it is neither spoken nor part
+  // of the visible text the accessible name must contain (WCAG 2.5.3).
+  const railIndex = css({
+    textStyle: 'numeric',
+    color: 'muted',
+    fontSize: '11px',
+    pt: '2px',
+    _before: { content: 'attr(data-round-index)' },
+  });
   const railExcerpt = css({
     lineClamp: 2,
     fontSize: '12px',
@@ -348,8 +356,6 @@
     round.recordedActiveMs === null
       ? `${formatSessionDuration(round.observedSpanMs)} observed`
       : `${formatSessionDuration(round.recordedActiveMs)} recorded`;
-  const roundAccessibleLabel = (round: RoundView): string =>
-    `Round ${round.index + 1} of ${view?.rounds.length ?? 0}: ${roundTitle(round)}. ${costLabel(round)}, ${spanLabel(round)}, ${fmtNum(round.tools)} tools, ${round.interactions.length} agent interactions.`;
   const rowValue = (row: SessionPresentationRow | null): { primary: string; secondary: string } | null => {
     if (!row) {
       return null;
@@ -487,9 +493,10 @@
         <ol aria-label="Rounds" class={rail} data-session-rounds-rail>
           {#each view.rounds as round (round.id)}
             <li class={railItem}>
+              <!-- Named by content (WCAG 2.5.3): a hidden "Round n of m" prefix and interaction count
+                   frame the visible excerpt, chips, tools, span, and cost. -->
               <button
                 aria-current={round.id === selectedRound.id ? 'true' : 'false'}
-                aria-label={roundAccessibleLabel(round)}
                 class={railButton}
                 data-session-round={round.index}
                 onclick={() => selectRound(round)}
@@ -498,8 +505,13 @@
                 type="button"
                 bind:this={railButtons[round.index]}
               >
-                <span aria-hidden="true" class={railIndex}>{String(round.index + 1).padStart(2, '0')}</span>
+                <span
+                  aria-hidden="true"
+                  class={railIndex}
+                  data-round-index={String(round.index + 1).padStart(2, '0')}
+                ></span>
                 <span>
+                  <span class={visuallyHidden}>Round {round.index + 1} of {view.rounds.length}: </span>
                   <span class={cx(railExcerpt, !round.excerpt && railExcerptMuted)}>{roundTitle(round)}</span>
                   <span class={railMeta}>
                     {#each round.interactions as interaction (interaction.toolUseId)}
@@ -512,6 +524,7 @@
                   </span>
                 </span>
                 <span class={railCost}>{costLabel(round)}</span>
+                <span class={visuallyHidden}>, {round.interactions.length} agent interactions.</span>
               </button>
             </li>
           {/each}
@@ -544,8 +557,8 @@
             {#if selectedRound.prompts.length === 0}
               <div class={empty}>
                 {selectedRound.kind === 'unattributed'
-                ? 'Recorded activity that no prompt owns. It stays visible instead of being folded into a neighbour.'
-                : 'No prompt text was available in local history.'}
+                  ? 'Recorded activity that no prompt owns. It stays visible instead of being folded into a neighbour.'
+                  : 'No prompt text was available in local history.'}
               </div>
             {/if}
             {#each selectedRound.prompts as prompt (prompt.id)}
@@ -572,7 +585,9 @@
                       onclick={() => togglePrompt(prompt.id)}
                       type="button"
                     >
-                      {expanded ? 'Show the opening only' : `Continue reading (${fmtCompact(prompt.text.length)} characters)`}
+                      {expanded
+                        ? 'Show the opening only'
+                        : `Continue reading (${fmtCompact(prompt.text.length)} characters)`}
                     </button>
                   {/if}
                 {/if}

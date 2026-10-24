@@ -160,7 +160,7 @@
   contentClass={filterContent}
   positioning={{ gutter: 4, placement: 'bottom-start' }}
   {trigger}
-  triggerAriaLabel={label}
+  triggerAriaLabel={`${label}: ${triggerLabel}`}
   triggerClass={value.length > 0 ? cx(filterTrigger, narrowedFilterTrigger) : filterTrigger}
   triggerTitle={triggerLabel}
 >
@@ -178,8 +178,7 @@
       <li>
         <Checkbox
           checked={value.includes(option)}
-          onCheckedChange={(checked) =>
-            onValueChange(toggleCheckboxFilterOption(value, options, option, checked))}
+          onCheckedChange={(checked) => onValueChange(toggleCheckboxFilterOption(value, options, option, checked))}
         >
           <span class={optionLabel} title={labelFor(option)}>{labelFor(option)}</span>
         </Checkbox>

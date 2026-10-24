@@ -862,7 +862,9 @@
       </p>
     {:else if detailLookupFailed}
       <p class={notice} data-session-route-status="failed" role="status">
-        {selectedLookup.data?.ok === false ? selectedLookup.data.error.message : 'The selected session could not be loaded.'}
+        {selectedLookup.data?.ok === false
+          ? selectedLookup.data.error.message
+          : 'The selected session could not be loaded.'}
         <button class={ghostButton} onclick={() => selectedLookup.refetch()} type="button">Retry session</button>
         <button class={ghostButton} onclick={() => changeSelection(null)} type="button">Close session details</button>
       </p>
@@ -955,7 +957,7 @@
           {/each}
         {/if}
         {#if matchedRows.length > 3 || matching.hasNextPage || searchExpanded}
-          <button class={ghostButton} onclick={() => searchExpanded = !searchExpanded} type="button">
+          <button class={ghostButton} onclick={() => (searchExpanded = !searchExpanded)} type="button">
             {searchExpanded ? 'Return to full campaign' : 'Explore matching sessions'}
           </button>
         {/if}
@@ -976,7 +978,9 @@
         bind:this={searchVirtualList}
         bind:navigation={searchNavigation}
       >
-        {#snippet children(_entry)}
+        {#snippet children(
+          _entry,
+        )}
           <button
             class={card}
             data-matching-row-id={_entry.row.rowId}
@@ -1003,7 +1007,11 @@
       {#if visible && (visible.timelineRange.from === null || visible.timelineRange.to === null)}
         <button
           class={ghostButton}
-          onclick={() => timelineAxis = { context: timelineContext, axis: buildCampaignTimeline(items, visible.timelineRange).axis }}
+          onclick={() =>
+            (timelineAxis = {
+              context: timelineContext,
+              axis: buildCampaignTimeline(items, visible.timelineRange).axis,
+            })}
           type="button"
         >
           Fit loaded campaigns
@@ -1018,7 +1026,13 @@
         mapError={exploration.error?.message ?? null}
         mapLoading={isRefreshing}
         onLoadMoreCampaigns={loadCampaigns}
-        onLoadMoreSessions={() => { if (exploration.error) {retry(); return false;} return loadMembers(); }}
+        onLoadMoreSessions={() => {
+          if (exploration.error) {
+            retry();
+            return false;
+          }
+          return loadMembers();
+        }}
         onOpenSession={openSession}
         onSelectCampaign={selectCampaign}
         selectedCampaignKey={selectedKey}
@@ -1046,7 +1060,7 @@
         </p>
       {/if}
     {:else}
-      <button class={mobileBack} onclick={() => mobileMap = !mobileMap} type="button">
+      <button class={mobileBack} onclick={() => (mobileMap = !mobileMap)} type="button">
         {mobileMap ? 'Back to campaigns' : 'View selected campaign'}
       </button>
       <div class={layout} data-mobile-map={mobileMap ? 'true' : 'false'}>
@@ -1061,7 +1075,9 @@
             surface="list"
             bind:navigation={listNavigation}
           >
-            {#snippet children(_entry)}
+            {#snippet children(
+              _entry,
+            )}
               {@const item = _entry.item}
               <button
                 aria-pressed={item.campaignKey === selectedKey ? 'true' : 'false'}
@@ -1079,7 +1095,9 @@
                   ·
                   {item.row.partial || item.row.usageUnavailable ? '≥ ' : ''}
                   {fmtCompact(item.row.tokenTotal)}
-                  recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount ? '' : ' in filter'}</span
+                  recorded tokens{item.row.campaignVisibleCount === item.row.campaignTotalCount
+                    ? ''
+                    : ' in filter'}</span
                 >
               </button>
             {/snippet}

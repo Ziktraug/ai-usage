@@ -79,9 +79,7 @@
     <SkillsConsolidate
       groups={presentation.unmanagedGroups}
       total={presentation.health.consolidateCount}
-      {...(presentation.unmanagedUsageByName === undefined
-        ? {}
-        : { usageByName: presentation.unmanagedUsageByName })}
+      {...presentation.unmanagedUsageByName === undefined ? {} : { usageByName: presentation.unmanagedUsageByName }}
       usageEvidenceComplete={presentation.observations.view?.invocationEvidenceComplete ?? false}
     />
     <SkillsConfiguration context={slotContext} />
@@ -89,7 +87,7 @@
 </div>
 
 <SkillDrawer
-  {...(editorSlot === undefined ? {} : { editorSlot })}
+  {...editorSlot === undefined ? {} : { editorSlot }}
   {management}
   onClose={closeDrawer}
   {presentation}

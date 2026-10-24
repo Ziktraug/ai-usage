@@ -177,16 +177,24 @@
   <Popover.Root
     autoFocus={false}
     lazyMount
-    onOpenChange={(details) => { cancelClose(); isOpen = details.open; if (!details.open) { contentHasFocus = false; } }}
+    onOpenChange={(details) => {
+      cancelClose();
+      isOpen = details.open;
+      if (!details.open) {
+        contentHasFocus = false;
+      }
+    }}
     open={isOpen}
     positioning={{ placement: 'bottom-end', gutter: 8, strategy: 'fixed', overflowPadding: 12 }}
     restoreFocus={!hoverOpened}
     unmountOnExit
   >
     <Popover.Trigger
-      aria-label="Collection status"
+      aria-label={`Collection status: ${status.label}`}
       class={trigger}
-      onclick={() => { hoverOpened = false; }}
+      onclick={() => {
+        hoverOpened = false;
+      }}
       onkeydown={focusContentOnTab}
       onpointerenter={enter}
       onpointerleave={leave}
@@ -194,7 +202,11 @@
     >
       <span
         aria-hidden="true"
-        class={cx(dot, status.tone === 'info' && activeDot, (status.tone === 'warning' || status.tone === 'danger') && warningDot)}
+        class={cx(
+          dot,
+          status.tone === 'info' && activeDot,
+          (status.tone === 'warning' || status.tone === 'danger') && warningDot,
+        )}
       ></span>
       <span aria-live="polite" data-source-summary-status>{status.label}</span>
     </Popover.Trigger>
@@ -204,8 +216,13 @@
           aria-label="Collection details"
           class={card}
           data-source-card
-          onfocusin={() => { contentHasFocus = true; hoverOpened = false; }}
-          onfocusout={(event) => { contentHasFocus = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget); }}
+          onfocusin={() => {
+            contentHasFocus = true;
+            hoverOpened = false;
+          }}
+          onfocusout={(event) => {
+            contentHasFocus = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget);
+          }}
           onpointerenter={enter}
           onpointerleave={leave}
         >

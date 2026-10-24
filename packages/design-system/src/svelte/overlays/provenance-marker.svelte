@@ -14,13 +14,13 @@
 
 {#if facts.length > 0}
   <Tooltip content={title}>
-    {#snippet trigger(_triggerProps)}
+    {#snippet trigger(
+      _triggerProps,
+    )}
       <button
         {..._triggerProps}
         aria-label={title}
-        class={hasWarning
-          ? `${provenanceMarkerClass} ${provenanceMarkerWarningClass}`
-          : provenanceMarkerClass}
+        class={hasWarning ? `${provenanceMarkerClass} ${provenanceMarkerWarningClass}` : provenanceMarkerClass}
         type="button"
       >
         {provenanceMarkerGlyph(facts)}

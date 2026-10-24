@@ -130,7 +130,9 @@
   sessionCount={queryState?.sessionCount}
   sourceRows={queryState === undefined ? [] : projectSessionDestinationRows(queryState)}
 >
-  {#snippet children(_rows)}
+  {#snippet children(
+    _rows,
+  )}
     <div class={tableControls} data-sessions-export>
       <!-- The export serializes only loaded top-level campaign aggregates. Keep
            campaign-row pagination and underlying session coverage as separate units. -->
@@ -147,22 +149,36 @@
       />
     </div>
     <SessionTable
-      {...(queryState?.campaignChildren === undefined
-        ? {}
-        : { campaignChildren: queryState.campaignChildren })}
+      {...queryState?.campaignChildren === undefined ? {} : { campaignChildren: queryState.campaignChildren }}
       {columnVisibility}
       hasMoreRows={Boolean(queryState?.nextCursor)}
       initialWindowAnchor={initialSessionWindowAnchor}
       loading={pending && !queryState}
       loadingMoreRows={queryState?.loadingMore ?? false}
-      onClearFilters={() => navigate((current) => ({ ...current, filters: {}, harness: [], machine: [], origin: [], q: '', range: { mode: '30d' } }))}
+      onClearFilters={() =>
+        navigate((current) => ({
+          ...current,
+          filters: {},
+          harness: [],
+          machine: [],
+          origin: [],
+          q: '',
+          range: { mode: '30d' },
+        }))}
       onColumnVisibilityChange={(updater) => {
         const next = applyStateUpdate(updater, columnVisibility);
         const columnSearch = columnVisibilitySearchForVisibility(next);
         navigate((current) => ({ ...current, ...columnSearch }), { replace: true });
       }}
-      onFieldFilter={(key, value) => navigate((current) => ({ ...current, filters: { ...current.filters, [key]: value } }))}
-      onHarnessFilter={(value) => navigate((current) => ({ ...current, harness: current.harness.includes(value) ? current.harness.filter((item) => item !== value) : [...current.harness, value] }))}
+      onFieldFilter={(key, value) =>
+        navigate((current) => ({ ...current, filters: { ...current.filters, [key]: value } }))}
+      onHarnessFilter={(value) =>
+        navigate((current) => ({
+          ...current,
+          harness: current.harness.includes(value)
+            ? current.harness.filter((item) => item !== value)
+            : [...current.harness, value],
+        }))}
       onInitialWindowAnchor={onInitialSessionWindowAnchor}
       onLoadCampaignChildren={(campaignKey) => onIncreaseQueryDepth('campaign-children', campaignKey)}
       onLoadMoreRows={() => onIncreaseQueryDepth('top-level')}
@@ -178,7 +194,7 @@
       searchQuery={query?.filters.query ?? ''}
       {selectedRowId}
       {sorting}
-      {...(queryState?.itemCount === undefined ? {} : { totalRows: queryState.itemCount })}
+      {...queryState?.itemCount === undefined ? {} : { totalRows: queryState.itemCount }}
     />
   {/snippet}
 </SessionsDestinationState>

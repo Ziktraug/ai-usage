@@ -374,23 +374,28 @@
     bind:this={virtualList}
     bind:navigation
   >
-    {#snippet children(_entry)}
+    {#snippet children(
+      _entry,
+    )}
       {#if _entry.kind === 'project'}
         {@const project = _entry.project}
         <div class={cx(grid, projectRow)} data-project-key={project.projectKey} data-timeline-project>
           <h3 class={projectHeading}>
+            <!-- Named by content (WCAG 2.5.3): the hidden prefix carries the action, the count stays part of the name. -->
             <button
-              aria-describedby={`timeline-project-count-${encodeURIComponent(_entry.key)}`}
               aria-expanded={collapsedProjects.has(project.projectKey) ? 'false' : 'true'}
-              aria-label={`${collapsedProjects.has(project.projectKey) ? 'Expand' : 'Collapse'} project ${project.projectLabel}`}
               class={projectButton}
               onclick={() => toggleProject(project.projectKey)}
               type="button"
             >
               <span aria-hidden="true">{collapsedProjects.has(project.projectKey) ? '▸' : '▾'}</span>
               <span
-                ><span class={projectTitle}>{project.projectLabel}{_entry.continuation ? ' · continued' : ''}</span
-                ><span class={meta} id={`timeline-project-count-${encodeURIComponent(_entry.key)}`}
+                ><span class={projectTitle}
+                  ><span class={screenReader}
+                    >{collapsedProjects.has(project.projectKey) ? 'Expand' : 'Collapse'}
+                    project
+                  </span>{project.projectLabel}{_entry.continuation ? ' · continued' : ''}</span
+                ><span class={meta}
                   >{project.campaigns.length}
                   {project.campaigns.length === 1 ? 'campaign' : 'campaigns'}
                   shown here</span
@@ -401,7 +406,11 @@
           <span aria-hidden="true" class={lane}>
             {#each project.bars as span, index (index)}
               <span
-                class={cx(bar, span.point ? pointBar : projectBar, barTone(span.timing === 'partial', false, projectTone))}
+                class={cx(
+                  bar,
+                  span.point ? pointBar : projectBar,
+                  barTone(span.timing === 'partial', false, projectTone),
+                )}
                 data-timeline-project-bar
                 data-timing={span.timing}
                 style:left={`${span.leftPercent}%`}
@@ -442,13 +451,12 @@
             </button>
             <button
               aria-describedby={descriptionId}
-              aria-label={`Select campaign ${label}`}
               aria-pressed={selectedCampaignKey === key ? 'true' : 'false'}
               class={labelButton}
               onclick={() => selectCampaign(key)}
               type="button"
             >
-              <span class={title}>{label}</span>
+              <span class={title}><span class={screenReader}>Select campaign </span>{label}</span>
               <span class={meta}
                 >{campaign.item.chronology.sessionCount}
                 {campaign.item.chronology.sessionCount === 1 ? 'session' : 'sessions'}
@@ -474,7 +482,11 @@
             >
               <span
                 aria-hidden="true"
-                class={cx(bar, campaign.bar.point ? pointBar : campaignBar, barTone(campaign.timing === 'partial', selectedCampaignKey === key, campaignTone))}
+                class={cx(
+                  bar,
+                  campaign.bar.point ? pointBar : campaignBar,
+                  barTone(campaign.timing === 'partial', selectedCampaignKey === key, campaignTone),
+                )}
                 data-timeline-campaign-bar
                 style:left={`${campaign.bar.leftPercent}%`}
                 style:width={campaign.bar.point ? undefined : `${campaign.bar.widthPercent}%`}
@@ -493,28 +505,20 @@
       {:else if _entry.kind === 'session'}
         {@const node = _entry.node}
         {@const nodeBar = barForInterval(node.startMs, node.endMs, timeline.axis)}
-        {@const nodeDescriptionId = `timeline-session-description-${encodeURIComponent(node.row.rowId)}`}
         <div
           data-depth={node.depth}
           data-relationship={node.relationship}
           data-row-id={node.row.rowId}
           data-timeline-session
         >
-          <button
-            aria-describedby={nodeDescriptionId}
-            aria-label={`Open session ${node.title}`}
-            class={cx(grid, sessionButton)}
-            onclick={() => onOpenSession(node.row)}
-            type="button"
-          >
+          <!-- Named by content (WCAG 2.5.3): hidden "Open session" prefix, visible metadata, then the
+               spoken-only detail that used to be the description. -->
+          <button class={cx(grid, sessionButton)} onclick={() => onOpenSession(node.row)} type="button">
             <span class={sessionLabel} style:padding-left={`${Math.min(node.depth + 1, 7) * 10}px`}>
-              <span class={screenReader} id={nodeDescriptionId}>
-                {nodeRole(node)}. {node.row.harness}. {node.row.modelLabel}. Started
-                {node.startedAt ?? 'not recorded'}. Ended {node.endedAt ?? 'not recorded'}.
-                {node.lineageIssue ? `Lineage: ${node.lineageIssue.replaceAll('-', ' ')}.` : ''}
-                {nodeBar ? clipLabel(nodeBar) : ''}
-              </span>
-              <span class={title}>{nodePrefix(node)}{node.title}</span>
+              <span class={title}
+                ><span class={screenReader}>Open session </span><span aria-hidden="true">{nodePrefix(node)}</span>
+                {node.title}</span
+              >
               <span class={meta}>{nodeRole(node)} ·{node.row.modelLabel || node.row.harness}</span>
               <span class={meta}
                 >{sessionInstant(node.startedAt, 'Start not recorded')}
@@ -523,11 +527,21 @@
               {#if node.lineageIssue}
                 <span class={meta}>Lineage: {node.lineageIssue.replaceAll('-', ' ')}</span>
               {/if}
+              <span class={screenReader}>
+                {nodeRole(node)}. {node.row.harness}. {node.row.modelLabel}. Started
+                {node.startedAt ?? 'not recorded'}. Ended {node.endedAt ?? 'not recorded'}.
+                {node.lineageIssue ? `Lineage: ${node.lineageIssue.replaceAll('-', ' ')}.` : ''}
+                {nodeBar ? clipLabel(nodeBar) : ''}
+              </span>
             </span>
             {#if nodeBar}
               <span aria-hidden="true" class={lane}>
                 <span
-                  class={cx(bar, nodeBar.point ? pointBar : sessionBar, barTone(node.timingStatus !== 'recorded', node.relationship === 'root', sessionTone))}
+                  class={cx(
+                    bar,
+                    nodeBar.point ? pointBar : sessionBar,
+                    barTone(node.timingStatus !== 'recorded', node.relationship === 'root', sessionTone),
+                  )}
                   data-timeline-session-bar
                   style:left={`${nodeBar.leftPercent}%`}
                   style:width={nodeBar.point ? undefined : `${nodeBar.widthPercent}%`}

@@ -319,7 +319,9 @@
                   {observationRow.skillName}
                   <span class={managedTag}>{observationRow.managed ? ' managed' : ' unmanaged'}</span>
                 </th>
-                {#each observationRow.harnesses.filter((cell) => cell.state !== 'not-observable') as cell (cell.harnessKey)}
+                {#each observationRow.harnesses.filter(
+                  (cell) => cell.state !== 'not-observable',
+                ) as cell (cell.harnessKey)}
                   <td class={observationCell} data-harness={cell.harnessKey} data-observation-state={cell.state}>
                     {#if cell.state === 'no-observations'}
                       <span aria-hidden="true" class={emptyCellMark}>—</span>

@@ -282,13 +282,13 @@
 
 {#if view && presentation}
   <SkillsWorkspace
-    {...(editorSlot === undefined ? {} : { editorSlot })}
-    {...(healthSlot === undefined ? {} : { healthSlot })}
+    {...editorSlot === undefined ? {} : { editorSlot }}
+    {...healthSlot === undefined ? {} : { healthSlot }}
     {hydrated}
     {management}
     {presentation}
     {selectedDocument}
-    {...(onSourceChange === undefined ? {} : { onSourceChange })}
+    {...onSourceChange === undefined ? {} : { onSourceChange }}
     snapshot={view.snapshot}
     {snapshotUpdates}
     {view}

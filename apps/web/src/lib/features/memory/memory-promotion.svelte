@@ -83,7 +83,7 @@
       <a
         data-sveltekit-keepfocus
         data-sveltekit-noscroll
-        href={memoryHref('/memory',{view:'review',proposal:proposalId})}
+        href={memoryHref('/memory', { view: 'review', proposal: proposalId })}
         >Open Pending review</a
       >
     </p>
@@ -95,7 +95,16 @@
       <div class={memoryRow}>
         <label class={memoryField}
           >Knowledge type<select class={memoryInput} bind:value={kind}>
-            {#each ['decision','pattern','pitfall','command','constraint','handoff','lesson','preference'] as option}
+            {#each [
+              'decision',
+              'pattern',
+              'pitfall',
+              'command',
+              'constraint',
+              'handoff',
+              'lesson',
+              'preference',
+            ] as option}
               <option value={option}>{option}</option>
             {/each}
           </select></label

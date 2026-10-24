@@ -28,13 +28,13 @@ out, and better-auth patches since 1.7.2 include security fixes.
 | D1 | Bun | 1.4.3, `packageManager` is the only version source (CI `setup-bun` reads it); `flake.nix` overrides nixpkgs' 1.4.2 until NixOS/nixpkgs#574334 lands | first Rust-ported line; 1.4.3 fixes spawn/pipe hangs, zstd, mimalloc RSS and a TLS CVE |
 | D2 | Biome | 2.5.15, **not** 2.6.x | Biome 2.6 renamed `useSortedClasses`; both Ultracite 7.8.3 and 8.0.1 presets still set it, so every Biome 2.6 command fails on configuration. Revisit when Ultracite ships a 2.6 preset |
 | D3 | Ultracite | 8.0.1 | entry names and CLI unchanged; ~45 new error rules, none auto-fixable. Rule policy decided in batch 9 from a repo-wide count |
-| D4 | TypeScript | `typescript` 6.0.3 everywhere (web and fixture leave 5.9.3); TS 7.0.2 added as `@typescript/native` for plain `tsc` checks | TS 7.0 ships no JS API; `svelte-check`, `svelte-kit sync` and `tools/check-typescript-coverage.ts` need it. The dual install is svelte-check's documented layout. TS 7 found 0 errors on all 33 projects |
+| D4 | TypeScript | `typescript` 6.0.3 everywhere (web and fixture leave 5.9.3); TS 7 deferred to 7.1 | TS 7.0 ships no JS API; `svelte-check`, `svelte-kit sync` and `tools/check-typescript-coverage.ts` need it. The dual install svelte-check documents (`@typescript/native@npm:typescript@7`) makes `node_modules/.bin/tsc` depend on link order, which is not a contract. TS 7.0.2 found 0 errors on all 33 projects (7–8× faster), so the move is mechanical once 7.1 ships its API and Svelte content mappers |
 | D5 | SvelteKit | 3.1.0 with `@sveltejs/adapter-bun` 1.0.0 | the old adapter is Kit-2-only and archived. The origin/idle-timeout contract of ADR 0011 changes and gets a new ADR |
 | D6 | Panda CSS | 2.3.0 with `panda lib` + `designSystem` | v2 drops buildinfo-in-`include` and `panda ship` |
 | D7 | TanStack Table | 9.3.1 | contained to the Sessions table model |
 | D8 | Effect | 4.0.5, one atomic bump | GA, LTS to 2029; types cross package boundaries, so no dual-version workspace |
 | D9 | better-auth | 1.7.12 + a PostgreSQL migration | 1.7.3 reverted the account identity to `(providerId, accountId)` and validates the schema at startup; the `issuer NOT NULL` column would reject every insert |
-| D10 | MCP SDK | v2 (`@modelcontextprotocol/server`/`client`) if it still negotiates the protocol versions current clients use; otherwise 1.32.1 | v1 only gets fixes for ≥ 6 months |
+| D10 | MCP SDK | 1.32.1 (v1), not v2 | v2.3.1 accepts the same five protocol versions, but changes what clients see: every `inputSchema` moves from draft-07 to draft 2020-12, `execution.taskSupport` disappears from `tools/list`, validation error text changes; the Claude Agent SDK peers on v1 anyway. On 1.32.1 the stdio answers and `tools/list` are byte-identical to 1.30.0 |
 | D11 | drizzle-orm | 0.45.4 | 1.0 is still a release candidate |
 | D12 | GitHub Actions | `checkout@v7`, `upload-artifact@v7`, `setup-bun@v2`, `install-nix-action@v31` | Node 24 runtimes; only `pull_request`/`workflow_dispatch` triggers |
 | D13 | Claude Agent SDK | 0.3.308; quota read passes `{ skipBehaviors: true }` | the usage call now scans local transcripts by default |
@@ -80,8 +80,8 @@ diffs are applied to the upgrade worktree and re-verified there on Bun 1.4.3.
    now waits, `yieldNow` is a value, scheduler yields through `setImmediate`.
 7. **better-auth 1.7.12** — migration, mapping, adapter filter, tests (`test:postgres`).
 8. **MCP SDK** — v2 or 1.32.1 per D10.
-9. **TypeScript 7 binary, then Ultracite 8** — repo-wide rule count, fix the rules that
-   find defects, record any rule turned off with its reason.
+9. **Ultracite 8** — repo-wide rule count, fix the rules that find defects, record any
+   rule turned off with its reason.
 10. **Final** — full gates, e2e variants, adversarial review, plan status.
 
 ## STOP conditions

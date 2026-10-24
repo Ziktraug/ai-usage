@@ -44,7 +44,9 @@
   });
 </script>
 
-{#snippet editorSlot(_context: SkillsShellSlotContext)}
+{#snippet editorSlot(
+  _context: SkillsShellSlotContext,
+)}
   <SkillsEditorSlot context={_context} />
 {/snippet}
 {#snippet headerMeta()}
@@ -72,7 +74,9 @@
   </button>
 {/snippet}
 
-{#snippet healthSlot(_context: SkillsShellSlotContext)}
+{#snippet healthSlot(
+  _context: SkillsShellSlotContext,
+)}
   <SkillsHealthSlot
     context={_context}
     onReconcileReady={(action) => (reconcileAction = action)}

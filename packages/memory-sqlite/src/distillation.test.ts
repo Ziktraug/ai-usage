@@ -206,62 +206,62 @@ const fixture = async () => {
 };
 
 describe('local-only session distillation persistence', () => {
-  test.each([
-    'withdraw',
-    'purge',
-  ] as const)('fences a promotion paused after source read when %s wins', async (mode) => {
-    const f = await fixture();
-    const published = await f.publish();
-    const authorizer = createSingleUserAuthorizer({
-      localPersonId: f.identity.person.id,
-      personalSpaceId: f.identity.space.id,
-      listKnownResources: async () => [],
-    });
-    const read = Promise.withResolvers<void>();
-    const resume = Promise.withResolvers<void>();
-    const promotion = createAnalysisPromotionService({
-      authorizer,
-      repository: f.kernel.memory,
-      readAnalysis: async (projectId, analysisId) => {
-        const analysis = await f.kernel.distillation.get(projectId, analysisId);
-        read.resolve();
-        await resume.promise;
-        return analysis;
-      },
-    });
-    const pending = promotion(
-      {
-        analysisId: published.analysis.id,
-        projectId: f.projectId,
-        elementKey: 'summary',
-        title: 'Verify the cache regression',
-        kind: 'lesson',
-        formulation: 'Run the regression before claiming success.',
-        sensitivity: 'normal',
-        localOnly: true,
-      },
-      {
-        authorization: { activeSpaceId: f.identity.space.id, trustedDevice: true },
-        principal: { kind: 'person', personId: f.identity.person.id },
-      },
-    );
-    await read.promise;
-    expect(await f.kernel.distillation.remove(f.projectId, published.analysis.id, mode)).toMatchObject({
-      dependencyCount: 0,
-    });
-    resume.resolve();
-    await expect(pending).rejects.toMatchObject({ code: 'stale' });
-    expect(
-      f.read((database) =>
-        database
-          .query(`SELECT
+  test.each(['withdraw', 'purge'] as const)(
+    'fences a promotion paused after source read when %s wins',
+    async (mode) => {
+      const f = await fixture();
+      const published = await f.publish();
+      const authorizer = createSingleUserAuthorizer({
+        localPersonId: f.identity.person.id,
+        personalSpaceId: f.identity.space.id,
+        listKnownResources: async () => [],
+      });
+      const read = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      const promotion = createAnalysisPromotionService({
+        authorizer,
+        repository: f.kernel.memory,
+        readAnalysis: async (projectId, analysisId) => {
+          const analysis = await f.kernel.distillation.get(projectId, analysisId);
+          read.resolve();
+          await resume.promise;
+          return analysis;
+        },
+      });
+      const pending = promotion(
+        {
+          analysisId: published.analysis.id,
+          projectId: f.projectId,
+          elementKey: 'summary',
+          title: 'Verify the cache regression',
+          kind: 'lesson',
+          formulation: 'Run the regression before claiming success.',
+          sensitivity: 'normal',
+          localOnly: true,
+        },
+        {
+          authorization: { activeSpaceId: f.identity.space.id, trustedDevice: true },
+          principal: { kind: 'person', personId: f.identity.person.id },
+        },
+      );
+      await read.promise;
+      expect(await f.kernel.distillation.remove(f.projectId, published.analysis.id, mode)).toMatchObject({
+        dependencyCount: 0,
+      });
+      resume.resolve();
+      await expect(pending).rejects.toMatchObject({ code: 'stale' });
+      expect(
+        f.read((database) =>
+          database
+            .query(`SELECT
           (SELECT COUNT(*) FROM memory_observations) AS observations,
           (SELECT COUNT(*) FROM memory_proposals) AS proposals,
           (SELECT COUNT(*) FROM memory_analysis_promotions) AS promotions`)
-          .get(),
-      ),
-    ).toEqual({ observations: 0, proposals: 0, promotions: 0 });
-  });
+            .get(),
+        ),
+      ).toEqual({ observations: 0, proposals: 0, promotions: 0 });
+    },
+  );
 
   test('real published analysis promotion survives withdrawal and content purge with dependencies visible and no outbox effects', async () => {
     const f = await fixture();
@@ -639,60 +639,59 @@ describe('local-only session distillation persistence', () => {
     await expect(f.prepare()).rejects.toMatchObject({ code: 'analysis-withdrawn' });
     expect((await f.kernel.distillation.remove(f.projectId, second.analysis.id, 'purge')).removedAnalyses).toBe(0);
   });
-  test.each([
-    'claim',
-    'retry',
-    'submit',
-  ] as const)('rejects %s for an incompatible stored extractor without changing the job or publishing', async (transition) => {
-    const database = new Database(':memory:', { strict: true });
-    try {
-      database.exec(
-        "PRAGMA foreign_keys=ON; CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project-one');",
-      );
-      database.exec(localDistillationSchema);
-      database.exec(localDistillationProgressSchema);
-      let milliseconds = Date.parse('2026-10-04T12:00:00.000Z');
-      const repository = createSqliteDistillationRepository(database, () => new Date(milliseconds));
-      const packet = packetFor('project-one');
-      const grant = grantFor(packet);
-      const job = await repository.prepare({ packet, grant, revisionKey: null, producerSessionId: null });
-      const lease = transition === 'claim' ? null : await repository.claim('project-one', job.id);
-      if (transition === 'retry') {
-        milliseconds += distillationBounds.leaseMs + 1;
-        await repository.status(grant);
+  test.each(['claim', 'retry', 'submit'] as const)(
+    'rejects %s for an incompatible stored extractor without changing the job or publishing',
+    async (transition) => {
+      const database = new Database(':memory:', { strict: true });
+      try {
+        database.exec(
+          "PRAGMA foreign_keys=ON; CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project-one');",
+        );
+        database.exec(localDistillationSchema);
+        database.exec(localDistillationProgressSchema);
+        let milliseconds = Date.parse('2026-10-04T12:00:00.000Z');
+        const repository = createSqliteDistillationRepository(database, () => new Date(milliseconds));
+        const packet = packetFor('project-one');
+        const grant = grantFor(packet);
+        const job = await repository.prepare({ packet, grant, revisionKey: null, producerSessionId: null });
+        const lease = transition === 'claim' ? null : await repository.claim('project-one', job.id);
+        if (transition === 'retry') {
+          milliseconds += distillationBounds.leaseMs + 1;
+          await repository.status(grant);
+        }
+        database
+          .query('UPDATE distillation_jobs SET extractor_version=? WHERE id=?')
+          .run('unsupported-extractor', job.id);
+        const before = database.query('SELECT * FROM distillation_jobs WHERE id=?').get(job.id);
+        const submit = () =>
+          repository.submit({
+            projectId: 'project-one',
+            jobId: job.id,
+            leaseId: lease?.leaseId ?? 'no-lease',
+            packetDigest: packet.packetDigest,
+            content: content(),
+          });
+        const result = transition === 'submit' ? submit() : repository[transition]('project-one', job.id);
+        await expect(result).rejects.toMatchObject({ code: 'extractor-version-mismatch' });
+        expect(database.query('SELECT * FROM distillation_jobs WHERE id=?').get(job.id)).toEqual(before);
+        expect(database.query('SELECT COUNT(*) AS count FROM session_analyses').get()).toEqual({ count: 0 });
+        expect(database.query('SELECT COUNT(*) AS count FROM session_analyses_fts').get()).toEqual({ count: 0 });
+        if (transition === 'submit') {
+          milliseconds += distillationBounds.leaseMs + 1;
+          await expect(submit()).rejects.toMatchObject({ code: 'extractor-version-mismatch' });
+          expect(database.query('SELECT * FROM distillation_jobs WHERE id=?').get(job.id)).toMatchObject({
+            state: 'failed',
+            error_code: 'lease-expired',
+            extractor_version: 'unsupported-extractor',
+            lease_id: null,
+            lease_expires_at: null,
+          });
+        }
+      } finally {
+        database.close();
       }
-      database
-        .query('UPDATE distillation_jobs SET extractor_version=? WHERE id=?')
-        .run('unsupported-extractor', job.id);
-      const before = database.query('SELECT * FROM distillation_jobs WHERE id=?').get(job.id);
-      const submit = () =>
-        repository.submit({
-          projectId: 'project-one',
-          jobId: job.id,
-          leaseId: lease?.leaseId ?? 'no-lease',
-          packetDigest: packet.packetDigest,
-          content: content(),
-        });
-      const result = transition === 'submit' ? submit() : repository[transition]('project-one', job.id);
-      await expect(result).rejects.toMatchObject({ code: 'extractor-version-mismatch' });
-      expect(database.query('SELECT * FROM distillation_jobs WHERE id=?').get(job.id)).toEqual(before);
-      expect(database.query('SELECT COUNT(*) AS count FROM session_analyses').get()).toEqual({ count: 0 });
-      expect(database.query('SELECT COUNT(*) AS count FROM session_analyses_fts').get()).toEqual({ count: 0 });
-      if (transition === 'submit') {
-        milliseconds += distillationBounds.leaseMs + 1;
-        await expect(submit()).rejects.toMatchObject({ code: 'extractor-version-mismatch' });
-        expect(database.query('SELECT * FROM distillation_jobs WHERE id=?').get(job.id)).toMatchObject({
-          state: 'failed',
-          error_code: 'lease-expired',
-          extractor_version: 'unsupported-extractor',
-          lease_id: null,
-          lease_expires_at: null,
-        });
-      }
-    } finally {
-      database.close();
-    }
-  });
+    },
+  );
 
   test('prepares idempotently, publishes once, persists exact revisions and searches independently after restart', async () => {
     const f = await fixture();

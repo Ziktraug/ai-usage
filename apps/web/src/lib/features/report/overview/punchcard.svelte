@@ -87,7 +87,9 @@
             {#if timeCell}
               {@const mark = punchcardSessionMark(item.sessions, punchcard.maxSessions)}
               <Tooltip contentClass={tooltip}>
-                {#snippet trigger(_triggerProps)}
+                {#snippet trigger(
+                  _triggerProps,
+                )}
                   <button
                     {..._triggerProps}
                     aria-label={ariaLabel(timeCell, item.sessions)}

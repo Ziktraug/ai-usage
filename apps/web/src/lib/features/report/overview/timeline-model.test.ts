@@ -205,7 +205,7 @@ describe('P2 timeline presentation model', () => {
 test('wires legend buttons, keyboard inspection, live readout, and collision measurement in the Svelte leaf', async () => {
   const source = await Bun.file(new URL('./activity-timeline.svelte', import.meta.url)).text();
   expect(source).toContain('onkeydown={onChartKeydown}');
-  expect(source).toContain('onfocus={() => inspect(inspectedIndex ?? (bars[0]?.index ?? 0))}');
+  expect(source).toContain('onfocus={() => inspect(inspectedIndex ?? bars[0]?.index ?? 0)}');
   expect(source).toContain('aria-live="polite"');
   expect(source).toContain('data-timeline-readout');
   expect(source).toContain('{...pressedAria(active)}');

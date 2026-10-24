@@ -14,10 +14,14 @@ const ORPHAN_CARD_NAME = /^Check migration compatibility /;
 
 const agentMap = (page: Page): Locator => page.getByRole('region', { name: 'Agent Map', exact: true });
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Node buttons are named by their content: "Open session <title>" followed by the node's metadata. */
+const openSessionButton = (page: Page, title: string): Locator =>
+  page.getByRole('button', { name: new RegExp(`^Open session ${escapeRegExp(title)}(?:\\s|$)`) });
+
 const node = (page: Page, title: string): Locator =>
-  page.locator('[data-campaign-node]').filter({
-    has: page.getByRole('button', { exact: true, name: `Open session ${title}` }),
-  });
+  page.locator('[data-campaign-node]').filter({ has: openSessionButton(page, title) });
 
 const openCampaigns = async (page: Page): Promise<void> => {
   await page.goto('/campaigns');
@@ -77,7 +81,7 @@ test('opens an individual nested session with the keyboard and restores focus af
   page,
 }) => {
   await openCampaigns(page);
-  const trigger = page.getByRole('button', { name: `Open session ${NESTED_TITLE}`, exact: true });
+  const trigger = openSessionButton(page, NESTED_TITLE);
   await trigger.focus();
   await page.keyboard.press('Enter');
   const drawer = page.getByRole('dialog', { name: 'Session details', exact: true });
@@ -94,7 +98,7 @@ test('restores a partially visible clicked session without moving the map and st
 }) => {
   await openCampaigns(page);
   const viewport = page.locator('[data-campaign-scroll="map"]');
-  const trigger = page.getByRole('button', { name: 'Open session Define the data model', exact: true });
+  const trigger = openSessionButton(page, 'Define the data model');
   await viewport.scrollIntoViewIfNeeded();
   const viewportBox = await viewport.boundingBox();
   const triggerBox = await trigger.boundingBox();
@@ -150,7 +154,7 @@ test('restores session inspection and its campaign through Back and Forward in t
   const revision = await page.locator('[data-map-revision]').getAttribute('data-map-revision');
   expect(revision).toBeTruthy();
   await selectCampaign(page, STANDALONE_CARD_NAME, STANDALONE_TITLE);
-  await page.getByRole('button', { name: `Open session ${STANDALONE_TITLE}`, exact: true }).click();
+  await openSessionButton(page, STANDALONE_TITLE).click();
   const drawer = page.getByRole('dialog', { name: 'Session details', exact: true });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText(STANDALONE_TITLE, { exact: true })).toBeVisible();

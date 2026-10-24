@@ -82,7 +82,7 @@ describe('rendered source-control pending semantics', () => {
 
   test('renders only the compact trigger until collection details are opened', () => {
     const summary = fixtureBlock(render(fixture, { props: { pending: false } }).body, 'summary');
-    expect(summary).toContain('aria-label="Collection status"');
+    expect(summary).toContain('aria-label="Collection status: ');
     expect(summary).not.toContain('data-source-card');
     expect(summary).not.toContain('Collect now');
   });
