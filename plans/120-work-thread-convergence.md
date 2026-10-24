@@ -117,3 +117,24 @@ follow-ups. ADR 0063 records the durable decisions.
 - Not verified: Jira through `acli` (not installed); running-session state
   from real sources; Claude to Codex cross-harness delegation (not declared
   natively); the daily store (not touched).
+
+### 2026-10-24 — after the second review
+
+A second independent review confirmed the eleven earlier findings closed and
+found four more (followed links starved by declared session links under the
+collection bound; discovery re-seeding a detached key; unbounded synthetic
+receipts; a detached-history omission hiding a failed source state); all four
+are fixed. W1 lot 4 adds the identified-wait transition (ADR 0063).
+
+At `78af4cf3`: `bun run verify` green at `43f316cd` (later commits change only
+two e2e specs); `bun run test:e2e` 265 passed; `bun run test:e2e-production`
+all chained suites passed (13, 6, 1, 1, 7, 31). `bun run demo` serves the task
+view with synthetic tasks and working follow-up commands.
+
+Remaining: running state of real sessions (needs native Codex lifecycle
+evidence and a Codex cache version bump); Jira through `acli` (not installed);
+cross-harness Claude to Codex delegation (not declared natively);
+`apps/web/src/lib/features/work/work-threads.css` is a plain stylesheet mapped
+to Panda tokens, to fold into Panda recipes; activation on the daily store
+(backup, then engine start per docs/local-store-upgrade.md) awaits the
+operator.
