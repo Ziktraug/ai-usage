@@ -345,8 +345,17 @@ _Avoid_: in-place edit, file version, proposal
 **Work thread**:
 A durable continuity container across Sessions and harnesses, with an explicit
 intent and lifecycle and an optional Project. It is not a Session, Project,
-issue, branch, pull request, or campaign.
+issue, branch, pull request, or campaign. The Work view calls it a task; its
+sessions, branch, pull requests and Jira issues are links, and it carries the
+operator's follow state (ADR 0063).
 _Avoid_: session thread, campaign, task inferred from prompts
+
+**Follow state**:
+The operator's own standing on a Work thread: Following, Waiting or Done. Only
+explicit commands change it. Ending a follow-up closes the operator's
+responsibility, never a pull request, issue, session or agent; "to resume",
+"in progress" and "ready to close" are derived hints, not states.
+_Avoid_: task status, closed, resolved, archived
 
 **Work handoff**:
 An immutable, evidence-labelled `WorkHandoff` revision that transfers reviewed

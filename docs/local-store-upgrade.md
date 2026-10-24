@@ -223,6 +223,32 @@ a typed `schema-too-old`, shown on the Work view as "not upgraded for this
 version yet; the engine upgrades it when it next starts", never as a raw
 storage failure.
 
+### Additive tables and columns under usage version 4 (2026-10-24, Work threads)
+
+Durable Work threads (ADR 0063) add four tables without changing
+`user_version`: `work_threads` (identity, title, intent, origin and its unique
+`origin_key`, follow state and revision, waiting and done fields, note,
+`last_activity_at`), `work_thread_links` (qualified keys, provenance,
+`detached_at`; one active link per thread, kind and key), `work_thread_events`
+(every follow-state, link, note and rename change) and `work_thread_commands`
+(one recorded answer per client command id). The same open adds nullable
+columns to the fact family: `discovery_role`, `mergeable` and
+`merge_state_status` on `pull_request_observations`, `counts_changed_at` on
+`checkout_status_observations` and `outcome_code` on `work_fact_run_state`,
+through `ALTER TABLE … ADD COLUMN`. Nothing is backfilled, the store generation
+does not move, and the tables are outside the served revision, the export and
+the replication outbox. Table and column presence are the signals; a second
+open changes nothing. Collections and projection rebuilds never write the
+thread tables, so a thread's follow state, links and history survive them.
+
+The first engine run after the upgrade may create Following threads for the
+operator's open pull requests (author or review requested) and assigned Jira
+issues the CLIs return. An older binary opens the upgraded store and ignores
+the new tables and columns; threads created meanwhile are kept for the next
+upgrade, not deleted. Until the engine has reopened the store, the Work view's
+query-only read answers `schema-too-old` ("not upgraded for this version yet"),
+never an empty list.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

@@ -84,6 +84,7 @@ publication settle window therefore takes 0048.
 | [0060](0060-attribute-work-responses-to-their-requests.md) | Attribute Work responses to their requests | 2026-10-22 | Accepted; amends 0056 |
 | [0061](0061-local-codex-request-observations.md) | Keep native Codex request observations local and attributable | 2026-10-22 | Accepted; amends 0059; extends 0050, 0060 |
 | [0062](0062-owned-codex-review-through-app-server.md) | Run owned Codex reviews through the subscription app-server | 2026-10-22 | Accepted; amends 0053, 0055; extends 0057 |
+| [0063](0063-durable-work-threads-and-personal-follow-up.md) | Durable Work threads carry the operator's follow-up | 2026-10-24 | Accepted; extends 0050, 0051, 0054 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

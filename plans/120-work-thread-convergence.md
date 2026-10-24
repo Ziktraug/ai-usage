@@ -70,10 +70,10 @@ simulated actions are fiction and never ship as real data.
 
 | Lot | Scope | Status |
 | --- | --- | --- |
-| A | Thread store, engine command, reader, `/work` list + detail + end/reopen, PR discovery without sessions | In progress |
-| B | Local/GitHub/Jira markers, session episodes and delegations in one thread history, search | Pending |
-| C | Resume: open the exact source, copy contextual continuation, waits satisfied once, close despite remainders | Pending |
-| D | Independent review, visual comparison with v3, bounded real-source observation, simplification | Pending |
+| A | Thread store, engine command, reader, `/work` list + detail + end/reopen, PR discovery without sessions | Delivered and verified |
+| B | Local/GitHub/Jira markers, session episodes and delegations in one thread history, search | Delivered; Jira real path unavailable (no `acli`), fixture-tested |
+| C | Resume: open the exact source, copy contextual continuation, waits satisfied once, close despite remainders | Delivered except automatic wait satisfaction (in progress) |
+| D | Independent review, visual comparison with v3, bounded real-source observation, simplification | Two reviews; real GitHub observed read-only; plain CSS file to fold into Panda remains |
 
 ## Acceptance
 
@@ -83,3 +83,37 @@ personal closure, closure despite remainders, wait satisfied, wrong
 association, lineage and duration, silent wait, real use, interface).
 
 ## Verification log
+
+### 2026-10-24 — integrated slice
+
+Workers (Codex CLI 0.163.0, model `gpt-6-astra` verified in each native
+rollout): W1 store/command/reader `01a16e12-5d9f-7d02-9865-3ff67ee17631`,
+W2 discovery `01a16e12-5ef0-7622-a5c8-b22374ed546a`, W3 Work view
+`01a16e12-6070-78a2-8cfa-98c124ec50da`; each resumed on its own thread for
+follow-ups. ADR 0063 records the durable decisions.
+
+- `bun run verify` green at `37ad4bd5` (check, lint, typecheck, all package
+  tests, build), after isolating two engine lifecycle tests that reached the
+  operator's real `gh` once discovery ran with no linked pull request.
+- Fixture e2e (`work-threads`, `work`, `work-e2e-fixture`): 25 passed.
+- `bun run test:e2e-production`: all chained suites passed, including
+  `work-threads-production.spec.ts` (real engine, disposable store, fake `gh`):
+  a pull request without sessions becomes one task, ends, appears in Done,
+  reopens; a second source run adds no duplicate; an analysis created from a
+  session ends and reopens; a stale second tab gets a conflict; the fake `gh`
+  audit shows reads only.
+- Reader: 500 threads x 5 links, 100-row page, 918 ms to 31 ms median;
+  20,000 served rows x 500 threads with session-title search: page query
+  2,777 ms to 20 ms, complete page 151 ms median (synthetic, empty histories).
+- Real source, read-only, disposable store: the product's own collectors
+  discovered 10 of the operator's authored open pull requests (limit 10,
+  truncated), observed all 10 with mergeability, seeded 10 threads, a second
+  seed created none; the reader returned 10 rows with 0 sessions; the
+  production app on that store showed them and named GitHub as
+  unauthenticated for its isolated engine instead of an empty list. Discovery
+  first reported unauthenticated in that environment (`gh auth status` timed
+  out under the bounded environment with two stored accounts); fixed by
+  reading one account token (`a3ba3a7b`).
+- Not verified: Jira through `acli` (not installed); running-session state
+  from real sources; Claude to Codex cross-harness delegation (not declared
+  natively); the daily store (not touched).
