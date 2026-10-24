@@ -98,6 +98,7 @@ export {
   acknowledgeUsageReplicationBatch,
   applyWorkThreadCommand,
   applyWorkThreadWaitObservations,
+  attachDeclaredWorkThreadSessions,
   backfillUsageReplicationOutbox,
   blockUsageReplicationBatch,
   checkpointUsageStore,
@@ -182,6 +183,9 @@ export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
 export type {
   ApplyWorkThreadWaitObservationsInput,
   ApplyWorkThreadWaitObservationsResult,
+  AttachDeclaredWorkThreadSessionsInput,
+  AttachDeclaredWorkThreadSessionsResult,
+  DeclaredWorkThreadSession,
   QueryActiveWorkThreadLinksInput,
   QueryActiveWorkThreadLinksResult,
   QueryWorkThreadWaitCandidatesInput,

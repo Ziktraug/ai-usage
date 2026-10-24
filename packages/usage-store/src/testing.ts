@@ -1,4 +1,5 @@
 export {
+  attachDeclaredWorkThreadSessions,
   createUsageStore,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,

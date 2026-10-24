@@ -14,6 +14,7 @@ import { reportCaptureFingerprintForPayload } from '@ai-usage/report-core/report
 import { isSerializedUsageRow, type SerializedRow } from '@ai-usage/report-core/report-data';
 import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
+import { parseWorkThreadLinkKey, pullRequestLinkKey, sessionLinkKey } from '@ai-usage/report-core/work-thread';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import type {
@@ -54,6 +55,7 @@ import {
   SERVED_REPORT_REVISION_PATTERN,
   type ServedRevisionReadDatabase,
 } from './served-revision';
+import type { DeclaredWorkThreadSession } from './work-thread-store';
 
 interface SqliteStatement {
   all(...params: unknown[]): unknown[];
@@ -701,16 +703,18 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
     return readServedReportRevision(input, ({ database, revision }) => {
       const since = (input.now ?? Date.now()) - sinceDays * MILLISECONDS_PER_DAY;
       const records = database.query(`
-          SELECT source_row_json
+          SELECT source_row_json, machine_id
           FROM session_rows
           WHERE source_authority = 'local-observed' AND sort_date >= ?
+            ${input.machineId === undefined ? '' : 'AND machine_id = ?'}
           ORDER BY sort_date DESC, ordinal
           LIMIT ${MAX_PORTABLE_USAGE_ROWS + 1}
         `);
       const links = new Map<string, ServedSessionPullRequestLink>();
+      const declarations = new Map<string, DeclaredWorkThreadSession>();
       let scannedRows = 0;
       let truncated = false;
-      for (const value of records.iterate(since)) {
+      for (const value of records.iterate(...(input.machineId === undefined ? [since] : [since, input.machineId]))) {
         scannedRows += 1;
         if (scannedRows > MAX_PORTABLE_USAGE_ROWS) {
           throw usageStoreError(
@@ -720,7 +724,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
             'invalid-input',
           );
         }
-        const record = value as { source_row_json?: unknown };
+        const record = value as { source_row_json?: unknown; machine_id?: unknown };
         if (typeof record.source_row_json !== 'string') {
           throw new Error('Served session row is invalid');
         }
@@ -734,6 +738,32 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
             continue;
           }
           const key = JSON.stringify([link.host, link.repository, link.number]);
+          if (typeof record.machine_id !== 'string' || rowValue.source === undefined) {
+            throw new Error('Served session identity is invalid');
+          }
+          const sessionId = rowValue.source.sourceSessionId;
+          const sessionKey =
+            sessionId === null
+              ? null
+              : sessionLinkKey({
+                  machineId: record.machine_id,
+                  harness: rowValue.source.harnessKey,
+                  sessionId,
+                });
+          if (sessionKey === null || !parseWorkThreadLinkKey('session', sessionKey)) {
+            // The PR remains observable, but a legacy row without a qualified identity cannot join a thread.
+            truncated = true;
+          } else {
+            const declaration = { pullRequestKey: pullRequestLinkKey(link), sessionKey };
+            const declarationKey = JSON.stringify([declaration.pullRequestKey, sessionKey]);
+            if (!declarations.has(declarationKey)) {
+              if (declarations.size < MAX_SESSION_PULL_REQUEST_LINK_LIMIT) {
+                declarations.set(declarationKey, declaration);
+              } else {
+                truncated = true;
+              }
+            }
+          }
           if (links.has(key)) {
             continue;
           }
@@ -744,7 +774,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
           links.set(key, link);
         }
       }
-      return { links: [...links.values()], revision, scannedRows, truncated };
+      return { declarations: [...declarations.values()], links: [...links.values()], revision, scannedRows, truncated };
     });
   };
 

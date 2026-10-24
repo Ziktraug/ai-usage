@@ -148,6 +148,27 @@ export interface SeedWorkThreadsResult {
   readonly existing: number;
 }
 
+export interface DeclaredWorkThreadSession {
+  readonly pullRequestKey: string;
+  readonly sessionKey: string;
+}
+
+export interface AttachDeclaredWorkThreadSessionsInput {
+  readonly dbPath: string;
+  readonly declarations: readonly DeclaredWorkThreadSession[];
+  readonly machineId: string;
+  readonly now: string;
+}
+
+export interface AttachDeclaredWorkThreadSessionsResult {
+  readonly detached: number;
+  readonly existing: number;
+  readonly linked: number;
+  readonly truncated: boolean;
+}
+
+const MAX_DECLARED_SESSION_LINKS = 500;
+
 const MAX_WAIT_CANDIDATES = 500;
 interface WorkThreadWaitFact {
   readonly mergedAt: CanonicalInstant | null;
@@ -942,6 +963,84 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       return { created, existing };
     });
 
+  const attachDeclaredWorkThreadSessions = (
+    input: AttachDeclaredWorkThreadSessionsInput,
+  ): Effect.Effect<AttachDeclaredWorkThreadSessionsResult, UsageStoreError> =>
+    write(input.dbPath, 'attachDeclaredWorkThreadSessions', (db) => {
+      const now = instant(input.now);
+      const declarations = new Map<string, DeclaredWorkThreadSession>();
+      for (const declaration of input.declarations.slice(0, MAX_DECLARED_SESSION_LINKS)) {
+        const pullRequestKey = canonicalLinkKey('pull-request', declaration.pullRequestKey);
+        const session = parseWorkThreadLinkKey('session', declaration.sessionKey);
+        if (
+          !parseWorkThreadLinkKey('pull-request', pullRequestKey) ||
+          session?.kind !== 'session' ||
+          session.machineId !== input.machineId
+        ) {
+          return invalidInput('Declared sessions require qualified pull request and same-machine session keys');
+        }
+        declarations.set(JSON.stringify([pullRequestKey, declaration.sessionKey]), {
+          pullRequestKey,
+          sessionKey: declaration.sessionKey,
+        });
+      }
+      const result = {
+        linked: 0,
+        existing: 0,
+        detached: 0,
+        truncated: input.declarations.length > MAX_DECLARED_SESSION_LINKS,
+      };
+      for (const { pullRequestKey, sessionKey } of declarations.values()) {
+        // Keep detached history as an operator-owned veto; a later poll may only fill previously absent links.
+        const scope = `FROM work_threads t WHERE t.machine_id = ? AND EXISTS (
+          SELECT 1 FROM work_thread_links p WHERE p.thread_id = t.thread_id
+          AND p.kind = 'pull-request' AND lower(p.link_key) = ? AND p.detached_at IS NULL)`;
+        const history = `SELECT 1 FROM work_thread_links s WHERE s.thread_id = t.thread_id
+          AND s.kind = 'session' AND s.link_key = ?`;
+        const activeCount =
+          '(SELECT COUNT(*) FROM work_thread_links a WHERE a.thread_id = t.thread_id AND a.detached_at IS NULL)';
+        const stats = record(
+          db
+            .query(`SELECT
+          COUNT(CASE WHEN EXISTS (${history} AND s.detached_at IS NULL) THEN 1 END) AS existing,
+          COUNT(CASE WHEN EXISTS (${history} AND s.detached_at IS NOT NULL) THEN 1 END) AS detached,
+          COUNT(CASE WHEN NOT EXISTS (${history}) AND ${activeCount} >= ? THEN 1 END) AS full
+          ${scope}`)
+            .get(
+              sessionKey,
+              sessionKey,
+              sessionKey,
+              WORK_THREAD_BOUNDS.maxLinksPerThread,
+              input.machineId,
+              pullRequestKey,
+            ),
+        );
+        result.existing += validated(typeof stats.existing === 'number' ? stats.existing : null, 'existing link count');
+        result.detached += validated(typeof stats.detached === 'number' ? stats.detached : null, 'detached link count');
+        result.truncated ||= validated(typeof stats.full === 'number' ? stats.full : null, 'full thread count') > 0;
+        const remaining = MAX_DECLARED_SESSION_LINKS - result.linked;
+        const candidates = db
+          .query(`SELECT t.* ${scope} AND NOT EXISTS (${history})
+          AND ${activeCount} < ? ORDER BY t.thread_id LIMIT ?`)
+          .all(input.machineId, pullRequestKey, sessionKey, WORK_THREAD_BOUNDS.maxLinksPerThread, remaining + 1);
+        result.truncated ||= candidates.length > remaining;
+        for (const candidate of candidates.slice(0, remaining)) {
+          const thread = threadFromRecord(candidate);
+          addLink(db, {
+            threadId: thread.threadId,
+            kind: 'session',
+            key: sessionKey,
+            provenance: 'declared',
+            createdAt: now,
+          });
+          saveThread(db, { ...thread, updatedAt: now });
+          addEvent(db, thread, now, 'link-added', { linkKey: sessionKey });
+          result.linked++;
+        }
+      }
+      return result;
+    });
+
   const queryWorkThreadWaitCandidates = (
     input: QueryWorkThreadWaitCandidatesInput,
   ): Effect.Effect<QueryWorkThreadWaitCandidatesResult, UsageStoreError> =>
@@ -1266,6 +1365,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
     ...createWorkThreadSessionEvidenceStore(dependencies),
     applyWorkThreadCommand,
     applyWorkThreadWaitObservations,
+    attachDeclaredWorkThreadSessions,
     countWorkThreads,
     queryActiveWorkThreadLinks,
     queryWorkThreadById,
@@ -1291,12 +1391,17 @@ export interface WorkThreadSessionEvidence {
     readonly harness: string;
     /** Stored first-prompt excerpt only when the served row declares that title provenance. */
     readonly firstPrompt: string | null;
-    readonly member: import('./work-session-join').ServedHarnessSessionMember;
+    readonly member: Omit<import('./work-session-join').ServedHarnessSessionMember, 'projectLabel' | 'rowId'> & {
+      /** Native Desktop evidence has no served row or project label. */
+      readonly projectLabel: string | null;
+      readonly rowId: string | null;
+    };
     readonly desktop: {
       readonly createdAt: CanonicalInstant;
       readonly cwd: string;
       readonly lastActivityAt: CanonicalInstant;
       readonly lastTurnReport: string | null;
+      readonly observedAt: CanonicalInstant;
       readonly title: string;
       readonly turnSummary: { readonly needsAction: string | null; readonly detail: string } | null;
       readonly worktreePath: string | null;
@@ -1343,6 +1448,7 @@ interface SessionEvidencePage {
   readonly children: ReadonlyMap<string, readonly Record<string, unknown>[]>;
   readonly desktops: ReadonlyMap<string, Record<string, unknown>>;
   readonly generatedAt: CanonicalInstant | null;
+  readonly nativeRoots: ReadonlyMap<string, readonly Record<string, unknown>[]>;
   readonly revision: string | null;
   readonly roots: ReadonlyMap<string, readonly Record<string, unknown>[]>;
 }
@@ -1384,6 +1490,32 @@ const readSessionEvidencePage = (
       return invalidInput('Invalid linked session evidence scope');
     }
   }
+  const nativeRequests = new Map<string, readonly string[]>();
+  for (const scope of scopes) {
+    for (const link of scope.links) {
+      const parsed = link.detachedAt === null ? parseWorkThreadLinkKey(link.kind, link.key) : null;
+      if (parsed?.kind === 'session' && parsed.harness === 'claude') {
+        nativeRequests.set(link.key, [link.key, parsed.machineId, parsed.sessionId]);
+      }
+    }
+  }
+  // Only exact current CLI identities can supply a native root without a served row.
+  // Two matches retain ambiguity rather than choosing a registry file by recency.
+  const nativeRoots = groupEvidenceRecords(
+    nativeRequests.size === 0
+      ? []
+      : db
+          .query(`WITH requested AS (
+          SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
+            json_extract(value, '$[2]') AS session_id FROM json_each(?)
+        ), ranked AS (
+          SELECT requested.request_key, desktop.*,
+            ROW_NUMBER() OVER (PARTITION BY requested.request_key ORDER BY desktop.id) AS rank
+          FROM requested JOIN claude_desktop_sessions desktop
+            ON desktop.machine_id = requested.machine AND desktop.cli_session_id = requested.session_id
+        ) SELECT * FROM ranked WHERE rank <= 2 ORDER BY request_key, rank`)
+          .all(JSON.stringify([...nativeRequests.values()])),
+  );
   const currentValue = db
     .query(`SELECT revisions.revision, revisions.generated_at FROM served_report_current current
       JOIN served_report_revisions revisions USING(revision) WHERE current.singleton = 1 AND revisions.complete = 1`)
@@ -1396,6 +1528,7 @@ const readSessionEvidencePage = (
       children: new Map(),
       desktops: new Map(),
       branches: new Map(),
+      nativeRoots,
     };
   }
   const current = record(currentValue);
@@ -1479,10 +1612,17 @@ const readSessionEvidencePage = (
       }),
     );
   const desktops = readDesktops([...desktopRequests.values()]);
+  for (const [key, rows] of nativeRoots) {
+    if ((roots.get(key)?.length ?? 0) === 0 && rows.length === 1 && rows[0]) {
+      desktops.set(key, rows[0]);
+    }
+  }
   const childRequests = scopes.flatMap((scope) =>
     scope.links.flatMap((link) => {
       const request = sessionRequests.get(link.key);
-      return link.detachedAt === null && link.kind === 'session' && request && roots.get(link.key)?.length === 1
+      const rootCount = roots.get(link.key)?.length ?? 0;
+      const hasRoot = rootCount === 1 || (rootCount === 0 && nativeRoots.get(link.key)?.length === 1);
+      return link.detachedAt === null && link.kind === 'session' && request && hasRoot
         ? [
             [
               JSON.stringify([link.threadId, link.key]),
@@ -1568,7 +1708,7 @@ const readSessionEvidencePage = (
     ) SELECT * FROM ranked WHERE rank <= ? ORDER BY request_key, rank`)
           .all(JSON.stringify([...branchRequests.values()]), revision, WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1),
   );
-  return { revision, generatedAt, roots, children, desktops, branches };
+  return { revision, generatedAt, roots, children, desktops, branches, nativeRoots };
 };
 
 const readThreadSessionEvidence = (
@@ -1576,14 +1716,11 @@ const readThreadSessionEvidence = (
   input: Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'>,
 ): WorkThreadSessionEvidence => {
   const { revision, generatedAt } = page;
-  if (revision === null) {
-    return { revision, generatedAt, sessions: [], branchCheckouts: [], truncated: false };
-  }
   const sessions = new Map<string, WorkThreadSessionEvidence['sessions'][number]>();
   const branchCheckouts: WorkThreadSessionEvidence['branchCheckouts'][number][] = [];
   let truncated = false;
-  const desktopOf = (machineId: string, sessionId: string) => {
-    const desktop = page.desktops.get(sessionEvidenceKey(machineId, 'claude', sessionId));
+  const desktopOf = (machineId: string, sessionId: string, native?: Record<string, unknown>) => {
+    const desktop = native ?? page.desktops.get(sessionEvidenceKey(machineId, 'claude', sessionId));
     if (desktop === undefined) {
       return null;
     }
@@ -1595,6 +1732,7 @@ const readThreadSessionEvidence = (
         cwd: validated(evidenceText(value.cwd), 'Desktop checkout'),
         lastActivityAt: validated(normalizeIsoTimestamp(value.last_activity_at), 'Desktop activity'),
         lastTurnReport: evidenceOptionalText(value.last_turn_report, 16_000),
+        observedAt: validated(normalizeIsoTimestamp(value.observed_at), 'Desktop observation instant'),
         title: validated(evidenceText(value.title), 'Desktop title'),
         turnSummary:
           value.status_category === null
@@ -1648,12 +1786,37 @@ const readThreadSessionEvidence = (
     const parsed = parseWorkThreadLinkKey(link.kind, link.key);
     if (parsed?.kind === 'session') {
       const roots = page.roots.get(link.key) ?? [];
-      if (roots.length !== 1) {
+      const native = page.nativeRoots.get(link.key) ?? [];
+      if (roots.length === 0 && native.length === 1 && parsed.harness === 'claude') {
+        const desktop = desktopOf(parsed.machineId, parsed.sessionId, native[0]);
+        if (desktop === null) {
+          return invalidInput('Native Desktop evidence is missing');
+        }
+        sessions.set(JSON.stringify([parsed.machineId, parsed.harness, parsed.sessionId]), {
+          harness: 'claude',
+          firstPrompt: null,
+          desktop: desktop.value,
+          member: {
+            activeAt: Date.parse(desktop.value.lastActivityAt),
+            branch: evidenceOptionalText(native[0]?.branch),
+            campaignRoot: false,
+            checkoutPath: desktop.value.worktreePath ?? desktop.value.cwd,
+            machineId: parsed.machineId,
+            origin: null,
+            parentSourceSessionId: null,
+            projectLabel: null,
+            rowId: null,
+            sourceSessionId: parsed.sessionId,
+            startedAt: desktop.value.createdAt,
+            title: desktop.value.title,
+          },
+        });
+      } else if (roots.length === 1) {
+        add(roots[0], parsed.harness);
+      } else {
         truncated = true;
         continue;
       }
-      const root = roots[0];
-      add(root, parsed.harness);
       const children = page.children.get(JSON.stringify([link.threadId, link.key])) ?? [];
       if (children.length > WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren) {
         truncated = true;

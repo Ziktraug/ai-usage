@@ -486,18 +486,24 @@ const sourcesOf = (
     let state: WorkThreadSourceStatus['state'] = 'ok';
     if (run.disabled) {
       state = 'disabled';
-    } else if (reads.some((read) => read.truncated.has(source))) {
-      state = 'truncated';
     } else if (run.failed > 0) {
       state =
         run.outcomeCode === 'unauthenticated' || observations.some((item) => item?.outcome === 'unauthenticated')
           ? 'unauthenticated'
           : 'failed';
+    } else if (reads.some((read) => read.truncated.has(source))) {
+      state = 'truncated';
     }
     return { source, state, lastRunAt: run.ranAt, message: run.message };
   });
   const evidence = reads.find((read) => read.evidence.revision !== null)?.evidence;
-  let sessionState: WorkThreadSourceStatus['state'] = evidence === undefined ? 'never-run' : 'ok';
+  const desktopObservedAt =
+    reads
+      .flatMap((read) => read.evidence.sessions.flatMap((session) => session.desktop?.observedAt ?? []))
+      .toSorted()
+      .at(-1) ?? null;
+  let sessionState: WorkThreadSourceStatus['state'] =
+    evidence === undefined && desktopObservedAt === null ? 'never-run' : 'ok';
   if (reads.some((read) => read.truncated.has('sessions'))) {
     sessionState = 'truncated';
   }
@@ -511,7 +517,7 @@ const sourcesOf = (
   sources.push({
     source: 'sessions',
     state: sessionState,
-    lastRunAt: evidence?.generatedAt ?? null,
+    lastRunAt: evidence?.generatedAt ?? desktopObservedAt,
     message: sessionMessages.length > 0 ? sessionMessages.join(' ') : null,
   });
   return sources;

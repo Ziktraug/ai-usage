@@ -989,6 +989,11 @@ test('reads explicitly recorded pull request links from recent local sessions on
   );
   const now = Date.parse('2026-07-02T00:00:00.000Z');
   expect(await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, now }))).toEqual({
+    declarations: [
+      { pullRequestKey: 'github.com/fixture/project#66', sessionKey: 'session:served-machine/codex/recent-a' },
+      { pullRequestKey: 'example.com/fixture/project#68', sessionKey: 'session:served-machine/codex/recent-b' },
+      { pullRequestKey: 'github.com/fixture/project#66', sessionKey: 'session:served-machine/codex/recent-b' },
+    ],
     links: [
       {
         host: 'github.com',
@@ -1017,4 +1022,72 @@ test('reads explicitly recorded pull request links from recent local sessions on
   });
   expect(await failureReason(queryServedSessionPullRequestLinks({ dbPath, limit: 501, now }))).toBe('invalid-input');
   expect(await failureReason(queryServedSessionPullRequestLinks({ dbPath, now, sinceDays: 0 }))).toBe('invalid-input');
+  expect(
+    await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, now, machineId: 'foreign' })),
+  ).toMatchObject({
+    declarations: [],
+    links: [],
+    scannedRows: 0,
+    truncated: false,
+  });
+  expect(
+    await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, now, machineId: 'served-machine' })),
+  ).toMatchObject({
+    scannedRows: 2,
+    declarations: expect.arrayContaining([
+      { pullRequestKey: 'github.com/fixture/project#66', sessionKey: 'session:served-machine/codex/recent-a' },
+      { pullRequestKey: 'github.com/fixture/project#66', sessionKey: 'session:served-machine/codex/recent-b' },
+    ]),
+  });
+});
+
+test('bounds declaring session pairs independently of distinct PRs and filters machine identities before the bound', async () => {
+  const dbPath = await createStore();
+  const declaredRow = (name: string, machineId: string, sessionId: string | null = name): SerializedRow => {
+    const base = row(name, 1, { sourcePath: '/private/project' });
+    return {
+      ...base,
+      source: {
+        ...base.source!,
+        machineId,
+        sourceSessionId: sessionId,
+        vcs: {
+          branches: [],
+          headCommit: null,
+          partial: false,
+          repository: null,
+          pullRequests: [
+            { number: 66, observedAt: null, repository: null, url: 'https://github.com/fixture/project/pull/66' },
+          ],
+        },
+      },
+    };
+  };
+  const rows = [
+    ...Array.from({ length: 501 }, (_, i) => declaredRow(`foreign-${i}`, 'foreign')),
+    declaredRow('local', 'served-machine'),
+  ];
+  await Effect.runPromise(publishServedReportRevision(publication(dbPath, 'bounded-declarations', rows)));
+  const now = Date.parse('2026-07-02T00:00:00.000Z');
+  const all = await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, now, limit: 1 }));
+  expect(all.links).toHaveLength(1);
+  expect(all.declarations).toHaveLength(500);
+  expect(all.truncated).toBe(true);
+  const local = await Effect.runPromise(
+    queryServedSessionPullRequestLinks({ dbPath, now, limit: 1, machineId: 'served-machine' }),
+  );
+  expect(local.declarations).toEqual([
+    { pullRequestKey: 'github.com/fixture/project#66', sessionKey: 'session:served-machine/codex/local' },
+  ]);
+  expect(local.truncated).toBe(false);
+  expect(local.scannedRows).toBe(1);
+  await Effect.runPromise(
+    publishServedReportRevision(
+      publication(dbPath, 'legacy-declaration', [declaredRow('legacy', 'served-machine', null)]),
+    ),
+  );
+  const legacy = await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, now }));
+  expect(legacy.declarations).toEqual([]);
+  expect(legacy.links).toHaveLength(1);
+  expect(legacy.truncated).toBe(true);
 });

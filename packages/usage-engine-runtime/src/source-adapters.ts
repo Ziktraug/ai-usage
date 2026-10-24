@@ -1,6 +1,7 @@
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
-import { observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
+import { CHECKOUT_STATUS_DEFAULTS, observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
 import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
 import {
   collectClaudeRetentionWarnings,
@@ -60,6 +61,7 @@ import type { PullRequestObservation } from '@ai-usage/report-core/work-attentio
 import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
 import {
   parseWorkThreadLinkKey,
+  sessionLinkKey,
   pullRequestLinkKey as workThreadPullRequestKey,
 } from '@ai-usage/report-core/work-thread';
 import {
@@ -68,6 +70,7 @@ import {
 } from '@ai-usage/report-core/work-thread-seeds';
 import {
   applyWorkThreadWaitObservations,
+  attachDeclaredWorkThreadSessions,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importCodexWorkObservations,
@@ -849,6 +852,8 @@ const pullRequestLinkKey = (link: PullRequestLink): string => JSON.stringify([li
 const DESKTOP_WORK_FACT_WINDOW_MS = 14 * 86_400_000;
 
 interface DesktopWorkFactInputs {
+  readonly declarations: readonly { readonly pullRequestKey: string; readonly sessionKey: string }[];
+  readonly declarationsTruncated: boolean;
   /** Jira keys written in the sessions' branch names (ADR 0054), never read from titles or paths. */
   readonly jiraKeys: readonly string[];
   readonly links: readonly PullRequestLink[];
@@ -856,7 +861,14 @@ interface DesktopWorkFactInputs {
   readonly warnings: readonly { readonly code: string; readonly message: string }[];
 }
 
-const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = { jiraKeys: [], links: [], paths: [], warnings: [] };
+const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = {
+  declarations: [],
+  declarationsTruncated: false,
+  jiraKeys: [],
+  links: [],
+  paths: [],
+  warnings: [],
+};
 
 const normalizedLinkKey = (link: PullRequestLink): string =>
   pullRequestLinkKey({
@@ -928,8 +940,10 @@ const desktopWorkFactInputs = (input: {
     machineId: input.machineId,
     sinceLastActivityAt: new Date(input.now().getTime() - DESKTOP_WORK_FACT_WINDOW_MS).toISOString(),
   }).pipe(
-    Effect.flatMap(({ observations }) => {
+    Effect.flatMap(({ observations, skipped, truncated }) => {
       const paths: string[] = [];
+      const declarations = new Map<string, { pullRequestKey: string; sessionKey: string }>();
+      let declarationsTruncated = truncated || skipped > 0;
       const links: PullRequestLink[] = [];
       const jiraKeys: string[] = [];
       const seenLinks = new Set<string>();
@@ -950,6 +964,22 @@ const desktopWorkFactInputs = (input: {
             repository: pullRequest.repository,
           };
           const key = pullRequestLinkKey(link);
+          const declaration = {
+            pullRequestKey: workThreadPullRequestKey(link),
+            sessionKey: sessionLinkKey({
+              machineId: observation.machineId,
+              harness: 'claude',
+              sessionId: observation.cliSessionId,
+            }),
+          };
+          if (
+            parseWorkThreadLinkKey('pull-request', declaration.pullRequestKey) &&
+            parseWorkThreadLinkKey('session', declaration.sessionKey)
+          ) {
+            declarations.set(JSON.stringify(declaration), declaration);
+          } else {
+            declarationsTruncated = true;
+          }
           if (!seenLinks.has(key)) {
             seenLinks.add(key);
             links.push(link);
@@ -957,7 +987,16 @@ const desktopWorkFactInputs = (input: {
         }
       }
       return withoutMergedLinks(input.dbPath, input.machineId, links).pipe(
-        Effect.map((open): DesktopWorkFactInputs => ({ jiraKeys, links: open.links, paths, warnings: open.warnings })),
+        Effect.map(
+          (open): DesktopWorkFactInputs => ({
+            declarations: [...declarations.values()],
+            declarationsTruncated,
+            jiraKeys,
+            links: open.links,
+            paths,
+            warnings: open.warnings,
+          }),
+        ),
       );
     }),
     Effect.catchAll((error) =>
@@ -1029,12 +1068,46 @@ const createCheckoutStatusSource = (input: {
         ? yield* input.options.workFactInputs.candidateCheckoutPaths()
         : [];
       // Desktop checkouts first, then the served plan and the injected candidates, each path once.
-      const paths = [
+      const candidates = [
         ...new Set([
           ...candidateCheckoutPaths([], input.machine.id, desktop.paths),
           ...candidateCheckoutPaths(served, input.machine.id, injected),
         ]),
       ];
+      let paths = candidates;
+      if (candidates.length > CHECKOUT_STATUS_DEFAULTS.maxPaths) {
+        const probes = yield* Effect.forEach(
+          candidates,
+          (candidate) =>
+            abortIfRequested(context.signal).pipe(
+              Effect.zipRight(
+                Effect.tryPromise({
+                  try: async () => {
+                    try {
+                      await stat(candidate);
+                      return { candidate, exists: true };
+                    } catch (cause) {
+                      if (
+                        cause !== null &&
+                        typeof cause === 'object' &&
+                        'code' in cause &&
+                        (cause.code === 'ENOENT' || cause.code === 'ENOTDIR')
+                      ) {
+                        return { candidate, exists: false };
+                      }
+                      throw cause;
+                    }
+                  },
+                  catch: (cause) => sourceFailure('checkouts.status', cause),
+                }),
+              ),
+            ),
+          { concurrency: 8 },
+        );
+        paths = [...probes.filter(({ exists }) => exists), ...probes.filter(({ exists }) => !exists)].map(
+          ({ candidate }) => candidate,
+        );
+      }
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: paths.length });
       const batch = yield* observeCheckoutStatus({
         machineId: input.machine.id,
@@ -1049,13 +1122,27 @@ const createCheckoutStatusSource = (input: {
         Effect.mapError((cause) => sourceFailure('checkouts.status', cause)),
       );
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
-      const message = batch.truncated
+      const missing = batch.observations.filter(({ outcome }) => outcome === 'missing').length;
+      const notRepositories = batch.observations.filter(({ outcome }) => outcome === 'not-a-repository').length;
+      const truncation = batch.truncated
         ? `Observed the first ${String(batch.observations.length)} of ${String(paths.length)} candidate checkouts.`
         : null;
+      const message =
+        [
+          truncation,
+          missing === 0
+            ? null
+            : `${String(missing)} known ${missing === 1 ? 'path no longer exists' : 'paths no longer exist'}.`,
+          notRepositories === 0
+            ? null
+            : `${String(notRepositories)} known ${notRepositories === 1 ? 'path is not a repository' : 'paths are not repositories'}.`,
+        ]
+          .filter(Boolean)
+          .join(' ') || null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: false,
-        failed: batch.observations.length - observed,
+        failed: batch.observations.length - observed - missing - notRepositories,
         machineId: input.machine.id,
         message,
         observed,
@@ -1066,7 +1153,10 @@ const createCheckoutStatusSource = (input: {
         changed: false,
         inputCount: paths.length,
         outputCount: batch.observations.length,
-        warnings: [...desktop.warnings, ...(message === null ? [] : [{ code: 'checkouts-truncated', message }])],
+        warnings: [
+          ...desktop.warnings,
+          ...(truncation === null ? [] : [{ code: 'checkouts-truncated', message: truncation }]),
+        ],
       };
     }),
 });
@@ -1114,10 +1204,14 @@ const createPullRequestSource = (input: {
           warnings: [],
         };
       }
-      const served = yield* servedInputsOrEmpty<readonly PullRequestLink[]>(
+      const served = yield* servedInputsOrEmpty(
         'github.pull-requests',
-        queryServedSessionPullRequestLinks({ dbPath: input.dbPath }).pipe(Effect.map(({ links }) => links)),
-        [] as readonly PullRequestLink[],
+        queryServedSessionPullRequestLinks({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          now: input.now().getTime(),
+        }),
+        { links: [], declarations: [], truncated: false, revision: '', scannedRows: 0 },
       );
       const desktop = yield* desktopWorkFactInputs({
         dbPath: input.dbPath,
@@ -1151,7 +1245,7 @@ const createPullRequestSource = (input: {
           repository: link.repository.trim().toLowerCase(),
         });
       const unique = new Map<string, { link: PullRequestLink; account: string | null }>();
-      for (const link of [...threadPullRequests, ...desktop.links, ...served, ...injected]) {
+      for (const link of [...threadPullRequests, ...desktop.links, ...served.links, ...injected]) {
         const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
         const key = keyFor(candidate);
         if (!unique.has(key)) {
@@ -1173,7 +1267,7 @@ const createPullRequestSource = (input: {
       }
       const discoveryWarnings: { code: string; message: string }[] = [];
       let discoveryFailures = 0;
-      let discoveryTruncated = threadLinks.truncated;
+      let discoveryTruncated = threadLinks.truncated || served.truncated;
       let discoveryUnauthenticated = false;
       for (const [account, owners] of accounts) {
         yield* abortIfRequested(context.signal);
@@ -1279,6 +1373,32 @@ const createPullRequestSource = (input: {
           seeds: pullRequestSeeds,
         }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
       }
+      const declarations = [
+        ...new Map(
+          [...desktop.declarations, ...served.declarations].map((declaration) => [
+            JSON.stringify([declaration.pullRequestKey, declaration.sessionKey]),
+            declaration,
+          ]),
+        ).values(),
+      ];
+      const attached =
+        declarations.length === 0
+          ? { truncated: false }
+          : yield* attachDeclaredWorkThreadSessions({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              now: input.now().toISOString(),
+              declarations,
+            }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      const declarationWarnings =
+        attached.truncated || served.truncated || desktop.declarationsTruncated
+          ? [
+              {
+                code: 'declared-sessions-truncated',
+                message: 'Some declared session links could not be read or exceeded the read or attachment limits.',
+              },
+            ]
+          : [];
       const observed = observations.filter(({ outcome }) => outcome === 'observed').length;
       const failed =
         discoveryFailures +
@@ -1291,6 +1411,7 @@ const createPullRequestSource = (input: {
           truncation,
           ...discoveryWarnings.map((warning) => warning.message),
           ...waitWarnings.map((warning) => warning.message),
+          ...declarationWarnings.map((warning) => warning.message),
         ]
           .filter(Boolean)
           .join(' ') || null;
@@ -1313,6 +1434,7 @@ const createPullRequestSource = (input: {
           ...desktop.warnings,
           ...discoveryWarnings,
           ...waitWarnings,
+          ...declarationWarnings,
           ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
         ],
       };

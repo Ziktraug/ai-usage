@@ -13,6 +13,8 @@ import {
 import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
+import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
+import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { collectionSourceIds } from '@ai-usage/report-core/source-control';
 import type { WorkThreadLinkInput } from '@ai-usage/report-core/work-thread';
@@ -31,11 +33,13 @@ import {
 import {
   applyWorkThreadCommand,
   importPullRequestObservations,
+  publishServedReportRevision,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryWorkFactRunStates,
   queryWorkThreadsPage,
+  updateUsageMachineLabel,
 } from '@ai-usage/usage-store/writer';
 import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
@@ -945,9 +949,9 @@ describe('work fact sources', () => {
         runs: [
           {
             disabled: false,
-            failed: 1,
+            failed: 0,
             machineId: machine.id,
-            message: null,
+            message: '1 known path no longer exists.',
             outcomeCode: null,
             observed: 1,
             ranAt: canonicalInstantFromDate(now),
@@ -959,6 +963,84 @@ describe('work fact sources', () => {
       expect(JSON.stringify(result)).not.toContain(home);
     } finally {
       rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('counts stale checkout paths separately while retaining real read failures', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-stale-checkouts-'));
+    try {
+      const names = ['live', 'not-repository', 'timeout', 'git-error'];
+      const paths = names.map((name) => path.join(home, name));
+      for (const candidate of paths) {
+        mkdirSync(candidate);
+      }
+      paths.push(path.join(home, 'missing'));
+      const runner: BoundedProcessRunner = (options) => {
+        const checkoutPath = options.args[options.args.indexOf('-C') + 1];
+        if (checkoutPath?.endsWith('/not-repository')) {
+          return Effect.succeed({ durationMs: 1, exitCode: 128, stdout: '' });
+        }
+        if (checkoutPath?.endsWith('/timeout')) {
+          return Effect.fail(new BoundedProcessError({ kind: 'timed-out', message: 'Fixture timeout' }));
+        }
+        if (checkoutPath?.endsWith('/git-error')) {
+          return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: '' });
+        }
+        return fakeWorkFactRunner([])(options);
+      };
+      const registry = await createRegistry(home, {
+        gitAvailable: () => true,
+        workFactInputs: { candidateCheckoutPaths: () => Effect.succeed(paths) },
+        workFactProcessRunner: runner,
+      });
+      const result = await Effect.runPromise(registry.get('checkouts.status')!.run(progressContext([])));
+      expect(result.warnings).toEqual([]);
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs[0]).toMatchObject({
+        observed: 1,
+        failed: 2,
+        message: '1 known path no longer exists. 1 known path is not a repository.',
+      });
+      const { items } = await Effect.runPromise(
+        queryLatestCheckoutStatusObservations({ dbPath: usageStorePath(home) }),
+      );
+      expect(items.map(({ latest }) => latest.outcome).sort()).toEqual([
+        'invalid',
+        'missing',
+        'not-a-repository',
+        'observed',
+        'timeout',
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('existing checkouts precede stale paths under the collection cap and report truncation', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-live-checkout-priority-'));
+    try {
+      const stale = Array.from({ length: 101 }, (_, index) => path.join(home, `gone-${index}`));
+      const live = path.join(home, 'live');
+      mkdirSync(live);
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        gitAvailable: () => true,
+        workFactInputs: { candidateCheckoutPaths: () => Effect.succeed([...stale, live]) },
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      const result = await Effect.runPromise(registry.get('checkouts.status')!.run(progressContext([])));
+      expect(result).toMatchObject({ inputCount: 102, outputCount: 100, warnings: [{ code: 'checkouts-truncated' }] });
+      expect(calls).toHaveLength(2);
+      const { items } = await Effect.runPromise(
+        queryLatestCheckoutStatusObservations({ dbPath: usageStorePath(home), limit: 100 }),
+      );
+      expect(items.find(({ latest }) => latest.checkoutPath === live)?.latest.outcome).toBe('observed');
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs[0]).toMatchObject({ observed: 1, failed: 0 });
+      expect(runs[0]?.message).toContain('100 of 102');
+      expect(runs[0]?.message).toContain('99 known paths no longer exist.');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 
@@ -1215,6 +1297,9 @@ describe('work fact sources', () => {
         ...overrides,
       });
       // #66 was last seen merged; #67 was seen open and then could not be read: only #67 is live.
+      const { threadId } = await createLinkedThread(home, [
+        { kind: 'pull-request', key: 'github.com/fixture/project#66' },
+      ]);
       await Effect.runPromise(
         importPullRequestObservations({
           dbPath: usageStorePath(home),
@@ -1254,6 +1339,13 @@ describe('work fact sources', () => {
         [66, 'observed', 'MERGED', canonicalInstantFromDate(new Date('2026-10-21T20:00:00.000Z'))],
         [67, 'observed', 'OPEN', canonicalInstantFromDate(now)],
       ]);
+      const links = await Effect.runPromise(
+        queryWorkThreadLinks({ dbPath: usageStorePath(home), threadIds: [threadId] }),
+      );
+      expect(links.find(({ kind }) => kind === 'session')).toMatchObject({
+        key: 'session:machine-a/claude/cli-desktop-work-root',
+        provenance: 'declared',
+      });
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
@@ -1620,6 +1712,252 @@ const discoveredPullRequest = (number: number, repository = 'fixture/project') =
   title: `Discovered ${String(number)}`,
   updatedAt: '2026-10-21T18:30:00Z',
   url: `https://github.com/${repository}/pull/${String(number)}`,
+});
+
+test('served declarations retain session identity through same-cycle attachment and repeated runs', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-declared-served-'));
+  try {
+    const now = new Date('2026-10-21T21:00:00.000Z');
+    const timestamp = canonicalInstantFromDate(now);
+    const rows: SerializedRow[] = ['declaring', 'unrelated', 'foreign'].map((id) => ({
+      activeDate: timestamp,
+      calls: 1,
+      costActual: null,
+      costApprox: 0,
+      costKnown: true,
+      date: timestamp,
+      durationMs: 1,
+      endDate: timestamp,
+      freshTokens: 0,
+      harness: 'Codex',
+      lineDelta: null,
+      linesAdded: null,
+      linesDeleted: null,
+      model: 'fixture',
+      name: id,
+      project: 'fixture',
+      provider: 'fixture',
+      sessionLabel: id,
+      source: {
+        harnessKey: 'codex',
+        machineId: id === 'foreign' ? 'different-machine' : machine.id,
+        machineLabel: machine.label,
+        rootSourceSessionId: id,
+        sourceSessionId: id,
+        sourcePath: '/fixture/shared-checkout',
+        vcs: {
+          branches: [],
+          headCommit: null,
+          partial: false,
+          repository: null,
+          pullRequests:
+            id === 'unrelated'
+              ? []
+              : [12, 13].map((number) => ({
+                  number,
+                  observedAt: timestamp,
+                  repository: 'fixture/project',
+                  url: `https://github.com/fixture/project/pull/${number}`,
+                })),
+        },
+      },
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 0,
+      tokOut: 0,
+      tokenTotal: 0,
+      tools: 0,
+      turns: 1,
+    }));
+    const support: FocusedReportSupport = {
+      analytics: {
+        averageDurationMs: null,
+        byHarness: [],
+        byModel: [],
+        byProvider: [],
+        costPer100Lines: null,
+        durationMs: 0,
+        durationRows: 0,
+        lineCount: 0,
+        linesA: 0,
+        linesD: 0,
+        meanCost: 0,
+        medianCost: 0,
+        pricedCount: 0,
+        recentSessions: 0,
+        sessionCount: rows.length,
+        tools: 0,
+        totalCost: 0,
+        turns: 0,
+        unpricedCount: 0,
+      },
+      filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
+      generatedAt: timestamp,
+      machineFreshness: {
+        kind: 'available',
+        machines: [{ id: machine.id, label: machine.label, lastSeenAt: timestamp }],
+        observedAt: timestamp,
+        omittedMachines: 0,
+        skippedRows: 0,
+      },
+      omittedRows: 0,
+      timeZone: 'UTC',
+    };
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    await Effect.runPromise(
+      publishServedReportRevision({
+        dbPath,
+        now: now.getTime(),
+        ttlMs: 300_000,
+        revision: 'declared-sessions',
+        assemble: () => ({
+          configFingerprint: 'c'.repeat(64),
+          generatedAt: timestamp,
+          projectAliases: [],
+          projectGroupConfigs: [],
+          rows,
+          sourceAuthorities: rows.map(() => 'local-observed' as const),
+          support,
+        }),
+      }),
+    );
+    const registry = await createRegistry(home, {
+      ghAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: (options) =>
+        options.args[0] === 'search'
+          ? Effect.succeed({
+              durationMs: 1,
+              exitCode: 0,
+              stdout: JSON.stringify([12, 13].map((number) => discoveredPullRequest(number))),
+            })
+          : fakeWorkFactRunner([])(options),
+    });
+    const source = registry.get('github.pull-requests')!;
+    for (let repeat = 0; repeat < 2; repeat++) {
+      await Effect.runPromise(source.run(progressContext([])));
+      const page = await Effect.runPromise(
+        queryWorkThreadsPage({ dbPath, query: { cursor: null, limit: 50, project: null, search: null, tab: 'open' } }),
+      );
+      expect(page.rows).toHaveLength(2);
+      const links = await Effect.runPromise(
+        queryWorkThreadLinks({ dbPath, threadIds: page.rows.map(({ thread }) => thread.threadId) }),
+      );
+      const sessions = links.filter(({ kind }) => kind === 'session');
+      expect(sessions).toHaveLength(2);
+      expect(
+        sessions.every(
+          ({ key, provenance }) => key === 'session:machine-a/codex/declaring' && provenance === 'declared',
+        ),
+      ).toBe(true);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Desktop PR declarations join same-cycle discovered threads once and respect detached session links', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-declared-desktop-'));
+  try {
+    const now = new Date('2026-10-21T21:00:00.000Z');
+    const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+    mkdirSync(directory, { recursive: true });
+    for (const [id, numbers] of [
+      ['declaring', [12, 13]],
+      ['unrelated', []],
+      ['unsupported', [12]],
+    ] as const) {
+      writeFileSync(
+        path.join(directory, `local_${id}.json`),
+        JSON.stringify({
+          cliSessionId: id === 'unsupported' ? '/unsupported' : `cli-${id}`,
+          sessionId: `local_${id}`,
+          createdAt: now.getTime() - 7_200_000,
+          lastActivityAt: now.getTime() - 3_600_000,
+          cwd: '/fixture/shared-checkout',
+          isArchived: false,
+          title: id,
+          titleSource: 'auto',
+          prs: numbers.map((number) => ({
+            autoFix: false,
+            baseRef: 'main',
+            branch: 'feature',
+            host: 'github.com',
+            own: true,
+            prNumber: number,
+            provider: 'github',
+            repo: 'fixture/project',
+            state: 'OPEN',
+            url: `https://github.com/fixture/project/pull/${number}`,
+          })),
+        }),
+      );
+    }
+    const registry = await createRegistry(home, {
+      ghAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: (options) =>
+        options.args[0] === 'search'
+          ? Effect.succeed({
+              durationMs: 1,
+              exitCode: 0,
+              stdout: JSON.stringify([12, 13].map((number) => discoveredPullRequest(number))),
+            })
+          : fakeWorkFactRunner([])(options),
+    });
+    await Effect.runPromise(registry.get('claude.desktop-sessions')!.run(progressContext([])));
+    const source = registry.get('github.pull-requests')!;
+    const readLinks = async () => {
+      const page = await Effect.runPromise(
+        queryWorkThreadsPage({
+          dbPath: usageStorePath(home),
+          query: { cursor: null, limit: 50, project: null, search: null, tab: 'open' },
+        }),
+      );
+      expect(page.rows).toHaveLength(2);
+      return Effect.runPromise(
+        queryWorkThreadLinks({
+          dbPath: usageStorePath(home),
+          threadIds: page.rows.map(({ thread }) => thread.threadId),
+        }),
+      );
+    };
+    for (let run = 0; run < 2; run++) {
+      const result = await Effect.runPromise(source.run(progressContext([])));
+      expect(result.warnings).toEqual([
+        { code: 'declared-sessions-truncated', message: expect.stringContaining('could not be read') },
+      ]);
+      const links = await readLinks();
+      expect(links.filter(({ kind }) => kind === 'session')).toHaveLength(2);
+      expect(
+        links
+          .filter(({ kind }) => kind === 'session')
+          .every(
+            ({ key, provenance }) => key === 'session:machine-a/claude/cli-declaring' && provenance === 'declared',
+          ),
+      ).toBe(true);
+    }
+    const detached = (await readLinks()).find(({ kind }) => kind === 'session');
+    if (!detached) {
+      throw new Error('Expected declared link');
+    }
+    await Effect.runPromise(
+      applyWorkThreadCommand({
+        dbPath: usageStorePath(home),
+        machineId: machine.id,
+        now: now.toISOString(),
+        command: { op: 'detach-link', commandId: randomUUID(), threadId: detached.threadId, linkId: detached.linkId },
+      }),
+    );
+    await Effect.runPromise(source.run(progressContext([])));
+    const links = await readLinks();
+    expect(links.filter(({ kind, detachedAt }) => kind === 'session' && detachedAt === null)).toHaveLength(1);
+    expect(links.find(({ linkId }) => linkId === detached.linkId)?.detachedAt).not.toBeNull();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe('discovered work fact sources', () => {
@@ -2227,6 +2565,44 @@ const writeCrowdedDesktopRegistry = (home: string, now: Date): void => {
     );
   }
 };
+
+test('declared session attachment bounds remain visible in warnings and persisted run messages', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-declared-session-bound-'));
+  try {
+    const now = new Date('2026-10-21T21:00:00.000Z');
+    writeClaudeDesktopWorkRegistry(home, {
+      checkoutPath: path.join(home, 'checkout'),
+      worktreePath: path.join(home, 'worktree'),
+      oldPath: path.join(home, 'old'),
+      now,
+    });
+    const { threadId } = await createLinkedThread(home, [
+      { kind: 'pull-request', key: 'github.com/fixture/project#66' },
+      ...Array.from({ length: 63 }, (_, index) => ({
+        kind: 'session' as const,
+        key: `session:machine-a/codex/existing-${index}`,
+      })),
+    ]);
+    const registry = await createRegistry(home, {
+      ghAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: fakeWorkFactRunner([]),
+    });
+    await Effect.runPromise(registry.get('claude.desktop-sessions')!.run(progressContext([])));
+    const result = await Effect.runPromise(registry.get('github.pull-requests')!.run(progressContext([])));
+    expect(result.warnings).toEqual([
+      { code: 'declared-sessions-truncated', message: expect.stringContaining('attachment limits') },
+    ]);
+    const links = await Effect.runPromise(
+      queryWorkThreadLinks({ dbPath: usageStorePath(home), threadIds: [threadId] }),
+    );
+    expect(links).toHaveLength(64);
+    const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+    expect(runs.find(({ sourceId }) => sourceId === 'github.pull-requests')?.message).toContain('attachment limits');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test('thread PRs precede 45 session-declared PRs and preserve truncation reporting', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'engine-thread-crowded-prs-'));

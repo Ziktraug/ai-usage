@@ -16,13 +16,19 @@ import {
 } from '@ai-usage/report-core/work-attention';
 import {
   branchLinkKey,
+  pullRequestLinkKey,
   sessionLinkKey,
   type WorkThreadCommand,
   type WorkThreadLinkInput,
 } from '@ai-usage/report-core/work-thread';
 import { WORK_THREAD_VIEW_BOUNDS, type WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
-import { queryWorkThreadLinks, queryWorkThreadSessionEvidence } from '@ai-usage/usage-store/reader';
 import {
+  queryServedSessionPullRequestLinks,
+  queryWorkThreadLinks,
+  queryWorkThreadSessionEvidence,
+} from '@ai-usage/usage-store/reader';
+import {
+  attachDeclaredWorkThreadSessions,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importJiraIssueObservations,
@@ -421,6 +427,74 @@ describe('work-thread reader', () => {
       const row = result && ('row' in result ? result.row : result.rows[0]);
       expect(row?.markers.local).toHaveLength(64);
       expect(result?.sources.find((source) => source.source === 'checkouts')?.state).toBe('truncated');
+    }
+    await run(
+      recordWorkFactRun({
+        dbPath,
+        machineId: MACHINE,
+        sourceId: 'checkouts.status',
+        disabled: false,
+        failed: 1,
+        observed: 63,
+        message: 'One git read timed out; additional checkout markers were omitted.',
+        ranAt: NOW,
+      }),
+    );
+    for (const result of [
+      await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })),
+      await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW })),
+    ]) {
+      expect(result?.sources.find((source) => source.source === 'checkouts')).toMatchObject({
+        state: 'failed',
+        message: 'One git read timed out; additional checkout markers were omitted.',
+      });
+    }
+  });
+
+  test.each([
+    'missing',
+    'not-a-repository',
+    'timeout',
+    'denied',
+    'invalid',
+  ] as const)('keeps the %s checkout fact separate from the source run outcome', async (outcome) => {
+    const dbPath = await fixture();
+    await publish(dbPath, [session('local-session')]);
+    const threadId = await create(dbPath, [sessionLink('local-session')]);
+    const observation = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/project',
+      observedAt: at(-1),
+      outcome,
+    });
+    if (observation === null) {
+      throw new Error('Invalid checkout outcome fixture');
+    }
+    await run(importCheckoutStatusObservations({ dbPath, observations: [observation] }));
+    const failed = outcome === 'missing' || outcome === 'not-a-repository' ? 0 : 1;
+    const message = failed === 0 ? '1 known path no longer exists or is not a repository.' : 'One git read failed.';
+    await run(
+      recordWorkFactRun({
+        dbPath,
+        machineId: MACHINE,
+        sourceId: 'checkouts.status',
+        disabled: false,
+        failed,
+        observed: 0,
+        message,
+        ranAt: NOW,
+      }),
+    );
+    for (const result of [
+      await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })),
+      await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW })),
+    ]) {
+      const row = result && ('row' in result ? result.row : result.rows[0]);
+      expect(row?.markers.local[0]?.latest?.outcome).toBe(outcome);
+      expect(result?.sources.find((source) => source.source === 'checkouts')).toMatchObject({
+        state: failed === 0 ? 'ok' : 'failed',
+        message,
+      });
     }
   });
 
@@ -919,7 +993,57 @@ describe('work-thread reader', () => {
     expect(empty?.sources.find((source) => source.source === 'sessions')?.message).toBeNull();
   });
 
-  test('Desktop metadata supplies dated question and report without reading transcripts', async () => {
+  test('served PR declarations render exact session episodes and never link a shared checkout', async () => {
+    const dbPath = await fixture();
+    const declared = session('served-declaration', {
+      name: 'Served PR implementation',
+      sessionLabel: 'Served PR implementation',
+      source: {
+        ...session('served-declaration').source,
+        harnessKey: 'codex',
+        sourceSessionId: 'served-declaration',
+        vcs: {
+          branches: [],
+          headCommit: null,
+          partial: false,
+          pullRequests: [7, 8].map((number) => ({
+            number: null,
+            observedAt: null,
+            repository: null,
+            url: `https://github.com/fixture/repo/pull/${number}`,
+          })),
+          repository: null,
+        },
+      },
+    });
+    await publish(dbPath, [declared, session('same-checkout-without-declaration')]);
+    const threadIds = await Promise.all(
+      [7, 8].map((number) => create(dbPath, [{ kind: 'pull-request', key: `github.com/fixture/repo#${number}` }])),
+    );
+    const { declarations } = await run(queryServedSessionPullRequestLinks({ dbPath, now: NOW.getTime() }));
+    expect(declarations).toHaveLength(2);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await run(attachDeclaredWorkThreadSessions({ dbPath, machineId: MACHINE, now: at(0), declarations }));
+    }
+    for (const threadId of threadIds) {
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(detail?.row.sessionCount).toBe(1);
+      expect(detail?.row.links.filter((link) => link.kind === 'session')).toMatchObject([
+        { key: sessionLink('served-declaration').key, provenance: 'declared' },
+      ]);
+      expect(detail?.episodes).toMatchObject([
+        {
+          sourceSessionId: 'served-declaration',
+          harness: 'codex',
+          title: 'Served PR implementation',
+          startedAt: at(-2),
+          endedAt: at(-1),
+        },
+      ]);
+    }
+  });
+
+  test('a declared Desktop session renders its CLI identity, dated metadata and children', async () => {
     const dbPath = await fixture();
     const desktop = parseClaudeDesktopSessionObservation({
       accountDirectory: 'account',
@@ -929,7 +1053,7 @@ describe('work-thread reader', () => {
       completedTurns: 1,
       createdAt: at(-4),
       cwd: '/fixture/desktop',
-      declaredPullRequests: [],
+      declaredPullRequests: [{ host: 'github.com', repository: 'fixture/repo', number: 7, state: 'OPEN' }],
       desktopSessionId: 'desktop-id',
       effort: null,
       fileModifiedAt: at(-1),
@@ -991,6 +1115,29 @@ describe('work-thread reader', () => {
         ],
       }),
     );
+    const threadId = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }]);
+    const declarations = desktop.declaredPullRequests.map((pullRequest) => ({
+      pullRequestKey: pullRequestLinkKey(pullRequest),
+      sessionKey: sessionLink(desktop.cliSessionId, 'claude').key,
+    }));
+    await run(attachDeclaredWorkThreadSessions({ dbPath, machineId: MACHINE, now: at(0), declarations }));
+    const desktopOnly = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(desktopOnly?.episodes[0]).toMatchObject({
+      title: 'Desktop title',
+      sourceSessionId: 'cli-id',
+      harness: 'claude',
+      startedAt: at(-4),
+      endedAt: at(-1),
+    });
+    expect(desktopOnly?.sources.find((source) => source.source === 'sessions')).toMatchObject({
+      state: 'ok',
+      lastRunAt: at(0),
+    });
+    const nativeEvidence = await run(
+      queryWorkThreadSessionEvidence({ dbPath, machineId: MACHINE, links: desktopOnly?.row.links ?? [] }),
+    );
+    expect(nativeEvidence).toMatchObject({ revision: null, generatedAt: null });
+    expect(nativeEvidence.sessions[0]?.member).toMatchObject({ rowId: null, projectLabel: null });
     await publish(dbPath, [
       session('cli-id', {
         source: { harnessKey: 'claude', machineId: MACHINE, sourceSessionId: 'cli-id', rootSourceSessionId: 'cli-id' },
@@ -1000,9 +1147,24 @@ describe('work-thread reader', () => {
           source: { harnessKey: 'claude', machineId: MACHINE, sourceSessionId: id, rootSourceSessionId: id },
         }),
       ),
+      session('unrelated', {
+        source: {
+          harnessKey: 'codex',
+          machineId: MACHINE,
+          sourceSessionId: 'unrelated',
+          sourcePath: '/fixture/desktop',
+        },
+      }),
     ]);
-    const threadId = await create(dbPath, [sessionLink('cli-id', 'claude')]);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await run(attachDeclaredWorkThreadSessions({ dbPath, machineId: MACHINE, now: at(0), declarations }));
+    }
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.row.links.filter((link) => link.kind === 'session')).toMatchObject([
+      { key: sessionLink('cli-id', 'claude').key, provenance: 'declared' },
+    ]);
+    expect(detail?.row.sessionCount).toBe(2);
+    expect(detail?.episodes).toHaveLength(1);
     expect(detail?.row.runningSessions).toBe(0);
     expect(detail?.sources.find((source) => source.source === 'sessions')).toMatchObject({
       state: 'ok',
@@ -1010,6 +1172,10 @@ describe('work-thread reader', () => {
     });
     expect(detail?.episodes[0]).toMatchObject({
       title: 'Desktop title',
+      harness: 'claude',
+      sourceSessionId: 'cli-id',
+      startedAt: at(-4),
+      endedAt: at(-1),
       question: 'Review this',
       result: 'Ready for review.',
       durationMs: 10_800_000,
@@ -1041,6 +1207,60 @@ describe('work-thread reader', () => {
       expect(
         evidence.sessions.find((entry) => entry.member.sourceSessionId === 'child-cli')?.member.parentSourceSessionId,
       ).toBe('different-served-parent');
+    }
+    for (const variant of ['unrelated-served', 'served-child', 'ambiguous-desktop', 'ambiguous-served'] as const) {
+      const nativeDb = await fixture();
+      await run(
+        importClaudeDesktopSessions({
+          dbPath: nativeDb,
+          machineId: MACHINE,
+          collectedAt: NOW,
+          completeness: { filesParsed: 2, filesSeen: 2, rejected: 0, truncated: false, unsupported: 0 },
+          observations:
+            variant === 'ambiguous-desktop'
+              ? [desktop, { ...desktop, desktopSessionId: 'duplicate-desktop', filePath: 'account/duplicate.json' }]
+              : [desktop],
+        }),
+      );
+      if (variant !== 'ambiguous-desktop') {
+        let rows = [session('unrelated')];
+        if (variant === 'served-child') {
+          rows = [
+            session('child-only', {
+              source: {
+                harnessKey: 'claude',
+                machineId: MACHINE,
+                sourceSessionId: 'child-only',
+                rootSourceSessionId: 'cli-id',
+                parentSourceSessionId: 'cli-id',
+              },
+            }),
+          ];
+        } else if (variant === 'ambiguous-served') {
+          rows = ['first', 'second'].map((name) =>
+            session(name, {
+              source: {
+                harnessKey: 'claude',
+                machineId: MACHINE,
+                sourceSessionId: 'cli-id',
+                rootSourceSessionId: 'cli-id',
+              },
+            }),
+          );
+        }
+        await publish(nativeDb, rows);
+      }
+      const nativeThread = await create(nativeDb, [sessionLink('cli-id', 'claude')]);
+      const result = await run(queryWorkThreadDetail({ dbPath: nativeDb, threadId: nativeThread, now: NOW }));
+      const uniqueNativeRoot = variant === 'unrelated-served' || variant === 'served-child';
+      expect(result?.episodes).toHaveLength(uniqueNativeRoot ? 1 : 0);
+      expect(result?.sources.find((source) => source.source === 'sessions')?.state).toBe(
+        uniqueNativeRoot ? 'ok' : 'truncated',
+      );
+      if (variant === 'served-child') {
+        expect(result?.row.sessionCount).toBe(2);
+        expect(result?.episodes[0]?.children).toMatchObject([{ sourceSessionId: 'child-only' }]);
+      }
     }
   });
 

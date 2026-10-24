@@ -750,11 +750,15 @@ export interface ServedSessionPullRequestLink {
 export interface QueryServedSessionPullRequestLinksInput extends Omit<QueryServedReportRevisionInput, 'revision'> {
   /** Distinct links returned at most; more sets `truncated`. Default 200, maximum 500. */
   readonly limit?: number;
+  /** Restrict identities before applying bounds; an engine only attaches its own machine's sessions. */
+  readonly machineId?: string;
   /** Only Sessions active within this many days before `now`. Default 14, maximum 365. */
   readonly sinceDays?: number;
 }
 
 export interface ServedSessionPullRequestLinks {
+  /** Exact declaring session/PR pairs, independently bounded to 500 per read. */
+  readonly declarations: readonly import('./work-thread-store').DeclaredWorkThreadSession[];
   readonly links: readonly ServedSessionPullRequestLink[];
   readonly revision: string;
   readonly scannedRows: number;
@@ -4487,6 +4491,7 @@ export const { importCodexWorkObservations, queryCodexWorkObservations } = creat
 export const {
   applyWorkThreadCommand,
   applyWorkThreadWaitObservations,
+  attachDeclaredWorkThreadSessions,
   countWorkThreads,
   queryActiveWorkThreadLinks,
   queryWorkThreadById,
@@ -4507,6 +4512,9 @@ export type {
   ApplyWorkThreadCommandInput,
   ApplyWorkThreadWaitObservationsInput,
   ApplyWorkThreadWaitObservationsResult,
+  AttachDeclaredWorkThreadSessionsInput,
+  AttachDeclaredWorkThreadSessionsResult,
+  DeclaredWorkThreadSession,
   QueryActiveWorkThreadLinksInput,
   QueryActiveWorkThreadLinksResult,
   QueryWorkThreadByIdInput,
