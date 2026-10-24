@@ -91,17 +91,17 @@ export interface WorkThreadMark {
 export interface WorkThreadRow {
   /** Facts newer than `doneAt` on a Done thread: shown, never reopening it silently (plan 120 decision 3). */
   readonly afterDone: { readonly count: number; readonly latestAt: CanonicalInstant } | null;
+  /**
+   * Sessions those linked sessions delegated (subagents, automated reviews), nested under their
+   * parent and counted apart: they are part of the work, not more work to follow.
+   */
+  readonly delegatedSessionCount: number;
   readonly lastActivityAt: CanonicalInstant;
   readonly links: readonly WorkThreadLink[];
   readonly markers: WorkThreadMarkers;
   readonly marks: readonly WorkThreadMark[];
   /** Linked sessions still active by their own last activity, when the reader can tell. */
   readonly runningSessions: number;
-  /**
-   * Sessions those linked sessions delegated (subagents, automated reviews), nested under their
-   * parent and counted apart: they are part of the work, not more work to follow.
-   */
-  readonly delegatedSessionCount: number;
   /** Linked sessions themselves (the episodes of the thread), without their delegated children. */
   readonly sessionCount: number;
   readonly thread: WorkThread;
