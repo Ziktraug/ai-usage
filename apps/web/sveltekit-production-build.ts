@@ -121,7 +121,7 @@ const parseLockMetadata = (text: string): ProductionBuildLockMetadata | undefine
     }
     return value as ProductionBuildLockMetadata;
   } catch {
-    return;
+    // Unparseable lock metadata reads as absent.
   }
 };
 

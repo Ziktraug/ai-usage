@@ -27,15 +27,10 @@ const DEFAULT_VITE_MANIFEST_PATH = path.join(ROOT, 'apps/web/.svelte-kit/build/o
 const DEFAULT_OUTPUT_JSON = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map.json');
 const DEFAULT_OUTPUT_MD = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map.md');
 const DEFAULT_CLIENT_OUTPUT = path.join(ROOT, 'apps/web/.output-build/sveltekit/client');
-// biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
 const MANIFEST_PATH = process.env.AI_USAGE_PLAN072_MANIFEST ?? DEFAULT_MANIFEST_PATH;
-// biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
 const VITE_MANIFEST_PATH = process.env.AI_USAGE_PLAN072_VITE_MANIFEST ?? DEFAULT_VITE_MANIFEST_PATH;
-// biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
 const OUTPUT_JSON = process.env.AI_USAGE_PLAN072_OUTPUT_JSON ?? DEFAULT_OUTPUT_JSON;
-// biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
 const OUTPUT_MD = process.env.AI_USAGE_PLAN072_OUTPUT_MD ?? DEFAULT_OUTPUT_MD;
-// biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
 const CLIENT_OUTPUT = process.env.AI_USAGE_PLAN072_CLIENT_OUTPUT ?? DEFAULT_CLIENT_OUTPUT;
 
 const ARK_MODULE_PATTERNS = [/(?:\.\.\/)+node_modules\/@ark-ui\/svelte\//u] as const;

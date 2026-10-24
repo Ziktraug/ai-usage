@@ -477,11 +477,11 @@
   };
   const navigate = async (
     url: URL,
-    options: { readonly replace?: boolean; readonly state?: App.PageState } = {},
+    navigationOptions: { readonly replace?: boolean; readonly state?: App.PageState } = {},
   ): Promise<void> => {
     navigationError = null;
     try {
-      await shellNavigation.goto(url, { reset: false, ...options });
+      await shellNavigation.goto(url, { reset: false, ...navigationOptions });
     } catch (cause) {
       navigationError = cause instanceof Error ? cause.message : 'Campaign navigation failed.';
     }
@@ -702,9 +702,9 @@
   };
   const sessionCount = (row: SessionPresentationRow): string => {
     const total = row.campaignTotalCount ?? 1;
-    const visible = row.campaignVisibleCount ?? total;
-    if (visible !== total) {
-      return `${visible} of ${total} sessions`;
+    const visibleCount = row.campaignVisibleCount ?? total;
+    if (visibleCount !== total) {
+      return `${visibleCount} of ${total} sessions`;
     }
     return `${total} ${total === 1 ? 'session' : 'sessions'}`;
   };

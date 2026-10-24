@@ -169,6 +169,6 @@ const prefetchInitialDestination = async (
       );
     }
   } catch {
-    return;
+    // Prefetching the initial destination is best effort; the page query reports its own failure.
   }
 };

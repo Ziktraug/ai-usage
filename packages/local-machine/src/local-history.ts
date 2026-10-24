@@ -607,7 +607,6 @@ export const decompressHistoryArchive = (compressed: Buffer, filePath: string, m
   try {
     decompressed = zstdDecompressSync(compressed, { maxOutputLength: Math.max(1, layout.declaredContentSize) });
   } catch (cause) {
-    // biome-ignore lint/style/useErrorCause: HistoryArchiveError receives the cause as its second positional argument
     throw new HistoryArchiveError(filePath, cause);
   }
   if (decompressed.length !== layout.declaredContentSize) {

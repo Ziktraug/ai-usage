@@ -114,7 +114,6 @@ export const createPlatformStore = async (config: PlatformStoreConfig): Promise<
         await pool.end();
       } catch (error) {
         lifecycle = 'closed';
-        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new PlatformStoreError('shutdown-failed', 'close-store', { cause: error });
       }
       lifecycle = 'closed';

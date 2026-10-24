@@ -486,7 +486,7 @@ export const createSkillsServerDependencies = (
         return { projectGroups: [], sources: [] };
       }
       if (reason !== undefined) {
-        throw new Error('Project discovery is unavailable.');
+        throw new Error('Project discovery is unavailable.', { cause: error });
       }
       throw error;
     }
@@ -520,7 +520,7 @@ export const createSkillsServerDependencies = (
       });
     } catch (error) {
       if (usageStoreErrorReasonFrom(error) !== undefined) {
-        throw new Error('Skill observations are unavailable.');
+        throw new Error('Skill observations are unavailable.', { cause: error });
       }
       throw error;
     }

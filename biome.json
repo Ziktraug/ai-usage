@@ -38,6 +38,7 @@
         "noIncrementDecrement": "off",
         "noNonNullAssertion": "off",
         "useDestructuring": "off",
+        "useErrorCause": "off",
         "noRestrictedImports": {
           "level": "error",
           "options": {

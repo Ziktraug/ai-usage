@@ -110,7 +110,7 @@ const forbiddenModuleRules: readonly ForbiddenModuleRule[] = [
         appServerDirectoryPattern.test(normalized)
       );
     },
-    name: '$lib/server',
+    name: 'server-only directory',
   },
   {
     matches: (moduleId) => serverModulePattern.test(normalizedModuleId(moduleId)),

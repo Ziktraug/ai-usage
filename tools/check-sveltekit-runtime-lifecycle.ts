@@ -299,8 +299,8 @@ export const checkSvelteKitRuntimeLifecycle = async (
       const asset = await fetch(`${origin}/runtime-asset.txt`);
       assert((await asset.text()).trim() === 'sveltekit-runtime-asset-ok', 'Static asset failed.');
       heldForMs = await checkSse(origin, root, minimumSseHoldMs, isolatedEnvironment);
-    } catch (error) {
-      primaryError = error;
+    } catch (runError) {
+      primaryError = runError;
     }
 
     try {
@@ -313,8 +313,8 @@ export const checkSvelteKitRuntimeLifecycle = async (
       if (artifactSnapshot !== undefined) {
         await assertArtifactSnapshotUnchanged(options.artifactDirectory, artifactSnapshot);
       }
-    } catch (error) {
-      cleanupError = error;
+    } catch (stopError) {
+      cleanupError = stopError;
     }
   } finally {
     try {
@@ -322,13 +322,13 @@ export const checkSvelteKitRuntimeLifecycle = async (
         signalProcessGroup(child.pid, 'SIGKILL');
         await child.exited;
       }
-    } catch (error) {
-      cleanupError = combineErrors(cleanupError, error);
+    } catch (killError) {
+      cleanupError = combineErrors(cleanupError, killError);
     }
     try {
       await rm(root, { force: true, recursive: true });
-    } catch (error) {
-      cleanupError = combineErrors(cleanupError, error);
+    } catch (removeError) {
+      cleanupError = combineErrors(cleanupError, removeError);
     }
   }
 

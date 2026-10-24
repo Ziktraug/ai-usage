@@ -225,7 +225,7 @@ const parseAuthenticationBaseUrl = (value: string): URL => {
     }
     return url;
   } catch {
-    // biome-ignore lint/style/useErrorCause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`
+    // No cause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`.
     throw new AuthenticationRejectedError();
   }
 };

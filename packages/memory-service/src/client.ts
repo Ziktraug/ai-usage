@@ -148,7 +148,6 @@ const readBoundedResponse = async (response: Response, signal: AbortSignal): Pro
   try {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryServiceClientError('invalid-response', 'Memory service response is invalid.', { cause: error });
   }
 };
@@ -210,7 +209,7 @@ export const createMemoryServiceClient = ({
       if (error instanceof MemoryServiceClientError) {
         throw error;
       }
-      // biome-ignore lint/style/useErrorCause: redaction boundary, this can be a parse error quoting the token-bearing rendezvous file
+      // No cause: redaction boundary, the caught error can be a parse error quoting the token-bearing rendezvous file.
       throw new MemoryServiceClientError('service-unavailable', 'Memory service is unavailable.');
     } finally {
       linked.cleanup();

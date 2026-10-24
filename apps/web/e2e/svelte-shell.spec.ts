@@ -14,9 +14,9 @@ const ANY_VALUE_PATTERN = /.+/;
 const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync/;
 
 const navigateAndWaitForRouteData = async (page: Page, link: Locator, pathname: string): Promise<void> => {
-  const responsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return url.pathname === pathname && response.request().resourceType() === 'fetch';
+  const responsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return url.pathname === pathname && candidate.request().resourceType() === 'fetch';
   });
   await link.click();
   const response = await responsePromise;

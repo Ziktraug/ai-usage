@@ -29,8 +29,10 @@ export const reportRouteClientEntryKeys = (appDir: string): readonly string[] =>
     throw new Error('Expected the generated SvelteKit manifest to expose routes');
   }
   const matches = manifest.routes.filter(
-    (route: unknown) =>
-      isRecord(route) && typeof route.id === 'string' && (route.id.replace(ROUTE_GROUP_PATTERN, '') || '/') === '/',
+    (candidate: unknown) =>
+      isRecord(candidate) &&
+      typeof candidate.id === 'string' &&
+      (candidate.id.replace(ROUTE_GROUP_PATTERN, '') || '/') === '/',
   );
   const route: unknown = matches[0];
   const page = isRecord(route) ? route.page : undefined;

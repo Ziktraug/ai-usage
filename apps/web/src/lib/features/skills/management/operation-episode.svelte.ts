@@ -58,13 +58,13 @@ export interface SkillsManagementOperationNotice {
 }
 
 export interface SkillsManagementOperationClient extends SkillsInventoryQueryClient {
-  createManagedSkillTargetDirectory(input: { readonly targetId: string }): Promise<unknown>;
-  previewReconcileAllManagedSkills(): Promise<unknown>;
-  reconcileAllManagedSkills(): Promise<unknown>;
-  reconcileManagedSkill(skillName: string): Promise<unknown>;
-  refreshSkillManagementSnapshot(): Promise<unknown>;
-  saveSkillManagementConfig(input: SkillManagementConfig): Promise<unknown>;
-  toggleManagedSkill(input: { readonly enabled: boolean; readonly skillName: string }): Promise<unknown>;
+  createManagedSkillTargetDirectory: (input: { readonly targetId: string }) => Promise<unknown>;
+  previewReconcileAllManagedSkills: () => Promise<unknown>;
+  reconcileAllManagedSkills: () => Promise<unknown>;
+  reconcileManagedSkill: (skillName: string) => Promise<unknown>;
+  refreshSkillManagementSnapshot: () => Promise<unknown>;
+  saveSkillManagementConfig: (input: SkillManagementConfig) => Promise<unknown>;
+  toggleManagedSkill: (input: { readonly enabled: boolean; readonly skillName: string }) => Promise<unknown>;
 }
 
 const requireSnapshot = (wireResult: unknown): SkillManagementSnapshot => {
@@ -178,7 +178,7 @@ export const createSkillsManagementOperationEpisodePort = (
     try {
       return await mutation.mutateAsync(command);
     } catch {
-      return;
+      // The mutation observer keeps the failure for the notice; the episode has no outcome.
     }
   };
   return {

@@ -244,7 +244,6 @@ const jsonValue = (value: unknown, operation: string): MemoryJsonValue => {
   try {
     return parseMemoryJsonValue(value, operation);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('unavailable', operation, { cause: error });
   }
 };
@@ -365,7 +364,6 @@ const withMemoryTransaction = async <Value>(
   try {
     client = await pool.connect();
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('unavailable', operation, { cause: error });
   }
   try {
@@ -379,7 +377,6 @@ const withMemoryTransaction = async <Value>(
     if (error instanceof MemoryRepositoryError) {
       throw error;
     }
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('unavailable', operation, { cause: error });
   } finally {
     client.release();
@@ -409,7 +406,6 @@ const withMemorySearchTransaction = async <Value>(
   try {
     client = await pool.connect();
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('unavailable', 'search-items', { cause: error });
   }
   try {
@@ -431,12 +427,10 @@ const withMemorySearchTransaction = async <Value>(
       throw error;
     }
     if (isPostgreSqlQueryCancelled(error)) {
-      // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
       throw new MemoryRepositoryError(query.signal?.aborted ? 'cancelled' : 'timeout', 'search-items', {
         cause: error,
       });
     }
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('unavailable', 'search-items', { cause: error });
   } finally {
     client.release();
@@ -881,7 +875,6 @@ const decodeCursor = (cursor: string | null | undefined, query: ListMemoryItemsQ
     }
     return parseMemoryItemId(candidate.afterItemId);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', 'list-items', { cause: error });
   }
 };
@@ -907,7 +900,6 @@ const decodeProposalCursor = (cursor: string | null | undefined, query: ListMemo
     }
     return parseMemoryProposalId(candidate.afterItemId);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', 'list-proposals', { cause: error });
   }
 };
@@ -930,7 +922,6 @@ const memoryAuthorization = (
   try {
     binding = readAuthorizedResourceScopeAdapterBinding(authorizationScope);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', operation, { cause: error });
   }
   const scopeSql = authorizationScopeSql(expectedPermission, 'memory');
@@ -997,7 +988,6 @@ const decodeMemorySearchCursor = (
     if (error instanceof MemoryRepositoryError) {
       throw error;
     }
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', 'search-items-cursor', { cause: error });
   }
 };

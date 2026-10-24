@@ -113,7 +113,6 @@ export const withLocalMemoryIdentityKernel = (
         await runtime.dispose().catch((cleanupError: unknown) => cleanupFailures.push(cleanupError));
       }
       if (cleanupFailures.length > 0) {
-        // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
         throw new AggregateError([error, ...cleanupFailures], 'The local Memory runtime failed during startup.');
       }
       throw error;

@@ -844,7 +844,6 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
               ...(options.now === undefined ? {} : { updatedAt: options.now() }),
             });
           } catch (rollbackCause) {
-            // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
             throw new UsageEngineFatalConsistencyError(
               [cause, rollbackCause],
               'Machine label config write and usage-store rollback both failed.',

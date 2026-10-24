@@ -1127,7 +1127,6 @@ const recoverStaleLock = async (
     try {
       await rollBackRecoveryClaim(lockPath, claim, finalWasRemoved);
     } catch (rollbackError) {
-      // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
       throw new AggregateError([error, rollbackError], 'Usage engine stale-lock recovery rollback failed.');
     }
     throw error;
@@ -1222,7 +1221,6 @@ const rollBackPublishedLock = async (
     unresolvedFinal = await lstat(lockPath);
   } catch (inspectionError) {
     if (!errorHasCode(inspectionError, 'ENOENT')) {
-      // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
       throw new UnprovenPublishedLockRollbackError(
         [error, inspectionError],
         'Usage engine lock publication rollback could not be proven.',
@@ -1336,7 +1334,6 @@ const publishLock = async (
     try {
       await rollBackRecoveryClaim(lockPath, recoveryClaim, true);
     } catch (rollbackError) {
-      // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
       throw new AggregateError([error, rollbackError], 'Usage engine recovered-lock publication rollback failed.');
     }
     throw error;
@@ -1463,7 +1460,6 @@ export const acquireUsageEngineLock = async ({
     });
   } catch (error) {
     if (!(await removePrivateFileIfUnchanged(ownIntent.path, ownIntent.identity))) {
-      // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
       throw new AggregateError(
         [error, new Error(`Usage engine lock acquisition intent changed before cleanup: ${ownIntent.path}`)],
         'Usage engine lock acquisition and intent cleanup both failed.',

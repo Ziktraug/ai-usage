@@ -90,21 +90,21 @@
   const selectRow = (
     row: SessionPresentationRow,
     items: readonly SessionPageItem[],
-    query: SessionQueryRequest | undefined,
+    rowQuery: SessionQueryRequest | undefined,
     total: number,
   ): void => {
     if (selectedRowId === row.rowId) {
       onSelectionChange(null);
       return;
     }
-    if (!query) {
+    if (!rowQuery) {
       return;
     }
     const pageItem = items.find((item) =>
       row.campaignKey === undefined ? item.row.rowId === row.rowId : item.campaignKey === row.campaignKey,
     );
     onSelectionChange({
-      query,
+      query: rowQuery,
       row,
       target:
         pageItem === undefined

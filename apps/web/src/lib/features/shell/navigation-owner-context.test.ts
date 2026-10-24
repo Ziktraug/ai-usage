@@ -71,8 +71,8 @@ describe('shell navigation ownership', () => {
     const calls: unknown[] = [];
     const owner = createShellNavigationOwner({
       currentUrl,
-      goto: (url, options) => {
-        calls.push({ options, url });
+      goto: (url, gotoOptions) => {
+        calls.push({ options: gotoOptions, url });
         return navigation.promise;
       },
     });

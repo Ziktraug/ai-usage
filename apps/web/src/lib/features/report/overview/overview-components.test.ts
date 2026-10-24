@@ -9,7 +9,7 @@ import type { ProviderStatusView } from '../../../../provider-status-model';
 import { demoReportPayload } from '../../../../report-data';
 
 interface SvelteServerModule {
-  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+  render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
 const RECORD_DISCLOSURE_PATTERN = /aria-hidden="true" class="[^"]+">↗<\/span>/;

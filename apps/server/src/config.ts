@@ -141,7 +141,7 @@ const parseDatabaseUrl = (value: string | undefined): RedactedDatabaseUrl => {
       throw new ServerConfigError('database-url-invalid');
     }
   } catch {
-    // biome-ignore lint/style/useErrorCause: redaction boundary, a URL parse error keeps the raw database URL (password included) in `input`
+    // No cause: redaction boundary, a URL parse error keeps the raw database URL (password included) in `input`.
     throw new ServerConfigError('database-url-invalid');
   }
   return createRedactedDatabaseUrl(value);
@@ -212,7 +212,7 @@ const parseBaseUrl = (value: string | undefined, runtimeEnvironment: PlatformRun
     }
     return parsed.origin;
   } catch {
-    // biome-ignore lint/style/useErrorCause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`
+    // No cause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`.
     throw new ServerConfigError('base-url-invalid');
   }
 };
@@ -266,7 +266,7 @@ const parseDeviceTokenKeyRing = (value: string | undefined): DeploymentTokenKeyR
     }
     return createDeploymentTokenKeyRing(keys, current.keyVersion);
   } catch {
-    // biome-ignore lint/style/useErrorCause: redaction boundary, the Device token key ring is secret material
+    // No cause: redaction boundary, the caught error comes from parsing the secret Device token key ring.
     throw new ServerConfigError('secret-invalid');
   }
 };

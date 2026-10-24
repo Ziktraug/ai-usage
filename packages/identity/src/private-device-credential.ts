@@ -156,7 +156,7 @@ export const loadPrivateDeviceCredential = async (
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     return parseStoredCredential(JSON.parse(text) as unknown, filePath);
   } catch {
-    // biome-ignore lint/style/useErrorCause: redaction boundary, JSON parse errors quote the private credential document
+    // No cause: redaction boundary, a JSON parse error quotes the private credential document.
     throw new Error('The private Device credential file is invalid or unsafe.');
   } finally {
     await handle.close().catch(() => undefined);

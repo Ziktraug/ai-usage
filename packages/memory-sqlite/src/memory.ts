@@ -264,7 +264,6 @@ const jsonValue = (value: unknown, operation: string): MemoryJsonValue => {
     if (error instanceof MemoryRepositoryError) {
       throw error;
     }
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('unavailable', operation, { cause: error });
   }
 };
@@ -666,7 +665,6 @@ const decodeCursor = (cursor: string | null | undefined, query: ListMemoryItemsQ
     }
     return parseMemoryItemId(candidate.afterItemId);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', 'list-items', { cause: error });
   }
 };
@@ -692,7 +690,6 @@ const decodeProposalCursor = (cursor: string | null | undefined, query: ListMemo
     }
     return parseMemoryProposalId(candidate.afterItemId);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', 'list-proposals', { cause: error });
   }
 };
@@ -724,7 +721,6 @@ const authorizedMemoryIds = (
   try {
     return readAuthorizedResourceScopeIds(authorizationScope);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', operation, { cause: error });
   }
 };
@@ -788,7 +784,6 @@ const decodeMemorySearchCursor = (
     if (error instanceof MemoryRepositoryError) {
       throw error;
     }
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', 'search-items-cursor', { cause: error });
   }
 };
@@ -809,7 +804,6 @@ const authorizedSearchMemoryIds = (query: SearchMemoryRepositoryQuery): readonly
       .map((id) => parseMemoryItemId(id))
       .sort();
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new MemoryRepositoryError('invalid-input', 'search-items-authorization', { cause: error });
   }
 };

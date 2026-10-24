@@ -748,7 +748,9 @@ const runRootDevelopmentSmoke = async (): Promise<void> => {
     process.stdout.write('Root development starts one shared engine/Web target and reaps both task trees.\n');
   } catch (error) {
     const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`, {
+      cause: error,
+    });
   } finally {
     await fixture.dispose();
   }
@@ -892,7 +894,9 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
       await assertRuntimeReleased(fixture, 'Production supervisor');
     } catch (error) {
       const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
-      throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`, {
+        cause: error,
+      });
     }
   } finally {
     await fixture.dispose();

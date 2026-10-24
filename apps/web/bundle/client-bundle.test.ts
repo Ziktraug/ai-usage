@@ -38,9 +38,10 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// Panda 2.3.0 upgrade, local production build: 298,131 B before and 299,795 B after on the same tree
-// (Panda 2 emits a larger css() runtime and stylesheet).
-const RECORDED_GZIP_CLOSURE_BYTES = 299_795;
+// Plan 119 dependency upgrade, local production builds: 298,131 B after the in-major bumps,
+// 299,795 B with Panda 2.3.0 alone (larger css() runtime and stylesheet), 302,512 B with
+// SvelteKit 3.1.0 alone (client runtime), 304,465 B with both.
+const RECORDED_GZIP_CLOSURE_BYTES = 304_465;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */

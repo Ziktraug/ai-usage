@@ -48,8 +48,10 @@ describe('emitted Web client module manifest scanner', () => {
     ['usage-store performance facade', workspaceModule('usage-store', 'src', 'performance-testing.ts'), 'usage-store'],
     ['local machine', workspaceModule('local-machine', 'src', 'index.ts'), 'local-machine'],
     ['engine runtime', workspaceModule('usage-engine-runtime', 'src', 'index.ts'), 'usage-engine-runtime'],
-    ['$lib server alias', '$lib/server/report.ts', '$lib/server'],
-    ['resolved server directory', './src/lib/server/report.ts', '$lib/server'],
+    ['$lib server alias', '$lib/server/report.ts', 'server-only directory'],
+    ['#lib server alias', '#lib/server/report.ts', 'server-only directory'],
+    ['resolved $lib server directory', './src/lib/server/report.ts', 'server-only directory'],
+    ['Web app server directory', './src/server/skills.ts', 'server-only directory'],
     ['server module suffix', './src/lib/report.server.ts', '.server module'],
   ])('rejects a %s present in a client chunk', (_scenario, moduleId, rule) => {
     const manifest = parseWebClientModuleManifest(manifestText([moduleId]));
@@ -65,6 +67,7 @@ describe('emitted Web client module manifest scanner', () => {
     const manifest = parseWebClientModuleManifest(
       manifestText([
         './src/routes/+page.svelte',
+        './src/routes/server/+page.svelte',
         './src/lib/rpc/client.ts',
         './src/path.ts',
         workspaceModule('report-core', 'src', 'index.ts'),

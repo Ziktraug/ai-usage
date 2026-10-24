@@ -16,25 +16,25 @@ import { createSyncBrowserAdapter, type SyncFetch } from '../../rpc/sync-client'
 const MAX_PUBLIC_ERROR_TEXT = 512;
 
 export interface ManualTransferClient {
-  confirm(
+  confirm: (
     file: File,
     preview: UsageEngineMergePreviewOutput,
     signal?: AbortSignal,
     onProgress?: ManualUploadProgressListener,
-  ): Promise<ManualOperationResult<None>>;
-  download(
+  ) => Promise<ManualOperationResult<None>>;
+  download: (
     signal?: AbortSignal,
-  ): Promise<{ readonly filename: string; readonly response: Response; readonly rows: number }>;
-  importCursor(
+  ) => Promise<{ readonly filename: string; readonly response: Response; readonly rows: number }>;
+  importCursor: (
     file: File,
     signal?: AbortSignal,
     onProgress?: ManualUploadProgressListener,
-  ): Promise<ManualOperationResult<UsageEngineCursorImportOutput>>;
-  preview(
+  ) => Promise<ManualOperationResult<UsageEngineCursorImportOutput>>;
+  preview: (
     file: File,
     signal?: AbortSignal,
     onProgress?: ManualUploadProgressListener,
-  ): Promise<ManualOperationResult<UsageEngineMergePreviewOutput>>;
+  ) => Promise<ManualOperationResult<UsageEngineMergePreviewOutput>>;
 }
 
 // Which manual-transfer action is in flight. The progress UI needs it because preview, confirm, and

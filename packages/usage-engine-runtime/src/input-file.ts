@@ -1003,7 +1003,6 @@ const runWithCursorInputCleanup = async <Value>(
     }
   } catch (cleanupError) {
     if (!outcome.ok) {
-      // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
       throw new AggregateError([outcome.error, cleanupError], 'Cursor import and private handoff cleanup both failed.');
     }
     try {

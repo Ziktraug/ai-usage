@@ -143,7 +143,6 @@ export const createInMemoryUsageEngineControlClient = (
             protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           } as const);
       } catch (error) {
-        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'transport-failed',
           'command',
@@ -156,7 +155,6 @@ export const createInMemoryUsageEngineControlClient = (
         parsedResult = stabilizeUsageEngineCommandResult(parseUsageEngineCommandResult(cloneJson(result)));
       } catch (error) {
         if (error instanceof UsageEngineContractError && error.reason === 'protocol-mismatch') {
-          // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
           throw new UsageEngineControlError(
             'protocol-mismatch',
             'command',
@@ -164,7 +162,6 @@ export const createInMemoryUsageEngineControlClient = (
             { cause: error },
           );
         }
-        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'invalid-response',
           'command',
@@ -204,7 +201,6 @@ export const createInMemoryUsageEngineControlClient = (
             protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           });
       } catch (error) {
-        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'transport-failed',
           'command',
@@ -216,7 +212,6 @@ export const createInMemoryUsageEngineControlClient = (
       try {
         parsedResult = parseUsageEngineCommandCancellationResult(cloneJson(result));
       } catch (error) {
-        // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
         throw new UsageEngineControlError(
           'invalid-response',
           'command',

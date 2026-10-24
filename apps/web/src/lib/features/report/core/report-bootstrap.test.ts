@@ -448,9 +448,9 @@ describe('report bootstrap', () => {
           nativeReads += 1;
           return Promise.reject(new Error('SSR must not read native detail'));
         },
-        page: (request) => {
-          pages.push(request);
-          const data = projectSessionPage(demoReportPayload.rows, request);
+        page: (pageRequest) => {
+          pages.push(pageRequest);
+          const data = projectSessionPage(demoReportPayload.rows, pageRequest);
           return Promise.resolve({ data, ok: true, requestFingerprint: data.requestFingerprint, revision });
         },
       });
@@ -463,7 +463,7 @@ describe('report bootstrap', () => {
         },
         { createClient: () => successfulOverviewClient(), createSessionClient: () => sessionClient },
       );
-      const projections = pages.filter((request) => request.filters.fields.campaign === campaign.campaignKey);
+      const projections = pages.filter((pageRequest) => pageRequest.filters.fields.campaign === campaign.campaignKey);
       expect(projections).toHaveLength(1);
       const request = projections[0]!;
       expect(request).toMatchObject({ cursor: null, pageSize: 1, revision });
@@ -505,22 +505,22 @@ describe('report bootstrap', () => {
       {
         createClient: () => ({
           ...reportClient,
-          getFocusedReportOverview: (request) =>
-            request.query.revision === oldBootstrap.manifest.revision
+          getFocusedReportOverview: (overviewRequest) =>
+            overviewRequest.query.revision === oldBootstrap.manifest.revision
               ? Promise.resolve({
-                  error: { message: 'expired', revision: request.query.revision, tag: 'RevisionExpired' },
+                  error: { message: 'expired', revision: overviewRequest.query.revision, tag: 'RevisionExpired' },
                   ok: false,
-                  requestFingerprint: focusedOverviewFingerprint(request),
-                  revision: request.query.revision,
+                  requestFingerprint: focusedOverviewFingerprint(overviewRequest),
+                  revision: overviewRequest.query.revision,
                 })
-              : reportClient.getFocusedReportOverview(request),
+              : reportClient.getFocusedReportOverview(overviewRequest),
           getReportRevisionBootstrap: () => Promise.resolve(++bootstraps === 1 ? oldBootstrap : newBootstrap),
         }),
         createSessionClient: () =>
           sessionClientFixture({
-            lookup: (request) => {
-              lookups.push(request);
-              const data = projectSessionLookup(demoReportPayload.rows, request);
+            lookup: (lookupRequest) => {
+              lookups.push(lookupRequest);
+              const data = projectSessionLookup(demoReportPayload.rows, lookupRequest);
               return Promise.resolve({
                 data,
                 ok: true,

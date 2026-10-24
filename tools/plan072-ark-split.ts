@@ -82,7 +82,7 @@ const median = (values: readonly number[]): number => {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 };
 
-const percentage = (delta: number, control: number): number => Number(((delta / control) * 100).toFixed(6));
+const percentage = (difference: number, control: number): number => Number(((difference / control) * 100).toFixed(6));
 
 const delta = (control: number, candidate: number): { bytes: number; percent: number } => ({
   bytes: candidate - control,
@@ -165,7 +165,6 @@ const main = (): void => {
     throw new Error('Expected all control Drawer samples to load the same raw bytes');
   }
 
-  // biome-ignore lint/suspicious/noUndeclaredEnvVars: explicit path to the clean control build used for compression evidence
   const controlClientDirectory = process.env.AI_USAGE_PLAN072_CONTROL_CLIENT_DIR;
   if (!controlClientDirectory) {
     throw new Error('AI_USAGE_PLAN072_CONTROL_CLIENT_DIR must point to a clean HEAD control client build');

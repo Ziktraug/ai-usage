@@ -754,7 +754,6 @@ const measureScenario = async ({
         cancellationFailures.push(settlementError);
       }
     }
-    // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
     throw new AggregateError([error, ...cancellationFailures], `${name} measurement failed.`);
   }
   const finalSample = await sampleProcessTrees(roots(), devOutputDirectory);
@@ -2027,7 +2026,6 @@ const measureConcurrentBuild = async (
         cleanupFailures.push(settlementError);
       }
     }
-    // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
     throw new AggregateError([error, ...cleanupFailures], 'Concurrent dev readiness failed.');
   }
   if (!(devOutputDirectory && devPid && releasePrimaryBuild)) {
@@ -2401,7 +2399,6 @@ const runUsageRuntimeMeasurementScenarios = async (
             throw new Error('Web and engine did not converge on the same cold-start revision.');
           }
         } catch (error) {
-          // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
           throw new AggregateError(
             [
               error,
@@ -2640,7 +2637,6 @@ const runUsageRuntimeMeasurementScenarios = async (
             },
           );
         } catch (error) {
-          // biome-ignore lint/style/useErrorCause: the caught errors are kept in AggregateError.errors
           throw new AggregateError(
             [
               error,

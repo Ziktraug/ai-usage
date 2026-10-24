@@ -223,15 +223,15 @@ export const timelineReadoutFor = (
   // measured against.
   const previous = index > 0 ? timeline.buckets[index - 1] : undefined;
   const rows = series
-    .map((series) => {
-      const entry = bucket.byKey[series.key];
+    .map((seriesItem) => {
+      const entry = bucket.byKey[seriesItem.key];
       const current = timelineEntryValue(entry, metric);
-      const prior = previous ? timelineEntryValue(previous.byKey[series.key], metric) : 0;
+      const prior = previous ? timelineEntryValue(previous.byKey[seriesItem.key], metric) : 0;
       return {
         delta: prior > NEGLIGIBLE_PRIOR ? ((current - prior) / prior) * 100 : null,
-        key: series.key,
-        label: series.label,
-        priceMeasurement: entry?.priceMeasurement ?? series.priceMeasurement,
+        key: seriesItem.key,
+        label: seriesItem.label,
+        priceMeasurement: entry?.priceMeasurement ?? seriesItem.priceMeasurement,
         value: current,
       };
     })

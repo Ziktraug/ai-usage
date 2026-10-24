@@ -359,9 +359,9 @@ test('scrolls a large hierarchy and restores the same session anchor and keyboar
       const lateChild = map.locator('[data-campaign-node]').filter({ hasText: 'Continuity child 0013' });
       lateParentStates.push(
         ...(await lateChild.evaluateAll((rows) =>
-          rows.map((row) => ({
-            rowId: row.getAttribute('data-row-id'),
-            depth: row.getAttribute('data-depth'),
+          rows.map((element) => ({
+            rowId: element.getAttribute('data-row-id'),
+            depth: element.getAttribute('data-depth'),
           })),
         )),
       );

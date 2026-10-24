@@ -206,10 +206,10 @@ describe('Sync browser adapter', () => {
           cancellationStarted.resolve();
           return new Promise<void>(() => undefined);
         },
-        pull: (controller) => {
+        pull: (streamController) => {
           pulls += 1;
           if (pulls === 1) {
-            controller.enqueue(new TextEncoder().encode('{'));
+            streamController.enqueue(new TextEncoder().encode('{'));
             return;
           }
           secondReadStarted.resolve();
@@ -251,10 +251,10 @@ describe('Sync browser adapter', () => {
     const response = new Response(
       new ReadableStream<Uint8Array>({
         cancel: () => Promise.reject(new Error('manual-export cleanup rejected')),
-        pull: (controller) => {
+        pull: (streamController) => {
           pulls += 1;
           if (pulls === 1) {
-            controller.enqueue(new TextEncoder().encode('{'));
+            streamController.enqueue(new TextEncoder().encode('{'));
             return;
           }
           secondReadStarted.resolve();

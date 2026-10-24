@@ -115,7 +115,7 @@ const parseBaseUrl = (value: string, allowInsecureLoopback: boolean): URL => {
   try {
     url = new URL(value);
   } catch {
-    // biome-ignore lint/style/useErrorCause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`
+    // No cause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`.
     throw new ReplicationClientError('configuration-invalid');
   }
   const loopback = url.hostname === '127.0.0.1' || url.hostname === '[::1]' || url.hostname === 'localhost';

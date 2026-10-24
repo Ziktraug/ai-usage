@@ -108,7 +108,6 @@ export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvou
   try {
     protocolVersion = parseUsageEngineProtocolVersion(value.protocolVersion);
   } catch (error) {
-    // biome-ignore lint/style/useErrorCause: the cause is passed in this constructor's trailing ErrorOptions argument
     throw new UsageEngineRendezvousError('protocol-mismatch', 'Usage engine protocol version mismatch.', {
       cause: error,
     });
@@ -227,7 +226,7 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
     try {
       value = JSON.parse(text) as unknown;
     } catch {
-      // biome-ignore lint/style/useErrorCause: redaction boundary, JSON parse errors quote the token-bearing rendezvous document
+      // No cause: redaction boundary, a JSON parse error quotes the token-bearing rendezvous document.
       throw new Error('Usage engine rendezvous must contain valid JSON.');
     }
     return parseUsageEngineRendezvous(value);

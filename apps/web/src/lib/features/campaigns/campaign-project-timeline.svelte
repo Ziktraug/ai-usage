@@ -111,14 +111,14 @@
   const instant = (value: number): string => `${new Date(value).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
   const sessionInstant = (value: string | null, missing: string): string =>
     value ? `${value.slice(5, 10)} ${value.slice(11, 16)}` : missing;
-  const clipLabel = (bar: CampaignTimelineBar): string => {
-    if (bar.clippedStart && bar.clippedEnd) {
+  const clipLabel = (timelineBar: CampaignTimelineBar): string => {
+    if (timelineBar.clippedStart && timelineBar.clippedEnd) {
       return 'Continues beyond both timeline edges';
     }
-    if (bar.clippedStart) {
+    if (timelineBar.clippedStart) {
       return 'Started before the visible timeline';
     }
-    if (bar.clippedEnd) {
+    if (timelineBar.clippedEnd) {
       return 'Continues after the visible timeline';
     }
     return '';

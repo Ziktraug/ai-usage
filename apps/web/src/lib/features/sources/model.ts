@@ -50,7 +50,6 @@ export const sourceMutationDisabledReason = (pending: boolean, available: boolea
   if (pending) {
     return 'Another source command is pending.';
   }
-  return;
 };
 
 export const sourceRunDisabledReason = (
@@ -71,7 +70,6 @@ export const sourceRunDisabledReason = (
   if (!sourceCanRun(source)) {
     return 'This source is already queued or running.';
   }
-  return;
 };
 
 export const conciseSourceStatus = (state: SourceControlClientState): string => {

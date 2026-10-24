@@ -53,7 +53,7 @@ const LARGE_FIXTURE_SIZE = FIXTURE_SIZES[1];
 type FixtureSize = (typeof FIXTURE_SIZES)[number];
 
 interface BenchmarkDatabase extends SessionQuerySqliteDatabase {
-  close(): void;
+  close: () => void;
 }
 
 interface TraversalMeasurement {
@@ -463,7 +463,6 @@ export const runProbe = async (outputPath = DEFAULT_OUTPUT): Promise<ProbeOutput
 };
 
 if (import.meta.main) {
-  // biome-ignore lint/suspicious/noUndeclaredEnvVars: benchmark-only output override
   const output = await runProbe(process.env.AI_USAGE_PLAN072_OUTPUT ?? DEFAULT_OUTPUT);
   process.stdout.write(`${output.decision.reason}\n`);
 }

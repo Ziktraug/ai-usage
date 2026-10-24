@@ -367,7 +367,7 @@ const readCapturedSessionPage = async (
       rowIds: rpcStringFieldValues(responseBody, 'rowId'),
     };
   } catch {
-    return;
+    // An unreadable response body is not a captured session page.
   }
 };
 

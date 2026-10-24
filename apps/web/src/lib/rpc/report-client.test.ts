@@ -22,17 +22,17 @@ describe('report client adapter', () => {
     const signal = new AbortController().signal;
     const record =
       (path: string, result: unknown) =>
-      (input: unknown, options?: { readonly signal?: AbortSignal }): Promise<unknown> => {
-        calls.push({ input, path, signal: options?.signal });
+      (input: unknown, callOptions?: { readonly signal?: AbortSignal }): Promise<unknown> => {
+        calls.push({ input, path, signal: callOptions?.signal });
         return Promise.resolve(result);
       };
     const focusedResponse = (
       path: string,
       input: FocusedBreakdownRequest | FocusedOverviewRequest | FocusedRevisionRequest,
       requestFingerprint: string,
-      options?: { readonly signal?: AbortSignal },
+      callOptions?: { readonly signal?: AbortSignal },
     ): Promise<unknown> => {
-      calls.push({ input, path, signal: options?.signal });
+      calls.push({ input, path, signal: callOptions?.signal });
       const responseRevision = 'query' in input ? input.query.revision : input.revision;
       return Promise.resolve({
         error: { message: 'Query failed.', revision: responseRevision, tag: 'QueryFailed' },
@@ -60,12 +60,12 @@ describe('report client adapter', () => {
         }),
       },
       report: {
-        focusedBreakdown: (input: FocusedBreakdownRequest, options?: { readonly signal?: AbortSignal }) =>
-          focusedResponse('report.focusedBreakdown', input, focusedBreakdownFingerprint(input), options),
-        focusedOverview: (input: FocusedOverviewRequest, options?: { readonly signal?: AbortSignal }) =>
-          focusedResponse('report.focusedOverview', input, focusedOverviewFingerprint(input), options),
-        focusedSupport: (input: FocusedRevisionRequest, options?: { readonly signal?: AbortSignal }) =>
-          focusedResponse('report.focusedSupport', input, focusedRevisionFingerprint('support', input), options),
+        focusedBreakdown: (input: FocusedBreakdownRequest, callOptions?: { readonly signal?: AbortSignal }) =>
+          focusedResponse('report.focusedBreakdown', input, focusedBreakdownFingerprint(input), callOptions),
+        focusedOverview: (input: FocusedOverviewRequest, callOptions?: { readonly signal?: AbortSignal }) =>
+          focusedResponse('report.focusedOverview', input, focusedOverviewFingerprint(input), callOptions),
+        focusedSupport: (input: FocusedRevisionRequest, callOptions?: { readonly signal?: AbortSignal }) =>
+          focusedResponse('report.focusedSupport', input, focusedRevisionFingerprint('support', input), callOptions),
         revisionBootstrap: record('report.revisionBootstrap', {}),
         revisionManifest: record('report.revisionManifest', {}),
       },

@@ -95,7 +95,7 @@ const destinationSessionsQuery = (data: unknown): SessionQueryRequest | undefine
   try {
     return parseSessionQueryRequest(data.sessions.query);
   } catch {
-    return;
+    // A malformed sessions query is left out of canonicalization.
   }
 };
 

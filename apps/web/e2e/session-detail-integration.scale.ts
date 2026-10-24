@@ -264,7 +264,9 @@ test('keeps a deeply acquired Sessions surface and anchor through Rounds, Back a
   const maximumIndex = () =>
     surface
       .locator('[data-session-index]')
-      .evaluateAll((rows) => Math.max(-1, ...rows.map((row) => Number(row.getAttribute('data-session-index')))));
+      .evaluateAll((rows) =>
+        Math.max(-1, ...rows.map((element) => Number(element.getAttribute('data-session-index')))),
+      );
   await expect
     .poll(
       async () => {
