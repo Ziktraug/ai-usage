@@ -50,7 +50,7 @@ test('desktop arrival is informative, searchable, keyboard-navigable and keeps t
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const posts = trackPosts(page);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
@@ -167,7 +167,7 @@ test('a direct address restores the filters and the selected root, and the detai
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/work?attention=human-request&harness=claude&root=desk-mobile-nav');
+  await page.goto('/work/sessions?attention=human-request&harness=claude&root=desk-mobile-nav');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const filters = main.locator('[data-work-filters]');
@@ -192,7 +192,7 @@ test('mobile keeps the list readable and opens the detail as a drawer without ho
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const posts = trackPosts(page);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
@@ -220,7 +220,7 @@ test('mobile keeps the list readable and opens the detail as a drawer without ho
 for (const width of [768, 1279]) {
   test(`the ${width}px band keeps the rail and the detail placement coherent`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    await page.goto('/work');
+    await page.goto('/work/sessions');
     await waitForHydratedWork(page);
     const main = page.getByRole('main');
     const rail = page.locator('[data-app-navigation="desktop"][data-hydrated="true"]');
@@ -254,7 +254,7 @@ test('Work preserves disclosures opened by keyboard before hydration', async ({ 
   });
 
   try {
-    await page.goto('/work', { waitUntil: 'commit' });
+    await page.goto('/work/sessions', { waitUntil: 'commit' });
     await scriptsBlocked.promise;
     const main = page.getByRole('main');
     await expect(main).toHaveAttribute('data-work-hydrated', 'false');

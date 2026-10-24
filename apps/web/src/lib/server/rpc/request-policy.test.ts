@@ -112,15 +112,19 @@ describe('request policy matrix', () => {
     ]);
   });
 
-  test('requires demo rejection and trusted-local validation for every policy', () => {
-    expect(requestPolicyMatrix).toHaveLength(51);
+  test('isolates the three synthetic demo procedures and requires trusted-local validation', () => {
+    expect(requestPolicyMatrix).toHaveLength(54);
     expect(new Set(requestPolicyMatrix.map(({ id }) => id)).size).toBe(requestPolicyMatrix.length);
 
     for (const policy of requestPolicyMatrix) {
-      expect(policy.demo).toBe('forbidden');
+      expect(policy.demo).toBe(
+        ['workThreads.list', 'workThreads.detail', 'workThreads.command'].includes(policy.target)
+          ? 'synthetic-only'
+          : 'forbidden',
+      );
       expect(policy.trustedLocal).toBe('required');
       const observable = observableErrorFamiliesFor(policy);
-      expect(observable).toContain('ForbiddenDemo');
+      expect(observable.includes('ForbiddenDemo')).toBe(policy.demo === 'forbidden');
       expect(observable).toContain('MethodNotAllowed');
       expect(observable).toContain('MissingHost');
       expect(observable).toContain('UntrustedHost');

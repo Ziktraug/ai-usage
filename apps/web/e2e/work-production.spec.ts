@@ -222,7 +222,7 @@ const waitForCollectedWork = async (request: APIRequestContext): Promise<void> =
 };
 
 const openWorkRoot = async (page: Page, rootId: string): Promise<Locator> => {
-  await page.goto(`/work?root=${rootId}`);
+  await page.goto(`/work/sessions?root=${rootId}`);
   await waitForHydratedWork(page);
   const aside = page.getByRole('main').locator('[data-work-aside]');
   await expect(aside.locator('[data-work-detail]')).toHaveAttribute('data-work-detail', rootId);
@@ -237,7 +237,7 @@ test('renders the collected registry and its observed facts as a resume surface,
   await page.setViewportSize({ width: 1440, height: 900 });
   const tracked = trackRequests(page, new URL(baseURL ?? DEFAULT_ORIGIN).origin);
   await waitForCollectedWork(request);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
@@ -472,7 +472,7 @@ test('shows the collected Codex sessions apart, wait unknown, each opening its o
   expect(output.data.totalRoots).toBe(DESKTOP_ROOTS + CODEX_FAMILIES);
   expect(output.data.truncated).toBe(true);
 
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const section = main.locator('[data-work-section="not-observable"]');
@@ -612,7 +612,7 @@ test('lists the Desktop registry as a detected source whose last run succeeded',
   await capture(page, 'sources-prod-1440.png', { fullPage: true });
 
   // The Work view repeats the same source state beside its dataset.
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const sources = page.getByRole('main').locator('details[data-work-sources]');
   await sources.locator('> summary').click();
@@ -624,7 +624,7 @@ test('lists the Desktop registry as a detected source whose last run succeeded',
 test('opens the collected root as a drawer at 390px without overflow', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await waitForCollectedWork(request);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
@@ -661,7 +661,7 @@ test('reads on the production path what the native registry says about requests,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await waitForCollectedWork(request);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
 

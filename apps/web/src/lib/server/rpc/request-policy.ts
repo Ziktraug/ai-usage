@@ -1,7 +1,7 @@
 import type { PublicErrorFamily } from '@ai-usage/web-contract/errors';
 
 export const publicHttpMethods = ['GET', 'POST'] as const;
-export const demoPolicies = ['forbidden'] as const;
+export const demoPolicies = ['forbidden', 'synthetic-only'] as const;
 export const trustedLocalPolicies = ['required'] as const;
 export const csrfPolicies = ['not-required', 'required'] as const;
 export const requestSizeClasses = [
@@ -64,12 +64,14 @@ export interface ExplicitHttpRequestPolicy extends SharedRequestPolicy {
 
 export type RequestPolicy = ExplicitHttpRequestPolicy | OperationRequestPolicy;
 
-type OperationPolicyInput = Omit<OperationRequestPolicy, 'csrf' | 'demo' | 'id' | 'source' | 'trustedLocal'>;
+type OperationPolicyInput = Omit<OperationRequestPolicy, 'csrf' | 'demo' | 'id' | 'source' | 'trustedLocal'> & {
+  readonly demo?: DemoPolicy;
+};
 
 const defineOperationPolicy = (input: OperationPolicyInput): OperationRequestPolicy => ({
   ...input,
   csrf: input.transport === 'mutation' || input.transport === 'file' ? 'required' : 'not-required',
-  demo: 'forbidden',
+  demo: input.demo ?? 'forbidden',
   id: `operation:${input.operation}`,
   source: 'operation',
   trustedLocal: 'required',
@@ -460,6 +462,36 @@ export const operationRequestPolicies = [
     transport: 'mutation',
   }),
   defineOperationPolicy({
+    applicationErrorFamilies: ['Unavailable'],
+    method: 'POST',
+    operation: 'listWorkThreads',
+    demo: 'synthetic-only',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'workThreads.list',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
+    applicationErrorFamilies: ['Unavailable'],
+    method: 'POST',
+    operation: 'getWorkThreadDetail',
+    demo: 'synthetic-only',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'workThreads.detail',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
+    applicationErrorFamilies: ['Forbidden', 'InvalidInput', 'Unavailable'],
+    method: 'POST',
+    operation: 'executeWorkThreadCommand',
+    demo: 'synthetic-only',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'workThreads.command',
+    transport: 'mutation',
+  }),
+  defineOperationPolicy({
     applicationErrorFamilies: reportReadErrors,
     method: 'POST',
     operation: 'listWorkAttempts',
@@ -569,7 +601,10 @@ const localTrustErrors = [
 ] as const;
 
 export const observableErrorFamiliesFor = (policy: RequestPolicy): readonly string[] => {
-  const families = new Set<string>(['MethodNotAllowed', 'ForbiddenDemo', ...policy.applicationErrorFamilies]);
+  const families = new Set<string>(['MethodNotAllowed', ...policy.applicationErrorFamilies]);
+  if (policy.demo === 'forbidden') {
+    families.add('ForbiddenDemo');
+  }
   if (policy.trustedLocal === 'required') {
     for (const family of localTrustErrors) {
       families.add(family);

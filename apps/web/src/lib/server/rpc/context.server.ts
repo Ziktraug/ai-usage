@@ -438,6 +438,24 @@ const createWorkAttemptsDependencies = (request: Request): WebRpcRouterDependenc
     }),
 });
 
+const createWorkThreadsDependencies = (request: Request): WebRpcRouterDependencies['workThreads'] => ({
+  list: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-threads.server');
+      return await server.readWorkThreadListForServer(input, abortOptions(signal));
+    }),
+  detail: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-threads.server');
+      return await server.readWorkThreadDetailForServer(input, abortOptions(signal));
+    }),
+  command: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-threads.server');
+      return await server.executeWorkThreadCommandFromRequestForServer(request, input);
+    }),
+});
+
 const createWorkRoutingDependencies = (request: Request): WebRpcRouterDependencies['workRouting'] => ({
   isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
   qualify: async (input, signal) =>
@@ -471,5 +489,6 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
     work: createWorkDependencies(),
     workAttempts: createWorkAttemptsDependencies(request),
     workRouting: createWorkRoutingDependencies(request),
+    workThreads: createWorkThreadsDependencies(request),
   });
 };

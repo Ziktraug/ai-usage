@@ -51,7 +51,7 @@ test('real installed Codex metadata refuses credit-enabled generation from Work'
       { timeout: 60_000 },
     )
     .toBe(true);
-  await page.goto('/work?root=local_fixture-blocked-root');
+  await page.goto('/work/sessions?root=local_fixture-blocked-root');
   await expect(page.locator('main[data-work-hydrated="true"]')).toBeVisible();
   const aside = page.locator('[data-work-aside]');
   await aside.getByRole('button', { name: 'Qualify now with the engine' }).click();

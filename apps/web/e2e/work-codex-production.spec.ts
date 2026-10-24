@@ -52,7 +52,7 @@ test('fake Codex native process: choose model, review, retrieve context, interru
     )
     .toBe(true);
   await page.clock.install({ time: serverNow });
-  await page.goto(`/work?root=${rootId}`);
+  await page.goto(`/work/sessions?root=${rootId}`);
   await expect(page.locator('main[data-work-hydrated="true"]')).toBeVisible();
   const aside = page.locator('[data-work-aside]');
   const selection = aside.getByLabel('Review executor');
@@ -103,7 +103,7 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/work?context-project=hidden-context&context-days=180');
+  await page.goto('/work/sessions?context-project=hidden-context&context-days=180');
   await expect(page.locator('[data-work-root]').filter({ hasText: 'Old scoped exploration' })).toBeVisible();
   await page.reload();
   await expect(page.locator('[data-work-root]').filter({ hasText: 'Old scoped exploration' })).toBeVisible();
@@ -115,7 +115,7 @@ test('fake Codex native process: choose model, review, retrieve context, interru
       reads.push(sent.url());
     }
   });
-  await page.goto('/work?context-project=%2Fwork%2Fai-usage');
+  await page.goto('/work/sessions?context-project=%2Fwork%2Fai-usage');
   await expect(page.locator('[data-work-context-invalid]')).toBeVisible();
   await expect(page.locator('[data-work-root]')).toHaveCount(0);
   expect(reads).toHaveLength(0);
@@ -136,7 +136,7 @@ test('fake Codex native process: choose model, review, retrieve context, interru
   await expect(page.locator('[data-work-context-invalid]')).toBeVisible();
   await expect(page.locator('[data-work-root]')).toHaveCount(0);
   expect(reads).toHaveLength(0);
-  await page.goto('/work?context-project=checkout-3');
+  await page.goto('/work/sessions?context-project=checkout-3');
   const native = page
     .locator('[data-work-root]')
     .filter({ hasText: 'Keep the scoped context available across worktrees?' });
@@ -277,7 +277,7 @@ test('a delayed qualification cannot replace another selected root or a newer qu
     )
     .toBe(true);
   await page.clock.install({ time: serverNow });
-  await page.goto('/work?context-project=fixture-pagination');
+  await page.goto('/work/sessions?context-project=fixture-pagination');
   await expect(page.locator('main[data-work-hydrated="true"]')).toBeVisible();
   const roots = page.locator('[data-work-root]');
   await expect(roots).toHaveCount(10);

@@ -94,7 +94,7 @@ const expectAxeClean = async (page: Page): Promise<void> => {
 };
 const searchParam = (page: Page, name: string): string | null => new URL(page.url()).searchParams.get(name);
 const openWorkRoot = async (page: Page, rootId: string): Promise<Locator> => {
-  await page.goto(`/work?root=${rootId}`);
+  await page.goto(`/work/sessions?root=${rootId}`);
   await waitForHydratedWork(page);
   const aside = page.getByRole('main').locator('[data-work-aside]');
   await expect(aside.locator('[data-work-detail]')).toHaveAttribute('data-work-detail', rootId);
@@ -114,7 +114,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
       browserReads.push(sent.url());
     }
   });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const response = await request.post(WORK_ATTENTION_PATH, {
     data: encodeRpcResponseBody({ limit: 100, machineId: null }),
@@ -348,7 +348,7 @@ test('keeps questions pending after dated messages, replacement declarations and
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   // Per harness, what was read: declared waits from the Desktop registry only (ADR 0059).
@@ -430,7 +430,7 @@ test('shows Codex sessions apart: wait unknown, never folded under a Desktop roo
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const section = main.locator('[data-work-section="not-observable"]');
@@ -496,7 +496,7 @@ test('a search covers the ranking and says what it did not search; earlier quest
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const status = main.locator('[data-work-search-coverage]');

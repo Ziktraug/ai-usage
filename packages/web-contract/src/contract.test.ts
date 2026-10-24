@@ -10,6 +10,7 @@ import { syncContract } from './sync';
 import { workContract } from './work';
 import { workAttemptsContract } from './work-attempts';
 import { workRoutingContract } from './work-routing';
+import { workThreadsContract } from './work-threads';
 
 test('composes every RPC leaf under one root contract', () => {
   expect(webContract).toEqual({
@@ -23,5 +24,6 @@ test('composes every RPC leaf under one root contract', () => {
     work: workContract,
     workAttempts: workAttemptsContract,
     workRouting: workRoutingContract,
+    workThreads: workThreadsContract,
   });
 });

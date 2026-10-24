@@ -59,6 +59,7 @@
     workRowTop,
     workStack,
   } from './work-styles';
+  import WorkThreadIntake from './work-thread-intake.svelte';
 
   let {
     root,
@@ -237,6 +238,9 @@
       <p class={workMuted}>
         Choose an executor for a read-only review of “{root.title}”. The engine checks the target before launch.
       </p>
+      {#key sessionRow.rowId}
+        <WorkThreadIntake row={sessionRow} />
+      {/key}
       <WorkRouting {mode} {providers} {quotaUnavailable} target={sessionRow} />
     {:else if root.session && lookup.isPending}
       <p class={workMuted} role="status">Resolving the collected Session for this root…</p>

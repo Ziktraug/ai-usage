@@ -49,6 +49,9 @@ export const rpcPathByOperation = {
   getWorkRoutingContext: '/workRouting/context',
   qualifyWorkRouting: '/workRouting/qualify',
   listWorkAttempts: '/workAttempts/list',
+  listWorkThreads: '/workThreads/list',
+  getWorkThreadDetail: '/workThreads/detail',
+  executeWorkThreadCommand: '/workThreads/command',
   startWorkAttempt: '/workAttempts/start',
   stopWorkAttempt: '/workAttempts/stop',
   releaseWorkAttemptReservation: '/workAttempts/release',
@@ -181,7 +184,7 @@ export const enforceRequestPolicy = async (
   policy: RequestPolicy,
   runtimeMode: RuntimeMode = getServerRuntimeMode(),
 ): Promise<{ readonly policy: RequestPolicy } | Response> => {
-  if (runtimeMode === 'demo') {
+  if (runtimeMode === 'demo' && policy.demo === 'forbidden') {
     return demoNotFoundResponse();
   }
   if (request.method !== policy.method) {
@@ -221,11 +224,11 @@ export const enforceRpcRequestPolicy = async (
   if (!isRpcRequest) {
     return boundaryFailure(404, 'NotFound', 'The RPC operation does not exist.');
   }
-  if (runtimeMode === 'demo') {
-    return demoNotFoundResponse();
-  }
   const rpcPath = pathname.slice('/rpc'.length) || '/';
   const policy = rpcPolicyForPath(rpcPath);
+  if (runtimeMode === 'demo' && policy?.demo !== 'synthetic-only') {
+    return demoNotFoundResponse();
+  }
   if (!policy) {
     return boundaryFailure(404, 'NotFound', 'The RPC operation does not exist.');
   }
