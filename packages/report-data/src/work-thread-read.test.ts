@@ -174,6 +174,32 @@ const sessionLink = (id: string, harness = 'codex') => ({
   kind: 'session' as const,
   key: sessionLinkKey({ machineId: MACHINE, harness, sessionId: id }),
 });
+const withBranch = (row: SerializedRow, branch: string | null): SerializedRow => ({
+  ...row,
+  source: {
+    ...row.source,
+    harnessKey: row.source?.harnessKey ?? 'codex',
+    sourceSessionId: row.source?.sourceSessionId ?? null,
+    vcs: {
+      branches:
+        branch === null
+          ? []
+          : [
+              {
+                name: branch,
+                provenance: 'harness-recorded',
+                firstObservedAt: null,
+                lastObservedAt: null,
+                webUrl: null,
+              },
+            ],
+      headCommit: null,
+      partial: true,
+      pullRequests: [],
+      repository: null,
+    },
+  },
+});
 const pr = (hours: number, outcome: 'observed' | 'timeout' | 'unauthenticated' = 'observed') => {
   const value = parsePullRequestObservation({
     machineId: MACHINE,
@@ -183,6 +209,7 @@ const pr = (hours: number, outcome: 'observed' | 'timeout' | 'unauthenticated' =
     observedAt: at(hours),
     outcome,
     state: outcome === 'observed' ? 'OPEN' : null,
+    headRef: outcome === 'observed' ? 'feature' : null,
     title: outcome === 'observed' ? 'Real linked PR' : null,
   });
   if (value === null) {
@@ -192,6 +219,128 @@ const pr = (hours: number, outcome: 'observed' | 'timeout' | 'unauthenticated' =
 };
 
 describe('work-thread reader', () => {
+  test('counts linked episodes separately from distinct delegated children at every rendered depth', async () => {
+    const dbPath = await fixture();
+    const descendants = Array.from({ length: 20 }, (_, i) =>
+      session(`child-${i}`, {
+        source: {
+          ...session(`child-${i}`).source,
+          harnessKey: 'codex',
+          sourceSessionId: `child-${i}`,
+          parentSourceSessionId: 'root',
+          rootSourceSessionId: 'root',
+        },
+      }),
+    );
+    const grandchild = session('grandchild', {
+      source: {
+        ...session('grandchild').source,
+        harnessKey: 'codex',
+        sourceSessionId: 'grandchild',
+        parentSourceSessionId: 'child-0',
+        rootSourceSessionId: 'root',
+      },
+    });
+    await publish(dbPath, [session('root'), ...descendants, grandchild]);
+    const one = await create(dbPath, [sessionLink('root')]);
+    const two = await create(dbPath, [sessionLink('root'), sessionLink('child-0')]);
+    for (const [threadId, linked, delegated] of [
+      [one, 1, 20],
+      [two, 2, 20],
+    ] as const) {
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+      for (const row of [detail?.row, list.rows.find((candidate) => candidate.thread.threadId === threadId)]) {
+        expect(row).toMatchObject({ sessionCount: linked, delegatedSessionCount: delegated });
+      }
+      if (threadId === two) {
+        expect(
+          detail?.episodes[0]?.children.find((child) => child.sourceSessionId === 'child-0')?.children,
+        ).toMatchObject([{ sourceSessionId: 'grandchild' }]);
+      }
+    }
+  });
+
+  test.each([
+    { head: 'feat/x', checkout: 'main', recorded: 'main', expected: 0 },
+    { head: 'refs/heads/feat/x', checkout: 'feat/x', recorded: 'main', expected: 1 },
+    { head: 'feat/x', checkout: 'refs/heads/feat/x', recorded: null, expected: 1 },
+    { head: 'feat/x', checkout: 'Feat/x', recorded: 'Feat/x', expected: 0 },
+    { head: null, checkout: 'feat/x', recorded: 'feat/x', expected: 0 },
+    { head: 'feat/x', checkout: null, recorded: 'feat/x', expected: 0 },
+  ])('keeps PR session checkouts only on the observed head branch: $head / $checkout', async ({
+    head,
+    checkout,
+    recorded,
+    expected,
+  }) => {
+    const dbPath = await fixture();
+    await publish(dbPath, [withBranch(session('declaring'), recorded)]);
+    const threadId = await create(dbPath, [
+      sessionLink('declaring'),
+      { kind: 'pull-request', key: 'github.com/fixture/repo#7' },
+    ]);
+    await run(
+      importPullRequestObservations({ dbPath, observations: [{ ...pr(-3), headRef: head }, pr(-1, 'timeout')] }),
+    );
+    const observation = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/project',
+      outcome: 'observed',
+      observedAt: at(-2),
+      branch: checkout,
+      untrackedCount: 2,
+    });
+    if (!observation) {
+      throw new Error('Invalid branch checkout');
+    }
+    await run(importCheckoutStatusObservations({ dbPath, observations: [observation] }));
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(detail?.episodes).toHaveLength(1);
+    for (const row of [detail?.row, list.rows[0]]) {
+      expect(row?.markers.local).toHaveLength(expected);
+    }
+    if (expected === 1) {
+      await run(
+        importCheckoutStatusObservations({
+          dbPath,
+          observations: [{ ...observation, observedAt: at(0), outcome: 'timeout', branch: null }],
+        }),
+      );
+      expect((await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.markers.local).toEqual([]);
+    }
+  });
+
+  test('analysis checkouts require a matching recorded branch and retain the matching session identity', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [
+      withBranch(session('wrong'), 'main'),
+      withBranch(session('right'), 'refs/heads/feat/x'),
+      withBranch(session('unknown'), null),
+    ]);
+    const mismatch = await create(dbPath, [sessionLink('wrong'), sessionLink('unknown')]);
+    const match = await create(dbPath, [sessionLink('wrong'), sessionLink('right')]);
+    const observation = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/project',
+      outcome: 'observed',
+      observedAt: at(-1),
+      branch: 'feat/x',
+    });
+    if (!observation) {
+      throw new Error('Invalid analysis checkout');
+    }
+    await run(importCheckoutStatusObservations({ dbPath, observations: [observation] }));
+    for (const threadId of [mismatch, match]) {
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(detail?.episodes).toHaveLength(2);
+      expect(detail?.row.markers.local).toHaveLength(threadId === match ? 1 : 0);
+      if (threadId === match) {
+        expect(detail?.row.markers.local[0]?.key).toBe(sessionLink('right').key);
+      }
+    }
+  });
   test('empty data does not turn unrun sources into success, and a missing store fails', async () => {
     const dbPath = await fixture();
     const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
@@ -288,6 +437,7 @@ describe('work-thread reader', () => {
       checkoutPath: '/fixture/project',
       outcome: 'observed',
       observedAt: at(-8),
+      branch: 'feature',
       modifiedCount: 1,
       stagedCount: 0,
       untrackedCount: 0,
@@ -344,7 +494,9 @@ describe('work-thread reader', () => {
 
   test('backfilled checkout changes before Done remove the previously newer activity', async () => {
     const dbPath = await fixture();
-    await publish(dbPath, [session('old-session', { date: at(-21), activeDate: at(-20), endDate: at(-20) })]);
+    await publish(dbPath, [
+      withBranch(session('old-session', { date: at(-21), activeDate: at(-20), endDate: at(-20) }), 'feature'),
+    ]);
     const threadId = await create(dbPath, [sessionLink('old-session')]);
     await command(
       dbPath,
@@ -366,6 +518,7 @@ describe('work-thread reader', () => {
       checkoutPath: '/fixture/project',
       observedAt: at(-2),
       outcome: 'observed',
+      branch: 'feature',
       modifiedCount: 0,
       lastCommitAt: at(-20),
     });
@@ -415,7 +568,22 @@ describe('work-thread reader', () => {
         }),
       ),
     ]);
-    await publish(dbPath, rows);
+    await publish(
+      dbPath,
+      rows.map((row) => withBranch(row, 'feature')),
+    );
+    await run(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [...new Set(rows.map((row) => row.source?.sourcePath))].map((checkoutPath) => ({
+          machineId: MACHINE,
+          checkoutPath,
+          observedAt: at(-1),
+          outcome: 'observed',
+          branch: 'feature',
+        })),
+      }),
+    );
     const threadId = await create(
       dbPath,
       parents.map((parent) => sessionLink(parent)),
@@ -490,7 +658,7 @@ describe('work-thread reader', () => {
       await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW })),
     ]) {
       const row = result && ('row' in result ? result.row : result.rows[0]);
-      expect(row?.markers.local[0]?.latest?.outcome).toBe(outcome);
+      expect(row?.markers.local).toEqual([]);
       expect(result?.sources.find((source) => source.source === 'checkouts')).toMatchObject({
         state: failed === 0 ? 'ok' : 'failed',
         message,
@@ -577,16 +745,19 @@ describe('work-thread reader', () => {
     const dbPath = await fixture();
     await publish(dbPath, [
       session('parent', { date: at(-300), activeDate: at(-299), endDate: at(-299) }),
-      session('detached-child', {
-        source: {
-          ...session('detached-child').source,
-          harnessKey: 'codex',
-          sourceSessionId: 'detached-child',
-          parentSourceSessionId: 'parent',
-          rootSourceSessionId: 'parent',
-          sourcePath: '/fixture/detached',
-        },
-      }),
+      withBranch(
+        session('detached-child', {
+          source: {
+            ...session('detached-child').source,
+            harnessKey: 'codex',
+            sourceSessionId: 'detached-child',
+            parentSourceSessionId: 'parent',
+            rootSourceSessionId: 'parent',
+            sourcePath: '/fixture/detached',
+          },
+        }),
+        'feature',
+      ),
     ]);
     const threadId = await create(dbPath, [sessionLink('parent'), sessionLink('detached-child')]);
     const siblingThread = await create(dbPath, [sessionLink('parent')]);
@@ -617,6 +788,7 @@ describe('work-thread reader', () => {
       checkoutPath: '/fixture/detached',
       observedAt: at(-1),
       outcome: 'observed',
+      branch: 'feature',
       lastCommitAt: at(-2),
     });
     if (checkout === null) {
@@ -628,14 +800,13 @@ describe('work-thread reader', () => {
     for (const row of [detail?.row, list.rows[0]]) {
       expect(row?.sessionCount).toBe(1);
       expect(row?.marks.filter((mark) => mark.kind === 'session')).toEqual([]);
-      expect(row?.markers.local).toHaveLength(1);
-      expect(row?.markers.local[0]?.latest).toBeNull();
+      expect(row?.markers.local).toEqual([]);
       expect(row?.afterDone).toBeNull();
       expect(row?.lastActivityAt).toBe(at(-10));
     }
     expect(detail?.episodes[0]?.children).toEqual([]);
     const sibling = await run(queryWorkThreadDetail({ dbPath, threadId: siblingThread, now: NOW }));
-    expect(sibling?.row.sessionCount).toBe(2);
+    expect(sibling?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
     expect(sibling?.episodes[0]?.children).toHaveLength(1);
     expect(sibling?.row.markers.local.some((marker) => marker.latest?.checkoutPath === '/fixture/detached')).toBe(true);
   });
@@ -786,7 +957,7 @@ describe('work-thread reader', () => {
       for (let offset = 0; offset < 62; offset++) {
         const number = index * 62 + offset + 1;
         links.push({ kind: 'pull-request', key: `github.com/fixture/repo#${number}` });
-        observations.push({ ...pr(-1), number, title: `PR ${number}` });
+        observations.push({ ...pr(-1), number, title: `PR ${number}`, headRef: `branch-${index}` });
       }
       ids.push(await create(dbPath, links, `Batch task ${index}`, -20 - index));
       const jira = parseJiraIssueObservation({
@@ -855,7 +1026,7 @@ describe('work-thread reader', () => {
     expect(page.list.rows.flatMap((row) => row.markers.pullRequests)).toHaveLength(558);
     for (const [index, threadId] of ids.entries()) {
       const row = page.list.rows.find((candidate) => candidate.thread.threadId === threadId);
-      expect(row?.sessionCount).toBe(2);
+      expect(row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
       expect(row?.markers.pullRequests).toHaveLength(62);
       expect(
         row?.markers.pullRequests.every(
@@ -978,7 +1149,7 @@ describe('work-thread reader', () => {
     const threadId = await create(dbPath, [sessionLink('recent-root')]);
     const unrelatedThread = await create(dbPath, [], 'No sessions');
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
-    expect(detail?.row.sessionCount).toBe(2);
+    expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
     expect(detail?.row.runningSessions).toBe(0);
     expect(detail?.episodes[0]?.children[0]?.sourceSessionId).toBe('open-child');
     expect(detail?.sources.find((source) => source.source === 'sessions')).toMatchObject({
@@ -1163,7 +1334,7 @@ describe('work-thread reader', () => {
     expect(detail?.row.links.filter((link) => link.kind === 'session')).toMatchObject([
       { key: sessionLink('cli-id', 'claude').key, provenance: 'declared' },
     ]);
-    expect(detail?.row.sessionCount).toBe(2);
+    expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
     expect(detail?.episodes).toHaveLength(1);
     expect(detail?.row.runningSessions).toBe(0);
     expect(detail?.sources.find((source) => source.source === 'sessions')).toMatchObject({
@@ -1258,9 +1429,56 @@ describe('work-thread reader', () => {
         uniqueNativeRoot ? 'ok' : 'truncated',
       );
       if (variant === 'served-child') {
-        expect(result?.row.sessionCount).toBe(2);
+        expect(result?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
         expect(result?.episodes[0]?.children).toMatchObject([{ sourceSessionId: 'child-only' }]);
       }
+    }
+    for (const [nativeBranch, checkoutBranch, expected] of [
+      ['native-branch', 'native-branch', 1],
+      ['native-branch', 'served-branch', 0],
+      [null, 'served-branch', 0],
+    ] as const) {
+      const branchDb = await fixture();
+      await publish(branchDb, [
+        withBranch(
+          session('cli-id', {
+            source: {
+              harnessKey: 'claude',
+              machineId: MACHINE,
+              sourceSessionId: 'cli-id',
+              rootSourceSessionId: 'cli-id',
+            },
+          }),
+          'served-branch',
+        ),
+      ]);
+      await run(
+        importClaudeDesktopSessions({
+          dbPath: branchDb,
+          machineId: MACHINE,
+          collectedAt: NOW,
+          completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+          observations: [{ ...desktop, branch: nativeBranch }],
+        }),
+      );
+      await run(
+        importCheckoutStatusObservations({
+          dbPath: branchDb,
+          observations: [
+            {
+              machineId: MACHINE,
+              checkoutPath: desktop.cwd,
+              observedAt: at(0),
+              outcome: 'observed',
+              branch: checkoutBranch,
+            },
+          ],
+        }),
+      );
+      const branchThread = await create(branchDb, [sessionLink('cli-id', 'claude')]);
+      const result = await run(queryWorkThreadDetail({ dbPath: branchDb, threadId: branchThread, now: NOW }));
+      expect(result?.episodes).toHaveLength(1);
+      expect(result?.row.markers.local).toHaveLength(expected);
     }
   });
 
@@ -1320,6 +1538,17 @@ describe('work-thread reader', () => {
     expect(detail?.row.markers.local).toHaveLength(1);
     expect(detail?.row.markers.local.map((marker) => marker.via).sort()).toEqual(['branch-link']);
     expect(detail?.row.markers.local[0]?.latestSuccessful?.dirty).toBe(true);
+    await command(dbPath, {
+      commandId: randomUUID(),
+      op: 'link',
+      threadId,
+      kind: 'pull-request',
+      key: 'github.com/fixture/repo#7',
+    });
+    await run(importPullRequestObservations({ dbPath, observations: [{ ...pr(-1), headRef: 'another-branch' }] }));
+    expect(
+      (await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.markers.local.map((marker) => marker.via),
+    ).toEqual(['branch-link']);
     await command(
       dbPath,
       {

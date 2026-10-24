@@ -1397,6 +1397,7 @@ export interface WorkThreadSessionEvidence {
       readonly rowId: string | null;
     };
     readonly desktop: {
+      readonly branch: string | null;
       readonly createdAt: CanonicalInstant;
       readonly cwd: string;
       readonly lastActivityAt: CanonicalInstant;
@@ -1728,6 +1729,7 @@ const readThreadSessionEvidence = (
     return {
       desktopSessionId: validated(evidenceText(value.desktop_session_id, 512), 'Desktop session identity'),
       value: {
+        branch: evidenceOptionalText(value.branch),
         createdAt: validated(normalizeIsoTimestamp(value.created_at), 'Desktop start instant'),
         cwd: validated(evidenceText(value.cwd), 'Desktop checkout'),
         lastActivityAt: validated(normalizeIsoTimestamp(value.last_activity_at), 'Desktop activity'),

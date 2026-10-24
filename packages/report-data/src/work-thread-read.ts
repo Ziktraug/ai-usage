@@ -241,7 +241,11 @@ const pullRequestIdentity = (value: Pick<PullRequestObservation, 'machineId' | '
   identityOf(value.machineId, `pr:${value.host.toLowerCase()}/${value.repository.toLowerCase()}#${value.number}`);
 const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
   const paths = [
-    ...evidence.branchCheckouts.map((entry) => ({ ...entry, via: 'branch-link' as const })),
+    ...evidence.branchCheckouts.map((entry) => ({
+      ...entry,
+      sessions: [] as { key: string; branch: string | null }[],
+      via: 'branch-link' as const,
+    })),
     ...evidence.sessions.flatMap((session) => {
       const checkoutPath = session.desktop?.worktreePath ?? session.desktop?.cwd ?? session.member.checkoutPath;
       return checkoutPath === null
@@ -251,6 +255,12 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
               checkoutPath,
               key: keyOf(session),
               machineId: session.member.machineId,
+              sessions: [
+                {
+                  key: keyOf(session),
+                  branch: session.desktop === null ? session.member.branch : session.desktop.branch,
+                },
+              ],
               via: 'session-checkout' as const,
             },
           ];
@@ -259,11 +269,35 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
   const unique = new Map<string, (typeof paths)[number]>();
   for (const entry of paths) {
     const identity = identityOf(entry.machineId, entry.checkoutPath);
-    if (!unique.has(identity)) {
+    const existing = unique.get(identity);
+    if (existing === undefined) {
       unique.set(identity, entry);
+    } else {
+      unique.set(identity, { ...existing, sessions: [...existing.sessions, ...entry.sessions] });
     }
   }
   return [...unique.values()];
+};
+
+const branchRef = (branch: string | null | undefined): string | null => {
+  const ref = branch?.startsWith('refs/heads/') ? branch.slice('refs/heads/'.length) : branch;
+  return ref == null || ref.length === 0 ? null : ref;
+};
+
+const sessionCountsOf = (episodes: readonly WorkThreadEpisode[], links: readonly WorkThreadLink[]) => {
+  const linked = new Set(links.filter((link) => link.kind === 'session').map((link) => link.key));
+  const resolved = new Set<string>();
+  const pending = [...episodes];
+  while (pending.length > 0) {
+    const episode = pending.pop();
+    if (episode === undefined || resolved.has(episode.linkKey)) {
+      continue;
+    }
+    resolved.add(episode.linkKey);
+    pending.push(...episode.children);
+  }
+  const sessionCount = [...resolved].filter((key) => linked.has(key)).length;
+  return { sessionCount, delegatedSessionCount: resolved.size - sessionCount };
 };
 
 interface RowScope {
@@ -381,10 +415,32 @@ const readRow = (
   if (checkoutPaths.length > WORK_THREAD_BOUNDS.maxLinksPerThread) {
     truncated.add('checkouts');
   }
-  const local = checkoutPaths.slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread).map((checkout) => ({
-    ...factOf(checkout.key, factsRead.checkouts.get(identityOf(checkout.machineId, checkout.checkoutPath))),
-    via: checkout.via,
-  }));
+  const headRefs = new Set(
+    pullRequests.flatMap((pullRequest) => {
+      const head = branchRef(pullRequest.latestSuccessful?.headRef);
+      return head === null ? [] : [head];
+    }),
+  );
+  const local = checkoutPaths
+    .slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread)
+    .flatMap<WorkThreadMarkers['local'][number]>((checkout) => {
+      const observation = factsRead.checkouts.get(identityOf(checkout.machineId, checkout.checkoutPath));
+      if (checkout.via === 'branch-link') {
+        return [{ ...factOf(checkout.key, observation), via: checkout.via }];
+      }
+      const branch = observation?.latest.outcome === 'observed' ? branchRef(observation.latest.branch) : null;
+      if (branch === null) {
+        return [];
+      }
+      if (pullRequests.length > 0 && !headRefs.has(branch)) {
+        return [];
+      }
+      const key =
+        pullRequests.length > 0
+          ? checkout.key
+          : (checkout.sessions.find((session) => branchRef(session.branch) === branch)?.key ?? null);
+      return key === null ? [] : [{ ...factOf(key, observation), via: checkout.via }];
+    });
   const sessions = [...new Map(evidence.sessions.map((session) => [keyOf(session), session])).values()];
   const facts = [...pullRequests, ...jiraIssues, ...local];
   const factDates = new Map<string, CanonicalInstant>();
@@ -448,7 +504,7 @@ const readRow = (
       marks,
       // Neither stored session family carries native lifecycle evidence; recency is not a running state.
       runningSessions: 0,
-      sessionCount: sessions.length,
+      ...sessionCountsOf(episodes, active),
       thread,
     },
   };

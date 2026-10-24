@@ -319,7 +319,7 @@ const evidenceFixture = async () => {
     CREATE TABLE claude_desktop_sessions(id INTEGER PRIMARY KEY, machine_id TEXT, desktop_session_id TEXT,
       cli_session_id TEXT, prior_cli_session_ids_json TEXT, title TEXT, created_at TEXT, last_activity_at TEXT,
       cwd TEXT, worktree_path TEXT, last_turn_report TEXT, status_category TEXT, needs_action TEXT,
-      status_detail TEXT, spawned_from_session_id TEXT, observed_at TEXT);
+      status_detail TEXT, spawned_from_session_id TEXT, observed_at TEXT, branch TEXT);
     INSERT INTO served_report_current VALUES (1, 'fixture');
   `);
   db.query('INSERT INTO served_report_revisions VALUES (?, ?, 1)').run('fixture', NOW);
@@ -510,6 +510,25 @@ describe('work thread store', () => {
         }),
       );
       expect((await search('Rare served')).rows).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('preserves the native Desktop checkout branch apart from served session history', async () => {
+    const { db, dbPath, store, addSession, addDesktop } = await evidenceFixture();
+    try {
+      addSession('desktop', 'Served Desktop', { harness: 'claude', repository: 'fixture/repo', branch: 'old-branch' });
+      addDesktop('desktop', 'Native Desktop');
+      db.query('UPDATE claude_desktop_sessions SET branch = ?').run('native-branch');
+      const input = { dbPath, machineId: MACHINE, links: [evidenceLink(randomUUID(), 'desktop', 'claude')] };
+      const known = await run(store.queryWorkThreadSessionEvidence(input));
+      expect(known.sessions[0]?.member.branch).toBe('old-branch');
+      expect(known.sessions[0]?.desktop?.branch).toBe('native-branch');
+      db.query('UPDATE claude_desktop_sessions SET branch = NULL').run();
+      const unknown = await run(store.queryWorkThreadSessionEvidence(input));
+      expect(unknown.sessions[0]?.member.branch).toBe('old-branch');
+      expect(unknown.sessions[0]?.desktop?.branch).toBeNull();
     } finally {
       db.close();
     }
