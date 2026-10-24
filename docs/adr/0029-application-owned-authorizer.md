@@ -36,8 +36,9 @@ Space and denies or fails non-local and organization contexts.
 
 Application services authorize before content access or mutation. HTTP routes,
 MCP tools, serializers, jobs, and UI filtering do not implement permission
-logic. Every adapter passes the same golden scenarios, including aggregate
-versus content separation and complete authorized-resource listing.
+logic. The single-user authorizer pins every allow and deny decision in its own tests,
+including aggregate versus content separation and complete authorized-resource listing (the
+shared multi-adapter conformance suite went with the organization model, ADR 0074).
 
 Authorization-aware persistence queries re-evaluate current relations in the
 same transaction as protected reads when stale scope could otherwise race a
@@ -48,7 +49,8 @@ revocation. The scope object is a capability handle, not a reusable ACL array.
 - The single-user value path can land before full ReBAC without creating a
   second permission model.
 - Authorization failures remain typed and fail closed.
-- Storage and external engine choices stay replaceable behind conformance.
+- A future second authorizer would need its own conformance suite again; the single-user
+  tests are the contract it would have to meet.
 
 ## Rejected alternative
 

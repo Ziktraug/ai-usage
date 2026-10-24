@@ -77,8 +77,8 @@ was deleted.
 | [0039](0039-continuous-campaign-exploration.md) | Preserve context during continuous campaign exploration | 2026-10-04 | Accepted; amends 0004 and 0012; amended by 0041 |
 | [0040](0040-rounds-are-derived-once-from-native-turns.md) | Rounds are derived once from native turns; child links carry their evidence | 2026-09-09 | Accepted; applies 0017 and 0018 to session detail |
 | [0041](0041-exact-detail-selection-with-continuous-exploration.md) | Resolve exact detail identity independently from bounded scroll restoration | 2026-10-04 | Accepted; amends 0039 |
-| [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Superseded by 0049 on `feat/work-resume-cockpit` (lands with PR #67); preservation rule in 0075 |
-| [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Superseded by 0049 on `feat/work-resume-cockpit` (lands with PR #67); preservation rule in 0075 |
+| [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Accepted; to be superseded by 0049 with PR #67; preservation rule in 0075 |
+| [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Accepted; to be superseded by 0049 with PR #67; preservation rule in 0075 |
 | [0044](0044-local-checkout-observation.md) | Observe local Checkouts and bind them to Projects without review | 2026-10-07 | Accepted; amends 0024, 0042; amended 2026-10-24; Memory-kernel half retires in plan 120 phase B |
 | [0045](0045-desktop-quota-feed-through-the-cli.md) | Desktop consumers read quota through the CLI JSON feed | 2026-10-12 | Accepted; extends 0009 |
 | [0046](0046-hourly-fleet-freshness-heartbeat.md) | Row freshness heartbeats are recorded at hour granularity | 2026-10-17 | Accepted; extends 0009 |
