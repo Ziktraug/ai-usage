@@ -513,14 +513,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
         page.locator('tr[data-selected="true"]'),
         page.locator('tr[data-selected="false"]'),
       );
-      // The last cell is positioned (it anchors the row's chevron), so it paints over the row's
-      // ring and has to carry its own.
-      await expect(page.locator('tr[data-selected="true"] td:last-child')).toHaveCSS('position', 'relative');
-      await expectForcedSelectionRing(
-        page,
-        page.locator('tr[data-selected="true"] td:last-child'),
-        page.locator('tr[data-selected="false"] td:last-child'),
-      );
+      // That the ring is painted unbroken over every cell is a render check further down.
     });
 
     test('the Campaigns view and the selected campaign', async ({ page }) => {
@@ -660,6 +653,146 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await page.keyboard.press('Tab');
       await expect(filterOptionFor(dialog, 'Codex').input).toBeFocused();
       await expect(claude.box).toHaveCSS('outline-style', 'none');
+    });
+  }
+}
+
+/**
+ * The desktop Session drawer opens over the right of the page, so only a viewport wider than the
+ * centred table and the drawer together, a 4K desktop, leaves the selected row's last cell on screen.
+ */
+const DRAWER_CLEAR_DESKTOP = { height: 1000, width: 3840 } as const;
+/** The ring is 2px wide; the band it is looked for in has a pixel of slack for a fractional row. */
+const RING_WIDTH = 2;
+const RING_EDGE_BAND = 3;
+/** The rounding a translucent ring picks up when it is painted over the cell. */
+const RING_COLOR_TOLERANCE = 2;
+
+interface RowRingMisses {
+  /** Columns across the last cell where the row's bottom edge is not the full ring width. */
+  readonly bottom: number;
+  /** Scanlines with a ring pixel along the last cell's own left edge, inside the row. */
+  readonly interiorLeft: number;
+  /** Scanlines where the row's left edge, the reference the others match, is not the full ring width. */
+  readonly left: number;
+  /** Scanlines where the row's right edge, which is the last cell's, is not the full ring width. */
+  readonly right: number;
+  /** Columns across the last cell where the row's top edge is not the full ring width. */
+  readonly top: number;
+}
+
+/**
+ * Reads the ring of a session row from a screenshot of it, as painted. The row draws the ring, a
+ * keyboard focus ring or the forced-colours selection ring, so it has to run at full width along the
+ * row's edges across the last cell, and the last cell, which carries the row's chevron, must neither
+ * paint over it nor draw a line of its own inside the row.
+ */
+const expectRowRingOverLastCell = async (page: Page, row: Locator, ringColor: string): Promise<void> => {
+  const ring = await expectSolidRing(row);
+  expect(ring.color).toBe(await resolveSystemColor(page, ringColor));
+  const lastCell = row.locator('td:last-child');
+  // Nothing may cover the cell, or the screenshot would show what covers it.
+  const uncovered = await lastCell.evaluate((cell) => {
+    const box = cell.getBoundingClientRect();
+    const middle = box.top + box.height / 2;
+    return [box.left + 1, box.right - 1].every((x) => cell.contains(document.elementFromPoint(x, middle)));
+  });
+  expect(uncovered).toBe(true);
+  // A translucent ring (the forced palette's Highlight can be) paints differently over the fill the
+  // cell shows and over the cell's bottom rule. That fill is the nearest opaque one among the cell
+  // and its ancestors, under every translucent one nearer the cell (forced colours keep a fill's
+  // alpha, so a transparent cell reads as a transparent Canvas).
+  const { fills, rule } = await lastCell.evaluate((cell) => {
+    const backgrounds: string[] = [];
+    for (let element: Element | null = cell; element; element = element.parentElement) {
+      backgrounds.push(getComputedStyle(element).backgroundColor);
+    }
+    return { fills: backgrounds, rule: getComputedStyle(cell).borderBottomColor };
+  });
+  const [ringPaint, rulePaint, ...fillPaints] = await paintedColors(page, [ring.color, rule, ...fills]);
+  const opaqueFillAt = fillPaints.findIndex((paint) => paint[3] === OPAQUE_ALPHA);
+  const opaqueFill = fillPaints[opaqueFillAt];
+  const [rowBox, cellBox] = await Promise.all([row.boundingBox(), lastCell.boundingBox()]);
+  if (!(ringPaint && rulePaint && opaqueFill && rowBox && cellBox)) {
+    throw new Error('Expected the ring and an opaque fill under the cell, and the row and its last cell on screen');
+  }
+  const fill = fillPaints.slice(0, opaqueFillAt).reduceRight((under, paint) => overCanvas(paint, under), opaqueFill);
+  const backdropPaints = [fill, overCanvas(rulePaint, fill)];
+  const screenshot = await row.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' });
+  const misses = await page.evaluate(
+    async ({ band, base64, cellLeft, paints, ringWidth, tolerance }): Promise<RowRingMisses> => {
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }), {
+        colorSpaceConversion: 'none',
+        premultiplyAlpha: 'none',
+      });
+      const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d', { willReadFrequently: true });
+      if (!context) {
+        throw new Error('Expected a 2D canvas context');
+      }
+      context.drawImage(bitmap, 0, 0);
+      const { data, height, width } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+      const channels = [0, 1, 2] as const;
+      const isRing = (x: number, y: number): boolean =>
+        paints.some((paint) =>
+          channels.every(
+            (channel) => Math.abs((data[(y * width + x) * 4 + channel] ?? Number.NaN) - paint[channel]) <= tolerance,
+          ),
+        );
+      const span = (from: number, to: number): number[] =>
+        Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
+      const ringPixels = (xs: readonly number[], ys: readonly number[]): number =>
+        xs.flatMap((x) => ys.filter((y) => isRing(x, y))).length;
+      const scanlines = span(band, height - 1 - band);
+      const cellColumns = span(cellLeft + band, width - 1 - band);
+      return {
+        bottom: cellColumns.filter((x) => ringPixels([x], span(height - band, height - 1)) < ringWidth).length,
+        interiorLeft: scanlines.filter((y) => ringPixels(span(cellLeft - 1, cellLeft + 2), [y]) > 0).length,
+        left: scanlines.filter((y) => ringPixels(span(0, band - 1), [y]) < ringWidth).length,
+        right: scanlines.filter((y) => ringPixels(span(width - band, width - 1), [y]) < ringWidth).length,
+        top: cellColumns.filter((x) => ringPixels([x], span(0, band - 1)) < ringWidth).length,
+      };
+    },
+    {
+      band: RING_EDGE_BAND,
+      base64: screenshot.toString('base64'),
+      cellLeft: Math.round(cellBox.x - Math.floor(rowBox.x)),
+      paints: backdropPaints.map((backdrop) => overCanvas(ringPaint, backdrop)),
+      ringWidth: RING_WIDTH,
+      tolerance: RING_COLOR_TOLERANCE,
+    },
+  );
+  expect(misses).toEqual({ bottom: 0, interiorLeft: 0, left: 0, right: 0, top: 0 });
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const forcedColors of ['none', 'active'] as const) {
+    const mode = forcedColors === 'active' ? `${colorScheme} forced-colors` : colorScheme;
+    test(`a session row paints its ring unbroken over its last cell in ${mode} mode`, async ({ page }) => {
+      await page.setViewportSize(DRAWER_CLEAR_DESKTOP);
+      await page.emulateMedia({ colorScheme, forcedColors });
+      await openHydratedReport(page, '/?tab=sessions');
+      const rows = page.locator('tr[data-session-row-id]');
+      const focusRing = forcedColors === 'active' ? 'Highlight' : 'var(--colors-accent)';
+
+      await focusByKeyboard(page, rows.first());
+      await expect(rows.first()).toHaveAttribute('data-selected', 'false');
+      await expectRowRingOverLastCell(page, rows.first(), focusRing);
+
+      // Chosen from the keyboard, the row keeps its focus ring while the desktop drawer opens.
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('dialog', { name: 'Session details' })).toBeVisible();
+      await expect(rows.first()).toHaveAttribute('data-selected', 'true');
+      await expect(rows.first()).toBeFocused();
+      await expectRowRingOverLastCell(page, rows.first(), focusRing);
+
+      if (forcedColors === 'active') {
+        // Chosen by pointer, the row has focus but no focus ring; forced colours ring the selection.
+        await rows.nth(1).click();
+        await page.mouse.move(0, 0);
+        await expect(rows.nth(1)).toHaveAttribute('data-selected', 'true');
+        await expectRowRingOverLastCell(page, rows.nth(1), 'Highlight');
+      }
     });
   }
 }

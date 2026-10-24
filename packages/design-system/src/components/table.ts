@@ -31,7 +31,11 @@ export const table = css({
 });
 
 export const sessionsTable = css({
+  // The row, not its last cell, anchors the chevron: the row's outline (its keyboard focus ring, and
+  // the forced-colours selection ring from the preset globalCss) paints over its unpositioned cells,
+  // where a positioned cell would paint its fill over the ring.
   '& tbody tr[data-selected]': {
+    position: 'relative',
     cursor: 'pointer',
     transition: 'background-color 0.1s',
   },
@@ -42,19 +46,23 @@ export const sessionsTable = css({
     boxShadow: 'inset 2px 0 0 token(colors.lineStrong)',
   },
   '& tbody tr[data-selected] td:last-child': {
-    position: 'relative',
     pr: '26px',
   },
   '& tbody tr[data-selected] td:last-child::after': {
     content: '"›"',
     position: 'absolute',
     right: '10px',
-    top: '50%',
+    // Centred on the cell above its 1px bottom rule, which the row's box includes.
+    top: 'calc(50% - 0.5px)',
     transform: 'translateY(-50%)',
     color: 'faint',
     fontSize: '14px',
     opacity: 0,
     transition: 'opacity 0.1s',
+  },
+  // The table's last row has no bottom rule (`table` above).
+  '& tbody tr[data-selected]:last-child td:last-child::after': {
+    top: '50%',
   },
   '& tbody tr[data-selected]:hover td:last-child::after': {
     opacity: 1,
@@ -69,11 +77,6 @@ export const sessionsTable = css({
   },
   '& tbody tr[data-selected="true"] td:first-child': {
     boxShadow: 'inset 2px 0 0 token(colors.accent)',
-  },
-  // Forced colours mark the selected row with the design system's Highlight ring (preset globalCss).
-  // The positioned last cell paints over that ring, so it carries the ring itself.
-  '& tbody tr[data-selected="true"]:not(:focus-visible) td:last-child': {
-    _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
   },
 });
 
