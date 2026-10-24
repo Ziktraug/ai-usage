@@ -18,6 +18,7 @@ import {
   queryWorkFactRunStates,
   type UsageStoreError,
 } from './reader';
+import { migrateWorkFactSchema, queryDiscoveredPullRequests } from './work-fact-store';
 import {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
@@ -48,10 +49,13 @@ const pullRequest = (overrides: Partial<PullRequestObservation> = {}): PullReque
     accountLabel: null,
     baseRef: 'main',
     checksRollup: 'success',
+    discoveryRole: null,
     draft: false,
     headRef: 'feat/work-view',
     host: 'github.com',
     machineId: 'machine-a',
+    mergeable: null,
+    mergeStateStatus: null,
     mergedAt: null,
     number: 66,
     observedAt: at(0),
@@ -138,6 +142,128 @@ const failureReason = async (effect: Effect.Effect<unknown, UsageStoreError>): P
 };
 
 describe('work fact store: pull request observations', () => {
+  test('reads legacy columns without migration and adds nullable columns on the next import', async () => {
+    const dbPath = await createStore('legacy-discovery');
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [pullRequest()] }));
+    const legacy = new Database(dbPath);
+    for (const column of ['discovery_role', 'mergeable', 'merge_state_status']) {
+      legacy.exec(`ALTER TABLE pull_request_observations DROP COLUMN ${column}`);
+    }
+    legacy.close();
+    const before = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(before.items[0]?.latestObserved).toEqual(pullRequest());
+    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }))).toEqual({
+      items: [],
+      skipped: 0,
+      truncated: false,
+    });
+    const observed = pullRequest({
+      discoveryRole: 'author',
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'BEHIND',
+      observedAt: at(1),
+    });
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [observed] }));
+    expect((await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }))).items[0]?.latestObserved).toEqual(
+      observed,
+    );
+    const migrated = new Database(dbPath);
+    expect(
+      migrated
+        .query(
+          'SELECT discovery_role, mergeable, merge_state_status FROM pull_request_observations ORDER BY observed_at DESC LIMIT 1',
+        )
+        .get(),
+    ).toEqual({ discovery_role: 'author', mergeable: 'MERGEABLE', merge_state_status: 'BEHIND' });
+    expect(migrateWorkFactSchema(migrated)).toBe(false);
+    migrated.close();
+  });
+
+  test('discovery selects the latest success despite failures, respects recency and never resurrects a removed role', async () => {
+    const dbPath = await createStore('discovered');
+    const kept = pullRequest({
+      discoveryRole: 'review-requested',
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+      observedAt: at(2),
+    });
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          kept,
+          failedPullRequest(3),
+          pullRequest({ number: 2, discoveryRole: 'author', observedAt: at(2) }),
+          pullRequest({ number: 2, discoveryRole: null, observedAt: at(3) }),
+          pullRequest({ number: 3, discoveryRole: 'author', observedAt: at(0) }),
+          failedPullRequest(4, { number: 4, discoveryRole: 'author' }),
+        ],
+      }),
+    );
+    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: Date.parse(at(1)) }))).toEqual({
+      items: [kept],
+      skipped: 0,
+      truncated: false,
+    });
+    expect(await failureReason(queryDiscoveredPullRequests({ dbPath, sinceMs: Number.NaN }))).toBe('invalid-input');
+  });
+
+  test('discovery filtering happens before the read ceiling, and qualifying overflow is visible', async () => {
+    const dbPath = await createStore('discovered-ceiling');
+    const unrelated = Array.from({ length: 501 }, (_, index) =>
+      pullRequest({ number: index + 100, observedAt: at(5) }),
+    );
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: unrelated.slice(0, 500) }));
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: unrelated.slice(500) }));
+    const discovered = pullRequest({ discoveryRole: 'author' });
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [discovered] }));
+    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }))).toEqual({
+      items: [discovered],
+      skipped: 0,
+      truncated: false,
+    });
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath,
+        observations: unrelated
+          .slice(0, 500)
+          .map((observation) => ({ ...observation, discoveryRole: 'author', observedAt: at(6) })),
+      }),
+    );
+    const bounded = await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }));
+    expect(bounded.items).toHaveLength(500);
+    expect(bounded.truncated).toBe(true);
+  });
+
+  test('discovery groups historical host and repository casing before selecting latest success', async () => {
+    const dbPath = await createStore('discovered-casing');
+    const original = pullRequest({ discoveryRole: 'author', host: 'GitHub.com', repository: 'Fixture/Project' });
+    const retained = pullRequest({
+      discoveryRole: 'author',
+      host: 'GitHub.com',
+      repository: 'Fixture/Project',
+      number: 2,
+    });
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          original,
+          pullRequest({ observedAt: at(1), discoveryRole: null }),
+          retained,
+          failedPullRequest(2, { number: 2 }),
+        ],
+      }),
+    );
+    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }))).toEqual({
+      items: [retained],
+      skipped: 0,
+      truncated: false,
+    });
+    // Generic observation reads retain their existing case-sensitive grouping contract.
+    expect((await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }))).items).toHaveLength(4);
+  });
+
   test('keeps the latest observation and the latest successful one apart, and re-imports idempotently', async () => {
     const dbPath = await createStore('pull-requests');
     const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));

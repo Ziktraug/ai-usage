@@ -11,7 +11,7 @@ import {
   WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
-import type { UsageStoreError, UsageStoreErrorReason } from './errors';
+import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import type {
   ImportCheckoutStatusObservationsInput,
   ImportJiraIssueObservationsInput,
@@ -28,6 +28,7 @@ import type {
   WorkFactRunState,
   WorkFactRunStates,
 } from './index';
+import { queryLatestPullRequestObservations as queryLatestStoredPullRequests } from './index';
 
 /**
  * Durable storage for the external and local fact family of the Work view (ADR 0051, ADR 0054):
@@ -73,7 +74,10 @@ export const workFactSchemaSql = `
     url TEXT,
     head_ref TEXT,
     base_ref TEXT,
-    checks_rollup TEXT
+    checks_rollup TEXT,
+    discovery_role TEXT,
+    mergeable TEXT,
+    merge_state_status TEXT
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_pull_request_observations_identity
     ON pull_request_observations(machine_id, host, repository, number, observed_at DESC);
@@ -152,6 +156,60 @@ interface SqliteDatabase {
   query(sql: string): SqliteStatement;
 }
 
+/** Presence-based, additive migration; only called by the usage-store writer. */
+export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {
+  const columns = db.query('PRAGMA table_info(pull_request_observations)').all() as { name: string }[];
+  let changed = false;
+  for (const name of ['discovery_role', 'mergeable', 'merge_state_status']) {
+    if (!columns.some((column) => column.name === name)) {
+      db.exec(`ALTER TABLE pull_request_observations ADD COLUMN ${name} TEXT`);
+      changed = true;
+    }
+  }
+  return changed;
+};
+
+export interface QueryDiscoveredPullRequestsInput {
+  readonly dbPath: string;
+  readonly sinceMs: number;
+}
+
+export interface DiscoveredPullRequests {
+  readonly items: readonly PullRequestObservation[];
+  readonly skipped: number;
+  /** The bounded candidate read could not cover all stored pull request identities. */
+  readonly truncated: boolean;
+}
+
+/** Successful observations survive failed reads; an older discovery role never overrides a newer success. */
+export const queryDiscoveredPullRequests = (
+  input: QueryDiscoveredPullRequestsInput,
+): Effect.Effect<DiscoveredPullRequests, UsageStoreError> => {
+  if (!Number.isSafeInteger(input.sinceMs) || Math.abs(input.sinceMs) > 8_640_000_000_000_000) {
+    return Effect.fail(
+      new UsageStoreError({
+        cause: 'sinceMs must be a valid integer timestamp',
+        message: 'Discovered pull request query is out of bounds',
+        operation: 'queryDiscoveredPullRequests',
+        reason: 'invalid-input',
+      }),
+    );
+  }
+  return queryLatestStoredPullRequests({
+    dbPath: input.dbPath,
+    discoveredSinceMs: input.sinceMs,
+    limit: MAX_WORK_FACT_QUERY_LIMIT,
+  }).pipe(
+    Effect.map(({ items, skipped, truncated }) => ({
+      items: items.flatMap(({ latestObserved }) =>
+        latestObserved?.discoveryRole && Date.parse(latestObserved.observedAt) >= input.sinceMs ? [latestObserved] : [],
+      ),
+      skipped,
+      truncated,
+    })),
+  );
+};
+
 interface WorkFactStoreDependencies {
   readonly usageStoreError: (
     operation: string,
@@ -174,11 +232,14 @@ interface PullRequestRecord {
   account_label: string | null;
   base_ref: string | null;
   checks_rollup: string | null;
+  discovery_role?: string | null;
   draft: number | null;
   head_ref: string | null;
   host: string;
   id: number;
   machine_id: string;
+  merge_state_status?: string | null;
+  mergeable?: string | null;
   merged_at: string | null;
   number: number;
   observed_at: string;
@@ -259,10 +320,13 @@ const pullRequestValue = (record: PullRequestRecord): unknown => ({
   accountLabel: record.account_label,
   baseRef: record.base_ref,
   checksRollup: record.checks_rollup,
+  discoveryRole: record.discovery_role,
   draft: booleanFromColumn(record.draft),
   headRef: record.head_ref,
   host: record.host,
   machineId: record.machine_id,
+  mergeable: record.mergeable,
+  mergeStateStatus: record.merge_state_status,
   mergedAt: record.merged_at,
   number: record.number,
   observedAt: record.observed_at,
@@ -487,11 +551,13 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           >();
           db.exec('BEGIN IMMEDIATE');
           try {
+            migrateWorkFactSchema(db);
             const insert = db.query(`
               INSERT OR IGNORE INTO pull_request_observations (
                 machine_id, host, repository, number, observed_at, outcome, outcome_message, account_label,
-                state, draft, review_decision, merged_at, updated_at, title, url, head_ref, base_ref, checks_rollup
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                state, draft, review_decision, merged_at, updated_at, title, url, head_ref, base_ref, checks_rollup,
+                discovery_role, mergeable, merge_state_status
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             for (const candidate of input.observations) {
               const observation = parsePullRequestObservation(candidate);
@@ -518,6 +584,9 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 observation.headRef,
                 observation.baseRef,
                 observation.checksRollup,
+                observation.discoveryRole ?? null,
+                observation.mergeable ?? null,
+                observation.mergeStateStatus ?? null,
               );
               if (changes(db) === 1) {
                 result.inserted += 1;
@@ -733,12 +802,15 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestPullRequestObservations = (
-    input: QueryLatestPullRequestObservationsInput,
+    input: QueryLatestPullRequestObservationsInput & { readonly discoveredSinceMs?: number },
   ): Effect.Effect<LatestPullRequestObservations, UsageStoreError> => {
     const limit = validLimit(input.limit);
     const links = input.links ?? [];
     if (
       limit === null ||
+      (input.discoveredSinceMs !== undefined &&
+        (!Number.isSafeInteger(input.discoveredSinceMs) ||
+          Math.abs(input.discoveredSinceMs) > 8_640_000_000_000_000)) ||
       !validMachineId(input.machineId) ||
       links.length > MAX_WORK_FACT_QUERY_LIMIT ||
       links.some(
@@ -764,36 +836,67 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
+          const discoveredSince = input.discoveredSinceMs;
+          const identityColumns =
+            discoveredSince === undefined
+              ? 'machine_id, host, repository, number'
+              : 'machine_id, LOWER(host), LOWER(repository), number';
+          if (discoveredSince !== undefined) {
+            const columns = db.query('PRAGMA table_info(pull_request_observations)').all() as { name: string }[];
+            if (!columns.some((column) => column.name === 'discovery_role')) {
+              return { items: [], skipped: 0, truncated: false };
+            }
+          }
+          const discoveryFilter =
+            discoveredSince === undefined
+              ? ''
+              : `
+            AND EXISTS (
+              SELECT 1 FROM ranked AS discovered
+              WHERE discovered.machine_id = ranked.machine_id
+                AND LOWER(discovered.host) = LOWER(ranked.host)
+                AND LOWER(discovered.repository) = LOWER(ranked.repository)
+                AND discovered.number = ranked.number
+                AND discovered.outcome = 'observed' AND discovered.rank_outcome = 1
+                AND discovered.discovery_role IS NOT NULL AND discovered.observed_at >= ?
+            )`;
           const records = db
             .query(`
               WITH ranked AS (
                 SELECT *,
                   ROW_NUMBER() OVER (
-                    PARTITION BY machine_id, host, repository, number
+                    PARTITION BY ${identityColumns}
                     ORDER BY observed_at DESC, id DESC
                   ) AS rank_all,
                   ROW_NUMBER() OVER (
-                    PARTITION BY machine_id, host, repository, number, outcome = 'observed'
+                    PARTITION BY ${identityColumns}, outcome = 'observed'
                     ORDER BY observed_at DESC, id DESC
                   ) AS rank_outcome,
-                  MAX(observed_at) OVER (PARTITION BY machine_id, host, repository, number) AS key_latest
+                  MAX(observed_at) OVER (PARTITION BY ${identityColumns}) AS key_latest
                 FROM pull_request_observations
                 WHERE (? IS NULL OR machine_id = ?) ${linkFilter}
               )
               SELECT * FROM ranked
-              WHERE rank_all = 1 OR (outcome = 'observed' AND rank_outcome = 1)
-              ORDER BY key_latest DESC, machine_id, host, repository, number, rank_all
+              WHERE (rank_all = 1 OR (outcome = 'observed' AND rank_outcome = 1)) ${discoveryFilter}
+              ORDER BY key_latest DESC, ${identityColumns}, rank_all
               LIMIT ?
             `)
             .all(
               input.machineId ?? null,
               input.machineId ?? null,
               ...linkParams,
+              ...(discoveredSince === undefined ? [] : [new Date(discoveredSince).toISOString()]),
               2 * (limit + 1),
             ) as PullRequestRecord[];
           return groupLatest(
             records,
-            (record) => JSON.stringify([record.machine_id, record.host, record.repository, record.number]),
+            (record) =>
+              JSON.stringify([
+                record.machine_id,
+                discoveredSince === undefined ? record.host : record.host.toLowerCase(),
+                discoveredSince === undefined ? record.repository : record.repository.toLowerCase(),
+                record.number,
+              ]),
             (record) => parsePullRequestObservation(pullRequestValue(record)),
             limit,
           );

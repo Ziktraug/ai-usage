@@ -164,11 +164,14 @@ describe('observePullRequests through a fake gh on PATH', () => {
       accountLabel: null,
       baseRef: 'main',
       checksRollup: 'success',
+      discoveryRole: null,
       draft: false,
       headRef: 'feat/work-view',
       host: 'github.com',
       machineId: 'machine-a',
+      mergeable: null,
       mergedAt: null,
+      mergeStateStatus: null,
       number: 66,
       observedAt: canonicalInstantFromDate(NOW),
       outcome: 'observed',
@@ -203,7 +206,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
     ]);
     expect(calls[0]?.args.slice(5)).toEqual([
       '--json',
-      'state,isDraft,reviewDecision,mergedAt,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
+      'state,isDraft,reviewDecision,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
     ]);
     for (const call of calls) {
       expect(call.token).toBeNull();
@@ -358,5 +361,45 @@ describe('observePullRequests through a fake gh on PATH', () => {
       ['unauthenticated', 'not attempted: gh has no stored token for alice on github.com'],
     ]);
     expect(fake.calls().map(({ args }) => args[0])).toEqual(['auth']);
+  });
+});
+
+describe('pull request discovery roles and mergeability', () => {
+  test('keeps behind separate from conflict and accepts old missing fields', () => {
+    expect(parsePullRequestView(view(), link(66))).toMatchObject({ mergeable: null, mergeStateStatus: null });
+    expect(parsePullRequestView(view({ mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' }), link(66))).toMatchObject({
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'BEHIND',
+    });
+    expect(parsePullRequestView(view({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }), link(66))).toMatchObject(
+      { mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' },
+    );
+    expect(
+      parsePullRequestView(view({ mergeable: 'UNKNOWN', mergeStateStatus: 'FUTURE_STATUS' }), link(66)),
+    ).toMatchObject({ mergeable: 'UNKNOWN', mergeStateStatus: 'FUTURE_STATUS' });
+    expect(parsePullRequestView(view({ mergeable: 'yes' }), link(66))).toBeNull();
+    expect(parsePullRequestView(view({ mergeStateStatus: 42 }), link(66))).toBeNull();
+  });
+  test('propagates a discovery role and requests raw mergeability fields', async () => {
+    const fake = installFakeGh({
+      pullRequests: { 'fixture/project#66': { stdout: view({ mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' }) } },
+    });
+    const batch = await observe(fake, { links: [{ ...link(66), discoveryRole: 'review-requested' }] });
+    expect(batch.observations[0]).toMatchObject({
+      discoveryRole: 'review-requested',
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'BEHIND',
+    });
+    const fields = fake.calls()[0]?.args.at(-1)?.split(',');
+    expect(fields).toContain('mergeable');
+    expect(fields).toContain('mergeStateStatus');
+  });
+  test('link-only observations have a null role and failed discoveries retain their role', async () => {
+    const good = installFakeGh({ pullRequests: { 'fixture/project#66': { stdout: view() } } });
+    expect((await observe(good)).observations[0]?.discoveryRole).toBeNull();
+    const failed = installFakeGh({ pullRequests: { 'fixture/project#66': { exitCode: 4 } } });
+    expect(
+      (await observe(failed, { links: [{ ...link(66), discoveryRole: 'author' }] })).observations[0],
+    ).toMatchObject({ discoveryRole: 'author', outcome: 'unauthenticated', mergeable: null, mergeStateStatus: null });
   });
 });

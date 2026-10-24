@@ -9,11 +9,13 @@ import {
 } from '@ai-usage/local-collectors/collectors';
 import { type BoundedRun, observeExecutors } from '@ai-usage/local-collectors/executor-observations';
 import { collectCursorCommitAttributionResult } from '@ai-usage/local-collectors/facets';
+import { discoverPullRequests } from '@ai-usage/local-collectors/github-pull-request-discovery';
 import {
   GITHUB_PULL_REQUEST_DEFAULTS,
   observePullRequests,
   type PullRequestLink,
 } from '@ai-usage/local-collectors/github-pull-requests';
+import { discoverJiraIssues } from '@ai-usage/local-collectors/jira-issue-discovery';
 import {
   JIRA_ISSUE_DEFAULTS,
   JIRA_NOT_INSTALLED_MESSAGE,
@@ -1095,7 +1097,7 @@ const createPullRequestSource = (input: {
           warnings: [],
         };
       }
-      const served = yield* servedInputsOrEmpty(
+      const served = yield* servedInputsOrEmpty<readonly PullRequestLink[]>(
         'github.pull-requests',
         queryServedSessionPullRequestLinks({ dbPath: input.dbPath }).pipe(Effect.map(({ links }) => links)),
         [] as readonly PullRequestLink[],
@@ -1108,22 +1110,67 @@ const createPullRequestSource = (input: {
       const injected = input.options.workFactInputs?.linkedPullRequests
         ? yield* input.options.workFactInputs.linkedPullRequests()
         : [];
-      // Desktop-declared pull requests first, then the served links and the injected ones, each once.
-      const unique = new Map<string, PullRequestLink>();
+      // Explicit links keep their order and account even when a search also discovers them.
+      const keyFor = (link: PullRequestLink): string =>
+        pullRequestLinkKey({
+          host: link.host.trim().toLowerCase(),
+          number: link.number,
+          repository: link.repository.trim().toLowerCase(),
+        });
+      const unique = new Map<string, { link: PullRequestLink; account: string | null }>();
       for (const link of [...desktop.links, ...served, ...injected]) {
         const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
-        const key = pullRequestLinkKey(candidate);
+        const key = keyFor(candidate);
         if (!unique.has(key)) {
-          unique.set(key, candidate);
+          unique.set(key, { link: candidate, account: accountFor(config.github, candidate) });
         }
       }
-      const links = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
-      const truncated = unique.size > links.length;
+      const accounts = new Map<string | null, string[]>();
+      for (const account of config.github?.accounts ?? []) {
+        if (account.host === 'github.com') {
+          accounts.set(account.ghUser, [...new Set([...(accounts.get(account.ghUser) ?? []), account.owner])]);
+        }
+      }
+      if (accounts.size === 0) {
+        accounts.set(null, []);
+      }
+      const discoveryWarnings: { code: string; message: string }[] = [];
+      let discoveryFailures = 0;
+      let discoveryTruncated = false;
+      for (const [account, owners] of accounts) {
+        yield* abortIfRequested(context.signal);
+        const discovery = yield* discoverPullRequests({
+          environment: ghEnvironment(),
+          ...(account === null ? {} : { account: { ghUser: account }, owners }),
+          ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+          ...(context.signal === undefined ? {} : { signal: context.signal }),
+        });
+        discoveryTruncated ||= discovery.truncated;
+        if (discovery.outcome !== 'observed') {
+          discoveryFailures += 1;
+          discoveryWarnings.push({
+            code: `pull-request-discovery-${discovery.outcome}`,
+            message: discovery.outcomeMessage ?? 'Pull request discovery failed.',
+          });
+        }
+        for (const link of discovery.links) {
+          const key = keyFor(link);
+          const explicit = unique.get(key);
+          if (explicit) {
+            // Author takes precedence if multiple accounts discover the same pull request.
+            const discoveryRole = explicit.link.discoveryRole === 'author' ? 'author' : link.discoveryRole;
+            unique.set(key, { ...explicit, link: { ...explicit.link, discoveryRole } });
+          } else {
+            unique.set(key, { link, account });
+          }
+        }
+      }
+      const selected = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
+      const links = selected.map(({ link }) => link);
+      const truncated = unique.size > links.length || discoveryTruncated;
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: links.length });
-      // One batch per gh login: the active account for owners without a configured one.
       const byAccount = new Map<string | null, PullRequestLink[]>();
-      for (const link of links) {
-        const account = accountFor(config.github, link);
+      for (const { link, account } of selected) {
         byAccount.set(account, [...(byAccount.get(account) ?? []), link]);
       }
       const observations: PullRequestObservation[] = [];
@@ -1146,10 +1193,14 @@ const createPullRequestSource = (input: {
         Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
       );
       const observed = observations.filter(({ outcome }) => outcome === 'observed').length;
-      const failed = observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
-      const message = truncated
-        ? `Observed the first ${String(links.length)} of ${String(unique.size)} linked pull requests.`
+      const failed =
+        discoveryFailures +
+        observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
+      const truncation = truncated
+        ? `Observed ${String(links.length)} of ${String(unique.size)} candidate pull requests; additional search results may be omitted.`
         : null;
+      const message =
+        [truncation, ...discoveryWarnings.map((warning) => warning.message)].filter(Boolean).join(' ') || null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: false,
@@ -1164,14 +1215,18 @@ const createPullRequestSource = (input: {
         changed: false,
         inputCount: links.length,
         outputCount: observations.length,
-        warnings: [...desktop.warnings, ...(message === null ? [] : [{ code: 'pull-requests-truncated', message }])],
+        warnings: [
+          ...desktop.warnings,
+          ...discoveryWarnings,
+          ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
+        ],
       };
     }),
 });
 
 /**
- * The Jira issue producer (ADR 0054): one bounded `acli` read per key the active Desktop sessions
- * wrote in a branch name, through the operator's own CLI session. The run records itself
+ * The Jira issue producer (ADR 0054): personal assigned-issue discovery joins explicit Desktop
+ * branch keys before bounded issue reads through the operator's own CLI session. The run records itself
  * `disabled` when `jira.enabled` is false, and also when every read found no `acli` (the binary
  * left between detection and the run), so the Work view can name the reason.
  */
@@ -1191,7 +1246,19 @@ const createJiraIssueSource = (input: {
       yield* reportProgress(context, { phase: 'discovering' });
       const availability = yield* input.detect;
       if (availability.availability !== 'detected') {
-        return sourceUnavailableResult();
+        if (availability.availability === 'not-detected') {
+          yield* recordWorkFactRun({
+            dbPath: input.dbPath,
+            disabled: true,
+            failed: 0,
+            machineId: input.machine.id,
+            message: JIRA_NOT_INSTALLED_MESSAGE,
+            observed: 0,
+            ranAt: input.now(),
+            sourceId: 'jira.issues',
+          }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+        }
+        return { ...sourceUnavailableResult(), unavailable: availability.reason };
       }
       const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
@@ -1223,8 +1290,43 @@ const createJiraIssueSource = (input: {
         machineId: input.machine.id,
         now: input.now,
       });
-      const keys = desktop.jiraKeys.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
-      const truncated = desktop.jiraKeys.length > keys.length;
+      yield* abortIfRequested(context.signal);
+      const discovery = yield* discoverJiraIssues({
+        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      });
+      yield* abortIfRequested(context.signal);
+      if (discovery.outcome === 'unavailable') {
+        yield* recordWorkFactRun({
+          dbPath: input.dbPath,
+          disabled: true,
+          failed: 0,
+          machineId: input.machine.id,
+          message: JIRA_NOT_INSTALLED_MESSAGE,
+          observed: 0,
+          ranAt: input.now(),
+          sourceId: 'jira.issues',
+        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+        return {
+          changed: false,
+          inputCount: 0,
+          outputCount: 0,
+          unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE },
+          warnings: desktop.warnings,
+        };
+      }
+      const discoveryWarnings =
+        discovery.outcome === 'observed'
+          ? []
+          : [
+              {
+                code: `jira-discovery-${discovery.outcome}`,
+                message: discovery.outcomeMessage ?? 'Jira issue discovery failed.',
+              },
+            ];
+      const candidates = [...new Set([...desktop.jiraKeys, ...discovery.keys])];
+      const keys = candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
+      const truncated = candidates.length > keys.length || discovery.truncated;
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: keys.length });
       const batch = yield* observeJiraIssues({
         keys,
@@ -1239,20 +1341,22 @@ const createJiraIssueSource = (input: {
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
-      const failed = batch.observations.filter(
-        ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled',
-      ).length;
+      const failed =
+        discoveryWarnings.length +
+        batch.observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
       const notInstalled =
         batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
       const truncation = truncated
-        ? `Observed the first ${String(keys.length)} of ${String(desktop.jiraKeys.length)} linked Jira issues.`
+        ? `Observed ${String(keys.length)} of ${String(candidates.length)} candidate Jira issues; additional search results may be omitted.`
         : null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: notInstalled,
         failed,
         machineId: input.machine.id,
-        message: notInstalled ? JIRA_NOT_INSTALLED_MESSAGE : truncation,
+        message: notInstalled
+          ? JIRA_NOT_INSTALLED_MESSAGE
+          : [truncation, ...discoveryWarnings.map((warning) => warning.message)].filter(Boolean).join(' ') || null,
         observed,
         ranAt: input.now(),
         sourceId: 'jira.issues',
@@ -1261,7 +1365,9 @@ const createJiraIssueSource = (input: {
         changed: false,
         inputCount: keys.length,
         outputCount: batch.observations.length,
+        ...(notInstalled ? { unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE } } : {}),
         warnings: [
+          ...discoveryWarnings,
           ...desktop.warnings,
           ...(truncation === null ? [] : [{ code: 'jira-issues-truncated', message: truncation }]),
         ],

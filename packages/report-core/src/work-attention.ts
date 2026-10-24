@@ -600,11 +600,14 @@ export interface PullRequestObservation {
   readonly accountLabel: string | null;
   readonly baseRef: string | null;
   readonly checksRollup: PullRequestCheckRollup | null;
+  readonly discoveryRole?: 'author' | 'review-requested' | null;
   readonly draft: boolean | null;
   readonly headRef: string | null;
   readonly host: string;
   readonly machineId: string;
+  readonly mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
   readonly mergedAt: CanonicalInstant | null;
+  readonly mergeStateStatus?: string | null;
   readonly number: number;
   readonly observedAt: CanonicalInstant;
   readonly outcome: PullRequestObservationOutcome;
@@ -629,6 +632,15 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
   const outcome = oneOf(PULL_REQUEST_OBSERVATION_OUTCOMES, value.outcome);
   const outcomeMessage = optionalText(value.outcomeMessage, maxDetailText);
   const accountLabel = optionalText(value.accountLabel, maxShortText);
+  const discoveryRole =
+    value.discoveryRole === null || value.discoveryRole === undefined
+      ? null
+      : oneOf(['author', 'review-requested'] as const, value.discoveryRole);
+  const mergeable =
+    value.mergeable === null || value.mergeable === undefined
+      ? null
+      : oneOf(['MERGEABLE', 'CONFLICTING', 'UNKNOWN'] as const, value.mergeable);
+  const mergeStateStatus = optionalText(value.mergeStateStatus, maxShortText);
   const state = value.state === null || value.state === undefined ? null : oneOf(PULL_REQUEST_STATES, value.state);
   const draft = optionalBoolean(value.draft);
   const reviewDecision = optionalText(value.reviewDecision, maxShortText);
@@ -653,6 +665,9 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     outcome === undefined ||
     outcomeMessage === undefined ||
     accountLabel === undefined ||
+    discoveryRole === undefined ||
+    mergeable === undefined ||
+    mergeStateStatus === undefined ||
     state === undefined ||
     draft === undefined ||
     reviewDecision === undefined ||
@@ -670,10 +685,13 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     accountLabel,
     baseRef,
     checksRollup,
+    discoveryRole,
     draft,
     headRef,
     host,
     machineId,
+    mergeable,
+    mergeStateStatus,
     mergedAt,
     number,
     observedAt,

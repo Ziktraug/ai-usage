@@ -38,6 +38,7 @@ import { Effect } from 'effect';
  */
 
 export interface PullRequestLink {
+  readonly discoveryRole?: 'author' | 'review-requested' | null;
   readonly host: string;
   readonly number: number;
   /** `owner/name`. */
@@ -82,6 +83,8 @@ const PULL_REQUEST_FIELDS = [
   'isDraft',
   'reviewDecision',
   'mergedAt',
+  'mergeable',
+  'mergeStateStatus',
   'updatedAt',
   'title',
   'url',
@@ -120,7 +123,7 @@ const normalizeLink = (link: PullRequestLink): PullRequestLink | null => {
   ) {
     return null;
   }
-  return { host, number: link.number, repository };
+  return { discoveryRole: link.discoveryRole ?? null, host, number: link.number, repository };
 };
 
 const failedObservation = (
@@ -132,11 +135,14 @@ const failedObservation = (
   accountLabel: context.accountLabel,
   baseRef: null,
   checksRollup: null,
+  discoveryRole: link.discoveryRole ?? null,
   draft: null,
   headRef: null,
   host: link.host,
   machineId: context.machineId,
+  mergeable: null,
   mergedAt: null,
+  mergeStateStatus: null,
   number: link.number,
   observedAt: context.observedAt,
   outcome,
@@ -192,7 +198,9 @@ interface ParsedPullRequest {
   readonly checksRollup: PullRequestCheckRollup;
   readonly draft: boolean;
   readonly headRef: string;
+  readonly mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
   readonly mergedAt: CanonicalInstant | null;
+  readonly mergeStateStatus: string | null;
   readonly reviewDecision: string | null;
   readonly state: PullRequestState;
   readonly title: string;
@@ -230,6 +238,15 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     value.reviewDecision === null || value.reviewDecision === undefined || value.reviewDecision === ''
       ? null
       : boundedText(value.reviewDecision, maxShortText);
+  const validMergeable =
+    value.mergeable === 'MERGEABLE' || value.mergeable === 'CONFLICTING' || value.mergeable === 'UNKNOWN'
+      ? value.mergeable
+      : undefined;
+  const mergeable = value.mergeable === undefined || value.mergeable === null ? null : validMergeable;
+  const mergeStateStatus =
+    value.mergeStateStatus === undefined || value.mergeStateStatus === null
+      ? null
+      : boundedText(value.mergeStateStatus, maxShortText);
   const mergedAt = optionalInstant(value.mergedAt);
   const updatedAt = normalizeIsoTimestamp(value.updatedAt);
   const title = boundedText(value.title, maxShortText);
@@ -252,6 +269,8 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     state === undefined ||
     draft === undefined ||
     reviewDecision === undefined ||
+    mergeable === undefined ||
+    mergeStateStatus === undefined ||
     mergedAt === undefined ||
     updatedAt === null ||
     title === undefined ||
@@ -272,7 +291,9 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     checksRollup: rollupChecks(value.statusCheckRollup),
     draft,
     headRef,
+    mergeable,
     mergedAt,
+    mergeStateStatus,
     reviewDecision,
     state,
     title,
@@ -423,11 +444,14 @@ const observeLink = (
           accountLabel: context.accountLabel,
           baseRef: parsed.baseRef,
           checksRollup: parsed.checksRollup,
+          discoveryRole: link.discoveryRole ?? null,
           draft: parsed.draft,
           headRef: parsed.headRef,
           host: link.host,
           machineId: context.machineId,
+          mergeable: parsed.mergeable,
           mergedAt: parsed.mergedAt,
+          mergeStateStatus: parsed.mergeStateStatus,
           number: link.number,
           observedAt,
           outcome: 'observed',
