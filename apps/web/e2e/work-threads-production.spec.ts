@@ -163,13 +163,17 @@ const runGitHubSourceFromUi = async (page: Page, request: APIRequestContext): Pr
   await page.goto('/sources');
   await expect(page.locator('main[data-route-shell="sources"][data-hydrated="true"]')).toBeVisible();
   const healthy = page.locator('[data-healthy-source-summary]');
-  if ((await healthy.count()) && (await healthy.getAttribute('open')) === null) {
-    await healthy.locator('> summary').click();
-  }
   const source = page
     .locator('[data-source-card], [data-healthy-source-row]')
     .filter({ has: page.getByText(SOURCE_ID, { exact: true }) });
-  await expect(source).toBeVisible();
+  // A healthy GitHub source sits in the collapsed "Healthy sources" disclosure; a refresh of the
+  // page data can re-render it closed, so open it until the row is visible.
+  await expect(async () => {
+    if ((await healthy.count()) && (await healthy.getAttribute('open')) === null) {
+      await healthy.locator('> summary').click();
+    }
+    await expect(source).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
   const run = source.getByRole('button', { name: 'Run now', exact: true });
   await expect(run).toBeEnabled();
   const commandResponse = page.waitForResponse(
@@ -341,7 +345,7 @@ const assertReadOnlyGhCalls = async (log: string): Promise<void> => {
       expect(args).toHaveLength(2); // No --method/-X, body, fields or other mutating API options.
       expect(subcommand).toMatch(API_PULL_REQUEST_READ);
     } else if (command === 'auth') {
-      expect(subcommand).toBe('token'); // No login, logout, setup-git or token writes.
+      expect(['status', 'token']).toContain(subcommand); // Reads only: no login, logout, setup-git or token writes.
     } else {
       throw new Error(`The production journey invoked an unexpected gh command: ${command ?? '(empty)'}`);
     }
