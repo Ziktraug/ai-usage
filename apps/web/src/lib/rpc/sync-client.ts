@@ -12,6 +12,11 @@ import { readBoundedResponseBytes } from './bounded-response-reader';
 const SAFE_ATTACHMENT_PATTERN = /^attachment; filename="([a-zA-Z0-9][a-zA-Z0-9._-]{0,254})"$/u;
 const CANONICAL_CONTENT_TYPE = 'application/json; charset=utf-8';
 const CONTENT_LENGTH_PATTERN = /^[1-9][0-9]*$/u;
+// The export request has no body, but SvelteKit 3 treats a mutation without a content type as a
+// form submission and checks its Origin against the listener origin `http://127.0.0.1:<PORT>`,
+// refusing a tab opened at `localhost`. A declared non-form type keeps it to the trusted-local and
+// request-policy checks every other browser mutation passes, as it was under SvelteKit 2.
+const EXPORT_REQUEST_HEADERS = { 'content-type': 'application/json' } as const;
 
 export type SyncFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -71,6 +76,7 @@ export const createSyncBrowserAdapter = (
     let response: Response;
     try {
       response = await fetchTransport(manualMergeDownloadTransport.path, {
+        headers: EXPORT_REQUEST_HEADERS,
         method: manualMergeDownloadTransport.method,
         ...(signal === undefined ? {} : { signal }),
       });

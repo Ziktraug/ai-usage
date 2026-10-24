@@ -1,3 +1,5 @@
+import { DatabaseError } from 'pg';
+
 export const platformStoreErrorCodes = [
   'configuration-invalid',
   'connection-failed',
@@ -40,6 +42,28 @@ export class PlatformStoreError extends Error {
 
 export const isPlatformStoreError = (error: unknown): error is PlatformStoreError =>
   error instanceof PlatformStoreError;
+
+/**
+ * What a store failure may tell an operator: its closed code, the operation
+ * that failed and, when PostgreSQL refused that operation, the SQLSTATE of the
+ * refusal (`IA003` for the provider-key migration, for example). Never the
+ * database message or detail, which can quote row values, nor any connection
+ * setting.
+ */
+export interface PlatformStoreFailureDiagnostic {
+  readonly code: PlatformStoreErrorCode;
+  readonly operation: string;
+  readonly sqlState?: string;
+}
+
+const sqlStatePattern = /^[0-9A-Z]{5}$/u;
+
+export const platformStoreFailureDiagnostic = (error: PlatformStoreError): PlatformStoreFailureDiagnostic => {
+  const { cause } = error;
+  return cause instanceof DatabaseError && cause.code !== undefined && sqlStatePattern.test(cause.code)
+    ? { code: error.code, operation: error.operation, sqlState: cause.code }
+    : { code: error.code, operation: error.operation };
+};
 
 export const asPlatformStoreError = (
   error: unknown,

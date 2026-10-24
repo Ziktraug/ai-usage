@@ -141,7 +141,7 @@ export const createPlatformStore = async (config: PlatformStoreConfig): Promise<
   });
 };
 
-export type { PlatformStoreErrorCode } from './errors';
-export { isPlatformStoreError, PlatformStoreError } from './errors';
+export type { PlatformStoreErrorCode, PlatformStoreFailureDiagnostic } from './errors';
+export { isPlatformStoreError, PlatformStoreError, platformStoreFailureDiagnostic } from './errors';
 export type { PlatformMigrationMode } from './migrations';
 export type { PlatformReadiness, PlatformStoreReader } from './reader';

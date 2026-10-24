@@ -1,4 +1,4 @@
-# ADR 0059: Ultracite 8 rule policy
+# ADR 0058: Ultracite 8 rule policy
 
 - **Status**: Accepted
 - **Date**: 2026-10-22

@@ -52,11 +52,13 @@
     }
   },
   "scripts": {
-    "build": "CI=1 bun --bun panda codegen --clean --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
-    "check": "CI=1 bun --bun panda codegen --clean --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
+    "build": "bun src/remove-panda-1-output.ts library styled-system && CI=1 bun --bun panda codegen --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
+    "check": "bun src/remove-panda-1-output.ts library styled-system && CI=1 bun --bun panda codegen --log-level warn && CI=1 bun --bun panda cssgen --log-level warn && bun run lib && bun --bun tsc --noEmit",
     "format": "biome format --write .",
     "lib": "CI=1 bun --bun panda lib --outdir styled-system --log-level warn",
     "lint": "biome check .",
+    "remove-panda-1-output": "bun src/remove-panda-1-output.ts",
+    "scope-breakpoints-to-screen": "bun src/screen-breakpoints.ts",
     "test": "bun test",
     "test:browser": "bun src/svelte/controls/controls.browser.ts && bun src/svelte/overlays/overlays.browser.ts"
   },

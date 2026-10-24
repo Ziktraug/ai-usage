@@ -48,7 +48,7 @@ const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 const REPORT_ENTRY_MAXIMUM_BYTES = 720_000;
 
 const LEADING_SLASH_PATTERN = /^\/+/;
-const TRAILING_MEDIA_QUERY_PATTERN = /@media \(width>=[\d.]+rem\)(?![\s\S]*@media)/;
+const TRAILING_MEDIA_QUERY_PATTERN = /@media screen and \(width>=[\d.]+rem\)(?![\s\S]*@media)/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -166,10 +166,10 @@ describe('report app client bundle', () => {
       return upToAtom.match(TRAILING_MEDIA_QUERY_PATTERN)?.[0];
     };
 
-    expect(mediaQueryFor('md:d_block')).toBe('@media (width>=48rem)');
-    expect(mediaQueryFor('xl:d_none')).toBe('@media (width>=80rem)');
-    expect(mediaQueryFor('md:d_none')).toBe('@media (width>=48rem)');
-    expect(mediaQueryFor('xl:d_block')).toBe('@media (width>=80rem)');
+    expect(mediaQueryFor('md:d_block')).toBe('@media screen and (width>=48rem)');
+    expect(mediaQueryFor('xl:d_none')).toBe('@media screen and (width>=80rem)');
+    expect(mediaQueryFor('md:d_none')).toBe('@media screen and (width>=48rem)');
+    expect(mediaQueryFor('xl:d_block')).toBe('@media screen and (width>=80rem)');
   });
 
   test('splits server-only route UI out of the report entry', () => {

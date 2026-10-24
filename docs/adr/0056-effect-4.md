@@ -28,8 +28,11 @@ server and the CLI surface typed store failures as values.
 
 ## Decision
 
-Migrate the whole repository to `effect@^4.0.5` in one change, behaviour
-preserving, using the idiomatic v4 API rather than compatibility shims:
+Migrate the whole repository to `effect@^4.0.5` in one change, using the
+idiomatic v4 API rather than compatibility shims. The migration preserves
+behaviour except where the new rejection shape makes typed error handling that
+Effect 3 had silently disabled take effect; those changes are kept on purpose
+and listed under Consequences.
 
 - Services are `Context.Service` classes; the current-hop carrier is a
   `Context.Reference` scoped with `Effect.provideService`.
@@ -38,9 +41,16 @@ preserving, using the idiomatic v4 API rather than compatibility shims:
   stays because it keeps the typed failure explicit even though `runPromise`
   now rejects with it directly.
 - The best-effort sink forks the transport detached, awaits its exit with a
-  `timeoutOption`, and abandons it (signals interrupt without waiting) when the
-  budget is spent. A test proves an uninterruptible transport cannot hold an
-  uninterruptible caller beyond the budget.
+  `timeoutOption`, and abandons it (signals interrupt without waiting) whenever
+  the wait ends without that exit: the budget is spent, or the wait itself is
+  interrupted, as when an enclosing combined sink's budget runs out first. Tests
+  prove an uninterruptible transport cannot hold an uninterruptible caller
+  beyond the budget and a hanging transport behind a combined sink is
+  interrupted when the combined submission is abandoned.
+- `run*` evaluates the effect synchronously before it looks at an `AbortSignal`,
+  so the usage-engine writer gate checks an already-aborted signal before it
+  runs anything; otherwise a free permit would start an uninterruptible write
+  that Effect 3 never started.
 - Tests read the test clock from `effect/testing`; the source-control tests
   record pending sleeps through a wrapper around the real `TestClock` instead
   of the removed `TestClock.sleeps`, so their synchronisation stays exact.
@@ -62,6 +72,23 @@ preserving, using the idiomatic v4 API rather than compatibility shims:
 - `Effect.runSync`/`runPromise` rejections are plain values: callers that
   format an error message see the typed error's own message, not a pretty
   printed cause.
+- Deliberate behaviour change in the usage engine: errors thrown inside the
+  writer gate (`writerGate.run`) used to reach the command coordinator wrapped
+  in a `FiberFailure`, so its `UsageEngineCommandError` and
+  `UsageEngineFatalConsistencyError` branches never matched and every such
+  failure completed as `command-failed` (after a fatal error the gate itself
+  still closed, but the engine stayed ready and kept admitting commands whose
+  writes then failed). They now match, as the coordinator was
+  written to do: a merge file with invalid JSON completes `merge-invalid-json`
+  (the web upload answers 400), a stale project-source selection completes
+  `command-rejected`, and an unreconciled machine-label compensation puts the
+  engine in the degraded `mutation-consistency-unknown` state, closes command
+  admission, rejects queued commands with `engine-busy` and stops the drain
+  until restart recovery. `live.test.ts` pins these outcomes through the live
+  mutation port, the writer gate and the coordinator.
+- `usage-engine check` now reports the store's typed reason (for example
+  `schema-too-new`) instead of always `storage-failure`, because
+  `inspectStore` receives the `UsageStoreError` itself.
 - Future Effect upgrades follow this ADR's method: mapping table verified
   against the installed `.d.ts`, dependency-ordered package migration, and
   repeated runs of the timing-sensitive suites.
@@ -75,7 +102,12 @@ interruption, rejection shape, fork start) behind familiar names.
 
 ## Evidence
 
-- `packages/effect-runtime/src/sink.ts` and `sink.test.ts` (submit budget).
+- `packages/effect-runtime/src/sink.ts` and `sink.test.ts` (submit budget,
+  abandoned combined submission).
+- `packages/usage-engine-runtime/src/writer-gate.ts` and `writer-gate.test.ts`
+  (pre-aborted signal), `live.test.ts` (typed command outcomes and the degraded
+  consistency state).
+- `apps/usage-engine/src/process-check.test.ts` (typed store reason).
 - `packages/effect-runtime/src/wide-event.ts` (`currentWideEventHop` reference).
 - `packages/usage-engine-runtime/src/source-control.test.ts`
   (`makeRecordingTestClockLayer`).

@@ -337,3 +337,20 @@ test('keeps project and session chronology accessible on desktop and narrow scre
     await testInfo.attach(`campaign-timeline-${width}px`, { contentType: 'image/png', path: screenshotPath });
   }
 });
+
+test('names a session row by its visible metadata and speaks only the detail it leaves out', async ({ page }) => {
+  await openTimeline(page);
+  await expect(namedButton(page, 'Open session', ROOT_TITLE)).toHaveAccessibleName(
+    'Open session Build forecast model Root session ·gpt-5.3-codex 06-11 08:00 → 06-11 09:20 ' +
+      'Codex. Started 2026-06-11T08:00:00.000Z. Ended 2026-06-11T09:20:00.000Z.',
+  );
+  await selectCampaign(page, CURSOR_TITLE, 1);
+  // No end time is recorded, so the visible "End not recorded" stands alone and nothing repeats it.
+  await expect(namedButton(page, 'Open session', CURSOR_TITLE)).toHaveAccessibleName(
+    'Open session Explore dashboard layout Root session ·cursor-agent 06-11 07:00 → End not recorded ' +
+      'Cursor. Started 2026-06-11T07:00:00.000Z.',
+  );
+  // WCAG 2.5.3: the visible label stays part of the accessible name.
+  const { violations } = await new AxeBuilder({ page }).withRules(['label-content-name-mismatch']).analyze();
+  expect(violations.map(({ id, nodes }) => ({ id, targets: nodes.flatMap(({ target }) => target) }))).toEqual([]);
+});

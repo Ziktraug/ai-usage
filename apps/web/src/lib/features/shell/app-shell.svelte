@@ -42,8 +42,17 @@
     write: (href, state) => replaceState(href, state),
   });
   providePageStateWriter(pageState);
+  // The anchor annotation is written from the report, outside the rail; a rejected write still
+  // surfaces through the rail's navigation failure status.
+  let pageStateFailure = $state(false);
   provideSessionWindowAnchorOwner(
-    createSessionWindowAnchorOwner({ replace: pageState.replace, state: pageState.current }),
+    createSessionWindowAnchorOwner({
+      onFailure: () => {
+        pageStateFailure = true;
+      },
+      replace: pageState.replace,
+      state: pageState.current,
+    }),
   );
 
   const destination = $derived(
@@ -82,7 +91,7 @@
   });
 </script>
 
-<AppNavigation {providerQuota} {runtimeMode} />
+<AppNavigation {pageStateFailure} {providerQuota} {runtimeMode} />
 <div class={content} data-app-shell-content>
   <header class={topbar} data-workspace-topbar>
     <div class={topbarLocation}>

@@ -280,7 +280,23 @@ const identityPackage = '@ai-usage/identity';
 const identitySharedAuthentication = `${identityPackage}/better-auth`;
 const identityTesting = `${identityPackage}/testing`;
 const betterAuthPackage = 'better-auth';
+const betterAuthPackageScope = '@better-auth/';
 const betterAuthDrizzleAdapter = '@better-auth/drizzle-adapter';
+const betterAuthSchemaCheckRegistry = '@better-auth/core/db/internal';
+// Identity modules that may import Better Auth; everything else in identity
+// sees only its own contracts.
+const betterAuthAdapterPrivateModules = new Set([
+  'packages/identity/src/internal/adapter-schema-check.ts',
+  'packages/identity/src/session-digest-adapter.ts',
+  'packages/identity/src/shared-authentication.test.ts',
+  'packages/identity/src/shared-authentication.ts',
+]);
+// Better Auth's internal schema-check registry: only the carry that keeps the
+// check on wrapped adapters, and the test that stubs the registry, use it.
+const betterAuthSchemaCheckRegistryModules = new Set([
+  'packages/identity/src/internal/adapter-schema-check.ts',
+  'packages/identity/src/shared-authentication.test.ts',
+]);
 const authorizationScopeInternal = `${authorizationPackage}/scope-internal`;
 const projectApplicationPackage = '@ai-usage/project-application';
 const projectRegistryPackage = '@ai-usage/project-registry';
@@ -330,15 +346,20 @@ const isPackageOrSubpath = (specifier: string, packageName: string): boolean =>
 
 const workspacePackageNameFor = (specifier: string): string => specifier.split('/').slice(0, 2).join('/');
 
+/** `better-auth`, its subpaths, and every `@better-auth/*` package except the Drizzle adapter. */
+const isBetterAuthSpecifier = (specifier: string): boolean =>
+  (isPackageOrSubpath(specifier, betterAuthPackage) || specifier.startsWith(betterAuthPackageScope)) &&
+  !isPackageOrSubpath(specifier, betterAuthDrizzleAdapter);
+
 const targetDependencyReason = (
   packageName: string,
   specifier: string,
   applicationPackages: ReadonlySet<string>,
 ): string | undefined => {
-  if (specifier === betterAuthPackage && packageName !== identityPackage) {
+  if (isBetterAuthSpecifier(specifier) && packageName !== identityPackage) {
     return 'Only identity may depend directly on Better Auth.';
   }
-  if (specifier === betterAuthDrizzleAdapter && packageName !== postgresStorePackage) {
+  if (isPackageOrSubpath(specifier, betterAuthDrizzleAdapter) && packageName !== postgresStorePackage) {
     return 'Only postgres-store may depend on the Better Auth Drizzle adapter.';
   }
   if (!isWorkspaceSpecifier(specifier)) {
@@ -483,19 +504,22 @@ const targetImportReason = (
   if (isPackageOrSubpath(specifier, mcpSdkPackage) && packageName !== mcpAdapterPackage) {
     return 'Only mcp-adapter may import the MCP protocol SDK directly.';
   }
-  if (specifier === betterAuthPackage) {
+  if (isBetterAuthSpecifier(specifier)) {
     if (packageName !== identityPackage) {
       return 'Only identity may import Better Auth directly.';
     }
-    if (
-      relativeFile !== 'packages/identity/src/shared-authentication.ts' &&
-      relativeFile !== 'packages/identity/src/session-digest-adapter.ts'
-    ) {
+    if (!betterAuthAdapterPrivateModules.has(relativeFile)) {
       return 'Better Auth types and runtime must remain inside identity adapter-private modules.';
+    }
+    if (
+      isPackageOrSubpath(specifier, betterAuthSchemaCheckRegistry) &&
+      !betterAuthSchemaCheckRegistryModules.has(relativeFile)
+    ) {
+      return "Better Auth's internal schema-check registry is private to the identity adapter schema-check carry.";
     }
   }
   if (
-    specifier === betterAuthDrizzleAdapter &&
+    isPackageOrSubpath(specifier, betterAuthDrizzleAdapter) &&
     (packageName !== postgresStorePackage ||
       relativeFile !== 'packages/postgres-store/src/internal/authentication-adapter.ts')
   ) {

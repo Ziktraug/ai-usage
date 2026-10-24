@@ -22,12 +22,7 @@ export class ClaudeQuotaCollectionError extends Data.TaggedError('ClaudeQuotaCol
 const collectionError = (reason: ClaudeQuotaCollectionErrorReason, message: string): ClaudeQuotaCollectionError =>
   new ClaudeQuotaCollectionError({ message, reason });
 
-/**
- * The surface this source needs from the SDK, named so the unstable parts are visible here. `Query`
- * is an `AsyncGenerator`, and the two teardown calls are not interchangeable: `interrupt` ends the
- * current turn, while `return` — the generator protocol's disposal — ends the *session* and tears
- * down the transport. Interrupting alone leaves handles open that keep the host process alive.
- */
+/** The options this source passes to the SDK usage read. */
 export interface ClaudeUsageReadOptions {
   /**
    * Since SDK 0.3.308 the usage read also scans every local transcript touched in the last seven days
@@ -37,6 +32,12 @@ export interface ClaudeUsageReadOptions {
   readonly skipBehaviors?: boolean;
 }
 
+/**
+ * The surface this source needs from the SDK, named so the unstable parts are visible here. `Query`
+ * is an `AsyncGenerator`, and the two teardown calls are not interchangeable: `interrupt` ends the
+ * current turn, while `return` — the generator protocol's disposal — ends the *session* and tears
+ * down the transport. Interrupting alone leaves handles open that keep the host process alive.
+ */
 export interface ClaudeUsageQuery {
   interrupt?: () => Promise<unknown>;
   return?: (value?: unknown) => Promise<unknown>;

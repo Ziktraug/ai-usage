@@ -38,13 +38,21 @@ A provider account is identified by `(provider_id, account_id)`, the identity
 Better Auth `1.7.3` restored after `1.7.0`–`1.7.2` had keyed accounts by an
 `issuer`. Migration ordinal 11 makes the `issuer` column nullable and replaces
 the `(issuer, account_id)` key with `(provider_id, account_id)`; it refuses to
-apply while one provider key maps to more than one row (SQLSTATE `IA003`,
-surfaced as the `cause` of the typed `migration-failed` error). Rows written
-under the earlier schema keep their issuer; nothing writes or reads it any
-more. Better Auth's schema validation stays enabled: the identity adapter
-wrappers carry the Drizzle schema check, so a mismatch between the tables the
-library writes and the Drizzle schema refuses authentication requests instead
-of being skipped.
+apply while one provider key maps to more than one row with SQLSTATE `IA003`.
+The server then does not start, and its start-failure diagnostic names the
+store code, the operation and that SQLSTATE, never the database message:
+`{"component":"platform-server","code":"process-start-failed","operation":"startup","store":{"code":"migration-failed","operation":"apply-migration","sqlState":"IA003"}}`.
+Rows written under the earlier schema keep their issuer; nothing writes or
+reads it any more.
+
+Better Auth's schema validation stays enabled. The identity adapter wrappers
+carry the Drizzle adapter's schema check, which compares the tables the library
+writes with the Drizzle schema. Better Auth starts the check when it
+initializes and awaits it before every authentication request, so a mismatch
+refuses those requests instead of failing at an insert; `/health/ready` probes
+only the store and does not run it. An adapter that registers no check fails
+the shared-authentication construction, so the server does not start, instead
+of the check being skipped.
 
 ## Identity and GitHub separation
 

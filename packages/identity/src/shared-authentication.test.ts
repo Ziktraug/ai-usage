@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { DBAdapter, DBAdapterInstance } from '@better-auth/core/db/adapter';
-import { createSchemaCheck, registerSchemaCheck, type SchemaFinding } from '@better-auth/core/db/internal';
+import {
+  createSchemaCheck,
+  registerSchemaCheck,
+  runtimeSchemaCheckFor,
+  type SchemaFinding,
+  schemaCheckFor,
+} from '@better-auth/core/db/internal';
 import type { IdentityServiceResult } from './index';
+import { AuthenticationAdapterError, carrySchemaCheck } from './internal/adapter-schema-check';
 import { createSharedAuthenticationService, type SharedAuthenticationIdentityStore } from './shared-authentication';
 
 const baseUrl = 'https://platform.example.invalid';
@@ -21,6 +28,24 @@ const identityStore: SharedAuthenticationIdentityStore = {
 const unexpectedCall = (operation: string) => (): Promise<never> =>
   Promise.reject(new Error(`Unexpected adapter call: ${operation}.`));
 
+const createStubAdapter = (id: string): DBAdapter => {
+  const adapter: DBAdapter = {
+    consumeOne: unexpectedCall('consumeOne'),
+    count: unexpectedCall('count'),
+    create: unexpectedCall('create'),
+    delete: unexpectedCall('delete'),
+    deleteMany: unexpectedCall('deleteMany'),
+    findMany: unexpectedCall('findMany'),
+    findOne: unexpectedCall('findOne'),
+    id,
+    incrementOne: unexpectedCall('incrementOne'),
+    transaction: (run) => run(adapter),
+    update: unexpectedCall('update'),
+    updateMany: unexpectedCall('updateMany'),
+  };
+  return adapter;
+};
+
 /**
  * An adapter whose registered schema check reports `findings`, the way the
  * Drizzle adapter registers its own check on the instance it returns.
@@ -28,20 +53,7 @@ const unexpectedCall = (operation: string) => (): Promise<never> =>
 const createCheckedDatabase =
   (findings: readonly SchemaFinding[], calls: string[]): DBAdapterInstance =>
   () => {
-    const adapter: DBAdapter = {
-      consumeOne: unexpectedCall('consumeOne'),
-      count: unexpectedCall('count'),
-      create: unexpectedCall('create'),
-      delete: unexpectedCall('delete'),
-      deleteMany: unexpectedCall('deleteMany'),
-      findMany: unexpectedCall('findMany'),
-      findOne: unexpectedCall('findOne'),
-      id: 'checked-stub',
-      incrementOne: unexpectedCall('incrementOne'),
-      transaction: (run) => run(adapter),
-      update: unexpectedCall('update'),
-      updateMany: unexpectedCall('updateMany'),
-    };
+    const adapter = createStubAdapter('checked-stub');
     registerSchemaCheck(
       adapter,
       createSchemaCheck(() => {
@@ -53,16 +65,19 @@ const createCheckedDatabase =
     return adapter;
   };
 
-const createService = (findings: readonly SchemaFinding[], calls: string[]) =>
+const createServiceWithDatabase = (database: DBAdapterInstance) =>
   createSharedAuthenticationService({
     baseUrl,
     bootstrapFirstOwner: false,
     clientId: 'github-client-id',
     clientSecret: 'github-client-secret',
-    database: createCheckedDatabase(findings, calls),
+    database,
     identityStore,
     secrets: [{ value: 'a'.repeat(32), version: 1 }],
   });
+
+const createService = (findings: readonly SchemaFinding[], calls: string[]) =>
+  createServiceWithDatabase(createCheckedDatabase(findings, calls));
 
 describe('shared authentication schema validation', () => {
   test('carries the adapter schema check through the identity wrappers and refuses requests on a mismatch', async () => {
@@ -92,5 +107,56 @@ describe('shared authentication schema validation', () => {
 
     await expect(service.resolveSession(new Headers())).resolves.toEqual({ kind: 'anonymous' });
     expect(calls).toEqual(['schema-check']);
+  });
+
+  test('refuses to build the service around an adapter that registers no schema check', () => {
+    // Better Auth would skip validation with a log line this service disables;
+    // the composition fails instead, before any request can be served.
+    expect(() => createServiceWithDatabase(() => createStubAdapter('unchecked-stub'))).toThrow(
+      expect.objectContaining({
+        code: 'schema-check-missing',
+        name: 'AuthenticationAdapterError',
+        operation: 'compose-database-adapter',
+      }),
+    );
+  });
+});
+
+describe('adapter schema-check carry', () => {
+  test('registers the inner check on the wrapper with the runtime policy of the options', () => {
+    const inner = createStubAdapter('inner');
+    const check = createSchemaCheck(() => [], 'drizzle');
+    registerSchemaCheck(inner, check, { runtimeEnabled: true });
+
+    const enforced = carrySchemaCheck(inner, createStubAdapter('enforced'), {});
+    expect(schemaCheckFor(enforced)).toBe(check);
+    expect(runtimeSchemaCheckFor(enforced)).toBe(check);
+
+    const disabled = carrySchemaCheck(inner, createStubAdapter('disabled'), {
+      advanced: { database: { validateSchema: false } },
+    });
+    expect(schemaCheckFor(disabled)).toBe(check);
+    expect(runtimeSchemaCheckFor(disabled)).toBeUndefined();
+  });
+
+  test('fails with a typed error when validation is on and the inner adapter has no check', () => {
+    const wrap = () =>
+      carrySchemaCheck(createStubAdapter('inner'), createStubAdapter('wrapped'), {
+        advanced: { database: { validateSchema: true } },
+      });
+
+    expect(wrap).toThrow(AuthenticationAdapterError);
+    expect(wrap).toThrow(
+      expect.objectContaining({ code: 'schema-check-missing', operation: 'compose-database-adapter' }),
+    );
+  });
+
+  test('passes an unchecked adapter through only when validation is explicitly disabled', () => {
+    const wrapped = createStubAdapter('wrapped');
+
+    expect(
+      carrySchemaCheck(createStubAdapter('inner'), wrapped, { advanced: { database: { validateSchema: false } } }),
+    ).toBe(wrapped);
+    expect(schemaCheckFor(wrapped)).toBeUndefined();
   });
 });

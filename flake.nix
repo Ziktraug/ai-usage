@@ -16,9 +16,10 @@
 
       # Bun 1.4.3 is the repository runtime: package.json `packageManager` and
       # `@types/bun` pin it, and CI reads the same field through setup-bun.
-      # nixpkgs nixos-unstable ships 1.4.2 (NixOS/nixpkgs#574334 tracks the
-      # bump), so the dev shell overrides the upstream sources to keep one
-      # runtime across local, `nix develop`, and CI. Delete this override and
+      # nixpkgs lags behind it (nixos-unstable shipped 1.4.2 on 2026-10-22;
+      # NixOS/nixpkgs#574334 tracks 1.4.3), so the dev shell overrides the
+      # upstream sources to keep the same Bun release across local,
+      # `nix develop`, and CI. Delete this override and
       # use `pkgs.bun` directly once nixpkgs ships bun >= 1.4.3. When moving the
       # version, refresh both hashes with `nix store prefetch-file --json <url>`.
       bunVersion = "1.4.3";

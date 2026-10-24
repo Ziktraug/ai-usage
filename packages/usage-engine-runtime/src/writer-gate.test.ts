@@ -47,6 +47,22 @@ describe('usage engine writer gate', () => {
     await expect(gate.run(async () => 'entered')).resolves.toBe('entered');
   });
 
+  test('never starts an operation whose signal is already aborted, even with a free permit', async () => {
+    const gate = createUsageEngineWriterGate();
+    const abortController = new AbortController();
+    abortController.abort();
+    let entered = false;
+
+    await expect(
+      gate.run(() => {
+        entered = true;
+        return Promise.resolve();
+      }, abortController.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(entered).toBe(false);
+    await expect(gate.run(async () => 'entered')).resolves.toBe('entered');
+  });
+
   test('terminally rejects queued and future writers after closing under the permit', async () => {
     const gate = createUsageEngineWriterGate();
     const releaseHolder = await Effect.runPromise(Deferred.make<void>());

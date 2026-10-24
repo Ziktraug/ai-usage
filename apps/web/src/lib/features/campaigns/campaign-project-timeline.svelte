@@ -141,6 +141,18 @@
     }
     return `Child session, level ${node.depth}`;
   };
+  // Spoken after a session row's visible metadata, so it carries only what that metadata leaves out:
+  // the harness behind a model label, the full timestamps behind the short ones, and the clipping.
+  const sessionSpokenDetail = (node: CampaignMapNode, nodeBar: CampaignTimelineBar | null): string =>
+    [
+      node.row.modelLabel ? node.row.harness : '',
+      node.startedAt ? `Started ${node.startedAt}` : '',
+      node.endedAt ? `Ended ${node.endedAt}` : '',
+      nodeBar ? clipLabel(nodeBar) : '',
+    ]
+      .filter((part) => part !== '')
+      .map((part) => `${part}.`)
+      .join(' ');
 
   const surface = css({
     display: 'grid',
@@ -505,14 +517,15 @@
       {:else if _entry.kind === 'session'}
         {@const node = _entry.node}
         {@const nodeBar = barForInterval(node.startMs, node.endMs, timeline.axis)}
+        {@const spokenDetail = sessionSpokenDetail(node, nodeBar)}
         <div
           data-depth={node.depth}
           data-relationship={node.relationship}
           data-row-id={node.row.rowId}
           data-timeline-session
         >
-          <!-- Named by content (WCAG 2.5.3): hidden "Open session" prefix, visible metadata, then the
-               spoken-only detail that used to be the description. -->
+          <!-- Named by content (WCAG 2.5.3): hidden "Open session" prefix, the visible metadata, then
+               only the detail that metadata does not show. -->
           <button class={cx(grid, sessionButton)} onclick={() => onOpenSession(node.row)} type="button">
             <span class={sessionLabel} style:padding-left={`${Math.min(node.depth + 1, 7) * 10}px`}>
               <span class={title}
@@ -527,12 +540,9 @@
               {#if node.lineageIssue}
                 <span class={meta}>Lineage: {node.lineageIssue.replaceAll('-', ' ')}</span>
               {/if}
-              <span class={screenReader}>
-                {nodeRole(node)}. {node.row.harness}. {node.row.modelLabel}. Started
-                {node.startedAt ?? 'not recorded'}. Ended {node.endedAt ?? 'not recorded'}.
-                {node.lineageIssue ? `Lineage: ${node.lineageIssue.replaceAll('-', ' ')}.` : ''}
-                {nodeBar ? clipLabel(nodeBar) : ''}
-              </span>
+              {#if spokenDetail}
+                <span class={screenReader}>{spokenDetail}</span>
+              {/if}
             </span>
             {#if nodeBar}
               <span aria-hidden="true" class={lane}>

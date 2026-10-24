@@ -1215,6 +1215,91 @@ describe('package boundary guard', () => {
     );
   });
 
+  test('treats every better-auth subpath and @better-auth package as Better Auth', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'identity',
+      {
+        dependencies: { '@better-auth/core': '1.7.12', 'better-auth': '1.7.12' },
+        name: identityPackage,
+      },
+      "import '@better-auth/core';\nimport 'better-auth/api';\n",
+    );
+    await mkdir(path.join(root, 'packages/identity/src/internal'));
+    await Promise.all([
+      writeFile(
+        path.join(root, 'packages/identity/src/shared-authentication.ts'),
+        "import { createAuthMiddleware } from 'better-auth/api';\nimport { schemaCheckFor } from '@better-auth/core/db/internal';\nvoid createAuthMiddleware;\nvoid schemaCheckFor;\n",
+      ),
+      writeFile(
+        path.join(root, 'packages/identity/src/internal/adapter-schema-check.ts'),
+        "import type { BetterAuthOptions } from '@better-auth/core';\nimport { schemaCheckFor } from '@better-auth/core/db/internal';\nexport type Options = BetterAuthOptions;\nvoid schemaCheckFor;\n",
+      ),
+      writeFile(
+        path.join(root, 'packages/identity/src/shared-authentication.test.ts'),
+        "import type { DBAdapter } from '@better-auth/core/db/adapter';\nimport { registerSchemaCheck } from '@better-auth/core/db/internal';\nexport type Adapter = DBAdapter;\nvoid registerSchemaCheck;\n",
+      ),
+    ]);
+    await writePackage(
+      root,
+      'packages',
+      'route-adapter',
+      {
+        dependencies: { '@better-auth/core': '1.7.12' },
+        name: '@ai-usage/route-adapter',
+      },
+      "import '@better-auth/core/db/internal';\nimport 'better-auth/api';\n",
+    );
+    await writePackage(root, 'packages', 'postgres-store', {
+      dependencies: { '@better-auth/core': '1.7.12', '@better-auth/drizzle-adapter': '1.7.12' },
+      name: postgresStorePackage,
+    });
+    await mkdir(path.join(root, 'packages/postgres-store/src/internal'));
+    await writeFile(
+      path.join(root, 'packages/postgres-store/src/internal/authentication-adapter.ts'),
+      "import { drizzleAdapter } from '@better-auth/drizzle-adapter';\nvoid drizzleAdapter;\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: 'packages/route-adapter/package.json',
+          message: expect.stringContaining('Only identity may depend directly on Better Auth.'),
+          specifier: '@better-auth/core',
+        }),
+        expect.objectContaining({
+          file: 'packages/route-adapter/src/index.ts',
+          message: 'Only identity may import Better Auth directly.',
+          specifier: '@better-auth/core/db/internal',
+        }),
+        expect.objectContaining({
+          file: 'packages/route-adapter/src/index.ts',
+          message: 'Only identity may import Better Auth directly.',
+          specifier: 'better-auth/api',
+        }),
+        expect.objectContaining({
+          file: 'packages/postgres-store/package.json',
+          message: expect.stringContaining('Only identity may depend directly on Better Auth.'),
+          specifier: '@better-auth/core',
+        }),
+        expect.objectContaining({ file: 'packages/identity/src/index.ts', specifier: '@better-auth/core' }),
+        expect.objectContaining({ file: 'packages/identity/src/index.ts', specifier: 'better-auth/api' }),
+        expect.objectContaining({
+          file: 'packages/identity/src/shared-authentication.ts',
+          specifier: '@better-auth/core/db/internal',
+        }),
+      ]),
+    );
+    const betterAuthViolations = violations.filter(({ specifier }) =>
+      ['@better-auth/', 'better-auth'].some((prefix) => specifier.startsWith(prefix)),
+    );
+    expect(betterAuthViolations).toHaveLength(7);
+    expect(violations).not.toContainEqual(expect.objectContaining({ specifier: '@better-auth/drizzle-adapter' }));
+  });
+
   test('allows shared authentication composition only in the server and PostgreSQL adapter', async () => {
     const root = await createFixture();
     await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' }, `import '${identitySharedAuthentication}';\n`);

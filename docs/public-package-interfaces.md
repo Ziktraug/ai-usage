@@ -132,7 +132,10 @@ policy DSL.
 
 The package owns application contracts and security policy, not PostgreSQL,
 SQLite, HTTP routing, or Drizzle persistence. Better Auth imports remain inside
-its two adapter-private modules.
+its adapter-private modules (`shared-authentication.ts`,
+`session-digest-adapter.ts`, and `internal/adapter-schema-check.ts`, which alone
+reaches the `@better-auth/core/db/internal` schema-check registry);
+`tools/check-package-boundaries.ts` enforces the list.
 
 ## `@ai-usage/project-application`
 

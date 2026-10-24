@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { Deferred, Effect } from 'effect';
+import { Deferred, Effect, Fiber } from 'effect';
 import type { WideEventSnapshot } from './model';
 import { testWideEventResource } from './resource';
-import { makeCaptureWideEventSink, submitWideEventBestEffort, type WideEventSinkShape } from './sink';
+import {
+  combineWideEventSinks,
+  makeCaptureWideEventSink,
+  submitWideEventBestEffort,
+  type WideEventSinkShape,
+} from './sink';
 
 const SUBMIT_BUDGET_MS = 250;
 const BUDGET_SLACK_MS = 750;
@@ -67,6 +72,28 @@ describe('submitWideEventBestEffort', () => {
 
     expect(elapsed).toBeLessThan(SUBMIT_BUDGET_MS + BUDGET_SLACK_MS);
     await Effect.runPromise(Deferred.succeed(released, undefined));
+  });
+
+  test('a combined sink interrupts a hanging transport when its own submission is abandoned', async () => {
+    const started = await Effect.runPromise(Deferred.make<void>());
+    const interrupted = await Effect.runPromise(Deferred.make<void>());
+    const hanging: WideEventSinkShape = {
+      submit: () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+        ),
+      diagnostics: () => Effect.succeed({ accepted: 0, dropped: 0, failed: 0 }),
+    };
+    const combined = combineWideEventSinks({ name: 'hanging', sink: hanging });
+
+    // An outer best-effort budget that is spent first abandons the combined submission by interrupting
+    // it, which interrupts the per-transport waiter before that waiter's own budget runs out.
+    const submission = Effect.runFork(combined.submit(event));
+    await Effect.runPromise(Deferred.await(started));
+    await Effect.runPromise(Fiber.interrupt(submission));
+
+    await Effect.runPromise(Deferred.await(interrupted).pipe(Effect.timeout('2 seconds')));
   });
 
   test('a transport defect never reaches the caller', async () => {

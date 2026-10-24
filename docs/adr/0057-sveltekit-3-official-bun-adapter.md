@@ -29,17 +29,24 @@ no Fetch Metadata) and the server-side subrequest normalisation all read it.
 - **The listener origin is bound at start.** `apps/web/sveltekit-loopback-adapter.ts` wraps the
   adapter: after `adapt()` it keeps the generated hand-off module as
   `adapter-bun.generated.js` and fronts it with an `adapter-bun.js` that re-exports it and
-  overrides `origin` with `ORIGIN`. Startup fails unless `ORIGIN` is a canonical http(s) origin;
+  overrides `origin` with `ORIGIN`. Startup fails unless `ORIGIN` is a canonical http(s) origin,
+  or that origin with its default port spelled out, and the module exports the canonical form
+  (`URL.origin`, which is also how browsers spell `Origin`: `PORT=80` is `http://127.0.0.1`);
   the build fails unless the generated module exports exactly one unconfigured origin
   (`export const origin = undefined;`), so an adapter upgrade that changes this hand-off cannot
-  pass silently. `apps/web/start.mjs` stays the only entry and sets
-  `ORIGIN=http://127.0.0.1:<PORT>`, as it did for ADR 0011.
+  pass silently. `apps/web/start.mjs` stays the only entry and sets `ORIGIN` to the canonical
+  origin of `http://127.0.0.1:<PORT>`, as it did for ADR 0011.
 - **Origin and CSRF contract.** Request URLs, SvelteKit's CSRF self-origin and the RPC origin
   policy all see `http://127.0.0.1:<PORT>`. SvelteKit rejects form-encoded, `text/plain` and
   content-type-less `POST`/`PUT`/`PATCH`/`DELETE` requests whose `Origin` is absent or differs.
-  The trusted-local hook still rejects a non-loopback `Host`, cross-site `Sec-Fetch-Site`, a
-  mismatched `Origin` and a mismatched `X-Forwarded-Proto` on every request; nothing in it
-  changed.
+  A tab opened at `http://localhost:<PORT>`, which the trusted-local hook accepts, sends a
+  different `Origin`, and SvelteKit 2 checked only form content types, so every browser mutation
+  declares a non-form content type: RPC and source-control commands send JSON, uploads JSON or
+  CSV, and the bodyless manual export (`POST /api/manual-merge/download`) declares
+  `application/json`. Test and benchmark clients that send a bodyless mutation (the
+  performance-capture reset) send the listener `Origin`. The trusted-local hook still rejects a
+  non-loopback `Host`, cross-site `Sec-Fetch-Site`, a mismatched `Origin` and a mismatched
+  `X-Forwarded-Proto` on every request; nothing in it changed.
 - **Adapter environment.** `start.mjs` sets `HOST=127.0.0.1`, `PORT`, `BODY_SIZE_LIMIT`,
   `CONNECTION_IDLE_TIMEOUT=45` and `SHUTDOWN_TIMEOUT=2`, and deletes the inherited
   `ADDRESS_HEADER`, `DEVELOPMENT`, `HOST_HEADER`, `IPV6_ONLY`, `PORT_HEADER`, `PROTOCOL_HEADER`,
@@ -56,12 +63,21 @@ no Fetch Metadata) and the server-side subrequest normalisation all read it.
   `data-sveltekit-reset="false"`). SvelteKit 3 has no equivalent of `noScroll` alone (keep the
   scroll position, still reset focus): those navigations keep SvelteKit's focus reset and the
   shell calls `disableScrollHandling()` from `onNavigate` for them, marked by a shell `goto`
-  with `preserveScroll` or by `data-ai-usage-preserve-scroll` on a link. Current-entry
+  with `preserveScroll` or by `data-ai-usage-preserve-scroll` on a link. That request is keyed
+  to its target URL: SvelteKit skips `beforeNavigate` for a navigation that starts while another
+  is in flight but still runs `onNavigate` for it, so a bare flag would leak into it. Back and
+  Forward reset focus after every traversal, as in SvelteKit 2: SvelteKit 3 resets only across
+  entries with different reset indexes, which left focus on the departed page's control after
+  Back across a `reset: false` entry. The shell blurs before the traversal renders and resets
+  the focus starting point afterwards unless a component claimed focus. Current-entry
   annotations (history keys, the session window anchor, the Skills fallback URL) keep the
   deprecated `replaceState`, because `goto(url, { shallow: true })` runs every navigation hook,
   can be cancelled by the dirty-editor guard and takes over the in-flight navigation. SvelteKit
   3 applies `replaceState` asynchronously, so the shell routes those annotations through one
-  page-state writer that composes on the latest requested state.
+  page-state writer that composes on the latest requested state, and a rejected write reaches a
+  visible failure status. SvelteKit 3 also hands each written state back as a new object while
+  `page.url` stays put, so the Skills fallback writes only while the address is not already the
+  worktable and never twice at once; re-running on every new `page.state` looped.
 - **Imports and types.** `$lib` becomes `#lib` (`imports` in `apps/web/package.json`, real file
   extensions); `$app/environment` becomes `$app/env`; `Handle`/`HandleFetch` come from
   `@sveltejs/kit/hooks`. `apps/web/tsconfig.json` extends `$app/tsconfig` and pins `rootDirs` to
@@ -132,3 +148,12 @@ Gathered on 2026-10-22 in the `chore/upgrade-dependencies` worktree under `nix d
   `test:e2e-production` 13 + 7 + 31 passed, the production Memory suite 3 passed.
 - Three isolated `bun run dev` cold starts reached Vite ready in 4.6–5.8 s, served `/` with 200,
   and left no process with their `HOME` after `SIGINT` to the process group.
+- Review fixes (logs `logs/kitfix-*.log`). `/skills/global/<missing>` looped on `replaceState`
+  until the page hung (`e2e/skills.spec.ts` failed against the old effect) and now writes the
+  worktable URL once. `e2e/history-focus.spec.ts` passed 6 of 6 against the SvelteKit 2 build of
+  the base commit, failed 3 of 6 on SvelteKit 3 without the shell's traversal reset (focus stayed
+  on the campaign card, the Analysis tab and the Memory filter button after Back) and passes 6
+  of 6 with it. `e2e/production-localhost-mutation.scale.ts` sees SvelteKit answer a bodyless
+  `POST` from `Origin: http://localhost:<PORT>` with its form CSRF 403, and the browser export
+  from a `localhost` tab succeed. `benchmark:session-scroll` 4 passed and the plan 072 benchmark
+  43 passed with the perf reset sending the listener `Origin`.

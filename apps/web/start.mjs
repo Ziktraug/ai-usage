@@ -54,8 +54,9 @@ for (const key of untrustedAdapterEnvironmentKeys) {
 process.env.BODY_SIZE_LIMIT = String(MAX_PORTABLE_USAGE_BYTES);
 process.env.CONNECTION_IDLE_TIMEOUT = CONNECTION_IDLE_TIMEOUT_SECONDS;
 process.env.HOST = LOOPBACK_HOST;
-// Read by the hand-off module `sveltekit-loopback-adapter.ts` puts in front of the adapter.
-process.env.ORIGIN = `http://${LOOPBACK_HOST}:${listenerPort}`;
+// Read by the hand-off module `sveltekit-loopback-adapter.ts` puts in front of the adapter. The
+// canonical spelling drops a default port (`PORT=80`), as browsers do in `Origin`.
+process.env.ORIGIN = new URL(`http://${LOOPBACK_HOST}:${listenerPort}`).origin;
 process.env.PORT = listenerPort;
 process.env.SHUTDOWN_TIMEOUT = SHUTDOWN_TIMEOUT_SECONDS;
 

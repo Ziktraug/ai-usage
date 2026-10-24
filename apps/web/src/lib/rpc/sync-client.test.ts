@@ -102,7 +102,13 @@ describe('Sync browser adapter', () => {
     expect(download.response).not.toBe(response);
     expect(await download.response.text()).toBe('{"portable":true}');
     expect(fetchInput).toBe('/api/manual-merge/download');
-    expect(fetchInit).toEqual({ method: 'POST', signal: controller.signal });
+    // SvelteKit 3 treats a mutation without a content type as a form post and checks its Origin against
+    // `http://127.0.0.1:<PORT>`, so a tab opened at `localhost` would be refused without one.
+    expect(fetchInit).toEqual({
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      signal: controller.signal,
+    });
     expect(response.bodyUsed).toBe(true);
   });
 

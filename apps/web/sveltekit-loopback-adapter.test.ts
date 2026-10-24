@@ -73,10 +73,28 @@ describe('loopback Bun adapter origin binding', () => {
     expect(handoff.server_options).toEqual({});
   });
 
+  // `start.mjs` spells the listener as `http://127.0.0.1:<PORT>`, and `URL.origin` drops a default
+  // port, which is also how browsers spell it in `Origin`.
+  test.each([
+    ['http on port 80', 'http://127.0.0.1:80', 'http://127.0.0.1'],
+    ['https on port 443', 'https://127.0.0.1:443', 'https://127.0.0.1'],
+    ['an already canonical default port', 'http://127.0.0.1', 'http://127.0.0.1'],
+  ])('exports the canonical origin for %s', async (_scenario, value, canonical) => {
+    const directory = await boundOutput();
+    process.env[RUNTIME_ORIGIN_VARIABLE] = value;
+
+    const handoff = await importHandoff(directory);
+
+    expect(handoff.origin).toBe(canonical);
+  });
+
   test.each([
     ['missing', undefined],
     ['empty', ''],
     ['path-qualified', 'http://127.0.0.1:48123/'],
+    ['path-qualified default-port', 'http://127.0.0.1:80/'],
+    ['credentialed', 'http://user@127.0.0.1:80'],
+    ['zero-padded default-port', 'http://127.0.0.1:080'],
     ['non-http', 'file:///tmp/listener'],
   ])('refuses to start with a %s ORIGIN', async (_scenario, value) => {
     const directory = await boundOutput();

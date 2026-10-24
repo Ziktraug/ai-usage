@@ -19,6 +19,8 @@
   import { isReportPathname } from '../sessions/detail/session-route';
   import { useDirtyGuardRegistry } from './dirty-navigation-context';
   import DiscardNavigationDialog from './discard-navigation-dialog.svelte';
+  import { createFrameworkScrollPreservation } from './framework-scroll-preservation';
+  import { createHistoryFocusReset, documentHistoryFocusPort } from './history-focus';
   import ManageButton from './manage-button.svelte';
   import {
     activeReportTab,
@@ -39,9 +41,15 @@
   import ThemeToggle from './theme-toggle.svelte';
 
   let {
+    pageStateFailure = false,
     providerQuota = [],
     runtimeMode,
-  }: { providerQuota?: readonly ProviderQuotaRailEntry[]; runtimeMode: RuntimeMode } = $props();
+  }: {
+    /** A history annotation written outside the rail was rejected. */
+    pageStateFailure?: boolean;
+    providerQuota?: readonly ProviderQuotaRailEntry[];
+    runtimeMode: RuntimeMode;
+  } = $props();
 
   // Both rails render on the server; the viewport breakpoint alone decides which one is visible, so
   // navigation is present in the very first paint instead of waiting for matchMedia after hydration.
@@ -219,7 +227,9 @@
   // focus, which is what SvelteKit 2's `noScroll` alone did. Navigations that ask for it (a shell
   // goto with `preserveScroll`, or a link marked `data-ai-usage-preserve-scroll`) keep SvelteKit's
   // focus reset and skip only its scroll handling.
-  let preserveFrameworkScroll = false;
+  const frameworkScrollPreservation = createFrameworkScrollPreservation();
+  // Back and Forward reset focus after every traversal, as SvelteKit 2 did (`history-focus.ts`).
+  const historyFocus = createHistoryFocusReset(documentHistoryFocusPort());
   const linkPreservesScroll = (target: EventTarget | null): boolean =>
     target instanceof Element && target.closest('a[data-ai-usage-preserve-scroll]') !== null;
 
@@ -247,8 +257,10 @@
     const isReplacement = intent.replace;
     const preserveReportScroll = shouldPreserveReportScroll(navigation.from?.url ?? null, navigation.to?.url ?? null);
     sessionWindowAnchorOwner.beginNavigation(preserveReportScroll);
-    preserveFrameworkScroll =
-      intent.preserveScroll || (navigation.type === 'link' && linkPreservesScroll(navigation.event.target));
+    frameworkScrollPreservation.request(
+      navigation.to?.url.href,
+      intent.preserveScroll || (navigation.type === 'link' && linkPreservesScroll(navigation.event.target)),
+    );
     if (isReplacement) {
       pendingHistoryCursor = historyCursor;
       pendingEntryKey = fromKey;
@@ -279,15 +291,15 @@
     }
   });
 
-  onNavigate(() => {
-    const preserve = preserveFrameworkScroll;
-    preserveFrameworkScroll = false;
-    if (preserve) {
+  onNavigate((navigation) => {
+    historyFocus.beforeUpdate(navigation.type);
+    if (frameworkScrollPreservation.consume(navigation.to?.url.href)) {
       disableScrollHandling();
     }
   });
 
-  afterNavigate(() => {
+  afterNavigate((navigation) => {
+    historyFocus.afterUpdate(navigation.type, navigation.to?.url ?? pageUrl);
     queueMicrotask(() => {
       currentEntryKey = seedCurrentEntry(pendingEntryKey || undefined);
       if (pendingEntryKey) {
@@ -369,6 +381,7 @@
       history: window.history,
       onFailure: () => {
         sessionWindowAnchorOwner.cancelNavigation();
+        frameworkScrollPreservation.cancel();
         navigationFailure = true;
       },
     });
@@ -404,6 +417,7 @@
           if (blocked) {
             scrollLifecycle?.cancel();
             sessionWindowAnchorOwner.cancelNavigation();
+            frameworkScrollPreservation.cancel();
             blockedNavigation = controller.pending() !== undefined;
           }
           return blocked;
@@ -446,7 +460,7 @@
   };
 </script>
 
-{#if navigationFailure}
+{#if navigationFailure || pageStateFailure}
   <p aria-live="polite" class={css({ srOnly: true })}>Navigation failed. Try again.</p>
 {/if}
 

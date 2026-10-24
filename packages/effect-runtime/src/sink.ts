@@ -1,4 +1,4 @@
-import { Context, Effect, Fiber, Layer, Option, Ref } from 'effect';
+import { Context, Effect, Exit, Fiber, Layer, Option, Ref } from 'effect';
 import type { WideEventSnapshot } from './model';
 import { testWideEventResourceLayer, type WideEventResourceService } from './resource';
 import { serializeWideEventSnapshot } from './sanitize';
@@ -35,21 +35,24 @@ export const makeEmptyWideEventSinkDiagnostics = (): WideEventSinkDiagnostics =>
  *
  * The submission runs in a detached fiber so that the caller (usually an
  * uninterruptible boundary finalizer) only waits for its exit with a timeout.
- * When the budget is spent the submission is abandoned: it is signalled to
- * interrupt but never awaited, so an uninterruptible transport cannot hold the
- * caller beyond the budget.
+ * Whenever the wait ends without that exit — the budget is spent, or the wait
+ * itself is interrupted, as when an enclosing combined sink's budget runs out
+ * first — the submission is abandoned: it is signalled to interrupt but never
+ * awaited, so an uninterruptible transport cannot hold the caller beyond the
+ * budget and an interruptible one does not outlive it.
  */
 export const submitWideEventBestEffort = (sink: WideEventSinkShape, event: WideEventSnapshot): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const submission = yield* Effect.forkDetach(
+  Effect.acquireUseRelease(
+    Effect.forkDetach(
       Effect.suspend(() => sink.submit(event)),
       { startImmediately: true },
-    );
-    const exit = yield* Fiber.await(submission).pipe(Effect.timeoutOption(SINK_SUBMIT_TIMEOUT_MS));
-    if (Option.isNone(exit)) {
-      submission.interruptUnsafe();
-    }
-  });
+    ),
+    (submission) => Fiber.await(submission).pipe(Effect.timeoutOption(SINK_SUBMIT_TIMEOUT_MS)),
+    (submission, waited) =>
+      Exit.isSuccess(waited) && Option.isSome(waited.value)
+        ? Effect.void
+        : Effect.sync(() => submission.interruptUnsafe()),
+  ).pipe(Effect.asVoid);
 
 export const noopWideEventSink: WideEventSinkShape = {
   submit: () => Effect.void,

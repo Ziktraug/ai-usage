@@ -19,7 +19,15 @@
       goto: () => Promise.reject(new Error('Server rendering must not navigate')),
     }),
   );
-  provideSessionWindowAnchorOwner(createSessionWindowAnchorOwner({ replace: () => undefined, state: () => ({}) }));
+  provideSessionWindowAnchorOwner(
+    createSessionWindowAnchorOwner({
+      onFailure: (cause) => {
+        throw cause;
+      },
+      replace: () => Promise.resolve(),
+      state: () => ({}),
+    }),
+  );
 </script>
 
 <WebQueryProvider hydrationState={data.queryState}>

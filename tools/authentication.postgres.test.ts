@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createSharedAuthenticationService } from '@ai-usage/identity/better-auth';
+import { createSharedAuthenticationService, type SharedAuthenticationDatabase } from '@ai-usage/identity/better-auth';
 import { parseAuthenticationIdentityId, parseInstant } from '@ai-usage/platform-core/identity';
 import { createPlatformStore } from '@ai-usage/postgres-store/writer';
 import { Pool } from 'pg';
@@ -574,6 +574,48 @@ if (runPostgresTests) {
         expect(counts.rows[0]).toEqual({ bootstrap: 0, people: 0 });
       } finally {
         await pool.end().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('carries the schema check of the production Drizzle adapter through the identity wrappers', async () => {
+      const cluster = await startPostgresCluster('shared-authentication-schema-check');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 2,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const serviceConfig = {
+        baseUrl,
+        bootstrapFirstOwner: false,
+        clientId: 'github-client-id',
+        clientSecret: 'github-client-secret',
+        identityStore: store.authentication,
+        secrets: [{ value: 'auth-secret-with-more-than-thirty-two-characters-v1', version: 1 }],
+      };
+      try {
+        // The identity wrappers refuse an adapter that registers no schema
+        // check, so the production composition building at all shows that the
+        // Drizzle adapter as the PostgreSQL store builds it carries one. A
+        // session resolving shows Better Auth ran it and found no mismatch: a
+        // mismatch would answer `unavailable`.
+        const production = createSharedAuthenticationService({
+          ...serviceConfig,
+          database: store.authentication.database,
+        });
+        await expect(production.resolveSession(new Headers())).resolves.toEqual({ kind: 'anonymous' });
+
+        // The same adapter behind a wrapper that drops its check, the way an
+        // uncarried wrapper would, is refused before any request.
+        const uncarried: SharedAuthenticationDatabase = (options) => ({ ...store.authentication.database(options) });
+        expect(() => createSharedAuthenticationService({ ...serviceConfig, database: uncarried })).toThrow(
+          expect.objectContaining({ code: 'schema-check-missing', operation: 'compose-database-adapter' }),
+        );
+      } finally {
         await store.close().catch(() => undefined);
         await cluster.stop();
       }

@@ -27,7 +27,7 @@
   import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
   import { skillObservationQueryPresentation } from './observation-query-presentation';
-  import { createSkillsFallbackNavigationRequest } from './skills-fallback-navigation';
+  import { createSkillsFallbackNavigator } from './skills-fallback-navigation';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
@@ -271,17 +271,30 @@
     return () => window.cancelAnimationFrame(activationFrame);
   });
 
+  let fallbackFailure = $state<string | undefined>();
+  const fallbackNavigator = createSkillsFallbackNavigator({
+    currentHref: () => window.location.href,
+    onFailure: (cause) => {
+      fallbackFailure = cause instanceof Error ? cause.message : 'The skills address could not be updated.';
+    },
+    // A URL rewrite in place, as in SvelteKit 2: the deprecated `replaceState` runs no navigation
+    // hooks, where a shallow `goto` would run the dirty-editor guard and could be cancelled by it.
+    replace: (url, state) => replaceState(url, state),
+  });
+
   $effect(() => {
     if (!(mounted && view?.fallbackHref)) {
       return;
     }
-    const request = createSkillsFallbackNavigationRequest(window.location.href, navigationState);
-    // A URL rewrite in place, as in SvelteKit 2: the deprecated `replaceState` runs no navigation
-    // hooks, where a shallow `goto` would run the dirty-editor guard and could be cancelled by it.
-    replaceState(request.intent.url, request.state);
+    // Reading the history state re-arms the fallback after a navigation; the navigator turns the
+    // re-run every rewrite causes into a no-op.
+    fallbackNavigator.apply(navigationState);
   });
 </script>
 
+{#if fallbackFailure}
+  <p aria-live="polite" role="status">{fallbackFailure}</p>
+{/if}
 {#if view && presentation}
   <SkillsWorkspace
     {...editorSlot === undefined ? {} : { editorSlot }}
