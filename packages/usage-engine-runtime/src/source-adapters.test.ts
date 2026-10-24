@@ -989,11 +989,21 @@ describe('work fact sources', () => {
       ).toEqual([['gh', 'pr', 'view', '66']]);
       expect(calls[0]?.env).toMatchObject({ GH_PROMPT_DISABLED: '1' });
       expect(calls[0]?.env?.GH_TOKEN).toBeUndefined();
+      expect(calls.map(({ args }) => args.slice(0, 2))).toEqual([
+        ['auth', 'token'],
+        ['search', 'prs'],
+        ['search', 'prs'],
+        ['auth', 'token'],
+        ['pr', 'view'],
+      ]);
+      expect(calls[3]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
+      expect(calls[4]?.env?.GH_TOKEN).toBe('fixture-token');
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => [latest.host, latest.number, latest.outcome, latest.state])).toEqual([
         ['github.com', 66, 'observed', 'OPEN'],
         ['gitlab.com', 3, 'disabled', null],
       ]);
+      expect(JSON.stringify({ result, stored, args: calls.map(({ args }) => args) })).not.toContain('fixture-token');
       expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }))).runs).toEqual([
         {
           disabled: false,
@@ -1050,7 +1060,13 @@ describe('work fact sources', () => {
       const runner: BoundedProcessRunner = (options) => {
         if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'token') {
           calls.push(options);
-          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: 'PRIVATE_ENGINE_TOKEN_SENTINEL\n' });
+          return Effect.succeed({
+            durationMs: 1,
+            exitCode: 0,
+            stdout: options.args.includes('--user')
+              ? 'PRIVATE_ENGINE_TOKEN_SENTINEL\n'
+              : 'ACTIVE_ENGINE_TOKEN_SENTINEL\n',
+          });
         }
         return fakeWorkFactRunner(calls)(options);
       };
@@ -1072,14 +1088,15 @@ describe('work fact sources', () => {
       );
       expect(result).toMatchObject({ inputCount: 2, outputCount: 2 });
       const ghCalls = calls.map(({ args, env }) => [args.slice(0, 3).join(' '), env?.GH_TOKEN ?? null]);
-      // The configured owner's batch runs first (link order); the active-account batch never sees the token.
+      // Each account's batch receives its own resolved token; no configured token leaks to the active account.
       expect(ghCalls).toEqual([
         ['auth token --user', null],
         ['search prs --author=@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['search prs --review-requested=@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['auth token --user', null],
         ['pr view 66', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
-        ['pr view 7', null],
+        ['auth token --hostname', null],
+        ['pr view 7', 'ACTIVE_ENGINE_TOKEN_SENTINEL'],
       ]);
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => [latest.number, latest.accountLabel])).toEqual([
@@ -1087,6 +1104,7 @@ describe('work fact sources', () => {
         [7, null],
       ]);
       expect(JSON.stringify(stored)).not.toContain('PRIVATE_ENGINE_TOKEN_SENTINEL');
+      expect(JSON.stringify(stored)).not.toContain('ACTIVE_ENGINE_TOKEN_SENTINEL');
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
@@ -1675,7 +1693,11 @@ describe('discovered work fact sources', () => {
       const runner: BoundedProcessRunner = (options) => {
         if (options.args[0] === 'auth') {
           calls.push(options);
-          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: 'SYNTHETIC_ACCOUNT_TOKEN' });
+          return Effect.succeed({
+            durationMs: 1,
+            exitCode: 0,
+            stdout: options.args.includes('--user') ? 'SYNTHETIC_ACCOUNT_TOKEN' : 'SYNTHETIC_ACTIVE_TOKEN',
+          });
         }
         if (options.args[0] === 'search') {
           calls.push(options);
@@ -1708,12 +1730,16 @@ describe('discovered work fact sources', () => {
       });
       const searches = calls.filter(({ args }) => args[0] === 'search');
       expect(searches).toHaveLength(2);
-      expect(calls.filter(({ args }) => args[0] === 'auth').every(({ args }) => args[3] === 'alice')).toBe(true);
+      expect(calls.filter(({ args }) => args[0] === 'auth').map(({ args }) => args)).toEqual([
+        ['auth', 'token', '--user', 'alice', '--hostname', 'github.com'],
+        ['auth', 'token', '--user', 'alice', '--hostname', 'github.com'],
+        ['auth', 'token', '--hostname', 'github.com'],
+      ]);
       expect(searches[0]?.args).toEqual(expect.arrayContaining(['--owner', 'fixture', 'other']));
       const views = calls.filter(({ args }) => args[0] === 'pr');
       expect(views[0]?.args.slice(0, 5)).toEqual(['pr', 'view', '45', '--repo', 'Fixture/project']);
       expect(views.filter(({ args }) => args[2] === '45')).toHaveLength(1);
-      expect(views.find(({ args }) => args[2] === '46')?.env?.GH_TOKEN).toBeUndefined();
+      expect(views.find(({ args }) => args[2] === '46')?.env?.GH_TOKEN).toBe('SYNTHETIC_ACTIVE_TOKEN');
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.find(({ latest }) => latest.number === 45)?.latest).toMatchObject({
         accountLabel: 'alice',

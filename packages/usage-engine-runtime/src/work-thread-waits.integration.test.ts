@@ -113,7 +113,7 @@ const fixture = async (
   const runner: BoundedProcessRunner = (options) =>
     Effect.promise(async () => {
       calls.push([options.command, ...options.args]);
-      if (options.command === 'gh' && options.args[0] === 'auth') {
+      if (options.command === 'gh' && options.args.join(' ') === 'auth token --hostname github.com') {
         return { durationMs: 1, exitCode: 0, stdout: 'fixture-token\n' };
       }
       if (
@@ -123,6 +123,9 @@ const fixture = async (
         return { durationMs: 1, exitCode: 0, stdout: '[]' };
       }
       if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
+        if (options.env?.GH_TOKEN !== 'fixture-token') {
+          return { durationMs: 1, exitCode: 4, stdout: '' };
+        }
         await beforeView?.();
         return {
           durationMs: 1,

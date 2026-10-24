@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -31,13 +31,16 @@ interface FakeGh {
 }
 
 /** Installs the fake `gh` on a private PATH that also carries the Bun executable for its shebang. */
-const installFakeGh = (scenario: unknown): FakeGh => {
+const installFakeGh = (scenario: Readonly<Record<string, unknown>>): FakeGh => {
   const binDirectory = mkdtempSync(path.join(tmpdir(), 'ai-usage-fake-gh-'));
   temporaryRoots.push(binDirectory);
   const ghPath = path.join(binDirectory, 'gh');
   copyFileSync(fixturePath, ghPath);
   chmodSync(ghPath, 0o700);
-  writeFileSync(path.join(binDirectory, 'scenario.json'), JSON.stringify(scenario));
+  writeFileSync(
+    path.join(binDirectory, 'scenario.json'),
+    JSON.stringify({ authToken: { stdout: `${TOKEN_SENTINEL}\n` }, ...scenario }),
+  );
   const searchPath = [binDirectory, path.dirname(process.execPath)].join(path.delimiter);
   return {
     calls: () => {
@@ -199,17 +202,19 @@ describe('observePullRequests through a fake gh on PATH', () => {
       reviewDecision: null,
     });
     const calls = fake.calls();
-    expect(calls.map(({ args }) => args.slice(0, 5))).toEqual([
+    expect(calls[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
+    expect(calls.slice(1).map(({ args }) => args.slice(0, 5))).toEqual([
       ['pr', 'view', '66', '--repo', 'fixture/project'],
       ['pr', 'view', '67', '--repo', 'fixture/project'],
       ['pr', 'view', '68', '--repo', 'fixture/project'],
     ]);
-    expect(calls[0]?.args.slice(5)).toEqual([
+    expect(calls[1]?.args.slice(5)).toEqual([
       '--json',
       'state,isDraft,reviewDecision,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
     ]);
+    expect(calls[0]?.token).toBeNull();
+    expect(calls.slice(1).map(({ token }) => token)).toEqual([TOKEN_SENTINEL, TOKEN_SENTINEL, TOKEN_SENTINEL]);
     for (const call of calls) {
-      expect(call.token).toBeNull();
       expect(call.environment).toContain('GH_PROMPT_DISABLED');
       expect(call.environment).toContain('GH_NO_UPDATE_NOTIFIER');
     }
@@ -245,7 +250,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
       [66, 'unauthenticated', 'gh reported that authentication is required (exit 4)'],
       [67, 'unauthenticated', 'not attempted: gh reported that authentication is required (exit 4)'],
     ]);
-    expect(fake.calls()).toHaveLength(1);
+    expect(fake.calls()).toHaveLength(2);
   });
 
   test('distinguishes not-found from network silence with one bounded REST follow-up', async () => {
@@ -270,11 +275,21 @@ describe('observePullRequests through a fake gh on PATH', () => {
       'GitHub returned HTTP 404 (not found or not visible to this account)',
     );
 
+    const beforeNetwork = fake.calls().length;
     const network = await observe(fake, { links: [link(500), link(67)] });
     expect(network.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
       ['network', 'gh exited 1 without output (network failure or not found)'],
       ['network', 'not attempted: gh exited 1 without output (network failure or not found)'],
     ]);
+
+    const networkCalls = fake.calls().slice(beforeNetwork);
+    expect(networkCalls.map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'repos/fixture/project/pulls/500'],
+    ]);
+    expect(networkCalls.slice(1).map(({ token }) => token)).toEqual([TOKEN_SENTINEL, TOKEN_SENTINEL]);
+    expect(JSON.stringify(network)).not.toContain(TOKEN_SENTINEL);
 
     const rejected = await observe(fake, { links: [link(401), link(67)] });
     expect(rejected.observations.map(({ outcome }) => outcome)).toEqual(['unauthenticated', 'unauthenticated']);
@@ -300,7 +315,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
     expect(performance.now() - startedAt).toBeLessThan(2500);
     expect(batch.observations.map(({ outcome }) => outcome)).toEqual(['timeout', 'timeout']);
     expect(batch.observations[1]?.outcomeMessage).toBe('not attempted: gh timed out');
-    expect(fake.calls()).toHaveLength(1);
+    expect(fake.calls()).toHaveLength(2);
   });
 
   test('records malformed or mismatched JSON as invalid and keeps going', async () => {
@@ -326,7 +341,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
       }),
     );
     expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
-      ['disabled', 'gh is not installed'],
+      ['disabled', 'not attempted: gh is not installed'],
       ['disabled', 'not attempted: gh is not installed'],
     ]);
   });
@@ -348,6 +363,8 @@ describe('observePullRequests through a fake gh on PATH', () => {
     expect(calls[0]?.args).toEqual(['auth', 'token', '--user', 'alice', '--hostname', 'github.com']);
     expect(calls[0]?.token).toBeNull();
     expect(calls[1]?.token).toBe(TOKEN_SENTINEL);
+    expect(JSON.stringify(calls.map(({ args }) => args))).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
   });
 
   test('records every link as unauthenticated when the configured account has no stored token', async () => {
@@ -390,7 +407,11 @@ describe('pull request discovery roles and mergeability', () => {
       mergeable: 'MERGEABLE',
       mergeStateStatus: 'BEHIND',
     });
-    const fields = fake.calls()[0]?.args.at(-1)?.split(',');
+    const fields = fake
+      .calls()
+      .find(({ args }) => args[0] === 'pr')
+      ?.args.at(-1)
+      ?.split(',');
     expect(fields).toContain('mergeable');
     expect(fields).toContain('mergeStateStatus');
   });
@@ -402,4 +423,77 @@ describe('pull request discovery roles and mergeability', () => {
       (await observe(failed, { links: [{ ...link(66), discoveryRole: 'author' }] })).observations[0],
     ).toMatchObject({ discoveryRole: 'author', outcome: 'unauthenticated', mergeable: null, mergeStateStatus: null });
   });
+});
+
+test('resolves the active account token before observing when automatic credential lookup fails', async () => {
+  const fake = installFakeGh({
+    authToken: { stdout: `${TOKEN_SENTINEL}\n` },
+    pullRequests: {
+      'fixture/project#66': { stdout: view() },
+      'fixture/project#67': { stdout: view({ url: 'https://github.com/fixture/project/pull/67' }) },
+    },
+  });
+  const requireExplicitToken: BoundedProcessRunner = (options) => {
+    if (options.args[0] === 'pr' && options.env?.GH_TOKEN !== TOKEN_SENTINEL) {
+      return Effect.succeed({ durationMs: 0, exitCode: 4, stdout: '' });
+    }
+    return fake.run(options);
+  };
+  const stderr = spyOn(process.stderr, 'write');
+  try {
+    const batch = await observe(fake, { links: [link(66), link(67)], run: requireExplicitToken });
+    expect(batch.observations.map(({ outcome }) => outcome)).toEqual(['observed', 'observed']);
+    expect(batch.accountLabel).toBeNull();
+    expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['pr', 'view'],
+    ]);
+    expect(fake.calls()[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
+    expect(fake.calls()[0]?.token).toBeNull();
+    expect(
+      fake
+        .calls()
+        .slice(1)
+        .map(({ token }) => token),
+    ).toEqual([TOKEN_SENTINEL, TOKEN_SENTINEL]);
+    expect(JSON.stringify(fake.calls().map(({ args }) => args))).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
+    const emittedStderr = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(emittedStderr).not.toContain(TOKEN_SENTINEL);
+    expect(emittedStderr).not.toContain(STDERR_SENTINEL);
+  } finally {
+    stderr.mockRestore();
+  }
+});
+
+test.each([
+  { stdout: '' },
+  { stdout: '  \n\t' },
+  { exitCode: 1, stdout: '' },
+])('halts the active-account batch when no usable token is returned: %j', async (authToken) => {
+  const fake = installFakeGh({
+    authToken,
+    pullRequests: { 'fixture/project#66': { stdout: view() } },
+  });
+  const batch = await observe(fake, { links: [link(66), link(67)] });
+  expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
+    ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
+    ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
+  ]);
+  expect(fake.calls().map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
+  expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+  expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
+});
+
+test('halts after a bounded active-account token read timeout without observing a link', async () => {
+  const fake = installFakeGh({ authToken: { delayMs: 3000, stdout: TOKEN_SENTINEL } });
+  const batch = await observe(fake, { links: [link(66), link(67)], timeoutMs: 200 });
+  expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
+    ['timeout', 'not attempted: gh timed out while reading the account token'],
+    ['timeout', 'not attempted: gh timed out while reading the account token'],
+  ]);
+  expect(fake.calls().map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
+  expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
 });

@@ -20,9 +20,9 @@ import { Effect } from 'effect';
 /**
  * External fact: what GitHub shows for one explicitly linked pull request at one instant, read
  * through the operator's own `gh` CLI and credentials. The engine never holds a token of its own:
- * by default the CLI's active account answers; when the local config names an account for an
- * owner, its token is obtained with `gh auth token --user` for this run only and handed to the
- * read through `GH_TOKEN`, never stored, logged or echoed into an observation.
+ * one `gh auth token` read selects the active account, or `--user` selects the locally configured
+ * account for an owner. Its token is handed to every read through `GH_TOKEN` for this batch only,
+ * never stored, logged or echoed into an observation.
  *
  * `gh` writes its diagnostics to stderr, which the bounded runner discards. Failures are
  * therefore classified from exit codes and from stdout alone:
@@ -485,15 +485,14 @@ const observeLink = (
 
 const resolveAccountToken = (
   context: Omit<RunContext, 'environment'>,
-  ghUser: string,
+  ghUser: string | null,
   environment: Readonly<Record<string, string>>,
 ): Effect.Effect<{ readonly token: string } | { readonly failure: Classification }> =>
   Effect.gen(function* () {
     const read = yield* gh({ ...context, environment }, [
       'auth',
       'token',
-      '--user',
-      ghUser,
+      ...(ghUser === null ? [] : ['--user', ghUser]),
       '--hostname',
       SUPPORTED_GITHUB_HOST,
     ]);
@@ -509,7 +508,7 @@ const resolveAccountToken = (
       return {
         failure: {
           haltsRun: true,
-          message: `gh has no stored token for ${ghUser} on ${SUPPORTED_GITHUB_HOST}`,
+          message: `gh has no stored token for ${ghUser ?? 'the active account'} on ${SUPPORTED_GITHUB_HOST}`,
           outcome: 'unauthenticated',
         },
       };
@@ -521,7 +520,7 @@ const resolveAccountToken = (
  * Observes each distinct link once, in order, up to `maxLinks`. Hosts other than github.com are
  * recorded as `disabled`. After a run-halting failure (timeout, missing `gh`, no credentials,
  * network silence) the remaining links are recorded with that outcome without another call, so
- * an offline machine costs at most two process spawns per cycle. Never fails.
+ * an offline machine costs at most three process spawns per cycle (token, view, REST). Never fails.
  */
 export const observePullRequests = (options: ObservePullRequestsOptions): Effect.Effect<PullRequestObservationBatch> =>
   Effect.gen(function* () {
@@ -575,15 +574,14 @@ export const observePullRequests = (options: ObservePullRequestsOptions): Effect
     }
     let halt: Classification | null = null;
     let environment: Readonly<Record<string, string>> = baseEnvironment;
-    if (options.account !== undefined) {
-      const resolved = yield* resolveAccountToken(baseContext, options.account.ghUser, baseEnvironment);
-      if ('failure' in resolved) {
-        halt = resolved.failure;
-      } else {
-        // The token lives in this closure for the duration of the batch and reaches `gh` only as
-        // the GH_TOKEN variable of the calls below.
-        environment = { ...baseEnvironment, GH_TOKEN: resolved.token };
-      }
+    // Resolve even the active account explicitly: automatic credential lookup in `gh pr view`
+    // can fail under the engine while the bounded `gh auth token` read succeeds.
+    const resolved = yield* resolveAccountToken(baseContext, options.account?.ghUser ?? null, baseEnvironment);
+    if ('failure' in resolved) {
+      halt = resolved.failure;
+    } else {
+      // The token stays in this batch and reaches `gh` only through its environment.
+      environment = { ...baseEnvironment, GH_TOKEN: resolved.token };
     }
     const context: RunContext = { ...baseContext, environment };
     for (const link of supported) {

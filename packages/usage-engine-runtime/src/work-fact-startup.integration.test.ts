@@ -73,6 +73,9 @@ const fakeRunner =
       return respond('[]');
     }
     if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
+      if (options.env?.GH_TOKEN !== 'fixture-token') {
+        return respond('', 4);
+      }
       return respond(pullRequestView(options.args[4] ?? '', Number(options.args[2])));
     }
     return respond('', 1);
@@ -230,6 +233,14 @@ describe('work fact producers on engine startup', () => {
       .map(({ args }) => `${args[4]}#${args[2]}`)
       .sort();
     expect(pullRequests).toEqual(['fixture/project#66', 'fixture/project#67']);
+    expect(calls.filter(({ command }) => command === 'gh').map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['search', 'prs'],
+      ['search', 'prs'],
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['pr', 'view'],
+    ]);
 
     const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
     expect(
