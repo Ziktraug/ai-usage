@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun x ultracite fix --skip=correctness/noUnusedImports --hook"
+            "command": "bun run fix --skip=correctness/noUnusedImports --hook"
           }
         ]
       }
