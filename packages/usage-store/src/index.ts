@@ -4486,12 +4486,14 @@ export const { importCodexWorkObservations, queryCodexWorkObservations } = creat
 
 export const {
   applyWorkThreadCommand,
+  applyWorkThreadWaitObservations,
   countWorkThreads,
   queryActiveWorkThreadLinks,
   queryWorkThreadById,
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   queryWorkThreadProjects,
+  queryWorkThreadWaitCandidates,
   queryWorkThreadSessionEvidence,
   queryWorkThreadsPage,
   seedWorkThreads,
@@ -4503,6 +4505,8 @@ export const {
 });
 export type {
   ApplyWorkThreadCommandInput,
+  ApplyWorkThreadWaitObservationsInput,
+  ApplyWorkThreadWaitObservationsResult,
   QueryActiveWorkThreadLinksInput,
   QueryActiveWorkThreadLinksResult,
   QueryWorkThreadByIdInput,
@@ -4510,11 +4514,14 @@ export type {
   QueryWorkThreadSessionEvidenceInput,
   QueryWorkThreadsPageInput,
   QueryWorkThreadsPageResult,
+  QueryWorkThreadWaitCandidatesInput,
+  QueryWorkThreadWaitCandidatesResult,
   SeedWorkThreadsInput,
   SeedWorkThreadsResult,
   WorkThreadPageRow,
   WorkThreadSeed,
   WorkThreadSessionEvidence,
+  WorkThreadWaitCandidate,
 } from './work-thread-store';
 
 export const exportLocalMergeBundle = (

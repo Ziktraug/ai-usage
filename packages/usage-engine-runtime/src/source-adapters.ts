@@ -58,12 +58,16 @@ import {
 } from '@ai-usage/report-core/source-control';
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
-import { parseWorkThreadLinkKey } from '@ai-usage/report-core/work-thread';
+import {
+  parseWorkThreadLinkKey,
+  pullRequestLinkKey as workThreadPullRequestKey,
+} from '@ai-usage/report-core/work-thread';
 import {
   workThreadSeedsFromJiraIssues,
   workThreadSeedsFromPullRequests,
 } from '@ai-usage/report-core/work-thread-seeds';
 import {
+  applyWorkThreadWaitObservations,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importCodexWorkObservations,
@@ -83,6 +87,7 @@ import {
   queryLatestPullRequestObservations,
   queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
+  queryWorkThreadWaitCandidates,
   type RtkSavingsContribution,
   recordWorkFactRun,
   type ServedLocalProjectSource,
@@ -1202,6 +1207,16 @@ const createPullRequestSource = (input: {
       const selected = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
       const links = selected.map(({ link }) => link);
       const truncated = unique.size > links.length || discoveryTruncated;
+      const waits = yield* servedInputsOrEmpty(
+        'github.pull-requests',
+        queryWorkThreadWaitCandidates({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'pull-request-review',
+          linkKeys: links.map(workThreadPullRequestKey),
+        }),
+        { candidates: [], truncated: false },
+      );
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: links.length });
       const byAccount = new Map<string | null, PullRequestLink[]>();
       for (const { link, account } of selected) {
@@ -1226,6 +1241,34 @@ const createPullRequestSource = (input: {
       yield* importPullRequestObservations({ dbPath: input.dbPath, observations }).pipe(
         Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
       );
+      const waitResult =
+        waits.candidates.length === 0
+          ? { satisfied: 0, unchanged: 0, unproven: 0 }
+          : yield* applyWorkThreadWaitObservations({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              now: input.now().toISOString(),
+              candidates: waits.candidates,
+              pullRequests: observations,
+            }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      const waitWarnings = [
+        ...(waits.truncated
+          ? [
+              {
+                code: 'work-thread-waits-truncated',
+                message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
+              },
+            ]
+          : []),
+        ...(waitResult.unproven > 0
+          ? [
+              {
+                code: 'pull-request-wait-unproven',
+                message: `Stored observations cannot prove a new review decision for ${String(waitResult.unproven)} identified waits; they remain waiting.`,
+              },
+            ]
+          : []),
+      ];
       // A discovered pull request becomes a Work thread once; the store keys it by origin (plan 120).
       const pullRequestSeeds = workThreadSeedsFromPullRequests(observations);
       if (pullRequestSeeds.length > 0) {
@@ -1244,7 +1287,13 @@ const createPullRequestSource = (input: {
         ? `Observed ${String(links.length)} of ${String(unique.size)} candidate pull requests; additional search results may be omitted.`
         : null;
       const message =
-        [truncation, ...discoveryWarnings.map((warning) => warning.message)].filter(Boolean).join(' ') || null;
+        [
+          truncation,
+          ...discoveryWarnings.map((warning) => warning.message),
+          ...waitWarnings.map((warning) => warning.message),
+        ]
+          .filter(Boolean)
+          .join(' ') || null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: false,
@@ -1263,6 +1312,7 @@ const createPullRequestSource = (input: {
         warnings: [
           ...desktop.warnings,
           ...discoveryWarnings,
+          ...waitWarnings,
           ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
         ],
       };
@@ -1388,6 +1438,16 @@ const createJiraIssueSource = (input: {
       const candidates = [...new Set([...desktop.jiraKeys, ...threadKeys, ...discovery.keys])];
       const keys = candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
       const truncated = candidates.length > keys.length || discovery.truncated || threadLinks.truncated;
+      const waits = yield* servedInputsOrEmpty(
+        'jira.issues',
+        queryWorkThreadWaitCandidates({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'jira-update',
+          linkKeys: keys.map((key) => `jira:default/${key}`),
+        }),
+        { candidates: [], truncated: false },
+      );
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: keys.length });
       const batch = yield* observeJiraIssues({
         keys,
@@ -1401,6 +1461,34 @@ const createJiraIssueSource = (input: {
       yield* importJiraIssueObservations({ dbPath: input.dbPath, observations: batch.observations }).pipe(
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
+      const waitResult =
+        waits.candidates.length === 0
+          ? { satisfied: 0, unchanged: 0, unproven: 0 }
+          : yield* applyWorkThreadWaitObservations({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              now: input.now().toISOString(),
+              candidates: waits.candidates,
+              jiraIssues: batch.observations,
+            }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+      const waitWarnings = [
+        ...(waits.truncated
+          ? [
+              {
+                code: 'work-thread-waits-truncated',
+                message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
+              },
+            ]
+          : []),
+        ...(waitResult.unproven > 0
+          ? [
+              {
+                code: 'jira-wait-unproven',
+                message: `Stored observations cannot prove a status change for ${String(waitResult.unproven)} identified waits; they remain waiting.`,
+              },
+            ]
+          : []),
+      ];
       // Only assigned issues the discovery returned become threads; a key read from a branch name
       // stays a fact of the sessions that wrote it.
       const discoveredKeys = new Set(discovery.keys);
@@ -1431,7 +1519,13 @@ const createJiraIssueSource = (input: {
         machineId: input.machine.id,
         message: notInstalled
           ? JIRA_NOT_INSTALLED_MESSAGE
-          : [truncation, ...discoveryWarnings.map((warning) => warning.message)].filter(Boolean).join(' ') || null,
+          : [
+              truncation,
+              ...discoveryWarnings.map((warning) => warning.message),
+              ...waitWarnings.map((warning) => warning.message),
+            ]
+              .filter(Boolean)
+              .join(' ') || null,
         observed,
         ranAt: input.now(),
         outcomeCode: discovery.outcome === 'unauthenticated' ? 'unauthenticated' : null,
@@ -1445,6 +1539,7 @@ const createJiraIssueSource = (input: {
         warnings: [
           ...discoveryWarnings,
           ...desktop.warnings,
+          ...waitWarnings,
           ...(truncation === null ? [] : [{ code: 'jira-issues-truncated', message: truncation }]),
         ],
       };

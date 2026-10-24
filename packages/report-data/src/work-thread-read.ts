@@ -446,6 +446,7 @@ const readRow = (
       links: active,
       markers: { pullRequests, jiraIssues, local },
       marks,
+      // Neither stored session family carries native lifecycle evidence; recency is not a running state.
       runningSessions: 0,
       sessionCount: sessions.length,
       thread,
@@ -500,13 +501,18 @@ const sourcesOf = (
   if (reads.some((read) => read.truncated.has('sessions'))) {
     sessionState = 'truncated';
   }
+  const sessionMessages: string[] = [];
+  if (reads.some((read) => read.truncated.has('sessions'))) {
+    sessionMessages.push('Some linked session evidence was unavailable or exceeded the read bounds.');
+  }
+  if (reads.some((read) => read.evidence.sessions.length > 0)) {
+    sessionMessages.push('Running state is unknown for the linked sessions.');
+  }
   sources.push({
     source: 'sessions',
     state: sessionState,
     lastRunAt: evidence?.generatedAt ?? null,
-    message: reads.some((read) => read.truncated.has('sessions'))
-      ? 'Some linked session evidence was unavailable or exceeded the read bounds.'
-      : null,
+    message: sessionMessages.length > 0 ? sessionMessages.join(' ') : null,
   });
   return sources;
 };

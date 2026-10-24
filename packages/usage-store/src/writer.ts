@@ -97,6 +97,7 @@ export type {
 export {
   acknowledgeUsageReplicationBatch,
   applyWorkThreadCommand,
+  applyWorkThreadWaitObservations,
   backfillUsageReplicationOutbox,
   blockUsageReplicationBatch,
   checkpointUsageStore,
@@ -145,6 +146,7 @@ export {
   queryUsageStoreGenerations,
   queryWorkFactRunStates,
   queryWorkThreadsPage,
+  queryWorkThreadWaitCandidates,
   quiesceUsageStoreForShutdown,
   recordProviderQuotaSourceAttempt,
   recordWorkFactRun,
@@ -178,7 +180,12 @@ export type {
 } from './review-attempt-store';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
 export type {
+  ApplyWorkThreadWaitObservationsInput,
+  ApplyWorkThreadWaitObservationsResult,
   QueryActiveWorkThreadLinksInput,
   QueryActiveWorkThreadLinksResult,
+  QueryWorkThreadWaitCandidatesInput,
+  QueryWorkThreadWaitCandidatesResult,
   WorkThreadSeed,
+  WorkThreadWaitCandidate,
 } from './work-thread-store';

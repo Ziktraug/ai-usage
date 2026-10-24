@@ -859,6 +859,42 @@ describe('work-thread reader', () => {
     expect(doneList.rows[0]?.lastActivityAt).toBe(at(-2));
   });
 
+  test('recent activity, partial timing and missing ends do not establish running sessions', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [
+      session('recent-root', { activeDate: at(0), endDate: at(0), partial: true }),
+      session('open-child', {
+        activeDate: at(0),
+        date: at(0),
+        endDate: null,
+        partial: true,
+        source: {
+          harnessKey: 'codex',
+          machineId: MACHINE,
+          parentSourceSessionId: 'recent-root',
+          rootSourceSessionId: 'recent-root',
+          sourceSessionId: 'open-child',
+        },
+      }),
+    ]);
+    const threadId = await create(dbPath, [sessionLink('recent-root')]);
+    const unrelatedThread = await create(dbPath, [], 'No sessions');
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.row.sessionCount).toBe(2);
+    expect(detail?.row.runningSessions).toBe(0);
+    expect(detail?.episodes[0]?.children[0]?.sourceSessionId).toBe('open-child');
+    expect(detail?.sources.find((source) => source.source === 'sessions')).toMatchObject({
+      state: 'ok',
+      message: expect.stringContaining('Running state is unknown for the linked sessions.'),
+    });
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(list.rows.find((row) => row.thread.threadId === threadId)?.runningSessions).toBe(0);
+    expect(list.rows.find((row) => row.thread.threadId === unrelatedThread)?.sessionCount).toBe(0);
+    expect(list.sources.find((source) => source.source === 'sessions')?.message).toContain('Running state is unknown');
+    const empty = await run(queryWorkThreadDetail({ dbPath, threadId: unrelatedThread, now: NOW }));
+    expect(empty?.sources.find((source) => source.source === 'sessions')?.message).toBeNull();
+  });
+
   test('Desktop metadata supplies dated question and report without reading transcripts', async () => {
     const dbPath = await fixture();
     const desktop = parseClaudeDesktopSessionObservation({
@@ -901,7 +937,7 @@ describe('work-thread reader', () => {
       wrapUpDescription: null,
       writtenBranches: [],
     });
-    if (desktop === null) {
+    if (desktop === null || desktop.turnSummary === null) {
       throw new Error('Invalid Desktop fixture');
     }
     await run(
@@ -917,6 +953,7 @@ describe('work-thread reader', () => {
             cliSessionId: 'child-cli',
             desktopSessionId: 'child-desktop',
             title: 'Child',
+            turnSummary: { ...desktop.turnSummary, status: 'blocked' },
             spawnedFrom: { sessionId: 'desktop-id', sideSession: true, taskId: null, title: 'Child' },
           },
           {
@@ -924,6 +961,7 @@ describe('work-thread reader', () => {
             cliSessionId: 'grand-cli',
             desktopSessionId: 'grand-desktop',
             title: 'Grandchild',
+            turnSummary: { ...desktop.turnSummary, status: 'completed' },
             spawnedFrom: { sessionId: 'child-desktop', sideSession: true, taskId: null, title: 'Grandchild' },
           },
         ],
@@ -941,6 +979,11 @@ describe('work-thread reader', () => {
     ]);
     const threadId = await create(dbPath, [sessionLink('cli-id', 'claude')]);
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.row.runningSessions).toBe(0);
+    expect(detail?.sources.find((source) => source.source === 'sessions')).toMatchObject({
+      state: 'ok',
+      message: expect.stringContaining('Running state is unknown for the linked sessions.'),
+    });
     expect(detail?.episodes[0]).toMatchObject({
       title: 'Desktop title',
       question: 'Review this',
@@ -954,6 +997,7 @@ describe('work-thread reader', () => {
     ]) {
       const overlapping = await create(dbPath, links);
       const grouped = await run(queryWorkThreadDetail({ dbPath, threadId: overlapping, now: NOW }));
+      expect(grouped?.row.runningSessions).toBe(0);
       expect(grouped?.episodes).toHaveLength(1);
       expect(grouped?.episodes[0]?.children[0]?.sourceSessionId).toBe('child-cli');
       expect(grouped?.episodes[0]?.children[0]?.children[0]?.sourceSessionId).toBe('grand-cli');
