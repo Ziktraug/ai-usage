@@ -424,9 +424,30 @@ describe('work-thread reader', () => {
     }
   });
 
-  test('returns the newest 64 detached links and reports the omitted history', async () => {
+  test.each([
+    'never-run',
+    'ok',
+    'unauthenticated',
+    'failed',
+    'disabled',
+  ] as const)('returns the newest 64 detached links without hiding the %s source state', async (state) => {
     const dbPath = await fixture();
     const threadId = await create(dbPath);
+    if (state !== 'never-run') {
+      await run(
+        recordWorkFactRun({
+          dbPath,
+          machineId: MACHINE,
+          sourceId: 'github.pull-requests',
+          disabled: state === 'disabled',
+          failed: state === 'failed' || state === 'unauthenticated' ? 1 : 0,
+          observed: state === 'ok' ? 1 : 0,
+          ranAt: NOW,
+          message: 'Fixture collection result.',
+          outcomeCode: state === 'unauthenticated' ? 'unauthenticated' : null,
+        }),
+      );
+    }
     const db = new Database(dbPath);
     try {
       for (let i = 0; i < 70; i++) {
@@ -442,8 +463,11 @@ describe('work-thread reader', () => {
     expect(detail?.detachedLinks[0]?.key).toBe('github.com/fixture/repo#1');
     expect(detail?.detachedLinks.at(-1)?.key).toBe('github.com/fixture/repo#64');
     expect(detail?.sources.find((source) => source.source === 'github')).toMatchObject({
-      state: 'truncated',
-      message: expect.stringContaining('detached'),
+      state: state === 'ok' ? 'truncated' : state,
+      message:
+        state === 'never-run'
+          ? 'Older detached links are omitted from this history.'
+          : 'Fixture collection result. Older detached links are omitted from this history.',
     });
   });
 

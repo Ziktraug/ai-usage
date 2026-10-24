@@ -930,7 +930,7 @@ describe('work thread store', () => {
           seeds: [link.kind === 'pull-request' ? seed() : jira],
         }),
       ),
-    ).toEqual({ created: 1, existing: 0 });
+    ).toEqual({ created: 0, existing: 1 });
     expect(
       await run(
         seedWorkThreads({
@@ -941,6 +941,45 @@ describe('work thread store', () => {
         }),
       ),
     ).toEqual({ created: 0, existing: 1 });
+  });
+
+  test.each([
+    seed(),
+    seed({ origin: 'jira-issue', linkKind: 'jira-issue', originKey: 'jira:default/FIX-42' }),
+  ])('preserves detached $linkKind seed suppression while allowing an explicit relink', async (candidate) => {
+    const dbPath = await createStore();
+    const threadId = await create(dbPath, {
+      links: [{ kind: candidate.linkKind, key: candidate.originKey }],
+    });
+    const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    if (!link) {
+      throw new Error('Expected operator link');
+    }
+    await command(dbPath, { op: 'detach-link', commandId: randomUUID(), threadId, linkId: link.linkId });
+    const before = threadSnapshot(dbPath);
+    const input = { dbPath, machineId: MACHINE, now: LATER, seeds: [candidate] };
+    expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
+    expect(threadSnapshot(dbPath)).toEqual(before);
+    expect(
+      await command(
+        dbPath,
+        { op: 'link', commandId: randomUUID(), threadId, kind: candidate.linkKind, key: candidate.originKey },
+        LATER,
+      ),
+    ).toMatchObject({ applied: true, ok: true, threadId });
+    const links = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    expect(links).toHaveLength(2);
+    expect(links.find((item) => item.linkId === link.linkId)?.detachedAt).toBe(NOW);
+    expect(links.filter((item) => item.detachedAt === null)).toMatchObject([
+      { kind: candidate.linkKind, key: candidate.originKey, provenance: 'user', createdAt: LATER },
+    ]);
+    expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
+    expect(await run(queryWorkThreadEvents({ dbPath, threadId }))).toMatchObject([
+      { kind: 'created' },
+      { kind: 'link-detached' },
+      { kind: 'link-added' },
+    ]);
   });
 
   test('canonicalizes PR and branch authorities while preserving branch ref case and legacy deduplication', async () => {

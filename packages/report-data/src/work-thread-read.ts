@@ -663,7 +663,7 @@ export const queryWorkThreadDetail = (input: {
         omittedDetachedSources.has(source.source)
           ? {
               ...source,
-              state: 'truncated' as const,
+              state: source.state === 'ok' ? ('truncated' as const) : source.state,
               message: [source.message, 'Older detached links are omitted from this history.']
                 .filter(Boolean)
                 .join(' '),

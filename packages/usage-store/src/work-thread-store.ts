@@ -914,9 +914,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
             )
             .get(originKey) !== null ||
           db
-            .query(
-              `SELECT 1 FROM work_thread_links WHERE kind = ? AND ${comparableLinkSql(seed.linkKind)} = ? AND detached_at IS NULL`,
-            )
+            .query(`SELECT 1 FROM work_thread_links WHERE kind = ? AND ${comparableLinkSql(seed.linkKind)} = ?`)
             .get(seed.linkKind, originKey) !== null
         ) {
           existing++;

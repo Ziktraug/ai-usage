@@ -1143,7 +1143,7 @@ const createPullRequestSource = (input: {
         return parsed?.kind === 'pull-request' ? [parsed] : [];
       });
       // Store eligibility precedes its bound, so completed links cannot crowd out older pending links.
-      // Explicit links keep their order and account even when a search also discovers them.
+      // Operator-followed links precede session declarations and retain their account on discovery.
       const keyFor = (link: PullRequestLink): string =>
         pullRequestLinkKey({
           host: link.host.trim().toLowerCase(),
@@ -1151,7 +1151,7 @@ const createPullRequestSource = (input: {
           repository: link.repository.trim().toLowerCase(),
         });
       const unique = new Map<string, { link: PullRequestLink; account: string | null }>();
-      for (const link of [...desktop.links, ...served, ...injected, ...threadPullRequests]) {
+      for (const link of [...threadPullRequests, ...desktop.links, ...served, ...injected]) {
         const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
         const key = keyFor(candidate);
         if (!unique.has(key)) {
@@ -1435,7 +1435,7 @@ const createJiraIssueSource = (input: {
         // The current Jira observation authority is the CLI's default site only.
         return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [parsed.key] : [];
       });
-      const candidates = [...new Set([...desktop.jiraKeys, ...threadKeys, ...discovery.keys])];
+      const candidates = [...new Set([...threadKeys, ...desktop.jiraKeys, ...discovery.keys])];
       const keys = candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
       const truncated = candidates.length > keys.length || discovery.truncated || threadLinks.truncated;
       const waits = yield* servedInputsOrEmpty(

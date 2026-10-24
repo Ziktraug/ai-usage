@@ -2166,7 +2166,109 @@ test('observes an older default-site Jira link when other sites fill the candida
   }
 });
 
-test('thread PRs follow explicit session links and precede bounded discovery results', async () => {
+const writeCrowdedDesktopRegistry = (home: string, now: Date): void => {
+  const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+  mkdirSync(directory, { recursive: true });
+  for (let number = 1; number <= 45; number += 1) {
+    const sessionId = `local_crowded-${number}`;
+    writeFileSync(
+      path.join(directory, `${sessionId}.json`),
+      JSON.stringify({
+        cliSessionId: `cli-crowded-${number}`,
+        createdAt: now.getTime() - 7_200_000,
+        cwd: path.join(home, 'projects', 'example'),
+        isArchived: false,
+        lastActivityAt: now.getTime() - 3_600_000,
+        branch: `feat/SESSION-${number}`,
+        prs: [
+          {
+            autoFix: false,
+            baseRef: 'main',
+            branch: `feat/SESSION-${number}`,
+            host: 'github.com',
+            own: true,
+            prNumber: number,
+            provider: 'github',
+            repo: 'fixture/project',
+            state: 'OPEN',
+            url: `https://github.com/fixture/project/pull/${number}`,
+          },
+        ],
+        sessionId,
+        title: `Crowded session ${number}`,
+        titleSource: 'auto',
+      }),
+    );
+  }
+};
+
+test('thread PRs precede 45 session-declared PRs and preserve truncation reporting', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-thread-crowded-prs-'));
+  try {
+    const now = new Date('2026-10-21T21:00:00.000Z');
+    writeCrowdedDesktopRegistry(home, now);
+    await createLinkedThread(home, [{ kind: 'pull-request', key: 'github.com/fixture/project#100' }]);
+    const calls: BoundedProcessOptions[] = [];
+    const registry = await createRegistry(home, {
+      ghAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: fakeWorkFactRunner(calls),
+    });
+    expect(await Effect.runPromise(registry.get('claude.desktop-sessions')!.run(progressContext([])))).toMatchObject({
+      inputCount: 45,
+      outputCount: 45,
+    });
+    const result = await Effect.runPromise(registry.get('github.pull-requests')!.run(progressContext([])));
+    expect(result).toMatchObject({
+      inputCount: 40,
+      outputCount: 40,
+      warnings: [{ code: 'pull-requests-truncated', message: expect.stringContaining('46') }],
+    });
+    const viewed = calls.filter(({ args }) => args[0] === 'pr').map(({ args }) => Number(args[2]));
+    expect(viewed[0]).toBe(100);
+    const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+    expect(stored.items.find(({ latest }) => latest.number === 100)?.latest.outcome).toBe('observed');
+    const runs = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+    expect(runs.runs.find(({ sourceId }) => sourceId === 'github.pull-requests')?.message).toContain('40 of 46');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('thread Jira keys precede 45 session-declared keys and preserve truncation reporting', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-thread-crowded-jira-'));
+  try {
+    const now = new Date('2026-10-21T21:00:00.000Z');
+    writeCrowdedDesktopRegistry(home, now);
+    await createLinkedThread(home, [{ kind: 'jira-issue', key: 'jira:default/LINKED-1' }]);
+    const calls: BoundedProcessOptions[] = [];
+    const registry = await createRegistry(home, {
+      acliAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: fakeJiraRunner(calls),
+    });
+    expect(await Effect.runPromise(registry.get('claude.desktop-sessions')!.run(progressContext([])))).toMatchObject({
+      inputCount: 45,
+      outputCount: 45,
+    });
+    const result = await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])));
+    expect(result).toMatchObject({
+      inputCount: 20,
+      outputCount: 20,
+      warnings: [{ code: 'jira-issues-truncated', message: expect.stringContaining('46') }],
+    });
+    const viewed = calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3]);
+    expect(viewed[0]).toBe('LINKED-1');
+    const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
+    expect(stored.items.find(({ latest }) => latest.key === 'LINKED-1')?.latest.outcome).toBe('observed');
+    const runs = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+    expect(runs.runs.find(({ sourceId }) => sourceId === 'jira.issues')?.message).toContain('20 of 46');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('thread PRs precede injected session links and bounded discovery results', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'engine-thread-pr-priority-'));
   try {
     await createLinkedThread(
@@ -2193,8 +2295,9 @@ test('thread PRs follow explicit session links and precede bounded discovery res
     const result = await Effect.runPromise(registry.get('github.pull-requests')!.run(progressContext([])));
     expect(result).toMatchObject({ inputCount: 40, outputCount: 40, warnings: [{ code: 'pull-requests-truncated' }] });
     const viewed = calls.filter(({ args }) => args[0] === 'pr').map(({ args }) => Number(args[2]));
-    expect(viewed[0]).toBe(5);
-    expect(viewed.slice(1).every((number) => number >= 100)).toBe(true);
+    expect(viewed.every((number) => number >= 100)).toBe(true);
+    expect(viewed).not.toContain(5);
+    expect(viewed).not.toContain(1);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
