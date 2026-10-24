@@ -124,7 +124,7 @@ const boundaryPolicies: BoundaryPolicy[] = [
     packageName: '@ai-usage/identity',
     forbiddenDependencies: ['drizzle-orm', 'pg'],
     forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'pg'],
-    reason: 'identity owns the Device application services, not their persistence adapter.',
+    reason: 'identity owns the Device token and credential helpers, not a persistence adapter.',
   },
   {
     packageName: '@ai-usage/memory-sqlite',

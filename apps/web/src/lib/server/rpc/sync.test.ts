@@ -381,6 +381,7 @@ describe('manual merge explicit HTTP adapters', () => {
     const controller = new AbortController();
     let cleanupCount = 0;
     let receivedRequest: Request | undefined;
+    let lateCleanup: Promise<void> | undefined;
     let resolveLateStaging: (() => void) | undefined;
     let stagingStarted: (() => void) | undefined;
     const stagingStartedPromise = new Promise<void>((resolve) => {
@@ -398,7 +399,7 @@ describe('manual merge explicit HTTP adapters', () => {
         await new Promise<void>((resolve) => {
           request.signal.addEventListener('abort', () => resolve(), { once: true });
         });
-        lateStaging.then(() => {
+        lateCleanup = lateStaging.then(() => {
           cleanupCount += 1;
         });
         return new Response(null, { status: 499 });
@@ -410,8 +411,7 @@ describe('manual merge explicit HTTP adapters', () => {
     controller.abort();
     const response = await responsePromise;
     resolveLateStaging?.();
-    await lateStaging;
-    await Promise.resolve();
+    await lateCleanup;
 
     expect(response.status).toBe(499);
     expect(receivedRequest).toBe(upload);

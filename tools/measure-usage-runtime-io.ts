@@ -948,7 +948,7 @@ const stopCapturedProcessOnce = async (ownedProcess: CapturedOwnedProcess): Prom
 
 const stopCapturedProcess = (ownedProcess: CapturedOwnedProcess): Promise<void> => {
   const existing = stopPromises.get(ownedProcess);
-  if (existing) {
+  if (existing !== undefined) {
     return existing;
   }
   const stopping = stopCapturedProcessOnce(ownedProcess);

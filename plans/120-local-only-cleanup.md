@@ -1,14 +1,15 @@
 # 120 — Local-only cleanup: remove the connected platform and dead features, take the upgrade's opportunities
 
-Status: IN PROGRESS, started 2026-10-24.
+Status: PHASE A DONE locally on 2026-10-24 (stacked branches, committed, not pushed); phase B
+TODO after PR #67.
 Baseline: `chore/upgrade-dependencies` at `5b8bc4d4` (plan 119, Bun 1.4.3, Effect 4, SvelteKit 3,
 Panda 2, Ultracite 8), not pushed.
 Depends on: plan 119. Phase B waits for PR #67 (`feat/work-resume-cockpit`, which carries #66 and
 ADR 0049) to land on `main`.
 Authorization: local implementation, isolated verification and local commits on stacked branches;
 no push, no PR, no real-store upgrade unless the operator asks.
-Evidence: dead-feature inventory and critical ADR review of 2026-10-24 (session scratchpad
-`dead-feature-inventory.md`, `adr-critical-review.md`); feature surveys of the upgraded packages.
+Evidence: dead-feature inventory and critical ADR review of 2026-10-24 (kept as working notes in
+`.agent-memory/plan-120-local-only-2026-10-24/`); feature surveys of the upgraded packages.
 
 ## Operator decisions (2026-10-24)
 
@@ -69,6 +70,48 @@ features; ES2025 lib (`Map.getOrInsertComputed`, `RegExp.escape`); Bun test-runn
 tests allow it; runtime measurements on Bun 1.4.3 + Effect 4 recorded in ADRs 0070/0071.
 Panda source transforms and WebP screenshot baselines need a spike or CI-generated references and
 are decided inside the batch.
+
+## Phase A outcome (2026-10-24)
+
+Branches, each stacked on the previous one, all local and committed:
+
+| Branch | What it carries |
+| --- | --- |
+| `chore/upgrade-dependencies` | plan 119, the ADR renumbering to 0070–0073, Panda token pruning that brought the bundle back under its ceiling |
+| `refactor/remove-connected-platform` | the platform removal (95 files, 26.9k lines), the restored CLI Ctrl-C test, the pinned single-user decisions, the dead Device enrollment service, docs |
+| `feat/upgrade-opportunities` | the web and engine opportunities, agent hooks, the review fixes (SSE restart ride-through, CLI engine process group, loopback bind, focus and forced-colours accessibility, Query guard, token scan) |
+| `docs/adr-consolidation` | ADRs 0074–0076, retired and superseded ADRs, index |
+| `fix/plan-120-review` | second-round review fixes, the Biome nursery promise and Svelte rules |
+
+Opportunities taken: all of the list above except two, with reasons. Panda source transforms need a
+new dependency (`@pandacss/vite`) and would not remove the `css()` runtime because 11 merges stay
+dynamic. WebP screenshot baselines need references generated in CI. Measured gains: engine CPU on
+cold start 3.3–3.7 s → 2.0 s and warm idle 0.21–0.31 s → 0.08–0.11 s per 10 s (Bun 1.4.3 + Effect 4
+against `main`), Codex archive decoding peak 716 → 86 MB, first-load stylesheet 23,768 → 19,082 B
+gzip, four package suites about twice as fast with `--parallel`.
+
+Pre-existing defects fixed on the way: the dev engine-restart SSE closure (7 of 20 runs on every
+branch), stale locks after a terminal Ctrl-C, the built server binding every interface when started
+directly, invisible checkbox focus, focus lost after "Custom", forced-colours selection and focus
+indicators, heatmap contrast under forced colours, the Sessions row ring painted over by its last
+cell, a production e2e helper race (also on `main`).
+
+Adversarial review: two rounds over every branch; every confirmed finding fixed with a test; no
+security-boundary regression found.
+
+Final evidence on the stack tip `47fd690b`, fresh worktree, frozen lockfile install, `nix develop`
+(Bun 1.4.3): `verify` with the turbo cache bypassed 3,686 pass / 0 fail, Ultracite 0 diagnostics
+over 1,449 files; `test:web-production`, `test:web-dev-build-isolation`, `test:web-bundle`,
+`test:web-client-manifest`, the SvelteKit lifecycle test green; `test:e2e` 301, `test:e2e-demo` 2,
+`test:e2e-production` 13 + 8 + 32, `test:e2e-memory` 3, `benchmark:session-scroll` 4.
+
+Not done and why:
+- Phase B (below) waits for PR #67.
+- Keyboard behaviours that match `main` and were left as they are: ticking a filter option closes
+  its popover; period presets move focus to the page.
+- Forced colours not yet checked on the activity timeline, segment bars, breakdown row bars and model
+  swatches; a focused pressed toggle shows only its focus ring in forced colours.
+- The 20 Panda overrides that never rendered (plan 119) remain an operator design decision.
 
 ## STOP conditions
 

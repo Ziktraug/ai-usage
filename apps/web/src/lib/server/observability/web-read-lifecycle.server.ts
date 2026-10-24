@@ -49,18 +49,19 @@ export const createWebReadObservabilityLifecycle = (
 
   const dispose = (): Promise<void> => {
     stopped = true;
-    disposal ??= runtimePromise
-      ? runtimePromise.then(
-          async (runtime) => {
-            try {
-              await runtime.dispose();
-            } finally {
-              registry.remove(runtime);
-            }
-          },
-          () => undefined,
-        )
-      : Promise.resolve();
+    disposal ??=
+      runtimePromise === undefined
+        ? Promise.resolve()
+        : runtimePromise.then(
+            async (runtime) => {
+              try {
+                await runtime.dispose();
+              } finally {
+                registry.remove(runtime);
+              }
+            },
+            () => undefined,
+          );
     return disposal;
   };
 

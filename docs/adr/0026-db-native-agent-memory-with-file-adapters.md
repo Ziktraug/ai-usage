@@ -52,8 +52,9 @@ two competing mutation authorities.
 ## Reversal condition
 
 Reconsider database authority only if a portable file engine can prove the same
-atomic revision, authorization, relation, indexing, concurrent-writer, and
-replication guarantees through the full conformance suite in both modes.
+atomic revision, authorization, relation, indexing and concurrent-writer guarantees
+that the Memory store tests pin today (replication and the connected mode left with
+[ADR 0074](0074-local-only-single-operator-product.md)).
 
 ## Evidence
 

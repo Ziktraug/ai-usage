@@ -2,13 +2,18 @@
 
 - **Status**: Accepted
 - **Date**: 2026-10-22; amended 2026-10-24 (platform-only text removed,
-  [ADR 0074](0074-local-only-single-operator-product.md))
+  [ADR 0074](0074-local-only-single-operator-product.md)) and 2026-10-24
+  (nursery rules turned on)
 
 > Amended 2026-10-24: plan 120 phase A deletes `apps/server` and Better Auth, so
 > this record no longer names the server's diagnostics, the root `pg` and
 > `@types/pg` declarations, or the server's database URL, base URL and Device
 > token key ring parsers and shared authentication's base URL parser as
 > redaction boundaries. The rule decisions are unchanged.
+
+> Amended 2026-10-24 (nursery rules): two Biome nursery promise rules and five
+> Svelte nursery guards are on. See "Amendment 2026-10-24: nursery rules" at the
+> end.
 
 ## Context
 
@@ -149,3 +154,81 @@ take no separate `cause`.
   to fit the rule's positional check.
 - Fixing `noAwaitInLoops` with `Promise.all`: this changes ordering and
   resource bounds, which tests would catch only by luck.
+
+## Amendment 2026-10-24: nursery rules
+
+**Context.** Ultracite 8.0.1 turns on one nursery rule, `useSortedClasses`, and
+leaves the rest of Biome's nursery group off. Two nursery rules check promise
+handling: `noFloatingPromises` and `noMisusedPromises`. The defects they catch
+are easy to miss in review. Before they were turned on, they reported 8 and 10
+diagnostics. Five Svelte nursery rules reported none.
+
+**Decision.** `biome.json` turns these nursery rules on at `error`:
+
+- `noFloatingPromises`: a promise statement must be awaited, returned, stored
+  where something awaits it, or given a rejection handler.
+- `noMisusedPromises`: a promise must not be used where it is almost certainly
+  a mistake, for example as a condition (a promise is always truthy).
+- `noSvelteAtDebugTags`: no `{@debug}` is left in a template.
+- `noSvelteAtHtmlTags`: no `{@html}`, which renders unescaped markup.
+- `noSvelteExportLet`: component props come from `$props()`, not `export let`.
+- `noSvelteUnnecessaryStateWrap`: no `$state(...)` around a class that is
+  already reactive, such as `SvelteMap`.
+- `useSvelteKitRuneImports`: app state comes from `$app/state`, not
+  `$app/stores`.
+
+The five Svelte rules are guards: the code already follows them, and a
+planted violation of each is reported as an error under this configuration.
+
+The 18 promise diagnostics were resolved in code, apart from two suppressions:
+
+- `apps/usage-engine/src/process.ts`: when a second signal forced shutdown, the
+  observer of a late rendezvous removal or control-server disposal was chained
+  to the settled outcome with no rejection path. The reporter parameter was
+  optional, so a caller that left it out would have lost the late failure
+  without a trace. No live failure was found: the outcome never rejects, and
+  both call sites pass a reporter that cannot throw. The observer now handles
+  the cleanup's own rejection and reports it, as the runtime disposal path
+  already did, and the reporter is required. A test rejects both cleanups after
+  forced termination and expects one report each.
+- The usage-engine runtime's pending handoff diagnostics (`live.ts`) and pending
+  file-input cleanups (`runtime-command-coordinator.ts`) each kept one promise
+  and removed it from a second chain that nothing observed. Each now keeps the
+  end of its own chain, which disposal awaits.
+- One web test observed two pending queries with `.finally`. It now passes the
+  same marker as both handlers of `.then`, and each awaited query still fails
+  the test if it rejects. Another test started a late cleanup and then waited a
+  fixed number of microtasks for it. It now awaits that cleanup.
+- All 10 `noMisusedPromises` diagnostics tested a `Promise | undefined` slot
+  for presence, for example `if (active)`. Biome 2.5.15 treats the union as
+  always truthy. The checks now compare against `undefined`, which says what
+  they test.
+- Suppressions: 2, both `lint/nursery/noFloatingPromises` in
+  `apps/web/src/lib/query/options/memory-workspace.ts`, which calls TanStack
+  Query's `fetchPreviousPage` and `fetchNextPage` without observing the result.
+  TanStack Query 5 resolves those promises and records a failure in the query's
+  error state unless `throwOnError` is set, so they never reject.
+
+`void` is not used to mark a promise as ignored, although the rule accepts it.
+Ultracite's core preset turns on `complexity/noVoid`, and `void` would hide a
+rejection, not handle it.
+
+Three other nursery rules stay off because the code does not follow them yet:
+`noSvelteLegacyConst` (94 diagnostics), `useSvelteRequireEachKey` (27) and
+`usePromiseRejectErrors` (6).
+
+**Consequences.**
+
+- `ultracite check` stays clean with these rules on. A new unobserved promise
+  statement, or a promise used as a condition, fails `bun run check`.
+- Nursery rules are not stable. A Biome minor or patch release may change what
+  they report, their options, their group or their name. A rule that leaves the
+  nursery may also get a different default severity. Biome is pinned exactly
+  (`"@biomejs/biome": "2.5.15"`, with `ultracite` at `8.0.1`). A Biome upgrade
+  reruns `ultracite check` across the repository and reviews this list before
+  it lands. Biome 2.5.15 rejects an unknown rule key in `biome.json` (`Found an
+  unknown key`), so a rule whose key disappears fails loudly and is not
+  silently ignored.
+- A further suppression of these rules needs a reason that says why the
+  promise cannot reject or is awaited elsewhere. Turning one of them off is a
+  dated amendment to this record that states the diagnostics count.

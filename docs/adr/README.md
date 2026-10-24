@@ -87,7 +87,7 @@ was deleted.
 | [0070](0070-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011; amended 2026-10-24 |
 | [0071](0071-effect-4.md) | Run every Effect surface on Effect 4 | 2026-10-22 | Accepted; amends 0001; amended 2026-10-24 |
 | [0072](0072-sveltekit-3-official-bun-adapter.md) | Run SvelteKit 3 on the official `@sveltejs/adapter-bun` | 2026-10-22 | Accepted; amends 0011; amended 2026-10-24 |
-| [0073](0073-ultracite-8-rule-policy.md) | Ultracite 8 rule policy: rules that churn style, misread the code or change behaviour stay off | 2026-10-22 | Accepted, amended 2026-10-24 (platform-only text removed) |
+| [0073](0073-ultracite-8-rule-policy.md) | Ultracite 8 rule policy: rules that churn style, misread the code or change behaviour stay off | 2026-10-22 | Accepted, amended 2026-10-24 (platform-only text removed; nursery promise and Svelte rules on) |
 | [0074](0074-local-only-single-operator-product.md) | Local-only, single-operator product; manual transfer bundles are the only cross-machine path | 2026-10-24 | Accepted; supersedes 0023, 0030, 0031, 0033–0036; amends 0024, 0026–0029, 0038 |
 | [0075](0075-local-store-schema-evolution.md) | Local store schema evolution: forward-only, additive where possible, widen-only reads | 2026-10-24 | Accepted; extends 0009 |
 | [0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md) | Browser boundary: oRPC contract + TanStack Query, derived once | 2026-10-24 | Accepted; supersedes 0010 and 0012 |

@@ -368,7 +368,7 @@ const stopOwnedProcessOnce = async (ownedProcess: OwnedProcess): Promise<void> =
 
 const stopOwnedProcess = (ownedProcess: OwnedProcess): Promise<void> => {
   const existing = stopPromises.get(ownedProcess);
-  if (existing) {
+  if (existing !== undefined) {
     return existing;
   }
   const stopping = stopOwnedProcessOnce(ownedProcess);
@@ -391,7 +391,7 @@ const removeOwnedRuntimeRootOnce = async (runtimeRoot: string): Promise<void> =>
 
 const removeOwnedRuntimeRoot = (runtimeRoot: string): Promise<void> => {
   const existing = rootRemovalPromises.get(runtimeRoot);
-  if (existing) {
+  if (existing !== undefined) {
     return existing;
   }
   const removing = removeOwnedRuntimeRootOnce(runtimeRoot).finally(() => {

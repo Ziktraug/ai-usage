@@ -30,6 +30,15 @@
       "complexity": {
         "noExcessiveCognitiveComplexity": "off"
       },
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error",
+        "noSvelteAtDebugTags": "error",
+        "noSvelteAtHtmlTags": "error",
+        "noSvelteExportLet": "error",
+        "noSvelteUnnecessaryStateWrap": "error",
+        "useSvelteKitRuneImports": "error"
+      },
       "performance": {
         "noAwaitInLoops": "off",
         "noBarrelFile": "off"

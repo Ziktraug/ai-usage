@@ -154,8 +154,8 @@ type ProcessCleanupOutcome =
 
 const settleProcessCleanup = async (
   cleanup: () => Promise<void>,
-  forcedTermination?: Promise<UsageEngineTerminationSignal>,
-  reportCleanupFailure?: () => void,
+  forcedTermination: Promise<UsageEngineTerminationSignal> | undefined,
+  reportCleanupFailure: () => void,
 ): Promise<ProcessCleanupOutcome> => {
   let operation: Promise<void>;
   try {
@@ -175,11 +175,11 @@ const settleProcessCleanup = async (
     forcedTermination.then((): ProcessCleanupOutcome => ({ kind: 'forced' })),
   ]);
   if (outcome.kind === 'forced') {
-    settlement.then((lateOutcome) => {
-      if (lateOutcome.kind === 'failed') {
-        reportCleanupFailure?.();
-      }
-    });
+    // Shutdown no longer waits for this cleanup, so its late rejection goes to the cleanup reporter.
+    operation.then(
+      () => undefined,
+      () => reportCleanupFailure(),
+    );
   }
   return outcome;
 };

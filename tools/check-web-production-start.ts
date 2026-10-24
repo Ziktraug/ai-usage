@@ -502,7 +502,7 @@ const stopChild = async (
     }
   }
   await within('owned direct child exit', deadlines.forceExitMs, child.exited);
-  if (shutdownObservation) {
+  if (shutdownObservation !== undefined) {
     const observation = await shutdownObservation;
     if (observation.kind === 'error') {
       throw observation.error;
