@@ -6,6 +6,7 @@ import {
   assertDirectoryIdentitiesPreserved,
   captureBoundedStream,
   createWebBuildIsolationEnvironment,
+  formatIsolationFailure,
   measureOperationDuration,
   snapshotDirectoryIdentities,
 } from './check-web-dev-build-isolation';
@@ -20,6 +21,12 @@ const createFixture = async (): Promise<string> => {
   const fixture = await mkdtemp(path.join(tmpdir(), 'plan052-web-build-isolation-unit-'));
   fixtures.push(fixture);
   return fixture;
+};
+
+/** Pin a stack so the formatted failure does not depend on where the test constructs its errors. */
+const withStack = <Failure extends Error>(failure: Failure, stack: string): Failure => {
+  failure.stack = stack;
+  return failure;
 };
 
 describe('web dev/build isolation helpers', () => {
@@ -112,5 +119,45 @@ describe('web dev/build isolation helpers', () => {
       XDG_DATA_HOME: path.join(fixture, 'data'),
     });
     expect(environment.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+  });
+
+  test('prints every aggregated error and nested cause beneath the failure that carries it', () => {
+    const refused = withStack(new Error('connect ECONNREFUSED'), 'Error: connect ECONNREFUSED\n    at connect');
+    const readiness = withStack(
+      new Error('The dev server never became ready.', { cause: refused }),
+      'Error: The dev server never became ready.\n    at waitForReady',
+    );
+    const cleanup = withStack(
+      new AggregateError(['process group 42 survived SIGKILL'], 'Cleanup failed.'),
+      'AggregateError: Cleanup failed.\n    at cleanup',
+    );
+    const failure = withStack(
+      new AggregateError([readiness, cleanup], 'The dev/build isolation check failed.'),
+      'AggregateError: The dev/build isolation check failed.\n    at runWebDevBuildIsolationCheck',
+    );
+
+    expect(formatIsolationFailure(failure)).toBe(
+      [
+        'AggregateError: The dev/build isolation check failed.',
+        '    at runWebDevBuildIsolationCheck',
+        '  errors[0]: Error: The dev server never became ready.',
+        '      at waitForReady',
+        '    cause: Error: connect ECONNREFUSED',
+        '        at connect',
+        '  errors[1]: AggregateError: Cleanup failed.',
+        '      at cleanup',
+        '    errors[0]: process group 42 survived SIGKILL',
+      ].join('\n'),
+    );
+    expect(formatIsolationFailure('interrupted')).toBe('interrupted');
+  });
+
+  test('stops at a nested failure that refers back to one being printed', () => {
+    const failure = withStack(new Error('loop'), 'Error: loop');
+    failure.cause = withStack(new AggregateError([failure], 'wrapper'), 'AggregateError: wrapper');
+
+    expect(formatIsolationFailure(failure)).toBe(
+      ['Error: loop', '  cause: AggregateError: wrapper', '    errors[0]: [circular reference]'].join('\n'),
+    );
   });
 });

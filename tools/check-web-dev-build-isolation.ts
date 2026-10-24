@@ -846,6 +846,39 @@ export const runWebDevBuildIsolationCheck = async (
   return operationResult;
 };
 
+/**
+ * Renders a failure with every aggregated error and nested `cause` indented beneath it: `stack`
+ * alone omits both, so a failed check would otherwise report only its top-level AggregateError.
+ */
+export const formatIsolationFailure = (failure: unknown): string => {
+  const lines: string[] = [];
+  const printing = new Set<Error>();
+  const append = (value: unknown, label: string, depth: number): void => {
+    const indent = '  '.repeat(depth);
+    if (value instanceof Error && printing.has(value)) {
+      lines.push(`${indent}${label}[circular reference]`);
+      return;
+    }
+    const [first, ...rest] = (value instanceof Error ? (value.stack ?? value.message) : String(value)).split('\n');
+    lines.push(`${indent}${label}${first}`, ...rest.map((line) => `${indent}${line}`));
+    if (!(value instanceof Error)) {
+      return;
+    }
+    printing.add(value);
+    if (value instanceof AggregateError) {
+      for (const [index, error] of value.errors.entries()) {
+        append(error, `errors[${index}]: `, depth + 1);
+      }
+    }
+    if (value.cause !== undefined) {
+      append(value.cause, 'cause: ', depth + 1);
+    }
+    printing.delete(value);
+  };
+  append(failure, '', 0);
+  return lines.join('\n');
+};
+
 if (import.meta.main) {
   let interrupted = false;
   const handleSignal = async (signal: NodeJS.Signals): Promise<void> => {
@@ -856,8 +889,7 @@ if (import.meta.main) {
     try {
       await interruptActiveWebBuildIsolationChecks();
     } catch (error) {
-      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      process.stderr.write(`${message}\n`);
+      process.stderr.write(`${formatIsolationFailure(error)}\n`);
     } finally {
       process.off('SIGINT', handleSigint);
       process.off('SIGTERM', handleSigterm);
@@ -873,8 +905,7 @@ if (import.meta.main) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
     if (!interrupted) {
-      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      process.stderr.write(`${message}\n`);
+      process.stderr.write(`${formatIsolationFailure(error)}\n`);
       process.exitCode = 1;
     }
   } finally {
