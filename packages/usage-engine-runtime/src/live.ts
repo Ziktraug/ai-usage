@@ -175,7 +175,7 @@ export const createTerminalSourceControlPort = (
   };
 
   const startStream = (): void => {
-    if (streamSettlement) {
+    if (streamSettlement !== undefined) {
       return;
     }
     const streamFiber = managedRuntime.runFork(
@@ -901,16 +901,17 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     return outcome.value;
   };
   const reportCleanupFailure = (operation: 'confirm-merge' | 'cursor-import' | 'preview-merge'): void => {
-    const diagnostic = observe(
+    const diagnostic: Promise<void> = observe(
       'handoff.cleanup',
       () => Promise.reject(new Error('A committed usage-engine handoff could not be removed.')),
       { operation },
-    ).then(
-      () => undefined,
-      () => undefined,
-    );
+    )
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => pendingDiagnostics.delete(diagnostic));
     pendingDiagnostics.add(diagnostic);
-    diagnostic.then(() => pendingDiagnostics.delete(diagnostic));
   };
   const requireMachine = (): UsageMachine => {
     if (!machine) {

@@ -573,6 +573,56 @@ describe('usage engine process lifecycle', () => {
     await Bun.sleep(0);
   });
 
+  test('reports rendezvous and server cleanup rejections that settle after forced termination', async () => {
+    const trace: string[] = [];
+    const output: string[] = [];
+    const termination = deferred<UsageEngineTerminationSignal>();
+    const forcedTermination = deferred<UsageEngineTerminationSignal>();
+    const ready = deferred<void>();
+    const removalStarted = deferred<void>();
+    const removal = deferred<void>();
+    const serverDisposal = deferred<void>();
+    const dependencies = createDependencies(trace, output, {
+      publishRendezvous: async (input) => {
+        const rendezvous = await createDependencies(trace, output).publishRendezvous(input);
+        ready.resolve();
+        return {
+          ...rendezvous,
+          remove: () => {
+            removalStarted.resolve();
+            return removal.promise;
+          },
+        };
+      },
+      startControlServer: () =>
+        Promise.resolve({
+          dispose: () => serverDisposal.promise,
+          hostname: '127.0.0.1' as const,
+          port: 41_052,
+        }),
+    });
+    const running = createUsageEngineProcess(dependencies).run({
+      forcedTermination: forcedTermination.promise,
+      mode: { mode: 'serve', port: 0 },
+      paths,
+      termination: termination.promise,
+    });
+    await ready.promise;
+    termination.resolve('SIGTERM');
+    await removalStarted.promise;
+    forcedTermination.resolve('SIGTERM');
+    await expect(running).resolves.toBe(0);
+    expect(trace).not.toContain('cleanup-failure:rendezvous');
+    expect(trace).not.toContain('cleanup-failure:control-server');
+
+    removal.reject(new Error('private late rendezvous cleanup failure'));
+    serverDisposal.reject(new Error('private late server cleanup failure'));
+    await Bun.sleep(0);
+
+    expect(trace.filter((entry) => entry === 'cleanup-failure:rendezvous')).toHaveLength(1);
+    expect(trace.filter((entry) => entry === 'cleanup-failure:control-server')).toHaveLength(1);
+  });
+
   test('waits for the exact foreground completion and starts no control server or rendezvous', async () => {
     const trace: string[] = [];
     const output: string[] = [];

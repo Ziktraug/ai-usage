@@ -30,10 +30,12 @@ export const continueMemoryAnalysisWindow = (
     return;
   }
   if (window.visibleStart < window.firstIndex + window.overscan && query.hasPreviousPage) {
+    // biome-ignore lint/nursery/noFloatingPromises: TanStack page fetches never reject without throwOnError; failures land in query state.
     query.fetchPreviousPage();
     return;
   }
   if (window.visibleEnd > window.firstIndex + window.rowCount - window.overscan && query.hasNextPage) {
+    // biome-ignore lint/nursery/noFloatingPromises: TanStack page fetches never reject without throwOnError; failures land in query state.
     query.fetchNextPage();
   }
 };

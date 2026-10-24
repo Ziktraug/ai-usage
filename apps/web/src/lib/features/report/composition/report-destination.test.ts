@@ -588,9 +588,11 @@ describe('report destination Query', () => {
       reportDestinationQueryOptions(dependencies, breakdown, { browser: true }),
     );
     let breakdownSettled = false;
-    pendingBreakdown.finally(() => {
+    const markBreakdownSettled = (): void => {
       breakdownSettled = true;
-    });
+    };
+    // Observes settlement only; a rejection still fails the test at `await pendingBreakdown`.
+    pendingBreakdown.then(markBreakdownSettled, markBreakdownSettled);
     await Promise.resolve();
     const breakdownOverviewRequest = {
       includeAdvanced: false,
@@ -615,9 +617,11 @@ describe('report destination Query', () => {
       reportDestinationQueryOptions(dependencies, sessions, { browser: true }),
     );
     let sessionsSettled = false;
-    pendingSessions.finally(() => {
+    const markSessionsSettled = (): void => {
       sessionsSettled = true;
-    });
+    };
+    // Observes settlement only; a rejection still fails the test at `await pendingSessions`.
+    pendingSessions.then(markSessionsSettled, markSessionsSettled);
     await Promise.resolve();
     expect(sessionsSettled).toBe(false);
     const sessionsOverviewRequest = {
