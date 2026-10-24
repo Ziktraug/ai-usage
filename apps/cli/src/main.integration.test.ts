@@ -6,7 +6,7 @@ import { isProviderStatusDataset, type ProviderStatusDataset } from '@ai-usage/r
 import { parseUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { createUsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import { loadUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
-import { withCliSandbox } from './test-support/run-cli';
+import { type RunningCli, withCliSandbox } from './test-support/run-cli';
 
 type StoredWideEvent = Omit<WideEventSnapshot, 'resource' | 'schemaVersion'> &
   (
@@ -30,7 +30,6 @@ const codexHistory =
 
 const PROCESS_INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 const DAEMON_INTEGRATION_TEST_TIMEOUT_MS = 40_000;
-const SETUP_URL_PATTERN = /Setup UI: (http:\/\/[^\s]+)/;
 const usageEngineMainPath = path.resolve(import.meta.dir, '../../usage-engine/src/main.ts');
 
 const spawnUsageEngineDaemon = (root: string, environment: Readonly<Record<string, string>>) => {
@@ -73,6 +72,99 @@ const stopUsageEngineDaemon = async (daemon: ReturnType<typeof spawnUsageEngineD
   const exitCode = await daemon.child.exited;
   await Promise.all([daemon.stderr, daemon.stdout]);
   return exitCode;
+};
+
+const errorCode = (error: unknown): string | undefined =>
+  typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined;
+
+/**
+ * A `codex app-server` that never answers. It records its parent (the engine that spawned it) and
+ * its own pid, then blocks well past the engine's quota read timeout. The engine only spawns it from
+ * inside an active `collect-fresh-quota` command, after taking its writer lease, so the marker
+ * appearing is the moment the CLI is held mid-command.
+ */
+const unansweredCodexAppServer = (markerPath: string): string =>
+  `#!/bin/sh\nprintf '%s %s\\n' "$PPID" "$$" > "${markerPath}.tmp"\nmv "${markerPath}.tmp" "${markerPath}"\nexec sleep 30\n`;
+
+interface HeldProvider {
+  readonly enginePid: number;
+  readonly providerPid: number;
+}
+
+const MARKER_PIDS_PATTERN = /^(\d+) (\d+)\n$/;
+
+const waitForHeldProvider = async (markerPath: string, cli: RunningCli): Promise<HeldProvider> => {
+  let cliExitCode: number | undefined;
+  cli.exited.then(
+    (exitCode) => {
+      cliExitCode = exitCode;
+    },
+    () => undefined,
+  );
+  const deadline = Date.now() + PROCESS_INTEGRATION_TEST_TIMEOUT_MS / 2;
+  while (Date.now() < deadline) {
+    const marker = await readFile(markerPath, 'utf8').catch((error: unknown) => {
+      if (errorCode(error) === 'ENOENT') {
+        return;
+      }
+      throw error;
+    });
+    if (marker !== undefined) {
+      const pids = MARKER_PIDS_PATTERN.exec(marker);
+      if (pids?.[1] === undefined || pids[2] === undefined) {
+        throw new Error(`The held provider wrote a malformed marker: ${JSON.stringify(marker)}`);
+      }
+      return { enginePid: Number(pids[1]), providerPid: Number(pids[2]) };
+    }
+    if (cliExitCode !== undefined) {
+      throw new Error(`The CLI exited ${cliExitCode} before its engine reached the held provider.`);
+    }
+    await Bun.sleep(10);
+  }
+  throw new Error('Timed out waiting for the foreground engine to reach the held provider.');
+};
+
+const processExists = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === 'ESRCH') {
+      return false;
+    }
+    throw error;
+  }
+};
+
+/** The engine's cross-process coordination files in its state directory: writer leases and rendezvous. */
+const engineCoordinationFiles = async (stateDirectory: string): Promise<string[]> =>
+  (await readdir(stateDirectory))
+    .filter((name) => name.endsWith('.engine.lock') || name === 'rendezvous.json' || name === 'memory-service.json')
+    .sort();
+
+const PROC_PID_PATTERN = /^\d+$/;
+
+/** Every live process whose environment carries `entry`, read from Linux procfs. */
+const processesCarryingEnvironmentEntry = async (entry: string): Promise<number[]> => {
+  const pids = (await readdir('/proc')).filter((name) => PROC_PID_PATTERN.test(name));
+  const carriers = await Promise.all(
+    pids.map(async (pid) => {
+      try {
+        return (await readFile(path.join('/proc', pid, 'environ'), 'utf8')).split('\0').includes(entry)
+          ? [Number(pid)]
+          : [];
+      } catch (error) {
+        // Another user's process, or one that exited between the listing and the read.
+        if (['EACCES', 'ENOENT', 'EPERM', 'ESRCH'].includes(errorCode(error) ?? '')) {
+          return [];
+        }
+        throw error;
+      }
+    }),
+  );
+  return carriers.flat();
 };
 
 const parseWideEventLines = (body: string): StoredWideEvent[] =>
@@ -255,28 +347,71 @@ test('fails an empty stored read without starting an engine and can then publish
   });
 });
 
-test('forwards Ctrl-C through a foreground engine and leaves no writer or listener behind', async () => {
-  await withCliSandbox(async ({ root, runCli }) => {
-    const databasePath = path.join(root, 'store', 'usage.sqlite');
-    const interrupted = await runCli(['setup', '--local', '--port', '0'], {
-      interrupt: { afterMs: 750, signal: 'SIGINT' },
-    });
-    if (interrupted.exitCode !== 130) {
-      throw new Error(
-        `Expected setup to exit 130 after SIGINT, got ${interrupted.exitCode}. stderr: ${interrupted.stderr}`,
-      );
-    }
-    expect(interrupted.signalCode).toBeNull();
-    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
-    await expect(Bun.file(path.join(root, 'state', 'rendezvous.json')).exists()).resolves.toBe(false);
+test(
+  'forwards Ctrl-C through a foreground engine held mid-command and leaves no writer, listener or process behind',
+  async () => {
+    await withCliSandbox(async ({ root, runCli }) => {
+      const profile = path.join(root, 'profile');
+      const binaryDirectory = path.join(root, 'bin');
+      const databasePath = path.join(root, 'store', 'usage.sqlite');
+      const stateDirectory = path.join(root, 'state');
+      const markerPath = path.join(root, 'codex-app-server-held');
+      await mkdir(binaryDirectory, { recursive: true });
+      const fakeCodexPath = path.join(binaryDirectory, 'codex');
+      await writeFile(fakeCodexPath, unansweredCodexAppServer(markerPath));
+      await chmod(fakeCodexPath, 0o700);
+      const observed: { held?: HeldProvider } = {};
 
-    const setupUrl = interrupted.stdout.match(SETUP_URL_PATTERN)?.[1];
-    if (setupUrl !== undefined) {
-      await expect(fetch(setupUrl)).rejects.toThrow();
-    }
-    expect((await runCli(['--json', '--harness', 'codex', '--no-cursor'])).exitCode).toBe(0);
-  });
-});
+      const interrupted = await runCli(['quota', '--json'], {
+        env: { PATH: `${binaryDirectory}:${process.env.PATH ?? ''}` },
+        interrupt: {
+          signal: 'SIGINT',
+          when: async (cli) => {
+            const held = await waitForHeldProvider(markerPath, cli);
+            if (held.enginePid === cli.pid) {
+              throw new Error('The provider was spawned by the CLI itself, not by a foreground engine.');
+            }
+            // The interruption has to land while the engine owns its writer leases and Memory
+            // listener, or "nothing left behind" proves nothing.
+            const coordination = {
+              state: await engineCoordinationFiles(stateDirectory),
+              usageLock: await Bun.file(`${databasePath}.engine.lock`).exists(),
+            };
+            expect(coordination).toEqual({
+              state: ['memory-service.json', 'memory.sqlite.engine.lock'],
+              usageLock: true,
+            });
+            observed.held = held;
+          },
+        },
+      });
+
+      const { held } = observed;
+      if (held === undefined) {
+        throw new Error('The CLI was interrupted without observing the held provider.');
+      }
+      if (interrupted.exitCode !== 130) {
+        throw new Error(
+          `Expected quota to exit 130 after SIGINT, got ${interrupted.exitCode}. stderr: ${interrupted.stderr}`,
+        );
+      }
+      expect(interrupted.signalCode).toBeNull();
+      expect(interrupted.stdout).toBe('');
+      expect(interrupted.stderr).toContain('Usage engine command was cancelled.');
+      await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
+      await expect(engineCoordinationFiles(stateDirectory)).resolves.toEqual([]);
+      // The CLI waits for its engine, and the engine for its provider, so both are gone by now.
+      expect(processExists(held.enginePid)).toBe(false);
+      expect(processExists(held.providerPid)).toBe(false);
+      if (process.platform === 'linux') {
+        expect(await processesCarryingEnvironmentEntry(`HOME=${profile}`)).toEqual([]);
+      }
+
+      expect((await runCli(['--json', '--harness', 'codex', '--no-cursor'])).exitCode).toBe(0);
+    });
+  },
+  PROCESS_INTEGRATION_TEST_TIMEOUT_MS,
+);
 
 test('renders a snapshot merge and rejects retired HTML arguments as real processes', async () => {
   await withCliSandbox(async ({ root, runCli }) => {

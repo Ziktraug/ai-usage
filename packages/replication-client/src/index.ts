@@ -1,4 +1,4 @@
-import type { DeviceCredentialResolution } from '@ai-usage/identity/device-enrollment';
+import type { DeviceCredentialResolution } from '@ai-usage/identity';
 import { type DeviceCredentialToken, revealDeviceCredentialTokenForTransport } from '@ai-usage/identity/device-tokens';
 import {
   type Device,

@@ -27,7 +27,6 @@ import {
   queryServedReportRevisionLocalSnapshot,
   queryServedReportRevisionPortableConfig,
   queryServedReportRevisionSlices,
-  queryServedReportRevisionSupport,
   queryUsageLocalMachine,
 } from '@ai-usage/usage-store/reader';
 import { Effect } from 'effect';
@@ -284,9 +283,6 @@ export const readServedLocalUsageSnapshot = async (input: {
     support: served.support,
   };
 };
-
-export const readServedUsageSupport = async (dbPath: string, revision: string): Promise<FocusedReportSupport> =>
-  (await Effect.runPromise(queryServedReportRevisionSupport({ dbPath, revision }))).support;
 
 export const readServedPortableConfig = async (dbPath: string, revision?: string) => {
   const result = await Effect.runPromise(

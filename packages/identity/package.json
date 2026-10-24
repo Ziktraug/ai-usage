@@ -5,12 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./better-auth": "./src/shared-authentication.ts",
-    "./device-enrollment": "./src/device-enrollment.ts",
     "./private-device-credential": "./src/private-device-credential.ts",
-    "./session-digest-adapter": "./src/session-digest-adapter.ts",
-    "./device-tokens": "./src/device-tokens.ts",
-    "./testing": "./src/testing.ts"
+    "./device-tokens": "./src/device-tokens.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -20,9 +16,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ai-usage/authorization": "workspace:*",
-    "@ai-usage/platform-core": "workspace:*",
-    "@better-auth/core": "1.7.12",
-    "better-auth": "1.7.12"
+    "@ai-usage/platform-core": "workspace:*"
   }
 }

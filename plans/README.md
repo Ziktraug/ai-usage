@@ -191,7 +191,8 @@ dependency.
 | 114 | Session Rounds and Sub-agents — Reading Panel With a URL Across Claude, Codex, and OpenCode | P1 | L | - | IN PROGRESS (phases 1–3 reconciled with continuous exploration; bounded Members from every detail entry point; acceptance tracked in PR #55; phase 4 lanes and agent view pending) |
 | 115 | [Local session distillation](115-local-session-distillation.md) | P1 | L | - | DONE (synthetic active-harness workflow, durable local corpus, CLI and Session integration verified; real-history evaluation and real-store upgrade unperformed) |
 | 116 | [Session lineage view — campaign lanes, then project × time](116-session-lineage-view.md) | P1 | L | 114 (phases 1–3); PR #62 (merged) for the Codex part | TODO (promoted 2026-10-20 from the lineage exploration; nothing implemented) |
-| 119 | [Dependency upgrade — Bun 1.4, Effect 4, SvelteKit 3, Panda 2, Ultracite 8](119-dependency-upgrade-2026-10.md) | P1 | L | - | DONE locally (branch `chore/upgrade-dependencies`, uncommitted; operator flake.lock update and CI pending; 117–118 are taken by the work-resume branches) |
+| 119 | [Dependency upgrade — Bun 1.4, Effect 4, SvelteKit 3, Panda 2, Ultracite 8](119-dependency-upgrade-2026-10.md) | P1 | L | - | DONE locally (branch `chore/upgrade-dependencies`, committed, not pushed; CI pending; 117–118 are taken by the work-resume branches) |
+| 120 | [Local-only cleanup — remove the connected platform and dead features, take the upgrade's opportunities](120-local-only-cleanup.md) | P1 | L | 119; phase B waits for PR #67 | IN PROGRESS (phase A on stacked branches `refactor/remove-connected-platform`, `feat/upgrade-opportunities`, `docs/adr-consolidation`) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:

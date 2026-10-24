@@ -35,7 +35,6 @@ import { fmtNum, pad, trunc } from './render/format';
 import { renderReplicationStatus } from './replication';
 import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, renderWarningsForStderr } from './report';
 import { CliRuntime, type CliRuntime as CliRuntimeService } from './runtime';
-import { runSetupServer } from './setup';
 import { readUsageSnapshotFile } from './snapshot-file';
 import { CliUsageEngineError, type CliUsageEngineExecution } from './usage-engine';
 import {
@@ -45,7 +44,6 @@ import {
   readServedLocalUsageSnapshot,
   readServedPortableConfig,
   readServedUsageReport,
-  readServedUsageSupport,
   readUsageMachine,
   reportSourceIdsFor,
   sourceExecutionOutcomes,
@@ -519,43 +517,6 @@ export const app = Effect.gen(function* () {
         ? `Already imported: ${importedPath}`
         : `Imported Cursor usage export: ${importedPath}`,
     );
-    return;
-  }
-
-  if (command._tag === 'Setup') {
-    const engineCommand: UsageEngineCommand = command.args.local
-      ? { command: 'collect-fresh-report', harness: null, includeCursor: true }
-      : { command: 'publish' };
-    const execution = yield* executeEngine(runtime, engineCommand);
-    const collection = command.args.local
-      ? requiredCollectionOutput(execution, reportSourceIdsFor({ harness: null, includeCursor: true }))
-      : undefined;
-    const revision = collection?.publication.revision ?? requiredPublicationOutput(execution).publication.revision;
-    const support = yield* fromPromise(() => readServedUsageSupport(runtime.paths.databasePath, revision));
-    const local = command.args.local
-      ? yield* fromPromise(() =>
-          readServedLocalUsageSnapshot({
-            dbPath: runtime.paths.databasePath,
-            revision,
-            selection: { harness: null, includeCursor: true },
-            warnings:
-              collection === undefined ? [] : reportWarningsFor(collection, { harness: null, includeCursor: true }),
-          }),
-        )
-      : undefined;
-    yield* runSetupServer({
-      ...(local === undefined ? {} : { localSnapshot: local.snapshot }),
-      port: command.args.port,
-      projectGroups: support.projectGroupConfigs ?? [],
-      signal: runtime.signal,
-      snapshotFiles: command.args.files,
-      writeProjectGroups: async (projectGroups) => {
-        await runtime.usageEngine.execute(
-          { command: 'replace-project-groups', projectGroups },
-          { signal: runtime.signal },
-        );
-      },
-    });
     return;
   }
 
