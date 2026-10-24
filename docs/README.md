@@ -1,9 +1,9 @@
 # Documentation map
 
 Three kinds of documents live here. **Living reference** is kept current and is
-safe to rely on. **Accepted platform specifications** record settled target
-contracts whose runtime status is tracked separately. **Dated records** are
-design plans, audits, and measurement snapshots that were true at their stated
+safe to rely on. **Pending removal** documents a dormant subsystem that plan 120
+phase B deletes; it stays accurate for the code that still exists until then.
+**Dated records** are measurement snapshots that were true at their stated
 date; they are retained for provenance, not maintained. When they disagree with
 living reference, the living reference wins.
 
@@ -18,12 +18,11 @@ living reference, the living reference wins.
   "why is it like this".
 - [`../CONTEXT.md`](../CONTEXT.md) — the ubiquitous language of the domain.
 - [`public-package-interfaces.md`](public-package-interfaces.md) — current
-  import seams plus explicitly marked accepted platform targets.
+  import seams.
 - [`generated-tooling-ownership.md`](generated-tooling-ownership.md) — which
   generated trees exist and who owns them.
 - [`skills-management.md`](skills-management.md) — the Skills control plane
-  feature overview ([`skills-management-spec.md`](skills-management-spec.md)
-  holds its binding delivered spec).
+  feature overview.
 - [`session-analysis-sources.md`](session-analysis-sources.md) — what each
   harness can truthfully provide, per metric.
 - [`session-distillation.md`](session-distillation.md) — explicit local Codex
@@ -32,52 +31,25 @@ living reference, the living reference wins.
 - [`provider-quota-data-sources.md`](provider-quota-data-sources.md) — quota
   windows and supported sources per provider (research, re-verified
   2026-08-08).
+- [`identity-kernel.md`](identity-kernel.md) — stable local Space/Person/Device/
+  Repository/Project identities in `memory.sqlite`, the authorization seam,
+  resolution, and the local review service.
+- [`authorization.md`](authorization.md) — the `Authorizer` port and the local
+  single-user policy.
 - [`future-work.md`](future-work.md) — the standing backlog and product
   guardrails.
 
-## Accepted platform specifications
+## Pending removal (plan 120 phase B)
 
-The architecture in this section is accepted and its runtime for plans
-101–107 is integrated on `main` via PR #53. Plan 107 stays `IN PROGRESS`
-for its open bootstrap/repair criteria; plans 108–110 are not started; and
-each specification names the operations that are still application-only
-(no operator surface). Measurements quoted by these specifications are the
-evidence recorded at integration time, not a refreshed benchmark. See
-[`../plans/README.md`](../plans/README.md) for delivery status and
-[`future-work.md`](future-work.md) for the platform backlog.
-
-- [`platform-server-operations.md`](platform-server-operations.md) — connected
-  PostgreSQL 17 lifecycle, migrations, health, configuration, and recovery.
-- [`identity-kernel.md`](identity-kernel.md) — stable Space/Person/Device/
-  Repository/Project identities, authorization seam, resolution, persistence,
-  and the local review service.
-- [`authorization.md`](authorization.md) — Authorizer port, organization roles,
-  explicit PostgreSQL relations/queries, complete scope, RLS, audit, benchmark,
-  and the measured OpenFGA escape hatch.
-- [`authentication-and-device-enrollment.md`](authentication-and-device-enrollment.md)
-  — GitHub-only connected login, Web sessions, bootstrap, Device enrollment,
-  token/key rotation, private local storage, support limits, and threat model.
-- [`device-replication.md`](device-replication.md) — outbound-only publication,
-  protocol identities, SQLite outbox recovery, transactional PostgreSQL apply,
-  replay/security boundary, diagnostics, privacy tombstones, and fallback.
-- [`memory-search-and-mcp.md`](memory-search-and-mcp.md) — authorization-first
-  SQLite/PostgreSQL search, corpus metrics, vector gate, Web/CLI surfaces, MCP
-  tools, registration, and retrieved-content safety.
+- [`device-replication.md`](device-replication.md) — the dormant outbound
+  replication client and its SQLite outboxes; the server it published to is
+  removed.
+- [`memory-search-and-mcp.md`](memory-search-and-mcp.md) — accepted Memory
+  search, its Web/CLI surfaces, and the MCP tools. Memory goes in phase B; the
+  MCP server stays.
 
 ## Dated records
 
-- [`app-audit-2026-07-10.md`](app-audit-2026-07-10.md) — full application
-  audit; findings remediated through the plans/ backlog.
-- [`model-pricing-audit-2026-07-15.md`](model-pricing-audit-2026-07-15.md) —
-  pricing research snapshot; the pricing table was updated from it. Superseded
-  by the 2026-09-05 refresh for current rates.
-- [`model-pricing-audit-2026-09-05.md`](model-pricing-audit-2026-09-05.md) —
-  pricing refresh; dated GPT-5.6 cuts, the withdrawn Sonnet 5 increase, and the
-  models that stay deliberately unpriced.
-- [`project-grouping-plan.md`](project-grouping-plan.md) — delivered grouping
-  design (2026-07); paths predate later refactors.
-- [`provider-status-windows-plan.md`](provider-status-windows-plan.md) —
-  superseded early quota design, kept as historical context (see its banner).
 - [`session-scroll-benchmark.md`](session-scroll-benchmark.md) — the plan 031
   decision measurements.
 - [`performance/`](performance/) — measured baselines and optimization

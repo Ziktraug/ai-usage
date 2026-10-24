@@ -30,7 +30,6 @@ const codexHistory =
 
 const PROCESS_INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 const DAEMON_INTEGRATION_TEST_TIMEOUT_MS = 40_000;
-const SETUP_URL_PATTERN = /Setup UI: (http:\/\/[^\s]+)/;
 const usageEngineMainPath = path.resolve(import.meta.dir, '../../usage-engine/src/main.ts');
 
 const spawnUsageEngineDaemon = (root: string, environment: Readonly<Record<string, string>>) => {
@@ -252,29 +251,6 @@ test('fails an empty stored read without starting an engine and can then publish
     await expect(Bun.file(databasePath).exists()).resolves.toBe(true);
     await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(false);
     await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
-  });
-});
-
-test('forwards Ctrl-C through a foreground engine and leaves no writer or listener behind', async () => {
-  await withCliSandbox(async ({ root, runCli }) => {
-    const databasePath = path.join(root, 'store', 'usage.sqlite');
-    const interrupted = await runCli(['setup', '--local', '--port', '0'], {
-      interrupt: { afterMs: 750, signal: 'SIGINT' },
-    });
-    if (interrupted.exitCode !== 130) {
-      throw new Error(
-        `Expected setup to exit 130 after SIGINT, got ${interrupted.exitCode}. stderr: ${interrupted.stderr}`,
-      );
-    }
-    expect(interrupted.signalCode).toBeNull();
-    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
-    await expect(Bun.file(path.join(root, 'state', 'rendezvous.json')).exists()).resolves.toBe(false);
-
-    const setupUrl = interrupted.stdout.match(SETUP_URL_PATTERN)?.[1];
-    if (setupUrl !== undefined) {
-      await expect(fetch(setupUrl)).rejects.toThrow();
-    }
-    expect((await runCli(['--json', '--harness', 'codex', '--no-cursor'])).exitCode).toBe(0);
   });
 });
 

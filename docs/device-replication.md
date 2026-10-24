@@ -5,6 +5,8 @@
 > remains `IN PROGRESS`: server-side bundle bootstrap and blocked-stream repair
 > controls are still open (see Operations and fallback).
 
+> **Plan 120:** `apps/server` and its enrollment routes are removed, so nothing receives these publications; the Device token and credential-file reference that was `docs/authentication-and-device-enrollment.md` is in git history, and this page goes with replication in phase B.
+
 Device replication publishes selected local facts to the connected platform.
 It is an asynchronous publication path, not a remote-control channel and not a
 replacement for either local SQLite authority.

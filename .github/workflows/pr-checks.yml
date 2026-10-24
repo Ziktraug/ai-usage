@@ -39,7 +39,7 @@ jobs:
             echo "browser=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # The browser jobs execute apps/web, and through it 9 of the 13
+          # The browser jobs execute apps/web, and through it most of the
           # workspace packages; the demo/production job also boots
           # apps/usage-engine, which pulls in the rest. The only code
           # directory outside that surface is apps/cli, so the filter is
@@ -86,26 +86,6 @@ jobs:
       - run: bun run test:web-client-manifest
       - run: bun run test:web-bundle
 
-  local-platform-independence:
-    name: Local Mode Without PostgreSQL
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run test:local-platform
-
-  postgres-foundation:
-    name: PostgreSQL 17 Foundation
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: cachix/install-nix-action@v31
-      - name: Run the flake-locked PostgreSQL suite
-        run: nix develop --command bash -lc 'bun install --frozen-lockfile && postgres --version && bun run test:postgres'
-
   lifecycle:
     name: Production and Lifecycle
     runs-on: ubuntu-latest
@@ -117,7 +97,6 @@ jobs:
       - run: bun run build
       - run: bun run test:web-production
       - run: bun run test:web-dev-build-isolation
-      - run: bun run test:setup-loopback
 
   functional-browser:
     name: Functional Browser

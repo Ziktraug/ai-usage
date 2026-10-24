@@ -55,7 +55,6 @@
             packages = [
               pkgs.biome
               (bunFor pkgs)
-              pkgs.postgresql_17
             ];
           };
         }

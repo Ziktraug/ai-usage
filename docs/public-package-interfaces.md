@@ -4,13 +4,12 @@ Existing workspace packages expose only their current seams below.
 Cross-package imports must use declared package exports, never private `src`
 paths or relative workspace paths.
 
-Platform entries introduced by plans 101–107 (`platform-core`,
-`authorization-contract`, `authorization`, `identity`, `project-application`,
-`project-registry`, `replication-*`, `memory-*`, `mcp-adapter`,
-`postgres-store`, `server`, and `mcp`, plus the platform-specific extensions
+Entries introduced by plans 101–107 (`platform-core`,
+`authorization-contract`, `authorization`, `identity`, `project-registry`,
+`replication-*`, `memory-*`, `mcp-adapter`, and `mcp`, plus the extensions
 described for existing packages and apps) are exports present on `main` since
-PR #53. Plan 107's open criteria and the application operations that still
-lack an operator surface are listed in [`future-work.md`](future-work.md).
+PR #53. Plan 120 removed the connected entries; `identity` and `replication-*`
+remain only for the dormant replication client until its phase B.
 All entries describe current interfaces.
 
 ## `@ai-usage/effect-runtime`
@@ -75,8 +74,9 @@ state.
 ## `@ai-usage/platform-core`
 
 - `./identity`: branded canonical UUID IDs, canonical instants, identity value
-  validation, and Space/Person/Device/SCM/Repository/Project/Checkout/Capture
-  Context domain contracts.
+  validation, and Space/Person/Device/Repository/Project/Checkout domain
+  contracts, plus the Capture Context and SCM IDs the replication protocol
+  still carries.
 - `./distillation-evidence`: bounded original-event packets, source snapshots,
   progressive windows and source-reference validation.
 - `./session-distillation`: generated account content, immutable analysis and
@@ -98,53 +98,31 @@ scope contents, persistence, transport, or browser integration.
 ## `@ai-usage/authorization`
 
 - `.`: re-export of the portable authorization contract.
-- `./conformance`: immutable adapter-independent organization scenarios for
-  adapter verification.
-- `./in-memory`: explicit organization-policy adapter and relation-read
-  instrumentation for application-service/conformance tests.
-- `./organization-model`: concrete organization membership, Team, resource,
-  grant, sensitivity, expiry, and revocation state contracts.
 - `./permission-resource`: the frozen permission/resource-kind map.
 - `./scope-internal`: opaque-scope construction and adapter consumption;
-  restricted to SQLite/PostgreSQL adapter code and tests, never routes/UI/MCP.
+  restricted to the SQLite adapter and tests, never routes/UI/MCP.
 - `./single-user`: personal-Space-only local adapter with explicit
   principal/Space/resource checks and unavailable-infrastructure results.
 
-Authentication and PostgreSQL queries are not part of this package. The
-organization adapters implement explicit domain rules rather than a generic
-policy DSL.
+The package implements explicit domain rules rather than a generic policy DSL
+and owns no persistence or transport.
 
 ## `@ai-usage/identity`
 
-- `.`: provider-independent Authentication identity, domain session, Device
-  credential/grant metadata, and typed identity-service result contracts.
-- `./better-auth`: the GitHub-only Better Auth `1.7.12` application wrapper and
-  adapter ports; production composition is restricted to `apps/server` and the
-  PostgreSQL authentication adapter.
+Imported only by the dormant replication client and the engine's replication
+runtime; plan 120 phase B removes the package.
+
+- `.`: Device credential/grant metadata and typed identity-service result
+  contracts.
 - `./device-enrollment`: authorization-aware grant, exchange, authentication,
   list, rename, rotation, and revocation application service.
 - `./device-tokens`: redacted public-ID/HMAC token and deployment-key-ring
   values with narrow transport accessors and constant-time verification.
 - `./private-device-credential`: Node-only owner/no-follow private-file adapter
   for the local recoverable Device credential.
-- `./session-digest-adapter`: adapter-private Better Auth token-digest wrapper.
-- `./testing`: shared-authentication factory injection for tests/gates only.
 
-The package owns application contracts and security policy, not PostgreSQL,
-SQLite, HTTP routing, or Drizzle persistence. Better Auth imports remain inside
-its adapter-private modules (`shared-authentication.ts`,
-`session-digest-adapter.ts`, and `internal/adapter-schema-check.ts`, which alone
-reaches the `@better-auth/core/db/internal` schema-check registry);
-`tools/check-package-boundaries.ts` enforces the list.
-
-## `@ai-usage/project-application`
-
-- `.`: authorization-aware Project-listing service, authorized Project catalog
-  port, bounded page/result contracts, and typed catalog failures.
-
-The service calls `Authorizer.materializeResourceScope`, treats the complete
-scope as opaque, and passes it to persistence. It owns no SQL, transport, or
-browser code and never post-filters unrestricted Projects.
+The package owns application contracts and security policy, not SQLite or HTTP
+routing.
 
 ## `@ai-usage/project-registry`
 
@@ -323,12 +301,12 @@ Project-registry contracts but no storage adapter. Browser code does not import
   and the evidence gate for vector search.
 - `./ranking`: bounded lexical and trigram query helpers.
 
-This package owns no database. SQLite and PostgreSQL adapters consume the same
-portable corpus and ranking contracts.
+This package owns no database. The SQLite adapter consumes these portable
+corpus and ranking contracts.
 
 ## `@ai-usage/mcp-adapter`
 
-- `.`: exact read-only tool names, schemas, cards, local/connected
+- `.`: exact read-only tool names, schemas, cards, local
   application-service composition, and MCP server construction.
 - `./registration`: identity-checked/idempotent JSON and Codex stdio
   registration helpers.
@@ -397,41 +375,6 @@ client and never starts an app-owned provider timer.
   foreground `once <command-request-json>` process. It is a terminal process
   boundary, not an in-process API.
 
-## `@ai-usage/postgres-store`
-
-- `./authentication`: shared-authentication database and identity-store port;
-  Better Auth row/adapter types remain behind the application wrapper.
-- `./authorization`: connected authorization administration and Authorizer
-  contracts composed by the shared writer.
-- `./identity`: validated shared identity repository contracts returned by the
-  write-pool composition; no row or pool type escapes.
-- `./devices`: Device enrollment/lifecycle persistence port returned by the
-  writer composition; HMAC verifier fields never enter HTTP projections.
-- `./memory`: shared PostgreSQL Memory repository port returned by the writer
-  composition.
-- `./schema`: the current platform schema identity/version contract; no
-  inferred Drizzle row type or pool escapes.
-- `./migrations`: the explicit ordinal migration registry and validation
-  contracts; only `apps/server` may consume migration capabilities.
-- `./performance-testing`: Project authorization query access for the
-  repository benchmark only; forbidden from production packages.
-- `./projects`: authorized Project persistence-catalog contract.
-- `./reader`: validated readiness result and typed bounded failures.
-- `./writer`: the write-pool composition and lifecycle; production use is
-  restricted to `apps/server`.
-- `./testing`: disposable raw fixture/migration helpers and the failing-factory
-  injection seam for test or fixture source only.
-
-There is deliberately no root export. The package imports only authorization,
-`platform-core`, `project-application`, and `project-registry` contracts from
-the workspace and owns no SQLite, HTTP, local-machine, or harness filesystem
-access.
-
-## `@ai-usage/server`
-
-- `./main`: executable connected-server process entrypoint. It is not a
-  browser or in-process domain API.
-
 ## `@ai-usage/mcp`
 
 Executable-only local stdio composition. It imports the MCP adapter, Memory
@@ -475,19 +418,14 @@ storage API.
   Memory-service contracts/client/node; browser code imports only the oRPC
   Project and Memory contracts. Web must not reach a storage adapter, collectors, or
   engine-runtime directly or transitively. Its production closure also cannot
-  reach the authorization implementation or `project-application`.
+  reach the authorization implementation.
 - `apps/cli` may import effect-runtime, Memory-service client/search contracts,
   platform-core, report-core,
   `@ai-usage/report-data/portable-report`, usage-engine-control,
   `usage-store/reader`, and `@ai-usage/usage-engine/main` for a bounded
   foreground process. The executable is a terminal process boundary, not an
   in-process runtime dependency. CLI must not import collectors,
-  engine-runtime, the usage writer, or PostgreSQL.
-- `apps/server` may import `postgres-store/writer`, identity application
-  services, authorization,
-  Project-catalog, and migration contracts plus connected application-service
-  contracts. It must not import usage-store, collectors, local-machine,
-  usage-engine, CLI, or Web implementations.
+  engine-runtime, the usage writer, or the authorization implementation.
 
 ## Guardrails
 

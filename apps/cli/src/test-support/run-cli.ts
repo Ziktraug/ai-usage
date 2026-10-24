@@ -11,10 +11,6 @@ export interface CliRunResult {
 
 export interface CliRunOptions {
   readonly env?: Readonly<Record<string, string>>;
-  readonly interrupt?: {
-    readonly afterMs: number;
-    readonly signal: Extract<NodeJS.Signals, 'SIGINT' | 'SIGTERM'>;
-  };
 }
 
 const cliRoot = path.resolve(import.meta.dir, '../..');
@@ -72,9 +68,6 @@ export const withCliSandbox = async <Value>(
       stdout: 'pipe',
     });
     const timeout = setTimeout(() => child.kill('SIGKILL'), 20_000);
-    const interrupt = options.interrupt
-      ? setTimeout(() => child.kill(options.interrupt?.signal), options.interrupt.afterMs)
-      : undefined;
     try {
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(child.stdout).text(),
@@ -84,9 +77,6 @@ export const withCliSandbox = async <Value>(
       return { exitCode, signalCode: child.signalCode, stderr, stdout };
     } finally {
       clearTimeout(timeout);
-      if (interrupt !== undefined) {
-        clearTimeout(interrupt);
-      }
     }
   };
   try {
