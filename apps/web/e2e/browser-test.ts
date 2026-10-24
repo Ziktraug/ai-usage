@@ -71,8 +71,8 @@ export interface BrowserFailureGate {
 
 export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
 
-/** A worker's first document on a cold Vite dev server can still be loading route modules after 5 s. */
-const FIRST_HYDRATION_TIMEOUT_MS = 15_000;
+/** A cold Vite dev server needs over 5 s; no suite's expect timeout exceeds 20 s, so none waits under its default. */
+const FIRST_HYDRATION_TIMEOUT_MS = 20_000;
 
 export const waitForHydratedReport = async (page: Page): Promise<void> => {
   await playwrightExpect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible({

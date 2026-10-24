@@ -44,7 +44,7 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 /**
  * The browser's own attempts at a failed lazy chunk: Vite's `<link rel=modulepreload>`, then the
  * `import()`, which Chromium 156+ re-fetches after a failed preload while 155 and earlier reuse the
- * failure. Any further request before Reload is the app retrying on its own.
+ * failure. A further request before Reload means something beyond the browser's own load fetched the chunk.
  */
 const BROWSER_CHUNK_LOAD_ATTEMPTS = 2;
 
