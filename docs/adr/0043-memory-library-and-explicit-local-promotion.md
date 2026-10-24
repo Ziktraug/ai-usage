@@ -1,6 +1,13 @@
 # ADR 0043: Browse Session accounts and explicitly promote local knowledge
 
-- **Status**: Accepted
+- **Status**: Accepted; to be superseded by ADR 0049 when PR #67 (`feat/work-resume-cockpit`)
+  lands, which retires the analyzed-Session library and promotion; the code it governs is still
+  live on this branch. The `local-only` publication policy guards against replication, which
+  stays dormant until [ADR 0074](0074-local-only-single-operator-product.md) phase B removes it
+  (the client still starts when `AI_USAGE_PLATFORM_BASE_URL` is set), so the guard stays until
+  then; the
+  no-deletion obligation is the general rule of
+  [ADR 0075](0075-local-store-schema-evolution.md).
 - **Date**: 2026-10-06
 - **Amends**: 0042
 

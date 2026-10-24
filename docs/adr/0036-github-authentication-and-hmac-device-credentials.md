@@ -1,6 +1,7 @@
 # ADR 0036: GitHub authentication and HMAC Device credentials
 
-- **Status**: Accepted
+- **Status**: Superseded on 2026-10-24: the connected platform is deleted (plan 120)
+- **Superseded by**: [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
 
 ## Context
@@ -101,6 +102,6 @@ contracts and migration path.
 
 ## Evidence
 
-- [Authentication and Device enrollment](../authentication-and-device-enrollment.md)
+- Authentication and Device enrollment guide: `docs/authentication-and-device-enrollment.md`, removed with the platform by plan 120 (git history keeps it)
 - [Identity separation](0033-separate-person-auth-scm-and-device-identities.md)
 - [Plan 104](../../plans/104-authentication-github-device-enrollment.md)

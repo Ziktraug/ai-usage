@@ -1,7 +1,17 @@
 # ADR 0021: Design-system promotion requires a second consumer
 
-- **Status**: Accepted
+- **Status**: Retired 2026-10-24 (ADR review of plan 120); no replacement
 - **Date**: 2026-08-25 (records the standing package policy)
+
+> Retired because the rule describes a package shape that does not exist and a
+> trigger that cannot fire. The root entry has exported only the Panda preset
+> (`aiUsagePreset`) since the SvelteKit migration; reusable components live in
+> `./svelte` and report slots in `./report`, so nothing is promoted "to the root
+> API". `apps/web` is the only application consumer, before and after the
+> connected server's removal (it had no UI), and ADR 0074 makes the product
+> single-application. The package stays as the Panda build seam. Not
+> generalizing for a single consumer remains ordinary review practice and
+> needs no record of its own.
 
 ## Context
 

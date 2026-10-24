@@ -1,7 +1,15 @@
 # ADR 0032: Work handoffs before native session conversion
 
-- **Status**: Accepted
+- **Status**: Retired 2026-10-24 (ADR review of plan 120); its guardrail is
+  carried by [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
+
+> Retired because it was never built: plan 108 stayed `TODO`, and no Work
+> Thread or `WorkHandoff` domain exists beyond reserved resource-kind names in
+> `packages/authorization-contract` and the search evaluation fixtures. The
+> Work context projection on `feat/work-resume-cockpit` (ADR 0058 there) is
+> explicitly not a Work handoff. The binding part, production code never writes
+> a harness's native session store, is stated in ADR 0074.
 
 ## Context
 
