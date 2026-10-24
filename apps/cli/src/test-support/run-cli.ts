@@ -9,9 +9,43 @@ export interface CliRunResult {
   stdout: string;
 }
 
+export interface RunningCli {
+  readonly exited: Promise<number>;
+  readonly pid: number;
+}
+
+export interface CliInterruption {
+  readonly signal: Extract<NodeJS.Signals, 'SIGINT' | 'SIGTERM'>;
+  /**
+   * Resolves once the running CLI has reached the state the test interrupts, and rejects when it
+   * cannot. The signal is sent only after it resolves, so the interruption follows an observed state
+   * rather than elapsed time.
+   */
+  readonly when: (cli: RunningCli) => Promise<void>;
+}
+
 export interface CliRunOptions {
   readonly env?: Readonly<Record<string, string>>;
+  readonly interrupt?: CliInterruption;
 }
+
+type InterruptionOutcome = { readonly error: unknown; readonly ok: false } | { readonly ok: true };
+
+const interruptWhenReached = async (
+  child: { readonly kill: (signal: NodeJS.Signals) => void } & RunningCli,
+  interruption: CliInterruption,
+): Promise<InterruptionOutcome> => {
+  try {
+    await interruption.when({ exited: child.exited, pid: child.pid });
+  } catch (error) {
+    // The awaited state never arrived. Stop the CLI through its own graceful shutdown so a failing
+    // test does not strand a foreground engine, then report why.
+    child.kill('SIGTERM');
+    return { error, ok: false };
+  }
+  child.kill(interruption.signal);
+  return { ok: true };
+};
 
 const cliRoot = path.resolve(import.meta.dir, '../..');
 
@@ -68,12 +102,21 @@ export const withCliSandbox = async <Value>(
       stdout: 'pipe',
     });
     const timeout = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    const interruption = options.interrupt === undefined ? undefined : interruptWhenReached(child, options.interrupt);
     try {
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
         child.exited,
       ]);
+      const interruptionOutcome = await interruption;
+      if (interruptionOutcome?.ok === false) {
+        const { error } = interruptionOutcome;
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`The CLI was not interrupted (exit ${exitCode}): ${reason}\nstderr: ${stderr}`, {
+          cause: error,
+        });
+      }
       return { exitCode, signalCode: child.signalCode, stderr, stdout };
     } finally {
       clearTimeout(timeout);
