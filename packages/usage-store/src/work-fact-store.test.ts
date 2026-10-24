@@ -18,7 +18,12 @@ import {
   queryWorkFactRunStates,
   type UsageStoreError,
 } from './reader';
-import { migrateWorkFactSchema, queryDiscoveredPullRequests } from './work-fact-store';
+import {
+  MAX_WORK_THREAD_CHECKOUT_KEYS,
+  MAX_WORK_THREAD_FACT_KEYS,
+  migrateWorkFactSchema,
+  queryDiscoveredPullRequests,
+} from './work-fact-store';
 import {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
@@ -599,5 +604,191 @@ describe('work fact store: Jira issue observations', () => {
         sourceId: 'jira.issues',
       },
     ]);
+  });
+});
+
+describe('work fact store: exact page batches', () => {
+  test('joins mixed-case PR history to normalized keys while isolating machines and numbers', async () => {
+    const dbPath = await createStore('page-pr-casing');
+    const success = pullRequest({ host: 'GitHub.COM', repository: 'Fixture/Project', observedAt: at(2) });
+    const failure = failedPullRequest(3, { repository: 'FIXTURE/project' });
+    const second = pullRequest({ machineId: 'machine-b', number: 7, observedAt: at(1) });
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          pullRequest(),
+          success,
+          failure,
+          second,
+          pullRequest({ machineId: 'machine-b', observedAt: at(5) }),
+          pullRequest({ number: 7, observedAt: at(5) }),
+          pullRequest({ host: 'other.example', observedAt: at(5) }),
+        ],
+      }),
+    );
+    const result = await Effect.runPromise(
+      queryLatestPullRequestObservations({
+        dbPath,
+        batch: [
+          { host: 'github.com', repository: 'fixture/project', number: 66, machineId: 'machine-a' },
+          { host: 'GITHUB.COM', repository: 'fixture/PROJECT', number: 7, machineId: 'machine-b' },
+        ],
+      }),
+    );
+    expect(result).toEqual({
+      items: [
+        { latest: failure, latestObserved: success },
+        { latest: second, latestObserved: second },
+      ],
+      skipped: 0,
+      truncated: false,
+    });
+  });
+
+  test('batches Jira and checkout identities without mixing same-key histories across machines', async () => {
+    const dbPath = await createStore('page-machine-isolation');
+    const secondCheckout = checkout({ machineId: 'machine-b', checkoutPath: '/other', observedAt: at(1) });
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout(),
+          failedCheckout(3),
+          secondCheckout,
+          checkout({ machineId: 'machine-b', observedAt: at(5) }),
+          checkout({ checkoutPath: '/other', observedAt: at(5) }),
+        ],
+      }),
+    );
+    expect(
+      await Effect.runPromise(
+        queryLatestCheckoutStatusObservations({
+          dbPath,
+          batch: [checkout(), secondCheckout],
+        }),
+      ),
+    ).toEqual({
+      items: [
+        { latest: failedCheckout(3), latestObserved: checkout() },
+        { latest: secondCheckout, latestObserved: secondCheckout },
+      ],
+      skipped: 0,
+      truncated: false,
+    });
+    const secondJira = jiraIssue({ machineId: 'machine-b', key: 'XLB-7', observedAt: at(1) });
+    await Effect.runPromise(
+      importJiraIssueObservations({
+        dbPath,
+        observations: [
+          jiraIssue(),
+          failedJiraIssue(3),
+          secondJira,
+          jiraIssue({ machineId: 'machine-b', observedAt: at(5) }),
+          jiraIssue({ key: 'XLB-7', observedAt: at(5) }),
+        ],
+      }),
+    );
+    expect(
+      await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: [jiraIssue(), secondJira] })),
+    ).toEqual({
+      items: [
+        { latest: failedJiraIssue(3), latestObserved: jiraIssue() },
+        { latest: secondJira, latestObserved: secondJira },
+      ],
+      skipped: 0,
+      truncated: false,
+    });
+  });
+
+  test('empty page batches read no unscoped observations', async () => {
+    const dbPath = await createStore('page-empty');
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [pullRequest()] }));
+    await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue()] }));
+    await Effect.runPromise(importCheckoutStatusObservations({ dbPath, observations: [checkout()] }));
+    for (const result of await Promise.all([
+      Effect.runPromise(queryLatestPullRequestObservations({ dbPath, batch: [] })),
+      Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: [] })),
+      Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath, batch: [] })),
+    ])) {
+      expect(result).toEqual({ items: [], skipped: 0, truncated: false });
+    }
+  });
+
+  test('returns more than 500 exact identities without the generic query ceiling or SQL expression limit', async () => {
+    const dbPath = await createStore('page-large');
+    const pullRequests = Array.from({ length: 501 }, (_, index) => pullRequest({ number: index + 1 }));
+    const jiraIssues = Array.from({ length: 501 }, (_, index) => jiraIssue({ key: `XLB-${index + 1}` }));
+    const checkouts = Array.from({ length: 501 }, (_, index) => checkout({ checkoutPath: `/checkout/${index}` }));
+    for (let start = 0; start < 501; start += 500) {
+      await Effect.runPromise(
+        importPullRequestObservations({ dbPath, observations: pullRequests.slice(start, start + 500) }),
+      );
+      await Effect.runPromise(
+        importJiraIssueObservations({ dbPath, observations: jiraIssues.slice(start, start + 500) }),
+      );
+      await Effect.runPromise(
+        importCheckoutStatusObservations({ dbPath, observations: checkouts.slice(start, start + 500) }),
+      );
+    }
+    for (const result of await Promise.all([
+      Effect.runPromise(queryLatestPullRequestObservations({ dbPath, batch: pullRequests })),
+      Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: jiraIssues })),
+      Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath, batch: checkouts })),
+    ])) {
+      expect(result.items).toHaveLength(501);
+      expect(result.skipped).toBe(0);
+      expect(result.truncated).toBe(false);
+    }
+    const duplicateKeys = Array.from({ length: MAX_WORK_THREAD_FACT_KEYS }, () => pullRequest());
+    expect(
+      (await Effect.runPromise(queryLatestPullRequestObservations({ dbPath, batch: duplicateKeys }))).items,
+    ).toHaveLength(1);
+    const generic = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, limit: 500 }));
+    expect(generic.items).toHaveLength(500);
+    expect(generic.truncated).toBe(true);
+  });
+
+  test('rejects oversized or invalid exact batches and preserves the generic ceiling', async () => {
+    const dbPath = await createStore('page-bounds');
+    for (const effect of [
+      queryLatestPullRequestObservations({
+        dbPath,
+        batch: Array.from({ length: MAX_WORK_THREAD_FACT_KEYS + 1 }, () => pullRequest()),
+      }),
+      queryLatestJiraIssueObservations({
+        dbPath,
+        batch: Array.from({ length: MAX_WORK_THREAD_FACT_KEYS + 1 }, () => jiraIssue()),
+      }),
+      queryLatestCheckoutStatusObservations({
+        dbPath,
+        batch: Array.from({ length: MAX_WORK_THREAD_CHECKOUT_KEYS + 1 }, () => ({
+          machineId: 'machine-a',
+          checkoutPath: '/checkout',
+        })),
+      }),
+      queryLatestPullRequestObservations({ dbPath, batch: [pullRequest({ machineId: '' })] }),
+      queryLatestPullRequestObservations({ dbPath, batch: [pullRequest({ number: 0 })] }),
+      queryLatestJiraIssueObservations({ dbPath, batch: [{ machineId: 'machine-a', key: 'bad-key' }] }),
+      queryLatestCheckoutStatusObservations({ dbPath, batch: [{ machineId: 'machine-a', checkoutPath: '' }] }),
+      queryLatestPullRequestObservations({ dbPath, limit: 501 }),
+      queryLatestJiraIssueObservations({ dbPath, limit: 501 }),
+      queryLatestCheckoutStatusObservations({ dbPath, limit: 501 }),
+    ]) {
+      expect(await failureReason(effect)).toBe('invalid-input');
+    }
+  });
+
+  test('reports invalid stored observations in an exact batch', async () => {
+    const dbPath = await createStore('page-invalid-history');
+    await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue()] }));
+    const db = new Database(dbPath);
+    db.exec("UPDATE jira_issue_observations SET comments_json = 'invalid-json'");
+    db.close();
+    expect(await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: [jiraIssue()] }))).toEqual({
+      items: [],
+      skipped: 1,
+      truncated: false,
+    });
   });
 });

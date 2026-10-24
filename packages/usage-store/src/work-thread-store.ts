@@ -567,9 +567,28 @@ const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[
   }
   if (query.search !== null && query.search.length > 0) {
     conditions.push(`(instr(lower(t.title), lower(?)) > 0 OR EXISTS (
-      SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.detached_at IS NULL AND instr(lower(l.link_key), lower(?)) > 0
+      SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.detached_at IS NULL AND (
+        instr(lower(l.link_key), lower(?)) > 0 OR (l.kind = 'session' AND (
+          EXISTS (
+            SELECT 1 FROM served_report_current current
+            JOIN served_report_revisions revision USING (revision)
+            JOIN served_report_rows session USING (revision)
+            WHERE current.singleton = 1 AND revision.complete = 1
+              AND l.link_key = 'session:' || session.machine_id || '/' ||
+                json_extract(session.source_row_json, '$.source.harnessKey') || '/' ||
+                json_extract(session.source_row_json, '$.source.sourceSessionId')
+              AND instr(lower(json_extract(session.source_row_json, '$.sessionLabel')), lower(?)) > 0
+          ) OR EXISTS (
+            SELECT 1 FROM claude_desktop_sessions desktop
+            WHERE (l.link_key = 'session:' || desktop.machine_id || '/claude/' || desktop.cli_session_id
+              OR EXISTS (SELECT 1 FROM json_each(desktop.prior_cli_session_ids_json) prior
+                WHERE l.link_key = 'session:' || desktop.machine_id || '/claude/' || prior.value))
+              AND instr(lower(desktop.title), lower(?)) > 0
+          )
+        ))
+      )
     ))`);
-    params.push(query.search, query.search);
+    params.push(query.search, query.search, query.search, query.search);
   }
   if (query.cursor !== null) {
     if (typeof query.cursor !== 'string' || query.cursor.length > 2000) {
@@ -729,32 +748,33 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         return invalidInput('Invalid work thread link scope');
       }
       // Active links are all returned; detached history is the latest maxEventsPerThread per thread.
-      return ids.flatMap((id) =>
-        db
-          .query(`SELECT * FROM (
-        SELECT * FROM work_thread_links WHERE thread_id = ? AND detached_at IS NULL
-        UNION ALL SELECT * FROM (
-          SELECT * FROM work_thread_links WHERE thread_id = ? AND detached_at IS NOT NULL
-          ORDER BY detached_at DESC, rowid DESC LIMIT ?
-        )
-      ) ORDER BY created_at, link_id`)
-          .all(id, id, WORK_THREAD_BOUNDS.maxEventsPerThread)
-          .map(linkFromRecord),
-      );
+      return db
+        .query(`SELECT * FROM (
+          SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY thread_id, (detached_at IS NULL) ORDER BY detached_at DESC, rowid DESC
+          ) AS rank FROM work_thread_links WHERE thread_id IN (SELECT value FROM json_each(?))
+        ) WHERE detached_at IS NULL OR rank <= ? ORDER BY thread_id, created_at, link_id`)
+        .all(JSON.stringify(ids), WORK_THREAD_BOUNDS.maxEventsPerThread)
+        .map(linkFromRecord);
     });
 
   const queryWorkThreadEvents = (
-    input: QueryWorkThreadByIdInput,
+    input: QueryWorkThreadByIdInput | QueryWorkThreadLinksInput,
   ): Effect.Effect<readonly WorkThreadEvent[], UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadEvents', (db) =>
-      db
+    read(input.dbPath, 'queryWorkThreadEvents', (db) => {
+      const ids = [...new Set('threadIds' in input ? input.threadIds : [input.threadId])];
+      if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
+        return invalidInput('Invalid work thread event scope');
+      }
+      return db
         .query(`SELECT event_json FROM (
-      SELECT event_json, at, rowid AS sequence FROM work_thread_events WHERE thread_id = ?
-      ORDER BY at DESC, rowid DESC LIMIT ?
-    ) ORDER BY at, sequence`)
-        .all(input.threadId, WORK_THREAD_BOUNDS.maxEventsPerThread)
-        .map((value) => validated(parseWorkThreadEvent(json(record(value).event_json)), 'event')),
-    );
+          SELECT thread_id, event_json, at, rowid AS sequence,
+            ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY at DESC, rowid DESC) AS rank
+          FROM work_thread_events WHERE thread_id IN (SELECT value FROM json_each(?))
+        ) WHERE rank <= ? ORDER BY thread_id, at, sequence`)
+        .all(JSON.stringify(ids), WORK_THREAD_BOUNDS.maxEventsPerThread)
+        .map((value) => validated(parseWorkThreadEvent(json(record(value).event_json)), 'event'));
+    });
 
   const countWorkThreads = (input: {
     readonly dbPath: string;
@@ -834,6 +854,20 @@ export interface QueryWorkThreadSessionEvidenceInput {
   readonly machineId: string;
 }
 
+export interface QueryWorkThreadSessionEvidenceBatchInput {
+  readonly dbPath: string;
+  readonly threads: readonly {
+    readonly threadId: string;
+    readonly links: readonly WorkThreadLink[];
+    readonly machineId: string;
+  }[];
+}
+
+export interface WorkThreadSessionEvidenceBatchEntry {
+  readonly evidence: WorkThreadSessionEvidence;
+  readonly threadId: string;
+}
+
 const EVIDENCE_MEMBER_COLUMNS = `row_id, machine_id, project_label, campaign_root, origin, active_time,
   json_extract(source_row_json, '$.source.sourceSessionId') AS source_session_id,
   json_extract(source_row_json, '$.source.parentSourceSessionId') AS parent_session_id,
@@ -849,37 +883,198 @@ const evidenceText = (value: unknown, maximum = 4096): string | null =>
 const evidenceOptionalText = (value: unknown, maximum = 4096): string | null =>
   value === null || value === undefined ? null : validated(evidenceText(value, maximum), 'session metadata');
 
-const readThreadSessionEvidence = (
+interface SessionEvidencePage {
+  readonly branches: ReadonlyMap<string, readonly Record<string, unknown>[]>;
+  readonly children: ReadonlyMap<string, readonly Record<string, unknown>[]>;
+  readonly desktops: ReadonlyMap<string, Record<string, unknown>>;
+  readonly generatedAt: CanonicalInstant | null;
+  readonly revision: string | null;
+  readonly roots: ReadonlyMap<string, readonly Record<string, unknown>[]>;
+}
+
+const sessionEvidenceKey = (machineId: string, harness: string, sessionId: string): string =>
+  `session:${machineId}/${harness}/${sessionId}`;
+
+const groupEvidenceRecords = (values: readonly unknown[]): Map<string, Record<string, unknown>[]> => {
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const value of values) {
+    const row = record(value);
+    const key = validated(evidenceText(row.request_key), 'requested evidence key');
+    const group = grouped.get(key) ?? [];
+    group.push(row);
+    grouped.set(key, group);
+  }
+  return grouped;
+};
+
+/** All page evidence uses one snapshot and a fixed number of identity-scoped SQL reads. */
+const readSessionEvidencePage = (
   db: SqliteDatabase,
-  input: QueryWorkThreadSessionEvidenceInput,
-): WorkThreadSessionEvidence => {
-  if (
-    input.links.length > WORK_THREAD_BOUNDS.maxLinksPerThread ||
-    !input.machineId ||
-    input.links.some((link) => parseWorkThreadLink(link) === null)
-  ) {
-    return invalidInput('Invalid linked session evidence scope');
+  scopes: readonly Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'>[],
+): SessionEvidencePage => {
+  for (const input of scopes) {
+    if (
+      input.links.length > WORK_THREAD_BOUNDS.maxLinksPerThread ||
+      !input.machineId ||
+      input.links.some((link) => parseWorkThreadLink(link) === null)
+    ) {
+      return invalidInput('Invalid linked session evidence scope');
+    }
   }
   const currentValue = db
     .query(`SELECT revisions.revision, revisions.generated_at FROM served_report_current current
-    JOIN served_report_revisions revisions USING(revision) WHERE current.singleton = 1 AND revisions.complete = 1`)
+      JOIN served_report_revisions revisions USING(revision) WHERE current.singleton = 1 AND revisions.complete = 1`)
     .get();
   if (currentValue === null) {
-    return { revision: null, generatedAt: null, sessions: [], branchCheckouts: [], truncated: false };
+    return {
+      revision: null,
+      generatedAt: null,
+      roots: new Map(),
+      children: new Map(),
+      desktops: new Map(),
+      branches: new Map(),
+    };
   }
   const current = record(currentValue);
   const revision = validated(evidenceText(current.revision, 512), 'served revision');
   const generatedAt = validated(normalizeIsoTimestamp(current.generated_at), 'served revision date');
+  const sessionRequests = new Map<string, readonly string[]>();
+  const branchRequests = new Map<string, readonly string[]>();
+  for (const scope of scopes) {
+    for (const link of scope.links) {
+      if (link.detachedAt !== null) {
+        continue;
+      }
+      const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+      if (parsed?.kind === 'session') {
+        sessionRequests.set(link.key, [link.key, parsed.machineId, parsed.harness, parsed.sessionId]);
+      } else if (parsed?.kind === 'branch') {
+        const key = JSON.stringify([scope.machineId, link.key]);
+        branchRequests.set(key, [key, scope.machineId, parsed.host, parsed.repository, parsed.ref]);
+      }
+    }
+  }
+  const memberCte = `members AS MATERIALIZED (
+    SELECT ordinal, ${EVIDENCE_MEMBER_COLUMNS}, json_extract(source_row_json, '$.source.harnessKey') AS harness_key
+    FROM served_report_rows WHERE revision = ?
+  )`;
+  const requestCte = `requested AS (
+    SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
+      json_extract(value, '$[2]') AS harness, json_extract(value, '$[3]') AS session_id
+    FROM json_each(?)
+  )`;
+  const roots = groupEvidenceRecords(
+    sessionRequests.size === 0
+      ? []
+      : db
+          .query(`WITH ${memberCte}, ${requestCte}, ranked AS (
+      SELECT requested.request_key, members.*,
+        ROW_NUMBER() OVER (PARTITION BY requested.request_key ORDER BY ordinal) AS rank
+      FROM requested JOIN members ON machine_id = machine AND harness_key = harness AND source_session_id = session_id
+    ) SELECT * FROM ranked WHERE rank <= 2 ORDER BY request_key, rank`)
+          .all(revision, JSON.stringify([...sessionRequests.values()])),
+  );
+  const desktopRequests = new Map<string, readonly string[]>();
+  for (const [key, rows] of roots) {
+    const request = sessionRequests.get(key);
+    if (rows.length === 1 && request?.[2] === 'claude') {
+      desktopRequests.set(key, request);
+    }
+  }
+  const readDesktops = (requests: readonly (readonly string[])[]) =>
+    new Map(
+      (requests.length === 0
+        ? []
+        : db
+            .query(`WITH ${requestCte}, ranked AS (
+        SELECT requested.request_key, desktop.*,
+          ROW_NUMBER() OVER (PARTITION BY requested.request_key ORDER BY last_activity_at DESC, id DESC) AS rank
+        FROM requested JOIN claude_desktop_sessions desktop ON desktop.machine_id = machine
+          AND (cli_session_id = session_id OR EXISTS (
+            SELECT 1 FROM json_each(prior_cli_session_ids_json) WHERE value = session_id))
+      ) SELECT * FROM ranked WHERE rank = 1`)
+            .all(JSON.stringify(requests))
+      ).map((value) => {
+        const row = record(value);
+        return [validated(evidenceText(row.request_key), 'Desktop request key'), row] as const;
+      }),
+    );
+  const desktops = readDesktops([...desktopRequests.values()]);
+  const childRequests = [...sessionRequests].flatMap(([key, request]) =>
+    roots.get(key)?.length === 1 ? [[...request, desktops.get(key)?.desktop_session_id ?? null]] : [],
+  );
+  const children = groupEvidenceRecords(
+    childRequests.length === 0
+      ? []
+      : db
+          .query(`WITH ${memberCte}, requested AS (
+      SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
+        json_extract(value, '$[2]') AS harness, json_extract(value, '$[3]') AS session_id,
+        json_extract(value, '$[4]') AS desktop_id FROM json_each(?)
+    ), ranked AS (
+      SELECT requested.request_key, members.*,
+        ROW_NUMBER() OVER (PARTITION BY requested.request_key ORDER BY active_time DESC, ordinal) AS rank
+      FROM requested JOIN members ON machine_id = machine AND harness_key = harness AND (
+        parent_session_id = session_id OR (desktop_id IS NOT NULL AND parent_session_id IS NULL AND EXISTS (
+          SELECT 1 FROM claude_desktop_sessions desktop WHERE desktop.machine_id = machine
+            AND desktop.spawned_from_session_id = desktop_id AND desktop.cli_session_id = source_session_id
+        )))
+    ) SELECT * FROM ranked WHERE rank <= ? ORDER BY request_key, rank`)
+          .all(revision, JSON.stringify(childRequests), WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1),
+  );
+  const childDesktopRequests = new Map<string, readonly string[]>();
+  for (const rows of children.values()) {
+    for (const row of rows.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren)) {
+      if (row.harness_key === 'claude') {
+        const machine = validated(evidenceText(row.machine_id, 512), 'child machine');
+        const sessionId = validated(evidenceText(row.source_session_id, 512), 'child session identity');
+        const key = sessionEvidenceKey(machine, 'claude', sessionId);
+        if (!desktopRequests.has(key)) {
+          childDesktopRequests.set(key, [key, machine, 'claude', sessionId]);
+        }
+      }
+    }
+  }
+  for (const [key, value] of readDesktops([...childDesktopRequests.values()])) {
+    desktops.set(key, value);
+  }
+  const branches = groupEvidenceRecords(
+    branchRequests.size === 0
+      ? []
+      : db
+          .query(`WITH requested AS (
+      SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
+        json_extract(value, '$[2]') AS host, json_extract(value, '$[3]') AS repository,
+        json_extract(value, '$[4]') AS ref FROM json_each(?)
+    ), paths AS (
+      SELECT DISTINCT requested.request_key, json_extract(source_row_json, '$.source.sourcePath') AS checkout_path
+      FROM requested JOIN served_report_rows ON machine_id = machine AND revision = ?
+        AND lower(json_extract(source_row_json, '$.source.vcs.repository.host')) = host
+        AND json_extract(source_row_json, '$.source.vcs.repository.ownerPath') = repository
+        AND json_extract(source_row_json, '$.source.vcs.branches[#-1].name') = ref
+        AND json_extract(source_row_json, '$.source.sourcePath') IS NOT NULL
+    ), ranked AS (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY request_key ORDER BY checkout_path) AS rank FROM paths
+    ) SELECT * FROM ranked WHERE rank <= ? ORDER BY request_key, rank`)
+          .all(JSON.stringify([...branchRequests.values()]), revision, WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1),
+  );
+  return { revision, generatedAt, roots, children, desktops, branches };
+};
+
+const readThreadSessionEvidence = (
+  page: SessionEvidencePage,
+  input: Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'>,
+): WorkThreadSessionEvidence => {
+  const { revision, generatedAt } = page;
+  if (revision === null) {
+    return { revision, generatedAt, sessions: [], branchCheckouts: [], truncated: false };
+  }
   const sessions = new Map<string, WorkThreadSessionEvidence['sessions'][number]>();
   const branchCheckouts: WorkThreadSessionEvidence['branchCheckouts'][number][] = [];
   let truncated = false;
   const desktopOf = (machineId: string, sessionId: string) => {
-    const desktop = db
-      .query(`SELECT * FROM claude_desktop_sessions WHERE machine_id = ? AND
-      (cli_session_id = ? OR EXISTS (SELECT 1 FROM json_each(prior_cli_session_ids_json) WHERE value = ?))
-      ORDER BY last_activity_at DESC, id DESC LIMIT 1`)
-      .get(machineId, sessionId, sessionId);
-    if (desktop === null) {
+    const desktop = page.desktops.get(sessionEvidenceKey(machineId, 'claude', sessionId));
+    if (desktop === undefined) {
       return null;
     }
     const value = record(desktop);
@@ -942,33 +1137,14 @@ const readThreadSessionEvidence = (
   for (const link of input.links.filter((item) => item.detachedAt === null)) {
     const parsed = parseWorkThreadLinkKey(link.kind, link.key);
     if (parsed?.kind === 'session') {
-      const roots = db
-        .query(`SELECT ${EVIDENCE_MEMBER_COLUMNS} FROM served_report_rows WHERE revision = ? AND machine_id = ?
-        AND json_extract(source_row_json, '$.source.harnessKey') = ? AND json_extract(source_row_json, '$.source.sourceSessionId') = ? ORDER BY ordinal LIMIT 2`)
-        .all(revision, parsed.machineId, parsed.harness, parsed.sessionId);
+      const roots = page.roots.get(link.key) ?? [];
       if (roots.length !== 1) {
         truncated = true;
         continue;
       }
       const root = roots[0];
-      const desktopId = add(root, parsed.harness);
-      const children = db
-        .query(`SELECT ${EVIDENCE_MEMBER_COLUMNS} FROM served_report_rows WHERE revision = ? AND machine_id = ?
-        AND json_extract(source_row_json, '$.source.harnessKey') = ? AND (
-          json_extract(source_row_json, '$.source.parentSourceSessionId') = ? OR
-          (? IS NOT NULL AND json_extract(source_row_json, '$.source.parentSourceSessionId') IS NULL AND json_extract(source_row_json, '$.source.sourceSessionId') IN (
-            SELECT cli_session_id FROM claude_desktop_sessions WHERE machine_id = ? AND spawned_from_session_id = ?)))
-        ORDER BY active_time DESC, ordinal LIMIT ?`)
-        .all(
-          revision,
-          parsed.machineId,
-          parsed.harness,
-          parsed.sessionId,
-          desktopId,
-          parsed.machineId,
-          desktopId,
-          WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1,
-        );
+      add(root, parsed.harness);
+      const children = page.children.get(link.key) ?? [];
       if (children.length > WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren) {
         truncated = true;
       }
@@ -976,21 +1152,7 @@ const readThreadSessionEvidence = (
         add(child, parsed.harness, parsed.sessionId);
       }
     } else if (parsed?.kind === 'branch') {
-      const paths = db
-        .query(`SELECT DISTINCT json_extract(source_row_json, '$.source.sourcePath') AS checkout_path
-        FROM served_report_rows WHERE revision = ? AND machine_id = ?
-        AND lower(json_extract(source_row_json, '$.source.vcs.repository.host')) = ?
-        AND json_extract(source_row_json, '$.source.vcs.repository.ownerPath') = ?
-        AND json_extract(source_row_json, '$.source.vcs.branches[#-1].name') = ?
-        AND json_extract(source_row_json, '$.source.sourcePath') IS NOT NULL ORDER BY checkout_path LIMIT ?`)
-        .all(
-          revision,
-          input.machineId,
-          parsed.host,
-          parsed.repository,
-          parsed.ref,
-          WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1,
-        );
+      const paths = page.branches.get(JSON.stringify([input.machineId, link.key])) ?? [];
       if (paths.length > WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren) {
         truncated = true;
       }
@@ -1006,21 +1168,49 @@ const readThreadSessionEvidence = (
   return { revision, generatedAt, sessions: [...sessions.values()], branchCheckouts, truncated };
 };
 
-export const createWorkThreadSessionEvidenceStore = (dependencies: WorkThreadStoreDependencies) => ({
-  queryWorkThreadSessionEvidence: (
+export const createWorkThreadSessionEvidenceStore = (dependencies: WorkThreadStoreDependencies) => {
+  function queryWorkThreadSessionEvidence(
     input: QueryWorkThreadSessionEvidenceInput,
-  ): Effect.Effect<WorkThreadSessionEvidence, UsageStoreError> =>
-    dependencies.withUsageStoreReader(input.dbPath, (db) =>
+  ): Effect.Effect<WorkThreadSessionEvidence, UsageStoreError>;
+  function queryWorkThreadSessionEvidence(
+    input: QueryWorkThreadSessionEvidenceBatchInput,
+  ): Effect.Effect<readonly WorkThreadSessionEvidenceBatchEntry[], UsageStoreError>;
+  function queryWorkThreadSessionEvidence(
+    input: QueryWorkThreadSessionEvidenceInput | QueryWorkThreadSessionEvidenceBatchInput,
+  ): Effect.Effect<WorkThreadSessionEvidence | readonly WorkThreadSessionEvidenceBatchEntry[], UsageStoreError> {
+    return dependencies.withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
           db.exec('BEGIN');
           try {
-            return readThreadSessionEvidence(db, input);
+            if ('threads' in input) {
+              if (
+                input.threads.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize ||
+                new Set(input.threads.map((thread) => thread.threadId)).size !== input.threads.length ||
+                input.threads.some(
+                  (thread) =>
+                    !isWorkThreadId(thread.threadId) || thread.links.some((link) => link.threadId !== thread.threadId),
+                )
+              ) {
+                return invalidInput('Invalid work thread session evidence batch');
+              }
+              if (input.threads.length === 0) {
+                return [];
+              }
+              const page = readSessionEvidencePage(db, input.threads);
+              return input.threads.map((thread) => ({
+                threadId: thread.threadId,
+                evidence: readThreadSessionEvidence(page, thread),
+              }));
+            }
+            return readThreadSessionEvidence(readSessionEvidencePage(db, [input]), input);
           } finally {
             db.exec('COMMIT');
           }
         },
         catch: (cause) => dependencies.usageStoreReadError('queryWorkThreadSessionEvidence', input.dbPath, cause),
       }),
-    ),
-});
+    );
+  }
+  return { queryWorkThreadSessionEvidence };
+};

@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instan
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import {
+  type PullRequestObservation,
   parseCheckoutStatusObservation,
   parseClaudeDesktopSessionObservation,
   parseJiraIssueObservation,
@@ -201,6 +202,13 @@ describe('work-thread reader', () => {
     if (missing._tag === 'Left') {
       expect(missing.left.reason).toBe('store-missing');
     }
+    await publish(dbPath, [session('unlinked')]);
+    const published = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(published.rows).toEqual([]);
+    expect(published.sources.find((source) => source.source === 'sessions')).toMatchObject({
+      state: 'ok',
+      lastRunAt: at(0),
+    });
   });
 
   test('reads latest attempt alongside latest success, keeps ended follow-up, and ignores detached links', async () => {
@@ -242,6 +250,243 @@ describe('work-thread reader', () => {
     expect(detached?.row.markers.pullRequests).toEqual([]);
     expect(detached?.detachedLinks).toHaveLength(1);
     expect(detached?.row.afterDone).toBeNull();
+  });
+
+  test('maps W2 markers from the latest success across repository casing and isolates machine identities', async () => {
+    const dbPath = await fixture();
+    const mergeability = [
+      ['MERGEABLE', 'mergeable'],
+      ['CONFLICTING', 'conflicting'],
+      ['UNKNOWN', 'unknown'],
+      [null, null],
+    ] as const;
+    const expected = new Map<string, { mergeable: string | null; number: number }>();
+    const observations: PullRequestObservation[] = [];
+    for (const [index, [mergeable, marker]] of mergeability.entries()) {
+      const number = index + 7;
+      const threadId = await create(dbPath, [{ kind: 'pull-request', key: `github.com/fixture/repo#${number}` }]);
+      expected.set(threadId, { mergeable: marker, number });
+      observations.push(
+        {
+          ...pr(-4),
+          repository: 'Fixture/RePo',
+          number,
+          mergeable,
+          mergeStateStatus: 'CLEAN',
+          discoveryRole: 'author',
+        },
+        {
+          ...pr(-2, 'timeout'),
+          repository: 'FIXTURE/repo',
+          number,
+          mergeable: 'CONFLICTING',
+          mergeStateStatus: 'DIRTY',
+          discoveryRole: 'review-requested',
+        },
+        {
+          ...pr(-1),
+          machineId: 'another-machine',
+          number,
+          mergeable: 'UNKNOWN',
+          mergeStateStatus: 'WRONG',
+          discoveryRole: 'review-requested',
+        },
+      );
+    }
+    const failedOnly = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#11' }]);
+    observations.push({
+      ...pr(-1, 'timeout'),
+      number: 11,
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'CLEAN',
+      discoveryRole: 'author',
+    });
+    await run(importPullRequestObservations({ dbPath, observations }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(list.rows).toHaveLength(5);
+    for (const [threadId, item] of expected) {
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      for (const row of [list.rows.find((candidate) => candidate.thread.threadId === threadId), detail?.row]) {
+        expect(row?.markers.pullRequests).toHaveLength(1);
+        expect(row?.markers.pullRequests[0]).toMatchObject({
+          key: `github.com/fixture/repo#${item.number}`,
+          latest: { outcome: 'timeout', observedAt: at(-2), machineId: MACHINE },
+          latestSuccessful: { outcome: 'observed', observedAt: at(-4), machineId: MACHINE, repository: 'Fixture/RePo' },
+          mergeable: item.mergeable,
+          mergeStateStatus: 'CLEAN',
+          role: 'author',
+        });
+      }
+    }
+    expect(list.rows.find((row) => row.thread.threadId === failedOnly)?.markers.pullRequests[0]).toMatchObject({
+      latest: { outcome: 'timeout' },
+      latestSuccessful: null,
+      mergeable: null,
+      mergeStateStatus: null,
+      role: null,
+    });
+  });
+
+  test('detached history does not consume the active evidence link bound', async () => {
+    const dbPath = await fixture();
+    const threadId = await create(
+      dbPath,
+      Array.from({ length: 64 }, (_, index) => ({
+        kind: 'pull-request',
+        key: `github.com/fixture/repo#${index + 1}`,
+      })),
+    );
+    const links = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    const first = links[0];
+    if (!first) {
+      throw new Error('Missing fixture link');
+    }
+    await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: first.linkId });
+    await command(dbPath, {
+      commandId: randomUUID(),
+      op: 'link',
+      threadId,
+      kind: 'pull-request',
+      key: 'github.com/fixture/repo#65',
+    });
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(detail?.detachedLinks.map((link) => link.linkId)).toEqual([first.linkId]);
+    expect(detail?.row.links).toHaveLength(64);
+    expect(list.rows[0]?.links).toHaveLength(64);
+    expect(list.rows[0]?.markers.pullRequests).toHaveLength(64);
+  });
+
+  test('batches a page above 500 fact identities without mixing threads, sessions, events or machines', async () => {
+    const dbPath = await fixture();
+    const observations: PullRequestObservation[] = [];
+    const ids: string[] = [];
+    const rows: SerializedRow[] = [];
+    for (let index = 0; index < 9; index++) {
+      const rootId = `root-${index}`;
+      const childId = `child-${index}`;
+      const root = session(rootId, {
+        date: at(-3),
+        source: {
+          ...session(rootId).source,
+          harnessKey: 'codex',
+          sourceSessionId: rootId,
+          sourcePath: `/fixture/${index}`,
+        },
+      });
+      const child = session(childId, {
+        source: {
+          ...session(childId).source,
+          harnessKey: 'codex',
+          sourceSessionId: childId,
+          sourcePath: `/fixture/${index}`,
+          parentSourceSessionId: rootId,
+          rootSourceSessionId: rootId,
+        },
+      });
+      rows.push(
+        root,
+        child,
+        session(rootId, {
+          source: { ...root.source, harnessKey: 'codex', sourceSessionId: rootId, machineId: 'another-machine' },
+        }),
+      );
+      const links: WorkThreadLinkInput[] = [
+        sessionLink(rootId),
+        { kind: 'jira-issue', key: `jira:default/TASK-${index + 1}` },
+      ];
+      for (let offset = 0; offset < 62; offset++) {
+        const number = index * 62 + offset + 1;
+        links.push({ kind: 'pull-request', key: `github.com/fixture/repo#${number}` });
+        observations.push({ ...pr(-1), number, title: `PR ${number}` });
+      }
+      ids.push(await create(dbPath, links, `Batch task ${index}`, -20 - index));
+      const jira = parseJiraIssueObservation({
+        machineId: MACHINE,
+        key: `TASK-${index + 1}`,
+        observedAt: at(-1),
+        outcome: 'observed',
+        status: 'Open',
+        summary: `Issue ${index}`,
+      });
+      const checkout = parseCheckoutStatusObservation({
+        machineId: MACHINE,
+        checkoutPath: `/fixture/${index}`,
+        observedAt: at(-1),
+        outcome: 'observed',
+        branch: `branch-${index}`,
+        dirty: true,
+      });
+      if (jira === null || checkout === null) {
+        throw new Error('Invalid batch fixture');
+      }
+      await run(
+        importJiraIssueObservations({
+          dbPath,
+          observations: [jira, { ...jira, machineId: 'another-machine', summary: 'Wrong machine' }],
+        }),
+      );
+      await run(
+        importCheckoutStatusObservations({
+          dbPath,
+          observations: [checkout, { ...checkout, machineId: 'another-machine', branch: 'wrong-machine' }],
+        }),
+      );
+    }
+    for (let offset = 0; offset < observations.length; offset += 500) {
+      await run(importPullRequestObservations({ dbPath, observations: observations.slice(offset, offset + 500) }));
+    }
+    await run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [{ ...pr(0), number: 1, machineId: 'another-machine', title: 'Wrong machine' }],
+      }),
+    );
+    await publish(dbPath, rows);
+    const readQueries = async (limit: number) => {
+      const queries = spyOn(Database.prototype, 'query');
+      try {
+        const list = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, limit }, now: NOW }));
+        return { list, queries: queries.mock.calls.map(([sql]) => sql) };
+      } finally {
+        queries.mockRestore();
+      }
+    };
+    const single = await readQueries(1);
+    const page = await readQueries(9);
+    expect(page.queries.length).toBe(single.queries.length);
+    for (const table of [
+      'pull_request_observations',
+      'jira_issue_observations',
+      'checkout_status_observations',
+      'work_thread_events',
+    ]) {
+      expect(page.queries.filter((sql) => sql.includes(`FROM ${table}`))).toHaveLength(1);
+    }
+    expect(page.list.rows).toHaveLength(9);
+    expect(page.list.rows.flatMap((row) => row.markers.pullRequests)).toHaveLength(558);
+    for (const [index, threadId] of ids.entries()) {
+      const row = page.list.rows.find((candidate) => candidate.thread.threadId === threadId);
+      expect(row?.sessionCount).toBe(2);
+      expect(row?.markers.pullRequests).toHaveLength(62);
+      expect(
+        row?.markers.pullRequests.every(
+          (marker) =>
+            marker.latestSuccessful?.machineId === MACHINE &&
+            marker.latestSuccessful.number > index * 62 &&
+            marker.latestSuccessful.number <= (index + 1) * 62,
+        ),
+      ).toBe(true);
+      expect(row?.markers.jiraIssues[0]?.latestSuccessful?.summary).toBe(`Issue ${index}`);
+      expect(row?.markers.local).toHaveLength(2);
+      expect(
+        row?.markers.local.every(
+          (marker) =>
+            marker.latestSuccessful?.machineId === MACHINE && marker.latestSuccessful.branch === `branch-${index}`,
+        ),
+      ).toBe(true);
+      expect(row?.marks.filter((mark) => mark.kind === 'event').map((mark) => mark.at)).toEqual([at(-20 - index)]);
+    }
   });
 
   test('resolves an old linked session beyond 200 newer campaigns and folds declared children', async () => {
@@ -639,14 +884,20 @@ describe('work-thread reader', () => {
     } finally {
       db.close();
     }
-    const start = performance.now();
-    const list = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, limit: 100 }, now: NOW }));
-    const elapsed = performance.now() - start;
-    console.info(`Work thread list 500 threads x 5 links, 100-row page: ${elapsed.toFixed(1)} ms`);
-    expect(list.rows).toHaveLength(100);
-    expect(list.rows.every((row) => row.links.length === 5)).toBe(true);
-    expect(list.nextCursor).not.toBeNull();
-    expect(list.counts).toEqual({ open: 501, done: 0 });
+    const samples: number[] = [];
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const start = performance.now();
+      const list = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, limit: 100 }, now: NOW }));
+      samples.push(performance.now() - start);
+      expect(list.rows).toHaveLength(100);
+      expect(list.rows.every((row) => row.links.length === 5)).toBe(true);
+      expect(list.nextCursor).not.toBeNull();
+      expect(list.counts).toEqual({ open: 501, done: 0 });
+    }
+    const median = [...samples].sort((left, right) => left - right)[2];
+    console.info(
+      `Work thread list 500 threads x 5 links, 100-row page: samples=[${samples.map((sample) => sample.toFixed(1)).join(', ')}] ms; median=${median?.toFixed(1)} ms`,
+    );
     const selected = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, search: 'old wait' }, now: NOW }));
     expect(selected.rows.map((row) => row.thread.threadId)).toEqual([old]);
     const invalid = await run(

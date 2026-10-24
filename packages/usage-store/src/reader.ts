@@ -147,6 +147,11 @@ export {
   buildSessionQuerySqlOrder,
   executeMaterializedSessionQuery,
 } from './session-query-sqlite';
+export type {
+  QueryCheckoutStatusObservationBatchInput,
+  QueryJiraIssueObservationBatchInput,
+  QueryPullRequestObservationBatchInput,
+} from './work-fact-store';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
 export type {
   QueryRecentServedHarnessSessionsInput,
@@ -166,9 +171,11 @@ export { MAX_WORK_SCOPE_CHECKOUTS, type WorkSessionReadScope } from './work-sess
 export type {
   QueryWorkThreadByIdInput,
   QueryWorkThreadLinksInput,
+  QueryWorkThreadSessionEvidenceBatchInput,
   QueryWorkThreadSessionEvidenceInput,
   QueryWorkThreadsPageInput,
   QueryWorkThreadsPageResult,
   WorkThreadPageRow,
   WorkThreadSessionEvidence,
+  WorkThreadSessionEvidenceBatchEntry,
 } from './work-thread-store';

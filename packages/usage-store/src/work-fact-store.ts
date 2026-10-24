@@ -10,6 +10,8 @@ import {
   parsePullRequestObservation,
   WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
+import { WORK_THREAD_BOUNDS } from '@ai-usage/report-core/work-thread';
+import { WORK_THREAD_VIEW_BOUNDS } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import type {
@@ -53,6 +55,26 @@ export const WORK_FACT_RETENTION_PER_KEY = 5;
 export const MAX_WORK_FACT_BATCH = 500;
 export const MAX_WORK_FACT_QUERY_LIMIT = 500;
 export const DEFAULT_WORK_FACT_QUERY_LIMIT = 200;
+
+/** Exact page scopes may exceed the generic history browser's 500-identity ceiling. */
+export const MAX_WORK_THREAD_FACT_KEYS = WORK_THREAD_VIEW_BOUNDS.maxPageSize * WORK_THREAD_BOUNDS.maxLinksPerThread;
+export const MAX_WORK_THREAD_CHECKOUT_KEYS =
+  MAX_WORK_THREAD_FACT_KEYS * (WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1);
+
+export interface QueryPullRequestObservationBatchInput {
+  readonly batch: readonly Pick<PullRequestObservation, 'machineId' | 'host' | 'repository' | 'number'>[];
+  readonly dbPath: string;
+}
+
+export interface QueryJiraIssueObservationBatchInput {
+  readonly batch: readonly Pick<JiraIssueObservation, 'machineId' | 'key'>[];
+  readonly dbPath: string;
+}
+
+export interface QueryCheckoutStatusObservationBatchInput {
+  readonly batch: readonly Pick<CheckoutStatusObservation, 'machineId' | 'checkoutPath'>[];
+  readonly dbPath: string;
+}
 
 export const workFactSchemaSql = `
   CREATE TABLE IF NOT EXISTS pull_request_observations (
@@ -802,12 +824,32 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestPullRequestObservations = (
-    input: QueryLatestPullRequestObservationsInput & { readonly discoveredSinceMs?: number },
+    query:
+      | (QueryLatestPullRequestObservationsInput & { readonly discoveredSinceMs?: number })
+      | QueryPullRequestObservationBatchInput,
   ): Effect.Effect<LatestPullRequestObservations, UsageStoreError> => {
-    const limit = validLimit(input.limit);
+    const batch = 'batch' in query ? query.batch : undefined;
+    const input: QueryLatestPullRequestObservationsInput & { readonly discoveredSinceMs?: number } =
+      'batch' in query ? { dbPath: query.dbPath } : query;
+    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
     const links = input.links ?? [];
     if (
       limit === null ||
+      (batch !== undefined &&
+        (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
+          batch.some(
+            (key) =>
+              typeof key.machineId !== 'string' ||
+              !validMachineId(key.machineId) ||
+              typeof key.host !== 'string' ||
+              key.host.length === 0 ||
+              key.host.length > WORK_ATTENTION_BOUNDS.maxId ||
+              typeof key.repository !== 'string' ||
+              key.repository.length === 0 ||
+              key.repository.length > WORK_ATTENTION_BOUNDS.maxId ||
+              !Number.isSafeInteger(key.number) ||
+              key.number <= 0,
+          ))) ||
       (input.discoveredSinceMs !== undefined &&
         (!Number.isSafeInteger(input.discoveredSinceMs) ||
           Math.abs(input.discoveredSinceMs) > 8_640_000_000_000_000)) ||
@@ -830,17 +872,30 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
         ),
       );
     }
-    const linkFilter =
+    if (batch?.length === 0) {
+      return Effect.succeed({ items: [], skipped: 0, truncated: false });
+    }
+    const legacyLinkFilter =
       links.length === 0 ? '' : `AND (${links.map(() => '(host = ? AND repository = ? AND number = ?)').join(' OR ')})`;
-    const linkParams = links.flatMap((link) => [link.host, link.repository, link.number]);
+    const linkFilter =
+      batch === undefined
+        ? legacyLinkFilter
+        : `AND (machine_id, LOWER(host), LOWER(repository), number) IN (
+          SELECT json_extract(value, '$.machineId'), LOWER(json_extract(value, '$.host')),
+            LOWER(json_extract(value, '$.repository')), json_extract(value, '$.number') FROM json_each(?)
+        )`;
+    const linkParams =
+      batch === undefined
+        ? links.flatMap((link) => [link.host, link.repository, link.number])
+        : [JSON.stringify(batch)];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
           const discoveredSince = input.discoveredSinceMs;
-          const identityColumns =
-            discoveredSince === undefined
-              ? 'machine_id, host, repository, number'
-              : 'machine_id, LOWER(host), LOWER(repository), number';
+          const caseInsensitive = batch !== undefined || discoveredSince !== undefined;
+          const identityColumns = caseInsensitive
+            ? 'machine_id, LOWER(host), LOWER(repository), number'
+            : 'machine_id, host, repository, number';
           if (discoveredSince !== undefined) {
             const columns = db.query('PRAGMA table_info(pull_request_observations)').all() as { name: string }[];
             if (!columns.some((column) => column.name === 'discovery_role')) {
@@ -893,8 +948,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
             (record) =>
               JSON.stringify([
                 record.machine_id,
-                discoveredSince === undefined ? record.host : record.host.toLowerCase(),
-                discoveredSince === undefined ? record.repository : record.repository.toLowerCase(),
+                caseInsensitive ? record.host.toLowerCase() : record.host,
+                caseInsensitive ? record.repository.toLowerCase() : record.repository,
                 record.number,
               ]),
             (record) => parsePullRequestObservation(pullRequestValue(record)),
@@ -907,13 +962,25 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestCheckoutStatusObservations = (
-    input: QueryLatestCheckoutStatusObservationsInput,
+    query: QueryLatestCheckoutStatusObservationsInput | QueryCheckoutStatusObservationBatchInput,
   ): Effect.Effect<LatestCheckoutStatusObservations, UsageStoreError> => {
-    const limit = validLimit(input.limit);
+    const batch = 'batch' in query ? query.batch : undefined;
+    const input: QueryLatestCheckoutStatusObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_CHECKOUT_KEYS;
     const paths = input.paths ?? [];
     if (
       limit === null ||
       !validMachineId(input.machineId) ||
+      (batch !== undefined &&
+        (batch.length > MAX_WORK_THREAD_CHECKOUT_KEYS ||
+          batch.some(
+            (key) =>
+              typeof key.machineId !== 'string' ||
+              !validMachineId(key.machineId) ||
+              typeof key.checkoutPath !== 'string' ||
+              key.checkoutPath.length === 0 ||
+              key.checkoutPath.length > WORK_ATTENTION_BOUNDS.maxPath,
+          ))) ||
       paths.length > MAX_WORK_FACT_QUERY_LIMIT ||
       paths.some((candidate) => typeof candidate !== 'string' || candidate.length === 0)
     ) {
@@ -926,7 +993,17 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
         ),
       );
     }
-    const pathFilter = paths.length === 0 ? '' : `AND checkout_path IN (${paths.map(() => '?').join(', ')})`;
+    if (batch?.length === 0) {
+      return Effect.succeed({ items: [], skipped: 0, truncated: false });
+    }
+    const legacyPathFilter = paths.length === 0 ? '' : `AND checkout_path IN (${paths.map(() => '?').join(', ')})`;
+    const pathFilter =
+      batch === undefined
+        ? legacyPathFilter
+        : `AND (machine_id, checkout_path) IN (
+          SELECT json_extract(value, '$.machineId'), json_extract(value, '$.checkoutPath') FROM json_each(?)
+        )`;
+    const pathParams = batch === undefined ? paths : [JSON.stringify(batch)];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
@@ -951,7 +1028,12 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ORDER BY key_latest DESC, machine_id, checkout_path, rank_all
               LIMIT ?
             `)
-            .all(input.machineId ?? null, input.machineId ?? null, ...paths, 2 * (limit + 1)) as CheckoutStatusRecord[];
+            .all(
+              input.machineId ?? null,
+              input.machineId ?? null,
+              ...pathParams,
+              2 * (limit + 1),
+            ) as CheckoutStatusRecord[];
           return groupLatest(
             records,
             (record) => JSON.stringify([record.machine_id, record.checkout_path]),
@@ -965,13 +1047,24 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestJiraIssueObservations = (
-    input: QueryLatestJiraIssueObservationsInput,
+    query: QueryLatestJiraIssueObservationsInput | QueryJiraIssueObservationBatchInput,
   ): Effect.Effect<LatestJiraIssueObservations, UsageStoreError> => {
-    const limit = validLimit(input.limit);
+    const batch = 'batch' in query ? query.batch : undefined;
+    const input: QueryLatestJiraIssueObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
     const keys = input.keys ?? [];
     if (
       limit === null ||
       !validMachineId(input.machineId) ||
+      (batch !== undefined &&
+        (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
+          batch.some(
+            (key) =>
+              typeof key.machineId !== 'string' ||
+              !validMachineId(key.machineId) ||
+              typeof key.key !== 'string' ||
+              !JIRA_ISSUE_KEY_PATTERN.test(key.key),
+          ))) ||
       keys.length > MAX_WORK_FACT_QUERY_LIMIT ||
       keys.some((key) => typeof key !== 'string' || !JIRA_ISSUE_KEY_PATTERN.test(key))
     ) {
@@ -984,7 +1077,17 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
         ),
       );
     }
-    const keyFilter = keys.length === 0 ? '' : `AND issue_key IN (${keys.map(() => '?').join(', ')})`;
+    if (batch?.length === 0) {
+      return Effect.succeed({ items: [], skipped: 0, truncated: false });
+    }
+    const legacyKeyFilter = keys.length === 0 ? '' : `AND issue_key IN (${keys.map(() => '?').join(', ')})`;
+    const keyFilter =
+      batch === undefined
+        ? legacyKeyFilter
+        : `AND (machine_id, issue_key) IN (
+          SELECT json_extract(value, '$.machineId'), json_extract(value, '$.key') FROM json_each(?)
+        )`;
+    const keyParams = batch === undefined ? keys : [JSON.stringify(batch)];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
@@ -1009,7 +1112,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ORDER BY key_latest DESC, machine_id, issue_key, rank_all
               LIMIT ?
             `)
-            .all(input.machineId ?? null, input.machineId ?? null, ...keys, 2 * (limit + 1)) as JiraIssueRecord[];
+            .all(input.machineId ?? null, input.machineId ?? null, ...keyParams, 2 * (limit + 1)) as JiraIssueRecord[];
           return groupLatest(
             records,
             (record) => JSON.stringify([record.machine_id, record.issue_key]),

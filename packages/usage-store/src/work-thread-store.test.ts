@@ -10,10 +10,11 @@ import {
   WORK_THREAD_BOUNDS,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
+  type WorkThreadLink,
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
-import type { UsageStoreError } from './errors';
+import { UsageStoreError } from './errors';
 import { applyWorkThreadCommand, seedWorkThreads } from './index';
 import {
   countWorkThreads,
@@ -24,7 +25,7 @@ import {
   queryWorkThreadProjects,
   queryWorkThreadsPage,
 } from './reader';
-import type { WorkThreadSeed } from './work-thread-store';
+import { createWorkThreadStore, type WorkThreadSeed, workThreadSchemaSql } from './work-thread-store';
 import { importLocalRows, importPullRequestObservations, initializeUsageStore, recordWorkFactRun } from './writer';
 
 const roots: string[] = [];
@@ -123,7 +124,291 @@ const threadSnapshot = (dbPath: string): unknown[] => {
   }
 };
 
+/** Real disposable SQLite, reduced served columns, and counted query-only connection ownership. */
+const evidenceFixture = async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'work-thread-evidence-'));
+  roots.push(root);
+  const dbPath = path.join(root, 'evidence.sqlite');
+  const db = new Database(dbPath);
+  db.exec(workThreadSchemaSql);
+  db.exec(`
+    CREATE TABLE served_report_current(singleton INTEGER, revision TEXT);
+    CREATE TABLE served_report_revisions(revision TEXT, generated_at TEXT, complete INTEGER);
+    CREATE TABLE served_report_rows(revision TEXT, ordinal INTEGER, row_id TEXT, project_label TEXT,
+      campaign_root INTEGER, origin TEXT, active_time INTEGER, machine_id TEXT, source_row_json TEXT);
+    CREATE TABLE claude_desktop_sessions(id INTEGER PRIMARY KEY, machine_id TEXT, desktop_session_id TEXT,
+      cli_session_id TEXT, prior_cli_session_ids_json TEXT, title TEXT, created_at TEXT, last_activity_at TEXT,
+      cwd TEXT, worktree_path TEXT, last_turn_report TEXT, status_category TEXT, needs_action TEXT,
+      status_detail TEXT, spawned_from_session_id TEXT);
+    INSERT INTO served_report_current VALUES (1, 'fixture');
+  `);
+  db.query('INSERT INTO served_report_revisions VALUES (?, ?, 1)').run('fixture', NOW);
+  let connections = 0;
+  let queries = 0;
+  const store = createWorkThreadStore({
+    usageStoreError: (operation, _path, cause, reason) =>
+      new UsageStoreError({ operation, message: String(cause), reason }),
+    usageStoreReadError: (operation, _path, cause) =>
+      cause instanceof UsageStoreError
+        ? cause
+        : new UsageStoreError({ operation, message: String(cause), reason: 'storage-failure' }),
+    withUsageStoreReader: (_path, use) =>
+      Effect.suspend(() => {
+        connections++;
+        const reader = new Database(dbPath, { readonly: true });
+        reader.exec('PRAGMA query_only = ON');
+        return use({
+          exec: (sql) => reader.exec(sql),
+          query: (sql) => {
+            queries++;
+            return reader.query(sql);
+          },
+        }).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
+      }),
+    withUsageStoreWriter: (_path, use) => use(db),
+  });
+  let ordinal = 0;
+  const addSession = (
+    id: string,
+    title: string,
+    options: { machine?: string; harness?: string; parent?: string; revision?: string } = {},
+  ) => {
+    ordinal++;
+    db.query('INSERT INTO served_report_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      options.revision ?? 'fixture',
+      ordinal,
+      `row-${ordinal}`,
+      'fixture',
+      Number(!options.parent),
+      options.parent ? 'subagent' : 'human',
+      ordinal,
+      options.machine ?? MACHINE,
+      JSON.stringify({
+        date: NOW,
+        endDate: LATER,
+        sessionLabel: title,
+        source: {
+          harnessKey: options.harness ?? 'codex',
+          sourceSessionId: id,
+          parentSourceSessionId: options.parent ?? null,
+          sourcePath: '/fixture',
+        },
+      }),
+    );
+  };
+  const addDesktop = (id: string, title: string, prior: readonly string[] = [], machine = MACHINE) => {
+    db.query(`INSERT INTO claude_desktop_sessions (
+      machine_id, desktop_session_id, cli_session_id, prior_cli_session_ids_json, title, created_at,
+      last_activity_at, cwd
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      machine,
+      `desktop-${id}`,
+      id,
+      JSON.stringify(prior),
+      title,
+      NOW,
+      LATER,
+      '/fixture',
+    );
+  };
+  const createThread = async (links: readonly { kind: 'session'; key: string }[], now = NOW) => {
+    const result = await run(
+      store.applyWorkThreadCommand({ dbPath, machineId: MACHINE, now, command: createCommand({ links }) }),
+    );
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+    return result.threadId;
+  };
+  return { addSession, addDesktop, createThread, db, dbPath, store, counts: () => ({ connections, queries }) };
+};
+
+const evidenceLink = (threadId: string, sessionId: string, harness = 'codex'): WorkThreadLink => ({
+  linkId: randomUUID(),
+  threadId,
+  kind: 'session',
+  key: `session:${MACHINE}/${harness}/${sessionId}`,
+  provenance: 'user',
+  createdAt: NOW,
+  detachedAt: null,
+});
+
 describe('work thread store', () => {
+  test('searches exact linked served and Desktop titles before pagination, excluding detached and other identities', async () => {
+    const fixture = await evidenceFixture();
+    const { db, dbPath, store, addSession, addDesktop, createThread } = fixture;
+    try {
+      addSession('served', 'Rare served title');
+      addSession('served', 'Other machine title', { machine: 'elsewhere' });
+      addSession('served', 'Other harness title', { harness: 'claude' });
+      addSession('served', 'Unpublished title', { revision: 'older' });
+      addDesktop('current-cli', 'Rare Desktop title', ['prior-cli']);
+      addDesktop('current-cli', 'Other Desktop machine title', [], 'elsewhere');
+      const served = await createThread([{ kind: 'session', key: `session:${MACHINE}/codex/served` }]);
+      const current = await createThread([{ kind: 'session', key: `session:${MACHINE}/claude/current-cli` }]);
+      const prior = await createThread([{ kind: 'session', key: `session:${MACHINE}/claude/prior-cli` }]);
+      await createThread([{ kind: 'session', key: `session:${MACHINE}/codex/current-cli` }], LATER);
+      for (let index = 0; index < 8; index++) {
+        await createThread([], LATER);
+      }
+      const search = (text: string, cursor: string | null = null) =>
+        run(
+          store.queryWorkThreadsPage({ dbPath, query: { cursor, limit: 1, project: null, search: text, tab: 'open' } }),
+        );
+      expect((await search('RARE SERVED')).rows.map((row) => row.thread.threadId)).toEqual([served]);
+      const desktopFirst = await search('Rare Desktop');
+      const desktopSecond = await search('Rare Desktop', desktopFirst.nextCursor);
+      expect(
+        [desktopFirst, desktopSecond].flatMap((result) => result.rows.map((row) => row.thread.threadId)).toSorted(),
+      ).toEqual([current, prior].toSorted());
+      expect(desktopSecond.nextCursor).toBeNull();
+      for (const wrong of ['Other machine', 'Other harness', 'Unpublished', 'Other Desktop machine']) {
+        expect((await search(wrong)).rows).toEqual([]);
+      }
+      const [link] = await run(store.queryWorkThreadLinks({ dbPath, threadIds: [served] }));
+      if (!link) {
+        throw new Error('Expected linked served session');
+      }
+      await run(
+        store.applyWorkThreadCommand({
+          dbPath,
+          machineId: MACHINE,
+          now: LATER,
+          command: { op: 'detach-link', commandId: randomUUID(), threadId: served, linkId: link.linkId },
+        }),
+      );
+      expect((await search('Rare served')).rows).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('batches more than 64 session links in one snapshot with independent per-thread and parent bounds', async () => {
+    const fixture = await evidenceFixture();
+    const { db, dbPath, store, addSession, addDesktop } = fixture;
+    try {
+      const scopes = Array.from({ length: 3 }, (_, thread) => {
+        const threadId = randomUUID();
+        return {
+          threadId,
+          machineId: MACHINE,
+          links: Array.from({ length: 32 }, (_, index) => {
+            const id = `thread-${thread}-session-${index}`;
+            addSession(id, id);
+            return evidenceLink(threadId, id);
+          }),
+        };
+      });
+      const first = scopes[0];
+      if (!first) {
+        throw new Error('Expected evidence scopes');
+      }
+      addSession('thread-0-session-0', 'wrong machine', { machine: 'elsewhere' });
+      addSession('thread-0-session-0', 'wrong harness', { harness: 'claude' });
+      for (let index = 0; index < 23; index++) {
+        addSession(`child-${index}`, `child-${index}`, { parent: 'thread-0-session-0' });
+      }
+      addSession('desktop-prior', 'Served Desktop', { harness: 'claude' });
+      addDesktop('desktop-current', 'Newest Desktop', ['desktop-prior']);
+      first.links.push(evidenceLink(first.threadId, 'desktop-prior', 'claude'));
+      const emptyId = randomUUID();
+      scopes.push({ threadId: emptyId, machineId: MACHINE, links: [] });
+      const before = fixture.counts();
+      const results = await run(store.queryWorkThreadSessionEvidence({ dbPath, threads: scopes }));
+      expect(fixture.counts().connections - before.connections).toBe(1);
+      expect(fixture.counts().queries - before.queries).toBeLessThanOrEqual(6);
+      expect(results.map((entry) => entry.threadId)).toEqual(scopes.map((scope) => scope.threadId));
+      expect(results.map((entry) => entry.evidence.sessions.length)).toEqual([53, 32, 32, 0]);
+      expect(results.map((entry) => entry.evidence.truncated)).toEqual([true, false, false, false]);
+      expect(
+        results[0]?.evidence.sessions.filter((entry) => entry.member.parentSourceSessionId === 'thread-0-session-0'),
+      ).toHaveLength(20);
+      expect(
+        results[0]?.evidence.sessions.find((entry) => entry.member.sourceSessionId === 'desktop-prior')?.desktop?.title,
+      ).toBe('Newest Desktop');
+      expect(
+        results.flatMap((entry) => entry.evidence.sessions).some((entry) => entry.member.title.startsWith('wrong')),
+      ).toBe(false);
+      expect(results[1]?.evidence.sessions.every((entry) => entry.member.sourceSessionId.startsWith('thread-1-'))).toBe(
+        true,
+      );
+      expect(results.every((entry) => entry.evidence.revision === 'fixture')).toBe(true);
+      expect(await run(store.queryWorkThreadSessionEvidence({ dbPath, threads: [] }))).toEqual([]);
+      const tooMany = Array.from({ length: 65 }, (_, index) => evidenceLink(first.threadId, `extra-${index}`));
+      const invalid = await Effect.runPromise(
+        Effect.either(store.queryWorkThreadSessionEvidence({ dbPath, threads: [{ ...first, links: tooMany }] })),
+      );
+      expect(invalid._tag).toBe('Left');
+      if (invalid._tag === 'Left') {
+        expect(invalid.left.reason).toBe('invalid-input');
+      }
+      const crossThread = await Effect.runPromise(
+        Effect.either(
+          store.queryWorkThreadSessionEvidence({
+            dbPath,
+            threads: [{ ...first, links: [evidenceLink(emptyId, 'thread-0-session-0')] }],
+          }),
+        ),
+      );
+      expect(crossThread._tag).toBe('Left');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('batches latest event history and active/detached links with independent thread limits', async () => {
+    const { db, dbPath, store, createThread, counts } = await evidenceFixture();
+    try {
+      const first = await createThread([{ kind: 'session', key: SESSION }]);
+      const second = await createThread([{ kind: 'session', key: SESSION }]);
+      const insertEvent = db.query('INSERT INTO work_thread_events VALUES (?, ?, ?, ?)');
+      const insertLink = db.query('INSERT INTO work_thread_links VALUES (?, ?, ?, ?, ?, ?, ?)');
+      db.transaction(() => {
+        for (const threadId of [first, second]) {
+          for (let index = 0; index < WORK_THREAD_BOUNDS.maxEventsPerThread + 4; index++) {
+            const eventId = randomUUID();
+            insertEvent.run(
+              eventId,
+              threadId,
+              LATER,
+              JSON.stringify({
+                eventId,
+                threadId,
+                at: LATER,
+                kind: 'note',
+                acknowledgedRemainders: [],
+                fromState: null,
+                toState: null,
+                linkKey: null,
+                reason: `Note ${index}`,
+              }),
+            );
+            insertLink.run(randomUUID(), threadId, 'session', SESSION, 'user', NOW, LATER);
+          }
+        }
+      })();
+      const before = counts();
+      const events = await run(store.queryWorkThreadEvents({ dbPath, threadIds: [first, second] }));
+      expect(counts().connections - before.connections).toBe(1);
+      expect(counts().queries - before.queries).toBe(5); // Four schema checks, one scoped event query.
+      for (const threadId of [first, second]) {
+        const scoped = events.filter((event) => event.threadId === threadId);
+        expect(scoped).toHaveLength(WORK_THREAD_BOUNDS.maxEventsPerThread);
+        expect(scoped[0]?.reason).toBe('Note 4');
+      }
+      const links = await run(store.queryWorkThreadLinks({ dbPath, threadIds: [first, second] }));
+      for (const threadId of [first, second]) {
+        const scoped = links.filter((link) => link.threadId === threadId);
+        expect(scoped).toHaveLength(WORK_THREAD_BOUNDS.maxEventsPerThread + 1);
+        expect(scoped.filter((link) => link.detachedAt === null)).toHaveLength(1);
+      }
+      expect(await run(store.queryWorkThreadEvents({ dbPath, threadIds: [] }))).toEqual([]);
+      expect(await run(store.queryWorkThreadLinks({ dbPath, threadIds: [] }))).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('persists a create and replays its recorded result without a second event', async () => {
     const dbPath = await createStore();
     const input = createCommand({ links: [{ kind: 'session', key: SESSION }] });

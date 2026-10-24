@@ -25,6 +25,9 @@ import {
 } from '@ai-usage/report-core/work-thread-view';
 import {
   countWorkThreads,
+  type LatestCheckoutStatusObservations,
+  type LatestJiraIssueObservations,
+  type LatestPullRequestObservations,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -214,7 +217,7 @@ const observationKey = (observation: Observation): string => {
   if ('key' in observation) {
     return `jira:${observation.key}`;
   }
-  return `pr:${observation.host}/${observation.repository}#${observation.number}`;
+  return `pr:${observation.host.toLowerCase()}/${observation.repository.toLowerCase()}#${observation.number}`;
 };
 const factOf = <Value extends Observation>(
   key: string,
@@ -232,149 +235,201 @@ interface RowRead {
   readonly truncated: ReadonlySet<WorkThreadSourceStatus['source']>;
 }
 
-const readRow = (
-  dbPath: string,
-  thread: WorkThread,
-  links: readonly WorkThreadLink[],
-  events: readonly WorkThreadEvent[],
-  now: CanonicalInstant,
-  storedActivity = thread.updatedAt,
-): Effect.Effect<RowRead, UsageStoreError> =>
+const identityOf = (machineId: string, key: string): string => JSON.stringify([machineId, key]);
+const pullRequestIdentity = (value: Pick<PullRequestObservation, 'machineId' | 'host' | 'repository' | 'number'>) =>
+  identityOf(value.machineId, `pr:${value.host.toLowerCase()}/${value.repository.toLowerCase()}#${value.number}`);
+const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
+  const paths = [
+    ...evidence.branchCheckouts.map((entry) => ({ ...entry, via: 'branch-link' as const })),
+    ...evidence.sessions.flatMap((session) => {
+      const checkoutPath = session.desktop?.worktreePath ?? session.desktop?.cwd ?? session.member.checkoutPath;
+      return checkoutPath === null
+        ? []
+        : [
+            {
+              checkoutPath,
+              key: keyOf(session),
+              machineId: session.member.machineId,
+              via: 'session-checkout' as const,
+            },
+          ];
+    }),
+  ];
+  return [
+    ...new Map(
+      paths.map((entry) => [JSON.stringify([entry.key, entry.machineId, entry.checkoutPath]), entry]),
+    ).values(),
+  ];
+};
+
+interface RowScope {
+  readonly evidence: WorkThreadSessionEvidence;
+  readonly links: readonly WorkThreadLink[];
+  readonly thread: WorkThread;
+}
+interface RowFacts {
+  readonly checkouts: ReadonlyMap<string, LatestCheckoutStatusObservations['items'][number]>;
+  readonly jiraIssues: ReadonlyMap<string, LatestJiraIssueObservations['items'][number]>;
+  readonly pullRequests: ReadonlyMap<string, LatestPullRequestObservations['items'][number]>;
+  readonly truncated: ReadonlySet<WorkThreadSourceStatus['source']>;
+}
+
+const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<RowFacts, UsageStoreError> =>
   Effect.gen(function* () {
-    const active = links.filter((link) => link.detachedAt === null);
-    const evidence = yield* queryWorkThreadSessionEvidence({ dbPath, machineId: thread.machineId, links: active });
-    const { episodes, omitted } = episodesOf(evidence, active);
-    const truncated = new Set<WorkThreadSourceStatus['source']>();
-    if (evidence.truncated || omitted) {
-      truncated.add('sessions');
-    }
-    const pullRequests: WorkThreadMarkers['pullRequests'][number][] = [];
-    const jiraIssues: WorkThreadMarkers['jiraIssues'][number][] = [];
-    const local: WorkThreadMarkers['local'][number][] = [];
-    for (const link of active) {
-      const parsed = parseWorkThreadLinkKey(link.kind, link.key);
-      if (parsed?.kind === 'pull-request') {
-        const result = yield* queryLatestPullRequestObservations({
-          dbPath,
-          machineId: thread.machineId,
-          links: [parsed],
-          limit: 1,
-        });
-        if (result.skipped || result.truncated) {
-          truncated.add('github');
-        }
-        pullRequests.push({
-          ...factOf(link.key, result.items[0]),
-          mergeable: null,
-          mergeStateStatus: null,
-          role: null,
-        });
-      } else if (parsed?.kind === 'jira-issue') {
-        // The legacy Jira store has one default CLI authority and cannot prove an arbitrary site.
-        if (parsed.site !== 'default') {
-          jiraIssues.push(factOf<JiraIssueObservation>(link.key, undefined));
-          truncated.add('jira');
+    const pullRequests = new Map<
+      string,
+      Pick<PullRequestObservation, 'machineId' | 'host' | 'repository' | 'number'>
+    >();
+    const jiraIssues = new Map<string, Pick<JiraIssueObservation, 'machineId' | 'key'>>();
+    const checkouts = new Map<string, Pick<CheckoutStatusObservation, 'machineId' | 'checkoutPath'>>();
+    for (const { thread, links, evidence } of scopes) {
+      for (const link of links) {
+        if (link.detachedAt !== null) {
           continue;
         }
-        const result = yield* queryLatestJiraIssueObservations({
-          dbPath,
-          machineId: thread.machineId,
-          keys: [parsed.key],
-          limit: 1,
+        const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+        if (parsed?.kind === 'pull-request') {
+          const target = {
+            machineId: thread.machineId,
+            host: parsed.host,
+            repository: parsed.repository,
+            number: parsed.number,
+          };
+          pullRequests.set(pullRequestIdentity(target), target);
+        } else if (parsed?.kind === 'jira-issue' && parsed.site === 'default') {
+          const target = { machineId: thread.machineId, key: parsed.key };
+          jiraIssues.set(identityOf(target.machineId, target.key), target);
+        }
+      }
+      for (const checkout of checkoutPathsOf(evidence)) {
+        checkouts.set(identityOf(checkout.machineId, checkout.checkoutPath), {
+          machineId: checkout.machineId,
+          checkoutPath: checkout.checkoutPath,
         });
-        if (result.skipped || result.truncated) {
-          truncated.add('jira');
-        }
-        jiraIssues.push(factOf(link.key, result.items[0]));
       }
     }
-    const checkoutPaths = [
-      ...evidence.branchCheckouts.map((entry) => ({ ...entry, via: 'branch-link' as const })),
-      ...evidence.sessions.flatMap((session) => {
-        const checkoutPath = session.desktop?.worktreePath ?? session.desktop?.cwd ?? session.member.checkoutPath;
-        return checkoutPath === null
-          ? []
-          : [
-              {
-                checkoutPath,
-                key: keyOf(session),
-                machineId: session.member.machineId,
-                via: 'session-checkout' as const,
-              },
-            ];
-      }),
-    ];
-    const seen = new Set<string>();
-    for (const checkout of checkoutPaths) {
-      const identity = JSON.stringify([checkout.key, checkout.machineId, checkout.checkoutPath]);
-      if (seen.has(identity)) {
-        continue;
-      }
-      seen.add(identity);
-      const result = yield* queryLatestCheckoutStatusObservations({
-        dbPath,
-        machineId: checkout.machineId,
-        paths: [checkout.checkoutPath],
-        limit: 1,
-      });
-      if (result.skipped || result.truncated) {
-        truncated.add('checkouts');
-      }
-      local.push({ ...factOf(checkout.key, result.items[0]), via: checkout.via });
+    const prs = yield* queryLatestPullRequestObservations({ dbPath, batch: [...pullRequests.values()] });
+    const jira = yield* queryLatestJiraIssueObservations({ dbPath, batch: [...jiraIssues.values()] });
+    const local = yield* queryLatestCheckoutStatusObservations({ dbPath, batch: [...checkouts.values()] });
+    const truncated = new Set<WorkThreadSourceStatus['source']>();
+    if (prs.skipped || prs.truncated) {
+      truncated.add('github');
     }
-    const sessions = [...new Map(evidence.sessions.map((session) => [keyOf(session), session])).values()];
-    const facts = [...pullRequests, ...jiraIssues, ...local];
-    const factDates = new Map<string, CanonicalInstant>();
-    for (const marker of facts) {
-      for (const observation of [marker.latest, marker.latestSuccessful]) {
-        if (observation !== null) {
-          factDates.set(
-            JSON.stringify([observation.machineId, observationKey(observation), observation.observedAt]),
-            observation.observedAt,
-          );
-        }
-      }
+    if (jira.skipped || jira.truncated) {
+      truncated.add('jira');
     }
-    const sessionDates = sessions.flatMap((session) => {
-      const activeAt =
-        session.desktop?.lastActivityAt ??
-        (session.member.activeAt === null
-          ? normalizeIsoTimestamp(session.member.startedAt)
-          : normalizeIsoTimestamp(new Date(session.member.activeAt).toISOString()));
-      return activeAt === null ? [] : [activeAt];
-    });
-    const dates = [...factDates.values(), ...sessionDates];
-    const after = thread.doneAt === null ? [] : dates.filter((at) => Date.parse(at) > Date.parse(thread.doneAt ?? at));
-    const start = Date.parse(now) - 8 * DAY_MS;
-    const marks = [
-      ...sessions.flatMap((session) => {
-        const at = session.desktop?.createdAt ?? normalizeIsoTimestamp(session.member.startedAt);
-        return at === null ? [] : [{ at, harness: session.harness, kind: 'session' as const }];
-      }),
-      ...events.map(({ at }) => ({ at, harness: null, kind: 'event' as const })),
-    ]
-      .filter(({ at }) => Date.parse(at) >= start && Date.parse(at) <= Date.parse(now))
-      .sort((a, b) => b.at.localeCompare(a.at))
-      .slice(0, WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow)
-      .reverse();
-    const latest = (instants: readonly CanonicalInstant[]): CanonicalInstant =>
-      instants.reduce((a, b) => (Date.parse(a) > Date.parse(b) ? a : b));
+    if (local.skipped || local.truncated) {
+      truncated.add('checkouts');
+    }
     return {
-      episodes,
-      evidence,
+      pullRequests: new Map(prs.items.map((item) => [pullRequestIdentity(item.latest), item])),
+      jiraIssues: new Map(jira.items.map((item) => [identityOf(item.latest.machineId, item.latest.key), item])),
+      checkouts: new Map(
+        local.items.map((item) => [identityOf(item.latest.machineId, item.latest.checkoutPath), item]),
+      ),
       truncated,
-      row: {
-        afterDone: after.length === 0 ? null : { count: after.length, latestAt: latest(after) },
-        lastActivityAt: latest([storedActivity, ...dates]),
-        links: active,
-        markers: { pullRequests, jiraIssues, local },
-        marks,
-        runningSessions: 0,
-        sessionCount: sessions.length,
-        thread,
-      },
     };
   });
+
+const MERGEABLE = { MERGEABLE: 'mergeable', CONFLICTING: 'conflicting', UNKNOWN: 'unknown' } as const;
+
+const readRow = (
+  { thread, links, evidence }: RowScope,
+  events: readonly WorkThreadEvent[],
+  factsRead: RowFacts,
+  now: CanonicalInstant,
+  storedActivity = thread.updatedAt,
+): RowRead => {
+  const active = links.filter((link) => link.detachedAt === null);
+  const { episodes, omitted } = episodesOf(evidence, active);
+  const truncated = new Set(factsRead.truncated);
+  if (evidence.truncated || omitted) {
+    truncated.add('sessions');
+  }
+  const pullRequests: WorkThreadMarkers['pullRequests'][number][] = [];
+  const jiraIssues: WorkThreadMarkers['jiraIssues'][number][] = [];
+  for (const link of active) {
+    const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+    if (parsed?.kind === 'pull-request') {
+      const fact = factOf(
+        link.key,
+        factsRead.pullRequests.get(pullRequestIdentity({ ...parsed, machineId: thread.machineId })),
+      );
+      const successful = fact.latestSuccessful;
+      const mergeable = successful?.mergeable;
+      pullRequests.push({
+        ...fact,
+        mergeable: mergeable == null ? null : MERGEABLE[mergeable],
+        mergeStateStatus: successful?.mergeStateStatus ?? null,
+        role: successful?.discoveryRole ?? null,
+      });
+    } else if (parsed?.kind === 'jira-issue') {
+      // The legacy Jira store has one default CLI authority and cannot prove an arbitrary site.
+      if (parsed.site === 'default') {
+        jiraIssues.push(factOf(link.key, factsRead.jiraIssues.get(identityOf(thread.machineId, parsed.key))));
+      } else {
+        jiraIssues.push(factOf<JiraIssueObservation>(link.key, undefined));
+        truncated.add('jira');
+      }
+    }
+  }
+  const local = checkoutPathsOf(evidence).map((checkout) => ({
+    ...factOf(checkout.key, factsRead.checkouts.get(identityOf(checkout.machineId, checkout.checkoutPath))),
+    via: checkout.via,
+  }));
+  const sessions = [...new Map(evidence.sessions.map((session) => [keyOf(session), session])).values()];
+  const facts = [...pullRequests, ...jiraIssues, ...local];
+  const factDates = new Map<string, CanonicalInstant>();
+  for (const marker of facts) {
+    for (const observation of [marker.latest, marker.latestSuccessful]) {
+      if (observation !== null) {
+        factDates.set(
+          JSON.stringify([observation.machineId, observationKey(observation), observation.observedAt]),
+          observation.observedAt,
+        );
+      }
+    }
+  }
+  const sessionDates = sessions.flatMap((session) => {
+    const activeAt =
+      session.desktop?.lastActivityAt ??
+      (session.member.activeAt === null
+        ? normalizeIsoTimestamp(session.member.startedAt)
+        : normalizeIsoTimestamp(new Date(session.member.activeAt).toISOString()));
+    return activeAt === null ? [] : [activeAt];
+  });
+  const dates = [...factDates.values(), ...sessionDates];
+  const after = thread.doneAt === null ? [] : dates.filter((at) => Date.parse(at) > Date.parse(thread.doneAt ?? at));
+  const start = Date.parse(now) - 8 * DAY_MS;
+  const marks = [
+    ...sessions.flatMap((session) => {
+      const at = session.desktop?.createdAt ?? normalizeIsoTimestamp(session.member.startedAt);
+      return at === null ? [] : [{ at, harness: session.harness, kind: 'session' as const }];
+    }),
+    ...events.map(({ at }) => ({ at, harness: null, kind: 'event' as const })),
+  ]
+    .filter(({ at }) => Date.parse(at) >= start && Date.parse(at) <= Date.parse(now))
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow)
+    .reverse();
+  const latest = (instants: readonly CanonicalInstant[]): CanonicalInstant =>
+    instants.reduce((a, b) => (Date.parse(a) > Date.parse(b) ? a : b));
+  return {
+    episodes,
+    evidence,
+    truncated,
+    row: {
+      afterDone: after.length === 0 ? null : { count: after.length, latestAt: latest(after) },
+      lastActivityAt: latest([storedActivity, ...dates]),
+      links: active,
+      markers: { pullRequests, jiraIssues, local },
+      marks,
+      runningSessions: 0,
+      sessionCount: sessions.length,
+      thread,
+    },
+  };
+};
 
 const SOURCE_IDS = { checkouts: 'checkouts.status', github: 'github.pull-requests', jira: 'jira.issues' } as const;
 const sourcesOf = (
@@ -439,29 +494,8 @@ export const queryWorkThreadList = (input: {
     const generatedAt = yield* nowOf(input.now);
     const page = yield* queryWorkThreadsPage(input);
     const machine = yield* queryUsageLocalMachine(input);
-    const links =
-      page.rows.length === 0
-        ? []
-        : yield* queryWorkThreadLinks({
-            dbPath: input.dbPath,
-            threadIds: page.rows.map(({ thread }) => thread.threadId),
-          });
-    const reads: RowRead[] = [];
-    for (const { thread, lastActivityAt } of page.rows) {
-      const events = yield* queryWorkThreadEvents({ dbPath: input.dbPath, threadId: thread.threadId });
-      reads.push(
-        yield* readRow(
-          input.dbPath,
-          thread,
-          links.filter((link) => link.threadId === thread.threadId),
-          events,
-          generatedAt,
-          lastActivityAt,
-        ),
-      );
-    }
     // An empty page still reports whether a served revision exists.
-    if (reads.length === 0) {
+    if (page.rows.length === 0) {
       const evidence = yield* queryWorkThreadSessionEvidence({
         dbPath: input.dbPath,
         machineId: machine.id,
@@ -484,6 +518,58 @@ export const queryWorkThreadList = (input: {
         sources,
       };
     }
+    const links = yield* queryWorkThreadLinks({
+      dbPath: input.dbPath,
+      threadIds: page.rows.map(({ thread }) => thread.threadId),
+    });
+
+    const linksByThread = new Map<string, WorkThreadLink[]>();
+    for (const link of links) {
+      const group = linksByThread.get(link.threadId) ?? [];
+      group.push(link);
+      linksByThread.set(link.threadId, group);
+    }
+    const scopes = page.rows.map(({ thread }) => ({
+      thread,
+      links: linksByThread.get(thread.threadId) ?? [],
+    }));
+    const evidence = yield* queryWorkThreadSessionEvidence({
+      dbPath: input.dbPath,
+      threads: scopes.map(({ thread, links: threadLinks }) => ({
+        threadId: thread.threadId,
+        machineId: thread.machineId,
+        links: threadLinks.filter((link) => link.detachedAt === null),
+      })),
+    });
+    const evidenceByThread = new Map(evidence.map((item) => [item.threadId, item.evidence]));
+    const rowScopes: RowScope[] = [];
+    for (const scope of scopes) {
+      const threadEvidence = evidenceByThread.get(scope.thread.threadId);
+      if (threadEvidence === undefined) {
+        return yield* Effect.fail(error('Missing batched thread evidence'));
+      }
+      rowScopes.push({ ...scope, evidence: threadEvidence });
+    }
+    const facts = yield* readFacts(input.dbPath, rowScopes);
+    const events = yield* queryWorkThreadEvents({
+      dbPath: input.dbPath,
+      threadIds: scopes.map(({ thread }) => thread.threadId),
+    });
+    const eventsByThread = new Map<string, WorkThreadEvent[]>();
+    for (const event of events) {
+      const group = eventsByThread.get(event.threadId) ?? [];
+      group.push(event);
+      eventsByThread.set(event.threadId, group);
+    }
+    const reads = rowScopes.map((scope, index) =>
+      readRow(
+        scope,
+        eventsByThread.get(scope.thread.threadId) ?? [],
+        facts,
+        generatedAt,
+        page.rows[index]?.lastActivityAt,
+      ),
+    );
     const runStates = yield* queryWorkFactRunStates(input);
     return {
       counts: yield* countWorkThreads(input),
@@ -509,7 +595,14 @@ export const queryWorkThreadDetail = (input: {
     }
     const links = yield* queryWorkThreadLinks({ dbPath: input.dbPath, threadIds: [thread.threadId] });
     const events = yield* queryWorkThreadEvents(input);
-    const read = yield* readRow(input.dbPath, thread, links, events, generatedAt);
+    const evidence = yield* queryWorkThreadSessionEvidence({
+      dbPath: input.dbPath,
+      machineId: thread.machineId,
+      links: links.filter((link) => link.detachedAt === null),
+    });
+    const scope = { thread, links, evidence };
+    const facts = yield* readFacts(input.dbPath, [scope]);
+    const read = readRow(scope, events, facts, generatedAt);
     const runStates = yield* queryWorkFactRunStates(input);
     return {
       detachedLinks: links.filter((link) => link.detachedAt !== null),
