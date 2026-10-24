@@ -516,7 +516,6 @@ export const authenticationProviderAccountsTable = pgTable('authentication_provi
   createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).notNull(),
   id: uuid('id').primaryKey().defaultRandom(),
   idToken: text('id_token'),
-  issuer: text('issuer').notNull(),
   password: text('password'),
   providerId: text('provider_id').notNull(),
   refreshToken: text('refresh_token'),

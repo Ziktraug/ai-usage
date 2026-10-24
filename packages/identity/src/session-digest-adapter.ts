@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DBAdapter, DBAdapterInstance, DBTransactionAdapter, Where } from 'better-auth';
+import { carrySchemaCheck } from './internal/adapter-schema-check';
 
 const redactedSessionToken = '[REDACTED]';
 
@@ -166,5 +167,5 @@ export const withWebSessionTokenDigests =
       id: `${adapter.id}-session-digests`,
       transaction: (run) => adapter.transaction((transaction) => run(wrapTransactionAdapter(transaction))),
     };
-    return result;
+    return carrySchemaCheck(adapter, result, options);
   };

@@ -10,6 +10,7 @@ import { APIError, betterAuth, type DBAdapter, type DBAdapterInstance, type DBTr
 import { createAuthMiddleware } from 'better-auth/api';
 import type { IdentityServiceResult, SharedAuthenticationPrincipal, SharedSessionResolution } from './index';
 import { SHARED_AUTHENTICATION_PROVIDER } from './index';
+import { carrySchemaCheck } from './internal/adapter-schema-check';
 import { getInjectedSharedAuthenticationServiceFactory } from './internal/shared-authentication-factory';
 import { withWebSessionTokenDigests } from './session-digest-adapter';
 
@@ -101,10 +102,10 @@ const withProviderAccountGuards =
       id: `${adapter.id}-provider-account-guards`,
       transaction: (run) => adapter.transaction((transaction) => run(guardAccountWrites(transaction))),
     };
-    return result;
+    return carrySchemaCheck(adapter, result, options);
   };
 
-export const BETTER_AUTH_VERSION = '1.7.2' as const;
+export const BETTER_AUTH_VERSION = '1.7.12' as const;
 export const SHARED_SESSION_ABSOLUTE_LIFETIME_SECONDS = 24 * 60 * 60;
 export const SHARED_SESSION_FRESH_LIFETIME_SECONDS = 15 * 60;
 
@@ -348,7 +349,6 @@ export const createSharedAuthenticationService = (
         accountId: 'accountId',
         createdAt: 'createdAt',
         idToken: 'idToken',
-        issuer: 'issuer',
         password: 'password',
         providerId: 'providerId',
         refreshToken: 'refreshToken',
@@ -373,7 +373,10 @@ export const createSharedAuthenticationService = (
           }
         : undefined,
       crossSubDomainCookies: { enabled: false },
-      database: { generateId: 'uuid' as const, joins: false },
+      // The schema check is a startup guard: the Drizzle adapter compares the
+      // tables Better Auth writes with the Drizzle schema, and a mismatch
+      // refuses every authentication request instead of failing at an insert.
+      database: { generateId: 'uuid' as const, joins: false, validateSchema: true },
       defaultCookieAttributes: {
         httpOnly: true,
         path: '/',

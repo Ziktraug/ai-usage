@@ -498,8 +498,8 @@ if (runPostgresTests) {
           );
           await pool.query(
             `INSERT INTO authentication_provider_accounts
-               (id, issuer, account_id, provider_id, user_id, created_at, updated_at)
-             VALUES ($1, 'local:oauth:github', $2, 'github', $3, $4, $4)`,
+               (id, account_id, provider_id, user_id, created_at, updated_at)
+             VALUES ($1, $2, 'github', $3, $4, $4)`,
             [crypto.randomUUID(), subject, principalId, observedAt],
           );
         }
@@ -555,8 +555,8 @@ if (runPostgresTests) {
         );
         await pool.query(
           `INSERT INTO authentication_provider_accounts
-             (id, issuer, account_id, provider_id, user_id, created_at, updated_at)
-           VALUES ($1, 'local:oauth:github', 'denied-subject', 'github', $2, $3, $3)`,
+             (id, account_id, provider_id, user_id, created_at, updated_at)
+           VALUES ($1, 'denied-subject', 'github', $2, $3, $3)`,
           [crypto.randomUUID(), authenticationPrincipalId, observedAt],
         );
 
@@ -1215,8 +1215,8 @@ if (runPostgresTests) {
           END $$`);
         await pool.query(
           `INSERT INTO authentication_provider_accounts
-             (issuer, account_id, provider_id, user_id, created_at, updated_at)
-           VALUES ('local:oauth:github', '345678', 'github', $1, now(), now())`,
+             (account_id, provider_id, user_id, created_at, updated_at)
+           VALUES ('345678', 'github', $1, now(), now())`,
           [accountCRow.user_id],
         );
         await pool.query(`DO $$

@@ -118,7 +118,7 @@ policy DSL.
 
 - `.`: provider-independent Authentication identity, domain session, Device
   credential/grant metadata, and typed identity-service result contracts.
-- `./better-auth`: the GitHub-only Better Auth `1.7.2` application wrapper and
+- `./better-auth`: the GitHub-only Better Auth `1.7.12` application wrapper and
   adapter ports; production composition is restricted to `apps/server` and the
   PostgreSQL authentication adapter.
 - `./device-enrollment`: authorization-aware grant, exchange, authentication,

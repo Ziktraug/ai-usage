@@ -27,9 +27,9 @@
     "@ai-usage/project-application": "workspace:*",
     "@ai-usage/project-registry": "workspace:*",
     "@ai-usage/replication-protocol": "workspace:*",
-    "@better-auth/drizzle-adapter": "1.7.2",
-    "drizzle-orm": "0.45.2",
-    "pg": "8.23.0"
+    "@better-auth/drizzle-adapter": "1.7.12",
+    "drizzle-orm": "0.45.4",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/pg": "8.23.1"

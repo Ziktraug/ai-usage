@@ -30,8 +30,8 @@ export class PlatformStoreError extends Error {
   readonly code: PlatformStoreErrorCode;
   readonly operation: string;
 
-  constructor(code: PlatformStoreErrorCode, operation: string) {
-    super(publicMessages[code]);
+  constructor(code: PlatformStoreErrorCode, operation: string, options?: ErrorOptions) {
+    super(publicMessages[code], options);
     this.name = 'PlatformStoreError';
     this.code = code;
     this.operation = operation;

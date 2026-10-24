@@ -27,12 +27,24 @@ unsupported; local-only mode is the supported no-account composition. Future
 human passwords require an accepted recovery/email/abuse design and Argon2id;
 that password-hash rule does not apply to random Device tokens.
 
-The pending implementation pins Better Auth and its Drizzle adapter to `1.7.2`.
+The implementation pins Better Auth and its Drizzle adapter to `1.7.12`.
 The compatibility spike used Bun `1.3.13`, SvelteKit's standard Request
 boundary, PostgreSQL/Drizzle, GitHub OAuth with PKCE, secure cookies, database
 state, and explicit linking. `@ai-usage/identity` hides library row/API types; only
 `apps/server` composes shared authentication, and only the PostgreSQL adapter
 imports the Better Auth Drizzle adapter.
+
+A provider account is identified by `(provider_id, account_id)`, the identity
+Better Auth `1.7.3` restored after `1.7.0`–`1.7.2` had keyed accounts by an
+`issuer`. Migration ordinal 11 makes the `issuer` column nullable and replaces
+the `(issuer, account_id)` key with `(provider_id, account_id)`; it refuses to
+apply while one provider key maps to more than one row (SQLSTATE `IA003`,
+surfaced as the `cause` of the typed `migration-failed` error). Rows written
+under the earlier schema keep their issuer; nothing writes or reads it any
+more. Better Auth's schema validation stays enabled: the identity adapter
+wrappers carry the Drizzle schema check, so a mismatch between the tables the
+library writes and the Drizzle schema refuses authentication requests instead
+of being skipped.
 
 ## Identity and GitHub separation
 

@@ -76,9 +76,11 @@ const applyMigration = async (client: PoolClient, migration: PlatformMigration):
       migration.ordinal,
     ]);
     await client.query('COMMIT');
-  } catch {
+  } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
-    throw new PlatformStoreError('migration-failed', 'apply-migration');
+    // The database error (SQLSTATE, message) is what tells an operator why a
+    // migration refused to apply; the public message stays generic.
+    throw new PlatformStoreError('migration-failed', 'apply-migration', { cause: error });
   }
 };
 

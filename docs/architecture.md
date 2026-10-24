@@ -558,7 +558,7 @@ client, transport, or browser integration.
 Owns the GitHub-only shared-authentication wrapper, explicit identity-linking
 policy, Web-session domain projection, redacted public-ID/HMAC Device tokens,
 Device enrollment/lifecycle application service, and the Node-only private
-local credential-file adapter. Better Auth `1.7.2` and its session/account rows
+local credential-file adapter. Better Auth `1.7.12` and its session/account rows
 remain behind adapter-private subpaths. The package imports domain contracts
 and `Authorizer`, but no PostgreSQL/SQLite adapter or HTTP router.
 
