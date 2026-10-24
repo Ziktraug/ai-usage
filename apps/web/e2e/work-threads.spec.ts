@@ -133,6 +133,107 @@ test('ending despite remainders records the decision and Undo restores follow-up
   expect((await detail(request, task.threadId)).row.thread.followRevision).toBe(3);
 });
 
+test('Undo after ending a waiting task restores its exact wait through two recorded transitions', async ({
+  page,
+  request,
+}) => {
+  const task = await createTask(request, { links: [{ key: prKey, kind: 'pull-request' }] });
+  await open(page, task.threadId);
+  await page.getByRole('button', { name: 'Mark as waiting', exact: true }).click();
+  await page.getByLabel('Waiting for', { exact: true }).fill('Human PR review');
+  await page.getByRole('combobox', { name: 'Linked PR review (optional)', exact: true }).selectOption(prKey);
+  await page.getByRole('button', { name: 'Wait', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Marked as waiting' })).toBeVisible();
+  const waiting = (await detail(request, task.threadId)).row.thread;
+  await endFollowUp(page);
+  await page.getByRole('button', { name: 'End anyway', exact: true }).click();
+  const endedToast = page.getByRole('status').filter({ hasText: 'Follow-up ended' });
+  await expect(endedToast).toBeVisible();
+  const ended = (await detail(request, task.threadId)).row.thread;
+  await endedToast.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Follow-up restored' })).toBeVisible();
+  await expect(page.locator('[data-follow-state="waiting"]')).toBeVisible();
+  const restored = await detail(request, task.threadId);
+  expect(restored.row.thread).toMatchObject({
+    followState: 'waiting',
+    followRevision: ended.followRevision + 2,
+    waitingFor: waiting.waitingFor,
+    waitingOn: waiting.waitingOn,
+  });
+  expect(
+    restored.events
+      .filter((event) => event.kind === 'follow-state')
+      .slice(-2)
+      .map((event) => event.toState),
+  ).toEqual(['following', 'waiting']);
+});
+
+test('a waiting task can Resume following and Undo restores its wait expectation', async ({ page, request }) => {
+  const task = await createTask(request, { links: [{ key: prKey, kind: 'pull-request' }] });
+  await open(page, task.threadId);
+  await page.getByRole('button', { name: 'Mark as waiting', exact: true }).click();
+  await page.getByLabel('Waiting for', { exact: true }).fill('The requested review');
+  await page.getByRole('combobox', { name: 'Linked PR review (optional)', exact: true }).selectOption(prKey);
+  await page.getByRole('button', { name: 'Wait', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Marked as waiting' })).toBeVisible();
+  const waiting = (await detail(request, task.threadId)).row.thread;
+  await expect(page.getByRole('button', { name: 'End follow-up', exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Resume following', exact: true }).click();
+  const resumedToast = page.getByRole('status').filter({ hasText: 'Following resumed' });
+  await expect(resumedToast).toBeVisible();
+  await expect(page.locator('[data-follow-state="following"]')).toBeVisible();
+  expect((await detail(request, task.threadId)).row.thread).toMatchObject({
+    followState: 'following',
+    followRevision: waiting.followRevision + 1,
+    waitingFor: null,
+    waitingOn: null,
+  });
+  await resumedToast.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Follow-up restored' })).toBeVisible();
+  expect((await detail(request, task.threadId)).row.thread).toMatchObject({
+    followState: 'waiting',
+    followRevision: waiting.followRevision + 2,
+    waitingFor: waiting.waitingFor,
+    waitingOn: waiting.waitingOn,
+  });
+});
+
+test('Undo of Reopen restores the original closure reason and acknowledgements after a later note', async ({
+  page,
+  request,
+}) => {
+  const task = await createTask(request, { intent: 'change', links: [{ key: prKey, kind: 'pull-request' }] });
+  await open(page, task.threadId);
+  await endFollowUp(page);
+  const reason = 'Payments team owns the remaining review';
+  await page.getByLabel('Reason (optional)').fill(reason);
+  await page.getByRole('button', { name: 'End anyway', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Follow-up ended' })).toBeVisible();
+  const ended = await detail(request, task.threadId);
+  const closure = ended.events.findLast((event) => event.kind === 'follow-state' && event.toState === 'done');
+  expect(closure?.acknowledgedRemainders.length).toBeGreaterThan(0);
+  await page.locator('summary').filter({ hasText: 'Resume note, if needed' }).click();
+  await page.getByLabel('Resume note', { exact: true }).fill('Contact the payments team for any new evidence.');
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Resume note saved' })).toBeVisible();
+  expect((await detail(request, task.threadId)).events.at(-1)?.kind).toBe('note');
+  await page.getByRole('button', { name: 'Reopen', exact: true }).first().click();
+  const reopenedToast = page.getByRole('status').filter({ hasText: 'Follow-up reopened' });
+  await expect(reopenedToast).toBeVisible();
+  await reopenedToast.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Follow-up restored' })).toBeVisible();
+  const restored = await detail(request, task.threadId);
+  expect(restored.row.thread).toMatchObject({
+    followState: 'done',
+    doneReason: reason,
+    followRevision: ended.row.thread.followRevision + 2,
+  });
+  expect(
+    restored.events.findLast((event) => event.kind === 'follow-state' && event.toState === 'done')
+      ?.acknowledgedRemainders,
+  ).toEqual(closure?.acknowledgedRemainders);
+});
+
 test('a task exists for a PR with zero sessions and keeps a dated GitHub marker', async ({ page }) => {
   await open(page);
   await expect(row(page, ids.review)).toContainText('PR #1492 · 0 sessions');
@@ -219,6 +320,10 @@ test('searches PR and session titles and preserves filters through task navigati
   await row(page, ids.payments).getByRole('link', { name: 'Prevent duplicate payments' }).first().click();
   await expect(page.getByRole('heading', { name: 'Prevent duplicate payments', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '+ 1 delegated session', exact: true }).click();
+  await expect(page.getByRole('button', { name: '− 1 delegated session', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
   await expect(page.getByRole('button', { name: 'Check the retry invariant' })).toBeVisible();
   await page.getByRole('link', { name: '← My work', exact: true }).click();
   await expect(page.getByRole('searchbox', { name: 'Search tasks' })).toHaveValue('Compare retry approaches');

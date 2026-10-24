@@ -140,7 +140,8 @@
       onclick={() => childrenOpen = !childrenOpen}
       type="button"
     >
-      + {episode.children.length} delegated {episode.children.length === 1 ? 'session' : 'sessions'}
+      {showDelegations || childrenOpen ? '−' : '+'} {episode.children.length} delegated
+      {episode.children.length === 1 ? 'session' : 'sessions'}
     </button>
     {#if showDelegations || childrenOpen}
       <div class="wt-children">

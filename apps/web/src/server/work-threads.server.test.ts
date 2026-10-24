@@ -10,7 +10,11 @@ import {
   type WorkThreadCommand,
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
-import { parseWorkThreadsDetailOutput, parseWorkThreadsListOutput } from '@ai-usage/web-contract/work-threads';
+import {
+  parseWorkThreadsCommandOutput,
+  parseWorkThreadsDetailOutput,
+  parseWorkThreadsListOutput,
+} from '@ai-usage/web-contract/work-threads';
 import {
   bindLiveWorkThreadPorts,
   executeWorkThreadCommandForServer,
@@ -233,6 +237,47 @@ describe('synthetic task dataset', () => {
 });
 
 describe('synthetic work thread commands', () => {
+  test.each([false, true])('caps total tasks including seeds and preserves command retries (seed=%s)', async (seed) => {
+    const ports = createSyntheticWorkThreadStore({ seed });
+    const initial = (await ports.readList(query)).counts;
+    const firstCommand = create();
+    const accepted = await ports.executeCommand(firstCommand);
+    if (!accepted.ok) {
+      throw new Error('The first synthetic task should fit below the limit.');
+    }
+    for (let count = initial.open + initial.done + 1; count < 200; count += 1) {
+      expect(await ports.executeCommand(create())).toMatchObject({ applied: true, ok: true });
+    }
+    const atCapacity = (await ports.readList(query)).counts;
+    expect(atCapacity.open + atCapacity.done).toBe(200);
+
+    const overflow = { ...create(), title: 'A task beyond capacity' };
+    const refused = await ports.executeCommand(overflow);
+    expect(parseWorkThreadsCommandOutput(refused)).toEqual({
+      currentRevision: null,
+      failure: 'invalid-transition',
+      message: 'Synthetic demo has reached its limit of 200 tasks. Restart the demo to create more.',
+      ok: false,
+    });
+    expect(await ports.executeCommand(firstCommand)).toEqual({ ...accepted, applied: false });
+    expect(await ports.executeCommand(overflow)).toEqual(refused);
+    expect((await ports.readList(query)).counts).toEqual(atCapacity);
+    expect((await ports.readDetail(accepted.threadId))?.events).toHaveLength(1);
+
+    // Existing follow-up commands still work at capacity; Done tasks remain part of the limit.
+    expect(await ports.executeCommand(close(accepted.threadId))).toMatchObject({ followRevision: 2, ok: true });
+    expect(await ports.executeCommand(create())).toEqual(refused);
+    expect(await ports.executeCommand(overflow)).toEqual(refused);
+    expect(await ports.executeCommand(firstCommand)).toEqual({ ...accepted, applied: false });
+    expect((await ports.readList(query)).counts).toEqual({ done: atCapacity.done + 1, open: atCapacity.open - 1 });
+    expect((await ports.readDetail(accepted.threadId))?.events).toHaveLength(2);
+    expect((await ports.readList({ ...query, search: overflow.title })).rows).toEqual([]);
+
+    const independent = createSyntheticWorkThreadStore({ seed });
+    expect(await independent.executeCommand(create())).toMatchObject({ applied: true, ok: true });
+    expect((await independent.readList(query)).counts).toEqual({ done: initial.done, open: initial.open + 1 });
+  });
+
   test('create is idempotent and stores its links and creation history', async () => {
     const ports = createSyntheticWorkThreadStore({ seed: false });
     const input = { ...create(), links: [{ key: 'github.example/synthetic/shop#2', kind: 'pull-request' as const }] };
@@ -321,7 +366,7 @@ describe('synthetic work thread commands', () => {
     expect((await ports.readDetail(stale.threadId))?.row.thread.followState).toBe('done');
   });
 
-  test('waits require an active matching source and undo can restore a prior wait', async () => {
+  test('waits require a linked source and Done must reopen before restoring a prior wait', async () => {
     const ports = createSyntheticWorkThreadStore();
     const input = {
       ...close(WORK_THREADS_FIXTURE_IDS.payments),
@@ -346,9 +391,23 @@ describe('synthetic work thread commands', () => {
       waitingOn: input.waitingOn,
     });
     await ports.executeCommand({ ...close(input.threadId), expectedRevision: 2 });
-    expect(await ports.executeCommand({ ...input, commandId: crypto.randomUUID(), expectedRevision: 3 })).toMatchObject(
-      { followRevision: 4, ok: true },
+    const done = await ports.readDetail(input.threadId);
+    const invalidRestore = { ...input, commandId: crypto.randomUUID(), expectedRevision: 3 };
+    const refused = await ports.executeCommand(invalidRestore);
+    expect(refused).toMatchObject({ currentRevision: 3, failure: 'invalid-transition', ok: false });
+    expect(await ports.readDetail(input.threadId)).toEqual(done);
+    expect(
+      await ports.executeCommand({ ...close(input.threadId), expectedRevision: 3, to: 'following' }),
+    ).toMatchObject({ followRevision: 4, ok: true });
+    expect(await ports.executeCommand(invalidRestore)).toEqual(refused);
+    expect(await ports.executeCommand({ ...input, commandId: crypto.randomUUID(), expectedRevision: 4 })).toMatchObject(
+      { followRevision: 5, ok: true },
     );
+    expect((await ports.readDetail(input.threadId))?.row.thread).toMatchObject({
+      followState: 'waiting',
+      waitingFor: input.waitingFor,
+      waitingOn: input.waitingOn,
+    });
   });
 
   test('links the existing served synthetic session, detaches it and preserves the association history', async () => {

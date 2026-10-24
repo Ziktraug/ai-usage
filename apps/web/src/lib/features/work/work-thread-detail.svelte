@@ -9,6 +9,7 @@
   import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
   import { createWorkThreadCommandAction, type WorkThreadCommandActionInput } from '../../rpc/work-threads-client';
   import WorkThreadEpisode from './work-thread-episode.svelte';
+  import { captureFollowUndo, createFollowUndo, type FollowUndoAction } from './work-thread-follow-undo';
   import WorkThreadMarkers from './work-thread-markers.svelte';
   import {
     acknowledgedRemainderCopy,
@@ -139,7 +140,7 @@
     waitingOn: to === 'waiting' ? (extra?.waitingOn ?? null) : null,
   });
   const setFollowState = async (to: WorkThreadFollowState): Promise<void> => {
-    const previous = { state: thread.followState, waitingFor: thread.waitingFor, waitingOn: thread.waitingOn };
+    const previous = captureFollowUndo(data);
     const reviewPr = reviewPrs.find((marker) => marker.key === waitPrKey);
     const wait =
       to === 'waiting' && reviewPr
@@ -155,13 +156,55 @@
         panel = null;
         reason = '';
         toast = { done: 'Follow-up ended', waiting: 'Marked as waiting', following: 'Follow-up reopened' }[to];
-        undo = () =>
-          act(followInput(previous.state, result.followRevision, previous), () => {
-            toast = 'Follow-up restored';
-            undo = null;
-          });
+        if (to === 'following' && previous.state === 'waiting') {
+          toast = 'Following resumed';
+        }
+        if (previous.state === 'done' && previous.acknowledgedRemainders === null) {
+          toast = 'Follow-up reopened. Undo is unavailable because the original closure is outside the loaded history.';
+          undo = null;
+          return;
+        }
+        const restore = createFollowUndo(previous, to, result.followRevision, onCommand);
+        undo = () => restoreFollowState(restore);
       },
     );
+  };
+  const restoreFollowState = async (restore: FollowUndoAction): Promise<void> => {
+    if (busy) {
+      return;
+    }
+    busy = true;
+    actionError = null;
+    retry = null;
+    try {
+      const result = await restore.run();
+      toast = null;
+      undo = null;
+      if (result.status === 'restored') {
+        if (thread.followRevision > result.result.followRevision) {
+          actionError = 'This task changed in another tab — reloaded';
+        } else {
+          toast = 'Follow-up restored';
+        }
+      } else if (result.status === 'history-unavailable') {
+        actionError = 'Undo is unavailable because the original closure is outside the loaded history.';
+      } else if (result.status === 'refused') {
+        const message =
+          result.result.failure === 'revision-conflict'
+            ? 'This task changed in another tab — reloaded'
+            : result.result.message;
+        actionError = result.reopened
+          ? `Task reopened, but the previous waiting state was not restored. ${message}`
+          : message;
+      } else {
+        actionError = result.reopened
+          ? 'Task reopened; restoring the previous waiting state could not be confirmed. Retry to check its outcome.'
+          : 'Restoring the follow-up could not be confirmed. Retry to check its outcome.';
+        retry = () => restoreFollowState(restore);
+      }
+    } finally {
+      busy = false;
+    }
   };
   const end = (): void => {
     if (situation.remainders.length) {
@@ -251,8 +294,13 @@
     {/if}
   </div>
   <div class="wt-follow-controls">
-    <span class="wt-follow-state" data-follow-state={thread.followState}>{followLabel}</span
-    ><button
+    <span class="wt-follow-state" data-follow-state={thread.followState}>{followLabel}</span>
+    {#if thread.followState === 'waiting'}
+      <button class="wt-button" disabled={busy} onclick={() => setFollowState('following')} type="button">
+        Resume following
+      </button>
+    {/if}
+    <button
       class="wt-button"
       disabled={busy}
       onclick={() => thread.followState === 'done' ? setFollowState('following') : end()}

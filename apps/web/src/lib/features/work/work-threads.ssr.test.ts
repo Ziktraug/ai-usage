@@ -155,6 +155,8 @@ describe('work thread SSR presentation', () => {
     expect(collapsed.split('data-session-key=').length - 1).toBe(1);
     expect(expanded.split('data-session-key=').length - 1).toBeGreaterThan(1);
     expect(collapsed).toContain('delegated session');
+    expect(collapsed).toContain('+ 1 delegated session');
+    expect(expanded).toContain('− 1 delegated session');
   });
   test('source read failures are visible even when some tasks are served', () => {
     const body = html(Sources, {
@@ -177,5 +179,11 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain('You ended this follow-up on');
     expect(body).toContain('Nothing in GitHub, Jira or any session was changed');
     expect(body).toContain('Reopen');
+  });
+  test('a waiting task offers Resume following while retaining End follow-up', async () => {
+    const waiting = await detail(WORK_THREADS_FIXTURE_IDS.badges);
+    const body = html(Detail, { ...baseDetailProps, data: waiting });
+    expect(body).toContain('Resume following');
+    expect(body).toContain('End follow-up');
   });
 });

@@ -36,6 +36,7 @@ import type { WorkThreadServerPorts } from './work-threads.server';
 export const WORK_THREADS_SYNTHETIC_LABEL = 'Synthetic demo';
 export const WORK_THREADS_SYNTHETIC_NOW = parseCanonicalInstant('2026-10-24T11:00:00.000Z');
 export const WORK_THREADS_SYNTHETIC_MACHINE = 'fixture-machine';
+const MAX_SYNTHETIC_THREADS = 200;
 export const WORK_THREADS_FIXTURE_IDS = {
   payments: '12000000-0000-4000-8000-000000000001',
   tests: '12000000-0000-4000-8000-000000000002',
@@ -566,6 +567,14 @@ export const createSyntheticWorkThreadStore = (
   };
   const apply = (command: WorkThreadCommand): WorkThreadCommandResult => {
     if (command.op === 'create') {
+      // Seeded and Done tasks count too. Receipt replay happens before applying a new command.
+      if (records.size >= MAX_SYNTHETIC_THREADS) {
+        return fail(
+          'invalid-transition',
+          null,
+          `Synthetic demo has reached its limit of ${MAX_SYNTHETIC_THREADS} tasks. Restart the demo to create more.`,
+        );
+      }
       const thread = makeThread(crypto.randomUUID(), command.title, {
         createdAt: now(),
         updatedAt: now(),
@@ -597,6 +606,9 @@ export const createSyntheticWorkThreadStore = (
         }
         if (command.to === record.thread.followState) {
           return fail('invalid-transition', revision, 'This task already has that follow state.');
+        }
+        if (record.thread.followState === 'done' && command.to !== 'following') {
+          return fail('invalid-transition', revision, 'Reopen this task before marking it as waiting.');
         }
         if (command.waitingOn !== null) {
           const kind = command.waitingOn.kind === 'pull-request-review' ? 'pull-request' : 'jira-issue';
