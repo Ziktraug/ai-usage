@@ -18,12 +18,7 @@ import {
   queryWorkFactRunStates,
   type UsageStoreError,
 } from './reader';
-import {
-  MAX_WORK_THREAD_CHECKOUT_KEYS,
-  MAX_WORK_THREAD_FACT_KEYS,
-  migrateWorkFactSchema,
-  queryDiscoveredPullRequests,
-} from './work-fact-store';
+import { MAX_WORK_THREAD_CHECKOUT_KEYS, MAX_WORK_THREAD_FACT_KEYS, migrateWorkFactSchema } from './work-fact-store';
 import {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
@@ -157,11 +152,6 @@ describe('work fact store: pull request observations', () => {
     legacy.close();
     const before = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
     expect(before.items[0]?.latestObserved).toEqual(pullRequest());
-    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }))).toEqual({
-      items: [],
-      skipped: 0,
-      truncated: false,
-    });
     const observed = pullRequest({
       discoveryRole: 'author',
       mergeable: 'MERGEABLE',
@@ -182,91 +172,6 @@ describe('work fact store: pull request observations', () => {
     ).toEqual({ discovery_role: 'author', mergeable: 'MERGEABLE', merge_state_status: 'BEHIND' });
     expect(migrateWorkFactSchema(migrated)).toBe(false);
     migrated.close();
-  });
-
-  test('discovery selects the latest success despite failures, respects recency and never resurrects a removed role', async () => {
-    const dbPath = await createStore('discovered');
-    const kept = pullRequest({
-      discoveryRole: 'review-requested',
-      mergeable: 'CONFLICTING',
-      mergeStateStatus: 'DIRTY',
-      observedAt: at(2),
-    });
-    await Effect.runPromise(
-      importPullRequestObservations({
-        dbPath,
-        observations: [
-          kept,
-          failedPullRequest(3),
-          pullRequest({ number: 2, discoveryRole: 'author', observedAt: at(2) }),
-          pullRequest({ number: 2, discoveryRole: null, observedAt: at(3) }),
-          pullRequest({ number: 3, discoveryRole: 'author', observedAt: at(0) }),
-          failedPullRequest(4, { number: 4, discoveryRole: 'author' }),
-        ],
-      }),
-    );
-    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: Date.parse(at(1)) }))).toEqual({
-      items: [kept],
-      skipped: 0,
-      truncated: false,
-    });
-    expect(await failureReason(queryDiscoveredPullRequests({ dbPath, sinceMs: Number.NaN }))).toBe('invalid-input');
-  });
-
-  test('discovery filtering happens before the read ceiling, and qualifying overflow is visible', async () => {
-    const dbPath = await createStore('discovered-ceiling');
-    const unrelated = Array.from({ length: 501 }, (_, index) =>
-      pullRequest({ number: index + 100, observedAt: at(5) }),
-    );
-    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: unrelated.slice(0, 500) }));
-    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: unrelated.slice(500) }));
-    const discovered = pullRequest({ discoveryRole: 'author' });
-    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [discovered] }));
-    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }))).toEqual({
-      items: [discovered],
-      skipped: 0,
-      truncated: false,
-    });
-    await Effect.runPromise(
-      importPullRequestObservations({
-        dbPath,
-        observations: unrelated
-          .slice(0, 500)
-          .map((observation) => ({ ...observation, discoveryRole: 'author', observedAt: at(6) })),
-      }),
-    );
-    const bounded = await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }));
-    expect(bounded.items).toHaveLength(500);
-    expect(bounded.truncated).toBe(true);
-  });
-
-  test('discovery groups historical host and repository casing before selecting latest success', async () => {
-    const dbPath = await createStore('discovered-casing');
-    const original = pullRequest({ discoveryRole: 'author', host: 'GitHub.com', repository: 'Fixture/Project' });
-    const retained = pullRequest({
-      discoveryRole: 'author',
-      host: 'GitHub.com',
-      repository: 'Fixture/Project',
-      number: 2,
-    });
-    await Effect.runPromise(
-      importPullRequestObservations({
-        dbPath,
-        observations: [
-          original,
-          pullRequest({ observedAt: at(1), discoveryRole: null }),
-          retained,
-          failedPullRequest(2, { number: 2 }),
-        ],
-      }),
-    );
-    expect(await Effect.runPromise(queryDiscoveredPullRequests({ dbPath, sinceMs: 0 }))).toEqual({
-      items: [retained],
-      skipped: 0,
-      truncated: false,
-    });
-    // Generic observation reads retain their existing case-sensitive grouping contract.
-    expect((await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }))).items).toHaveLength(4);
   });
 
   test('keeps the latest observation and the latest successful one apart, and re-imports idempotently', async () => {
@@ -388,13 +293,13 @@ describe('work fact store: checkout status observations', () => {
     ).toEqual({ inserted: 3, pruned: 0, rejected: 1, unchanged: 0 });
     const all = await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }));
     expect(all.items).toEqual([
-      { latest: failedCheckout(2), latestObserved: checkout() },
-      { latest: other, latestObserved: other },
+      { countsChangedAt: null, latest: failedCheckout(2), latestObserved: checkout() },
+      { countsChangedAt: null, latest: other, latestObserved: other },
     ]);
     const filtered = await Effect.runPromise(
       queryLatestCheckoutStatusObservations({ dbPath, paths: ['/home/alex/projects/other'] }),
     );
-    expect(filtered.items).toEqual([{ latest: other, latestObserved: other }]);
+    expect(filtered.items).toEqual([{ countsChangedAt: null, latest: other, latestObserved: other }]);
     expect(filtered.skipped).toBe(0);
   });
 
@@ -409,15 +314,209 @@ describe('work fact store: checkout status observations', () => {
     );
     expect(rowCount(dbPath, 'checkout_status_observations')).toBe(6);
     const latest = await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }));
-    expect(latest.items).toEqual([{ latest: failedCheckout(6), latestObserved: checkout() }]);
+    expect(latest.items).toEqual([{ countsChangedAt: null, latest: failedCheckout(6), latestObserved: checkout() }]);
     await Effect.runPromise(
       importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(7) })] }),
     );
     expect(rowCount(dbPath, 'checkout_status_observations')).toBe(5);
   });
+
+  test('count activity requires a proven change and survives polls, failures, retention and late imports', async () => {
+    const dbPath = await createStore('checkout-activity');
+    const read = async () =>
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath, machineId: 'machine-a' }))).items[0]
+        ?.countsChangedAt;
+    await Effect.runPromise(importCheckoutStatusObservations({ dbPath, observations: [checkout()] }));
+    expect(await read()).toBeNull();
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(1) })] }),
+    );
+    expect(await read()).toBeNull();
+    // A shuffled batch is compared by observation time, never import order.
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout({ observedAt: at(4), modifiedCount: 8 }),
+          checkout({ observedAt: at(2), modifiedCount: 8 }),
+          failedCheckout(3),
+          checkout({ machineId: 'machine-b', observedAt: at(5), modifiedCount: 99 }),
+        ],
+      }),
+    );
+    expect(await read()).toBe(at(2));
+    for (let minute = 5; minute < 13; minute++) {
+      await Effect.runPromise(
+        importCheckoutStatusObservations({
+          dbPath,
+          observations: [checkout({ observedAt: at(minute), modifiedCount: 8 })],
+        }),
+      );
+    }
+    expect(await read()).toBe(at(2));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [failedCheckout(13), failedCheckout(14)] }),
+    );
+    expect(await read()).toBe(at(2));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(15), modifiedCount: 9 })] }),
+    );
+    expect(await read()).toBe(at(15));
+    // Late history does not stamp the current poll time onto an already proven change.
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(14), modifiedCount: 8 })] }),
+    );
+    expect(await read()).toBe(at(15));
+  });
+
+  test('backfilled evidence moves a proven count change earlier without losing a retained baseline', async () => {
+    const dbPath = await createStore('checkout-activity-backfill');
+    const read = async () =>
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt;
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout({ observedAt: at(10), modifiedCount: 0 }),
+          checkout({ observedAt: at(12), modifiedCount: 1 }),
+        ],
+      }),
+    );
+    expect(await read()).toBe(at(12));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(11), modifiedCount: 1 })] }),
+    );
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [13, 14, 15, 16, 17, 18].map((minute) => failedCheckout(minute)),
+      }),
+    );
+    // Only one success survives; its predecessor and the actual change observation have been pruned.
+    expect(rowCount(dbPath, 'checkout_status_observations')).toBe(6);
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(19), modifiedCount: 1 })] }),
+    );
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(20), modifiedCount: 2 })] }),
+    );
+    expect(await read()).toBe(at(20));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [21, 22, 23, 24, 25, 26].map((minute) => failedCheckout(minute)),
+      }),
+    );
+    // A sole retained success may itself be the observation where the counts changed.
+    expect(await read()).toBe(at(20));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(27), modifiedCount: 2 })] }),
+    );
+    expect(await read()).toBe(at(20));
+  });
+
+  test('backfilled observations before retained history preserve its proven change checkpoint', async () => {
+    const dbPath = await createStore('checkout-activity-retained-backfill');
+    const read = async () =>
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt;
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout({ observedAt: at(10), modifiedCount: 0 }),
+          checkout({ observedAt: at(12), modifiedCount: 1 }),
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(11), modifiedCount: 1 })] }),
+    );
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [13, 14, 15, 16, 17, 18, 19, 20].map((minute) =>
+          checkout({ observedAt: at(minute), modifiedCount: 1 }),
+        ),
+      }),
+    );
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(10), modifiedCount: 0 })] }),
+    );
+    expect(await read()).toBe(at(11));
+  });
+
+  test('unknown counts cannot establish change and legacy readers remain read-only before migration', async () => {
+    const dbPath = await createStore('checkout-legacy-activity');
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [checkout({ modifiedCount: null }), checkout({ observedAt: at(1), modifiedCount: 8 })],
+      }),
+    );
+    expect(
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt,
+    ).toBeNull();
+    const legacy = new Database(dbPath);
+    legacy.exec('ALTER TABLE checkout_status_observations DROP COLUMN counts_changed_at');
+    legacy.exec('ALTER TABLE work_fact_run_state DROP COLUMN outcome_code');
+    legacy.close();
+    expect(
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt,
+    ).toBeNull();
+    expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).runs).toEqual([]);
+    const before = new Database(dbPath, { readonly: true });
+    expect(
+      before
+        .query('PRAGMA table_info(checkout_status_observations)')
+        .all()
+        .some(
+          (column) =>
+            typeof column === 'object' && column !== null && 'name' in column && column.name === 'counts_changed_at',
+        ),
+    ).toBe(false);
+    before.close();
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(2), modifiedCount: 9 })] }),
+    );
+    expect((await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt).toBe(
+      at(2),
+    );
+  });
 });
 
 describe('work fact store: run state', () => {
+  test('persists and clears a typed discovery authentication outcome without parsing messages', async () => {
+    const dbPath = await createStore('typed-outcome');
+    const input = {
+      dbPath,
+      machineId: 'machine-a',
+      sourceId: 'github.pull-requests' as const,
+      ranAt: at(0),
+      disabled: false,
+      failed: 1,
+      observed: 0,
+      message: 'fixture',
+      outcomeCode: 'unauthenticated' as const,
+    };
+    expect(await Effect.runPromise(recordWorkFactRun(input))).toEqual({ changed: true });
+    expect(await Effect.runPromise(recordWorkFactRun(input))).toEqual({ changed: false });
+    expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).runs[0]?.outcomeCode).toBe('unauthenticated');
+    expect(await Effect.runPromise(recordWorkFactRun({ ...input, outcomeCode: null }))).toEqual({ changed: true });
+    expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).runs[0]?.outcomeCode).toBeNull();
+    expect(await failureReason(recordWorkFactRun({ ...input, outcomeCode: 'arbitrary' as 'unauthenticated' }))).toBe(
+      'invalid-input',
+    );
+    const corrupt = new Database(dbPath);
+    corrupt.exec('PRAGMA ignore_check_constraints = ON');
+    corrupt.exec("UPDATE work_fact_run_state SET outcome_code = 'arbitrary'");
+    corrupt.close();
+    expect(await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).toEqual({ runs: [], skipped: 1 });
+  });
+
   test('records one row per source, reports change, and validates the input', async () => {
     const dbPath = await createStore('runs');
     const run = {
@@ -452,6 +551,7 @@ describe('work fact store: run state', () => {
           machineId: 'machine-a',
           message: null,
           observed: 3,
+          outcomeCode: null,
           ranAt: at(0),
           sourceId: 'checkouts.status',
         },
@@ -461,6 +561,7 @@ describe('work fact store: run state', () => {
           machineId: 'machine-a',
           message: 'github.enabled is false in the local config',
           observed: 0,
+          outcomeCode: null,
           ranAt: at(0),
           sourceId: 'github.pull-requests',
         },
@@ -600,6 +701,7 @@ describe('work fact store: Jira issue observations', () => {
         machineId: 'machine-a',
         message: 'acli not installed',
         observed: 0,
+        outcomeCode: null,
         ranAt: at(0),
         sourceId: 'jira.issues',
       },
@@ -670,8 +772,8 @@ describe('work fact store: exact page batches', () => {
       ),
     ).toEqual({
       items: [
-        { latest: failedCheckout(3), latestObserved: checkout() },
-        { latest: secondCheckout, latestObserved: secondCheckout },
+        { countsChangedAt: null, latest: failedCheckout(3), latestObserved: checkout() },
+        { countsChangedAt: null, latest: secondCheckout, latestObserved: secondCheckout },
       ],
       skipped: 0,
       truncated: false,

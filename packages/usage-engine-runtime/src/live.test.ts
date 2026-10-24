@@ -55,6 +55,7 @@ import {
 } from './runtime';
 import { type ScheduledSource, SourceRunError } from './source-adapters';
 import type { SourceControlService } from './source-control';
+import { isolatedSourceOptions } from './source-test-fixtures';
 import { createUsageEngineWriterGate } from './writer-gate';
 
 const roots: string[] = [];
@@ -1143,6 +1144,7 @@ describe('live usage engine publication', () => {
       writeMachineConfig(configuredMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const runtime = createLiveUsageEngineRuntime({
+      sourceOptions: isolatedSourceOptions,
       acquireWriterLease: async () => ({ release: async () => undefined }),
       codexLiveAvailable: () => false,
       configCwd: root,
@@ -1200,6 +1202,7 @@ describe('live usage engine publication', () => {
       writeMachineConfig(configuredMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const runtime = createLiveUsageEngineRuntime({
+      sourceOptions: isolatedSourceOptions,
       acquireWriterLease: async () => ({ release: async () => undefined }),
       codexLiveAvailable: () => false,
       configCwd: root,
@@ -1454,7 +1457,16 @@ describe('live usage engine publication', () => {
     const capture = makeCaptureWideEventSink();
     const privateFailure = `${root}/private-cleanup-target`;
     let failCleanup = false;
+    const factCalls: (readonly string[])[] = [];
     const runtime = createLiveUsageEngineRuntime({
+      sourceOptions: {
+        ...isolatedSourceOptions,
+        ghAvailable: () => true,
+        workFactProcessRunner: (options) => {
+          factCalls.push(options.args);
+          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: options.args[0] === 'search' ? '[]' : '' });
+        },
+      },
       acquireWriterLease: async () => ({ release: async () => undefined }),
       codexLiveAvailable: () => false,
       configCwd: root,
@@ -1510,6 +1522,11 @@ describe('live usage engine publication', () => {
     await expect(runtime.waitForCommand('cleanup-event-confirm')).resolves.toMatchObject({ state: 'succeeded' });
     await runtime.dispose();
 
+    expect(factCalls.map((args) => args.slice(0, 2))).toEqual([
+      ['auth', 'status'],
+      ['search', 'prs'],
+      ['search', 'prs'],
+    ]);
     const cleanupEvents = capture.events().filter((event) => event.boundary === 'handoff.cleanup');
     expect(cleanupEvents).toHaveLength(1);
     expect(cleanupEvents[0]).toMatchObject({
@@ -1534,6 +1551,7 @@ describe('live usage engine publication', () => {
     const privateFailure = `${root}/private-retention-target`;
     const instanceId = '99999999-9999-4999-8999-999999999999';
     const runtime = createLiveUsageEngineRuntime({
+      sourceOptions: isolatedSourceOptions,
       acquireWriterLease: async () => ({ release: async () => undefined }),
       codexLiveAvailable: () => false,
       configCwd: root,
@@ -1602,6 +1620,7 @@ describe('live usage engine publication', () => {
       testWideEventResourceLayer,
     );
     const runtime = createLiveUsageEngineRuntime({
+      sourceOptions: isolatedSourceOptions,
       acquireWriterLease: () => {
         trace.push('lock');
         return Promise.resolve({
@@ -1687,6 +1706,7 @@ describe('live usage engine publication', () => {
     database.close(true);
 
     const runtime = createLiveUsageEngineRuntime({
+      sourceOptions: isolatedSourceOptions,
       acquireWriterLease: async () => ({ release: async () => undefined }),
       codexLiveAvailable: () => false,
       configCwd: root,
@@ -1764,6 +1784,7 @@ describe('live usage engine publication', () => {
     );
 
     const runtime = createLiveUsageEngineRuntime({
+      sourceOptions: isolatedSourceOptions,
       acquireWriterLease: async () => ({ release: async () => undefined }),
       codexLiveAvailable: () => false,
       configCwd: root,

@@ -180,7 +180,7 @@ describe('work-thread engine service', () => {
     }
   });
 
-  test('waits for the writer gate for commands and seeding, and refuses writes after gate closure', async () => {
+  test('waits for the writer gate for commands and refuses writes after gate closure', async () => {
     const { dbPath, gate, service } = await fixture();
     const holderEntered = await Effect.runPromise(Deferred.make<void>());
     const releaseHolder = await Effect.runPromise(Deferred.make<void>());
@@ -194,21 +194,6 @@ describe('work-thread engine service', () => {
       completed += 1;
       return result;
     });
-    const seeds = [
-      {
-        discoveredAt: NOW.toISOString(),
-        intent: 'change' as const,
-        linkKind: 'pull-request' as const,
-        origin: 'pull-request' as const,
-        originKey: 'github.com/owner/repo#7',
-        projectLabel: 'Project',
-        title: 'Discovered change',
-      },
-    ];
-    const seeded = service.seedWorkThreads(seeds).then((result) => {
-      completed += 1;
-      return result;
-    });
     try {
       await Bun.sleep(5);
       expect(completed).toBe(0);
@@ -218,11 +203,8 @@ describe('work-thread engine service', () => {
     }
     const commandResult = await pending;
     expect(commandResult.result.ok).toBe(true);
-    expect(await seeded).toEqual({ created: 1, existing: 0 });
-    expect(await service.seedWorkThreads(seeds)).toEqual({ created: 0, existing: 1 });
     gate.close();
     await expect(service.execute(createCommand())).rejects.toThrow('closed');
-    await expect(service.seedWorkThreads(seeds)).rejects.toThrow('closed');
     if (commandResult.result.ok) {
       expect(persistedThread(dbPath, commandResult.result.threadId)).not.toBeNull();
     }

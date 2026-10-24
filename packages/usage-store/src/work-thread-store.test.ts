@@ -26,7 +26,13 @@ import {
   queryWorkThreadsPage,
 } from './reader';
 import { createWorkThreadStore, type WorkThreadSeed, workThreadSchemaSql } from './work-thread-store';
-import { importLocalRows, importPullRequestObservations, initializeUsageStore, recordWorkFactRun } from './writer';
+import {
+  importLocalRows,
+  importPullRequestObservations,
+  initializeUsageStore,
+  queryActiveWorkThreadLinks,
+  recordWorkFactRun,
+} from './writer';
 
 const roots: string[] = [];
 const NOW = parseCanonicalInstant('2026-10-24T10:00:00.000Z');
@@ -171,7 +177,15 @@ const evidenceFixture = async () => {
   const addSession = (
     id: string,
     title: string,
-    options: { machine?: string; harness?: string; parent?: string; revision?: string } = {},
+    options: {
+      machine?: string;
+      harness?: string;
+      parent?: string;
+      revision?: string;
+      checkout?: string;
+      branch?: string;
+      repository?: string;
+    } = {},
   ) => {
     ordinal++;
     db.query('INSERT INTO served_report_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
@@ -191,7 +205,13 @@ const evidenceFixture = async () => {
           harnessKey: options.harness ?? 'codex',
           sourceSessionId: id,
           parentSourceSessionId: options.parent ?? null,
-          sourcePath: '/fixture',
+          sourcePath: options.checkout ?? '/fixture',
+          vcs: options.repository
+            ? {
+                repository: { host: 'GitHub.COM', ownerPath: options.repository },
+                branches: [{ name: options.branch }],
+              }
+            : undefined,
         },
       }),
     );
@@ -234,6 +254,43 @@ const evidenceLink = (threadId: string, sessionId: string, harness = 'codex'): W
 });
 
 describe('work thread store', () => {
+  test('measures session-title search across 20,000 served rows and 500 threads', async () => {
+    const { db, dbPath, store, addSession, createThread } = await evidenceFixture();
+    try {
+      db.transaction(() => {
+        for (let index = 0; index < 20_000; index++) {
+          addSession(`benchmark-${index}`, index % 5 === 0 ? 'Needle session title' : 'Unrelated session');
+        }
+      })();
+      for (let index = 0; index < 500; index++) {
+        await createThread(
+          Array.from({ length: 5 }, (_, link) => ({
+            kind: 'session' as const,
+            key: `session:${MACHINE}/codex/benchmark-${index * 40 + link}`,
+          })),
+        );
+      }
+      const durations: number[] = [];
+      for (let index = 0; index < 5; index++) {
+        const start = performance.now();
+        const result = await run(
+          store.queryWorkThreadsPage({
+            dbPath,
+            query: { cursor: null, limit: 100, project: null, search: 'needle session', tab: 'open' },
+          }),
+        );
+        durations.push(performance.now() - start);
+        expect(result.rows).toHaveLength(100);
+        expect(result.nextCursor).not.toBeNull();
+      }
+      console.info(
+        `Session-title search 20,000 rows x 500 threads: ${durations.map((ms) => ms.toFixed(1)).join(', ')} ms; median ${durations.toSorted((a, b) => a - b)[2]?.toFixed(1)} ms`,
+      );
+    } finally {
+      db.close();
+    }
+  }, 120_000);
+
   test('searches exact linked served and Desktop titles before pagination, excluding detached and other identities', async () => {
     const fixture = await evidenceFixture();
     const { db, dbPath, store, addSession, addDesktop, createThread } = fixture;
@@ -354,6 +411,222 @@ describe('work thread store', () => {
     } finally {
       db.close();
     }
+  });
+
+  test('excludes detached children before the per-parent bound independently per thread and permits relinks', async () => {
+    const { db, dbPath, store, addSession, createThread } = await evidenceFixture();
+    try {
+      addSession('parent', 'Root');
+      for (let index = 0; index < 21; index++) {
+        addSession(`child-${index}`, `Child ${index}`, { parent: 'parent' });
+      }
+      const first = await createThread([
+        { kind: 'session', key: `session:${MACHINE}/codex/parent` },
+        { kind: 'session', key: `session:${MACHINE}/codex/child-20` },
+      ]);
+      const second = await createThread([{ kind: 'session', key: `session:${MACHINE}/codex/parent` }]);
+      const child = (await run(store.queryWorkThreadLinks({ dbPath, threadIds: [first] }))).find((link) =>
+        link.key.endsWith('/child-20'),
+      );
+      if (!child) {
+        throw new Error('Expected child link');
+      }
+      await run(
+        store.applyWorkThreadCommand({
+          dbPath,
+          machineId: MACHINE,
+          now: LATER,
+          command: { commandId: randomUUID(), op: 'detach-link', threadId: first, linkId: child.linkId },
+        }),
+      );
+      // Old detach decisions must survive more history than the bounded view returns.
+      db.transaction(() => {
+        for (let index = 0; index < 300; index++) {
+          db.query('INSERT INTO work_thread_links VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            randomUUID(),
+            first,
+            'session',
+            `session:${MACHINE}/codex/old-${index}`,
+            'user',
+            NOW,
+            LATER,
+          );
+        }
+      })();
+      const scope = async (threadId: string) => ({
+        threadId,
+        machineId: MACHINE,
+        links: (await run(store.queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).filter(
+          (link) => link.detachedAt === null,
+        ),
+      });
+      const result = await run(
+        store.queryWorkThreadSessionEvidence({ dbPath, threads: [await scope(first), await scope(second)] }),
+      );
+      expect(result[0]?.evidence.sessions).toHaveLength(21);
+      expect(result[0]?.evidence.sessions.some((entry) => entry.member.sourceSessionId === 'child-20')).toBe(false);
+      expect(result[0]?.evidence.sessions.some((entry) => entry.member.sourceSessionId === 'child-0')).toBe(true);
+      expect(result[0]?.evidence.truncated).toBe(false);
+      expect(result[1]?.evidence.sessions.some((entry) => entry.member.sourceSessionId === 'child-20')).toBe(true);
+      expect(result[1]?.evidence.truncated).toBe(true);
+      await run(
+        store.applyWorkThreadCommand({
+          dbPath,
+          machineId: MACHINE,
+          now: LATER,
+          command: { commandId: randomUUID(), op: 'link', threadId: first, kind: 'session', key: child.key },
+        }),
+      );
+      const relinked = await run(store.queryWorkThreadSessionEvidence({ dbPath, ...(await scope(first)) }));
+      expect(relinked.sessions.some((entry) => entry.member.sourceSessionId === 'child-20')).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('joins legacy branch authorities without changing ref case or resurrecting detached checkout evidence', async () => {
+    const { db, dbPath, store, addSession, createThread } = await evidenceFixture();
+    try {
+      addSession('branch-session', 'Branch match', {
+        repository: 'Fixture/Repo',
+        branch: 'Feature',
+        checkout: '/matching',
+      });
+      addSession('other-ref', 'Other ref', { repository: 'fixture/repo', branch: 'feature', checkout: '/other-ref' });
+      addSession('detached', 'Detached', { repository: 'Fixture/Repo', branch: 'Feature', checkout: '/detached' });
+      const threadId = await createThread([{ kind: 'session', key: `session:${MACHINE}/codex/detached` }]);
+      await run(
+        store.applyWorkThreadCommand({
+          dbPath,
+          machineId: MACHINE,
+          now: NOW,
+          command: {
+            op: 'link',
+            commandId: randomUUID(),
+            threadId,
+            kind: 'branch',
+            key: 'branch:github.com/Fixture/Repo@Feature',
+          },
+        }),
+      );
+      db.query("UPDATE work_thread_links SET link_key = ? WHERE kind = 'branch'").run(
+        'branch:GitHub.COM/FIXTURE/REPO@Feature',
+      );
+      db.query("UPDATE work_thread_links SET detached_at = ? WHERE kind = 'session'").run(LATER);
+      const links = (await run(store.queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).filter(
+        (link) => link.detachedAt === null,
+      );
+      const evidence = await run(store.queryWorkThreadSessionEvidence({ dbPath, links, machineId: MACHINE }));
+      expect(evidence.branchCheckouts.map((checkout) => checkout.checkoutPath)).toEqual(['/matching']);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('returns bounded distinct active PR and Jira links of non-Done local threads', async () => {
+    const { db, dbPath, store } = await evidenceFixture();
+    try {
+      const add = async (machineId: string, links: Extract<WorkThreadCommand, { op: 'create' }>['links']) => {
+        const result = await run(
+          store.applyWorkThreadCommand({ dbPath, machineId, now: NOW, command: createCommand({ links }) }),
+        );
+        if (!result.ok) {
+          throw new Error('Expected thread');
+        }
+        return result.threadId;
+      };
+      const first = await add(MACHINE, [
+        { kind: 'pull-request', key: PR },
+        { kind: 'jira-issue', key: 'jira:default/FIX-42' },
+      ]);
+      await add(MACHINE, [{ kind: 'pull-request', key: 'github.com/FIXTURE/REPO#42' }]);
+      await add(MACHINE, [{ kind: 'pull-request', key: 'github.com/fixture/repo#43' }]);
+      const done = await add(MACHINE, [{ kind: 'pull-request', key: 'github.com/fixture/repo#44' }]);
+      const detached = await add(MACHINE, [{ kind: 'pull-request', key: 'github.com/fixture/repo#45' }]);
+      await add('different-machine', [{ kind: 'pull-request', key: 'github.com/fixture/repo#46' }]);
+      await run(
+        store.applyWorkThreadCommand({ dbPath, machineId: MACHINE, now: NOW, command: follow(done, 1, 'done') }),
+      );
+      db.query('UPDATE work_thread_links SET detached_at = ? WHERE thread_id = ?').run(LATER, detached);
+      db.query("UPDATE work_thread_links SET link_key = ? WHERE thread_id = ? AND kind = 'pull-request'").run(
+        'GitHub.COM/Fixture/Repo#42',
+        first,
+      );
+      const limited = await run(
+        store.queryActiveWorkThreadLinks({ dbPath, machineId: MACHINE, kind: 'pull-request', limit: 1 }),
+      );
+      expect(limited.links).toHaveLength(1);
+      expect(limited.truncated).toBe(true);
+      const complete = await run(
+        store.queryActiveWorkThreadLinks({ dbPath, machineId: MACHINE, kind: 'pull-request', limit: 100 }),
+      );
+      expect(complete.links.map((link) => link.key).toSorted()).toEqual([PR, 'github.com/fixture/repo#43']);
+      expect(complete.truncated).toBe(false);
+      expect(
+        (
+          await run(store.queryActiveWorkThreadLinks({ dbPath, machineId: MACHINE, kind: 'jira-issue', limit: 100 }))
+        ).links.map((link) => link.key),
+      ).toEqual(['jira:default/FIX-42']);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('observation eligibility precedes the active-link bound and keeps failures after a merge', async () => {
+    const dbPath = await createStore();
+    await create(dbPath, {
+      links: [1, 2, 3].map((number) => ({ kind: 'pull-request', key: `github.com/fixture/repo#${number}` })),
+    });
+    const observed = (number: number, overrides: Record<string, unknown> = {}) => ({
+      accountLabel: null,
+      baseRef: 'main',
+      checksRollup: 'success',
+      draft: false,
+      headRef: 'fixture',
+      host: 'github.com',
+      machineId: MACHINE,
+      mergedAt: NOW,
+      number,
+      observedAt: NOW,
+      outcome: 'observed',
+      outcomeMessage: null,
+      repository: 'Fixture/Repo',
+      reviewDecision: null,
+      state: 'MERGED',
+      title: 'Merged fixture',
+      updatedAt: NOW,
+      url: `https://github.com/Fixture/Repo/pull/${number}`,
+      ...overrides,
+    });
+    expect(
+      await run(
+        importPullRequestObservations({
+          dbPath,
+          observations: [
+            observed(1),
+            observed(1, {
+              observedAt: LATER,
+              outcome: 'timeout',
+              outcomeMessage: 'Timed out',
+              repository: 'fixture/repo',
+            }),
+            observed(2),
+            observed(3, { machineId: 'other-machine' }),
+          ],
+        }),
+      ),
+    ).toMatchObject({ inserted: 4, rejected: 0 });
+    const query = { dbPath, machineId: MACHINE, kind: 'pull-request' as const, limit: 100 };
+    expect((await run(queryActiveWorkThreadLinks(query))).links).toHaveLength(3);
+    const pending = await run(queryActiveWorkThreadLinks({ ...query, excludeObservedMerged: true }));
+    expect(pending.links.map((link) => link.key).toSorted()).toEqual([
+      'github.com/fixture/repo#1',
+      'github.com/fixture/repo#3',
+    ]);
+    expect(pending.truncated).toBe(false);
+    expect(await run(queryActiveWorkThreadLinks({ ...query, excludeObservedMerged: true, limit: 1 }))).toMatchObject({
+      truncated: true,
+    });
   });
 
   test('batches latest event history and active/detached links with independent thread limits', async () => {
@@ -614,6 +887,105 @@ describe('work thread store', () => {
     expect(await run(seedWorkThreads({ ...input, now: LATER }))).toEqual({ created: 0, existing: 2 });
     expect(threadSnapshot(dbPath)).toEqual(before);
     expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 1, open: 0 });
+  });
+
+  test('seed deduplication includes operator and declared links on any thread and legacy PR casing', async () => {
+    const dbPath = await createStore();
+    const operator = await create(dbPath, {
+      links: [
+        { kind: 'pull-request', key: 'GitHub.COM/Fixture/Repo#42' },
+        { kind: 'jira-issue', key: 'jira:default/FIX-42' },
+      ],
+    });
+    await command(dbPath, follow(operator, 1, 'done'));
+    const db = new Database(dbPath);
+    db.query("UPDATE work_thread_links SET provenance = 'declared', link_key = ? WHERE kind = 'pull-request'").run(
+      'GitHub.COM/Fixture/Repo#42',
+    );
+    db.close();
+    const jira: WorkThreadSeed = {
+      ...seed(),
+      origin: 'jira-issue',
+      linkKind: 'jira-issue',
+      originKey: 'jira:default/FIX-42',
+    };
+    expect(
+      await run(seedWorkThreads({ dbPath, machineId: 'different-machine', now: NOW, seeds: [seed(), jira] })),
+    ).toEqual({ created: 0, existing: 2 });
+    const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [operator] }));
+    if (!link) {
+      throw new Error('Expected link');
+    }
+    await command(dbPath, { op: 'detach-link', commandId: randomUUID(), threadId: operator, linkId: link.linkId });
+    expect(
+      await run(
+        seedWorkThreads({
+          dbPath,
+          machineId: MACHINE,
+          now: NOW,
+          seeds: [link.kind === 'pull-request' ? seed() : jira],
+        }),
+      ),
+    ).toEqual({ created: 1, existing: 0 });
+    expect(
+      await run(
+        seedWorkThreads({
+          dbPath,
+          machineId: MACHINE,
+          now: NOW,
+          seeds: [link.kind === 'pull-request' ? { ...seed(), originKey: 'GitHub.COM/FIXTURE/REPO#42' } : jira],
+        }),
+      ),
+    ).toEqual({ created: 0, existing: 1 });
+  });
+
+  test('canonicalizes PR and branch authorities while preserving branch ref case and legacy deduplication', async () => {
+    const dbPath = await createStore();
+    const threadId = await create(dbPath, {
+      links: [
+        { kind: 'pull-request', key: 'GitHub.COM/Fixture/Repo#42' },
+        { kind: 'pull-request', key: PR },
+        { kind: 'branch', key: 'branch:GitHub.COM/Fixture/Repo@Feature' },
+        { kind: 'branch', key: 'branch:github.com/fixture/repo@Feature' },
+        { kind: 'branch', key: 'branch:github.com/fixture/repo@feature' },
+      ],
+    });
+    const links = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    expect(links.map((link) => link.key).toSorted()).toEqual(
+      [PR, 'branch:github.com/fixture/repo@Feature', 'branch:github.com/fixture/repo@feature'].toSorted(),
+    );
+    const db = new Database(dbPath);
+    db.query("UPDATE work_thread_links SET link_key = ? WHERE kind = 'pull-request'").run('GitHub.COM/Fixture/Repo#42');
+    db.query(
+      "UPDATE work_thread_links SET link_key = ? WHERE kind = 'branch' AND link_key = 'branch:github.com/fixture/repo@Feature'",
+    ).run('branch:GitHub.COM/Fixture/Repo@Feature');
+    db.close();
+    for (const link of [
+      { kind: 'pull-request' as const, key: PR },
+      { kind: 'branch' as const, key: 'branch:github.com/fixture/repo@Feature' },
+    ]) {
+      expect(await command(dbPath, { op: 'link', commandId: randomUUID(), threadId, ...link })).toMatchObject({
+        ok: true,
+        applied: false,
+      });
+    }
+  });
+
+  test('malformed links still fail as invalid input before storage, and omitted create links remain accepted', async () => {
+    const dbPath = await createStore();
+    for (const links of ['bad', [null], [{ kind: 'pull-request', key: 42 }]]) {
+      const malformed: WorkThreadCommand = JSON.parse(JSON.stringify({ ...createCommand(), links }));
+      const result = await Effect.runPromise(
+        Effect.either(applyWorkThreadCommand({ dbPath, machineId: MACHINE, now: NOW, command: malformed })),
+      );
+      expect(result._tag).toBe('Left');
+      if (result._tag === 'Left') {
+        expect(result.left.reason).toBe('invalid-input');
+      }
+    }
+    const omitted: WorkThreadCommand = JSON.parse(JSON.stringify({ ...createCommand(), links: undefined }));
+    expect(await command(dbPath, omitted)).toMatchObject({ ok: true });
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
   });
 
   test('seed validation rolls back the complete batch and canonicalizes discovered instants', async () => {

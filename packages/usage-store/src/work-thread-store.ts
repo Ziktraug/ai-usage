@@ -166,6 +166,49 @@ export interface QueryWorkThreadLinksInput {
   readonly threadIds: readonly string[];
 }
 
+export interface QueryActiveWorkThreadLinksInput {
+  readonly dbPath: string;
+  /** Apply terminal-state eligibility before the bound; a failure after a merge stays eligible. */
+  readonly excludeObservedMerged?: boolean;
+  /** Restrict Jira authority before the bound; omitted means all sites. */
+  readonly jiraSite?: string;
+  readonly kind: 'pull-request' | 'jira-issue';
+  readonly limit: number;
+  readonly machineId: string;
+}
+
+export interface QueryActiveWorkThreadLinksResult {
+  readonly links: readonly WorkThreadLink[];
+  readonly truncated: boolean;
+}
+
+/** Repository authorities are case-insensitive; Git branch refs remain case-sensitive. */
+const canonicalLinkKey = (kind: WorkThreadLinkKind, key: string): string => {
+  if (kind === 'pull-request') {
+    return key.toLowerCase();
+  }
+  if (kind === 'branch') {
+    const boundary = key.indexOf('@');
+    return boundary < 0 ? key : key.slice(0, boundary).toLowerCase() + key.slice(boundary);
+  }
+  return key;
+};
+
+const comparableLinkSql = (kind: WorkThreadLinkKind): string => {
+  if (kind === 'pull-request') {
+    return 'lower(link_key)';
+  }
+  if (kind === 'branch') {
+    return "lower(substr(link_key, 1, instr(link_key, '@') - 1)) || substr(link_key, instr(link_key, '@'))";
+  }
+  return 'link_key';
+};
+
+const normalizeCommandLink = (link: unknown): unknown =>
+  isRecord(link) && typeof link.key === 'string' && (link.kind === 'pull-request' || link.kind === 'branch')
+    ? { ...link, key: canonicalLinkKey(link.kind, link.key) }
+    : link;
+
 const invalidInput = (message: string): never => {
   throw new UsageStoreError({ message, operation: 'work-thread', reason: 'invalid-input' });
 };
@@ -201,7 +244,10 @@ const threadFromRecord = (value: unknown): WorkThread => {
       note: row.note,
       objective: row.objective,
       origin: row.origin,
-      originKey: row.origin_key,
+      originKey:
+        typeof row.origin_key === 'string' && row.origin === 'pull-request'
+          ? row.origin_key.toLowerCase()
+          : row.origin_key,
       projectLabel: row.project_label,
       threadId: row.thread_id,
       title: row.title,
@@ -219,7 +265,10 @@ const linkFromRecord = (value: unknown): WorkThreadLink => {
     parseWorkThreadLink({
       createdAt: row.created_at,
       detachedAt: row.detached_at,
-      key: row.link_key,
+      key:
+        typeof row.link_key === 'string' && (row.kind === 'branch' || row.kind === 'pull-request')
+          ? canonicalLinkKey(row.kind, row.link_key)
+          : row.link_key,
       kind: row.kind,
       linkId: row.link_id,
       provenance: row.provenance,
@@ -302,7 +351,12 @@ const addEvent = (
 
 const addLink = (db: SqliteDatabase, link: Omit<WorkThreadLink, 'linkId' | 'detachedAt'>): void => {
   const validatedLink = validated(
-    parseWorkThreadLink({ ...link, detachedAt: null, linkId: randomUUID() }),
+    parseWorkThreadLink({
+      ...link,
+      key: canonicalLinkKey(link.kind, link.key),
+      detachedAt: null,
+      linkId: randomUUID(),
+    }),
     'link write',
   );
   db.query(`INSERT INTO work_thread_links(link_id, thread_id, kind, link_key, provenance, created_at)
@@ -310,7 +364,7 @@ const addLink = (db: SqliteDatabase, link: Omit<WorkThreadLink, 'linkId' | 'deta
     validatedLink.linkId,
     link.threadId,
     link.kind,
-    link.key,
+    validatedLink.key,
     link.provenance,
     link.createdAt,
   );
@@ -433,9 +487,9 @@ const applyLink = (
   if (
     db
       .query(
-        'SELECT 1 FROM work_thread_links WHERE thread_id = ? AND kind = ? AND link_key = ? AND detached_at IS NULL',
+        `SELECT 1 FROM work_thread_links WHERE thread_id = ? AND kind = ? AND ${comparableLinkSql(command.kind)} = ? AND detached_at IS NULL`,
       )
-      .get(thread.threadId, command.kind, command.key) !== null
+      .get(thread.threadId, command.kind, canonicalLinkKey(command.kind, command.key)) !== null
   ) {
     return success(thread, false);
   }
@@ -458,7 +512,13 @@ const executeCommand = (
   input: ApplyWorkThreadCommandInput,
   now: CanonicalInstant,
 ): WorkThreadCommandResult => {
-  const command = parseWorkThreadCommand(input.command);
+  let normalized: unknown = input.command;
+  if (input.command.op === 'create' && Array.isArray(input.command.links)) {
+    normalized = { ...input.command, links: input.command.links.map(normalizeCommandLink) };
+  } else if (input.command.op === 'link') {
+    normalized = normalizeCommandLink(input.command);
+  }
+  const command = parseWorkThreadCommand(normalized);
   if (!command) {
     if (
       input.command.op === 'link' &&
@@ -479,7 +539,7 @@ const executeCommand = (
     saveThread(db, thread);
     const seen = new Set<string>();
     for (const link of command.links) {
-      const identity = JSON.stringify([link.kind, link.key]);
+      const identity = JSON.stringify([link.kind, canonicalLinkKey(link.kind, link.key)]);
       if (!seen.has(identity)) {
         addLink(db, { ...link, createdAt: now, provenance: 'user', threadId: thread.threadId });
         seen.add(identity);
@@ -568,27 +628,27 @@ const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[
   if (query.search !== null && query.search.length > 0) {
     conditions.push(`(instr(lower(t.title), lower(?)) > 0 OR EXISTS (
       SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.detached_at IS NULL AND (
-        instr(lower(l.link_key), lower(?)) > 0 OR (l.kind = 'session' AND (
-          EXISTS (
-            SELECT 1 FROM served_report_current current
+        instr(lower(l.link_key), lower(?)) > 0 OR (l.kind = 'session' AND l.link_key IN (
+            SELECT 'session:' || session.machine_id || '/' ||
+              json_extract(session.source_row_json, '$.source.harnessKey') || '/' ||
+              json_extract(session.source_row_json, '$.source.sourceSessionId')
+            FROM served_report_current current
             JOIN served_report_revisions revision USING (revision)
             JOIN served_report_rows session USING (revision)
             WHERE current.singleton = 1 AND revision.complete = 1
-              AND l.link_key = 'session:' || session.machine_id || '/' ||
-                json_extract(session.source_row_json, '$.source.harnessKey') || '/' ||
-                json_extract(session.source_row_json, '$.source.sourceSessionId')
               AND instr(lower(json_extract(session.source_row_json, '$.sessionLabel')), lower(?)) > 0
-          ) OR EXISTS (
-            SELECT 1 FROM claude_desktop_sessions desktop
-            WHERE (l.link_key = 'session:' || desktop.machine_id || '/claude/' || desktop.cli_session_id
-              OR EXISTS (SELECT 1 FROM json_each(desktop.prior_cli_session_ids_json) prior
-                WHERE l.link_key = 'session:' || desktop.machine_id || '/claude/' || prior.value))
-              AND instr(lower(desktop.title), lower(?)) > 0
-          )
+            UNION ALL
+            SELECT 'session:' || desktop.machine_id || '/claude/' || desktop.cli_session_id
+            FROM claude_desktop_sessions desktop
+            WHERE instr(lower(desktop.title), lower(?)) > 0
+            UNION ALL
+            SELECT 'session:' || desktop.machine_id || '/claude/' || prior.value
+            FROM claude_desktop_sessions desktop, json_each(desktop.prior_cli_session_ids_json) prior
+            WHERE instr(lower(desktop.title), lower(?)) > 0
         ))
       )
     ))`);
-    params.push(query.search, query.search, query.search, query.search);
+    params.push(query.search, query.search, query.search, query.search, query.search);
   }
   if (query.cursor !== null) {
     if (typeof query.cursor !== 'string' || query.cursor.length > 2000) {
@@ -684,19 +744,37 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       let created = 0;
       let existing = 0;
       for (const seed of input.seeds) {
-        if (seed.origin !== seed.linkKind || !parseWorkThreadLinkKey(seed.linkKind, seed.originKey)) {
+        const originKey = canonicalLinkKey(seed.linkKind, seed.originKey);
+        if (seed.origin !== seed.linkKind || !parseWorkThreadLinkKey(seed.linkKind, originKey)) {
           return invalidInput('Seed origin and qualified link key must match');
         }
-        if (db.query('SELECT 1 FROM work_threads WHERE origin_key = ?').get(seed.originKey) !== null) {
+        if (
+          db
+            .query(
+              `SELECT 1 FROM work_threads WHERE ${seed.origin === 'pull-request' ? 'lower(origin_key)' : 'origin_key'} = ?`,
+            )
+            .get(originKey) !== null ||
+          db
+            .query(
+              `SELECT 1 FROM work_thread_links WHERE kind = ? AND ${comparableLinkSql(seed.linkKind)} = ? AND detached_at IS NULL`,
+            )
+            .get(seed.linkKind, originKey) !== null
+        ) {
           existing++;
           continue;
         }
         const discoveredAt = instant(seed.discoveredAt);
-        const thread = newThread({ ...seed, machineId: input.machineId, now: discoveredAt, objective: null });
+        const thread = newThread({
+          ...seed,
+          originKey,
+          machineId: input.machineId,
+          now: discoveredAt,
+          objective: null,
+        });
         saveThread(db, { ...thread, updatedAt: now });
         addLink(db, {
           createdAt: discoveredAt,
-          key: seed.originKey,
+          key: originKey,
           kind: seed.linkKind,
           provenance: 'origin',
           threadId: thread.threadId,
@@ -758,6 +836,57 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         .map(linkFromRecord);
     });
 
+  const queryActiveWorkThreadLinks = (
+    input: QueryActiveWorkThreadLinksInput,
+  ): Effect.Effect<QueryActiveWorkThreadLinksResult, UsageStoreError> =>
+    read(input.dbPath, 'queryActiveWorkThreadLinks', (db) => {
+      if (
+        !input.machineId ||
+        (input.kind !== 'pull-request' && input.kind !== 'jira-issue') ||
+        !Number.isSafeInteger(input.limit) ||
+        input.limit < 1 ||
+        input.limit > 500 ||
+        (input.excludeObservedMerged !== undefined && typeof input.excludeObservedMerged !== 'boolean') ||
+        (input.excludeObservedMerged === true && input.kind !== 'pull-request') ||
+        (input.jiraSite !== undefined &&
+          (input.kind !== 'jira-issue' || !parseWorkThreadLinkKey('jira-issue', `jira:${input.jiraSite}/TEST-1`)))
+      ) {
+        return invalidInput('Invalid active work thread link scope');
+      }
+      const pendingPullRequests = input.excludeObservedMerged === true;
+      const latestObservations = pendingPullRequests
+        ? `WITH latest_observations AS MATERIALIZED (
+        SELECT lower(host) || '/' || lower(repository) || '#' || number AS link_key, outcome, state,
+          ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
+        FROM pull_request_observations WHERE machine_id = ?
+      )`
+        : '';
+      const eligibility = pendingPullRequests
+        ? `AND NOT EXISTS (
+        SELECT 1 FROM latest_observations observation WHERE observation.link_key = lower(links.link_key)
+          AND observation.rank = 1 AND observation.outcome = 'observed' AND observation.state = 'MERGED'
+      )`
+        : '';
+      const params: unknown[] = pendingPullRequests ? [input.machineId] : [];
+      params.push(input.machineId, input.kind);
+      if (input.jiraSite !== undefined) {
+        params.push(`jira:${input.jiraSite}/`);
+      }
+      params.push(input.limit + 1);
+      const rows = db
+        .query(`${latestObservations} SELECT * FROM (
+        SELECT links.*, ROW_NUMBER() OVER (PARTITION BY ${input.kind === 'pull-request' ? 'lower(link_key)' : 'link_key'}
+          ORDER BY links.created_at DESC, links.link_id) AS rank
+        FROM work_thread_links links JOIN work_threads threads USING(thread_id)
+        WHERE threads.machine_id = ? AND threads.follow_state != 'done'
+          AND links.kind = ? AND links.detached_at IS NULL
+          ${eligibility}
+          ${input.jiraSite === undefined ? '' : 'AND instr(links.link_key, ?) = 1'}
+      ) WHERE rank = 1 ORDER BY created_at DESC, link_id LIMIT ?`)
+        .all(...params);
+      return { links: rows.slice(0, input.limit).map(linkFromRecord), truncated: rows.length > input.limit };
+    });
+
   const queryWorkThreadEvents = (
     input: QueryWorkThreadByIdInput | QueryWorkThreadLinksInput,
   ): Effect.Effect<readonly WorkThreadEvent[], UsageStoreError> =>
@@ -812,6 +941,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
     ...createWorkThreadSessionEvidenceStore(dependencies),
     applyWorkThreadCommand,
     countWorkThreads,
+    queryActiveWorkThreadLinks,
     queryWorkThreadById,
     queryWorkThreadEvents,
     queryWorkThreadLinks,
@@ -868,15 +998,13 @@ export interface WorkThreadSessionEvidenceBatchEntry {
   readonly threadId: string;
 }
 
-const EVIDENCE_MEMBER_COLUMNS = `row_id, machine_id, project_label, campaign_root, origin, active_time,
-  json_extract(source_row_json, '$.source.sourceSessionId') AS source_session_id,
-  json_extract(source_row_json, '$.source.parentSourceSessionId') AS parent_session_id,
-  json_extract(source_row_json, '$.source.sourcePath') AS checkout_path,
-  json_extract(source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
-  json_extract(source_row_json, '$.date') AS started_at,
-  json_extract(source_row_json, '$.endDate') AS ended_at,
-  json_extract(source_row_json, '$.sessionLabel') AS title,
-  json_extract(source_row_json, '$.titleSource') AS title_source`;
+const EVIDENCE_MEMBER_DETAILS = `
+  json_extract(metadata.source_row_json, '$.source.sourcePath') AS checkout_path,
+  json_extract(metadata.source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
+  json_extract(metadata.source_row_json, '$.date') AS started_at,
+  json_extract(metadata.source_row_json, '$.endDate') AS ended_at,
+  json_extract(metadata.source_row_json, '$.sessionLabel') AS title,
+  json_extract(metadata.source_row_json, '$.titleSource') AS title_source`;
 
 const evidenceText = (value: unknown, maximum = 4096): string | null =>
   typeof value === 'string' && value.length <= maximum ? value : null;
@@ -894,6 +1022,14 @@ interface SessionEvidencePage {
 
 const sessionEvidenceKey = (machineId: string, harness: string, sessionId: string): string =>
   `session:${machineId}/${harness}/${sessionId}`;
+
+const nonDetachedSessionSql = (machine: string, harness: string, session: string): string => `NOT EXISTS (
+  SELECT 1 FROM work_thread_links detached WHERE detached.thread_id = requested.thread_id
+    AND detached.kind = 'session' AND detached.detached_at IS NOT NULL
+    AND detached.link_key = 'session:' || ${machine} || '/' || ${harness} || '/' || ${session}
+    AND NOT EXISTS (SELECT 1 FROM work_thread_links relinked WHERE relinked.thread_id = detached.thread_id
+      AND relinked.kind = 'session' AND relinked.link_key = detached.link_key AND relinked.detached_at IS NULL)
+)`;
 
 const groupEvidenceRecords = (values: readonly unknown[]): Map<string, Record<string, unknown>[]> => {
   const grouped = new Map<string, Record<string, unknown>[]>();
@@ -949,16 +1085,30 @@ const readSessionEvidencePage = (
       if (parsed?.kind === 'session') {
         sessionRequests.set(link.key, [link.key, parsed.machineId, parsed.harness, parsed.sessionId]);
       } else if (parsed?.kind === 'branch') {
-        const key = JSON.stringify([scope.machineId, link.key]);
-        branchRequests.set(key, [key, scope.machineId, parsed.host, parsed.repository, parsed.ref]);
+        const key = JSON.stringify([link.threadId, scope.machineId, link.key]);
+        branchRequests.set(key, [
+          key,
+          scope.machineId,
+          parsed.host.toLowerCase(),
+          parsed.repository.toLowerCase(),
+          parsed.ref,
+          link.threadId,
+        ]);
       }
     }
   }
-  const memberCte = `members AS MATERIALIZED (
-    SELECT ordinal, ${EVIDENCE_MEMBER_COLUMNS}, json_extract(source_row_json, '$.source.harnessKey') AS harness_key
-    FROM served_report_rows WHERE revision = ?
+  const memberCte = (identityFilter: string) => `members AS MATERIALIZED (
+    SELECT ordinal, row_id, machine_id, project_label, campaign_root, origin, active_time,
+      json_extract(source_row_json, '$.source.sourceSessionId') AS source_session_id,
+      json_extract(source_row_json, '$.source.parentSourceSessionId') AS parent_session_id,
+      json_extract(source_row_json, '$.source.harnessKey') AS harness_key
+    FROM served_report_rows WHERE revision = ? AND (${identityFilter})
   )`;
-  const requestCte = `requested AS (
+  const requestedIdentityFilter = (identity: 'sourceSessionId' | 'parentSourceSessionId') => `
+    ${identity === 'parentSourceSessionId' ? "json_extract(source_row_json, '$.source.parentSourceSessionId') IS NOT NULL AND" : ''}
+    (machine_id, json_extract(source_row_json, '$.source.harnessKey'), json_extract(source_row_json, '$.source.${identity}'))
+      IN (SELECT machine, harness, session_id FROM requested)`;
+  const requestCte = `requested AS MATERIALIZED (
     SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
       json_extract(value, '$[2]') AS harness, json_extract(value, '$[3]') AS session_id
     FROM json_each(?)
@@ -967,12 +1117,14 @@ const readSessionEvidencePage = (
     sessionRequests.size === 0
       ? []
       : db
-          .query(`WITH ${memberCte}, ${requestCte}, ranked AS (
+          .query(`WITH ${requestCte}, ${memberCte(requestedIdentityFilter('sourceSessionId'))}, ranked AS (
       SELECT requested.request_key, members.*,
         ROW_NUMBER() OVER (PARTITION BY requested.request_key ORDER BY ordinal) AS rank
       FROM requested JOIN members ON machine_id = machine AND harness_key = harness AND source_session_id = session_id
-    ) SELECT * FROM ranked WHERE rank <= 2 ORDER BY request_key, rank`)
-          .all(revision, JSON.stringify([...sessionRequests.values()])),
+    ) SELECT ranked.*, ${EVIDENCE_MEMBER_DETAILS} FROM ranked
+      JOIN served_report_rows metadata ON metadata.revision = ? AND metadata.ordinal = ranked.ordinal
+      WHERE rank <= 2 ORDER BY request_key, rank`)
+          .all(JSON.stringify([...sessionRequests.values()]), revision, revision),
   );
   const desktopRequests = new Map<string, readonly string[]>();
   for (const [key, rows] of roots) {
@@ -1000,27 +1152,57 @@ const readSessionEvidencePage = (
       }),
     );
   const desktops = readDesktops([...desktopRequests.values()]);
-  const childRequests = [...sessionRequests].flatMap(([key, request]) =>
-    roots.get(key)?.length === 1 ? [[...request, desktops.get(key)?.desktop_session_id ?? null]] : [],
+  const childRequests = scopes.flatMap((scope) =>
+    scope.links.flatMap((link) => {
+      const request = sessionRequests.get(link.key);
+      return link.detachedAt === null && link.kind === 'session' && request && roots.get(link.key)?.length === 1
+        ? [
+            [
+              JSON.stringify([link.threadId, link.key]),
+              ...request.slice(1),
+              desktops.get(link.key)?.desktop_session_id ?? null,
+              link.threadId,
+            ],
+          ]
+        : [];
+    }),
   );
+  const desktopChildFilter = childRequests.some((request) => request[4] !== null)
+    ? `OR (machine_id, json_extract(source_row_json, '$.source.harnessKey'),
+        json_extract(source_row_json, '$.source.sourceSessionId')) IN (
+        SELECT requested.machine, requested.harness, desktop.cli_session_id
+        FROM requested JOIN claude_desktop_sessions desktop
+          ON desktop.machine_id = requested.machine AND desktop.spawned_from_session_id = requested.desktop_id
+        WHERE requested.desktop_id IS NOT NULL
+      )`
+    : '';
   const children = groupEvidenceRecords(
     childRequests.length === 0
       ? []
       : db
-          .query(`WITH ${memberCte}, requested AS (
+          .query(`WITH requested AS MATERIALIZED (
       SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
         json_extract(value, '$[2]') AS harness, json_extract(value, '$[3]') AS session_id,
-        json_extract(value, '$[4]') AS desktop_id FROM json_each(?)
+        json_extract(value, '$[4]') AS desktop_id, json_extract(value, '$[5]') AS thread_id FROM json_each(?)
+    ), ${memberCte(`${requestedIdentityFilter('parentSourceSessionId')} ${desktopChildFilter}`)}, candidates AS (
+      SELECT requested.request_key, requested.thread_id, members.*
+      FROM requested JOIN members ON machine_id = machine AND harness_key = harness AND parent_session_id = session_id
+      UNION ALL
+      SELECT DISTINCT requested.request_key, requested.thread_id, members.*
+      FROM requested JOIN claude_desktop_sessions desktop
+        ON desktop.machine_id = machine AND desktop.spawned_from_session_id = desktop_id
+      JOIN members ON members.machine_id = machine AND harness_key = harness
+        AND source_session_id = desktop.cli_session_id AND parent_session_id IS NULL
+      WHERE desktop_id IS NOT NULL
     ), ranked AS (
-      SELECT requested.request_key, members.*,
+      SELECT requested.*,
         ROW_NUMBER() OVER (PARTITION BY requested.request_key ORDER BY active_time DESC, ordinal) AS rank
-      FROM requested JOIN members ON machine_id = machine AND harness_key = harness AND (
-        parent_session_id = session_id OR (desktop_id IS NOT NULL AND parent_session_id IS NULL AND EXISTS (
-          SELECT 1 FROM claude_desktop_sessions desktop WHERE desktop.machine_id = machine
-            AND desktop.spawned_from_session_id = desktop_id AND desktop.cli_session_id = source_session_id
-        )))
-    ) SELECT * FROM ranked WHERE rank <= ? ORDER BY request_key, rank`)
-          .all(revision, JSON.stringify(childRequests), WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1),
+      FROM candidates requested
+      WHERE ${nonDetachedSessionSql('requested.machine_id', 'requested.harness_key', 'requested.source_session_id')}
+    ) SELECT ranked.*, ${EVIDENCE_MEMBER_DETAILS} FROM ranked
+      JOIN served_report_rows metadata ON metadata.revision = ? AND metadata.ordinal = ranked.ordinal
+      WHERE rank <= ? ORDER BY request_key, rank`)
+          .all(JSON.stringify(childRequests), revision, revision, WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1),
   );
   const childDesktopRequests = new Map<string, readonly string[]>();
   for (const rows of children.values()) {
@@ -1042,17 +1224,18 @@ const readSessionEvidencePage = (
     branchRequests.size === 0
       ? []
       : db
-          .query(`WITH requested AS (
+          .query(`WITH requested AS MATERIALIZED (
       SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
         json_extract(value, '$[2]') AS host, json_extract(value, '$[3]') AS repository,
-        json_extract(value, '$[4]') AS ref FROM json_each(?)
+        json_extract(value, '$[4]') AS ref, json_extract(value, '$[5]') AS thread_id FROM json_each(?)
     ), paths AS (
       SELECT DISTINCT requested.request_key, json_extract(source_row_json, '$.source.sourcePath') AS checkout_path
       FROM requested JOIN served_report_rows ON machine_id = machine AND revision = ?
         AND lower(json_extract(source_row_json, '$.source.vcs.repository.host')) = host
-        AND json_extract(source_row_json, '$.source.vcs.repository.ownerPath') = repository
+        AND lower(json_extract(source_row_json, '$.source.vcs.repository.ownerPath')) = repository
         AND json_extract(source_row_json, '$.source.vcs.branches[#-1].name') = ref
         AND json_extract(source_row_json, '$.source.sourcePath') IS NOT NULL
+        AND ${nonDetachedSessionSql('machine_id', "json_extract(source_row_json, '$.source.harnessKey')", "json_extract(source_row_json, '$.source.sourceSessionId')")}
     ), ranked AS (
       SELECT *, ROW_NUMBER() OVER (PARTITION BY request_key ORDER BY checkout_path) AS rank FROM paths
     ) SELECT * FROM ranked WHERE rank <= ? ORDER BY request_key, rank`)
@@ -1144,7 +1327,7 @@ const readThreadSessionEvidence = (
       }
       const root = roots[0];
       add(root, parsed.harness);
-      const children = page.children.get(link.key) ?? [];
+      const children = page.children.get(JSON.stringify([link.threadId, link.key])) ?? [];
       if (children.length > WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren) {
         truncated = true;
       }
@@ -1152,7 +1335,7 @@ const readThreadSessionEvidence = (
         add(child, parsed.harness, parsed.sessionId);
       }
     } else if (parsed?.kind === 'branch') {
-      const paths = page.branches.get(JSON.stringify([input.machineId, link.key])) ?? [];
+      const paths = page.branches.get(JSON.stringify([link.threadId, input.machineId, link.key])) ?? [];
       if (paths.length > WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren) {
         truncated = true;
       }

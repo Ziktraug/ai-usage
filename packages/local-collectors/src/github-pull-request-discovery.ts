@@ -151,7 +151,18 @@ export const discoverPullRequests = (
       timeoutMs: options.timeoutMs ?? GITHUB_PULL_REQUEST_DEFAULTS.timeoutMs,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     };
-    if (options.account !== undefined) {
+    if (options.account === undefined) {
+      const authentication = yield* read(run, {
+        ...base,
+        env,
+        args: ['auth', 'status', '--active', '--hostname', SUPPORTED_GITHUB_HOST],
+      });
+      if (authentication.outcome !== 'observed') {
+        return authentication.outcome === 'network'
+          ? batch('unauthenticated', 'gh active account is unauthenticated')
+          : batch(authentication.outcome, authentication.outcomeMessage);
+      }
+    } else {
       const token = yield* read(run, {
         ...base,
         env,

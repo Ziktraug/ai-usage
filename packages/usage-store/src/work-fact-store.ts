@@ -13,7 +13,7 @@ import {
 import { WORK_THREAD_BOUNDS } from '@ai-usage/report-core/work-thread';
 import { WORK_THREAD_VIEW_BOUNDS } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
-import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import type { UsageStoreError, UsageStoreErrorReason } from './errors';
 import type {
   ImportCheckoutStatusObservationsInput,
   ImportJiraIssueObservationsInput,
@@ -30,7 +30,6 @@ import type {
   WorkFactRunState,
   WorkFactRunStates,
 } from './index';
-import { queryLatestPullRequestObservations as queryLatestStoredPullRequests } from './index';
 
 /**
  * Durable storage for the external and local fact family of the Work view (ADR 0051, ADR 0054):
@@ -119,6 +118,7 @@ export const workFactSchemaSql = `
     modified_count INTEGER CHECK (modified_count IS NULL OR modified_count >= 0),
     untracked_count INTEGER CHECK (untracked_count IS NULL OR untracked_count >= 0),
     last_commit_at TEXT,
+    counts_changed_at TEXT,
     dirty INTEGER CHECK (dirty IN (0, 1))
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_checkout_status_observations_identity
@@ -151,7 +151,8 @@ export const workFactSchemaSql = `
     observed INTEGER NOT NULL CHECK (observed >= 0),
     failed INTEGER NOT NULL CHECK (failed >= 0),
     disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
-    message TEXT
+    message TEXT,
+    outcome_code TEXT CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')
   ) WITHOUT ROWID;
 `;
 
@@ -180,56 +181,21 @@ interface SqliteDatabase {
 
 /** Presence-based, additive migration; only called by the usage-store writer. */
 export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {
-  const columns = db.query('PRAGMA table_info(pull_request_observations)').all() as { name: string }[];
   let changed = false;
-  for (const name of ['discovery_role', 'mergeable', 'merge_state_status']) {
-    if (!columns.some((column) => column.name === name)) {
-      db.exec(`ALTER TABLE pull_request_observations ADD COLUMN ${name} TEXT`);
-      changed = true;
+  for (const [table, additions] of [
+    ['pull_request_observations', ['discovery_role', 'mergeable', 'merge_state_status']],
+    ['checkout_status_observations', ['counts_changed_at']],
+    ['work_fact_run_state', ['outcome_code']],
+  ] as const) {
+    const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    for (const name of additions) {
+      if (!columns.some((column) => column.name === name)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} TEXT`);
+        changed = true;
+      }
     }
   }
   return changed;
-};
-
-export interface QueryDiscoveredPullRequestsInput {
-  readonly dbPath: string;
-  readonly sinceMs: number;
-}
-
-export interface DiscoveredPullRequests {
-  readonly items: readonly PullRequestObservation[];
-  readonly skipped: number;
-  /** The bounded candidate read could not cover all stored pull request identities. */
-  readonly truncated: boolean;
-}
-
-/** Successful observations survive failed reads; an older discovery role never overrides a newer success. */
-export const queryDiscoveredPullRequests = (
-  input: QueryDiscoveredPullRequestsInput,
-): Effect.Effect<DiscoveredPullRequests, UsageStoreError> => {
-  if (!Number.isSafeInteger(input.sinceMs) || Math.abs(input.sinceMs) > 8_640_000_000_000_000) {
-    return Effect.fail(
-      new UsageStoreError({
-        cause: 'sinceMs must be a valid integer timestamp',
-        message: 'Discovered pull request query is out of bounds',
-        operation: 'queryDiscoveredPullRequests',
-        reason: 'invalid-input',
-      }),
-    );
-  }
-  return queryLatestStoredPullRequests({
-    dbPath: input.dbPath,
-    discoveredSinceMs: input.sinceMs,
-    limit: MAX_WORK_FACT_QUERY_LIMIT,
-  }).pipe(
-    Effect.map(({ items, skipped, truncated }) => ({
-      items: items.flatMap(({ latestObserved }) =>
-        latestObserved?.discoveryRole && Date.parse(latestObserved.observedAt) >= input.sinceMs ? [latestObserved] : [],
-      ),
-      skipped,
-      truncated,
-    })),
-  );
 };
 
 interface WorkFactStoreDependencies {
@@ -281,6 +247,7 @@ interface CheckoutStatusRecord {
   behind: number | null;
   branch: string | null;
   checkout_path: string;
+  counts_changed_at?: string | null;
   dirty: number | null;
   head_sha: string | null;
   id: number;
@@ -320,6 +287,7 @@ interface RunStateRecord {
   machine_id: string;
   message: string | null;
   observed: number;
+  outcome_code?: string | null;
   ran_at: string;
   source_id: string;
 }
@@ -378,6 +346,54 @@ const checkoutStatusValue = (record: CheckoutStatusRecord): unknown => ({
   untrackedCount: record.untracked_count,
   upstream: record.upstream,
 });
+
+const CHECKOUT_COUNT_COLUMNS = ['ahead', 'behind', 'staged_count', 'modified_count', 'untracked_count'] as const;
+
+/** Keep the last proven count change on every success so retention cannot turn an unchanged poll into activity. */
+const updateCheckoutCountChanges = (
+  db: SqliteDatabase,
+  key: Pick<CheckoutStatusObservation, 'machineId' | 'checkoutPath'>,
+  baselineId: number | null,
+): void => {
+  const records = db
+    .query(`
+    SELECT * FROM checkout_status_observations
+    WHERE machine_id = ? AND checkout_path = ? AND outcome = 'observed'
+    ORDER BY observed_at, id
+  `)
+    .all(key.machineId, key.checkoutPath) as CheckoutStatusRecord[];
+  const first = records[0];
+  if (first === undefined) {
+    return;
+  }
+  let previous: CheckoutStatusRecord | undefined;
+  let changedAt: string | null = null;
+  const update = db.query('UPDATE checkout_status_observations SET counts_changed_at = ? WHERE id = ?');
+  for (const record of records) {
+    const checkpoint = record.id === baselineId ? record.counts_changed_at : null;
+    if (
+      previous !== undefined &&
+      CHECKOUT_COUNT_COLUMNS.some(
+        (column) => previous?.[column] !== null && record[column] !== null && previous?.[column] !== record[column],
+      )
+    ) {
+      // A new sample before retained history must not replace its earlier proven change
+      // with the date of the first poll that happens to remain in the retention window.
+      changedAt =
+        checkpoint && checkpoint > previous.observed_at && checkpoint <= record.observed_at
+          ? checkpoint
+          : record.observed_at;
+    } else if (checkpoint && (changedAt === null || checkpoint > changedAt)) {
+      // Only the pre-import retained baseline carries proof from pruned predecessors.
+      // Later rows are recomputed so a backfill inside that window can move a change earlier.
+      changedAt = checkpoint;
+    }
+    if ((record.counts_changed_at ?? null) !== changedAt) {
+      update.run(changedAt, record.id);
+    }
+    previous = record;
+  }
+};
 
 /** The stored comments; a column that no longer parses is handed over as text, which is not a list and fails re-validation. */
 const commentsFromColumn = (value: string): unknown => {
@@ -652,9 +668,13 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
       Effect.try({
         try: () => {
           const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
-          const touched = new Map<string, Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'>>();
+          const touched = new Map<
+            string,
+            Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'> & { baselineId: number | null }
+          >();
           db.exec('BEGIN IMMEDIATE');
           try {
+            migrateWorkFactSchema(db);
             const insert = db.query(`
               INSERT OR IGNORE INTO checkout_status_observations (
                 machine_id, checkout_path, observed_at, outcome, branch, head_sha, upstream, ahead, behind,
@@ -666,6 +686,15 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               if (observation === null) {
                 result.rejected += 1;
                 continue;
+              }
+              const identity = JSON.stringify([observation.machineId, observation.checkoutPath]);
+              if (!touched.has(identity)) {
+                const baseline = db
+                  .query(`SELECT id FROM checkout_status_observations
+                  WHERE machine_id = ? AND checkout_path = ? AND outcome = 'observed'
+                  ORDER BY observed_at, id LIMIT 1`)
+                  .get(observation.machineId, observation.checkoutPath) as { id: number } | null;
+                touched.set(identity, { ...observation, baselineId: baseline?.id ?? null });
               }
               insert.run(
                 observation.machineId,
@@ -688,9 +717,9 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               } else {
                 result.unchanged += 1;
               }
-              touched.set(JSON.stringify([observation.machineId, observation.checkoutPath]), observation);
             }
             for (const key of touched.values()) {
+              updateCheckoutCountChanges(db, key, key.baselineId);
               result.pruned += retainCheckout(db, key);
             }
             db.exec('COMMIT');
@@ -777,6 +806,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
 
   const recordWorkFactRun = (input: RecordWorkFactRunInput): Effect.Effect<{ changed: boolean }, UsageStoreError> => {
     const ranAt = normalizeIsoTimestamp(input.ranAt);
+    const outcomeCode = input.outcomeCode ?? null;
     if (
       !isWorkFactSourceId(input.sourceId) ||
       ranAt === null ||
@@ -784,7 +814,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
       input.machineId === undefined ||
       !(Number.isSafeInteger(input.observed) && input.observed >= 0) ||
       !(Number.isSafeInteger(input.failed) && input.failed >= 0) ||
-      !(input.message === null || typeof input.message === 'string')
+      !(input.message === null || typeof input.message === 'string') ||
+      !(outcomeCode === null || outcomeCode === 'unauthenticated')
     ) {
       return Effect.fail(
         usageStoreError('recordWorkFactRun', input.dbPath, 'Work fact run state is invalid', 'invalid-input'),
@@ -794,20 +825,31 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
         try: () => {
+          migrateWorkFactSchema(db);
           const existing = db
             .query('SELECT * FROM work_fact_run_state WHERE source_id = ?')
             .get(input.sourceId) as RunStateRecord | null;
           db.query(`
-            INSERT INTO work_fact_run_state (source_id, machine_id, ran_at, observed, failed, disabled, message)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO work_fact_run_state (source_id, machine_id, ran_at, observed, failed, disabled, message, outcome_code)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_id) DO UPDATE SET
               machine_id = excluded.machine_id,
               ran_at = excluded.ran_at,
               observed = excluded.observed,
               failed = excluded.failed,
               disabled = excluded.disabled,
-              message = excluded.message
-          `).run(input.sourceId, input.machineId, ranAt, input.observed, input.failed, input.disabled ? 1 : 0, message);
+              message = excluded.message,
+              outcome_code = excluded.outcome_code
+          `).run(
+            input.sourceId,
+            input.machineId,
+            ranAt,
+            input.observed,
+            input.failed,
+            input.disabled ? 1 : 0,
+            message,
+            outcomeCode,
+          );
           const changed =
             existing === null ||
             existing.machine_id !== input.machineId ||
@@ -815,7 +857,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
             existing.observed !== input.observed ||
             existing.failed !== input.failed ||
             existing.disabled !== (input.disabled ? 1 : 0) ||
-            existing.message !== message;
+            existing.message !== message ||
+            (existing.outcome_code ?? null) !== outcomeCode;
           return { changed };
         },
         catch: (cause) => usageStoreError('recordWorkFactRun', input.dbPath, cause, 'storage-failure'),
@@ -824,13 +867,10 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestPullRequestObservations = (
-    query:
-      | (QueryLatestPullRequestObservationsInput & { readonly discoveredSinceMs?: number })
-      | QueryPullRequestObservationBatchInput,
+    query: QueryLatestPullRequestObservationsInput | QueryPullRequestObservationBatchInput,
   ): Effect.Effect<LatestPullRequestObservations, UsageStoreError> => {
     const batch = 'batch' in query ? query.batch : undefined;
-    const input: QueryLatestPullRequestObservationsInput & { readonly discoveredSinceMs?: number } =
-      'batch' in query ? { dbPath: query.dbPath } : query;
+    const input: QueryLatestPullRequestObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
     const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
     const links = input.links ?? [];
     if (
@@ -850,9 +890,6 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               !Number.isSafeInteger(key.number) ||
               key.number <= 0,
           ))) ||
-      (input.discoveredSinceMs !== undefined &&
-        (!Number.isSafeInteger(input.discoveredSinceMs) ||
-          Math.abs(input.discoveredSinceMs) > 8_640_000_000_000_000)) ||
       !validMachineId(input.machineId) ||
       links.length > MAX_WORK_FACT_QUERY_LIMIT ||
       links.some(
@@ -891,30 +928,10 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
-          const discoveredSince = input.discoveredSinceMs;
-          const caseInsensitive = batch !== undefined || discoveredSince !== undefined;
+          const caseInsensitive = batch !== undefined;
           const identityColumns = caseInsensitive
             ? 'machine_id, LOWER(host), LOWER(repository), number'
             : 'machine_id, host, repository, number';
-          if (discoveredSince !== undefined) {
-            const columns = db.query('PRAGMA table_info(pull_request_observations)').all() as { name: string }[];
-            if (!columns.some((column) => column.name === 'discovery_role')) {
-              return { items: [], skipped: 0, truncated: false };
-            }
-          }
-          const discoveryFilter =
-            discoveredSince === undefined
-              ? ''
-              : `
-            AND EXISTS (
-              SELECT 1 FROM ranked AS discovered
-              WHERE discovered.machine_id = ranked.machine_id
-                AND LOWER(discovered.host) = LOWER(ranked.host)
-                AND LOWER(discovered.repository) = LOWER(ranked.repository)
-                AND discovered.number = ranked.number
-                AND discovered.outcome = 'observed' AND discovered.rank_outcome = 1
-                AND discovered.discovery_role IS NOT NULL AND discovered.observed_at >= ?
-            )`;
           const records = db
             .query(`
               WITH ranked AS (
@@ -932,7 +949,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 WHERE (? IS NULL OR machine_id = ?) ${linkFilter}
               )
               SELECT * FROM ranked
-              WHERE (rank_all = 1 OR (outcome = 'observed' AND rank_outcome = 1)) ${discoveryFilter}
+              WHERE rank_all = 1 OR (outcome = 'observed' AND rank_outcome = 1)
               ORDER BY key_latest DESC, ${identityColumns}, rank_all
               LIMIT ?
             `)
@@ -940,7 +957,6 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               input.machineId ?? null,
               input.machineId ?? null,
               ...linkParams,
-              ...(discoveredSince === undefined ? [] : [new Date(discoveredSince).toISOString()]),
               2 * (limit + 1),
             ) as PullRequestRecord[];
           return groupLatest(
@@ -1034,12 +1050,33 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ...pathParams,
               2 * (limit + 1),
             ) as CheckoutStatusRecord[];
-          return groupLatest(
+          const grouped = groupLatest(
             records,
             (record) => JSON.stringify([record.machine_id, record.checkout_path]),
-            (record) => parseCheckoutStatusObservation(checkoutStatusValue(record)),
+            (record) =>
+              record.counts_changed_at != null && normalizeIsoTimestamp(record.counts_changed_at) === null
+                ? null
+                : parseCheckoutStatusObservation(checkoutStatusValue(record)),
             limit,
           );
+          const changedByIdentity = new Map(
+            records
+              .filter((record) => record.outcome === 'observed')
+              .map((record) => [
+                JSON.stringify([record.machine_id, record.checkout_path]),
+                record.counts_changed_at == null ? null : normalizeIsoTimestamp(record.counts_changed_at),
+              ]),
+          );
+          return {
+            ...grouped,
+            items: grouped.items.map((item) => ({
+              ...item,
+              countsChangedAt:
+                item.latestObserved === null
+                  ? null
+                  : (changedByIdentity.get(JSON.stringify([item.latest.machineId, item.latest.checkoutPath])) ?? null),
+            })),
+          };
         },
         catch: (cause) => usageStoreReadError('queryLatestCheckoutStatusObservations', input.dbPath, cause),
       }),
@@ -1136,6 +1173,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           let skipped = 0;
           for (const record of records) {
             const ranAt: CanonicalInstant | null = normalizeIsoTimestamp(record.ran_at);
+            const outcomeCode = record.outcome_code ?? null;
             if (
               !isWorkFactSourceId(record.source_id) ||
               ranAt === null ||
@@ -1144,7 +1182,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               !(Number.isSafeInteger(record.observed) && record.observed >= 0) ||
               !(Number.isSafeInteger(record.failed) && record.failed >= 0) ||
               !(record.disabled === 0 || record.disabled === 1) ||
-              !(record.message === null || typeof record.message === 'string')
+              !(record.message === null || typeof record.message === 'string') ||
+              !(outcomeCode === null || outcomeCode === 'unauthenticated')
             ) {
               skipped += 1;
               continue;
@@ -1155,6 +1194,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               machineId: record.machine_id,
               message: record.message,
               observed: record.observed,
+              outcomeCode,
               ranAt,
               sourceId: record.source_id,
             });

@@ -1,5 +1,5 @@
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import { applyWorkThreadCommand, seedWorkThreads, type WorkThreadSeed } from '@ai-usage/usage-store/writer';
+import { applyWorkThreadCommand } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import type { UsageEngineWorkThreadPort } from './runtime';
 
@@ -11,12 +11,7 @@ export interface WorkThreadServiceOptions {
   readonly runWithWriter: <Value>(operation: () => Promise<Value>, signal?: AbortSignal) => Promise<Value>;
 }
 
-export interface WorkThreadService extends UsageEngineWorkThreadPort {
-  readonly seedWorkThreads: (
-    seeds: readonly WorkThreadSeed[],
-    signal?: AbortSignal,
-  ) => Promise<{ readonly created: number; readonly existing: number }>;
-}
+export type WorkThreadService = UsageEngineWorkThreadPort;
 
 /** Short durable writes share the engine gate; domain refusals remain successful command answers. */
 export const createWorkThreadService = (options: WorkThreadServiceOptions): WorkThreadService => {
@@ -35,19 +30,6 @@ export const createWorkThreadService = (options: WorkThreadServiceOptions): Work
             }),
           ),
         }),
-        signal,
-      ),
-    seedWorkThreads: async (seeds, signal) =>
-      await options.runWithWriter(
-        async () =>
-          await Effect.runPromise(
-            seedWorkThreads({
-              dbPath: options.dbPath,
-              machineId: options.machine().id,
-              now: now().toISOString(),
-              seeds,
-            }),
-          ),
         signal,
       ),
   };

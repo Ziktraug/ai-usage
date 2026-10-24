@@ -229,7 +229,9 @@ describe('work-thread reader', () => {
       },
       -10,
     );
-    await run(importPullRequestObservations({ dbPath, observations: [pr(-8), pr(-2, 'timeout')] }));
+    await run(
+      importPullRequestObservations({ dbPath, observations: [{ ...pr(-8), updatedAt: at(-8) }, pr(-2, 'timeout')] }),
+    );
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     expect(detail?.row.markers.pullRequests[0]).toMatchObject({
       latest: { outcome: 'timeout' },
@@ -238,9 +240,9 @@ describe('work-thread reader', () => {
       mergeStateStatus: null,
       role: null,
     });
-    expect(detail?.row.afterDone).toEqual({ count: 2, latestAt: at(-2) });
+    expect(detail?.row.afterDone).toEqual({ count: 1, latestAt: at(-8) });
     expect(detail?.row.thread.followState).toBe('done');
-    expect(detail?.row.lastActivityAt).toBe(at(-2));
+    expect(detail?.row.lastActivityAt).toBe(at(-8));
     const link = (await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] })))[0];
     if (!link) {
       throw new Error('No link');
@@ -250,6 +252,294 @@ describe('work-thread reader', () => {
     expect(detached?.row.markers.pullRequests).toEqual([]);
     expect(detached?.detachedLinks).toHaveLength(1);
     expect(detached?.row.afterDone).toBeNull();
+  });
+
+  test('polls and failures do not become activity after Done, but source changes do', async () => {
+    const dbPath = await fixture();
+    const threadId = await create(dbPath, [
+      { kind: 'pull-request', key: 'github.com/fixture/repo#7' },
+      { kind: 'jira-issue', key: 'jira:default/ACT-1' },
+      sessionLink('old-session'),
+    ]);
+    await publish(dbPath, [session('old-session', { activeDate: at(-20), endDate: at(-20), date: at(-21) })]);
+    await command(
+      dbPath,
+      {
+        commandId: randomUUID(),
+        op: 'set-follow-state',
+        threadId,
+        expectedRevision: 1,
+        to: 'done',
+        reason: null,
+        waitingFor: null,
+        waitingOn: null,
+        acknowledgedRemainders: [],
+      },
+      -10,
+    );
+    const checkout = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/project',
+      outcome: 'observed',
+      observedAt: at(-8),
+      modifiedCount: 1,
+      stagedCount: 0,
+      untrackedCount: 0,
+      ahead: 0,
+      behind: 0,
+      lastCommitAt: at(-20),
+    });
+    const jira = parseJiraIssueObservation({
+      machineId: MACHINE,
+      key: 'ACT-1',
+      outcome: 'observed',
+      observedAt: at(-8),
+      updatedAt: at(-20),
+    });
+    if (checkout === null || jira === null) {
+      throw new Error('Invalid activity fixture');
+    }
+    await run(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout, { ...checkout, observedAt: at(-7) }] }),
+    );
+    await run(importJiraIssueObservations({ dbPath, observations: [jira, { ...jira, observedAt: at(-6) }] }));
+    await run(
+      importPullRequestObservations({ dbPath, observations: [{ ...pr(-8), updatedAt: at(-20) }, pr(-1, 'timeout')] }),
+    );
+    const unchanged = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(unchanged?.row.afterDone).toBeNull();
+    expect(unchanged?.row.lastActivityAt).toBe(at(-10));
+    await run(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          { ...checkout, observedAt: at(-5), modifiedCount: 2 },
+          { ...checkout, observedAt: at(-2), modifiedCount: 2 },
+        ],
+      }),
+    );
+    await run(
+      importJiraIssueObservations({ dbPath, observations: [{ ...jira, observedAt: at(-1), updatedAt: at(-4) }] }),
+    );
+    await run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [{ ...pr(0), state: 'MERGED', mergedAt: at(-3), updatedAt: at(-20) }],
+      }),
+    );
+    for (const row of [
+      (await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row,
+      (await run(queryWorkThreadList({ dbPath, query: { ...QUERY, tab: 'done' }, now: NOW }))).rows[0],
+    ]) {
+      expect(row?.afterDone).toEqual({ count: 3, latestAt: at(-3) });
+      expect(row?.lastActivityAt).toBe(at(-3));
+    }
+  });
+
+  test('backfilled checkout changes before Done remove the previously newer activity', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [session('old-session', { date: at(-21), activeDate: at(-20), endDate: at(-20) })]);
+    const threadId = await create(dbPath, [sessionLink('old-session')]);
+    await command(
+      dbPath,
+      {
+        commandId: randomUUID(),
+        op: 'set-follow-state',
+        threadId,
+        expectedRevision: 1,
+        to: 'done',
+        reason: null,
+        waitingFor: null,
+        waitingOn: null,
+        acknowledgedRemainders: [],
+      },
+      -0.5,
+    );
+    const observation = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/project',
+      observedAt: at(-2),
+      outcome: 'observed',
+      modifiedCount: 0,
+      lastCommitAt: at(-20),
+    });
+    if (observation === null) {
+      throw new Error('Invalid checkout fixture');
+    }
+    await run(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [observation, { ...observation, observedAt: at(0), modifiedCount: 1 }],
+      }),
+    );
+    expect((await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.afterDone).toEqual({
+      count: 1,
+      latestAt: at(0),
+    });
+    await run(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [{ ...observation, observedAt: at(-1), modifiedCount: 1 }],
+      }),
+    );
+    for (const row of [
+      (await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row,
+      (await run(queryWorkThreadList({ dbPath, query: { ...QUERY, tab: 'done' }, now: NOW }))).rows[0],
+    ]) {
+      expect(row?.afterDone).toBeNull();
+      expect(row?.lastActivityAt).toBe(at(-0.5));
+    }
+  });
+
+  test('deduplicates checkout paths before the 64-marker bound and exposes omissions', async () => {
+    const dbPath = await fixture();
+    const parents = Array.from({ length: 4 }, (_, i) => `parent-${i}`);
+    const rows = parents.flatMap((parent, i) => [
+      session(parent),
+      ...Array.from({ length: 20 }, (_, child) =>
+        session(`${parent}-${child}`, {
+          source: {
+            ...session(`${parent}-${child}`).source,
+            harnessKey: 'codex',
+            sourceSessionId: `${parent}-${child}`,
+            rootSourceSessionId: parent,
+            parentSourceSessionId: parent,
+            sourcePath: `/fixture/${i}-${child}`,
+          },
+        }),
+      ),
+    ]);
+    await publish(dbPath, rows);
+    const threadId = await create(
+      dbPath,
+      parents.map((parent) => sessionLink(parent)),
+    );
+    for (const result of [
+      await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })),
+      await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW })),
+    ]) {
+      const row = result && ('row' in result ? result.row : result.rows[0]);
+      expect(row?.markers.local).toHaveLength(64);
+      expect(result?.sources.find((source) => source.source === 'checkouts')?.state).toBe('truncated');
+    }
+  });
+
+  test('returns the newest 64 detached links and reports the omitted history', async () => {
+    const dbPath = await fixture();
+    const threadId = await create(dbPath);
+    const db = new Database(dbPath);
+    try {
+      for (let i = 0; i < 70; i++) {
+        db.query(
+          'INSERT INTO work_thread_links (link_id, thread_id, kind, link_key, provenance, created_at, detached_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ).run(randomUUID(), threadId, 'pull-request', `github.com/fixture/repo#${i + 1}`, 'user', at(-100), at(-i));
+      }
+    } finally {
+      db.close();
+    }
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.detachedLinks).toHaveLength(64);
+    expect(detail?.detachedLinks[0]?.key).toBe('github.com/fixture/repo#1');
+    expect(detail?.detachedLinks.at(-1)?.key).toBe('github.com/fixture/repo#64');
+    expect(detail?.sources.find((source) => source.source === 'github')).toMatchObject({
+      state: 'truncated',
+      message: expect.stringContaining('detached'),
+    });
+  });
+
+  test('unauthenticated discovery has a typed source state with no linked observations', async () => {
+    const dbPath = await fixture();
+    await run(
+      recordWorkFactRun({
+        dbPath,
+        machineId: MACHINE,
+        sourceId: 'github.pull-requests',
+        disabled: false,
+        failed: 1,
+        observed: 0,
+        ranAt: NOW,
+        message: 'Fixture reason without credential words',
+        outcomeCode: 'unauthenticated',
+      }),
+    );
+    expect(
+      (await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }))).sources.find(
+        (source) => source.source === 'github',
+      )?.state,
+    ).toBe('unauthenticated');
+    const threadId = await create(dbPath);
+    expect(
+      (await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.sources.find(
+        (source) => source.source === 'github',
+      )?.state,
+    ).toBe('unauthenticated');
+  });
+
+  test('detaching a declared child removes its episodes, counts, marks, checkouts and activity only from that thread', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [
+      session('parent', { date: at(-300), activeDate: at(-299), endDate: at(-299) }),
+      session('detached-child', {
+        source: {
+          ...session('detached-child').source,
+          harnessKey: 'codex',
+          sourceSessionId: 'detached-child',
+          parentSourceSessionId: 'parent',
+          rootSourceSessionId: 'parent',
+          sourcePath: '/fixture/detached',
+        },
+      }),
+    ]);
+    const threadId = await create(dbPath, [sessionLink('parent'), sessionLink('detached-child')]);
+    const siblingThread = await create(dbPath, [sessionLink('parent')]);
+    const childLink = (await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).find(
+      (link) => link.key === sessionLink('detached-child').key,
+    );
+    if (childLink === undefined) {
+      throw new Error('Missing child link');
+    }
+    await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: childLink.linkId }, -12);
+    await command(
+      dbPath,
+      {
+        commandId: randomUUID(),
+        op: 'set-follow-state',
+        threadId,
+        expectedRevision: 1,
+        to: 'done',
+        reason: null,
+        waitingFor: null,
+        waitingOn: null,
+        acknowledgedRemainders: [],
+      },
+      -10,
+    );
+    const checkout = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/detached',
+      observedAt: at(-1),
+      outcome: 'observed',
+      lastCommitAt: at(-2),
+    });
+    if (checkout === null) {
+      throw new Error('Invalid detached checkout fixture');
+    }
+    await run(importCheckoutStatusObservations({ dbPath, observations: [checkout] }));
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, tab: 'done' }, now: NOW }));
+    for (const row of [detail?.row, list.rows[0]]) {
+      expect(row?.sessionCount).toBe(1);
+      expect(row?.marks.filter((mark) => mark.kind === 'session')).toEqual([]);
+      expect(row?.markers.local).toHaveLength(1);
+      expect(row?.markers.local[0]?.latest).toBeNull();
+      expect(row?.afterDone).toBeNull();
+      expect(row?.lastActivityAt).toBe(at(-10));
+    }
+    expect(detail?.episodes[0]?.children).toEqual([]);
+    const sibling = await run(queryWorkThreadDetail({ dbPath, threadId: siblingThread, now: NOW }));
+    expect(sibling?.row.sessionCount).toBe(2);
+    expect(sibling?.episodes[0]?.children).toHaveLength(1);
+    expect(sibling?.row.markers.local.some((marker) => marker.latest?.checkoutPath === '/fixture/detached')).toBe(true);
   });
 
   test('maps W2 markers from the latest success across repository casing and isolates machine identities', async () => {
@@ -478,7 +768,7 @@ describe('work-thread reader', () => {
         ),
       ).toBe(true);
       expect(row?.markers.jiraIssues[0]?.latestSuccessful?.summary).toBe(`Issue ${index}`);
-      expect(row?.markers.local).toHaveLength(2);
+      expect(row?.markers.local).toHaveLength(1);
       expect(
         row?.markers.local.every(
           (marker) =>
@@ -739,8 +1029,8 @@ describe('work-thread reader', () => {
       { kind: 'branch', key: branchLinkKey({ host: 'github.com', repository: 'other/repo', ref: 'feature' }) },
     ]);
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
-    expect(detail?.row.markers.local).toHaveLength(2);
-    expect(detail?.row.markers.local.map((marker) => marker.via).sort()).toEqual(['branch-link', 'session-checkout']);
+    expect(detail?.row.markers.local).toHaveLength(1);
+    expect(detail?.row.markers.local.map((marker) => marker.via).sort()).toEqual(['branch-link']);
     expect(detail?.row.markers.local[0]?.latestSuccessful?.dirty).toBe(true);
     await command(
       dbPath,
@@ -759,7 +1049,7 @@ describe('work-thread reader', () => {
     );
     const ended = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     // The same checkout reached through branch and session remains one observed fact.
-    expect(ended?.row.afterDone).toEqual({ count: 2, latestAt: at(-1) });
+    expect(ended?.row.afterDone).toEqual({ count: 1, latestAt: at(-1) });
   });
 
   test('Jira sites cannot borrow another authority and source failures remain visible', async () => {
@@ -847,6 +1137,52 @@ describe('work-thread reader', () => {
     expect(bounded?.episodes[0]?.children).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren);
     expect(bounded?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
   });
+
+  test('measures complete search pages over 20000 served sessions and 500 threads', async () => {
+    const dbPath = await fixture();
+    await publish(
+      dbPath,
+      Array.from({ length: 20_000 }, (_, index) =>
+        session(`search-${index}`, {
+          name: index < 500 ? `Search target ${index}` : `Unrelated ${index}`,
+          sessionLabel: index < 500 ? `Search target ${index}` : `Unrelated ${index}`,
+        }),
+      ),
+    );
+    const db = new Database(dbPath);
+    try {
+      const insert = db.query(
+        `INSERT INTO work_threads (thread_id,machine_id,title,objective,project_label,intent,origin,origin_key,follow_state,follow_revision,waiting_for,waiting_on_json,done_at,done_reason,note,created_at,updated_at,last_activity_at) VALUES (?,?,'Fixture thread',NULL,'load',NULL,'user',NULL,'following',1,NULL,NULL,NULL,NULL,NULL,?,?,?)`,
+      );
+      const link = db.query(`INSERT INTO work_thread_links VALUES (?,?,?,?,'user',?,NULL)`);
+      db.transaction(() => {
+        for (let index = 0; index < 500; index++) {
+          const id = randomUUID();
+          insert.run(id, MACHINE, at(-2), at(-2), at(-2));
+          link.run(randomUUID(), id, 'session', sessionLink(`search-${index}`).key, at(-2));
+          for (let key = 0; key < 4; key++) {
+            link.run(randomUUID(), id, 'pull-request', `github.com/fixture/repo#${index * 4 + key + 1}`, at(-2));
+          }
+        }
+      })();
+    } finally {
+      db.close();
+    }
+    const samples: number[] = [];
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const started = performance.now();
+      const list = await run(
+        queryWorkThreadList({ dbPath, query: { ...QUERY, search: 'Search target', limit: 100 }, now: NOW }),
+      );
+      samples.push(performance.now() - started);
+      expect(list.rows).toHaveLength(100);
+      expect(list.rows.every((row) => row.sessionCount === 1 && row.links.length === 5)).toBe(true);
+      expect(list.nextCursor).not.toBeNull();
+    }
+    console.info(
+      `Complete thread search page: 20000 served sessions x 500 threads x 5 links, samples=[${samples.map((sample) => sample.toFixed(1)).join(', ')}] ms; median=${[...samples].sort((a, b) => a - b)[2]?.toFixed(1)} ms`,
+    );
+  }, 30_000);
 
   test('scopes old waiting threads before pagination and measures a 500-thread × 5-link list read', async () => {
     const dbPath = await fixture();

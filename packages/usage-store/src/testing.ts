@@ -25,6 +25,7 @@ export {
   queryReviewTargetResolution,
   querySkillObservations,
   queryWorkFactRunStates,
+  queryWorkThreadLinks,
   quiesceUsageStoreForShutdown,
   recordWorkFactRun,
   requestReviewAttempt,

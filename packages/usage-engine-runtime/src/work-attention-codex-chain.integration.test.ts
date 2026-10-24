@@ -12,6 +12,7 @@ import { queryWorkAttention } from '@ai-usage/report-data/work-attention-read';
 import { publishServedReportRevision, updateUsageMachineLabel, usageStorePath } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
+import { isolatedSourceOptions } from './source-test-fixtures';
 
 /**
  * Codex on the Work view end to end (ADR 0059): native rollouts, the real `codex.sessions`
@@ -62,9 +63,12 @@ describe('Codex work attention chain', () => {
     await appendFile(fixture.paths.codexRootRollout, `${JSON.stringify(askedQuestion(QUESTION_AT))}\n`);
 
     const registry = await Effect.runPromise(
-      createScheduledSourceRegistry({ codexLiveAvailable: () => false, machine: MACHINE, now: () => NOW }).pipe(
-        Effect.provideService(LocalHistoryStorage, storage),
-      ),
+      createScheduledSourceRegistry({
+        ...isolatedSourceOptions,
+        codexLiveAvailable: () => false,
+        machine: MACHINE,
+        now: () => NOW,
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const source = registry.get('codex.sessions');
     if (!source) {

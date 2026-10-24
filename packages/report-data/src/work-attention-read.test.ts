@@ -657,6 +657,7 @@ const runState = (
   machineId: MACHINE,
   message: null,
   observed: 1,
+  outcomeCode: null,
   ranAt: hoursAgo(0.25),
   sourceId,
   ...overrides,

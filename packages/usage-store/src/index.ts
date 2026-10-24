@@ -93,7 +93,13 @@ import {
   servedReportSchemaSql,
 } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
-import { createWorkFactStore, WORK_FACT_TABLES, type WorkFactSourceId, workFactSchemaSql } from './work-fact-store';
+import {
+  createWorkFactStore,
+  migrateWorkFactSchema,
+  WORK_FACT_TABLES,
+  type WorkFactSourceId,
+  workFactSchemaSql,
+} from './work-fact-store';
 import { createWorkSessionJoinStore } from './work-session-join';
 import { createWorkThreadStore, WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-store';
 
@@ -789,6 +795,7 @@ export interface RecordWorkFactRunInput {
   readonly machineId: string;
   readonly message: string | null;
   readonly observed: number;
+  readonly outcomeCode?: 'unauthenticated' | null;
   readonly ranAt: Date | string;
   readonly sourceId: WorkFactSourceId;
 }
@@ -799,6 +806,7 @@ export interface WorkFactRunState {
   readonly machineId: string;
   readonly message: string | null;
   readonly observed: number;
+  readonly outcomeCode?: 'unauthenticated' | null;
   readonly ranAt: PullRequestObservation['observedAt'];
   readonly sourceId: WorkFactSourceId;
 }
@@ -859,6 +867,7 @@ export interface QueryLatestCheckoutStatusObservationsInput {
 
 export interface LatestCheckoutStatusObservations {
   readonly items: readonly {
+    readonly countsChangedAt: CheckoutStatusObservation['observedAt'] | null;
     readonly latest: CheckoutStatusObservation;
     readonly latestObserved: CheckoutStatusObservation | null;
   }[];
@@ -1773,6 +1782,9 @@ const migrate = (db: SqliteDatabase): boolean => {
       ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
     db.exec(workFactSchemaSql);
+    if (migrateWorkFactSchema(db)) {
+      schemaChanged = true;
+    }
     db.exec(workThreadSchemaSql);
     // Additive under the same user_version: a store that created executor_observations before the
     // sign-in method was recorded gains the nullable column; older rows read as "no method".
@@ -4475,6 +4487,7 @@ export const { importCodexWorkObservations, queryCodexWorkObservations } = creat
 export const {
   applyWorkThreadCommand,
   countWorkThreads,
+  queryActiveWorkThreadLinks,
   queryWorkThreadById,
   queryWorkThreadEvents,
   queryWorkThreadLinks,
@@ -4490,6 +4503,8 @@ export const {
 });
 export type {
   ApplyWorkThreadCommandInput,
+  QueryActiveWorkThreadLinksInput,
+  QueryActiveWorkThreadLinksResult,
   QueryWorkThreadByIdInput,
   QueryWorkThreadLinksInput,
   QueryWorkThreadSessionEvidenceInput,

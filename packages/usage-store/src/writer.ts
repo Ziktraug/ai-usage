@@ -121,6 +121,7 @@ export {
   markReviewAttemptsLost,
   previewPeerMergeBundle,
   publishServedReportRevision,
+  queryActiveWorkThreadLinks,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
   queryCodexWorkObservations,
@@ -176,4 +177,8 @@ export type {
   TransitionReviewAttemptResult,
 } from './review-attempt-store';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
-export type { WorkThreadSeed } from './work-thread-store';
+export type {
+  QueryActiveWorkThreadLinksInput,
+  QueryActiveWorkThreadLinksResult,
+  WorkThreadSeed,
+} from './work-thread-store';

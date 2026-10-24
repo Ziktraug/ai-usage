@@ -58,6 +58,7 @@ import {
 } from '@ai-usage/report-core/source-control';
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
+import { parseWorkThreadLinkKey } from '@ai-usage/report-core/work-thread';
 import {
   workThreadSeedsFromJiraIssues,
   workThreadSeedsFromPullRequests,
@@ -75,6 +76,7 @@ import {
   MAX_CLAUDE_DESKTOP_SESSION_READ,
   MAX_CODEX_WORK_BATCH,
   MAX_WORK_FACT_QUERY_LIMIT,
+  queryActiveWorkThreadLinks,
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
@@ -852,7 +854,11 @@ interface DesktopWorkFactInputs {
 const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = { jiraKeys: [], links: [], paths: [], warnings: [] };
 
 const normalizedLinkKey = (link: PullRequestLink): string =>
-  pullRequestLinkKey({ host: link.host.trim().toLowerCase(), number: link.number, repository: link.repository.trim() });
+  pullRequestLinkKey({
+    host: link.host.trim().toLowerCase(),
+    number: link.number,
+    repository: link.repository.trim().toLowerCase(),
+  });
 
 /**
  * Leaves out the links whose latest stored observation already showed the pull request merged.
@@ -971,8 +977,9 @@ const desktopWorkFactInputs = (input: {
 const accountFor = (github: AiUsageGitHubConfig | undefined, link: PullRequestLink): string | null => {
   const owner = link.repository.split('/')[0]?.toLowerCase() ?? '';
   return (
-    github?.accounts?.find((account) => account.host === link.host && account.owner.toLowerCase() === owner)?.ghUser ??
-    null
+    github?.accounts?.find(
+      (account) => account.host.toLowerCase() === link.host.toLowerCase() && account.owner.toLowerCase() === owner,
+    )?.ghUser ?? null
   );
 };
 
@@ -1115,6 +1122,22 @@ const createPullRequestSource = (input: {
       const injected = input.options.workFactInputs?.linkedPullRequests
         ? yield* input.options.workFactInputs.linkedPullRequests()
         : [];
+      const threadLinks = yield* servedInputsOrEmpty(
+        'github.pull-requests',
+        queryActiveWorkThreadLinks({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'pull-request',
+          excludeObservedMerged: true,
+          limit: GITHUB_PULL_REQUEST_DEFAULTS.maxLinks,
+        }),
+        { links: [], truncated: false },
+      );
+      const threadPullRequests = threadLinks.links.flatMap((link): PullRequestLink[] => {
+        const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+        return parsed?.kind === 'pull-request' ? [parsed] : [];
+      });
+      // Store eligibility precedes its bound, so completed links cannot crowd out older pending links.
       // Explicit links keep their order and account even when a search also discovers them.
       const keyFor = (link: PullRequestLink): string =>
         pullRequestLinkKey({
@@ -1123,7 +1146,7 @@ const createPullRequestSource = (input: {
           repository: link.repository.trim().toLowerCase(),
         });
       const unique = new Map<string, { link: PullRequestLink; account: string | null }>();
-      for (const link of [...desktop.links, ...served, ...injected]) {
+      for (const link of [...desktop.links, ...served, ...injected, ...threadPullRequests]) {
         const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
         const key = keyFor(candidate);
         if (!unique.has(key)) {
@@ -1131,8 +1154,12 @@ const createPullRequestSource = (input: {
         }
       }
       const accounts = new Map<string | null, string[]>();
+      const routedOwners = new Set<string>();
       for (const account of config.github?.accounts ?? []) {
-        if (account.host === 'github.com') {
+        const owner = account.owner.toLowerCase();
+        // Match accountFor: only the first configured account for an owner can observe its PRs.
+        if (account.host === 'github.com' && !routedOwners.has(owner)) {
+          routedOwners.add(owner);
           accounts.set(account.ghUser, [...new Set([...(accounts.get(account.ghUser) ?? []), account.owner])]);
         }
       }
@@ -1141,7 +1168,8 @@ const createPullRequestSource = (input: {
       }
       const discoveryWarnings: { code: string; message: string }[] = [];
       let discoveryFailures = 0;
-      let discoveryTruncated = false;
+      let discoveryTruncated = threadLinks.truncated;
+      let discoveryUnauthenticated = false;
       for (const [account, owners] of accounts) {
         yield* abortIfRequested(context.signal);
         const discovery = yield* discoverPullRequests({
@@ -1151,6 +1179,7 @@ const createPullRequestSource = (input: {
           ...(context.signal === undefined ? {} : { signal: context.signal }),
         });
         discoveryTruncated ||= discovery.truncated;
+        discoveryUnauthenticated ||= discovery.outcome === 'unauthenticated';
         if (discovery.outcome !== 'observed') {
           discoveryFailures += 1;
           discoveryWarnings.push({
@@ -1224,6 +1253,7 @@ const createPullRequestSource = (input: {
         message,
         observed,
         ranAt: input.now(),
+        outcomeCode: discoveryUnauthenticated ? 'unauthenticated' : null,
         sourceId: 'github.pull-requests',
       }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
       return {
@@ -1339,9 +1369,25 @@ const createJiraIssueSource = (input: {
                 message: discovery.outcomeMessage ?? 'Jira issue discovery failed.',
               },
             ];
-      const candidates = [...new Set([...desktop.jiraKeys, ...discovery.keys])];
+      const threadLinks = yield* servedInputsOrEmpty(
+        'jira.issues',
+        queryActiveWorkThreadLinks({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'jira-issue',
+          jiraSite: 'default',
+          limit: JIRA_ISSUE_DEFAULTS.maxKeys,
+        }),
+        { links: [], truncated: false },
+      );
+      const threadKeys = threadLinks.links.flatMap((link) => {
+        const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+        // The current Jira observation authority is the CLI's default site only.
+        return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [parsed.key] : [];
+      });
+      const candidates = [...new Set([...desktop.jiraKeys, ...threadKeys, ...discovery.keys])];
       const keys = candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
-      const truncated = candidates.length > keys.length || discovery.truncated;
+      const truncated = candidates.length > keys.length || discovery.truncated || threadLinks.truncated;
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: keys.length });
       const batch = yield* observeJiraIssues({
         keys,
@@ -1388,6 +1434,7 @@ const createJiraIssueSource = (input: {
           : [truncation, ...discoveryWarnings.map((warning) => warning.message)].filter(Boolean).join(' ') || null,
         observed,
         ranAt: input.now(),
+        outcomeCode: discovery.outcome === 'unauthenticated' ? 'unauthenticated' : null,
         sourceId: 'jira.issues',
       }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
       return {

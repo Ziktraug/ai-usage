@@ -73,7 +73,7 @@ import {
   type UsageEngineSourceControlPort,
   type UsageEngineWriterLease,
 } from './runtime';
-import { createScheduledSourceRegistry, type ScheduledSource } from './source-adapters';
+import { createScheduledSourceRegistry, type ScheduledSource, type SourceAdapterOptions } from './source-adapters';
 import {
   createSourceControl,
   type ReportPublicationPort,
@@ -511,6 +511,16 @@ export interface LiveUsageEngineRuntimeOptions {
   /** One operator-log line per review attempt transition (ADR 0053); never a transcript. */
   readonly reportReviewAttempt?: (line: string) => void;
   readonly retainRevisions?: (input: { readonly dbPath: string; readonly now: number }) => Promise<void>;
+  /** Process seams forwarded to fact/executor sources; production uses their bounded default runners. */
+  readonly sourceOptions?: Pick<
+    SourceAdapterOptions,
+    | 'acliAvailable'
+    | 'claudeLiveAvailable'
+    | 'executorObservation'
+    | 'ghAvailable'
+    | 'gitAvailable'
+    | 'workFactProcessRunner'
+  >;
   readonly storage?: LocalHistoryStorageService;
   readonly temporaryRoot: string;
   readonly wideEventSinkLayer: Layer.Layer<WideEventResourceService | WideEventSink>;
@@ -964,6 +974,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     }
     const sources = await runWithStorage(
       createScheduledSourceRegistry({
+        ...options.sourceOptions,
         ...(options.codexLiveAvailable === undefined ? {} : { codexLiveAvailable: options.codexLiveAvailable }),
         configCwd: options.configCwd,
         dbPath: options.dbPath,

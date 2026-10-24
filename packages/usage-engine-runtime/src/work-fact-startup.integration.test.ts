@@ -10,6 +10,7 @@ import { queryWorkFactRunStates, usageStorePath } from '@ai-usage/usage-store/te
 import { Effect, Layer, TestContext } from 'effect';
 import { createScheduledSourceRegistry } from './source-adapters';
 import { createSourceControl, type SourceControlService } from './source-control';
+import { isolatedSourceOptions } from './source-test-fixtures';
 
 /**
  * The engine's first collection cycle, end to end: the real scheduler over the real source
@@ -64,6 +65,12 @@ const fakeRunner =
     if (options.command === 'git') {
       const subcommand = options.args[options.args.indexOf('-C') + 2];
       return subcommand === 'status' ? respond(cleanPorcelain) : respond('2026-10-20T10:00:00+00:00\n');
+    }
+    if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'status') {
+      return respond('');
+    }
+    if (options.command === 'gh' && options.args[0] === 'search') {
+      return respond('[]');
     }
     if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
       return respond(pullRequestView(options.args[4] ?? '', Number(options.args[2])));
@@ -176,6 +183,7 @@ describe('work fact producers on engine startup', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         const sources = yield* createScheduledSourceRegistry({
+          ...isolatedSourceOptions,
           claudeLiveAvailable: () => false,
           codexLiveAvailable: () => false,
           // No CLI is probed: the executor source stays undetected and spawns nothing.
@@ -218,7 +226,7 @@ describe('work fact producers on engine startup', () => {
     const gitPaths = calls.filter(({ command }) => command === 'git').map(({ args }) => args[args.indexOf('-C') + 1]);
     expect(new Set(gitPaths)).toEqual(new Set([checkoutPath, worktreePath]));
     const pullRequests = calls
-      .filter(({ command }) => command === 'gh')
+      .filter(({ command, args }) => command === 'gh' && args[0] === 'pr')
       .map(({ args }) => `${args[4]}#${args[2]}`)
       .sort();
     expect(pullRequests).toEqual(['fixture/project#66', 'fixture/project#67']);

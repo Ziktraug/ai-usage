@@ -10,6 +10,7 @@ import { queryCodexWorkObservations } from '@ai-usage/usage-store/testing';
 import { importCodexWorkObservations, initializeUsageStore, usageStorePath } from '@ai-usage/usage-store/writer';
 import { Cause, Effect, Exit } from 'effect';
 import { createScheduledSourceRegistry } from './source-adapters';
+import { isolatedSourceOptions } from './source-test-fixtures';
 
 const CORPUS_SIZE = 10_001;
 const NOW = new Date('2026-10-22T12:00:00.000Z');
@@ -40,7 +41,7 @@ const createCorpusSource = async (home: string) => {
     );
   }
   const registry = await Effect.runPromise(
-    createScheduledSourceRegistry({ machine, now: () => NOW }).pipe(
+    createScheduledSourceRegistry({ ...isolatedSourceOptions, machine, now: () => NOW }).pipe(
       Effect.provideService(LocalHistoryStorage, storage),
     ),
   );

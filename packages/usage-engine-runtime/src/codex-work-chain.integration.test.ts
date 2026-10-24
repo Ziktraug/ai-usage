@@ -12,6 +12,7 @@ import { queryCodexWorkObservations, queryReportRows } from '@ai-usage/usage-sto
 import { publishServedReportRevision, updateUsageMachineLabel, usageStorePath } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import { createScheduledSourceRegistry } from './source-adapters';
+import { isolatedSourceOptions } from './source-test-fixtures';
 
 const NOW = new Date('2026-10-22T12:00:00.000Z');
 const at = (second: number) => canonicalInstantFromDate(new Date(Date.UTC(2026, 9, 22, 10, 0, second)));
@@ -97,7 +98,7 @@ test('C01-C05/A03-A04: existing Codex source, auxiliary store, served families a
 
     const dbPath = usageStorePath(home);
     const registry = await Effect.runPromise(
-      createScheduledSourceRegistry({ machine, dbPath, now: () => NOW }).pipe(
+      createScheduledSourceRegistry({ ...isolatedSourceOptions, machine, dbPath, now: () => NOW }).pipe(
         Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
       ),
     );

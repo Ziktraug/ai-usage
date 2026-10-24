@@ -78,6 +78,35 @@ const readCounts = (db: Database): Record<string, number> =>
   );
 
 describe('usage-store forward migration', () => {
+  test('initialization adds nullable work fact evidence columns to a current-version store', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-work-fact-columns-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const legacy = new Database(dbPath);
+    legacy.exec('ALTER TABLE checkout_status_observations DROP COLUMN counts_changed_at');
+    legacy.exec('ALTER TABLE work_fact_run_state DROP COLUMN outcome_code');
+    const metadata = readMetadata(legacy);
+    const counts = readCounts(legacy);
+    const version = readUserVersion(legacy);
+    legacy.close();
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const migrated = new Database(dbPath, { readonly: true });
+    try {
+      expect(migrated.query('PRAGMA table_info(checkout_status_observations)').all()).toContainEqual(
+        expect.objectContaining({ name: 'counts_changed_at', type: 'TEXT', notnull: 0 }),
+      );
+      expect(migrated.query('PRAGMA table_info(work_fact_run_state)').all()).toContainEqual(
+        expect.objectContaining({ name: 'outcome_code', type: 'TEXT', notnull: 0 }),
+      );
+      expect(readMetadata(migrated)).toEqual(metadata);
+      expect(readCounts(migrated)).toEqual(counts);
+      expect(readUserVersion(migrated)).toBe(version);
+    } finally {
+      migrated.close();
+    }
+  });
+
   test('adds Work thread tables under the current version without changing durable rows or generations', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-store-work-thread-migration-'));
     temporaryRoots.push(root);

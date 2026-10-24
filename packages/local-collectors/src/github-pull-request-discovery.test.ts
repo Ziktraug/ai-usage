@@ -61,8 +61,9 @@ describe('personal pull request discovery', () => {
       [13, 'author'],
       [14, 'review-requested'],
     ]);
-    expect(fake.calls).toHaveLength(2);
-    for (const call of fake.calls) {
+    expect(fake.calls).toHaveLength(3);
+    expect(fake.calls[0]?.args).toEqual(['auth', 'status', '--active', '--hostname', 'github.com']);
+    for (const call of fake.calls.slice(1)) {
       expect(call.command).toBe('gh');
       expect(call.maximumOutputBytes).toBe(1024 * 1024);
       expect(call.timeoutMs).toBe(10_000);
@@ -105,7 +106,7 @@ describe('personal pull request discovery', () => {
     const result = await Effect.runPromise(discoverPullRequests({ run: fake.run, limit: 500 }));
     expect(result.links).toHaveLength(100);
     expect(result.truncated).toBe(true);
-    expect(fake.calls[0]?.args).toContain('50');
+    expect(fake.calls[1]?.args).toContain('50');
   });
   test('invalid scopes never spawn a process', async () => {
     const fake = fakeGh({});
@@ -123,7 +124,7 @@ describe('personal pull request discovery', () => {
     const fake = fakeGh({ author: { exitCode, stdout } });
     const result = await Effect.runPromise(discoverPullRequests({ run: fake.run }));
     expect(result.outcome).toBe(outcome);
-    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls).toHaveLength(2);
     expect(result.links).toEqual([]);
   });
   test('retains partial successful search facts alongside the second search failure', async () => {
@@ -170,5 +171,17 @@ test('a configured account without a stored token is unauthenticated before sear
     );
     expect(result.outcome).toBe('unauthenticated');
     expect(fake.calls).toHaveLength(1);
+  }
+});
+
+test('an unauthenticated active account never searches', async () => {
+  for (const response of [
+    { exitCode: 1, stdout: '' },
+    { exitCode: 4, stdout: '' },
+  ]) {
+    const fake = fakeGh({ auth: response });
+    const result = await Effect.runPromise(discoverPullRequests({ run: fake.run }));
+    expect(result.outcome).toBe('unauthenticated');
+    expect(fake.calls.map(({ args }) => args)).toEqual([['auth', 'status', '--active', '--hostname', 'github.com']]);
   }
 });

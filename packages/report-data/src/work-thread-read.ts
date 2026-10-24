@@ -8,6 +8,7 @@ import type {
 import {
   parseWorkThreadLinkKey,
   sessionLinkKey,
+  WORK_THREAD_BOUNDS,
   type WorkThread,
   type WorkThreadEvent,
   type WorkThreadLink,
@@ -255,11 +256,14 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
           ];
     }),
   ];
-  return [
-    ...new Map(
-      paths.map((entry) => [JSON.stringify([entry.key, entry.machineId, entry.checkoutPath]), entry]),
-    ).values(),
-  ];
+  const unique = new Map<string, (typeof paths)[number]>();
+  for (const entry of paths) {
+    const identity = identityOf(entry.machineId, entry.checkoutPath);
+    if (!unique.has(identity)) {
+      unique.set(identity, entry);
+    }
+  }
+  return [...unique.values()];
 };
 
 interface RowScope {
@@ -301,7 +305,7 @@ const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<R
           jiraIssues.set(identityOf(target.machineId, target.key), target);
         }
       }
-      for (const checkout of checkoutPathsOf(evidence)) {
+      for (const checkout of checkoutPathsOf(evidence).slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread)) {
         checkouts.set(identityOf(checkout.machineId, checkout.checkoutPath), {
           machineId: checkout.machineId,
           checkoutPath: checkout.checkoutPath,
@@ -373,7 +377,11 @@ const readRow = (
       }
     }
   }
-  const local = checkoutPathsOf(evidence).map((checkout) => ({
+  const checkoutPaths = checkoutPathsOf(evidence);
+  if (checkoutPaths.length > WORK_THREAD_BOUNDS.maxLinksPerThread) {
+    truncated.add('checkouts');
+  }
+  const local = checkoutPaths.slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread).map((checkout) => ({
     ...factOf(checkout.key, factsRead.checkouts.get(identityOf(checkout.machineId, checkout.checkoutPath))),
     via: checkout.via,
   }));
@@ -381,13 +389,27 @@ const readRow = (
   const facts = [...pullRequests, ...jiraIssues, ...local];
   const factDates = new Map<string, CanonicalInstant>();
   for (const marker of facts) {
-    for (const observation of [marker.latest, marker.latestSuccessful]) {
-      if (observation !== null) {
-        factDates.set(
-          JSON.stringify([observation.machineId, observationKey(observation), observation.observedAt]),
-          observation.observedAt,
-        );
-      }
+    const observation = marker.latestSuccessful;
+    if (observation === null) {
+      continue;
+    }
+    let instants: readonly (CanonicalInstant | null)[];
+    if ('checkoutPath' in observation) {
+      instants = [
+        observation.lastCommitAt,
+        factsRead.checkouts.get(identityOf(observation.machineId, observation.checkoutPath))?.countsChangedAt ?? null,
+      ];
+    } else if ('key' in observation) {
+      instants = [observation.updatedAt];
+    } else {
+      instants = [observation.updatedAt, observation.mergedAt];
+    }
+    const at = instants
+      .filter((instant): instant is CanonicalInstant => instant !== null)
+      .sort()
+      .at(-1);
+    if (at !== undefined) {
+      factDates.set(JSON.stringify([observation.machineId, observationKey(observation)]), at);
     }
   }
   const sessionDates = sessions.flatMap((session) => {
@@ -443,9 +465,10 @@ const sourcesOf = (
       (candidate) => candidate.machineId === machineId && candidate.sourceId === SOURCE_IDS[source],
     );
     if (run === undefined) {
+      const state = runRowsSkipped ? 'unavailable' : 'never-run';
       return {
         source,
-        state: runRowsSkipped ? 'unavailable' : 'never-run',
+        state: reads.some((read) => read.truncated.has(source)) ? 'truncated' : state,
         lastRunAt: null,
         message: runRowsSkipped ? 'Some source run records could not be read.' : null,
       };
@@ -465,7 +488,10 @@ const sourcesOf = (
     } else if (reads.some((read) => read.truncated.has(source))) {
       state = 'truncated';
     } else if (run.failed > 0) {
-      state = observations.some((item) => item?.outcome === 'unauthenticated') ? 'unauthenticated' : 'failed';
+      state =
+        run.outcomeCode === 'unauthenticated' || observations.some((item) => item?.outcome === 'unauthenticated')
+          ? 'unauthenticated'
+          : 'failed';
     }
     return { source, state, lastRunAt: run.ranAt, message: run.message };
   });
@@ -604,12 +630,39 @@ export const queryWorkThreadDetail = (input: {
     const facts = yield* readFacts(input.dbPath, [scope]);
     const read = readRow(scope, events, facts, generatedAt);
     const runStates = yield* queryWorkFactRunStates(input);
+    const detachedLinks = links
+      .filter((link) => link.detachedAt !== null)
+      .sort(
+        (left, right) =>
+          (right.detachedAt ?? '').localeCompare(left.detachedAt ?? '') || right.linkId.localeCompare(left.linkId),
+      );
+    const omittedDetachedSources = new Set(
+      detachedLinks.slice(WORK_THREAD_BOUNDS.maxLinksPerThread).map((link): WorkThreadSourceStatus['source'] => {
+        if (link.kind === 'pull-request') {
+          return 'github';
+        }
+        if (link.kind === 'jira-issue') {
+          return 'jira';
+        }
+        return link.kind === 'session' ? 'sessions' : 'checkouts';
+      }),
+    );
     return {
-      detachedLinks: links.filter((link) => link.detachedAt !== null),
+      detachedLinks: detachedLinks.slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread),
       episodes: read.episodes,
       events,
       generatedAt,
       row: read.row,
-      sources: sourcesOf(runStates.runs, [read], thread.machineId, runStates.skipped),
+      sources: sourcesOf(runStates.runs, [read], thread.machineId, runStates.skipped).map((source) =>
+        omittedDetachedSources.has(source.source)
+          ? {
+              ...source,
+              state: 'truncated' as const,
+              message: [source.message, 'Older detached links are omitted from this history.']
+                .filter(Boolean)
+                .join(' '),
+            }
+          : source,
+      ),
     };
   });
