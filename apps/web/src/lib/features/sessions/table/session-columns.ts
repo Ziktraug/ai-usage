@@ -1,13 +1,6 @@
 import { rtkSavingsPct } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-import {
-  type ColumnDef,
-  columnVisibilityFeature,
-  createExpandedRowModel,
-  rowExpandingFeature,
-  rowSortingFeature,
-  tableFeatures,
-} from '@tanstack/table-core';
+import { type ColumnDef, createExpandedRowModel, rowExpandingFeature, tableFeatures } from '@tanstack/table-core';
 import { storeReactivityBindings } from '@tanstack/table-core/store-reactivity-bindings';
 import { lineDeltaLabel } from '../../../../dashboard-sort';
 import {
@@ -29,15 +22,14 @@ export interface SessionColumnMeta {
 
 /**
  * The Table Core feature set the Sessions table registers, built once as Table Core recommends.
- * Core owns row identity, column visibility, and expansion; sorting stays declarative state because
- * the server owns ordering, so no sorted row model is registered and rows keep their server order.
+ * Core owns row identity and expansion only. The server owns ordering, so rows keep their server
+ * order; sorting and column visibility are component state the table renders from directly
+ * (`visibleSessionTableColumns`), so neither Table Core feature is registered.
  */
 export const sessionTableFeatures = tableFeatures({
-  columnVisibilityFeature,
   coreReactivityFeature: storeReactivityBindings(),
   expandedRowModel: createExpandedRowModel(),
   rowExpandingFeature,
-  rowSortingFeature,
 });
 
 export type SessionTableFeatures = typeof sessionTableFeatures;
@@ -70,7 +62,6 @@ const column = (
   meta: Omit<SessionColumnMeta, 'label'> & { readonly label?: string },
 ): SessionTableColumn => ({
   accessorFn: (row) => sortValueForSessionColumn(row, id),
-  enableHiding: id !== 'session',
   header,
   id,
   meta: { ...meta, label: meta.label ?? header },

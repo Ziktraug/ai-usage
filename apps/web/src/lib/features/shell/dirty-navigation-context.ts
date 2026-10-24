@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { createContext } from 'svelte';
 import type { Disposer, StateListener, StateSubscription } from '../../foundation/subscription';
 
 export interface DirtyGuardRegistration {
@@ -13,8 +13,6 @@ export interface DirtyGuardRegistry {
   readonly focus: () => void;
   readonly register: (registration: DirtyGuardRegistration) => Disposer;
 }
-
-const dirtyGuardContextKey = Symbol('ai-usage-dirty-navigation');
 
 export const createDirtyGuardRegistry = (): DirtyGuardRegistry => {
   const listeners = new Set<StateListener<boolean>>();
@@ -62,14 +60,4 @@ export const createDirtyGuardRegistry = (): DirtyGuardRegistry => {
   };
 };
 
-export const provideDirtyGuardRegistry = (registry: DirtyGuardRegistry): void => {
-  setContext(dirtyGuardContextKey, registry);
-};
-
-export const useDirtyGuardRegistry = (): DirtyGuardRegistry => {
-  const registry = getContext<DirtyGuardRegistry | undefined>(dirtyGuardContextKey);
-  if (!registry) {
-    throw new Error('Dirty navigation guard context is unavailable');
-  }
-  return registry;
-};
+export const [useDirtyGuardRegistry, provideDirtyGuardRegistry] = createContext<DirtyGuardRegistry>();

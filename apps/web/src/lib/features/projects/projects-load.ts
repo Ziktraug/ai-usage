@@ -22,8 +22,6 @@ export const loadProjectsPageData = async (
 ): Promise<ProjectsPageData> => ({
   queryState: await createAwaitedRouteQueryState(options, async (runtime) => {
     const client = dependencies.createClient?.(runtime) ?? createProjectsBrowserAdapter(runtime.rpc.projects);
-    await runtime.queryClient.fetchQuery(
-      projectResolutionReviewsQueryOptions(client, { browser: false, enabled: true }),
-    );
+    await runtime.queryClient.query(projectResolutionReviewsQueryOptions(client, { browser: false, enabled: true }));
   }),
 });

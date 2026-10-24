@@ -39,6 +39,23 @@ const REPORT_AXE_DESTINATIONS = [
   { label: 'Analysis', path: '/?tab=models' },
 ] as const;
 
+interface AccessibilityMedia {
+  readonly label: string;
+  readonly media: NonNullable<Parameters<Page['emulateMedia']>[0]>;
+}
+
+/**
+ * Every focus-indicator and axe check runs in both colour schemes as authored, under forced colours
+ * (a Windows contrast theme swaps the palette for system colours and drops box-shadows and
+ * background images, so anything drawn only with those disappears), and with a raised contrast
+ * preference.
+ */
+const ACCESSIBILITY_MEDIA: readonly AccessibilityMedia[] = (['light', 'dark'] as const).flatMap((colorScheme) => [
+  { label: `${colorScheme} mode`, media: { colorScheme } },
+  { label: `${colorScheme} forced-colors mode`, media: { colorScheme, forcedColors: 'active' } },
+  { label: `${colorScheme} more-contrast mode`, media: { colorScheme, contrast: 'more' } },
+]);
+
 const overviewTopSessionTrigger = (page: Page): Locator =>
   page
     .getByRole('heading', { level: 3, name: 'Top sessions' })
@@ -99,10 +116,48 @@ test.use({
   timezoneId: 'Europe/Paris',
 });
 
+/**
+ * Under forced colours Chromium paints text in the forced system colour, but it resolves the
+ * `currentcolor` of `-webkit-text-fill-color`, which axe reads before `color`, against the authored
+ * colour. axe would then compare light-on-dark labels' authored text with the forced background and
+ * fail them while the page shows CanvasText on Canvas. Pin the fill to the colour Chromium paints.
+ * That only holds while no stylesheet or inline style authors a fill colour, so that is asserted.
+ */
+const pinForcedTextFillToPaintedColor = async (page: Page): Promise<void> => {
+  const authoredFills = await page.evaluate(() => {
+    const fills = [...document.querySelectorAll('[style*="text-fill-color"]')].map((element) => element.outerHTML);
+    const visit = (sheet: CSSStyleSheet): void => {
+      for (const rule of sheet.cssRules) {
+        if (rule instanceof CSSImportRule && rule.styleSheet) {
+          visit(rule.styleSheet);
+        } else if (rule.cssText.includes('text-fill-color')) {
+          fills.push(rule.cssText);
+        }
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      visit(sheet);
+    }
+    return fills;
+  });
+  expect(authoredFills).toEqual([]);
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll<HTMLElement>('body *')) {
+      const style = getComputedStyle(element);
+      if (style.getPropertyValue('-webkit-text-fill-color') !== style.color) {
+        element.style.setProperty('-webkit-text-fill-color', style.color);
+      }
+    }
+  });
+};
+
 const expectNoAxeViolations = async (page: Page): Promise<void> => {
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
+  if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+    await pinForcedTextFillToPaintedColor(page);
+  }
   const results = await new AxeBuilder({ page }).analyze();
   const violations = results.violations.map((violation) => ({
     id: violation.id,
@@ -229,9 +284,9 @@ test('shows the report panel focus indicator only for keyboard navigation', asyn
   await expect(dashboardPanel).toHaveCSS('outline-style', 'solid');
 });
 
-for (const colorScheme of ['light', 'dark'] as const) {
-  test(`draws contrasting timeline and dashboard-panel focus indicators in ${colorScheme} mode`, async ({ page }) => {
-    await page.emulateMedia({ colorScheme });
+for (const { label, media } of ACCESSIBILITY_MEDIA) {
+  test(`draws contrasting timeline and dashboard-panel focus indicators in ${label}`, async ({ page }) => {
+    await page.emulateMedia(media);
     await page.addInitScript(() => {
       localStorage.clear();
     });
@@ -278,10 +333,10 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
   await expect(drawer).not.toBeVisible();
 });
 
-for (const colorScheme of ['light', 'dark'] as const) {
+for (const { label, media } of ACCESSIBILITY_MEDIA) {
   for (const destination of REPORT_AXE_DESTINATIONS) {
-    test(`${destination.label} has no detectable accessibility violations in ${colorScheme} mode`, async ({ page }) => {
-      await page.emulateMedia({ colorScheme });
+    test(`${destination.label} has no detectable accessibility violations in ${label}`, async ({ page }) => {
+      await page.emulateMedia(media);
       await page.addInitScript(() => localStorage.clear());
       await openHydratedReport(page, destination.path);
       await expect(reportViewsFor(page).getByRole('link', { exact: true, name: destination.label })).toHaveAttribute(
@@ -300,10 +355,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
     });
   }
 
-  test(`the open session drawer has no detectable accessibility violations in ${colorScheme} mode`, async ({
-    page,
-  }) => {
-    await page.emulateMedia({ colorScheme });
+  test(`the open session drawer has no detectable accessibility violations in ${label}`, async ({ page }) => {
+    await page.emulateMedia(media);
     await page.addInitScript(() => localStorage.clear());
     await page.setViewportSize({ height: 844, width: 390 });
     await openHydratedReport(page);
@@ -317,12 +370,164 @@ for (const colorScheme of ['light', 'dark'] as const) {
   });
 }
 
-test('Skills has no detectable accessibility violations', async ({ page }) => {
-  await openHydratedSkills(page, '/skills/global/alpha-skill');
-  await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
+for (const { label, media } of ACCESSIBILITY_MEDIA) {
+  test(`Skills has no detectable accessibility violations in ${label}`, async ({ page }) => {
+    await page.emulateMedia(media);
+    await openHydratedSkills(page, '/skills/global/alpha-skill');
+    await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
 
-  await expectNoAxeViolations(page);
-});
+    await expectNoAxeViolations(page);
+  });
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`a Skill switch keeps its on/off thumb in ${colorScheme} forced-colors mode`, async ({ page }) => {
+    // Forced colours repaint backgrounds as Canvas; a thumb drawn only with a background vanishes
+    // with the position that carries the state. axe has no rule for that, so the paint is checked.
+    await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+    await openHydratedSkills(page, '/skills/global/alpha-skill');
+    const toggle = page.getByRole('switch', { name: 'Disable alpha-skill' }).first();
+    await expect(toggle).toBeVisible();
+    const paint = () =>
+      toggle.evaluate((element) => ({
+        thumb: getComputedStyle(element, '::after').backgroundColor,
+        track: getComputedStyle(element).backgroundColor,
+      }));
+
+    const on = await paint();
+    expect(on.thumb).not.toBe(on.track);
+    // The state is styled from aria-checked alone, so flipping it shows the off paint without
+    // toggling the shared fixture skill.
+    await toggle.evaluate((element) => element.setAttribute('aria-checked', 'false'));
+    const off = await paint();
+    expect(off.thumb).not.toBe(off.track);
+  });
+}
+
+/**
+ * Forced colours repaint the tint or accent that marks a selection, which would leave the selected
+ * item looking like its siblings. It must keep a ring of its own: a solid outline at least 2px wide
+ * that no unselected sibling has. Without forced colours the ring is absent, so the authored
+ * rendering is unchanged.
+ */
+const expectForcedSelectionRing = async (page: Page, selected: Locator, siblings: Locator): Promise<void> => {
+  await expect(selected).toBeVisible();
+  const ring = await selected.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.outlineColor, style: style.outlineStyle, width: style.outlineWidth };
+  });
+  expect(ring.style).toBe('solid');
+  expect(Number.parseFloat(ring.width)).toBeGreaterThanOrEqual(2);
+  const siblingOutlines = await siblings.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return { color: style.outlineColor, style: style.outlineStyle, width: style.outlineWidth };
+    }),
+  );
+  expect(siblingOutlines.length).toBeGreaterThan(0);
+  for (const outline of siblingOutlines) {
+    expect(outline).not.toEqual(ring);
+  }
+  await page.emulateMedia({ forcedColors: 'none' });
+  await expect(selected).toHaveCSS('outline-style', 'none');
+  await page.emulateMedia({ forcedColors: 'active' });
+};
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test.describe(`selections stay distinguishable in ${colorScheme} forced-colors mode`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ colorScheme, forcedColors: 'active' });
+    });
+
+    test('the current navigation link, the Skills filter and the open skill row', async ({ page }) => {
+      await openHydratedSkills(page, '/skills/global/alpha-skill');
+      const rail = page.locator('[data-app-navigation="desktop"]');
+      await expectForcedSelectionRing(
+        page,
+        rail.locator('a[aria-current="page"]'),
+        rail.locator('a:not([aria-current])'),
+      );
+      await expectForcedSelectionRing(
+        page,
+        page.getByRole('button', { name: ALL_FILTER_PATTERN }),
+        page.locator('[data-worktable-filter][aria-pressed="false"]'),
+      );
+      const openRow = page.locator('tr[data-worktable-row="alpha-skill"]').first();
+      const otherRows = page.locator('tr[data-worktable-row]:not([data-worktable-row="alpha-skill"])');
+      await expectForcedSelectionRing(page, openRow, otherRows);
+      // The sticky name cell paints over the row's ring, so it has to carry its own.
+      await expectForcedSelectionRing(page, openRow.locator('th[scope="row"]'), otherRows.locator('th[scope="row"]'));
+    });
+
+    test('the current mobile navigation link and the Manage button', async ({ page }) => {
+      await page.setViewportSize({ height: 844, width: 390 });
+      const mobile = page.locator('[data-app-navigation="mobile"]');
+      await openHydratedReport(page);
+      await expectForcedSelectionRing(
+        page,
+        mobile.locator('a[aria-current="page"]'),
+        mobile.locator('a:not([aria-current]), button'),
+      );
+      await openHydratedSkills(page, '/skills');
+      await expectForcedSelectionRing(page, mobile.getByRole('button', { name: 'Manage' }), mobile.locator('a'));
+    });
+
+    test('the report period, the Analysis tab and a segmented control', async ({ page }) => {
+      await openHydratedReport(page, '/?tab=models');
+      const period = page.getByRole('region', { name: 'Report period' });
+      await expectForcedSelectionRing(
+        page,
+        period.locator('[aria-pressed="true"]'),
+        period.locator('[aria-pressed="false"]'),
+      );
+      const tabs = page.getByRole('tablist', { name: 'Analysis dimension' });
+      await expectForcedSelectionRing(
+        page,
+        tabs.getByRole('tab', { selected: true }),
+        tabs.getByRole('tab', { selected: false }),
+      );
+      const segments = page.getByRole('radiogroup', { name: 'Sort breakdown' });
+      await expectForcedSelectionRing(
+        page,
+        segments.getByRole('radio', { checked: true }),
+        segments.getByRole('radio', { checked: false }),
+      );
+    });
+
+    test('the session column preset and the selected session row', async ({ page }) => {
+      await openHydratedReport(page, '/?tab=sessions');
+      const presets = page.getByRole('group', { name: 'Session column presets' });
+      await expectForcedSelectionRing(
+        page,
+        presets.locator('[aria-pressed="true"]'),
+        presets.locator('[aria-pressed="false"]'),
+      );
+      await page.locator('tr[data-session-row-id]').first().click();
+      await expect(page.getByRole('dialog', { name: 'Session details' })).toBeVisible();
+      await expectForcedSelectionRing(
+        page,
+        page.locator('tr[data-selected="true"]'),
+        page.locator('tr[data-selected="false"]'),
+      );
+    });
+
+    test('the Campaigns view and the selected campaign', async ({ page }) => {
+      await page.goto('/campaigns');
+      await waitForHydratedNavigation(page);
+      const views = page.getByRole('navigation', { name: 'Campaign view' });
+      await expectForcedSelectionRing(
+        page,
+        views.locator('[aria-pressed="true"]'),
+        views.locator('[aria-pressed="false"]'),
+      );
+      await expectForcedSelectionRing(
+        page,
+        page.locator('[data-campaign-card][aria-pressed="true"]'),
+        page.locator('[data-campaign-card][aria-pressed="false"]'),
+      );
+    });
+  });
+}
 
 test('a reused project SKILL.md preview tracks whether the current document is scrollable', async ({ page }) => {
   await openHydratedSkills(page, '/skills/projects/project%2Fopaque/skill-name');

@@ -44,7 +44,10 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
 // The review fixes then reached 305,058 B, over the ceiling; Panda's
 // optimize.removeUnusedTokens/removeUnusedKeyframes brings it to 300,373 B (stylesheet
 // 23,768 -> 19,082 B: the unused preset-panda palettes and keyframes are no longer shipped).
-const RECORDED_GZIP_CLOSURE_BYTES = 300_373;
+// Plan 120 web opportunities: Svelte createContext (-331 B), Kit snapshot() (+240 B, shared by the
+// navigation chunk) and the forced-colours selection rings and switch thumb (+223 B of CSS)
+// bring it to 300,502 B.
+const RECORDED_GZIP_CLOSURE_BYTES = 300_502;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */

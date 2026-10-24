@@ -38,6 +38,16 @@ export const aiUsagePreset = definePreset({
     '::selection': {
       bg: 'accentSoft',
     },
+    // Forced colours (a Windows contrast theme) repaint every background as Canvas and every
+    // authored colour as a system colour, so a choice drawn as a tint or an accent hue disappears
+    // and the selected item looks like its siblings. Whatever exposes its state draws a Highlight
+    // ring instead, keyed on that state so no control has to remember it: the current page, a
+    // pressed toggle, a selected tab or segment, a selected row. The ring sits inside the border box,
+    // so it moves nothing and no scrolling ancestor clips it. A focused element keeps its own ring.
+    ':is([aria-current]:not([aria-current="false"]), [aria-pressed="true"], [aria-selected="true"], [role="radio"][aria-checked="true"], [data-selected="true"]):not(:focus-visible)':
+      {
+        _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
+      },
   },
   theme: {
     extend: {

@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { createContext } from 'svelte';
 import type { WebQueryHydrationState } from './client';
 
 interface WebQueryHydrationContext {
@@ -11,7 +11,9 @@ interface WebQueryHydrationContext {
   readonly covers: (state: WebQueryHydrationState | undefined) => boolean;
 }
 
-const webQueryHydrationContextKey = Symbol('web-query-hydration');
+const [useWebQueryHydrationContext, setWebQueryHydrationContext] = createContext<WebQueryHydrationContext>();
+
+export { useWebQueryHydrationContext };
 
 const hydrationEntries = (state: WebQueryHydrationState | undefined): ReadonlyMap<string, number> => {
   const entries = new Map<string, number>();
@@ -39,15 +41,7 @@ export const webQueryHydrationCovers = (
 };
 
 export const installWebQueryHydrationContext = (readAppliedState: () => WebQueryHydrationState | undefined): void => {
-  setContext<WebQueryHydrationContext>(webQueryHydrationContextKey, {
+  setWebQueryHydrationContext({
     covers: (state) => webQueryHydrationCovers(readAppliedState(), state),
   });
-};
-
-export const useWebQueryHydrationContext = (): WebQueryHydrationContext => {
-  const context = getContext<WebQueryHydrationContext | undefined>(webQueryHydrationContextKey);
-  if (context === undefined) {
-    throw new Error('Web Query hydration context is unavailable.');
-  }
-  return context;
 };

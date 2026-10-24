@@ -71,5 +71,5 @@ export const updateQuotaHistory = (
   client.setQueryData<ProviderQuotaHistoryResult>(quotaHistoryKey(request, policyIdentity), value);
 
 export const prefetchQuotaRail = async (queryClient: QueryClient, client: QuotaQueryClient): Promise<void> => {
-  await queryClient.fetchQuery(quotaRailQueryOptions(client, { browser: false, enabled: true }));
+  await queryClient.query(quotaRailQueryOptions(client, { browser: false, enabled: true }));
 };

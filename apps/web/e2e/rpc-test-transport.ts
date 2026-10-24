@@ -5,10 +5,12 @@ export const RPC_ROUTE_GLOB = '**/rpc/**';
 export const MANUAL_MERGE_DOWNLOAD_PATH = '/api/manual-merge/download';
 export const MANUAL_MERGE_UPLOAD_PATH = '/api/manual-merge/upload';
 export const SKILLS_SAVE_RPC_PATH = '/rpc/skills/saveManagedMarkdown';
+export const CAMPAIGN_LABELS_RPC_PATH = '/rpc/campaign/labelOverrides';
 
 const DEFINED_INTERCEPTION_ERROR_STATUS = 503;
 const EXPECTED_RPC_FAILURE_HEADER = 'x-ai-usage-e2e-expected-rpc-failure';
 const SKILLS_SAVE_FAILURE_MARKER = 'skills-save-interception';
+const CAMPAIGN_LABELS_FAILURE_MARKER = 'campaign-labels-interception';
 const rpcSerializer = new StandardRPCSerializer(new StandardRPCJsonSerializer());
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -59,6 +61,24 @@ export const isExpectedSkillsSaveFailureResponse = (response: RpcResponseIdentit
   response.status === DEFINED_INTERCEPTION_ERROR_STATUS &&
   response.pathname === SKILLS_SAVE_RPC_PATH &&
   response.headers[EXPECTED_RPC_FAILURE_HEADER] === SKILLS_SAVE_FAILURE_MARKER;
+
+/** The saved campaign labels read failing the way its procedure reports it, marked as intended. */
+export const campaignLabelsFailureFulfillment = (): RpcRouteFulfillment => ({
+  body: encodeRpcResponseBody({
+    code: 'Unavailable',
+    data: {},
+    defined: true,
+    message: 'Campaign labels are temporarily unavailable.',
+    status: DEFINED_INTERCEPTION_ERROR_STATUS,
+  }),
+  headers: { [EXPECTED_RPC_FAILURE_HEADER]: CAMPAIGN_LABELS_FAILURE_MARKER },
+  status: DEFINED_INTERCEPTION_ERROR_STATUS,
+});
+
+export const isExpectedCampaignLabelsFailureResponse = (response: RpcResponseIdentity): boolean =>
+  response.status === DEFINED_INTERCEPTION_ERROR_STATUS &&
+  response.pathname === CAMPAIGN_LABELS_RPC_PATH &&
+  response.headers[EXPECTED_RPC_FAILURE_HEADER] === CAMPAIGN_LABELS_FAILURE_MARKER;
 
 export const rpcRouteFulfillmentForClientResult = (result: unknown): RpcRouteFulfillment => {
   if (!(isRecord(result) && typeof result.ok === 'boolean')) {

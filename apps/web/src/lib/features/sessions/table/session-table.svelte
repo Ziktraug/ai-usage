@@ -174,8 +174,6 @@
       canLoadCampaignChildren: Boolean(onLoadCampaignChildren),
       expanded,
       rows,
-      sorting,
-      visibility: effectiveVisibility,
     }),
   );
   const visibleColumns = $derived(visibleSessionTableColumns(effectiveVisibility));

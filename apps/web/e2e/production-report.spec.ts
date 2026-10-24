@@ -1075,12 +1075,15 @@ test('automatically pages mobile Sessions and keeps modal analysis usable', asyn
   await expect(drawer).toHaveAttribute('aria-modal', 'true');
   const timelineTab = drawer.getByRole('tab', { name: 'Timeline' });
   await expect(timelineTab).toBeVisible();
-  const headerActionGeometry = await drawerHeader.locator('button:visible').evaluateAll((elements) =>
-    elements.map((element) => {
-      const rect = element.getBoundingClientRect();
-      return { height: Math.round(rect.height), width: Math.round(rect.width) };
-    }),
-  );
+  const headerActionGeometry = await drawerHeader
+    .locator('button')
+    .visible()
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { height: Math.round(rect.height), width: Math.round(rect.width) };
+      }),
+    );
   expect(headerActionGeometry).toHaveLength(3);
   expect(headerActionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
   await expect(drawerBody.getByRole('region', { name: 'Session rounds' })).toBeVisible();
@@ -1090,7 +1093,8 @@ test('automatically pages mobile Sessions and keeps modal analysis usable', asyn
   await expect(analysis).toBeVisible();
   await expect(timelineTab).toHaveAttribute('aria-selected', 'true');
   const bodyControlGeometry = await drawerBody
-    .locator('button:visible, a[href]:visible, summary:visible, input:visible, select:visible, textarea:visible')
+    .locator('button, a[href], summary, input, select, textarea')
+    .visible()
     .evaluateAll((elements) =>
       elements.map((element) => {
         const rect = element.getBoundingClientRect();

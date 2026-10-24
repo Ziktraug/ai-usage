@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url';
 const SOURCE_ROOT = fileURLToPath(new URL('./src', import.meta.url));
 const SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
 const TEST_FILE_PATTERN = /(?:\.test|\.fixture|\.ssr\.test)\.(?:svelte|ts)$/;
+// TanStack Query 5.102 folds fetch/prefetch/ensure into `query()` and `infiniteQuery()`; the deprecated
+// names stay listed so a call written against either API is caught.
 const IMPERATIVE_QUERY_PATTERN =
-  /\.(fetchInfiniteQuery|fetchNextPage|fetchQuery|ensureQueryData|getQueryData|getQueryState)\(/g;
+  /\.(ensureInfiniteQueryData|ensureQueryData|fetchInfiniteQuery|fetchNextPage|fetchQuery|getQueryData|getQueryState|infiniteQuery|prefetchInfiniteQuery|prefetchQuery|query)\(/g;
 
 const SERVER_PREFETCH_HELPERS = new Set([
   'lib/features/campaigns/campaigns-load.ts',
@@ -35,6 +37,14 @@ const sourceFilesUnder = async (directory: string): Promise<string[]> => {
 
 const normalizedRelativePath = (path: string): string => relative(SOURCE_ROOT, path).replaceAll('\\', '/');
 
+/** Imperative Query acquisitions in one source file, as `path:method`; Query modules and SSR prefetch own theirs. */
+const imperativeQueryFindings = (relativePath: string, source: string): string[] => {
+  if (relativePath.startsWith('lib/query/') || SERVER_PREFETCH_HELPERS.has(relativePath)) {
+    return [];
+  }
+  return [...source.matchAll(IMPERATIVE_QUERY_PATTERN)].map((match) => `${relativePath}:${match[1]}`);
+};
+
 describe('browser server-state ownership boundary', () => {
   test('keeps imperative acquisition in Query modules, SSR prefetch, or the frozen migration allowlist', async () => {
     const legacyFindings = new Set<string>();
@@ -42,12 +52,7 @@ describe('browser server-state ownership boundary', () => {
 
     for (const path of await sourceFilesUnder(SOURCE_ROOT)) {
       const relativePath = normalizedRelativePath(path);
-      if (relativePath.startsWith('lib/query/') || SERVER_PREFETCH_HELPERS.has(relativePath)) {
-        continue;
-      }
-      const source = await readFile(path, 'utf8');
-      for (const match of source.matchAll(IMPERATIVE_QUERY_PATTERN)) {
-        const finding = `${relativePath}:${match[1]}`;
+      for (const finding of imperativeQueryFindings(relativePath, await readFile(path, 'utf8'))) {
         if (LEGACY_MIGRATION_EXCEPTIONS.includes(finding)) {
           legacyFindings.add(finding);
         } else {
@@ -58,6 +63,23 @@ describe('browser server-state ownership boundary', () => {
 
     expect(unexpectedFindings.sort()).toEqual([]);
     expect([...legacyFindings].sort()).toEqual([...LEGACY_MIGRATION_EXCEPTIONS].sort());
+  });
+
+  test('flags the query() and infiniteQuery() acquisitions outside their owners', () => {
+    const source = [
+      'const report = await queryClient.query(reportOptions);',
+      'const sessions = await queryClient.infiniteQuery(sessionOptions);',
+      'await queryClient.fetchQuery(legacyOptions);',
+      'const options = queryOptions({ queryKey, queryFn });',
+    ].join('\n');
+
+    expect(imperativeQueryFindings('lib/features/report/report-page.svelte', source)).toEqual([
+      'lib/features/report/report-page.svelte:query',
+      'lib/features/report/report-page.svelte:infiniteQuery',
+      'lib/features/report/report-page.svelte:fetchQuery',
+    ]);
+    expect(imperativeQueryFindings('lib/query/options/report.ts', source)).toEqual([]);
+    expect(imperativeQueryFindings('lib/features/campaigns/campaigns-load.ts', source)).toEqual([]);
   });
 
   test('constructs TanStack QueryClient only inside the document/request-scoped client factory', async () => {

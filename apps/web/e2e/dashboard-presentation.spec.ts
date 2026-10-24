@@ -650,7 +650,7 @@ test('separates timeline boundary dates and retains no horizontally intersecting
     const tickRow = page.locator('[data-timeline-tick-row]');
     const boundaryRow = page.locator('[data-timeline-boundary-row]');
     await expect(page.locator('[data-timeline-labels-settled="true"]')).toBeVisible();
-    const ticks = tickRow.locator('[data-timeline-tick]:visible');
+    const ticks = tickRow.locator('[data-timeline-tick]').visible();
     const boundaries = boundaryRow.locator('[data-timeline-boundary]');
     await expect(tickRow).toBeVisible();
     await expect(boundaryRow).toBeVisible();
@@ -704,7 +704,8 @@ test('keeps the mobile filter stack coherent with content above the fold', async
   expect(searchBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MOBILE_VIEWPORT.width - 32);
   const filterControlGeometry = await page
     .locator('[data-dashboard-filter-stack]')
-    .locator('input:visible, button:visible, a:visible, [role="combobox"]:visible')
+    .locator('input, button, a, [role="combobox"]')
+    .visible()
     .evaluateAll((elements) =>
       elements.map((element) => {
         const box = element.getBoundingClientRect();
@@ -782,7 +783,8 @@ for (const scenario of FIRST_READ_SCENARIOS) {
       await expect(cards).toBeVisible();
       expect(await cards.getByRole('article').count()).toBeGreaterThan(0);
       const targetHeights = await panel
-        .locator('input:visible, button:visible, a:visible')
+        .locator('input, button, a')
+        .visible()
         .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
       expect(targetHeights.length).toBeGreaterThan(0);
       expect(targetHeights.every((height) => height >= 44)).toBe(true);
@@ -791,7 +793,8 @@ for (const scenario of FIRST_READ_SCENARIOS) {
       await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
     ).toBeLessThanOrEqual(0);
     const clippedActionCount = await panel
-      .locator('input:visible, button:visible, a:visible')
+      .locator('input, button, a')
+      .visible()
       .evaluateAll((elements) => elements.filter((element) => element.scrollWidth > element.clientWidth + 1).length);
     expect(clippedActionCount).toBe(0);
     const sourceStatusLabel = page

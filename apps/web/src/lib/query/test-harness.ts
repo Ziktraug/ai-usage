@@ -63,7 +63,7 @@ export const createQueryTestHarness = (client: QueryClient = createWebQueryClien
     },
     client,
     fetch: async ({ key, policy, resolve }) =>
-      await client.fetchQuery({
+      await client.query({
         ...policy,
         queryFn: async ({ signal }) => {
           const call = { id: nextCallId, key, signal } satisfies QueryHarnessCall;

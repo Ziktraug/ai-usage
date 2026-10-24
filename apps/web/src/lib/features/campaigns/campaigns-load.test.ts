@@ -14,6 +14,7 @@ import {
   sessionRowIdentity,
 } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
+import { ORPCError } from '@orpc/client';
 import { StandardRPCJsonSerializer, StandardRPCSerializer } from '@orpc/client/standard';
 import { QueryObserver } from '@tanstack/svelte-query';
 import {
@@ -23,6 +24,7 @@ import {
 } from '../../../campaign-map-fixture';
 import { demoReportPayload } from '../../../report-data';
 import { createHydratedWebQueryClient } from '../../query/client';
+import { campaignLabelOverridesKey, campaignLabelOverridesQueryOptions } from '../../query/options/report';
 import { sessionLookupKey, sessionLookupQueryOptions } from '../../query/options/session';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { loadCampaignsPageData } from './campaigns-load';
@@ -62,7 +64,12 @@ const bootstrap: Extract<ReportRevisionBootstrapResult, { readonly ok: true }> =
   requestFingerprint: 'report-manifest:v1:{}',
 };
 
-const ssrFixture = (rowId: string) => {
+const CAMPAIGN_LABELS_UNAVAILABLE = 'Campaign labels are temporarily unavailable.';
+
+const ssrFixture = (
+  rowId: string,
+  { labelOverrides = 'available' }: { labelOverrides?: 'available' | 'unavailable' } = {},
+) => {
   const url = new URL('http://campaign-ssr.invalid/campaigns?range=all');
   url.searchParams.set('selectedCampaign', campaignMapFixtureRootKey);
   url.searchParams.set('selectedSession', rowId);
@@ -76,6 +83,10 @@ const ssrFixture = (rowId: string) => {
     if (pathname === '/rpc/report/revisionBootstrap') {
       result = bootstrap;
     } else if (pathname === '/rpc/campaign/labelOverrides') {
+      if (labelOverrides === 'unavailable') {
+        const unavailable = new ORPCError('SERVICE_UNAVAILABLE', { message: CAMPAIGN_LABELS_UNAVAILABLE });
+        return Response.json(serializer.serialize(unavailable.toJSON()), { status: unavailable.status });
+      }
       result = { campaignLabelOverrides: [] };
     } else {
       const input = serializer.deserialize(await request.json());
@@ -98,6 +109,11 @@ const ssrFixture = (rowId: string) => {
   };
   return { lookups, memberPages, options: { fetch, url }, paths };
 };
+
+const dehydratedLabelOverrides = (data: Awaited<ReturnType<typeof loadCampaignsPageData>>) =>
+  data.queryState.dehydratedState.queries.filter(
+    (query) => JSON.stringify(query.queryKey) === JSON.stringify(campaignLabelOverridesKey()),
+  );
 
 describe('Campaign session metadata SSR', () => {
   test('hydrates one far session lookup and reuses its exact identity without a browser request', async () => {
@@ -156,6 +172,53 @@ describe('Campaign session metadata SSR', () => {
       expect(fixture.memberPages).toEqual([100]);
     },
   );
+
+  test('hydrates the saved campaign labels when they can be read', async () => {
+    const fixture = ssrFixture(sessionRowIdentity(root));
+    const data = await loadCampaignsPageData(fixture.options, 'live');
+
+    expect(dehydratedLabelOverrides(data)).toHaveLength(1);
+  });
+
+  test('renders without the saved campaign labels and leaves them to the browser when they cannot be read', async () => {
+    const fixture = ssrFixture(sessionRowIdentity(root), { labelOverrides: 'unavailable' });
+
+    // Labels are optional data: the page still loads, with every required read hydrated.
+    const data = await loadCampaignsPageData(fixture.options, 'live');
+    expect(fixture.paths).toContain('/rpc/campaign/labelOverrides');
+    expect(fixture.memberPages).toEqual([100]);
+    // The failure is not dehydrated, so the browser's labels query starts empty and requests the
+    // labels itself; its error is what the page reports beside the derived titles.
+    expect(dehydratedLabelOverrides(data)).toEqual([]);
+
+    const hydrated = createHydratedWebQueryClient(data.queryState);
+    let browserReads = 0;
+    const options = campaignLabelOverridesQueryOptions(
+      {
+        getCampaignLabelOverrides: () => {
+          browserReads += 1;
+          return Promise.reject(new Error(CAMPAIGN_LABELS_UNAVAILABLE));
+        },
+      },
+      { browser: true },
+    );
+    const observer = new QueryObserver(hydrated, options);
+    const settled = new Promise<void>((resolve) => {
+      const unsubscribe = observer.subscribe((result) => {
+        if (result.isError) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+    try {
+      await settled;
+      expect(browserReads).toBe(1);
+      expect(observer.getCurrentResult().error?.message).toBe(CAMPAIGN_LABELS_UNAVAILABLE);
+    } finally {
+      hydrated.clear();
+    }
+  });
 
   test.each(['', '   ', ' leading-space'])('does not issue a malformed session lookup %j', async (rowId) => {
     const fixture = ssrFixture(rowId);

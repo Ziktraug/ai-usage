@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { createContext } from 'svelte';
 import type { SvelteGotoOptions } from '../../foundation/navigation/svelte/navigation';
 
 type ShellGotoOptions = SvelteGotoOptions & { readonly state?: App.PageState };
@@ -22,7 +22,6 @@ export interface ShellNavigationOwner {
   readonly peekIntent: (type: string, url: { readonly href: string } | null) => ShellNavigationIntent;
 }
 
-const navigationOwnerContextKey = Symbol('ai-usage-navigation-owner');
 const unmarkedNavigation: ShellNavigationIntent = { preserveScroll: false, replace: false };
 
 const frameworkGotoOptions = (options: ShellGotoOptions | undefined): FrameworkGotoOptions | undefined => {
@@ -79,14 +78,4 @@ export const createShellNavigationOwner = (port: {
   };
 };
 
-export const provideShellNavigationOwner = (owner: ShellNavigationOwner): void => {
-  setContext(navigationOwnerContextKey, owner);
-};
-
-export const useShellNavigationOwner = (): ShellNavigationOwner => {
-  const owner = getContext<ShellNavigationOwner | undefined>(navigationOwnerContextKey);
-  if (!owner) {
-    throw new Error('Shell navigation context is unavailable');
-  }
-  return owner;
-};
+export const [useShellNavigationOwner, provideShellNavigationOwner] = createContext<ShellNavigationOwner>();
