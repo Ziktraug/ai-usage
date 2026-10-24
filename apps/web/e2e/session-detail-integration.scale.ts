@@ -41,6 +41,12 @@ const LOOKUP_PATH = '/rpc/session/lookup';
 const PAGE_PATH = '/rpc/session/page';
 const CHILDREN_PATH = '/rpc/session/campaignChildren';
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+/**
+ * The browser's own attempts at a failed lazy chunk: Vite's `<link rel=modulepreload>`, then the
+ * `import()`, which Chromium 156+ re-fetches after a failed preload while 155 and earlier reuse the
+ * failure. A further request before Reload means something beyond the browser's own load fetched the chunk.
+ */
+const BROWSER_CHUNK_LOAD_ATTEMPTS = 2;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -482,11 +488,13 @@ test('recovers one failed Session details chunk only after an explicit reload at
     throw new Error('The built manifest must identify the lazy Session details chunk');
   }
   const pathname = `/${drawerChunk.file}`;
-  const verifyExpectedFailure = browserFailureGate.allowScriptResponseOnce({
+  const verifyExpectedFailures = browserFailureGate.allowScriptResponses({
     url: new URL(pathname, baseURL).href,
     status: 503,
+    maximum: BROWSER_CHUNK_LOAD_ATTEMPTS,
   });
-  let chunkRequests = 0;
+  const chunkRequests = { failed: 0, served: 0 };
+  let chunkAvailable = false;
   let documentRequests = 0;
   page.on('request', (request) => {
     if (request.resourceType() === 'document') {
@@ -494,12 +502,13 @@ test('recovers one failed Session details chunk only after an explicit reload at
     }
   });
   await page.route(`**${pathname}`, async (route) => {
-    chunkRequests++;
-    if (chunkRequests === 1) {
-      await route.fulfill({ status: 503, contentType: 'text/javascript', body: '' });
+    if (chunkAvailable) {
+      chunkRequests.served++;
+      await route.continue();
       return;
     }
-    await route.continue();
+    chunkRequests.failed++;
+    await route.fulfill({ status: 503, contentType: 'text/javascript', body: '' });
   });
   try {
     await openHydratedReport(page, DEEP_SESSIONS);
@@ -511,17 +520,19 @@ test('recovers one failed Session details chunk only after an explicit reload at
     await expect(reload).toBeVisible();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe('/');
     const selectedUrl = page.url();
-    expect(chunkRequests).toBe(1);
+    expect(chunkRequests.failed).toBeGreaterThanOrEqual(1);
+    expect(chunkRequests.failed).toBeLessThanOrEqual(BROWSER_CHUNK_LOAD_ATTEMPTS);
     expect(documentRequests).toBe(documentsBeforeOpen);
     expect(await main?.evaluate((element) => element.isConnected)).toBe(true);
+    chunkAvailable = true;
     await reload.click();
     await expectRounds(page, DETAIL_EXPLORATION_TITLE);
     await expect(page).toHaveURL(selectedUrl);
     expect(await reportRevision(page)).toBe(revision);
-    expect(chunkRequests).toBe(2);
+    expect(chunkRequests.served).toBeGreaterThanOrEqual(1);
     expect(documentRequests).toBe(documentsBeforeOpen + 1);
   } finally {
-    verifyExpectedFailure();
+    verifyExpectedFailures();
   }
 });
 
