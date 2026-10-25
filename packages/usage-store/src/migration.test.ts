@@ -509,6 +509,53 @@ describe('usage-store forward migration', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
   });
 
+  test('adds the delegation tables to a current-version store without bumping user_version, idempotently', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-delegation-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    beforeMigration.exec(
+      'DROP TABLE delegation_evaluations; DROP TABLE delegation_jobs; DROP TABLE delegation_qualifications;',
+    );
+    const schemaWithout = readSchema(beforeMigration);
+    expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    beforeMigration.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const schemaAfter = readSchema(migrated);
+    const added = schemaAfter.filter((object) => !schemaWithout.some((previous) => previous.name === object.name));
+    expect(added.filter((object) => object.type === 'table').map((object) => object.name)).toEqual([
+      'delegation_evaluations',
+      'delegation_jobs',
+      'delegation_qualifications',
+    ]);
+    expect(added.filter((object) => object.type === 'index').map((object) => object.name)).toEqual([
+      'idx_delegation_evaluations_job',
+      'idx_delegation_jobs_machine_state',
+      'idx_delegation_jobs_pool',
+      'idx_delegation_jobs_reserved_target',
+      'idx_delegation_jobs_retry_of',
+      'idx_delegation_jobs_target',
+      'idx_delegation_qualifications_machine',
+    ]);
+    // Everything that was there before is unchanged.
+    expect(schemaAfter.filter((object) => !added.includes(object))).toEqual(schemaWithout);
+    migrated.close(true);
+
+    // A second open changes nothing.
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const reopened = new Database(dbPath, { create: false, readonly: true });
+    expect(readSchema(reopened)).toEqual(schemaAfter);
+    reopened.close(true);
+    // Jobs are not report data: the generation that drives publication did not move.
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
   test('adds the auth_method column to an executor_observations table written before it, without bumping user_version', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-store-executor-auth-method-migration-'));
     temporaryRoots.push(root);

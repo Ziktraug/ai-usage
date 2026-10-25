@@ -1,3 +1,4 @@
+export type { NewDelegationJob } from './delegation-store';
 export {
   createUsageStore,
   importCheckoutStatusObservations,
@@ -24,11 +25,14 @@ export {
   querySkillObservations,
   queryWorkFactRunStates,
   quiesceUsageStoreForShutdown,
+  recordDelegationEvaluation,
   recordWorkFactRun,
+  requestDelegationJob,
   requestReviewAttempt,
   setLocalProjectionReadFaultInjectorForTesting,
   setServedReportPublicationFaultInjectorForTesting,
   setServedReportReadFaultInjectorForTesting,
+  transitionDelegationJob,
   transitionReviewAttempt,
   USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   updateUsageMachineLabel,

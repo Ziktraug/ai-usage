@@ -72,6 +72,7 @@ import {
   claudeDesktopSessionSchemaSql,
   createClaudeDesktopSessionStore,
 } from './claude-desktop-session-store';
+import { createDelegationStore, DELEGATION_TABLES, migrateDelegationSchema } from './delegation-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import { createExecutorObservationStore } from './executor-observation-store';
 import {
@@ -1468,6 +1469,12 @@ const migrate = (db: SqliteDatabase): boolean => {
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
   schemaChanged ||= reviewAttemptsMissing;
+  // Delegation jobs, evaluations and qualifications (design 2026-10-25) follow the same additive
+  // rule under user_version 4: presence of the three tables is the signal.
+  const delegationTablesMissing = DELEGATION_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= delegationTablesMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1778,6 +1785,10 @@ const migrate = (db: SqliteDatabase): boolean => {
     // Review attempts gain the reservation, scope and guarantee columns and the reserving unique
     // index additively (ADR 0055); the helper reports whether it changed anything.
     if (migrateReviewAttemptSchema(db)) {
+      schemaChanged = true;
+    }
+    // The delegation tables are created when absent, under the same user_version (ADR 0075).
+    if (migrateDelegationSchema(db)) {
       schemaChanged = true;
     }
     if (skillObservationCollectionStateMissing) {
@@ -4405,12 +4416,13 @@ export const { importSkillObservations, querySkillObservations, retainSkillObser
   },
 );
 
-export const { importExecutorObservations, queryLatestExecutorObservations } = createExecutorObservationStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
+export const { importExecutorObservations, queryExecutorObservationHistory, queryLatestExecutorObservations } =
+  createExecutorObservationStore({
+    usageStoreError,
+    usageStoreReadError,
+    withUsageStoreReader,
+    withUsageStoreWriter,
+  });
 export const {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
@@ -4447,6 +4459,26 @@ export const {
   requestReviewAttempt,
   transitionReviewAttempt,
 } = createReviewAttemptStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export const {
+  countDelegationRetryChain,
+  markDelegationJobsLost,
+  queryDelegationEvaluations,
+  queryDelegationJobs,
+  readDelegationJob,
+  readDelegationJobs,
+  readDelegationQualification,
+  recordDelegationEvaluation,
+  recordDelegationQualification,
+  releaseDelegationJobReservation,
+  requestDelegationCancel,
+  requestDelegationJob,
+  transitionDelegationJob,
+} = createDelegationStore({
   usageStoreError,
   usageStoreReadError,
   withUsageStoreReader,

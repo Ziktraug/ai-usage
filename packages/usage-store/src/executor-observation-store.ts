@@ -1,5 +1,6 @@
 import {
   EXECUTOR_BOUNDS,
+  type ExecutorHarness,
   type ExecutorObservation,
   parseExecutorObservation,
 } from '@ai-usage/report-core/work-executors';
@@ -46,6 +47,28 @@ export interface QueryLatestExecutorObservationsResult {
   /** More (machine, harness) pairs exist than `EXECUTOR_BOUNDS.maxObservations`. */
   readonly truncated: boolean;
 }
+
+export interface QueryExecutorObservationHistoryInput {
+  readonly dbPath: string;
+  /** One harness only; every harness of the machine when absent. */
+  readonly harness?: ExecutorHarness;
+  /** Rows returned at most; defaults to and may not exceed `MAX_EXECUTOR_OBSERVATION_HISTORY`. */
+  readonly limit?: number;
+  readonly machineId: string;
+}
+
+export interface QueryExecutorObservationHistoryResult {
+  /** Newest first (`observedAt`, then insertion order); the retained rows of each executor, re-validated. */
+  readonly observations: readonly ExecutorObservation[];
+  /** Persisted rows that no longer pass validation. Never silently omitted. */
+  readonly skipped: number;
+  /** More rows exist than the limit returned. */
+  readonly truncated: boolean;
+}
+
+/** The retained history of every executor of one machine fits this bound by construction. */
+export const MAX_EXECUTOR_OBSERVATION_HISTORY =
+  EXECUTOR_BOUNDS.maxRetainedPerExecutor * EXECUTOR_BOUNDS.maxObservations;
 
 interface SqliteStatement {
   all: (...params: unknown[]) => unknown[];
@@ -187,6 +210,17 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
     );
   };
 
+  /**
+   * The reader is query-only and cannot add the ADR 0057 column; a store the engine has not
+   * reopened since then has recorded no fingerprint, which reads as exactly that.
+   */
+  const fingerprintColumn = (db: SqliteDatabase): string => {
+    const columns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
+    return columns.some((column) => column.name === 'account_fingerprint')
+      ? 'account_fingerprint'
+      : 'NULL AS account_fingerprint';
+  };
+
   const queryLatestExecutorObservations = (
     input: QueryLatestExecutorObservationsInput,
   ): Effect.Effect<QueryLatestExecutorObservationsResult, UsageStoreError> =>
@@ -194,12 +228,7 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
       Effect.try({
         try: () => {
           const limit = EXECUTOR_BOUNDS.maxObservations;
-          // The reader is query-only and cannot add the ADR 0057 column; a store the engine has not
-          // reopened since then has recorded no fingerprint, which reads as exactly that.
-          const columns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
-          const fingerprint = columns.some((column) => column.name === 'account_fingerprint')
-            ? 'account_fingerprint'
-            : 'NULL AS account_fingerprint';
+          const fingerprint = fingerprintColumn(db);
           const rows = db
             .query(`
               SELECT machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method,
@@ -232,5 +261,59 @@ export const createExecutorObservationStore = (dependencies: ExecutorObservation
       }),
     );
 
-  return { importExecutorObservations, queryLatestExecutorObservations };
+  /**
+   * The retained observations of one machine's executors, newest first: what a delegation
+   * qualification reads to tell an account change (`observedAccountChangeAt`) from a stable sign-in.
+   * The latest-per-executor read above stays the routing simulation's.
+   */
+  const queryExecutorObservationHistory = (
+    input: QueryExecutorObservationHistoryInput,
+  ): Effect.Effect<QueryExecutorObservationHistoryResult, UsageStoreError> => {
+    const limit = input.limit ?? MAX_EXECUTOR_OBSERVATION_HISTORY;
+    if (!(Number.isSafeInteger(limit) && limit > 0 && limit <= MAX_EXECUTOR_OBSERVATION_HISTORY)) {
+      return Effect.fail(
+        usageStoreError(
+          'queryExecutorObservationHistory',
+          input.dbPath,
+          `Executor observation history limit must be between 1 and ${MAX_EXECUTOR_OBSERVATION_HISTORY}`,
+          'invalid-input',
+        ),
+      );
+    }
+    return withUsageStoreReader(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          const fingerprint = fingerprintColumn(db);
+          const rows = db
+            .query(`
+              SELECT machine_id, harness, observed_at, binary_path, version, auth_state, auth_evidence, auth_method,
+                ${fingerprint}, outcome
+              FROM executor_observations
+              WHERE machine_id = ?${input.harness === undefined ? '' : ' AND harness = ?'}
+              ORDER BY observed_at DESC, id DESC
+              LIMIT ?
+            `)
+            .all(
+              input.machineId,
+              ...(input.harness === undefined ? [] : [input.harness]),
+              limit + 1,
+            ) as ExecutorObservationRecord[];
+          const observations: ExecutorObservation[] = [];
+          let skipped = 0;
+          for (const row of rows.slice(0, limit)) {
+            const observation = observationFromRecord(row);
+            if (observation) {
+              observations.push(observation);
+            } else {
+              skipped++;
+            }
+          }
+          return { observations, skipped, truncated: rows.length > limit };
+        },
+        catch: (cause) => usageStoreReadError('queryExecutorObservationHistory', input.dbPath, cause),
+      }),
+    );
+  };
+
+  return { importExecutorObservations, queryExecutorObservationHistory, queryLatestExecutorObservations };
 };

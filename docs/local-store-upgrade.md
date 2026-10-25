@@ -205,6 +205,28 @@ a typed `schema-too-old`, shown on the Work view as "not upgraded for this
 version yet; the engine upgrades it when it next starts", never as a raw
 storage failure.
 
+### Additive tables under usage version 4 (2026-10-25, delegation)
+
+Delegation (`packages/usage-store/src/delegation-store.ts`) adds three tables
+without changing `user_version`: `delegation_jobs` (one row per job a caller
+handed to AI Usage: request, frozen scope SHAs, chosen route, state, result,
+usage, harness guarantee, reservation release), `delegation_evaluations`
+(append-only verifications and acceptances) and `delegation_qualifications`
+(the admissible-route qualifications a selector chose from, pruned to the
+newest 500 per machine and 7 days unless a job cites them). The engine creates
+them on its next start when they are absent (`CREATE TABLE IF NOT EXISTS`,
+absence is the signal, ADR 0075); nothing is backfilled and the store
+generation does not move. A partial unique index keeps one reserving job per
+(machine, action, checkout, base SHA, head SHA); `lost` rows keep that
+reservation until release evidence is recorded, as review attempts do. Rows
+are re-validated on read with the shared `parseDelegationJob` and
+`parseDelegationEvaluation`; a row that no longer parses is counted in
+`skipped`. The three tables stay outside the served revision, the export, the
+merge bundle and the replication outbox; an older binary opens the store
+normally and ignores them. Until the engine has created them, the query-only
+reads (`readDelegationJobs`, `readDelegationJob`) answer a typed
+`store-not-upgraded`, never a raw storage failure.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

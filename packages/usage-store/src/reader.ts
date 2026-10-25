@@ -11,6 +11,20 @@ export {
   MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
 } from './claude-desktop-session-store';
+export type {
+  DelegationJobRead,
+  DelegationJobsRead,
+  DelegationStoreReadFailure,
+  QueryDelegationEvaluationsInput,
+  QueryDelegationEvaluationsResult,
+  QueryDelegationJobsInput,
+  QueryDelegationJobsResult,
+  ReadDelegationJobInput,
+  ReadDelegationQualificationInput,
+  ReadDelegationQualificationResult,
+  StoredDelegationQualification,
+} from './delegation-store';
+export { DELEGATION_STORE_BOUNDS } from './delegation-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type {
@@ -82,6 +96,8 @@ export {
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
+  queryDelegationEvaluations,
+  queryDelegationJobs,
   queryDistillationSessionMetadata,
   queryLatestCheckoutStatusObservations,
   queryLatestExecutorObservations,
@@ -114,6 +130,9 @@ export {
   queryUsageStoreGenerations,
   queryUsageSyncFleet,
   queryWorkFactRunStates,
+  readDelegationJob,
+  readDelegationJobs,
+  readDelegationQualification,
   USAGE_STORE_SCHEMA_VERSION,
   usageStorePath,
 } from './index';
