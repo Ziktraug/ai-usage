@@ -265,6 +265,142 @@ const withPullRequestDates = async (
 };
 
 describe('work-thread reader', () => {
+  test.each([
+    { title: '', expected: null },
+    { title: ' \t\n ', expected: null },
+    { title: ' '.repeat(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText + 1), expected: null },
+    { title: `${' '.repeat(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText + 1)}Visible title  `, expected: 'Visible title' },
+  ] as const)('keeps labels usable when a stored title normalizes to $expected', async ({ title, expected }) => {
+    const dbPath = await fixture();
+    await publish(dbPath, [
+      session('root'),
+      session('child', {
+        source: {
+          ...session('child').source,
+          harnessKey: 'codex',
+          sourceSessionId: 'child',
+          parentSourceSessionId: 'root',
+          rootSourceSessionId: 'root',
+        },
+      }),
+    ]);
+    const stored = new Database(dbPath);
+    try {
+      stored
+        .query(`UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.sessionLabel', ?)
+        WHERE json_extract(source_row_json, '$.source.sourceSessionId') = 'root'`)
+        .run(title);
+    } finally {
+      stored.close();
+    }
+    await run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [{ ...pr(-1), title: expected ?? title.slice(0, 16), createdAt: at(-3) }],
+      }),
+    );
+    const threadId = await create(dbPath, [
+      sessionLink('root'),
+      { kind: 'pull-request', key: 'github.com/fixture/repo#7' },
+    ]);
+    await command(dbPath, {
+      commandId: randomUUID(),
+      op: 'set-follow-state',
+      threadId,
+      expectedRevision: 1,
+      to: 'waiting',
+      waitingFor: 'A response',
+      waitingOn: null,
+      reason: null,
+      acknowledgedRemainders: [],
+    });
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(detail?.episodes[0]?.title).toBe(expected);
+    expect(detail?.episodes[0]?.children[0]?.launchedBy?.title).toBe(expected);
+    expect(detail?.factEvents[0]).toMatchObject({ label: 'PR #7', title: expected });
+    expect(detail?.row.marks.map((mark) => mark.label)).toEqual([
+      'Waiting',
+      'PR #7 opened',
+      expected ?? 'Session root',
+    ]);
+    expect(list.rows[0]).toEqual(detail?.row);
+    expect(detail?.row.marks.every((mark) => mark.label !== null && mark.label.trim().length > 0)).toBe(true);
+  });
+
+  test.each([
+    { desktopTitle: '', servedTitle: 'Served title', expected: 'Served title' },
+    { desktopTitle: ' \t ', servedTitle: '\n ', expected: null },
+  ])(
+    'treats a blank Desktop title as absent before the served fallback ($expected)',
+    async ({ desktopTitle, servedTitle, expected }) => {
+      const dbPath = await fixture();
+      const desktop = parseClaudeDesktopSessionObservation({
+        accountDirectory: 'account',
+        archived: false,
+        branch: null,
+        cliSessionId: 'root',
+        completedTurns: 1,
+        createdAt: at(-2),
+        cwd: '/fixture/project',
+        declaredPullRequests: [],
+        desktopSessionId: 'desktop-root',
+        effort: null,
+        fileModifiedAt: at(-1),
+        filePath: 'account/root.json',
+        format: 'claude-desktop-session-v1',
+        lastActivityAt: at(-1),
+        lastTurnReport: null,
+        machineId: MACHINE,
+        model: null,
+        observedAt: at(0),
+        openSuggestions: [],
+        organizationDirectory: 'org',
+        originCwd: null,
+        priorCliSessionIds: [],
+        resolvedSuggestions: {},
+        sideSessionNotes: [],
+        sourceBranch: null,
+        spawnedFrom: null,
+        title: 'Desktop title',
+        titleSource: 'auto',
+        turnSummary: null,
+        unsupportedReason: null,
+        worktreePath: null,
+        wrapUpDescription: null,
+        writtenBranches: [],
+      });
+      if (desktop === null) {
+        throw new Error('Invalid Desktop title fixture');
+      }
+      await run(
+        importClaudeDesktopSessions({
+          dbPath,
+          machineId: MACHINE,
+          collectedAt: NOW,
+          completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+          observations: [desktop],
+        }),
+      );
+      await publish(dbPath, [claudeDelegating('root', ['child']), session('child')]);
+      const stored = new Database(dbPath);
+      try {
+        stored.query('UPDATE claude_desktop_sessions SET title = ? WHERE cli_session_id = ?').run(desktopTitle, 'root');
+        stored
+          .query(`UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.sessionLabel', ?)
+        WHERE json_extract(source_row_json, '$.source.sourceSessionId') = 'root'`)
+          .run(servedTitle);
+      } finally {
+        stored.close();
+      }
+      const threadId = await create(dbPath, [sessionLink('root', 'claude')]);
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(detail?.episodes[0]?.title).toBe(expected);
+      expect(detail?.episodes[0]?.children[0]?.launchedBy?.title).toBe(expected);
+      expect(detail?.row.marks[0]?.label).toBe(expected ?? 'Session root');
+    },
+  );
+
   test('keeps recorded active time independent from a multi-day Desktop span', async () => {
     const dbPath = await fixture();
     const desktop = parseClaudeDesktopSessionObservation({

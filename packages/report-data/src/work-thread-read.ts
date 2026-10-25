@@ -51,6 +51,7 @@ import { Effect } from 'effect';
 const DAY_MS = 86_400_000;
 const text = (value: string | null | undefined): string | null =>
   value?.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodeText) ?? null;
+const titleText = (value: string | null | undefined): string | null => text(value?.trim()) || null;
 const error = (message: string) =>
   new UsageStoreError({ message, operation: 'queryWorkThreads', reason: 'invalid-input' });
 const nowOf = (now?: Date): Effect.Effect<CanonicalInstant, UsageStoreError> =>
@@ -114,7 +115,7 @@ const episodeOf = (
     launchedBy:
       parent === undefined
         ? null
-        : { harness: parent.harness, title: text(parent.desktop?.title ?? parent.member.title) },
+        : { harness: parent.harness, title: titleText(parent.desktop?.title) ?? titleText(parent.member.title) },
     linkKey: keyOf(session),
     machineId: member.machineId,
     origin,
@@ -134,7 +135,7 @@ const episodeOf = (
     running: null,
     sourceSessionId: member.sourceSessionId,
     startedAt,
-    title: text(desktop?.title ?? member.title),
+    title: titleText(desktop?.title) ?? titleText(member.title),
   };
 };
 
@@ -439,7 +440,7 @@ const factEventsOf = (pullRequests: WorkThreadMarkers['pullRequests']): WorkThre
           key: marker.key,
           kind,
           label: `PR #${successful.number}`,
-          title: text(successful.title),
+          title: titleText(successful.title),
         });
       }
     };
