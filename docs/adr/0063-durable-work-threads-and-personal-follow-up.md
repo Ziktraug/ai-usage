@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-24
 - **Extends:** [0050](0050-work-attention-facts-outside-the-served-revision.md), [0051](0051-engine-read-only-github-and-checkout-observation.md), [0054](0054-jira-issue-facts-explicit-keys-read-only.md)
-- **Plan:** [120](../../plans/120-work-thread-convergence.md)
+- **Plan:** [123](../../plans/123-work-thread-convergence.md)
 
 ## Context
 

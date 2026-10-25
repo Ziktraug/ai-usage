@@ -51,5 +51,5 @@ browser was rejected because collection and write ownership belong to the engine
 [Observation contract](../../packages/report-core/src/codex-work-observation.ts),
 [local store](../../packages/usage-store/src/codex-work-store.ts) and
 [portable-boundary test](../../packages/usage-store/src/codex-work-store.integration.test.ts).
-[Plan 119](../../plans/119-work-continuity-and-codex-review.md) separates native
+[Plan 122](../../plans/122-work-continuity-and-codex-review.md) separates native
 format qualification from synthetic integration and browser evidence.

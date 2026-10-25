@@ -58,5 +58,5 @@ was rejected because neither proves that execution ended.
 [Codex adapter](../../packages/local-collectors/src/codex-review-launcher.ts),
 [stdio client](../../packages/local-collectors/src/codex-app-server-client.ts),
 [engine lifecycle](../../packages/usage-engine-runtime/src/review-attempts.ts)
-and their focused tests. [Plan 119](../../plans/119-work-continuity-and-codex-review.md)
+and their focused tests. [Plan 122](../../plans/122-work-continuity-and-codex-review.md)
 records the exact distinction between synthetic and native evidence.

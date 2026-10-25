@@ -3,7 +3,7 @@ import { isRecord } from './datasets';
 import { normalizeIsoTimestamp } from './provider-status';
 
 /**
- * Work thread: the durable unit of the Work view (CONTEXT.md "Work thread", plan 120). A thread
+ * Work thread: the durable unit of the Work view (CONTEXT.md "Work thread", plan 123). A thread
  * keeps one identity from a first exploration to the end of the operator's follow-up, whatever
  * appears around it: sessions, a branch, a pull request, a Jira issue.
  *

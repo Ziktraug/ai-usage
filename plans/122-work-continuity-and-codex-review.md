@@ -1,4 +1,4 @@
-# Work continuity and Codex review
+# 122 — Work continuity and Codex review
 
 Status: BLOCKED for B10 native generation; the remaining local delivery is
 implemented and verified at `bdccc108`. This continues PR #67 at `6bf89308`,

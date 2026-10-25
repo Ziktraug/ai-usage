@@ -3,7 +3,7 @@ import type { CheckoutStatusObservation, JiraIssueObservation, PullRequestObserv
 import type { WorkThread, WorkThreadEvent, WorkThreadLink } from './work-thread';
 
 /**
- * The read model of the Work view (plan 120): what the reader assembles for one Work thread from
+ * The read model of the Work view (plan 123): what the reader assembles for one Work thread from
  * the thread store, the fact stores and the served sessions, and what the browser renders. Facts
  * are carried as observations with their own dates and outcomes; the view never turns a missing
  * or failed read into "nothing to do".
@@ -89,7 +89,7 @@ export interface WorkThreadMark {
 }
 
 export interface WorkThreadRow {
-  /** Facts newer than `doneAt` on a Done thread: shown, never reopening it silently (plan 120 decision 3). */
+  /** Facts newer than `doneAt` on a Done thread: shown, never reopening it silently (plan 123 decision 3). */
   readonly afterDone: { readonly count: number; readonly latestAt: CanonicalInstant } | null;
   /**
    * Sessions those linked sessions delegated (subagents, automated reviews), nested under their

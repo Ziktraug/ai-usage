@@ -1,7 +1,7 @@
-# Work thread convergence (« Unité de travail v3 »)
+# 123 — Work thread convergence (« Unité de travail v3 »)
 
 Status: IN PROGRESS. Starting head `b93a364b` on local branch
-`work-unit-convergence`: `work-continuity` at `7b133724` (plan 119, which
+`work-unit-convergence`: `work-continuity` at `7b133724` (plan 122, then numbered 119, which
 contains PR #67 at `6bf89308`) merged with `main` at `3fde5ae6`. Nothing is
 pushed or merged remotely.
 

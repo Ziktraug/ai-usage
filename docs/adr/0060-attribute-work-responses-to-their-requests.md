@@ -38,5 +38,5 @@ rejected because it loses the request's identity and scope.
 
 [Interpretation regressions](../../packages/report-core/src/work-attention-interpretation.test.ts)
 cover deferral, independent completed children, proposals, multiple questions,
-and Q1 followed by Q2. [Plan 119](../../plans/119-work-continuity-and-codex-review.md)
+and Q1 followed by Q2. [Plan 122](../../plans/122-work-continuity-and-codex-review.md)
 records implementation and verification separately.

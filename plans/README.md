@@ -76,15 +76,16 @@ dependency.
 
 ## Execution order & status
 
-Current continuation: [119 — Work continuity and Codex review](119-work-continuity-and-codex-review.md)
+Current continuation: [123 — Work thread convergence](123-work-thread-convergence.md), on
+[122 — Work continuity and Codex review](122-work-continuity-and-codex-review.md), which
 extends plan 118 from PR #67's verified `6bf89308` head. Local delivery is
 verified at `bdccc108`; B10 native generation remains blocked by the missing
 per-turn no-credit guarantee. Earlier delivery records remain historical.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| 119 | Work continuity and Codex review | P1 | L | 118 at `6bf89308` | BLOCKED for B10 native no-credit guarantee; L1/L3/L4/L5 delivered locally and verified at `bdccc108` |
-| 120 | Work thread convergence (Unité de travail v3) | P1 | L | 119 at `7b133724` + main `3fde5ae6` | IN PROGRESS; slice A–B delivered and verified locally (ADR 0063) |
+| 122 | [Work continuity and Codex review](122-work-continuity-and-codex-review.md) (was 119; renumbered after main took 119 and 120) | P1 | L | 118 at `6bf89308` | BLOCKED for B10 native no-credit guarantee; L1/L3/L4/L5 delivered locally and verified at `bdccc108` |
+| 123 | [Work thread convergence (Unité de travail v3)](123-work-thread-convergence.md) (was 120) | P1 | L | 122 at `7b133724`; PR #67 `de3c935c` + main `62e84b1a` merged at `ea8f48e9` | IN PROGRESS; slice A–B delivered and verified locally (ADR 0063); round 2 on the merged head |
 | 001 | Integrate Skill Management Into ai-usage | P1 | L | - | DONE |
 | 002 | Skills Inventory UI — Multi-Axis Redesign of `/skills` | P1 | L | 001 | DONE |
 | 003 | Skills UX Polish — Fix the `/skills` Presentation Defects | P2 | M | 002 | DONE |

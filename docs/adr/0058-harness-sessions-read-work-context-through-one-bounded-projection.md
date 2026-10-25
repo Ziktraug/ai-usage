@@ -58,7 +58,7 @@ data (ADR 0009).
 
 ## Consequences
 
-### Amendment: scope before bounds (2026-10-22, plan 119)
+### Amendment: scope before bounds (2026-10-22, plan 122, then numbered 119)
 
 The common reader now applies checkout or project scope in the store query
 before selecting a bounded page. This replaces the widest-global-page filter

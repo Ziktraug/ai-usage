@@ -44,7 +44,7 @@ live replication and later backfill.
 
 ## Additive tables under usage version 4 (2026-10-21)
 
-2026-10-22 (Work continuation, plan 119): `review_attempts` gains nullable
+2026-10-22 (Work continuation, plan 122): `review_attempts` gains nullable
 `native_turn_id`, `stop_requested_at` and `stop_confirmed_at` columns. Existing
 attempts keep their identity, reservation, result and Claude guarantee; unknown
 native/stop observations remain null. Query-only readers report a store not yet

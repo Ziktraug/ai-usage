@@ -90,7 +90,7 @@ const BLOCKED_DECLARED_AT = 'Jul 03, 2026, 13:00 GMT+2';
 // A worktree removed since its session is a fact about that session, stated in words, never a failed read.
 const MISSING_WORKTREE = '/.claude/worktrees/checkout-3: no longer on disk (removed since the session)';
 const CHECKOUTS_FAILED_PATTERN = /Checkouts: .* failed/;
-// A checkout path that no longer exists is a fact about the path, not an unread checkout (plan 120):
+// A checkout path that no longer exists is a fact about the path, not an unread checkout (plan 123):
 // it is named as gone, never counted as "not read".
 const CHECKOUTS_GONE_PATTERN =
   /Checkouts: [1-9]\d*\s+observed[^·]*· of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
