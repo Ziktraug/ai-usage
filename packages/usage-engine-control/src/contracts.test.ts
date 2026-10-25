@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   classifyUsageEngineRetry,
+  parseProjectGroupsByReferenceCommand,
   parseUsageEngineCommand,
   parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandCompletion,
@@ -64,6 +65,36 @@ describe('usage engine control contracts', () => {
       {
         command: 'qualify-review-routing',
         target: { desktopSessionId: null, harness: 'claude', sourceSessionId: 'session-a' },
+      },
+      {
+        command: 'qualify-delegation',
+        purpose: 'simulation',
+        request: { action: 'read-only-review', checkout: { path: '/home/operator/src/project' }, schemaVersion: 1 },
+      },
+      {
+        command: 'start-delegation',
+        idempotencyKey: 'claude-code:session-a:1',
+        request: { action: 'read-only-review', schemaVersion: 1 },
+        selection: { kind: 'abstain', qualificationId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5' },
+      },
+      { command: 'cancel-delegation', jobId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5' },
+      {
+        author: 'calling-model',
+        authorLabel: 'claude-code',
+        command: 'record-delegation-evaluation',
+        evaluation: { kind: 'verification', verdict: 'confirmed' },
+        jobId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5',
+      },
+      {
+        command: 'update-delegation-config',
+        delegation: { defaults: { reservePercent: 25 } },
+        expectedRevision: '0123456789abcdef',
+      },
+      {
+        command: 'update-delegation-config',
+        executors: [{ harness: 'claude-code' }],
+        expectedRevision: '0123456789abcdef',
+        reviewTargets: [{ checkoutPath: '/home/operator/src' }],
       },
       { command: 'collect-fresh-quota' },
       { command: 'import-cursor', input: { handoffId: 'handoff-1', kind: 'inbox-handoff' } },
@@ -623,6 +654,159 @@ describe('usage engine control contracts', () => {
     }
   });
 
+  test('carries the delegation commands as bounded objects and keeps the start out of the web (ADR 0077)', () => {
+    const request = { action: 'read-only-review', checkout: { path: '/home/operator/src/project' }, schemaVersion: 1 };
+    const selection = { kind: 'choice', qualificationId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5', routeId: 'r' };
+    const qualify = { command: 'qualify-delegation', purpose: 'delegation', request };
+    const start = { command: 'start-delegation', idempotencyKey: 'session-a:turn-7', request, selection };
+    const cancel = { command: 'cancel-delegation', jobId: 'job-1' };
+    const evaluate = {
+      author: 'operator',
+      authorLabel: null,
+      command: 'record-delegation-evaluation',
+      evaluation: { kind: 'acceptance', verdict: 'accepted' },
+      jobId: 'job-1',
+    };
+    const configure = { command: 'update-delegation-config', expectedRevision: 'abcdef0123456789', reviewTargets: [] };
+    for (const command of [qualify, cancel, evaluate, configure]) {
+      expect(parseWebUsageEngineCommand(command) as unknown).toEqual(command);
+    }
+    expect(parseUsageEngineCommand(start) as unknown).toEqual(start);
+    expect(() => parseWebUsageEngineCommand(start)).toThrow('start a delegation');
+
+    // The nested payloads are objects the engine parses; the control plane refuses only non-objects.
+    expect(() => parseUsageEngineCommand({ ...qualify, request: 'review HEAD' })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ ...qualify, purpose: 'dry-run' })).toThrow('purpose');
+    expect(() => parseUsageEngineCommand({ ...qualify, extra: true })).toThrow('unknown');
+    expect(() => parseUsageEngineCommand({ ...start, idempotencyKey: 'short' })).toThrow('idempotency');
+    expect(() => parseUsageEngineCommand({ ...start, idempotencyKey: 'has space in it' })).toThrow('idempotency');
+    expect(() => parseUsageEngineCommand({ ...start, selection: [] })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ command: 'cancel-delegation' })).toThrow('unknown or missing');
+    // The engine's own author is never accepted from a caller.
+    expect(() => parseUsageEngineCommand({ ...evaluate, author: 'automated-check' })).toThrow('author');
+    expect(() => parseUsageEngineCommand({ ...evaluate, evaluation: null })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ command: 'update-delegation-config', expectedRevision: 'abc' })).toThrow(
+      'no section',
+    );
+    expect(() => parseUsageEngineCommand({ ...configure, executors: 'all' })).toThrow('array');
+    expect(() => parseUsageEngineCommand({ ...configure, delegation: [] })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ ...configure, expectedRevision: 'x'.repeat(65) })).toThrow('revision');
+  });
+
+  test('carries the delegation answers and refuses outputs that do not conform (ADR 0077)', () => {
+    const base = { commandId: 'command-1', completedAt: '2026-10-25T08:00:02.000Z', state: 'succeeded' };
+    const qualification = {
+      admissibleRouteIds: [],
+      outcome: 'no-admissible-route',
+      qualificationId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5',
+      routes: [],
+      schemaVersion: 1,
+    };
+    const qualified = {
+      ...base,
+      command: 'qualify-delegation',
+      output: { kind: 'delegation-qualification', qualification },
+    };
+    expect(parseUsageEngineCommandCompletion(qualified)).toEqual(qualified as never);
+    for (const output of [
+      { kind: 'delegation-qualification', qualification: { ...qualification, schemaVersion: 2 } },
+      { kind: 'delegation-qualification', qualification: { ...qualification, outcome: 'maybe' } },
+      { kind: 'delegation-qualification', qualification: { ...qualification, qualificationId: 7 } },
+      { kind: 'delegation-qualification', qualification: { ...qualification, routes: ['x'.repeat(49 * 1024)] } },
+      { kind: 'delegation-qualification', qualification, rows: [] },
+      { kind: 'none' },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...qualified, output })).toThrow();
+    }
+
+    const started = {
+      ...base,
+      command: 'start-delegation',
+      output: { job: { jobId: 'job-1', reused: false, state: 'starting' }, kind: 'delegation-start', refusal: null },
+    };
+    expect(parseUsageEngineCommandCompletion(started)).toEqual(started as never);
+    const refused = {
+      ...started,
+      output: {
+        job: { jobId: 'job-2', reused: false, state: 'refused' },
+        kind: 'delegation-start',
+        refusal: { message: 'The cited qualification expired.', reason: 'qualification-expired' },
+      },
+    };
+    expect(parseUsageEngineCommandCompletion(refused)).toEqual(refused as never);
+    const refusedWithoutRow = { ...started, output: { ...refused.output, job: null } };
+    expect(parseUsageEngineCommandCompletion(refusedWithoutRow)).toEqual(refusedWithoutRow as never);
+    for (const output of [
+      { ...started.output, job: null },
+      { ...started.output, job: { ...started.output.job, state: 'queued' } },
+      { ...refused.output, refusal: { ...refused.output.refusal, reason: 'busy' } },
+      { ...refused.output, refusal: { message: 'x'.repeat(1025), reason: 'pool-busy' } },
+      { ...started.output, rows: [] },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...started, output })).toThrow();
+    }
+
+    const cancelled = {
+      ...base,
+      command: 'cancel-delegation',
+      output: { jobId: 'job-1', kind: 'delegation-cancel', result: 'cancelling', state: 'running' },
+    };
+    expect(parseUsageEngineCommandCompletion(cancelled)).toEqual(cancelled as never);
+    const unknownJob = { ...cancelled, output: { ...cancelled.output, result: 'not-found', state: null } };
+    expect(parseUsageEngineCommandCompletion(unknownJob)).toEqual(unknownJob as never);
+    expect(() =>
+      parseUsageEngineCommandCompletion({ ...cancelled, output: { ...cancelled.output, result: 'killed' } }),
+    ).toThrow();
+
+    const evaluated = {
+      ...base,
+      command: 'record-delegation-evaluation',
+      output: { evaluationId: 'evaluation-1', kind: 'delegation-evaluation', refusal: null },
+    };
+    expect(parseUsageEngineCommandCompletion(evaluated)).toEqual(evaluated as never);
+    const notEnded = {
+      ...evaluated,
+      output: {
+        evaluationId: null,
+        kind: 'delegation-evaluation',
+        refusal: { message: 'The job is still running.', reason: 'not-ended' },
+      },
+    };
+    expect(parseUsageEngineCommandCompletion(notEnded)).toEqual(notEnded as never);
+    for (const output of [
+      { evaluationId: null, kind: 'delegation-evaluation', refusal: null },
+      { ...notEnded.output, evaluationId: 'evaluation-1' },
+      { ...notEnded.output, refusal: { ...notEnded.output.refusal, reason: 'forbidden' } },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...evaluated, output })).toThrow();
+    }
+
+    const written = {
+      ...base,
+      command: 'update-delegation-config',
+      output: { issues: [], kind: 'delegation-config', result: 'written', revision: '0123456789abcdef' },
+    };
+    expect(parseUsageEngineCommandCompletion(written)).toEqual(written as never);
+    const invalid = {
+      ...written,
+      output: {
+        issues: [{ path: 'delegation.rules[0].id', reason: 'must match the rule id pattern' }],
+        kind: 'delegation-config',
+        result: 'invalid',
+        revision: '0123456789abcdef',
+      },
+    };
+    expect(parseUsageEngineCommandCompletion(invalid)).toEqual(invalid as never);
+    for (const output of [
+      { ...written.output, result: 'invalid' },
+      { ...invalid.output, result: 'written' },
+      { ...invalid.output, issues: [{ path: 'delegation', reason: 'x', value: 'secret' }] },
+      { ...written.output, result: 'skipped' },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...written, output })).toThrow();
+    }
+  });
+
   test('classifies retries by operation without trusting server input', () => {
     expect(classifyUsageEngineRetry('transport-failed', 'command')).toBe('same-command-id');
     expect(classifyUsageEngineRetry('transport-failed', 'status')).toBe('safe-request');
@@ -634,5 +818,26 @@ describe('usage engine control contracts', () => {
     expect(classifyUsageEngineRetry('merge-invalid-input', 'command')).toBe('never');
     expect(classifyUsageEngineRetry('merge-self-merge', 'command')).toBe('never');
     expect(classifyUsageEngineRetry('merge-store-failed', 'command')).toBe('never');
+  });
+});
+
+describe('narrow project-group command parser', () => {
+  test('answers exactly what the full command parser and the web projection answer', () => {
+    const command = {
+      command: 'replace-project-groups-by-reference',
+      projectGroups: [{ id: 'group-1', name: 'Group 1', sources: [`project-source:${'b'.repeat(64)}`] }],
+      revision: 'revision-b',
+    };
+    const narrow = parseProjectGroupsByReferenceCommand(command) as unknown;
+    expect(narrow).toEqual(parseUsageEngineCommand(command));
+    expect(narrow).toEqual(parseWebUsageEngineCommand(command));
+    expect(() => parseProjectGroupsByReferenceCommand({ ...command, extra: true })).toThrow('unknown fields');
+    expect(() => parseProjectGroupsByReferenceCommand({ command: 'publish' })).toThrow('unknown fields');
+    expect(() =>
+      parseProjectGroupsByReferenceCommand({
+        ...command,
+        projectGroups: [{ id: 'group-1', name: 'Group 1', sources: ['/private/history'] }],
+      }),
+    ).toThrow('reference');
   });
 });

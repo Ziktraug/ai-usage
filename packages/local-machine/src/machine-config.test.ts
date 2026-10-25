@@ -596,6 +596,47 @@ describe('machine config', () => {
     }
   });
 
+  test('reads a delegation section whose entries are validated later and rejects a malformed section (ADR 0077)', async () => {
+    const home = await mkdtemp('ai-usage-delegation-home-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true, mode: 0o700 });
+      // A bad rule is the delegation parser's to report; the section's shape is what makes the config readable.
+      const delegation = { rules: [{ effect: 'maybe', id: 'r1', match: {} }] };
+      writeFileSync(aiUsageConfigPath(storage), JSON.stringify({ delegation }));
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.delegation).toEqual(delegation);
+
+      for (const malformed of [{ rules: {} }, { unknownSection: [] }, [], 'none']) {
+        writeFileSync(aiUsageConfigPath(storage), JSON.stringify({ delegation: malformed }));
+        await expect(
+          Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+        ).rejects.toThrow('Invalid ai-usage config');
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a delegation section in repository configuration', async () => {
+    const home = await mkdtemp('ai-usage-delegation-home-only-');
+    const repo = await mkdtemp('ai-usage-delegation-repo-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeFileSync(path.join(repo, 'ai-usage.config.ts'), 'export default { delegation: { rules: [] } };\n');
+
+      const error = await Effect.runPromise(
+        readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage), Effect.flip),
+      );
+      expect(formatLocalHistoryError(error)).toContain('delegation may only be configured in the user home config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   test('rejects routing declarations in repository configuration', async () => {
     const home = await mkdtemp('ai-usage-routing-home-only-');
     const repo = await mkdtemp('ai-usage-routing-repo-');

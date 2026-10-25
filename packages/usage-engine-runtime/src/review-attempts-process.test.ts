@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { delegationLaunchMarkerToken } from '@ai-usage/local-collectors/review-worker';
 import { createProcessTableScanner } from './review-attempts-process';
 
 const roots: string[] = [];
@@ -36,6 +37,32 @@ describe('review process scan (ADR 0055)', () => {
     const scan = createProcessTableScanner({ platform: 'linux', procRoot, selfPid: SELF });
     expect(await scan(MARKER)).toEqual({ kind: 'found', pids: [4242] });
     expect(await scan('00000000-0000-4000-8000-000000000000')).toEqual({ kind: 'absent' });
+  });
+
+  test('finds a Codex delegation worker by the marker token in its private output path (ADR 0077)', async () => {
+    const outputPath = `/home/operator/.config/ai-usage/engine/delegation/job-1/${delegationLaunchMarkerToken(MARKER)}.last-message.txt`;
+    const procRoot = await procTree({
+      [SELF]: ['bun', 'usage-engine'],
+      4242: ['codex', 'exec', '--sandbox', 'read-only', '--output-last-message', outputPath, '-'],
+      // The same UUID in another role is not this engine's token.
+      4300: ['codex', 'exec', '--output-last-message', `/tmp/${MARKER}.txt`, '-'],
+    });
+    const scan = createProcessTableScanner({ platform: 'linux', procRoot, selfPid: SELF });
+    expect(await scan(MARKER)).toEqual({ kind: 'found', pids: [4242] });
+
+    const ps = createProcessTableScanner({
+      listProcesses: () =>
+        Promise.resolve(
+          psListing([
+            [SELF, 'bun usage-engine'],
+            [4242, `codex exec --sandbox read-only --output-last-message ${outputPath} -`],
+          ]),
+        ),
+      platform: 'darwin',
+      selfPid: SELF,
+    });
+    expect(await ps(MARKER)).toEqual({ kind: 'found', pids: [4242] });
+    expect(await ps('00000000-0000-4000-8000-000000000000')).toEqual({ kind: 'absent' });
   });
 
   test('a table that does not show this engine itself cannot prove an absence', async () => {

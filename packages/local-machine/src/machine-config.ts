@@ -6,6 +6,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { isCampaignLabelOverrides } from '@ai-usage/report-core/campaign-label';
+import { isDelegationConfigShape } from '@ai-usage/report-core/delegation-policy';
 import type {
   AiUsageConfig,
   AiUsageGitHubAccountConfig,
@@ -452,6 +453,12 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   if (routing !== undefined && !isRoutingConfigShape(routing)) {
     return false;
   }
+  // Likewise for the home `delegation` section (ADR 0077): the shape here, each entry by
+  // `parseDelegationConfig`, which locates a bad entry without hiding its neighbours.
+  const delegation = config.delegation;
+  if (delegation !== undefined && !isDelegationConfigShape(delegation)) {
+    return false;
+  }
   const github = config.github;
   if (github !== undefined && !isGitHubConfig(github)) {
     return false;
@@ -553,7 +560,7 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
       (module as { default?: unknown; config?: unknown }).config;
     const homeOnlyField =
       typeof exportedConfig === 'object' && exportedConfig !== null
-        ? ['campaignLabelOverrides', 'github', 'jira', 'routing', 'sourcePolicies'].find((field) =>
+        ? ['campaignLabelOverrides', 'delegation', 'github', 'jira', 'routing', 'sourcePolicies'].find((field) =>
             Object.hasOwn(exportedConfig, field),
           )
         : undefined;

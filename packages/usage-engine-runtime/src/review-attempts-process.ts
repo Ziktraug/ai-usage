@@ -1,12 +1,15 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { delegationLaunchMarkerToken } from '@ai-usage/local-collectors/review-worker';
 import { executeBoundedProcess } from '@ai-usage/local-machine/bounded-process';
 
 /**
- * Process evidence for a lost review attempt (ADR 0055). The engine records, before any spawn, the
- * session id it passes to the harness as `--session-id`; the launched process carries it in its
- * argument vector for its whole life. Looking for that pair answers "does the harness process this
- * attempt started still run?" without trusting a pid (pids are reused) or an age (a slow process is
+ * Process evidence for a lost review attempt or delegation job (ADR 0055, 0077). The engine
+ * records, before any spawn, a marker the launched process carries in its argument vector for its
+ * whole life: Claude Code takes it as `--session-id <marker>`; Codex, which takes no session id,
+ * carries it in its private `--output-last-message` path as `ai-usage-delegation-<marker>`
+ * (`delegationLaunchMarkerToken`). Looking for either form answers "does the harness process this
+ * engine started still run?" without trusting a pid (pids are reused) or an age (a slow process is
  * not a dead one).
  *
  * Two listings, read-only, spawning nothing but a bounded `ps`:
@@ -26,7 +29,8 @@ export type ReviewProcessScan =
   | { readonly kind: 'found'; readonly pids: readonly number[] }
   | { readonly kind: 'unavailable'; readonly reason: string };
 
-export type FindReviewProcesses = (launchSessionId: string) => Promise<ReviewProcessScan>;
+/** Looks for the processes carrying one launch marker (a review attempt's session id or a delegation job's marker). */
+export type FindReviewProcesses = (launchMarker: string) => Promise<ReviewProcessScan>;
 
 export interface ProcessTableOptions {
   /** Test seam for the `ps` listing; defaults to `ps -axww -o pid=,command=` through the bounded runner. */
@@ -51,9 +55,18 @@ interface Listing {
   readonly sawSelf: boolean;
 }
 
-const carriesLaunchSession = (args: readonly string[], launchSessionId: string): boolean => {
-  for (let index = 0; index + 1 < args.length; index++) {
-    if (args[index] === SESSION_ID_FLAG && args[index + 1] === launchSessionId) {
+/**
+ * Whether an argument vector carries the marker: as the value of `--session-id` (Claude Code), or
+ * inside one argument as the delegation token (Codex's private output path). A marker that is only
+ * a prefix of another session id is not the marker; the token form is unambiguous by its prefix.
+ */
+const carriesLaunchMarker = (args: readonly string[], launchMarker: string): boolean => {
+  const token = delegationLaunchMarkerToken(launchMarker);
+  for (const [index, argument] of args.entries()) {
+    if (argument === SESSION_ID_FLAG && args[index + 1] === launchMarker) {
+      return true;
+    }
+    if (argument.includes(token)) {
       return true;
     }
   }
@@ -61,7 +74,7 @@ const carriesLaunchSession = (args: readonly string[], launchSessionId: string):
 };
 
 /** `null` when `/proc` cannot be listed at all; then `ps` is tried. */
-const listProcTable = async (root: string, selfPid: number, launchSessionId: string): Promise<Listing | null> => {
+const listProcTable = async (root: string, selfPid: number, launchMarker: string): Promise<Listing | null> => {
   let entries: string[];
   try {
     entries = await readdir(root);
@@ -83,15 +96,18 @@ const listProcTable = async (root: string, selfPid: number, launchSessionId: str
     }
     const pid = Number(entry);
     sawSelf ||= pid === selfPid;
-    if (carriesLaunchSession(cmdline.toString('utf8').split('\u0000'), launchSessionId)) {
+    if (carriesLaunchMarker(cmdline.toString('utf8').split('\u0000'), launchMarker)) {
       matches.push(pid);
     }
   }
   return { matches, sawSelf };
 };
 
-/** `ps` joins the argument vector with spaces; a UUID has none, so the pair is two adjacent tokens. */
-const listPsOutput = (output: string, selfPid: number, launchSessionId: string): Listing => {
+/**
+ * `ps` joins the argument vector with spaces; a UUID has none, so the `--session-id` pair is two
+ * adjacent tokens, and the delegation token (no spaces either) stays inside one token of its path.
+ */
+const listPsOutput = (output: string, selfPid: number, launchMarker: string): Listing => {
   const matches: number[] = [];
   let sawSelf = false;
   for (const line of output.split('\n')) {
@@ -101,7 +117,7 @@ const listPsOutput = (output: string, selfPid: number, launchSessionId: string):
     }
     const pid = Number(row[1]);
     sawSelf ||= pid === selfPid;
-    if (carriesLaunchSession((row[2] ?? '').split(WHITESPACE), launchSessionId)) {
+    if (carriesLaunchMarker((row[2] ?? '').split(WHITESPACE), launchMarker)) {
       matches.push(pid);
     }
   }
@@ -132,11 +148,11 @@ const conclude = (listing: Listing, source: string): ReviewProcessScan => {
 
 export const createProcessTableScanner =
   (options: ProcessTableOptions = {}): FindReviewProcesses =>
-  async (launchSessionId) => {
+  async (launchMarker) => {
     const platform = options.platform ?? process.platform;
     const selfPid = options.selfPid ?? process.pid;
     if (platform === 'linux') {
-      const proc = await listProcTable(options.procRoot ?? '/proc', selfPid, launchSessionId);
+      const proc = await listProcTable(options.procRoot ?? '/proc', selfPid, launchMarker);
       if (proc !== null) {
         return conclude(proc, '/proc');
       }
@@ -150,5 +166,5 @@ export const createProcessTableScanner =
         reason: `no readable process table on ${platform} (ps: ${error instanceof Error ? error.name : 'failed'})`,
       };
     }
-    return conclude(listPsOutput(output, selfPid, launchSessionId), 'ps');
+    return conclude(listPsOutput(output, selfPid, launchMarker), 'ps');
   };

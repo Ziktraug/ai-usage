@@ -8,6 +8,11 @@ import {
   type UsageEngineCollectionOutput,
   type UsageEngineCommand,
   type UsageEngineCursorImportOutput,
+  type UsageEngineDelegationCancelOutput,
+  type UsageEngineDelegationConfigOutput,
+  type UsageEngineDelegationEvaluationOutput,
+  type UsageEngineDelegationQualificationOutput,
+  type UsageEngineDelegationStartOutput,
   type UsageEngineMachineOutput,
   type UsageEngineMergePreviewOutput,
   type UsageEnginePublicationOutput,
@@ -23,6 +28,11 @@ import { UsageEngineSoftSourceError } from './runtime-errors';
 export type UsageEngineCommandOutput =
   | UsageEngineCollectionOutput
   | UsageEngineCursorImportOutput
+  | UsageEngineDelegationCancelOutput
+  | UsageEngineDelegationConfigOutput
+  | UsageEngineDelegationEvaluationOutput
+  | UsageEngineDelegationQualificationOutput
+  | UsageEngineDelegationStartOutput
   | UsageEngineMachineOutput
   | UsageEngineMergePreviewOutput
   | UsageEnginePublicationOutput
@@ -156,6 +166,37 @@ export const createRuntimeCommandExecutor = (
         const source = snapshot.sources.find(({ id }) => id === 'executors.capabilities') ?? null;
         return await dependencies.routingQualification.qualify(command, { source, startedAt }, signal);
       }
+      case 'qualify-delegation': {
+        if (!dependencies.delegation) {
+          throw new Error('Delegation is not available in this engine composition.');
+        }
+        // Same discipline as the routing qualification (ADR 0077): the executors are observed now
+        // through their own source before the decision reads the store.
+        const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+        const snapshot = await runSourceSoftly('executors.capabilities');
+        const source = snapshot.sources.find(({ id }) => id === 'executors.capabilities') ?? null;
+        return await dependencies.delegation.qualify(command, { source, startedAt }, signal);
+      }
+      case 'start-delegation':
+        if (!dependencies.delegation) {
+          throw new Error('Delegation is not available in this engine composition.');
+        }
+        return await dependencies.delegation.start(command, signal);
+      case 'cancel-delegation':
+        if (!dependencies.delegation) {
+          throw new Error('Delegation is not available in this engine composition.');
+        }
+        return await dependencies.delegation.cancel(command, signal);
+      case 'record-delegation-evaluation':
+        if (!dependencies.delegation) {
+          throw new Error('Delegation is not available in this engine composition.');
+        }
+        return await dependencies.delegation.recordEvaluation(command, signal);
+      case 'update-delegation-config':
+        if (!dependencies.delegation) {
+          throw new Error('Delegation is not available in this engine composition.');
+        }
+        return await dependencies.delegation.updateConfig(command, signal);
       case 'collect-fresh-quota':
         return await collectSources([...providerUsageSourceIds]);
       case 'import-cursor': {
