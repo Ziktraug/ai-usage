@@ -94,14 +94,14 @@ describe('task presentation model', () => {
     const at = parseCanonicalInstant('2026-10-24T00:30:00.000Z');
     expect(threadDayKey(at, 'America/Los_Angeles')).toBe('2026-10-23');
     expect(threadDayKey(at, 'Europe/Paris')).toBe('2026-10-24');
-    const marks = bucketThreadMarks([{ at, kind: 'session', harness: 'codex' }], 'America/Los_Angeles');
+    const marks = bucketThreadMarks([{ at, kind: 'session', harness: 'codex', label: null }], 'America/Los_Angeles');
     expect(marks.get('2026-10-23')).toHaveLength(1);
   });
   test('DST repeated hour is one day; week remains seven distinct calendar days', () => {
     const first = parseCanonicalInstant('2026-10-25T00:30:00.000Z');
     const second = parseCanonicalInstant('2026-10-25T01:30:00.000Z');
     const marks = bucketThreadMarks(
-      [first, second].map((at) => ({ at, kind: 'session' as const, harness: 'codex' })),
+      [first, second].map((at) => ({ at, kind: 'session' as const, harness: 'codex', label: null })),
       'Europe/Paris',
     );
     expect(marks.get('2026-10-25')).toHaveLength(2);
@@ -252,8 +252,8 @@ describe('task presentation model', () => {
   test('episode spans and resume paths are explicit, without invented commands', () => {
     const none: WorkThreadEpisode = {
       ...episode,
-      durationBasis: 'unknown',
-      durationMs: null,
+      activeMs: null,
+      spanMs: null,
       resume: { kind: 'none', reason: 'Not supported' },
     };
     expect(episodeSpan(none)).toBe('Span unknown');

@@ -16,6 +16,7 @@ import {
   type WorkThreadCommandResult,
 } from '@ai-usage/report-core/work-thread';
 import {
+  WORK_THREAD_FACT_EVENT_KINDS,
   WORK_THREAD_SOURCE_STATES,
   WORK_THREAD_TABS,
   WORK_THREAD_VIEW_BOUNDS,
@@ -109,11 +110,19 @@ const markers = strictObject({
 export const workThreadRowSchema = strictObject({
   afterDone: nullable(strictObject({ count, latestAt: instant })),
   delegatedSessionCount: count,
+  firstActivityAt: instant,
   lastActivityAt: instant,
   links: pipe(array(link), maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread)),
   markers,
   marks: pipe(
-    array(strictObject({ at: instant, harness: nullable(text), kind: picklist(['session', 'event']) })),
+    array(
+      strictObject({
+        at: instant,
+        harness: nullable(text),
+        kind: picklist(['session', 'event']),
+        label: nullable(pipe(string(), minLength(1), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText))),
+      }),
+    ),
     maxLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow),
   ),
   runningSessions: count,
@@ -139,8 +148,7 @@ export const workThreadsListDataSchema = strictObject({
 });
 const episodeText = nullable(pipe(string(), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText)));
 const episodeFields = {
-  durationBasis: picklist(['span', 'unknown']),
-  durationMs: nullable(count),
+  activeMs: nullable(count),
   endedAt: nullable(instant),
   firstPrompt: episodeText,
   harness: text,
@@ -162,6 +170,7 @@ const episodeFields = {
   ]),
   running: nullable(boolean()),
   sourceSessionId: text,
+  spanMs: nullable(count),
   startedAt: instant,
   title: episodeText,
 } as const;
@@ -196,6 +205,18 @@ export const workThreadsDetailDataSchema = strictObject({
   detachedLinks: pipe(array(link), maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread)),
   episodes: pipe(array(workThreadEpisodeSchema), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodes)),
   events: pipe(array(event), maxLength(WORK_THREAD_BOUNDS.maxEventsPerThread)),
+  factEvents: pipe(
+    array(
+      strictObject({
+        at: instant,
+        key: text,
+        kind: picklist(WORK_THREAD_FACT_EVENT_KINDS),
+        label: text,
+        title: nullable(pipe(string(), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText))),
+      }),
+    ),
+    maxLength(WORK_THREAD_VIEW_BOUNDS.maxFactEvents),
+  ),
   generatedAt: instant,
   row: workThreadRowSchema,
   sources: pipe(array(source), maxLength(4)),

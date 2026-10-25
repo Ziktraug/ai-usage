@@ -18,15 +18,21 @@ export type WorkThreadRemainder = RemainderEvidence &
         readonly staged: number | null;
         readonly untracked: number | null;
       }
-    | { readonly kind: 'unpushed-commits' | 'running-session'; readonly count: number }
+    // TODO(W1): one line per new kind: `unresolved-review-threads` (GitHub's unresolved review threads).
+    | { readonly kind: 'unpushed-commits' | 'running-session' | 'unresolved-review-threads'; readonly count: number }
     | { readonly kind: 'merge-conflict' | 'behind-base'; readonly baseRef: string | null }
     | { readonly kind: 'source-unavailable'; readonly outcome: string }
     | {
+        // TODO(W1): document `awaiting-review` (others' turn), `draft-pr`, `ready-to-merge` (the
+        // operator's move); `open-pr` stays the fallback when none of them can be established.
         readonly kind:
           | 'open-pr'
+          | 'awaiting-review'
           | 'changes-requested'
+          | 'draft-pr'
           | 'failing-checks'
           | 'pending-checks'
+          | 'ready-to-merge'
           | 'review-requested'
           | 'jira-open'
           | 'source-stale'

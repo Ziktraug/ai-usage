@@ -29,6 +29,7 @@ const thread: WorkThread = {
 };
 const row = (patch: Partial<WorkThreadRow> = {}): WorkThreadRow => ({
   afterDone: null,
+  firstActivityAt: at,
   lastActivityAt: at,
   links: [],
   markers: { jiraIssues: [], local: [], pullRequests: [] },

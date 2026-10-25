@@ -6,6 +6,7 @@ import {
   workThreadRowSchema,
   workThreadsCommandInputSchema,
   workThreadsCommandOutputSchema,
+  workThreadsDetailDataSchema,
   workThreadsDetailInputSchema,
   workThreadsListInputSchema,
   workThreadsListOutputSchema,
@@ -26,9 +27,8 @@ const base = {
   acknowledgedRemainders: ['PR remains open'],
 };
 const episode = {
+  activeMs: 60_000,
   children: [],
-  durationBasis: 'span',
-  durationMs: 60_000,
   endedAt: at,
   firstPrompt: null,
   harness: 'codex',
@@ -43,12 +43,14 @@ const episode = {
   resume: { kind: 'none', reason: 'No verified resume command.' },
   running: false,
   sourceSessionId: 'one',
+  spanMs: 3_600_000,
   startedAt: at,
   title: 'Synthetic session',
 };
 const row = {
   afterDone: null,
   delegatedSessionCount: 20,
+  firstActivityAt: at,
   lastActivityAt: at,
   links: [],
   markers: { jiraIssues: [], local: [], pullRequests: [] },
@@ -180,14 +182,59 @@ describe('Work thread wire contract', () => {
     expect(
       parse(workThreadEpisodeSchema, { ...episode, children: [{ ...episode, children: [episode] }] }),
     ).toMatchObject({ children: [{ children: [episode] }] });
-    expect(safeParse(workThreadEpisodeSchema, { ...episode, children: [{ ...episode, durationMs: -1 }] }).success).toBe(
+    expect(safeParse(workThreadEpisodeSchema, { ...episode, children: [{ ...episode, activeMs: -1 }] }).success).toBe(
       false,
     );
+    // A span is never accepted as a duration of work under the old name.
+    expect(safeParse(workThreadEpisodeSchema, { ...episode, durationMs: 60_000 }).success).toBe(false);
     expect(
       safeParse(workThreadEpisodeSchema, { ...episode, children: Array.from({ length: 21 }, () => episode) }).success,
     ).toBe(false);
     const cyclic: Record<string, unknown> = { ...episode };
     cyclic.children = [cyclic];
     expect(safeParse(workThreadEpisodeSchema, cyclic).success).toBe(false);
+  });
+});
+
+describe('Work thread wire contract — dated facts and labels', () => {
+  const detail = {
+    detachedLinks: [],
+    episodes: [episode],
+    events: [],
+    factEvents: [
+      {
+        at,
+        key: 'github.com/acme/app#12',
+        kind: 'pull-request-opened',
+        label: 'PR #12',
+        title: 'Synthetic change',
+      },
+    ],
+    generatedAt: at,
+    row: { ...row, marks: [{ at, harness: null, kind: 'event', label: 'PR #12 opened' }] },
+    sources: [],
+  };
+  test('fact events and mark labels cross the wire', () => {
+    expect(parse(workThreadsDetailDataSchema, detail)).toMatchObject({
+      factEvents: [{ kind: 'pull-request-opened', label: 'PR #12' }],
+      row: { firstActivityAt: at, marks: [{ label: 'PR #12 opened' }] },
+    });
+  });
+  test('unknown fact kinds, observation-dated facts and empty labels are rejected', () => {
+    for (const fact of [
+      { ...detail.factEvents[0], kind: 'pull-request-deployed' },
+      { ...detail.factEvents[0], observedAt: at },
+      { ...detail.factEvents[0], label: '' },
+    ]) {
+      expect(safeParse(workThreadsDetailDataSchema, { ...detail, factEvents: [fact] }).success).toBe(false);
+    }
+    expect(
+      safeParse(workThreadsDetailDataSchema, {
+        ...detail,
+        row: { ...row, marks: [{ at, harness: null, kind: 'event', label: '' }] },
+      }).success,
+    ).toBe(false);
+    const { firstActivityAt: _omitted, ...withoutOrigin } = row;
+    expect(safeParse(workThreadRowSchema, withoutOrigin).success).toBe(false);
   });
 });

@@ -198,6 +198,15 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
       return 'PR checks are pending';
     case 'review-requested':
       return 'A PR is waiting for your review';
+    // Provisional copy until the task view round lands (plan 123 round 2).
+    case 'unresolved-review-threads':
+      return `${remainder.count} review ${remainder.count === 1 ? 'thread' : 'threads'} to address`;
+    case 'awaiting-review':
+      return 'Review requested · waiting on reviewers';
+    case 'draft-pr':
+      return 'Draft PR';
+    case 'ready-to-merge':
+      return 'Ready to merge';
     case 'open-pr':
       return 'The linked PR is still open';
     case 'jira-open':
@@ -292,10 +301,10 @@ export const observedWebUrl = (value: string | null): string | null => {
 };
 
 export const episodeSpan = (episode: WorkThreadEpisode): string => {
-  if (episode.durationBasis !== 'span' || episode.durationMs === null) {
+  if (episode.spanMs === null) {
     return 'Span unknown';
   }
-  const minutes = Math.round(episode.durationMs / 60_000);
+  const minutes = Math.round(episode.spanMs / 60_000);
   return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
 };
 

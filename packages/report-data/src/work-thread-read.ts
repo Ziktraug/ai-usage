@@ -97,9 +97,9 @@ const episodeOf = (
     origin = 'automated-review';
   }
   return {
+    // Placeholder until the row's recorded turn time is carried (plan 123 round 2).
+    activeMs: null,
     children: [],
-    durationBasis: durationMs === null ? 'unknown' : 'span',
-    durationMs,
     endedAt,
     firstPrompt: text(session.firstPrompt),
     harness,
@@ -114,6 +114,7 @@ const episodeOf = (
     projectLabel: text(member.projectLabel),
     question: text(desktop?.turnSummary?.needsAction ?? desktop?.turnSummary?.detail),
     result: text(desktop?.lastTurnReport),
+    spanMs: durationMs,
     resume:
       harness === 'claude' || harness === 'codex'
         ? {
@@ -482,9 +483,9 @@ const readRow = (
   const marks = [
     ...sessions.flatMap((session) => {
       const at = session.desktop?.createdAt ?? normalizeIsoTimestamp(session.member.startedAt);
-      return at === null ? [] : [{ at, harness: session.harness, kind: 'session' as const }];
+      return at === null ? [] : [{ at, harness: session.harness, kind: 'session' as const, label: null }];
     }),
-    ...events.map(({ at }) => ({ at, harness: null, kind: 'event' as const })),
+    ...events.map(({ at }) => ({ at, harness: null, kind: 'event' as const, label: null })),
   ]
     .filter(({ at }) => Date.parse(at) >= start && Date.parse(at) <= Date.parse(now))
     .sort((a, b) => b.at.localeCompare(a.at))
@@ -498,6 +499,7 @@ const readRow = (
     truncated,
     row: {
       afterDone: after.length === 0 ? null : { count: after.length, latestAt: latest(after) },
+      firstActivityAt: thread.createdAt,
       lastActivityAt: latest([storedActivity, ...dates]),
       links: active,
       markers: { pullRequests, jiraIssues, local },
@@ -719,6 +721,8 @@ export const queryWorkThreadDetail = (input: {
       detachedLinks: detachedLinks.slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread),
       episodes: read.episodes,
       events,
+      // Placeholder until pull request dates reach the thread (plan 123 round 2).
+      factEvents: [],
       generatedAt,
       row: read.row,
       sources: sourcesOf(runStates.runs, [read], thread.machineId, runStates.skipped).map((source) =>

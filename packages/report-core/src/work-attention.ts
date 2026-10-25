@@ -600,6 +600,9 @@ export interface PullRequestObservation {
   readonly accountLabel: string | null;
   readonly baseRef: string | null;
   readonly checksRollup: PullRequestCheckRollup | null;
+  /** When GitHub closed it without merging; `mergedAt` carries a merge. */
+  readonly closedAt?: CanonicalInstant | null;
+  readonly createdAt?: CanonicalInstant | null;
   readonly discoveryRole?: 'author' | 'review-requested' | null;
   readonly draft: boolean | null;
   readonly headRef: string | null;
@@ -616,6 +619,11 @@ export interface PullRequestObservation {
   readonly reviewDecision: string | null;
   readonly state: PullRequestState | null;
   readonly title: string | null;
+  /**
+   * Review threads GitHub reports unresolved (`reviewThreads.isResolved`) on an open pull request;
+   * `null` when not read or not completely countable. A comment is not an unresolved thread.
+   */
+  readonly unresolvedReviewThreads?: number | null;
   readonly updatedAt: CanonicalInstant | null;
   readonly url: string | null;
 }

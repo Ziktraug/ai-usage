@@ -15,6 +15,8 @@ export const WORK_THREAD_VIEW_BOUNDS = {
   maxEpisodes: 100,
   maxEpisodeChildren: 20,
   maxEpisodeText: 1000,
+  /** Opened, merged or closed, for each linked pull request at most. */
+  maxFactEvents: 192,
   maxPageSize: 100,
   defaultPageSize: 50,
   maxSearch: 200,
@@ -86,6 +88,8 @@ export interface WorkThreadMark {
   readonly at: CanonicalInstant;
   readonly harness: string | null;
   readonly kind: 'session' | 'event';
+  /** What the mark stands for (a session title, "PR #12 opened"), for its accessible name and detail. */
+  readonly label: string | null;
 }
 
 export interface WorkThreadRow {
@@ -96,6 +100,11 @@ export interface WorkThreadRow {
    * parent and counted apart: they are part of the work, not more work to follow.
    */
   readonly delegatedSessionCount: number;
+  /**
+   * The earliest dated evidence of the work: the thread's creation, its linked sessions' starts and
+   * its linked pull requests' creation. A discovered thread is younger than the work it tracks.
+   */
+  readonly firstActivityAt: CanonicalInstant;
   readonly lastActivityAt: CanonicalInstant;
   readonly links: readonly WorkThreadLink[];
   readonly markers: WorkThreadMarkers;
@@ -117,21 +126,18 @@ export interface WorkThreadListDataset {
   readonly sources: readonly WorkThreadSourceStatus[];
 }
 
-/**
- * How an episode's duration is known. `span` is first to last observed activity of one session and
- * may contain pauses; it is labelled as such. `unknown` is never replaced by a guess.
- */
-export type WorkThreadDurationBasis = 'span' | 'unknown';
-
 /** A resume path the product has verified for this harness; nothing else is offered. */
 export type WorkThreadResumePath =
   | { readonly command: string; readonly cwd: string | null; readonly kind: 'cli-resume' }
   | { readonly kind: 'none'; readonly reason: string };
 
 export interface WorkThreadEpisode {
+  /**
+   * Recorded turn time of the session (the union of its turn intervals, as the collectors compute
+   * it); `null` when the harness records none. Never derived from the span.
+   */
+  readonly activeMs: number | null;
   readonly children: readonly WorkThreadEpisode[];
-  readonly durationBasis: WorkThreadDurationBasis;
-  readonly durationMs: number | null;
   readonly endedAt: CanonicalInstant | null;
   readonly firstPrompt: string | null;
   readonly harness: string;
@@ -148,7 +154,34 @@ export interface WorkThreadEpisode {
   readonly resume: WorkThreadResumePath;
   readonly running: boolean | null;
   readonly sourceSessionId: string;
+  /**
+   * First to last observed activity of the session. It contains pauses: a conversation that exists
+   * for days is not days of work, so it is shown as a span, never as work time.
+   */
+  readonly spanMs: number | null;
   readonly startedAt: CanonicalInstant;
+  readonly title: string | null;
+}
+
+export const WORK_THREAD_FACT_EVENT_KINDS = [
+  'pull-request-opened',
+  'pull-request-merged',
+  'pull-request-closed',
+] as const;
+export type WorkThreadFactEventKind = (typeof WORK_THREAD_FACT_EVENT_KINDS)[number];
+
+/**
+ * A dated fact of a linked source placed in the task's thread beside the sessions. It carries the
+ * source's own date (a pull request's `createdAt`, `mergedAt`, `closedAt`), never the instant the
+ * product observed it, and it is not stored as a thread event.
+ */
+export interface WorkThreadFactEvent {
+  readonly at: CanonicalInstant;
+  /** The linked source's qualified key. */
+  readonly key: string;
+  readonly kind: WorkThreadFactEventKind;
+  /** The source's short name, e.g. "PR #12". */
+  readonly label: string;
   readonly title: string | null;
 }
 
@@ -156,6 +189,7 @@ export interface WorkThreadDetailDataset {
   readonly detachedLinks: readonly WorkThreadLink[];
   readonly episodes: readonly WorkThreadEpisode[];
   readonly events: readonly WorkThreadEvent[];
+  readonly factEvents: readonly WorkThreadFactEvent[];
   readonly generatedAt: CanonicalInstant;
   readonly row: WorkThreadRow;
   readonly sources: readonly WorkThreadSourceStatus[];

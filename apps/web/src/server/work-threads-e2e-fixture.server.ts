@@ -94,9 +94,9 @@ const makeEpisode = (
   day: number,
   overrides: Partial<WorkThreadEpisode> = {},
 ): WorkThreadEpisode => ({
+  activeMs: 24 * 60_000,
   children: [],
-  durationBasis: 'span',
-  durationMs: 24 * 60_000,
+  spanMs: 24 * 60_000,
   endedAt: at(day, '09:44'),
   firstPrompt: 'Synthetic demo: investigate the behavior and explain the next decision.',
   harness: 'claude',
@@ -333,8 +333,8 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       [
         makeEpisode('thread-implementation', 'Implement explicit session links', 24, {
           endedAt: null,
-          durationBasis: 'unknown',
-          durationMs: null,
+          activeMs: null,
+          spanMs: null,
           projectLabel: 'ai-usage',
           running: true,
         }),
@@ -360,7 +360,8 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       projectLabel: 'ai-usage',
       startedAt: parseCanonicalInstant('2026-06-11T08:00:00.000Z'),
       endedAt: parseCanonicalInstant('2026-06-11T09:42:00.000Z'),
-      durationMs: 102 * 60_000,
+      activeMs: 102 * 60_000,
+      spanMs: 102 * 60_000,
     }),
     makeEpisode('campaign-child', 'Review analytics model', 19, {
       harness: 'codex',
@@ -369,7 +370,8 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       projectLabel: 'ai-usage',
       startedAt: parseCanonicalInstant('2026-06-10T18:15:00.000Z'),
       endedAt: parseCanonicalInstant('2026-06-10T18:44:00.000Z'),
-      durationMs: 29 * 60_000,
+      activeMs: 29 * 60_000,
+      spanMs: 29 * 60_000,
     }),
     makeEpisode('opencode-classifier', 'Tune collector fixtures', 19, {
       harness: 'codex',
@@ -378,7 +380,8 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       projectLabel: 'ai-usage',
       startedAt: parseCanonicalInstant('2026-05-25T13:05:00.000Z'),
       endedAt: parseCanonicalInstant('2026-05-25T14:18:00.000Z'),
-      durationMs: 73 * 60_000,
+      activeMs: 73 * 60_000,
+      spanMs: 73 * 60_000,
     }),
     makeEpisode('cursor-fixture', 'Explore report sketch', 19, {
       harness: 'cursor',
@@ -392,14 +395,16 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       projectLabel: 'ai-usage',
       startedAt: parseCanonicalInstant('2026-04-12T09:20:00.000Z'),
       endedAt: parseCanonicalInstant('2026-04-12T10:05:00.000Z'),
-      durationMs: 45 * 60_000,
+      activeMs: 45 * 60_000,
+      spanMs: 45 * 60_000,
     }),
     makeEpisode('claude-history-fallback', 'Recover Claude history', 19, {
       projectLabel: 'ai-usage',
       origin: null,
       startedAt: parseCanonicalInstant('2026-06-09T18:15:00.000Z'),
       endedAt: parseCanonicalInstant('2026-06-09T18:44:00.000Z'),
-      durationMs: 29 * 60_000,
+      activeMs: 29 * 60_000,
+      spanMs: 29 * 60_000,
     }),
   );
   return { episodes, records };
@@ -532,8 +537,9 @@ export const createSyntheticWorkThreadStore = (
         at: episode.startedAt,
         harness: episode.harness,
         kind: 'session' as const,
+        label: episode.title,
       })),
-      ...record.events.map((event) => ({ at: event.at, harness: null, kind: 'event' as const })),
+      ...record.events.map((event) => ({ at: event.at, harness: null, kind: 'event' as const, label: null })),
     ]
       .sort((left, right) => left.at.localeCompare(right.at))
       .slice(-WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
@@ -588,6 +594,9 @@ export const createSyntheticWorkThreadStore = (
     const latestAt = newer.at(-1);
     return {
       afterDone: latestAt ? { count: newer.length, latestAt } : null,
+      firstActivityAt:
+        [record.thread.createdAt, ...sessionEpisodes.map((episode) => episode.startedAt)].sort()[0] ??
+        record.thread.createdAt,
       lastActivityAt: marks.at(-1)?.at ?? record.thread.updatedAt,
       links,
       markers,
@@ -789,6 +798,7 @@ export const createSyntheticWorkThreadStore = (
               .slice(-WORK_THREAD_BOUNDS.maxLinksPerThread),
             episodes: linkedEpisodes(record).episodes.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodes),
             events: record.events.slice(-WORK_THREAD_BOUNDS.maxEventsPerThread),
+            factEvents: [],
             generatedAt: now(),
             row: toRow(record),
             sources: sourcesFor([record]),

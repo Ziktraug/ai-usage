@@ -1059,8 +1059,7 @@ describe('work-thread reader', () => {
     expect(detail?.episodes).toHaveLength(1);
     expect(detail?.episodes[0]).toMatchObject({
       sourceSessionId: 'old',
-      durationBasis: 'span',
-      durationMs: 3_600_000,
+      spanMs: 3_600_000,
       origin: 'human',
       running: null,
       firstPrompt: null,
@@ -1088,9 +1087,8 @@ describe('work-thread reader', () => {
     const threadId = await create(dbPath, [sessionLink(quotedId), sessionLink('other', 'opencode')]);
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     expect(detail?.episodes.find((episode) => episode.sourceSessionId === quotedId)).toMatchObject({
-      durationBasis: 'unknown',
       firstPrompt: quotedId,
-      durationMs: null,
+      spanMs: null,
       endedAt: null,
       origin: null,
       resume: { kind: 'cli-resume', command: "codex resume 'a'\\''$(touch-nope)'", cwd: '/fixture/project' },
@@ -1115,7 +1113,7 @@ describe('work-thread reader', () => {
     const activity = await run(queryWorkThreadDetail({ dbPath, threadId: ended, now: NOW }));
     expect(activity?.row.afterDone).toEqual({ count: 1, latestAt: at(-2) });
     expect(activity?.row.lastActivityAt).toBe(at(-2));
-    expect(activity?.episodes[0]?.durationBasis).toBe('unknown');
+    expect(activity?.episodes[0]?.spanMs).toBeNull();
     const doneList = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, tab: 'done' }, now: NOW }));
     expect(doneList.rows[0]?.lastActivityAt).toBe(at(-2));
   });
@@ -1341,7 +1339,7 @@ describe('work-thread reader', () => {
       endedAt: at(-1),
       question: 'Review this',
       result: 'Ready for review.',
-      durationMs: 10_800_000,
+      spanMs: 10_800_000,
       resume: { command: "claude --resume 'cli-id'", cwd: '/fixture/desktop' },
     });
     for (const links of [
