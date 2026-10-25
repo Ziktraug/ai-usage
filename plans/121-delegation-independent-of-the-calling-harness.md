@@ -72,3 +72,9 @@ Both gaps above are closed; same isolated runtime, real sign-ins untouched, `cod
   verification.
 - `bun run test:web-production` with Bun 1.4.3: pass (routes healthy, trusted-local only, IPv4
   loopback, port collisions fail cleanly).
+- Trust entries for the smoke directories appeared in `~/.codex/config.toml`. Cause: the ChatGPT
+  desktop app imported the smoke's Claude Code sessions into Codex at 03:19:59Z
+  (`~/.codex/external_agent_session_imports.json`) and registered their directories as trusted
+  projects. Three controlled `codex exec` runs (worker vector with a command, client vector,
+  invalid-model start) wrote nothing. No code change; the guide records the limit. The two test
+  entries were removed from the operator's config (backup kept in the session scratchpad).

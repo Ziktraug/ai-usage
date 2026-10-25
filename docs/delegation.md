@@ -215,4 +215,9 @@ it started is gone.
 - Claude Code managed policy and Codex `-c` overrides cannot be verified from
   their CLIs; each job's guarantee lists them. No OS sandbox is claimed for
   Claude Code. Workers write their own session logs.
+- Other tools that read those logs act on them as on any session. For example,
+  the ChatGPT desktop app's import of Claude Code sessions into Codex registers
+  each imported session's directory as a trusted Codex project in
+  `~/.codex/config.toml`, the reviewed checkout of a Claude Code worker
+  included. A `codex exec` worker itself was checked not to write that entry.
 - A selector's confidence is its own statement, not a measured probability.
