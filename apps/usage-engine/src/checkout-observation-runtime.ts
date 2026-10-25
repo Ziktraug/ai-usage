@@ -31,13 +31,13 @@ import {
   type UsageStoreError,
   usageStoreErrorReasonFrom,
 } from '@ai-usage/usage-store/reader';
-import { Effect, Either } from 'effect';
+import { Effect, Result } from 'effect';
 
-/** Surfaces the typed store failure itself rather than Effect's fiber wrapper. */
+/** Surfaces the typed store failure as a value at the Promise boundary. */
 const runStoreQuery = <Value>(
   query: Effect.Effect<Value, UsageStoreError>,
   signal: AbortSignal | undefined,
-): Promise<Either.Either<Value, UsageStoreError>> => Effect.runPromise(Effect.either(query), { signal });
+): Promise<Result.Result<Value, UsageStoreError>> => Effect.runPromise(Effect.result(query), { signal });
 
 /**
  * Local Checkout observation: the producer that turns the usage store's local
@@ -450,21 +450,21 @@ export const observeLocalCheckouts = async (
   signal?: AbortSignal,
 ): Promise<CheckoutObservationDiagnostic> => {
   const sources = await runStoreQuery(queryCurrentServedLocalProjectSources({ dbPath: options.databasePath }), signal);
-  if (Either.isLeft(sources)) {
-    if (sources.left.reason === 'revision-unavailable') {
+  if (Result.isFailure(sources)) {
+    if (sources.failure.reason === 'revision-unavailable') {
       return { code: 'no-publication' };
     }
-    throw sources.left;
+    throw sources.failure;
   }
-  const published: CurrentServedLocalProjectSources = sources.right;
+  const published: CurrentServedLocalProjectSources = sources.success;
   const [machineResult, bootstrap] = await Promise.all([
     runStoreQuery(queryUsageLocalMachine({ dbPath: options.databasePath }), signal),
     options.kernel.getBootstrapIdentity(),
   ]);
-  if (Either.isLeft(machineResult)) {
-    throw machineResult.left;
+  if (Result.isFailure(machineResult)) {
+    throw machineResult.failure;
   }
-  const machine = machineResult.right;
+  const machine = machineResult.success;
   const spaceId = bootstrap.space.id;
   const now = instantNow(options.clock);
   let candidates: Promise<readonly RepositoryResolutionCandidate[]> | undefined;

@@ -28,7 +28,7 @@ const fixture = (direct = false) => {
     currentUrl: () => current().url,
     goto: (url, options) => {
       const entry = { url: new URL(url, current().url), state: options?.state ?? {} };
-      if (options?.replaceState) {
+      if (options?.replace) {
         entries[index] = entry;
       } else {
         entries.splice(index + 1, entries.length, entry);
@@ -50,7 +50,7 @@ const fixture = (direct = false) => {
       if (panelOpenedFromReport(current().state)) {
         traverse(-1);
       } else {
-        await goto(sessionListUrl(current().url), { keepFocus: true, noScroll: true });
+        await goto(sessionListUrl(current().url), { reset: false });
       }
     },
   };

@@ -461,7 +461,7 @@ describe('Work attention dates and fact chips', () => {
     expect(workRootFactChips(base).some((chip) => chip.label.startsWith('blocked ·'))).toBe(false);
   });
   test('a Jira issue chip names the key, the status and the replies that arrived; a failed read names its outcome', () => {
-    const withJira = roots.find((root) => root.facts.some((fact) => fact.kind === 'jira-issue'));
+    const withJira = roots.find((root) => root.facts.some((candidate) => candidate.kind === 'jira-issue'));
     if (withJira === undefined) {
       throw new Error('Synthetic dataset must carry a Jira fact');
     }

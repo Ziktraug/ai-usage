@@ -172,7 +172,7 @@ export const skillsManagementSuccessMessage = (
     return 'Reconcile preview refreshed.';
   }
   const applied = result.actions.filter(
-    (action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation',
+    (candidate) => candidate.type !== 'noop' && candidate.type !== 'refuse-unmanaged-mutation',
   );
   if (applied.length === 0) {
     // A toggle that moved no files still changed the skill's state, and the message says so —
@@ -236,9 +236,9 @@ export const skillsConfigurationRefreshesDependents = (operation: SkillsConfigur
   operation.type === 'save-config';
 
 export interface InspectorMediaQuery {
-  addEventListener(type: 'change', listener: () => void): void;
+  addEventListener: (type: 'change', listener: () => void) => void;
   readonly matches: boolean;
-  removeEventListener(type: 'change', listener: () => void): void;
+  removeEventListener: (type: 'change', listener: () => void) => void;
 }
 
 export const observeInspectorDisclosure = (

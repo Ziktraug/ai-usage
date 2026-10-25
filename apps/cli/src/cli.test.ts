@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import { type CliCommand, parseCommand, type QuotaArgs } from './cli';
+import { type CliCommand, helpText, parseCommand, type QuotaArgs } from './cli';
 
 const quotaCommand = (overrides: Partial<QuotaArgs> = {}): CliCommand => ({
   _tag: 'Quota',
@@ -241,25 +241,9 @@ describe('CLI command parsing', () => {
     expect(failure(['work'])).toBe('Unknown work subcommand:');
   });
 
-  test('parses setup with file inputs and local collection', () => {
-    expect(Effect.runSync(parseCommand(['setup', 'mac.json', 'team.json']))).toEqual({
-      _tag: 'Setup',
-      args: { files: ['mac.json', 'team.json'], local: false, port: 3456 },
-    });
-    expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '8080']))).toEqual({
-      _tag: 'Setup',
-      args: { files: [], local: true, port: 8080 },
-    });
-    expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '0']))).toEqual({
-      _tag: 'Setup',
-      args: { files: [], local: true, port: 0 },
-    });
-  });
-
-  test('rejects the stale setup --web spelling', () => {
-    const error = Effect.runSync(Effect.flip(parseCommand(['setup', '--web'])));
-
-    expect(error.message).toBe('Unknown option for setup: --web');
+  test('rejects the retired setup command and no longer documents it', () => {
+    expect(Effect.runSync(Effect.flip(parseCommand(['setup', '--local']))).message).toBe('Unknown option: setup');
+    expect(helpText).not.toContain('setup');
   });
 
   test('merge rejects no input', () => {

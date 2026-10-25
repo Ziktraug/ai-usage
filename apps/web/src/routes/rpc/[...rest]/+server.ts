@@ -1,5 +1,5 @@
-import { handleWebRpcRequest } from '$lib/server/rpc/handler.server';
-import { normalizeOwnedRpcSubrequest } from '$lib/server/rpc/subrequest-normalization.server';
+import { handleWebRpcRequest } from '#lib/server/rpc/handler.server.ts';
+import { normalizeOwnedRpcSubrequest } from '#lib/server/rpc/subrequest-normalization.server.ts';
 import type { RequestHandler } from './$types';
 
 const handleRpcRequest: RequestHandler = async ({ isSubRequest, request, url }) => {

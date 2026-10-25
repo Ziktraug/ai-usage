@@ -23,14 +23,12 @@ describe('Campaign URL selection', () => {
     });
   });
 
-  test.each([
-    '',
-    '   ',
-    ` ${campaignMapFixtureRootKey}`,
-    'x'.repeat(513),
-  ])('reports malformed selection instead of throwing (%j)', (key) => {
-    expect(readCampaignSelection(urlFor(key), query)).toEqual({ status: 'invalid' });
-  });
+  test.each(['', '   ', ` ${campaignMapFixtureRootKey}`, 'x'.repeat(513)])(
+    'reports malformed selection instead of throwing (%j)',
+    (key) => {
+      expect(readCampaignSelection(urlFor(key), query)).toEqual({ status: 'invalid' });
+    },
+  );
 
   test('SSR recovers an invalid bookmark into a hydrated recent campaign without transport', async () => {
     const data = await loadCampaignsPageData(

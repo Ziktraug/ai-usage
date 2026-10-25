@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import { createUsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import {
   assertUsageEngineRendezvousTarget,
@@ -10,7 +9,6 @@ import {
 } from '@ai-usage/usage-engine-control/node';
 import { usageStorePath } from '@ai-usage/usage-store/reader';
 
-const LOOPBACK_HOST = '127.0.0.1';
 const DEFAULT_READINESS_DEADLINE_MS = 30_000;
 const DEFAULT_SHUTDOWN_GRACE_MS = 5000;
 const DEFAULT_FORCE_SHUTDOWN_MS = 3000;
@@ -84,23 +82,11 @@ const absolutePath = (value: string, label: string): string => {
   return path.resolve(value);
 };
 
-const untrustedAdapterEnvironmentKeys = new Set([
-  'ADDRESS_HEADER',
-  'BODY_SIZE_LIMIT',
-  'HOST_HEADER',
-  'ORIGIN',
-  'PORT_HEADER',
-  'PROTOCOL_HEADER',
-  'SOCKET_PATH',
-  'XFF_DEPTH',
-]);
-
+// Inherited variables pass through unchanged. The web adapter reads its configuration only under
+// its own prefix, which `apps/web/start.mjs` owns (it purges inherited prefixed variables and sets
+// host, port, body limit, idle and shutdown timeouts), so nothing here filters or sets it.
 const definedEnvironment = (environment: NodeJS.ProcessEnv): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(environment).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined && !untrustedAdapterEnvironmentKeys.has(entry[0]),
-    ),
-  );
+  Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined));
 
 const resolveProductionRuntimePaths = (
   rootDirectoryValue: string,
@@ -149,10 +135,7 @@ export const createProductionEnvironment = (
     AI_USAGE_LOG_DIR: runtimePaths.logDirectory,
     AI_USAGE_ROOT_DIR: runtimePaths.configCwd,
     AI_USAGE_TEMP_ROOT: runtimePaths.temporaryRoot,
-    BODY_SIZE_LIMIT: String(MAX_PORTABLE_USAGE_BYTES),
     HOME: runtimePaths.homeDirectory,
-    HOST: LOOPBACK_HOST,
-    IDLE_TIMEOUT: '45',
     NODE_ENV: 'production',
     TMPDIR: runtimePaths.temporaryRoot,
     VITE_AI_USAGE_DEMO: '0',
@@ -180,15 +163,19 @@ export const createProductionSupervisorCommands = (
 ): ProductionSupervisorOptions['commands'] => {
   const rootDirectory = absolutePath(rootDirectoryValue, 'Production root directory');
   const enginePort = parseEnginePort(environment.AI_USAGE_ENGINE_PORT);
+  // `--no-orphans`: each child runs in its own process group, so a supervisor
+  // killed without its graceful stop reaches neither; each exits with it
+  // instead of keeping the writer lock or the port.
   return {
     engine: [
       process.execPath,
+      '--no-orphans',
       '--no-env-file',
       path.join(rootDirectory, 'apps', 'usage-engine', 'src', 'main.ts'),
       'serve',
       ...(enginePort === undefined ? [] : ['--port', String(enginePort)]),
     ],
-    web: [process.execPath, '--no-env-file', path.join(rootDirectory, 'apps', 'web', 'start.mjs')],
+    web: [process.execPath, '--no-orphans', '--no-env-file', path.join(rootDirectory, 'apps', 'web', 'start.mjs')],
   };
 };
 

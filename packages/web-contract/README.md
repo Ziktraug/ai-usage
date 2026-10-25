@@ -11,7 +11,8 @@ checkpoint; no barrel may expose server implementations.
 Browser closures may import public contracts, schemas, errors, and the browser
 client adapter. They may not reach `@orpc/server`, SvelteKit server modules,
 Node, Bun, usage-store, report-data, local-machine, engine implementations,
-`$lib/server`, or `*.server.*` modules.
+`#lib/server` or any other server-only `server/` directory of the Web app, or
+`*.server.*` modules.
 
 V0 owns public errors, schema conventions, and request-policy metadata. V1-V4
 own disjoint procedure families. V5 owns the final contract/router composition.

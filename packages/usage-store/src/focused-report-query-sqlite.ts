@@ -43,6 +43,7 @@ import type {
 } from '@ai-usage/report-core/session-query';
 import { isSessionOrigin, sessionOriginLabel } from '@ai-usage/report-core/session-query';
 import { isOriginProvenanceKind } from '@ai-usage/report-core/types';
+import type { SqliteQueryBinding } from './served-revision';
 import {
   buildSessionQuerySqlFilter,
   executeMaterializedSessionQuery,
@@ -55,7 +56,7 @@ export type FocusedReportQueryResult = FocusedBreakdownResult | FocusedOverviewR
 const executeAll = <RecordType>(
   database: SessionQuerySqliteDatabase,
   sql: string,
-  params: readonly unknown[],
+  params: readonly SqliteQueryBinding[],
   trace?: SessionQuerySqliteTrace,
 ): RecordType[] => {
   trace?.({ params, sql });
@@ -65,7 +66,7 @@ const executeAll = <RecordType>(
 const executeGet = <RecordType>(
   database: SessionQuerySqliteDatabase,
   sql: string,
-  params: readonly unknown[],
+  params: readonly SqliteQueryBinding[],
   trace?: SessionQuerySqliteTrace,
 ): RecordType | null => {
   trace?.({ params, sql });

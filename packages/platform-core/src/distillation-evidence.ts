@@ -327,8 +327,8 @@ export const parseDistillationEvidenceCoverage = (
   if (!completion) {
     throw new DistillationEvidenceValidationError('Evidence completion is invalid');
   }
-  const exclusions = item.exclusions.map((value) => {
-    const exclusion = record(value, 'Evidence exclusion', ['reason', 'count']);
+  const exclusions = item.exclusions.map((rawExclusion) => {
+    const exclusion = record(rawExclusion, 'Evidence exclusion', ['reason', 'count']);
     const reason = distillationExclusionReasons.find((candidate) => candidate === exclusion.reason);
     if (!reason || seen.has(reason)) {
       throw new DistillationEvidenceValidationError('Evidence exclusion is invalid or duplicated');
@@ -337,14 +337,14 @@ export const parseDistillationEvidenceCoverage = (
     return { reason, count: integer(exclusion.count, 'Excluded events') };
   });
   const optionalCoverage = (key: 'snapshotCoverage' | 'textCoverage') => {
-    const value = item[key];
-    if (value === undefined) {
+    const coverage = item[key];
+    if (coverage === undefined) {
       return {};
     }
-    if (value !== 'complete' && value !== 'partial') {
+    if (coverage !== 'complete' && coverage !== 'partial') {
       throw new DistillationEvidenceValidationError('Invalid coverage dimension');
     }
-    return { [key]: value };
+    return { [key]: coverage };
   };
   return {
     ...optionalCoverage('snapshotCoverage'),

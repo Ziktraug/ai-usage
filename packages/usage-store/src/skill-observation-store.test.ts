@@ -212,7 +212,7 @@ describe('skill observation store', () => {
     const dbPath = await createStore('skill-invalid-completeness');
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         importSkillObservations({
           collection: null as never,
           dbPath,
@@ -222,7 +222,7 @@ describe('skill observation store', () => {
       ),
     );
 
-    expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { reason: 'invalid-input' } });
   });
 
   test('rejects an unknown expected producer instead of certifying an empty roster', async () => {
@@ -230,7 +230,7 @@ describe('skill observation store', () => {
     await Effect.runPromise(initializeUsageStore({ dbPath }));
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         querySkillObservations({
           dbPath,
           expectedProducerHarnessKeys: ['claud'],
@@ -239,7 +239,7 @@ describe('skill observation store', () => {
       ),
     );
 
-    expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { reason: 'invalid-input' } });
   });
 
   test('rejects an observable harness filter outside the expected producer roster', async () => {
@@ -247,7 +247,7 @@ describe('skill observation store', () => {
     await Effect.runPromise(initializeUsageStore({ dbPath }));
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         querySkillObservations({
           dbPath,
           expectedProducerHarnessKeys: ['codex'],
@@ -257,7 +257,7 @@ describe('skill observation store', () => {
       ),
     );
 
-    expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { reason: 'invalid-input' } });
   });
 
   test('treats an empty store without producer state as pre-collection evidence', async () => {
@@ -766,7 +766,7 @@ describe('skill observation store', () => {
     db.close(true);
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         importSkillObservations({
           collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
           dbPath,
@@ -777,7 +777,7 @@ describe('skill observation store', () => {
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(result._tag).toBe('Left');
+    expect(result._tag).toBe('Failure');
     expect(read.observations).toEqual([]);
     // The failed transaction left neither observations nor a completeness state. That is the same
     // authoritative pre-collection state as a new store, not a completed empty sweep.
@@ -898,10 +898,10 @@ describe('skill observation store', () => {
     const dbPath = await createStore('skill-budget');
     await Effect.runPromise(importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation()] }));
 
-    const result = await Effect.runPromise(Effect.either(querySkillObservations({ dbPath, maximumObservations: 0 })));
+    const result = await Effect.runPromise(Effect.result(querySkillObservations({ dbPath, maximumObservations: 0 })));
 
-    expect(result._tag).toBe('Left');
-    expect((result as { left: UsageStoreError }).left.reason).toBe('invalid-input');
+    expect(result._tag).toBe('Failure');
+    expect((result as { failure: UsageStoreError }).failure.reason).toBe('invalid-input');
   });
 
   test('retention deletes only exposed observations older than the window', async () => {

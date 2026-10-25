@@ -185,8 +185,8 @@ const publication = (
 };
 
 const failureReason = async (effect: Effect.Effect<unknown, UsageStoreError>): Promise<string | undefined> => {
-  const result = await Effect.runPromise(Effect.either(effect));
-  return result._tag === 'Left' ? result.left.reason : undefined;
+  const result = await Effect.runPromise(Effect.result(effect));
+  return result._tag === 'Failure' ? result.failure.reason : undefined;
 };
 
 test('projects only local observed project paths from the current durable revision', async () => {
@@ -383,12 +383,12 @@ test('rejects publication above the local project-source input ceiling before pr
   const oversizedRows = Array.from({ length: MAX_PORTABLE_USAGE_ROWS + 1 }, () => repeatedRow);
 
   const result = await Effect.runPromise(
-    Effect.either(publishServedReportRevision(publication(dbPath, 'revision-too-many-sources', oversizedRows))),
+    Effect.result(publishServedReportRevision(publication(dbPath, 'revision-too-many-sources', oversizedRows))),
   );
 
-  expect(result._tag).toBe('Left');
-  if (result._tag === 'Left') {
-    expect(result.left.message).toContain('row budget');
+  expect(result._tag).toBe('Failure');
+  if (result._tag === 'Failure') {
+    expect(result.failure.message).toContain('row budget');
   }
   expect(await failureReason(queryCurrentServedReportRevision({ dbPath, now: 1500 }))).toBe('revision-unavailable');
 });

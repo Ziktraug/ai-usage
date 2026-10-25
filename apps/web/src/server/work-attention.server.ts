@@ -2,7 +2,7 @@ import type { WorkAttentionDataset } from '@ai-usage/report-core/work-attention'
 import { queryWorkAttention } from '@ai-usage/report-data/work-attention-read';
 import { usageStoreErrorReasonFrom } from '@ai-usage/usage-store/reader';
 import type { WorkAttentionErrorTag, WorkAttentionInput } from '@ai-usage/web-contract/work';
-import { Effect, type Either } from 'effect';
+import { Effect, type Result } from 'effect';
 import type { RuntimeMode } from '../runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
@@ -40,10 +40,10 @@ export const readWorkAttentionFromStore = async (input: {
   readonly signal?: AbortSignal;
 }): Promise<WorkAttentionServerResult> => {
   input.signal?.throwIfAborted();
-  let result: Either.Either<WorkAttentionDataset, unknown>;
+  let result: Result.Result<WorkAttentionDataset, unknown>;
   try {
     result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryWorkAttention({
           dbPath: input.dbPath,
           ...(input.request.limit === undefined ? {} : { limit: input.request.limit }),
@@ -60,10 +60,10 @@ export const readWorkAttentionFromStore = async (input: {
     throw error;
   }
   input.signal?.throwIfAborted();
-  if (result._tag === 'Right') {
-    return { data: result.right, ok: true };
+  if (result._tag === 'Success') {
+    return { data: result.success, ok: true };
   }
-  const reason = usageStoreErrorReasonFrom(result.left);
+  const reason = usageStoreErrorReasonFrom(result.failure);
   if (reason === 'schema-too-old') {
     return failure(
       'IncompatibleStore',

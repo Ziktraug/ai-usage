@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { ReportBootstrapUnavailableError, reportPageDataFor } from '$lib/features/report/core/report-bootstrap';
+import { ReportBootstrapUnavailableError, reportPageDataFor } from '#lib/features/report/core/report-bootstrap.ts';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ data, fetch, parent, untrack, url }) => {

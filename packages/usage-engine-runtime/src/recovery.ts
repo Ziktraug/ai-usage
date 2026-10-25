@@ -120,7 +120,7 @@ const readOwnerMetadata = async (ownerPath: string): Promise<OwnerMetadata | und
       }
       return parseOwnerMetadata(JSON.parse(bytes.toString('utf8')) as unknown);
     } catch {
-      return;
+      // Unreadable or malformed owner metadata reads as absent.
     }
   } finally {
     await ownerFile.close().catch(() => undefined);

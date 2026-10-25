@@ -56,19 +56,19 @@ import {
 } from './served-revision';
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  finalize(): void;
-  get(...params: unknown[]): unknown;
-  iterate(...params: unknown[]): IterableIterator<unknown>;
-  run(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  finalize: () => void;
+  get: (...params: unknown[]) => unknown;
+  iterate: (...params: unknown[]) => IterableIterator<unknown>;
+  run: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  clearStatements(): void;
-  close(throwOnError?: boolean): void;
-  exec(sql: string): unknown;
+  clearStatements: () => void;
+  close: (throwOnError?: boolean) => void;
+  exec: (sql: string) => unknown;
   readonly inTransaction: boolean;
-  query(sql: string): SqliteStatement;
+  query: (sql: string) => SqliteStatement;
 }
 
 interface ServedReportRevisionReadContext {
@@ -1059,12 +1059,12 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
                     }
                     return manifestFromServedRevisionRecord(record);
                   } catch {
-                    return;
+                    // A failed validation reads as no reusable manifest; the caller reassembles.
                   }
                 };
                 const renewCurrentRevision = (
                   record: ServedReportRevisionRecord,
-                  manifest: ServedReportRevisionManifest,
+                  validatedManifest: ServedReportRevisionManifest,
                 ): PublishServedReportRevisionResult => {
                   const renewed = record.expires_at - options.now <= options.renewalWindowMs;
                   if (renewed) {
@@ -1080,7 +1080,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
                   }
                   return {
                     changed: false,
-                    manifest: renewed ? manifestFromServedRevisionRecord(record) : manifest,
+                    manifest: renewed ? manifestFromServedRevisionRecord(record) : validatedManifest,
                     renewed,
                   };
                 };

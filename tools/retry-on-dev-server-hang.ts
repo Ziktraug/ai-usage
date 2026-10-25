@@ -6,10 +6,10 @@
  *
  * 1. The server never becomes ready (PR #48). The process parks in epoll_wait
  *    during Vite's startup and no wakeup arrives, so Playwright times out
- *    waiting for the URL. It costs roughly one Functional Browser run in
- *    eight, so a single retry takes that to about one in sixty -- without
- *    touching the runtime pin, which cannot move because Bun 1.4 trades this
- *    hang for a worse one under `turbo watch dev`.
+ *    waiting for the URL. On Bun 1.3.13 it cost roughly one Functional
+ *    Browser run in eight, so a single retry took that to about one in sixty.
+ *    The root cause is not identified, so the wrapper stays in place on the
+ *    Bun 1.4 line (ADR 0070) until the signature stops appearing.
  * 2. The server reports ready, then the SSR module runner's first `fetchModule`
  *    request never settles and Vite's in-process transport gives up after its
  *    60 s invoke timeout, so every document answers 500 (PR #60, 2026-10-07).

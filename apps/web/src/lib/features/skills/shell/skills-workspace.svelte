@@ -49,7 +49,8 @@
   });
   const worktable = $derived(createSkillsWorktableModel({ presentation, view }));
   const closeDrawer = async (): Promise<void> => {
-    await goto('/skills', { noScroll: true });
+    // Keeps the worktable scroll position; the closing drawer hands focus back to its trigger.
+    await goto('/skills', { reset: false });
   };
 
   const page = css({ display: 'grid', gap: '20px', minW: 0 });
@@ -79,9 +80,7 @@
     <SkillsConsolidate
       groups={presentation.unmanagedGroups}
       total={presentation.health.consolidateCount}
-      {...(presentation.unmanagedUsageByName === undefined
-        ? {}
-        : { usageByName: presentation.unmanagedUsageByName })}
+      {...presentation.unmanagedUsageByName === undefined ? {} : { usageByName: presentation.unmanagedUsageByName }}
       usageEvidenceComplete={presentation.observations.view?.invocationEvidenceComplete ?? false}
     />
     <SkillsConfiguration context={slotContext} />
@@ -89,7 +88,7 @@
 </div>
 
 <SkillDrawer
-  {...(editorSlot === undefined ? {} : { editorSlot })}
+  {...editorSlot === undefined ? {} : { editorSlot }}
   {management}
   onClose={closeDrawer}
   {presentation}

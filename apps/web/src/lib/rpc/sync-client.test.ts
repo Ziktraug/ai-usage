@@ -102,7 +102,13 @@ describe('Sync browser adapter', () => {
     expect(download.response).not.toBe(response);
     expect(await download.response.text()).toBe('{"portable":true}');
     expect(fetchInput).toBe('/api/manual-merge/download');
-    expect(fetchInit).toEqual({ method: 'POST', signal: controller.signal });
+    // SvelteKit 3 treats a mutation without a content type as a form post and checks its Origin against
+    // `http://127.0.0.1:<PORT>`, so a tab opened at `localhost` would be refused without one.
+    expect(fetchInit).toEqual({
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      signal: controller.signal,
+    });
     expect(response.bodyUsed).toBe(true);
   });
 
@@ -206,10 +212,10 @@ describe('Sync browser adapter', () => {
           cancellationStarted.resolve();
           return new Promise<void>(() => undefined);
         },
-        pull: (controller) => {
+        pull: (streamController) => {
           pulls += 1;
           if (pulls === 1) {
-            controller.enqueue(new TextEncoder().encode('{'));
+            streamController.enqueue(new TextEncoder().encode('{'));
             return;
           }
           secondReadStarted.resolve();
@@ -251,10 +257,10 @@ describe('Sync browser adapter', () => {
     const response = new Response(
       new ReadableStream<Uint8Array>({
         cancel: () => Promise.reject(new Error('manual-export cleanup rejected')),
-        pull: (controller) => {
+        pull: (streamController) => {
           pulls += 1;
           if (pulls === 1) {
-            controller.enqueue(new TextEncoder().encode('{'));
+            streamController.enqueue(new TextEncoder().encode('{'));
             return;
           }
           secondReadStarted.resolve();

@@ -1,7 +1,16 @@
 # ADR 0038: Local Memory store writer lease and startup coupling
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by
+  [ADR 0074](0074-local-only-single-operator-product.md); retires with the
+  Memory store in plan 120 phase B
 - **Date**: 2026-09-07
+- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
+
+> Amended 2026-10-24 (ADR 0074): the PostgreSQL clause of decision 2 is
+> removed; there is no PostgreSQL authority and, after plan 120 phase B, no
+> replication. Decision 2 now separates the two local stores only. Phase B
+> removes the Memory listener and this lease with accepted Memory; the usage
+> writer lease of ADR 0009 is unaffected.
 
 ## Context
 
@@ -44,9 +53,8 @@ an explicit decision rather than an implicit one.
    Web, CLI, and MCP as "no local service" rather than as the typed cause, and
    because the supervisor already surfaces a closed
    `startupFailureKind` vocabulary. Separate availability in the sense of
-   ADR 0024 applies to the three durable authorities (usage SQLite, Memory
-   SQLite, PostgreSQL): a PostgreSQL or replication outage never degrades local
-   readiness, but the two local stores share one process lifetime.
+   ADR 0024 names each local store, but the two local stores share one process
+   lifetime.
 
 3. A separate Memory process still requires the new lifecycle decision that
    ADR 0024 describes; this ADR does not introduce one.

@@ -137,11 +137,13 @@ export const createRuntimeCommandCoordinator = (
     if (!commandHasFileInput(command)) {
       return;
     }
-    const cleanup = dependencies.discardFileInput(command).catch(() => {
-      // The live mutation port reports cleanup failures at their bounded boundary.
-    });
+    const cleanup: Promise<void> = dependencies
+      .discardFileInput(command)
+      .catch(() => {
+        // The live mutation port reports cleanup failures at their bounded boundary.
+      })
+      .finally(() => pendingFileInputCleanups.delete(cleanup));
     pendingFileInputCleanups.add(cleanup);
-    cleanup.finally(() => pendingFileInputCleanups.delete(cleanup));
   };
 
   const resolveIdle = (): void => {
@@ -248,7 +250,7 @@ export const createRuntimeCommandCoordinator = (
   };
 
   const drainCommandQueue = (commandDrain: CommandDrain): void => {
-    if (commandDrain.drain()) {
+    if (commandDrain.drain() !== undefined) {
       return;
     }
     const drain = (async () => {

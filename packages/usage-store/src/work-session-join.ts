@@ -27,13 +27,13 @@ const MAX_MEMBER_TEXT = 4096;
 const MAX_MEMBER_SHORT_TEXT = 64;
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  get: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  exec(sql: string): unknown;
-  query(sql: string): SqliteStatement;
+  exec: (sql: string) => unknown;
+  query: (sql: string) => SqliteStatement;
 }
 
 interface WorkSessionJoinDependencies {

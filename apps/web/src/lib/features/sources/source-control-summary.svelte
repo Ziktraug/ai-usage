@@ -122,9 +122,8 @@
     _hover: { color: 'ink' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const dot = css({ w: '6px', h: '6px', flexShrink: 0, borderRadius: 'full', bg: 'status.ok' });
-  const activeDot = css({ bg: 'accent' });
-  const warningDot = css({ bg: 'status.warn' });
+  const dot = css.raw({ w: '6px', h: '6px', flexShrink: 0, borderRadius: 'full', bg: 'status.ok' });
+  const warningDot = css.raw({ bg: 'status.warn' });
   const positioner = css({ zIndex: 70 });
   const card = css({
     zIndex: 70,
@@ -177,16 +176,24 @@
   <Popover.Root
     autoFocus={false}
     lazyMount
-    onOpenChange={(details) => { cancelClose(); isOpen = details.open; if (!details.open) { contentHasFocus = false; } }}
+    onOpenChange={(details) => {
+      cancelClose();
+      isOpen = details.open;
+      if (!details.open) {
+        contentHasFocus = false;
+      }
+    }}
     open={isOpen}
     positioning={{ placement: 'bottom-end', gutter: 8, strategy: 'fixed', overflowPadding: 12 }}
     restoreFocus={!hoverOpened}
     unmountOnExit
   >
     <Popover.Trigger
-      aria-label="Collection status"
+      aria-label={`Collection status: ${status.label}`}
       class={trigger}
-      onclick={() => { hoverOpened = false; }}
+      onclick={() => {
+        hoverOpened = false;
+      }}
       onkeydown={focusContentOnTab}
       onpointerenter={enter}
       onpointerleave={leave}
@@ -194,7 +201,7 @@
     >
       <span
         aria-hidden="true"
-        class={cx(dot, status.tone === 'info' && activeDot, (status.tone === 'warning' || status.tone === 'danger') && warningDot)}
+        class={css(dot, (status.tone === 'warning' || status.tone === 'danger') && warningDot)}
       ></span>
       <span aria-live="polite" data-source-summary-status>{status.label}</span>
     </Popover.Trigger>
@@ -204,8 +211,13 @@
           aria-label="Collection details"
           class={card}
           data-source-card
-          onfocusin={() => { contentHasFocus = true; hoverOpened = false; }}
-          onfocusout={(event) => { contentHasFocus = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget); }}
+          onfocusin={() => {
+            contentHasFocus = true;
+            hoverOpened = false;
+          }}
+          onfocusout={(event) => {
+            contentHasFocus = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget);
+          }}
           onpointerenter={enter}
           onpointerleave={leave}
         >

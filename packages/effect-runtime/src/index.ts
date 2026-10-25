@@ -57,6 +57,7 @@ export {
 } from './sink';
 export {
   annotateWideEvent,
+  annotateWideEventIfAvailable,
   type OpenHopHandle,
   WideEventService,
   type WideEventShape,

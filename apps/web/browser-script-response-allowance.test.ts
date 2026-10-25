@@ -40,3 +40,63 @@ describe('controlled script response failures', () => {
     expect(verify).toThrow('was not observed');
   });
 });
+
+describe('counted script response failures', () => {
+  test('accepts a single response and diagnostic, then stops masking when released', () => {
+    const allowance = createBrowserScriptResponseAllowance();
+    const verify = allowance.allowResponses({ ...identity, maximum: 2 });
+    expect(allowance.consumeResponse(response)).toBe(true);
+    expect(allowance.consumeConsole({ url, message })).toBe(true);
+    expect(allowance.consumeConsole({ url, message })).toBe(false);
+    expect(verify).not.toThrow();
+    expect(allowance.consumeResponse(response)).toBe(false);
+  });
+
+  test('consumes two responses with exactly one diagnostic each', () => {
+    const allowance = createBrowserScriptResponseAllowance();
+    const verify = allowance.allowResponses({ ...identity, maximum: 2 });
+    expect(allowance.consumeResponse(response)).toBe(true);
+    expect(allowance.consumeResponse(response)).toBe(true);
+    expect(allowance.consumeConsole({ url, message })).toBe(true);
+    expect(allowance.consumeConsole({ url, message })).toBe(true);
+    expect(allowance.consumeConsole({ url, message })).toBe(false);
+    expect(verify).not.toThrow();
+  });
+
+  test('leaves responses beyond the maximum and their diagnostics to the failure gate', () => {
+    const allowance = createBrowserScriptResponseAllowance();
+    const verify = allowance.allowResponses({ ...identity, maximum: 2 });
+    expect(allowance.consumeResponse(response)).toBe(true);
+    expect(allowance.consumeResponse(response)).toBe(true);
+    expect(allowance.consumeResponse(response)).toBe(false);
+    expect(allowance.consumeConsole({ url, message })).toBe(true);
+    expect(allowance.consumeConsole({ url, message })).toBe(true);
+    expect(allowance.consumeConsole({ url, message })).toBe(false);
+    expect(verify).not.toThrow();
+  });
+
+  test('reports and revokes an allowance whose response never arrived', () => {
+    const allowance = createBrowserScriptResponseAllowance();
+    const verify = allowance.allowResponses({ ...identity, maximum: 2 });
+    expect(verify).toThrow('was not observed');
+    expect(allowance.consumeResponse(response)).toBe(false);
+  });
+
+  test('rejects a duplicate registration for the same identity from either variant', () => {
+    const allowance = createBrowserScriptResponseAllowance();
+    const verify = allowance.allowResponses({ ...identity, maximum: 2 });
+    expect(() => allowance.allowResponses({ ...identity, maximum: 1 })).toThrow('already active');
+    expect(() => allowance.allowOnce(identity)).toThrow('already active');
+    expect(allowance.consumeResponse(response)).toBe(true);
+    expect(verify).not.toThrow();
+    expect(() => allowance.allowResponses({ ...identity, maximum: 2 })).toThrow('already active');
+    expect(allowance.consumeConsole({ url, message })).toBe(true);
+    expect(allowance.allowOnce(identity)).toBeInstanceOf(Function);
+  });
+
+  test('requires a positive integer maximum', () => {
+    const allowance = createBrowserScriptResponseAllowance();
+    expect(() => allowance.allowResponses({ ...identity, maximum: 0 })).toThrow('positive integer maximum');
+    expect(() => allowance.allowResponses({ ...identity, maximum: 1.5 })).toThrow('positive integer maximum');
+  });
+});

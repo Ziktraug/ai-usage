@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { annotateWideEventIfAvailable } from '@ai-usage/effect-runtime';
 import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
 import { observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
 import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
@@ -268,7 +269,7 @@ const detectConfiguredCursorInputs = (
         (inputPath) => (inputPath ? detected() : notDetected()),
       );
     }),
-    Effect.catchAll(() => Effect.succeed(misconfigured())),
+    Effect.catch(() => Effect.succeed(misconfigured())),
   );
 
 const detectPathCandidates = (
@@ -796,7 +797,7 @@ const servedInputsOrEmpty = <Value>(
   empty: Value,
 ): Effect.Effect<Value, SourceRunError> =>
   read.pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       error.reason === 'revision-unavailable' || error.reason === 'store-missing'
         ? Effect.succeed(empty)
         : Effect.fail(sourceFailure(sourceId, error)),
@@ -850,7 +851,7 @@ const withoutMergedLinks = (
     }
     return { links: links.filter((link) => !merged.has(normalizedLinkKey(link))), warnings: [] };
   }).pipe(
-    Effect.catchAll(() =>
+    Effect.catch(() =>
       Effect.succeed({
         links,
         warnings: [
@@ -916,7 +917,7 @@ const desktopWorkFactInputs = (input: {
         Effect.map((open): DesktopWorkFactInputs => ({ jiraKeys, links: open.links, paths, warnings: open.warnings })),
       );
     }),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed<DesktopWorkFactInputs>(
         error.reason === 'store-missing'
           ? NO_DESKTOP_WORK_FACT_INPUTS
@@ -1046,7 +1047,7 @@ const createPullRequestSource = (input: {
       }
       const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
-        Effect.catchAllDefect((cause) => Effect.fail(cause)),
+        Effect.catchDefect((cause: unknown) => Effect.fail(cause)),
         Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
       );
       if (config.github?.enabled === false) {
@@ -1071,7 +1072,7 @@ const createPullRequestSource = (input: {
       }
       const served = yield* servedInputsOrEmpty(
         'github.pull-requests',
-        queryServedSessionPullRequestLinks({ dbPath: input.dbPath }).pipe(Effect.map(({ links }) => links)),
+        queryServedSessionPullRequestLinks({ dbPath: input.dbPath }).pipe(Effect.map((result) => result.links)),
         [] as readonly PullRequestLink[],
       );
       const desktop = yield* desktopWorkFactInputs({
@@ -1169,7 +1170,7 @@ const createJiraIssueSource = (input: {
       }
       const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
-        Effect.catchAllDefect((cause) => Effect.fail(cause)),
+        Effect.catchDefect((cause: unknown) => Effect.fail(cause)),
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
       if (config.jira?.enabled === false) {
@@ -1388,7 +1389,8 @@ export const createScheduledSourceRegistry = (
           // No Claude quota history exists locally, so there is nothing to backfill.
           backfillSource: null,
           identity: CLAUDE_QUOTA_SOURCE_IDENTITY,
-          liveSource: createClaudeAgentSdkBatchSource(),
+          // The CLI version, or its typed startup refusal, lands on the read's `quota.refresh` hop.
+          liveSource: createClaudeAgentSdkBatchSource({ annotate: annotateWideEventIfAvailable }),
         },
         storage,
       }),

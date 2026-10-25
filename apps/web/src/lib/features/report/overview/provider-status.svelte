@@ -211,11 +211,16 @@
     [view.machineContext, view.accountContext].filter((value) => value !== null).join(' · ');
 </script>
 
-{#snippet providerStateBadge(_view: ProviderStatusView)}
+{#snippet providerStateBadge(
+  _view: ProviderStatusView,
+)}
   <span class={cx(badge, badgeTones[_view.tone])}>{_view.provider.state.replaceAll('-', ' ')}</span>
 {/snippet}
 
-{#snippet providerSummaryMetrics(_view: ProviderStatusView, _className: string)}
+{#snippet providerSummaryMetrics(
+  _view: ProviderStatusView,
+  _className: string,
+)}
   <div class={_className}>
     {#if _view.worstUsedPercent !== null}
       <span class={summaryPill}>Peak use {fmtPct(_view.worstUsedPercent)}</span>
@@ -229,7 +234,9 @@
   </div>
 {/snippet}
 
-{#snippet compactProviderStatus(_view: ProviderStatusView)}
+{#snippet compactProviderStatus(
+  _view: ProviderStatusView,
+)}
   <li class={compactProvider}>
     <div class={compactProviderTop}>
       <div class={compactProviderName}>
@@ -247,7 +254,9 @@
   </li>
 {/snippet}
 
-{#snippet providerDetailCard(_view: ProviderStatusView)}
+{#snippet providerDetailCard(
+  _view: ProviderStatusView,
+)}
   <li class={providerCard}>
     <div class={providerTop}>
       <div>

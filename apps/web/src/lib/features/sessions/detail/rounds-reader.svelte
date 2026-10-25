@@ -41,7 +41,15 @@
     '&[aria-current="true"]': { bg: 'accentTint', borderColor: 'line' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
-  const railIndex = css({ textStyle: 'numeric', color: 'muted', fontSize: '11px', pt: '2px' });
+  // The ordinal is decorative: it is drawn from a data attribute so it is neither spoken nor part
+  // of the visible text the accessible name must contain (WCAG 2.5.3).
+  const railIndex = css({
+    textStyle: 'numeric',
+    color: 'muted',
+    fontSize: '11px',
+    pt: '2px',
+    _before: { content: 'attr(data-round-index)' },
+  });
   const railExcerpt = css({
     lineClamp: 2,
     fontSize: '12px',
@@ -60,7 +68,7 @@
     lineHeight: 1.4,
   });
   const railCost = css({ textStyle: 'numeric', color: 'ink', fontSize: '11px', whiteSpace: 'nowrap', pt: '2px' });
-  const chip = css({
+  const chip = css.raw({
     display: 'inline-flex',
     alignItems: 'center',
     gap: '4px',
@@ -73,7 +81,7 @@
     fontSize: '10px',
     whiteSpace: 'nowrap',
   });
-  const chipAgent = css({ bg: 'accentTint', color: 'accent' });
+  const chipAgent = css.raw({ bg: 'accentTint', color: 'accent' });
   const pane = css({ display: 'grid', gap: '16px', minW: 0 });
   const paneHeader = css({ display: 'grid', gap: '4px' });
   const paneTitle = css({ color: 'ink', fontSize: '15px', fontWeight: 650, lineHeight: 1.3, m: 0 });
@@ -166,7 +174,7 @@
     textAlign: { base: 'left', md: 'right' },
     whiteSpace: { base: 'normal', md: 'nowrap' },
   });
-  const idChip = css({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
+  const idChip = css.raw({ whiteSpace: 'normal', overflowWrap: 'anywhere' });
   const scopeNote = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
   const preamble = css({ display: 'grid', gap: '10px', mb: '14px' });
   const unroundedBlock = css({
@@ -187,7 +195,6 @@
   const interactionValueSub = css({ display: 'block', color: 'muted', fontSize: '10px' });
   const noteList = css({ display: 'grid', gap: '4px', m: 0, p: 0, listStyle: 'none' });
   const note = css({ color: 'muted', fontSize: '11px', lineHeight: 1.45 });
-  const noteWarning = css({ color: 'status.warn' });
   const empty = css({
     p: '14px',
     border: '1px dashed token(colors.lineStrong)',
@@ -348,8 +355,6 @@
     round.recordedActiveMs === null
       ? `${formatSessionDuration(round.observedSpanMs)} observed`
       : `${formatSessionDuration(round.recordedActiveMs)} recorded`;
-  const roundAccessibleLabel = (round: RoundView): string =>
-    `Round ${round.index + 1} of ${view?.rounds.length ?? 0}: ${roundTitle(round)}. ${costLabel(round)}, ${spanLabel(round)}, ${fmtNum(round.tools)} tools, ${round.interactions.length} agent interactions.`;
   const rowValue = (row: SessionPresentationRow | null): { primary: string; secondary: string } | null => {
     if (!row) {
       return null;
@@ -425,7 +430,7 @@
       {#if view.coverageNotes.length > 0}
         <ul class={noteList} data-session-rounds-coverage>
           {#each view.coverageNotes as coverageNote (coverageNote.key)}
-            <li class={cx(note, coverageNote.tone === 'warning' && noteWarning)}>{coverageNote.text}</li>
+            <li class={note}>{coverageNote.text}</li>
           {/each}
         </ul>
       {/if}
@@ -444,7 +449,7 @@
                   <div class={interactionTitleClass}>{childTitle(child)}</div>
                   <div class={interactionMeta}>
                     {child.agentType ?? 'child session'}
-                    · <span class={cx(chip, idChip)}>{child.sourceSessionId}</span>
+                    · <span class={css(chip, idChip)}>{child.sourceSessionId}</span>
                     {#if child.row && onOpenChild}
                       ·
                       <button class={linkButton} onclick={() => onOpenChild?.(child.row!)} type="button">
@@ -487,9 +492,10 @@
         <ol aria-label="Rounds" class={rail} data-session-rounds-rail>
           {#each view.rounds as round (round.id)}
             <li class={railItem}>
+              <!-- Named by content (WCAG 2.5.3): a hidden "Round n of m" prefix and interaction count
+                   frame the visible excerpt, chips, tools, span, and cost. -->
               <button
                 aria-current={round.id === selectedRound.id ? 'true' : 'false'}
-                aria-label={roundAccessibleLabel(round)}
                 class={railButton}
                 data-session-round={round.index}
                 onclick={() => selectRound(round)}
@@ -498,12 +504,17 @@
                 type="button"
                 bind:this={railButtons[round.index]}
               >
-                <span aria-hidden="true" class={railIndex}>{String(round.index + 1).padStart(2, '0')}</span>
+                <span
+                  aria-hidden="true"
+                  class={railIndex}
+                  data-round-index={String(round.index + 1).padStart(2, '0')}
+                ></span>
                 <span>
+                  <span class={visuallyHidden}>Round {round.index + 1} of {view.rounds.length}: </span>
                   <span class={cx(railExcerpt, !round.excerpt && railExcerptMuted)}>{roundTitle(round)}</span>
                   <span class={railMeta}>
                     {#each round.interactions as interaction (interaction.toolUseId)}
-                      <span class={cx(chip, chipAgent)}
+                      <span class={css(chip, chipAgent)}
                         >{interaction.child?.agentType ?? (interaction.kind === 'spawn' ? 'agent' : 'message')}</span
                       >
                     {/each}
@@ -512,6 +523,7 @@
                   </span>
                 </span>
                 <span class={railCost}>{costLabel(round)}</span>
+                <span class={visuallyHidden}>, {round.interactions.length} agent interactions.</span>
               </button>
             </li>
           {/each}
@@ -544,8 +556,8 @@
             {#if selectedRound.prompts.length === 0}
               <div class={empty}>
                 {selectedRound.kind === 'unattributed'
-                ? 'Recorded activity that no prompt owns. It stays visible instead of being folded into a neighbour.'
-                : 'No prompt text was available in local history.'}
+                  ? 'Recorded activity that no prompt owns. It stays visible instead of being folded into a neighbour.'
+                  : 'No prompt text was available in local history.'}
               </div>
             {/if}
             {#each selectedRound.prompts as prompt (prompt.id)}
@@ -572,7 +584,9 @@
                       onclick={() => togglePrompt(prompt.id)}
                       type="button"
                     >
-                      {expanded ? 'Show the opening only' : `Continue reading (${fmtCompact(prompt.text.length)} characters)`}
+                      {expanded
+                        ? 'Show the opening only'
+                        : `Continue reading (${fmtCompact(prompt.text.length)} characters)`}
                     </button>
                   {/if}
                 {/if}
@@ -593,7 +607,7 @@
                       <div class={interactionMeta}>
                         {#if interaction.child}
                           {interaction.child.agentType ?? 'agent'}
-                          · <span class={cx(chip, idChip)}>{interaction.child.sourceSessionId}</span>
+                          · <span class={css(chip, idChip)}>{interaction.child.sourceSessionId}</span>
                           {#if interaction.child.row && onOpenChild}
                             ·
                             <button

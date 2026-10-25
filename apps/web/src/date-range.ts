@@ -25,7 +25,7 @@ const LOCAL_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 export const toDateInputValue = (date: Date) =>
   `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 
-export const parseLocalDate = (value: string, endOfDay = false) => {
+export const parseLocalDate = (value: string, atEndOfDay = false) => {
   const match = LOCAL_DATE_PATTERN.exec(value);
   if (!match) {
     return null;
@@ -37,7 +37,7 @@ export const parseLocalDate = (value: string, endOfDay = false) => {
   if (date.getFullYear() !== year || date.getMonth() !== monthIndex || date.getDate() !== day) {
     return null;
   }
-  if (endOfDay) {
+  if (atEndOfDay) {
     date.setHours(23, 59, 59, 999);
   }
   return date;

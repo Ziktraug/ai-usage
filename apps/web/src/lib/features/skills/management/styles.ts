@@ -5,7 +5,7 @@ export const compactStack = css({ display: 'grid', gap: '7px' });
 export const heading = css({ fontSize: '14px', fontWeight: 600, letterSpacing: '-0.02em' });
 export const muted = css({ color: 'muted', fontSize: '12px' });
 export const pathText = css({ fontFamily: 'mono', fontSize: '11px', color: 'muted', overflowWrap: 'anywhere' });
-export const pill = css({
+export const pill = css.raw({
   display: 'inline-flex',
   alignItems: 'center',
   w: 'fit-content',
@@ -18,10 +18,8 @@ export const pill = css({
   fontWeight: 700,
   textTransform: 'uppercase',
 });
-export const infoPill = css({ bg: 'accentTint', color: 'accent' });
-export const warningPill = css({ bg: 'status.warnSoft', color: 'status.warn' });
-export const dangerPill = css({ bg: 'status.dangerSoft', color: 'status.danger' });
-export const button = css({
+export const infoPill = css.raw({ bg: 'accentTint', color: 'accent' });
+export const buttonStyle = css.raw({
   appearance: 'none',
   border: '1px solid token(colors.lineStrong)',
   borderRadius: 'sm',
@@ -36,7 +34,8 @@ export const button = css({
   _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   _disabled: { cursor: 'default', opacity: 0.5 },
 });
-export const primaryButton = css({
+export const button = css(buttonStyle);
+export const primaryButton = css.raw({
   bg: 'accentTint',
   color: 'accent',
   borderColor: 'line',
@@ -72,11 +71,14 @@ export const switchButton = css({
     borderRadius: 'full',
     bg: 'muted',
     transition: 'transform 0.15s, background-color 0.15s',
+    // Forced colours repaint every background as Canvas, which would erase the thumb and with it
+    // the on/off position. A system colour is kept as authored, so the thumb stays drawn.
+    _highContrast: { bg: 'CanvasText' },
   },
   '&[aria-checked=true]': {
     bg: 'status.okSoft',
     borderColor: 'status.ok',
-    _after: { bg: 'status.ok', transform: 'translateX(14px)' },
+    _after: { bg: 'status.ok', transform: 'translateX(14px)', _highContrast: { bg: 'CanvasText' } },
   },
   '&[data-pending=true]': {
     borderColor: 'accent',
@@ -105,7 +107,7 @@ export const notice = css({
   fontSize: '12px',
   borderLeft: '2px solid token(colors.accent)',
 });
-export const errorNotice = css({ bg: 'status.dangerSoft', color: 'status.danger' });
+export const errorNotice = css({ color: 'status.danger' });
 export const operationNotice = css({
   position: 'fixed',
   zIndex: 50,

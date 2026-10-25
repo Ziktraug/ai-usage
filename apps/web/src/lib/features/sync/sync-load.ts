@@ -31,7 +31,7 @@ export const loadSyncPageData = async (
 ): Promise<SyncPageData> => {
   const queryState = await createAwaitedRouteQueryState(options, async (runtime) => {
     const client = dependencies.createClient?.(runtime) ?? createSyncBrowserAdapter(runtime.rpc.sync);
-    await runtime.queryClient.fetchQuery(
+    await runtime.queryClient.query(
       syncFleetQueryOptions(client, {
         browser: false,
         compatibleGeneration: SYNC_COMPATIBLE_GENERATION,

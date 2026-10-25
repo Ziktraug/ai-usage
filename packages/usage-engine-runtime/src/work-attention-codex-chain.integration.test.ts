@@ -105,7 +105,7 @@ describe('Codex work attention chain', () => {
     const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE.id, now: NOW }));
 
     // No Desktop registry on this machine: the Codex root is the whole dataset, and it is unknown.
-    expect(dataset.roots.map((root) => [root.key, root.attention])).toEqual([
+    expect(dataset.roots.map((entry) => [entry.key, entry.attention])).toEqual([
       [{ harness: 'codex', machineId: MACHINE.id, sourceSessionId: fixture.ids.codexRoot }, 'not-observable'],
     ]);
     const [root] = dataset.roots;

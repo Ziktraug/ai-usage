@@ -208,7 +208,7 @@ type DirectoryProbe = 'available' | 'missing' | 'denied';
 const probeDirectory = (checkoutPath: string): Effect.Effect<DirectoryProbe> =>
   Effect.tryPromise(() => stat(checkoutPath)).pipe(
     Effect.map((entry): DirectoryProbe => (entry.isDirectory() ? 'available' : 'missing')),
-    Effect.catchAll((error) => {
+    Effect.catch((error) => {
       const code =
         typeof error === 'object' && error !== null && 'cause' in error && typeof error.cause === 'object'
           ? (error.cause as { code?: unknown } | null)?.code
@@ -257,7 +257,7 @@ const readGit = (
     env: GIT_ENVIRONMENT,
   }).pipe(
     Effect.map((result): GitRead => ({ exitCode: result.exitCode, kind: 'completed', stdout: result.stdout })),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed<GitRead>(error.kind === 'timed-out' ? { kind: 'timeout' } : { kind: 'failed' }),
     ),
   );

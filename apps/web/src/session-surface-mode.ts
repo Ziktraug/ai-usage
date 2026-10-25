@@ -9,18 +9,18 @@ interface MediaQueryChangeEventLike {
 }
 
 interface MediaQueryListLike {
-  addEventListener(type: 'change', listener: (event: MediaQueryChangeEventLike) => void): void;
+  addEventListener: (type: 'change', listener: (event: MediaQueryChangeEventLike) => void) => void;
   matches: boolean;
-  removeEventListener(type: 'change', listener: (event: MediaQueryChangeEventLike) => void): void;
+  removeEventListener: (type: 'change', listener: (event: MediaQueryChangeEventLike) => void) => void;
 }
 
 export interface SessionSurfaceModeEnvironment {
-  matchMedia(query: string): MediaQueryListLike;
+  matchMedia: (query: string) => MediaQueryListLike;
 }
 
 export interface SessionSurfaceModeController {
-  mode(): SessionSurfaceMode;
-  start(onModeChange: StateListener<SessionSurfaceMode>): Disposer;
+  mode: () => SessionSurfaceMode;
+  start: (onModeChange: StateListener<SessionSurfaceMode>) => Disposer;
 }
 
 export const createSessionSurfaceModeController = (

@@ -65,7 +65,7 @@ const viteServer = await createServer({
   configFile: false,
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [...svelte()],
-  resolve: { alias: { '$app/environment': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
+  resolve: { alias: { '$app/env': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
   root: repositoryDirectory,
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
@@ -143,10 +143,10 @@ describe('Memory proposal review surface', () => {
     const client = createWebQueryClient();
     client.setQueryData(memoryProposalReviewsKey(), {
       ...snapshot,
-      proposals: snapshot.proposals.map((proposal) => ({
-        ...proposal,
+      proposals: snapshot.proposals.map((queued) => ({
+        ...queued,
         structuredContent: { publicationPolicy: 'local-only', sourceLocator: locator },
-        observationSources: proposal.observationSources.map((source) => ({
+        observationSources: queued.observationSources.map((source) => ({
           ...source,
           sourceKind: 'session',
           sourceLocator: locator,

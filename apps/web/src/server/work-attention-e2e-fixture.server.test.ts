@@ -214,10 +214,10 @@ describe('work attention e2e fixture', () => {
 
   test('shows the served Codex families as their own roots, wait unknown, never folded or promoted (ADR 0059)', async () => {
     const result = await readFixture();
-    const codex = result.data.roots.filter((root) => root.key.harness === 'codex');
+    const codex = result.data.roots.filter((candidate) => candidate.key.harness === 'codex');
     // After every Desktop root, most recently active first.
     expect(result.data.roots.slice(-3)).toEqual(codex);
-    expect(codex.map((root) => [root.title, root.attention, root.desktopSessionId, root.declared])).toEqual([
+    expect(codex.map((entry) => [entry.title, entry.attention, entry.desktopSessionId, entry.declared])).toEqual([
       [WORK_ATTENTION_E2E_CODEX_WORKTREE_TITLE, 'not-observable', null, null],
       [WORK_ATTENTION_E2E_CODEX_ROOT_TITLE, 'not-observable', null, null],
       [WORK_ATTENTION_E2E_CODEX_ORPHAN_TITLE, 'not-observable', null, null],

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import ErrorShell from '#lib/features/shell/error-shell.svelte';
+  import { createRetryController } from '#lib/foundation/navigation/svelte/retry.ts';
   import { page } from '$app/state';
-  import ErrorShell from '$lib/features/shell/error-shell.svelte';
-  import { createRetryController } from '$lib/foundation/navigation/svelte/retry';
 
   let pending = $state(false);
   let retryFailed = $state(false);

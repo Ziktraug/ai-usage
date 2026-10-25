@@ -163,11 +163,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                 if (total.value === 0) {
                   continue;
                 }
-                let current = agg.get(composerId);
-                if (!current) {
-                  current = { in: 0, out: 0, cr: 0, cw: 0, calls: 0 };
-                  agg.set(composerId, current);
-                }
+                const current = agg.getOrInsertComputed(composerId, () => ({ in: 0, out: 0, cr: 0, cw: 0, calls: 0 }));
                 const nextInput = addNonNegativeSafeIntegers(current.in, input.value);
                 const nextOutput = addNonNegativeSafeIntegers(current.out, output.value);
                 const nextCacheRead = addNonNegativeSafeIntegers(current.cr, cacheRead.value);
@@ -222,7 +218,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
     const sessions = yield* withPerfSpan(
       'aiUsage.collect.cursor.mapSessions',
       Effect.sync(() => {
-        const sessions: CollectedSession[] = [];
+        const mappedSessions: CollectedSession[] = [];
         for (const [composerId, current] of agg) {
           const composer = comp.get(composerId);
           const name = naming.get(composerId);
@@ -233,7 +229,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             cr: current.cr,
             cw: current.cw,
           };
-          sessions.push({
+          mappedSessions.push({
             source: { harnessKey: 'cursor', sourceSessionId: composerId },
             date: composer?.created ? new Date(composer.created) : null,
             endDate: null,
@@ -266,7 +262,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
           if (!name || name.turns === 0) {
             continue;
           }
-          sessions.push({
+          mappedSessions.push({
             source: { harnessKey: 'cursor', sourceSessionId: composerId },
             date: composer.created ? new Date(composer.created) : null,
             endDate: null,
@@ -286,9 +282,9 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             usageUnavailable: true,
           });
         }
-        return sessions;
+        return mappedSessions;
       }),
-      (sessions) => ({ rows: sessions.length }),
+      (mappedSessions) => ({ rows: mappedSessions.length }),
     );
     return { rejectedMetricRecords, sessions };
   });
@@ -310,8 +306,8 @@ const collectCursorRowsFromDb = (
     const stat = dbStat(dbPath);
     const cached = cachedDbCollection(cache, dbPath, stat);
     if (cached) {
-      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cached), (result) => ({
-        rows: result.rows.length,
+      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cached), (cachedResult) => ({
+        rows: cachedResult.rows.length,
       }));
     }
     const result = yield* collectCursorSessionsFromDb(storage, dbPath);

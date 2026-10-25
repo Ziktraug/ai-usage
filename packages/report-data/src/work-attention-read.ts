@@ -1022,7 +1022,7 @@ const buildRoot = (
   const { cut, facts } = boundFacts(
     factsOf(group, index, declared, {
       citedNotes: new Set(
-        linked.inputs.flatMap((session) => (session.linkFactId === null ? [] : [session.linkFactId])),
+        linked.inputs.flatMap((linkedSession) => (linkedSession.linkFactId === null ? [] : [linkedSession.linkFactId])),
       ),
       earlier: earlier.facts,
       linked: linked.facts,

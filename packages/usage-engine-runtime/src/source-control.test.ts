@@ -14,7 +14,8 @@ import {
   sanitizeSourceWarningCode,
   updateSourcePolicyOverrides,
 } from '@ai-usage/report-core/source-control';
-import { Deferred, Duration, Effect, Fiber, Layer, Ref, TestClock, TestContext } from 'effect';
+import { Clock, Context, Deferred, Duration, Effect, Fiber, Layer, Ref, Scheduler } from 'effect';
+import { TestClock } from 'effect/testing';
 import type { ScheduledSource } from './source-adapters';
 import { SourceRunError } from './source-adapters';
 import {
@@ -25,11 +26,42 @@ import {
 } from './source-control';
 import { createUsageEngineWriterGate } from './writer-gate';
 
-const testEnvLayer = Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(noopWideEventSink));
+const testEnvLayer = Layer.merge(TestClock.layer(), makeTestWideEventSinkLayer(noopWideEventSink));
+
+/**
+ * The test clock plus a record of its pending sleeps, keyed by their deadline in
+ * test time. The clock itself no longer exposes them; tests use the record to
+ * wait until a timer under test is actually registered before advancing time.
+ */
+const makeRecordingTestClockLayer = () => {
+  const pending = new Set<{ readonly deadline: number }>();
+  const layer = Layer.effectContext(
+    Effect.gen(function* () {
+      const clock = yield* TestClock.testClockWith(Effect.succeed);
+      const scheduler = yield* Scheduler.Scheduler;
+      const recording: TestClock.TestClock = {
+        ...clock,
+        sleep: (duration) =>
+          Effect.suspend(() => {
+            const entry = { deadline: clock.currentTimeMillisUnsafe() + Duration.toMillis(duration) };
+            pending.add(entry);
+            return clock.sleep(duration).pipe(Effect.ensuring(Effect.sync(() => pending.delete(entry))));
+          }),
+      };
+      return Context.make(Clock.Clock, recording).pipe(Context.add(Scheduler.Scheduler, scheduler));
+    }),
+  ).pipe(Layer.provide(TestClock.layer()));
+  return { layer, pendingSleeps: (): readonly number[] => [...pending].map(({ deadline }) => deadline) };
+};
 
 const withCaptureSink = () => {
   const sink = makeCaptureWideEventSink();
-  return { events: sink.events, layer: Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(sink)) };
+  const clock = makeRecordingTestClockLayer();
+  return {
+    events: sink.events,
+    layer: Layer.merge(clock.layer, makeTestWideEventSinkLayer(sink)),
+    pendingSleeps: clock.pendingSleeps,
+  };
 };
 
 const boundaryEvents = (events: readonly WideEventSnapshot[], boundary: string): readonly WideEventSnapshot[] =>
@@ -51,9 +83,9 @@ const fakeSource = (
   id: CollectionSourceId,
   run: ScheduledSource['run'],
   detect: ScheduledSource['detect'] = Effect.succeed(detected),
-  cadence: Duration.DurationInput = Duration.minutes(1),
+  cadence: Duration.Input = Duration.minutes(1),
 ): ScheduledSource => ({
-  cadence: Duration.decode(cadence),
+  cadence: Duration.fromInputUnsafe(cadence),
   detect,
   id,
   run,
@@ -82,11 +114,10 @@ const sourceView = (snapshot: SourceControlView, sourceId: CollectionSourceId) =
   return source;
 };
 
-const waitForSleeps = (deadline: number, count: number): Effect.Effect<void> =>
+const waitForSleeps = (pendingSleeps: () => readonly number[], deadline: number, count: number): Effect.Effect<void> =>
   Effect.gen(function* () {
     for (let attempt = 0; attempt < 1000; attempt++) {
-      const sleeps = Array.from(yield* TestClock.sleeps());
-      if (sleeps.filter((scheduledAt) => scheduledAt === deadline).length === count) {
+      if (pendingSleeps().filter((scheduledAt) => scheduledAt === deadline).length === count) {
         return;
       }
       yield* Effect.promise(() => hostScheduler.yield());
@@ -725,7 +756,7 @@ describe('source control plane', () => {
         });
         yield* Deferred.await(started);
 
-        const disableFiber = yield* Effect.fork(control.setEnabled('claude.sessions', false));
+        const disableFiber = yield* Effect.forkChild(control.setEnabled('claude.sessions', false));
         const pausing = yield* waitFor(control, (view) => sourceView(view, 'claude.sessions').lifecycle === 'pausing');
 
         expect(sourceView(pausing, 'claude.sessions').policy).toBe('disabled');
@@ -1012,11 +1043,11 @@ describe('source control plane', () => {
           ]),
           writerGate,
         });
-        yield* waitForSleeps(1000, 1);
+        yield* waitForSleeps(capture.pendingSleeps, 1000, 1);
         yield* TestClock.adjust(Duration.seconds(1));
         yield* waitFor(control, (view) => sourceView(view, 'codex.sessions').nextDueAt !== undefined);
         yield* TestClock.adjust(Duration.seconds(59));
-        yield* waitForSleeps(61_000, 2);
+        yield* waitForSleeps(capture.pendingSleeps, 61_000, 2);
 
         const waiting = yield* control.getSnapshot;
         expect(waiting.publication).toMatchObject({
@@ -1313,7 +1344,7 @@ describe('source control plane', () => {
               ],
             ]),
           });
-          yield* waitForSleeps(3000, 2);
+          yield* waitForSleeps(capture.pendingSleeps, 3000, 2);
           return service;
         }),
       );
@@ -1368,7 +1399,7 @@ describe('source control plane', () => {
           writerGate,
         });
         // The Codex cadence timer and the publication settle both wait 3 s.
-        yield* waitForSleeps(3000, 2);
+        yield* waitForSleeps(capture.pendingSleeps, 3000, 2);
         expect((yield* control.getSnapshot).publication).toMatchObject({ queued: true, running: false });
 
         // A writer command is not held behind the settle window.
@@ -1635,7 +1666,7 @@ describe('source control plane', () => {
             [
               'claude.sessions',
               fakeSource('claude.sessions', (context) =>
-                Effect.async((resume) => {
+                Effect.callback((resume) => {
                   Effect.runSync(Deferred.succeed(started, undefined));
                   const onAbort = (): void => {
                     Effect.runSync(Ref.set(aborted, true));

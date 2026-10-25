@@ -81,7 +81,7 @@ export const collectHarnessDatasetsResult = (
     const warnings: LocalHistoryWarning[] = [];
     if (selection.includeCursor) {
       const result = yield* collectCursorCommitAttributionResult.pipe(
-        Effect.catchAll((error: LocalHistoryError) =>
+        Effect.catch((error: LocalHistoryError) =>
           Effect.succeed({
             rows: [],
             warnings: [
@@ -102,7 +102,7 @@ export const collectHarnessDatasetsResult = (
       const codex = yield* findLatestCodexProviderStatus({
         ...(selection.machineId === undefined ? {} : { machineId: selection.machineId }),
         ...(selection.machineLabel === undefined ? {} : { machineLabel: selection.machineLabel }),
-      }).pipe(Effect.catchAll(() => Effect.succeed(codexCollectionErrorStatus(selection))));
+      }).pipe(Effect.catch(() => Effect.succeed(codexCollectionErrorStatus(selection))));
       if (codex) {
         datasets.providerStatus = createProviderStatusDataset([codex]);
       }

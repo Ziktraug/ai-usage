@@ -27,9 +27,11 @@ const openBuildReportRootSession = async (page: Page, viewport: SessionDrawerVie
 };
 
 const visibleDrawerControls = (drawer: Locator): Locator =>
-  drawer.locator(
-    'button:visible:not([disabled]), a[href]:visible, summary:visible, input:visible:not([disabled]), select:visible:not([disabled]), textarea:visible:not([disabled]), [tabindex]:visible:not([tabindex="-1"])',
-  );
+  drawer
+    .locator(
+      'button:not([disabled]), a[href], summary, input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )
+    .visible();
 
 const captureLifecycleWarnings = (page: Page): (() => readonly string[]) => {
   const warnings: string[] = [];
@@ -471,16 +473,20 @@ test('keeps the mobile Session drawer modal, trapped, safe, and restorable', asy
   }));
   expect(navigationGeometry.scrollWidth).toBeLessThanOrEqual(navigationGeometry.clientWidth + 1);
   expect(navigationGeometry.whiteSpace).toBe('nowrap');
-  const headerControlGeometry = await drawerHeader.locator('button:visible').evaluateAll((elements) =>
-    elements.map((element) => {
-      const rect = element.getBoundingClientRect();
-      return { height: Math.round(rect.height), width: Math.round(rect.width) };
-    }),
-  );
+  const headerControlGeometry = await drawerHeader
+    .locator('button')
+    .visible()
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { height: Math.round(rect.height), width: Math.round(rect.width) };
+      }),
+    );
   expect(headerControlGeometry.length).toBeGreaterThanOrEqual(3);
   expect(headerControlGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
   const bodyControlGeometry = await drawerBody
-    .locator('button:visible, a[href]:visible, summary:visible, input:visible, select:visible, textarea:visible')
+    .locator('button, a[href], summary, input, select, textarea')
+    .visible()
     .evaluateAll((elements) =>
       elements.map((element) => {
         const rect = element.getBoundingClientRect();
@@ -624,12 +630,15 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
     width: DESKTOP_DRAWER_VIEWPORT.width - 360,
   });
   expect(desktopGeometry.right).toBe(desktopGeometry.layoutRight);
-  const actionGeometry = await drawer.locator('[data-session-drawer-header] button:visible').evaluateAll((elements) =>
-    elements.map((element) => {
-      const rect = element.getBoundingClientRect();
-      return { height: Math.round(rect.height), width: Math.round(rect.width) };
-    }),
-  );
+  const actionGeometry = await drawer
+    .locator('[data-session-drawer-header] button')
+    .visible()
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { height: Math.round(rect.height), width: Math.round(rect.width) };
+      }),
+    );
   expect(actionGeometry.length).toBeGreaterThanOrEqual(3);
   expect(actionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
   const drawerHeader = drawer.locator('[data-session-drawer-header]');

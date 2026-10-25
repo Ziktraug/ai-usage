@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Option, TestClock, TestContext } from 'effect';
-import { annotateWideEvent, runBoundaryEffect, withMeasured, withMeasuredIfAvailable } from './index';
+import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Option } from 'effect';
+import { TestClock } from 'effect/testing';
+import {
+  annotateWideEvent,
+  annotateWideEventIfAvailable,
+  runBoundaryEffect,
+  withMeasured,
+  withMeasuredIfAvailable,
+} from './index';
 import {
   testWideEventResource,
   type WideEventResourceService,
@@ -35,7 +42,7 @@ describe('boundary runner and hop tree', () => {
       runBoundaryEffect(
         { boundary: 'nested' },
         withMeasured('outer')(
-          withMeasured('inner')(Effect.succeed(1)).pipe(Effect.zipLeft(withMeasured('sibling')(Effect.succeed(2)))),
+          withMeasured('inner')(Effect.succeed(1)).pipe(Effect.tap(withMeasured('sibling')(Effect.succeed(2)))),
         ),
       ),
     );
@@ -81,14 +88,14 @@ describe('boundary runner and hop tree', () => {
     const sink = makeCaptureWideEventSink();
     const startedAt = new Date('2026-07-25T12:34:56.000Z');
     const program = Effect.gen(function* () {
-      yield* TestClock.setTime(startedAt);
+      yield* TestClock.setTime(startedAt.getTime());
       yield* runBoundaryEffect(
         { boundary: 'injected-clock' },
         Effect.gen(function* () {
           yield* TestClock.adjust(Duration.millis(1500));
         }),
       );
-    }).pipe(Effect.provide(Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(sink))));
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), makeTestWideEventSinkLayer(sink))));
 
     await Effect.runPromise(program);
 
@@ -211,6 +218,26 @@ describe('boundary runner and hop tree', () => {
     expect(sink.events()[0]?.outcome).toBe('success');
     expect(sink.events()[0]?.annotations.observabilityTruncated).toBe(true);
     expect(sink.events()[0]?.services[0]?.annotations?.observabilityTruncated).toBe(true);
+  });
+
+  test('annotates the current event or hop when there is one, and is a no-op outside any', async () => {
+    const sink = makeCaptureWideEventSink();
+    // Typed without the service, so a collector can be handed it.
+    const annotate: (fields: Readonly<Record<string, string>>) => Effect.Effect<void> = annotateWideEventIfAvailable;
+    await Effect.runPromise(annotate({ outside: 'any boundary' }));
+    await Effect.runPromise(
+      runBoundaryEffect(
+        { boundary: 'optional-annotations' },
+        Effect.gen(function* () {
+          yield* annotate({ root: 'event' });
+          yield* withMeasured('quota.refresh')(annotate({ claudeCodeVersion: '2.1.999' }));
+        }),
+      ).pipe(Effect.provide(makeTestWideEventSinkLayer(sink))),
+    );
+
+    expect(sink.events()).toHaveLength(1);
+    expect(sink.events()[0]?.annotations).toMatchObject({ root: 'event' });
+    expect(sink.events()[0]?.services[0]?.annotations).toEqual({ claudeCodeVersion: '2.1.999' });
   });
 
   test('classifier failure falls back without changing the business exit', async () => {

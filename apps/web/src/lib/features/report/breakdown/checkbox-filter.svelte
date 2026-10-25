@@ -1,23 +1,20 @@
 <script lang="ts" module>
-  import { css, cx } from '@ai-usage/design-system/css';
-  import { field } from './styles';
+  import { css } from '@ai-usage/design-system/css';
+  import { fieldStyle } from './styles';
 
-  const filterTrigger = cx(
-    field,
-    css({
-      alignItems: 'center',
-      cursor: 'pointer',
-      display: 'inline-flex',
-      flex: { base: '1 1 120px', sm: '0 1 170px', xl: '0 1 140px' },
-      gap: '8px',
-      justifyContent: 'space-between',
-      minW: { base: 0, sm: '140px', xl: '120px' },
-      textAlign: 'left',
-      _hover: { borderColor: 'lineStrong' },
-      '&[data-state=open]': { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)' },
-    }),
-  );
-  const narrowedFilterTrigger = css({ bg: 'accentTint', borderColor: 'accent' });
+  const filterTrigger = css.raw(fieldStyle, {
+    alignItems: 'center',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    flex: { base: '1 1 120px', sm: '0 1 170px', xl: '0 1 140px' },
+    gap: '8px',
+    justifyContent: 'space-between',
+    minW: { base: 0, sm: '140px', xl: '120px' },
+    textAlign: 'left',
+    _hover: { borderColor: 'lineStrong' },
+    '&[data-state=open]': { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)' },
+  });
+  const narrowedFilterTrigger = css.raw({ bg: 'accentTint', borderColor: 'accent' });
   const triggerText = css({ minW: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
   const triggerIndicator = css({ color: 'faint', flexShrink: 0, fontSize: '10px' });
   const filterContent = css({
@@ -160,8 +157,8 @@
   contentClass={filterContent}
   positioning={{ gutter: 4, placement: 'bottom-start' }}
   {trigger}
-  triggerAriaLabel={label}
-  triggerClass={value.length > 0 ? cx(filterTrigger, narrowedFilterTrigger) : filterTrigger}
+  triggerAriaLabel={`${label}: ${triggerLabel}`}
+  triggerClass={css(filterTrigger, value.length > 0 && narrowedFilterTrigger)}
   triggerTitle={triggerLabel}
 >
   <div class={filterHeader}>
@@ -178,8 +175,7 @@
       <li>
         <Checkbox
           checked={value.includes(option)}
-          onCheckedChange={(checked) =>
-            onValueChange(toggleCheckboxFilterOption(value, options, option, checked))}
+          onCheckedChange={(checked) => onValueChange(toggleCheckboxFilterOption(value, options, option, checked))}
         >
           <span class={optionLabel} title={labelFor(option)}>{labelFor(option)}</span>
         </Checkbox>

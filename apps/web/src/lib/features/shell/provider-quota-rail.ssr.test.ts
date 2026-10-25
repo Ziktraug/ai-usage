@@ -182,17 +182,22 @@ describe('rendered provider quota rail', () => {
     expect(html).toContain('xl:d_block');
   });
 
-  test('gives the compact value the same em dash and stale tone the labelled value uses', () => {
-    const [first, ...rest] = measuredEntries();
-    if (!first) {
-      throw new Error('Expected at least one rail entry.');
+  test('gives the compact value the same em dash and absent tone the labelled value uses', () => {
+    const entries = measuredEntries();
+    const index = entries.findIndex((entry) => entry.usedPercent !== null);
+    const live = entries[index];
+    if (!live) {
+      throw new Error('Expected a measured rail entry.');
     }
-    const measured = compactValueSlots(renderRail([{ ...first, stale: false }, ...rest]))[0];
-    const stale = compactValueSlots(renderRail([{ ...first, stale: true, usedPercent: null }, ...rest]))[0];
+    const withEntry = (entry: ProviderQuotaRailEntry) =>
+      entries.map((candidate, at) => (at === index ? entry : candidate));
+    const measured = compactValueSlots(renderRail(withEntry({ ...live, stale: false })))[index];
+    const stale = compactValueSlots(renderRail(withEntry({ ...live, stale: true, usedPercent: null })))[index];
 
     expect(stale?.text).toBe('—');
-    // The tone must be on the compact element itself, not merely somewhere in the document: an aged
-    // reading keeps its number but must not sit at a live one's weight.
+    // The tone must be on the compact element itself, not merely somewhere in the document: a reading
+    // without a percentage must not sit at a live one's weight. Staleness alone has never changed the
+    // rendered tone (the live colour always won), so the absent tone is what distinguishes it.
     const staleOnlyClasses = (stale?.classes ?? '')
       .split(' ')
       .filter((token) => !(measured?.classes ?? '').split(' ').includes(token));

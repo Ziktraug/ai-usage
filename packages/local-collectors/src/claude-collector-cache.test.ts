@@ -19,7 +19,7 @@ afterEach(async () => {
   }
 });
 
-const jsonl = (...records: unknown[]): string => `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
+const jsonl = (...records: unknown[]): string => `${records.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
 
 const skillCall = (id: string) => ({ type: 'tool_use', id, name: 'Skill', input: { skill: 'review' } });
 
@@ -107,52 +107,52 @@ const fixture = async () => {
 };
 
 describe('Claude per-file collector cache', () => {
-  test.each([
-    'Agent',
-    'Task',
-  ])('links an explicit %s launch on cold and warm scans without caching derived parents', async (tool) => {
-    const { alpha, directory, cachePath, reads, run } = await fixture();
-    const child = path.join(directory, 'agent-child.jsonl');
-    await writeFile(alpha, jsonl(...launch('alpha', 'child', tool)));
-    await writeFile(child, jsonl(assistant('child')));
-    const cold = await run();
-    expect(cold.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source).toMatchObject({
-      harnessKey: 'claude',
-      parentSourceSessionId: 'alpha',
-    });
-    expect(cold.warnings).toEqual([]);
-    const serialized = normalizeSessionLineage(cold.rows).map(serializeUsageRow);
-    expect(serialized.find((row) => row.source?.sourceSessionId === 'agent-child')).toMatchObject({
-      origin: 'subagent',
-      subagent: true,
-      source: { parentSourceSessionId: 'alpha', rootSourceSessionId: 'alpha' },
-    });
-    const page = projectSessionPage(serialized, {
-      cursor: null,
-      filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
-      pageSize: 10,
-      range: { from: null, to: null },
-      revision: 'collector-lineage-fixture',
-      sort: [{ desc: true, id: 'date' }],
-    });
-    expect(page).toMatchObject({ itemCount: 2, sessionCount: 3 });
-    expect(page.items.find((item) => item.row.source?.sourceSessionId === 'alpha')?.row.campaignTotalCount).toBe(2);
-    const cache = await readCache(cachePath);
-    expect(record(cache.files[alpha]).declaredChildSourceSessionIds).toEqual(['agent-child']);
-    expect(record(cache.files[child]).rows).toEqual([
-      expect.objectContaining({ source: expect.not.objectContaining({ parentSourceSessionId: 'alpha' }) }),
-    ]);
-    reads.clear();
-    expect(await run()).toEqual(cold);
-    expect(reads.size).toBe(0);
+  test.each(['Agent', 'Task'])(
+    'links an explicit %s launch on cold and warm scans without caching derived parents',
+    async (tool) => {
+      const { alpha, directory, cachePath, reads, run } = await fixture();
+      const child = path.join(directory, 'agent-child.jsonl');
+      await writeFile(alpha, jsonl(...launch('alpha', 'child', tool)));
+      await writeFile(child, jsonl(assistant('child')));
+      const cold = await run();
+      expect(cold.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source).toMatchObject({
+        harnessKey: 'claude',
+        parentSourceSessionId: 'alpha',
+      });
+      expect(cold.warnings).toEqual([]);
+      const serialized = normalizeSessionLineage(cold.rows).map(serializeUsageRow);
+      expect(serialized.find((row) => row.source?.sourceSessionId === 'agent-child')).toMatchObject({
+        origin: 'subagent',
+        subagent: true,
+        source: { parentSourceSessionId: 'alpha', rootSourceSessionId: 'alpha' },
+      });
+      const page = projectSessionPage(serialized, {
+        cursor: null,
+        filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+        pageSize: 10,
+        range: { from: null, to: null },
+        revision: 'collector-lineage-fixture',
+        sort: [{ desc: true, id: 'date' }],
+      });
+      expect(page).toMatchObject({ itemCount: 2, sessionCount: 3 });
+      expect(page.items.find((item) => item.row.source?.sourceSessionId === 'alpha')?.row.campaignTotalCount).toBe(2);
+      const cache = await readCache(cachePath);
+      expect(record(cache.files[alpha]).declaredChildSourceSessionIds).toEqual(['agent-child']);
+      expect(record(cache.files[child]).rows).toEqual([
+        expect.objectContaining({ source: expect.not.objectContaining({ parentSourceSessionId: 'alpha' }) }),
+      ]);
+      reads.clear();
+      expect(await run()).toEqual(cold);
+      expect(reads.size).toBe(0);
 
-    await rm(alpha);
-    const orphan = await run();
-    expect(
-      orphan.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
-    ).toBeUndefined();
-    expect(reads.size).toBe(0);
-  });
+      await rm(alpha);
+      const orphan = await run();
+      expect(
+        orphan.rows.find((row) => row.source?.sourceSessionId === 'agent-child')?.source?.parentSourceSessionId,
+      ).toBeUndefined();
+      expect(reads.size).toBe(0);
+    },
+  );
 
   test('invalidates version 15 entries to recover previously dropped launches', async () => {
     const { alpha, beta, directory, cachePath, reads, run } = await fixture();

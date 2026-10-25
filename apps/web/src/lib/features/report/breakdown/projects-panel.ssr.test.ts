@@ -9,7 +9,7 @@ const LEGACY_MEASUREMENT_PATTERN = /\d+\/\d+ measured/;
 const MOBILE_EMPTY_STATUS_PATTERN = /<li[^>]*><span role="status">No projects<\/span><\/li>/;
 
 interface SvelteServerModule {
-  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+  render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
 const componentFrom = (loaded: unknown): Component => {
@@ -26,14 +26,19 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
   return loaded as SvelteServerModule;
 };
 
-const source = (id: string, machineId: string, machineLabel: string, project: string): UsageReportProjectSource => ({
+const source = (
+  id: string,
+  machineId: string,
+  machineLabel: string,
+  projectName: string,
+): UsageReportProjectSource => ({
   gitRemote: '',
   id,
   machineId,
   machineLabel,
-  project,
+  project: projectName,
   sessions: 3,
-  sourcePath: `/home/alex/${project}`,
+  sourcePath: `/home/alex/${projectName}`,
   tokens: 0,
 });
 

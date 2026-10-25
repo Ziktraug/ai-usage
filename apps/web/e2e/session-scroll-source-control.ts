@@ -36,19 +36,33 @@ export const freezeSessionScrollCollectionSources = async (
   if (!probeSource) {
     throw new Error('The production fixture must declare at least one collection source');
   }
+  // A command response only confirms admission. The engine then applies the queued commands one
+  // at a time, and a disable changes its policy before it requests its one publication, so a
+  // settled snapshot with every source disabled can still predate the last disable's publication.
+  // The first such snapshot fences that command: a later one that acknowledges a newer publication
+  // request proves every disable has published.
+  let fenceRequestedGeneration: number | undefined;
   await expect
     .poll(
       async () => {
         const snapshot = await disableCollectionSource(request, requestOrigin, probeSource.id);
         const { publication } = snapshot;
+        const allSourcesDormant =
+          snapshot.sources.length === collectionSourceDefinitions.length &&
+          snapshot.sources.every(({ lifecycle, policy }) => lifecycle === 'dormant' && policy === 'disabled');
+        const publicationSettled =
+          !(publication.dirty || publication.pendingDemand || publication.queued || publication.running) &&
+          publication.publishedGeneration >= publication.dirtyGeneration &&
+          publication.acknowledgedRequestGeneration >= publication.requestedGeneration;
+        if (allSourcesDormant && publicationSettled && snapshot.queueDepth === 0 && snapshot.runningCount === 0) {
+          fenceRequestedGeneration ??= publication.requestedGeneration;
+        }
         return {
-          allSourcesDormant:
-            snapshot.sources.length === collectionSourceDefinitions.length &&
-            snapshot.sources.every(({ lifecycle, policy }) => lifecycle === 'dormant' && policy === 'disabled'),
-          publicationSettled:
-            !(publication.dirty || publication.pendingDemand || publication.queued || publication.running) &&
-            publication.publishedGeneration >= publication.dirtyGeneration &&
-            publication.acknowledgedRequestGeneration >= publication.requestedGeneration,
+          allSourcesDormant,
+          publicationSettled,
+          publishedAfterFence:
+            fenceRequestedGeneration !== undefined &&
+            publication.acknowledgedRequestGeneration > fenceRequestedGeneration,
           queueDepth: snapshot.queueDepth,
           runningCount: snapshot.runningCount,
         };
@@ -61,6 +75,7 @@ export const freezeSessionScrollCollectionSources = async (
     .toEqual({
       allSourcesDormant: true,
       publicationSettled: true,
+      publishedAfterFence: true,
       queueDepth: 0,
       runningCount: 0,
     });

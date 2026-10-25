@@ -14,15 +14,15 @@
     heatScroll,
     heatWeekColumn,
     heatWeekdays,
+    intensityFill,
     panel,
     panelHeader,
     panelSub,
     panelTitle,
   } from '@ai-usage/design-system/report';
 
-  const accentFill = css({ bg: 'accent' });
   const emptyPanel = css({ color: 'muted', fontSize: '12px' });
-  const heatOpacity = [0.28, 0.52, 0.76, 1] as const;
+  const heatStrength = ['28%', '52%', '76%', '100%'] as const;
 </script>
 
 <script lang="ts">
@@ -137,7 +137,12 @@
                   <button
                     {...currentDayAria(item.date)}
                     aria-label={`${description}. Focus dashboard on this day.`}
-                    class={cx(heatCell, item.level === 0 ? heatCellZero : accentFill, key === heatmap.todayKey ? heatCellToday : undefined)}
+                    class={cx(
+                      heatCell,
+                      item.level === 0 ? heatCellZero : intensityFill,
+                      key === heatmap.todayKey ? heatCellToday : undefined,
+                    )}
+                    data-heat-level={item.level}
                     data-heatmap-day={key}
                     data-price-state={item.priceMeasurement.state}
                     onclick={() => onSelectDay(key)}
@@ -146,7 +151,7 @@
                     tabindex={focusedDay?.date === item.date ? 0 : -1}
                     title={description}
                     type="button"
-                    style:opacity={item.level > 0 ? heatOpacity[item.level - 1] : undefined}
+                    style:--mark-strength={item.level > 0 ? heatStrength[item.level - 1] : undefined}
                     use:registerCell={key}
                   ></button>
                 {:else}
@@ -163,10 +168,14 @@
         >{focusedDay ? describeHeatDay(focusedDay) : 'Choose a day in the activity range.'}</span
       >
     </div>
-    <div class={heatLegend}>
-      <span>Less</span><span class={cx(heatLegendCell, heatCellZero)}></span>
-      {#each heatOpacity as opacity (opacity)}
-        <span class={cx(heatLegendCell, accentFill)} style:opacity></span>
+    <div class={heatLegend} data-heatmap-legend>
+      <span>Less</span><span class={cx(heatLegendCell, heatCellZero)} data-heat-level="0"></span>
+      {#each heatStrength as strength, index (strength)}
+        <span
+          class={cx(heatLegendCell, intensityFill)}
+          data-heat-level={index + 1}
+          style:--mark-strength={strength}
+        ></span>
       {/each}
       <span>More</span><span style="margin-left: auto">scaled by sessions</span>
     </div>

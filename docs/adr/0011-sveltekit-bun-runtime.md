@@ -1,7 +1,24 @@
 # ADR 0011: Run SvelteKit with svelte-adapter-bun
 
-- **Status**: Accepted
+- **Status**: Superseded 2026-10-24 by
+  [ADR 0072](0072-sveltekit-3-official-bun-adapter.md). Its adapter, pins and
+  idle timeout were already replaced there, and 0072's Decision restates the
+  lifecycle requirements it kept (numeric loopback and the adapter
+  environment, SSE outliving the idle timeout, `Request.signal` aborts and the
+  exit after `sveltekit:shutdown`, phase-isolated outputs), while its Evidence
+  carries the committed lifecycle fixture. ADR 0070's extension of this record
+  applies to ADR 0072.
+- **Superseded by**: [ADR 0072](0072-sveltekit-3-official-bun-adapter.md)
 - **Date**: 2026-08-09
+- **Amended by**: [ADR 0072](0072-sveltekit-3-official-bun-adapter.md)
+
+> Amended 2026-10-22 (SvelteKit 3): the adapter selection is superseded by
+> ADR 0072. Web runs SvelteKit 3.1.0 on the official `@sveltejs/adapter-bun`
+> 1.0.0, so the TypeScript 5.9.3 peer pin and `IDLE_TIMEOUT=45` no longer
+> apply; production sets `CONNECTION_IDLE_TIMEOUT=45` and the adapter exempts
+> event streams from it. The lifecycle requirements below (numeric loopback,
+> SSE beyond 30 seconds, `Request.signal` cancellation, exit after
+> `sveltekit:shutdown`, isolated outputs) and the committed fixture stay.
 
 ## Context
 

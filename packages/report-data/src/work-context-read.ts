@@ -16,7 +16,7 @@ import {
   type WorkSessionKey,
 } from '@ai-usage/report-core/work-attention';
 import { UsageStoreError, usageStoreErrorReasonFrom } from '@ai-usage/usage-store/reader';
-import { Effect, Either } from 'effect';
+import { Effect, Result } from 'effect';
 import { queryWorkAttention } from './work-attention-read';
 
 /**
@@ -663,10 +663,10 @@ export const readWorkContext = async (
     return failure('cancelled', 'The Work context read was cancelled.');
   }
   const { signal, ...query } = input;
-  let result: Either.Either<WorkContextDataset, UsageStoreError>;
+  let result: Result.Result<WorkContextDataset, UsageStoreError>;
   try {
     result = await Effect.runPromise(
-      Effect.either(queryWorkContext({ ...query, scope: applied })),
+      Effect.result(queryWorkContext({ ...query, scope: applied })),
       signal === undefined ? undefined : { signal },
     );
   } catch (error) {
@@ -675,8 +675,8 @@ export const readWorkContext = async (
     }
     throw error;
   }
-  if (Either.isRight(result)) {
-    return { kind: 'success', value: result.right };
+  if (Result.isSuccess(result)) {
+    return { kind: 'success', value: result.success };
   }
-  return { failure: workContextFailureOf(result.left), kind: 'error' };
+  return { failure: workContextFailureOf(result.failure), kind: 'error' };
 };

@@ -2,10 +2,13 @@
 
 This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: the usage engine may ask the installed `codex app-server` or the experimental Claude Agent SDK for a fresh usage-limit observation before readers project the durable local result. Those provider clients own communication and authentication.
 
-Some entries below name accepted platform concepts before their runtime plans
-are integrated. A term's presence records the settled vocabulary, not feature
-availability; [`plans/README.md`](plans/README.md) is the implementation-status
-authority.
+The product is local-only; plan 120 removes the connected platform. Terms that
+only the dormant replication client still uses (Device enrollment state and
+credential, Replication outbox, Replication generation, Capture context) and the
+accepted Memory vocabulary stay until its phase B deletes that code; Work thread
+and Work handoff name a feature that was never built. A term's presence records
+the settled vocabulary, not feature availability;
+[`plans/README.md`](plans/README.md) is the implementation-status authority.
 
 ## Language
 
@@ -43,15 +46,15 @@ _Avoid_: copied database, artifact directory, live unversioned query
 The durable storage authorities behind explicit application and reader ports.
 The existing usage SQLite database remains the report data plane queried
 directly by Web and CLI through read-only/query-only connections. The dedicated
-local Memory SQLite database and shared PostgreSQL database are separate
-authorities; their presence does not authorize Web, CLI, or MCP to open
-write-capable connections or imply that one reader queries all three.
+local Memory SQLite database is a separate authority; its presence does not
+authorize Web, CLI, or MCP to open write-capable connections or imply that one
+reader queries both.
 _Avoid_: control HTTP, report endpoint, one undifferentiated database
 
 **Control plane**:
 The authenticated numeric-loopback usage-engine surface carrying only commands,
 status, and bounded sanitized SSE events.
-It is neither a Memory service/IPC seam nor the connected platform/server.
+It is not the Memory service/IPC seam.
 _Avoid_: data API, report transport, remote service, platform API
 
 **Memory service**:
@@ -62,13 +65,6 @@ Its accepted surface keeps Project resolution, Memory proposal review, and
 explicit import/export behind application services rather than implicit file
 synchronization.
 _Avoid_: control plane, report API, public platform endpoint
-
-**Platform/server**:
-The connected shared application surface. It authenticates external requests,
-calls application services, and composes the sole PostgreSQL writer. It never
-reads machine-local harness files and does not replace the local usage-engine
-control plane.
-_Avoid_: control plane, usage engine, local collector
 
 **Enrichment contribution**:
 A versioned, validated value owned by one enricher and keyed to a stable base usage-row identity. Report reads compose it with the producer-owned base row; neither writer replaces the other's durable data.
@@ -198,32 +194,9 @@ An explicit export, out-of-band file copy, and import. It does not imply discove
 _Avoid_: pairing, replication, automatic transfer
 
 **Person**:
-The stable domain identity of one human. A Person is independent of login
-identities, SCM accounts, Devices, and display handles, and owns one personal
-Space in the identity kernel.
+The stable domain identity of one human. A Person is independent of Devices and
+display handles, and owns one personal Space in the identity kernel.
 _Avoid_: user account, GitHub user, device owner record
-
-**Authentication identity**:
-One verified login identity linked to a Person. It proves an authentication
-event; it is not an SCM account, an SCM installation, or a Device credential.
-_Avoid_: Person, SCM account, bearer token
-
-**SCM account**:
-One Person-scoped source-control-provider identity with a required Person. It
-does not represent an organization installation or carry a recoverable secret
-inline.
-_Avoid_: authentication identity, SCM installation, nullable-person account
-
-**SCM installation**:
-One Space-scoped provider installation or repository grant. It belongs to the
-Space rather than to one Person and never assigns content ownership by itself.
-_Avoid_: SCM account, authentication identity, repository owner
-
-**SCM credential**:
-An encrypted recoverable secret or secret reference attached to exactly one SCM
-account or SCM installation. It remains distinct from authentication and Device
-credentials.
-_Avoid_: access identity, installation, device token
 
 **Device**:
 A stable identity for one local ai-usage runtime. Its Person owner, owning
@@ -239,24 +212,16 @@ or a second mutation authority.
 _Avoid_: sync queue, event log, pending changes
 
 **Space**:
-The explicit personal or organization ownership and authorization root for
-connected resources. A resource is assigned to a Space before storage or
-publication; repository, path, SCM, or Device observations never infer an
-organization Space later.
+The explicit personal ownership and authorization root of the local Person. A
+resource is assigned to a Space before storage; repository, path, or Device
+observations never infer another Space later.
 _Avoid_: tenant guessed from repository, project group, organization login
-
-**Team**:
-A Space-scoped organization group whose active Person memberships may inherit
-explicit resource grants through at most three concrete child-to-parent Team
-levels. It is not a login group, SCM team, customer policy object, or generic
-authorization tuple.
-_Avoid_: role, SCM team, arbitrary subject set, recursive policy graph
 
 **Authorizer**:
 The application-owned port for tri-state permission checks, bounded ordinary
 resource listing, and complete opaque authorized-resource scope. It separates
 allow, deny, and operational error and is the only permission seam used by
-application services in local and connected compositions.
+application services.
 _Avoid_: route guard, UI filter, database role, authentication provider
 
 **Authorized-resource scope**:
@@ -266,12 +231,6 @@ Application/edge code cannot inspect it as an ACL array. Persistence queries
 consume it before result limiting or ranking and must revalidate current
 relations when consistency requires it.
 _Avoid_: permission page, truncated ID list, post-filter, search-result ACL
-
-**Usage aggregate**:
-A content-free organization or Project usage projection authorized separately
-from Session metadata, Session content, Memory, and Work handoffs. Aggregate
-access never implies access to the contributing personal content.
-_Avoid_: redacted Session content, admin wildcard, usage-auditor transcript
 
 **Repository**:
 A stable Space-scoped source-control identity with provider identifiers and
@@ -294,12 +253,14 @@ _Avoid_: Project, Repository, capture authority
 **Resolution review**:
 The Person-facing decision that binds one observed Checkout to a Project (or
 leaves it explicitly unassigned) when repository resolution cannot decide
-alone. It records the chosen source and never infers an organization Space.
+alone. It records the chosen source and never infers another Space.
 _Avoid_: auto-assignment, project guess, unresolved warning
 
 **Capture context**:
-The explicit Device, Person, Space, optional Project, and optional SCM context
-attached before or during publication of a fact. Its assignment source is
+The explicit Device, Person, Space, optional Project, and optional SCM account
+or installation context attached before or during replication publication of a
+fact. The replication protocol carries the SCM fields until phase B removes it;
+local producers always leave them empty. Its assignment source is
 recorded; unresolved work stays personal or explicitly unassigned rather than
 being reassigned later from repository or Device clues.
 _Avoid_: inferred tenant, post-storage ownership repair, project source

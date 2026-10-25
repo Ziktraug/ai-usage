@@ -5,7 +5,7 @@ import type { Component } from 'svelte';
 import { createServer } from 'vite';
 
 interface SvelteServerModule {
-  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+  render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
 const componentFrom = (loaded: unknown): Component => {

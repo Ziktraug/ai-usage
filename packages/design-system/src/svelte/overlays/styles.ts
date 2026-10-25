@@ -1,6 +1,6 @@
 import { css } from '@ai-usage/design-system/css';
 
-export const drawerClass = css({
+export const drawerStyle = css.raw({
   position: 'fixed',
   right: '0',
   bottom: '0',
@@ -21,6 +21,7 @@ export const drawerClass = css({
   _closed: { animation: 'none' },
   _print: { display: 'none' },
 });
+export const drawerClass = css(drawerStyle);
 
 export const drawer = drawerClass;
 
@@ -146,7 +147,7 @@ export const provenanceCellClass = css({
   minW: 0,
 });
 
-export const provenanceMarkerClass = css({
+export const provenanceMarkerStyle = css.raw({
   appearance: 'none',
   display: 'inline-flex',
   alignItems: 'center',
@@ -165,8 +166,9 @@ export const provenanceMarkerClass = css({
   p: 0,
   _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
 });
+export const provenanceMarkerClass = css(provenanceMarkerStyle);
 
-export const provenanceMarkerWarningClass = css({
+export const provenanceMarkerWarningStyle = css.raw({
   color: 'accent',
   borderColor: 'accent',
 });

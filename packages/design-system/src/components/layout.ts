@@ -74,11 +74,12 @@ export const title = css({
   letterSpacing: '-0.045em',
 });
 
-export const meta = css({
+export const metaStyle = css.raw({
   color: 'muted',
   fontSize: '13px',
   overflowWrap: 'anywhere',
 });
+export const meta = css(metaStyle);
 
 export const filterSummary = css({
   display: 'flex',

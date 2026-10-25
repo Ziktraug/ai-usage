@@ -448,30 +448,26 @@ const installed = (['claude-code', 'codex'] as const).filter(
   (harness) => Bun.which(harness === 'claude-code' ? 'claude' : 'codex') !== null,
 );
 
-describe('observeExecutors against the installed CLIs', () => {
-  // Metadata reads only (`--version`, `auth status`, `login status`); nothing is generated and no
-  // credential file is read. Skipped explicitly where the binaries are absent (CI).
-  test.skipIf(installed.length === 0)(
-    'reads versions and sign-in state without retaining raw output',
-    async () => {
-      const observations = await observeExecutors({
-        harnesses: installed,
-        machineId: 'local-smoke',
-        timeoutMs: 10_000,
-      });
-      expect(observations).toHaveLength(installed.length);
-      for (const observation of observations) {
-        expect(observation.authEvidence.length).toBeLessThanOrEqual(EXECUTOR_BOUNDS.maxText);
-        expect(observation.authEvidence).not.toContain('@');
-        expect(['observed', 'timeout', 'invalid', 'unavailable']).toContain(observation.outcome);
-        if (observation.outcome !== 'unavailable') {
-          expect(observation.binaryPath).not.toBeNull();
-        }
-        if (observation.outcome === 'observed') {
-          expect(observation.version).not.toBeNull();
-        }
+// Metadata reads only (`--version`, `auth status`, `login status`); nothing is generated and no
+// credential file is read. Skipped explicitly where the binaries are absent (CI).
+describe.skipIf(installed.length === 0)('observeExecutors against the installed CLIs', () => {
+  test('reads versions and sign-in state without retaining raw output', async () => {
+    const observations = await observeExecutors({
+      harnesses: installed,
+      machineId: 'local-smoke',
+      timeoutMs: 10_000,
+    });
+    expect(observations).toHaveLength(installed.length);
+    for (const observation of observations) {
+      expect(observation.authEvidence.length).toBeLessThanOrEqual(EXECUTOR_BOUNDS.maxText);
+      expect(observation.authEvidence).not.toContain('@');
+      expect(['observed', 'timeout', 'invalid', 'unavailable']).toContain(observation.outcome);
+      if (observation.outcome !== 'unavailable') {
+        expect(observation.binaryPath).not.toBeNull();
       }
-    },
-    30_000,
-  );
+      if (observation.outcome === 'observed') {
+        expect(observation.version).not.toBeNull();
+      }
+    }
+  }, 30_000);
 });

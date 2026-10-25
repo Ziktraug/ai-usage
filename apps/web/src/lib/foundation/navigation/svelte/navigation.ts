@@ -11,11 +11,28 @@ export interface NavigationPort {
   readonly traverse: (delta: number) => void;
 }
 
+/**
+ * SvelteKit 3 `goto` options plus the one SvelteKit 2 behaviour it dropped. `reset: false` keeps
+ * both the scroll position and focus. `preserveScroll` keeps only the scroll position while focus
+ * is still reset, as SvelteKit 2's `noScroll` alone did; the shell navigation owner consumes it and
+ * disables SvelteKit's scroll handling for that navigation instead of passing it to `goto`.
+ */
 export interface SvelteGotoOptions {
-  readonly keepFocus?: boolean;
-  readonly noScroll?: boolean;
-  readonly replaceState?: boolean;
+  readonly preserveScroll?: boolean;
+  readonly replace?: boolean;
+  readonly reset?: boolean;
 }
+
+export const svelteGotoOptionsFor = (intent: NavigationIntent): SvelteGotoOptions => {
+  const replace = intent.replace === undefined ? {} : { replace: intent.replace };
+  if (intent.resetScroll === false) {
+    return intent.keepFocus === true ? { ...replace, reset: false } : { ...replace, preserveScroll: true };
+  }
+  if (intent.keepFocus === true) {
+    throw new Error('SvelteKit 3 resets focus whenever it resets scroll; keepFocus requires resetScroll: false.');
+  }
+  return replace;
+};
 
 export interface NavigationFailure {
   readonly cause: unknown;
@@ -186,11 +203,7 @@ export const createSvelteNavigationPort = (dependencies: {
   currentUrl: () => new URL(dependencies.getCurrentUrl()),
   navigate: async (intent) => {
     try {
-      await dependencies.goto(intent.url, {
-        ...(intent.keepFocus === undefined ? {} : { keepFocus: intent.keepFocus }),
-        ...(intent.replace === undefined ? {} : { replaceState: intent.replace }),
-        ...(intent.resetScroll === undefined ? {} : { noScroll: !intent.resetScroll }),
-      });
+      await dependencies.goto(intent.url, svelteGotoOptionsFor(intent));
     } catch (cause) {
       dependencies.onFailure?.({ cause, intent });
       throw cause;

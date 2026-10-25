@@ -86,21 +86,21 @@
       return;
     }
     await persist(
-      configs.map((item) => (item.id === group.id ? { ...item, name } : item)),
+      configs.map((config) => (config.id === group.id ? { ...config, name } : config)),
       `Renamed ${group.name}`,
     );
   };
   const deleteGroup = async (group: ProjectGroupConfig): Promise<void> =>
     await persist(
-      configs.filter((item) => item.id !== group.id),
+      configs.filter((config) => config.id !== group.id),
       `Deleted ${group.name}`,
     );
   const removeSelector = async (group: ProjectGroupConfig, selector: ProjectSourceSelector): Promise<void> => {
     const remaining = group.sources.filter((candidate) => !projectSourceSelectorsEqual(candidate, selector));
     await persist(
       remaining.length > 0
-        ? configs.map((item) => (item.id === group.id ? { ...item, sources: remaining } : item))
-        : configs.filter((item) => item.id !== group.id),
+        ? configs.map((config) => (config.id === group.id ? { ...config, sources: remaining } : config))
+        : configs.filter((config) => config.id !== group.id),
       `Updated ${group.name}`,
     );
   };

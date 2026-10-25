@@ -16,7 +16,7 @@
   } from '@ai-usage/report-core/session-query';
   import type { QueryClient } from '@tanstack/svelte-query';
   import { onDestroy, untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import {
     campaignLabelFor,
     focusedCampaignLabelContext,
@@ -459,15 +459,14 @@
       onLoadMoreCampaignSessions={() => undefined}
       onSelectSession={selectSessionRow}
       query={syntheticSessionQuery}
-      rolledUpClassifierCount={Math.max(
-        0,
-        selectedCampaignView.visibleRows.length - selectedCampaignView.visibleCount,
-      )}
+      rolledUpClassifierCount={Math.max(0, selectedCampaignView.visibleRows.length - selectedCampaignView.visibleCount)}
       visibleRows={selectedCampaignView.visibleRows}
     />
   {/if}
 {/snippet}
-{#snippet activeFilterSummary(_filterPending: boolean)}
+{#snippet activeFilterSummary(
+  _filterPending: boolean,
+)}
   <ActiveFilters
     hidden={Math.max(0, totalSessionCount - overview.summary.sessionCount)}
     {navigation}
@@ -612,8 +611,7 @@
             tab: 'sessions',
           })),
         onSelectSession: selectOverviewSession,
-        onSelectTimeCell: (cell) =>
-          navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) })),
+        onSelectTimeCell: (cell) => navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) })),
         presentSessionItem,
         providers: mode === 'e2e' ? providers : [],
         range: renderedSearch.range,

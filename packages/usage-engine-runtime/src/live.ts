@@ -125,7 +125,7 @@ export const createTerminalSourceControlPort = (
 ): UsageEngineSourceControlPort => {
   const controlLayer = options.sourceControlService
     ? Layer.succeed(SourceControl, options.sourceControlService)
-    : Layer.scoped(
+    : Layer.effect(
         SourceControl,
         createSourceControl({
           autonomousCollection: options.initialDetection !== 'deferred',
@@ -177,7 +177,7 @@ export const createTerminalSourceControlPort = (
   };
 
   const startStream = (): void => {
-    if (streamSettlement) {
+    if (streamSettlement !== undefined) {
       return;
     }
     const streamFiber = managedRuntime.runFork(
@@ -218,7 +218,7 @@ export const createTerminalSourceControlPort = (
         return current;
       } catch (error) {
         if (startupTimedOut) {
-          throw new Error('The usage engine initial source-control publication timed out.');
+          throw new Error('The usage engine initial source-control publication timed out.', { cause: error });
         }
         throw error;
       } finally {
@@ -305,11 +305,14 @@ export const createTerminalSourceControlPort = (
         error instanceof SourceControlCommandError &&
         (error.reason === 'disabled' || error.reason === 'not-detected')
       ) {
-        throw new UsageEngineSoftSourceError({
-          reason: error.reason,
-          snapshot: await currentSnapshot(signal),
-          sourceId,
-        });
+        throw new UsageEngineSoftSourceError(
+          {
+            reason: error.reason,
+            snapshot: await currentSnapshot(signal),
+            sourceId,
+          },
+          { cause: error },
+        );
       }
       throw error;
     }
@@ -902,16 +905,17 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     return outcome.value;
   };
   const reportCleanupFailure = (operation: 'confirm-merge' | 'cursor-import' | 'preview-merge'): void => {
-    const diagnostic = observe(
+    const diagnostic: Promise<void> = observe(
       'handoff.cleanup',
       () => Promise.reject(new Error('A committed usage-engine handoff could not be removed.')),
       { operation },
-    ).then(
-      () => undefined,
-      () => undefined,
-    );
+    )
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => pendingDiagnostics.delete(diagnostic));
     pendingDiagnostics.add(diagnostic);
-    diagnostic.then(() => pendingDiagnostics.delete(diagnostic));
   };
   const requireMachine = (): UsageMachine => {
     if (!machine) {

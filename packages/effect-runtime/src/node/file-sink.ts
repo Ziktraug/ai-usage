@@ -318,7 +318,7 @@ export const createFileWideEventSink = (
   const warn = options.warn ?? (() => undefined);
   const sweepFiles = options.sweepFiles ?? sweepOldFiles;
 
-  const diagnostics = Ref.unsafeMake(makeEmptyWideEventSinkDiagnostics());
+  const diagnostics = Ref.makeUnsafe(makeEmptyWideEventSinkDiagnostics());
   const pending: WideEventSnapshot[] = [];
   let circuitOpen = false;
   let outstanding = 0;
@@ -527,7 +527,7 @@ export const makeFileWideEventSinkLayer = (
     readonly directory?: string | null;
   } = {},
 ): Layer.Layer<WideEventSink> =>
-  Layer.scoped(
+  Layer.effect(
     WideEventSink,
     Effect.gen(function* () {
       const directory =

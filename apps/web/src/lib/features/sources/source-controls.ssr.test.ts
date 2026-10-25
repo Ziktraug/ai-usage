@@ -25,12 +25,12 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
   return loaded as SvelteServerModule;
 };
 
-const fixtureBlock = (html: string, fixture: 'actions' | 'summary'): string => {
-  const start = html.indexOf(`data-source-${fixture}-fixture`);
+const fixtureBlock = (html: string, fixtureKind: 'actions' | 'summary'): string => {
+  const start = html.indexOf(`data-source-${fixtureKind}-fixture`);
   if (start < 0) {
-    throw new Error(`Rendered source ${fixture} fixture is missing.`);
+    throw new Error(`Rendered source ${fixtureKind} fixture is missing.`);
   }
-  const nextFixture = fixture === 'actions' ? html.indexOf('data-source-summary-fixture', start + 1) : -1;
+  const nextFixture = fixtureKind === 'actions' ? html.indexOf('data-source-summary-fixture', start + 1) : -1;
   return html.slice(start, nextFixture < 0 ? undefined : nextFixture);
 };
 
@@ -82,7 +82,7 @@ describe('rendered source-control pending semantics', () => {
 
   test('renders only the compact trigger until collection details are opened', () => {
     const summary = fixtureBlock(render(fixture, { props: { pending: false } }).body, 'summary');
-    expect(summary).toContain('aria-label="Collection status"');
+    expect(summary).toContain('aria-label="Collection status: ');
     expect(summary).not.toContain('data-source-card');
     expect(summary).not.toContain('Collect now');
   });

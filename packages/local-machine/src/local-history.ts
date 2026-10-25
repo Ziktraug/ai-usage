@@ -1,7 +1,6 @@
 import fs, { type BigIntStats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { zstdDecompressSync } from 'node:zlib';
 
 import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -30,10 +29,10 @@ export interface LocalHistoryDirEntry {
 export type LocalHistorySqlParameter = bigint | boolean | null | number | string | Uint8Array;
 
 export interface LocalHistoryDatabase {
-  all<T extends object = Record<string, unknown>>(
+  all: <T extends object = Record<string, unknown>>(
     sql: string,
     parameters?: readonly LocalHistorySqlParameter[],
-  ): Effect.Effect<T[], LocalHistoryError>;
+  ) => Effect.Effect<T[], LocalHistoryError>;
   close: Effect.Effect<void>;
 }
 
@@ -48,18 +47,18 @@ export interface LocalHistoryTextRange {
 }
 
 export interface LocalHistoryStorage {
-  exists(filePath: string): Effect.Effect<boolean, LocalHistoryError>;
+  exists: (filePath: string) => Effect.Effect<boolean, LocalHistoryError>;
   home: string;
-  openDatabase(dbPath: string): Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
+  openDatabase: (dbPath: string) => Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
   /**
    * Read a user-managed config file, following symlinks. Dotfiles managers
    * (home-manager, stow, …) commonly install configs as symlinks, so unlike
    * history inputs these must be resolved before the hardened regular-file
    * read applies to the target.
    */
-  readConfigText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
-  readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
-  readFileMetadata?(filePath: string): Effect.Effect<LocalHistoryFileMetadata, LocalHistoryError>;
+  readConfigText: (filePath: string, maxBytes?: number) => Effect.Effect<string, LocalHistoryError>;
+  readDir: (dirPath: string) => Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
+  readFileMetadata?: (filePath: string) => Effect.Effect<LocalHistoryFileMetadata, LocalHistoryError>;
   /**
    * `oversizedLines` counts records dropped for exceeding `maxLineBytes`. They
    * are reported rather than thrown so one unreadable record costs its own
@@ -68,23 +67,24 @@ export interface LocalHistoryStorage {
    * A path ending in `.zst` is read as a zstd archive of newline-delimited
    * text: `bytes` and both limits apply to the decompressed content, and a
    * corrupt or truncated archive fails with operation `readLines.decompress`.
-   * Only this reader understands archives; `readText` and `readTextRange`
-   * never decompress.
+   * An archive decodes as a stream, so its read is asynchronous: run it with
+   * `Effect.runPromise`, never `Effect.runSync`. Only this reader understands
+   * archives; `readText` and `readTextRange` never decompress.
    */
-  readLines(
+  readLines: (
     filePath: string,
     visit: (line: string) => void,
     limits?: { maxBytes?: number; maxLineBytes?: number },
-  ): Effect.Effect<{ bytes: number; lines: number; oversizedLines: number }, LocalHistoryError>;
-  readText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
-  readTextRange?(
+  ) => Effect.Effect<{ bytes: number; lines: number; oversizedLines: number }, LocalHistoryError>;
+  readText: (filePath: string, maxBytes?: number) => Effect.Effect<string, LocalHistoryError>;
+  readTextRange?: (
     filePath: string,
     offset: number,
     maximumBytes: number,
-  ): Effect.Effect<LocalHistoryTextRange, LocalHistoryError>;
+  ) => Effect.Effect<LocalHistoryTextRange, LocalHistoryError>;
 }
 
-export const LocalHistoryStorage = Context.GenericTag<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
+export const LocalHistoryStorage = Context.Service<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
 
 interface LocalHistoryErrorDetails {
   readonly path?: string;
@@ -108,18 +108,25 @@ interface SqliteHistoryIdentity {
   readonly wal: SqliteFileIdentity | null;
 }
 
-const sqliteIdentityError = (operation: string, filePath: string, message: string): LocalHistoryError =>
+const sqliteIdentityError = (
+  operation: string,
+  filePath: string,
+  message: string,
+  options?: ErrorOptions,
+): LocalHistoryError =>
   new LocalHistoryError({
     operation,
     path: filePath,
-    cause: new Error(message),
+    cause: new Error(message, options),
   });
 
 const lstatSqlitePath = (filePath: string): BigIntStats | undefined => {
   try {
     return fs.lstatSync(filePath, { bigint: true, throwIfNoEntry: false });
-  } catch {
-    throw sqliteIdentityError('sqlite.identity', filePath, 'SQLite history identity could not be inspected.');
+  } catch (error) {
+    throw sqliteIdentityError('sqlite.identity', filePath, 'SQLite history identity could not be inspected.', {
+      cause: error,
+    });
   }
 };
 
@@ -188,7 +195,7 @@ const assertStableSqliteHistoryIdentity = (
  * `maxBytes + 1` bytes detects a file that grew past the bound without
  * allocating for it.
  */
-const readDescriptorBounded = (descriptor: number, filePath: string, maxBytes: number): Buffer => {
+const readDescriptorBounded = (descriptor: number, filePath: string, maxBytes: number): Buffer<ArrayBuffer> => {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
   while (totalBytes <= maxBytes) {
@@ -283,11 +290,11 @@ export interface BoundedLineEmitter {
    * Close the stream: an unterminated trailing record is emitted, or counted
    * as oversized when it had already passed the bound.
    */
-  finish(): void;
+  finish: () => void;
   readonly lines: number;
   readonly oversizedLines: number;
   /** Append decoded text and emit every newline-terminated record it completes. */
-  push(text: string): void;
+  push: (text: string) => void;
 }
 
 /**
@@ -295,51 +302,70 @@ export interface BoundedLineEmitter {
  * reader: CRLF stripping, a per-record byte bound, and discarding of a record
  * over that bound as its bytes arrive, so peak memory stays at the bound
  * rather than following the size of the offending record.
+ *
+ * The unterminated record is kept as the pieces it arrived in and joined once,
+ * when its newline arrives; only the newly pushed text is searched, and each
+ * piece is measured once. Appending to one string and searching it again on
+ * every push re-copied the whole buffered record per chunk (JSC flattens the
+ * rope to search it), which made a multi-megabyte record quadratic and drove a
+ * cold Codex pass to gigabytes of discarded copies. Pushed text comes from a
+ * streaming `TextDecoder`, so a piece never splits a surrogate pair and the
+ * per-piece UTF-8 byte counts add up to the record's.
  */
 export const createBoundedLineEmitter = (visit: (line: string) => void, maxLineBytes: number): BoundedLineEmitter => {
   let lines = 0;
   let oversizedLines = 0;
-  let pending = '';
+  let pendingPieces: string[] = [];
+  let pendingBytes = 0;
   // Set once the buffered record has already passed `maxLineBytes`. Its bytes
   // are discarded as they arrive instead of being retained until the closing
   // newline.
   let discardingOversizedLine = false;
-  const emitCompleteLines = (): void => {
-    for (;;) {
-      const separatorIndex = pending.indexOf('\n');
-      if (discardingOversizedLine) {
-        if (separatorIndex < 0) {
-          pending = '';
-          return;
-        }
-        pending = pending.slice(separatorIndex + 1);
-        discardingOversizedLine = false;
-        oversizedLines++;
-        continue;
-      }
-      if (separatorIndex < 0) {
-        break;
-      }
-      const line = pending.slice(0, separatorIndex).replace(TRAILING_CARRIAGE_RETURN, '');
-      pending = pending.slice(separatorIndex + 1);
-      if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
-        oversizedLines++;
-        continue;
-      }
-      visit(line);
-      lines++;
-    }
-    // Nothing arriving later can shrink an unterminated record that is already
-    // over the bound, so commit to discarding it now.
-    if (Buffer.byteLength(pending, 'utf8') > maxLineBytes) {
-      discardingOversizedLine = true;
-      pending = '';
-    }
+  const clearPending = (): void => {
+    pendingPieces = [];
+    pendingBytes = 0;
   };
   return {
     push: (text) => {
-      pending += text;
-      emitCompleteLines();
+      let start = 0;
+      for (;;) {
+        const separatorIndex = text.indexOf('\n', start);
+        if (separatorIndex < 0) {
+          break;
+        }
+        const tail = text.slice(start, separatorIndex);
+        start = separatorIndex + 1;
+        if (discardingOversizedLine) {
+          discardingOversizedLine = false;
+          oversizedLines++;
+          continue;
+        }
+        let record = tail;
+        if (pendingPieces.length > 0) {
+          pendingPieces.push(tail);
+          record = pendingPieces.join('');
+        }
+        clearPending();
+        const line = record.replace(TRAILING_CARRIAGE_RETURN, '');
+        if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
+          oversizedLines++;
+          continue;
+        }
+        visit(line);
+        lines++;
+      }
+      if (discardingOversizedLine || start === text.length) {
+        return;
+      }
+      const rest = text.slice(start);
+      pendingPieces.push(rest);
+      pendingBytes += Buffer.byteLength(rest, 'utf8');
+      // Nothing arriving later can shrink an unterminated record that is
+      // already over the bound, so commit to discarding it now.
+      if (pendingBytes > maxLineBytes) {
+        discardingOversizedLine = true;
+        clearPending();
+      }
     },
     finish: () => {
       if (discardingOversizedLine) {
@@ -347,13 +373,11 @@ export const createBoundedLineEmitter = (visit: (line: string) => void, maxLineB
         // its newline, so it closes here.
         oversizedLines++;
         discardingOversizedLine = false;
-        pending = '';
-      }
-      if (pending.length > 0) {
-        visit(pending.replace(TRAILING_CARRIAGE_RETURN, ''));
+      } else if (pendingPieces.length > 0) {
+        visit(pendingPieces.join('').replace(TRAILING_CARRIAGE_RETURN, ''));
         lines++;
-        pending = '';
       }
+      clearPending();
     },
     get lines() {
       return lines;
@@ -413,8 +437,8 @@ export const visitRegularFileLines = (
 
 /**
  * A history archive that is not one well-formed zstd frame with a declared
- * content size, or whose bytes the decompressor refused; `cause` names the
- * reason.
+ * content size, whose bytes the decoder refused, or whose decoded length
+ * disagrees with its declaration; `cause` names the reason.
  */
 export class HistoryArchiveError extends Error {
   constructor(filePath: string, cause: unknown) {
@@ -549,28 +573,53 @@ const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: numb
   return { declaredContentSize, frameEnd: offset };
 };
 
+const ignoreCancellationOutcome = (): void => undefined;
+
 /**
- * Decompress the bytes of a history archive: exactly one zstd frame that
- * declares its content size (walked before anything is decoded, the declared
- * size refused above `maxBytes` and above
- * `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`, because the whole output is held
- * in memory at once), decompressed with its output capped at that
- * declaration, and refused unless the output has exactly the declared length.
- * Pure over its input so the test double reads fixtures through the same
- * path. A zero-byte archive is refused with the rest: zstd of empty input is
- * a 9-byte frame, and Codex removes the plain source only after writing the
- * archive, so an empty one is damage rather than an empty history.
- *
- * `node:zlib`, not Bun's own `zstdDecompressSync`: on the pinned Bun 1.3.13
- * the Bun decompressor corrupts the heap (intermittent mimalloc segfaults in later
- * allocations, measured 2026-10-19), and the engine runs on that Bun.
- * Truncation safety comes from the frame walk and the length check, not from
- * the decompressor. `maxOutputLength` caps what a frame can emit at its
- * declaration (the option refuses 0, so an empty declaration is capped at one
- * byte and the length check refuses that byte); a frame whose blocks would
- * exceed it fails inside the decompressor.
+ * Bun's runtime implements zstd for the compression streams (`bun-types`
+ * declares it in `Bun.CompressionFormat`), but `lib.dom`'s narrower
+ * `CompressionFormat`, which predates it, is the one the constructor is typed
+ * with whenever the DOM library is loaded.
  */
-export const decompressHistoryArchive = (compressed: Buffer, filePath: string, maxBytes: number): Buffer => {
+const ZSTD_STREAM_FORMAT = 'zstd' satisfies Bun.CompressionFormat as CompressionFormat;
+
+/**
+ * Decode a history archive as a stream and hand its decoded bytes to
+ * `onChunk` in order. The archive must be exactly one zstd frame that
+ * declares its content size: the frame is walked before anything is decoded,
+ * and the declared size is refused above `maxBytes` and above
+ * `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`. The compressed bytes are fed to
+ * `DecompressionStream('zstd')` 64 KiB at a time and its output is pulled one
+ * chunk at a time, so memory follows the compressed archive plus one decoded
+ * chunk rather than the whole decoded content. A decoded chunk reaches
+ * `onChunk` only once the running total is still within the declaration, and
+ * the total must equal the declaration when the stream ends; the decoder
+ * itself refuses truncated input, trailing bytes, a bad content checksum and
+ * an output that disagrees with the declared size. Resolves to the decoded
+ * byte count.
+ *
+ * Every failure of the archive itself (the frame walk, the decoder, the size
+ * checks) is a `HistoryArchiveError`; a failure thrown by `onChunk` passes
+ * through unchanged. Chunks before a failure may already have been handed
+ * out: every caller discards a failed read whole, as it does for a plain file
+ * that fails part-way. Pure over its input so the test double reads fixtures
+ * through the same path. A zero-byte archive is refused with the rest: zstd of
+ * empty input is a 9-byte frame, and Codex removes the plain source only after
+ * writing the archive, so an empty one is damage rather than an empty history.
+ *
+ * Neither Bun's own one-shot zstd decoder nor the one-shot `node:zlib` one:
+ * the former corrupted the heap on Bun 1.3.13 (2026-10-19) and takes no
+ * output bound, the latter holds the whole output at once. This decoder was
+ * re-qualified on Bun 1.4.3 (ADR 0047, amendment of 2026-10-24), and the
+ * reader test keeps it the only one these packages reach.
+ */
+export const streamHistoryArchive = async (
+  compressed: Buffer<ArrayBuffer>,
+  filePath: string,
+  maxBytes: number,
+  onChunk: (chunk: Uint8Array) => void,
+  signal?: AbortSignal,
+): Promise<number> => {
   const layout = zstdSingleFrameLayout(
     compressed,
     filePath,
@@ -579,39 +628,85 @@ export const decompressHistoryArchive = (compressed: Buffer, filePath: string, m
   if (layout.frameEnd !== compressed.length) {
     throw new HistoryArchiveError(filePath, new Error(`History archive is not a single zstd frame: ${filePath}`));
   }
-  let decompressed: Buffer;
+  let fed = 0;
+  const source = new ReadableStream<BufferSource>(
+    {
+      pull: (controller) => {
+        if (fed >= compressed.length) {
+          controller.close();
+          return;
+        }
+        const next = Math.min(compressed.length, fed + READ_CHUNK_BYTES);
+        controller.enqueue(compressed.subarray(fed, next));
+        fed = next;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const reader = source.pipeThrough(new DecompressionStream(ZSTD_STREAM_FORMAT)).getReader();
+  let decoded = 0;
+  let streamEnded = false;
+  const readDecoded = async () => {
+    try {
+      return await reader.read();
+    } catch (cause) {
+      streamEnded = true;
+      throw new HistoryArchiveError(filePath, cause);
+    }
+  };
   try {
-    decompressed = zstdDecompressSync(compressed, { maxOutputLength: Math.max(1, layout.declaredContentSize) });
-  } catch (cause) {
-    throw new HistoryArchiveError(filePath, cause);
+    for (;;) {
+      signal?.throwIfAborted();
+      const next = await readDecoded();
+      if (next.done) {
+        streamEnded = true;
+        break;
+      }
+      decoded += next.value.byteLength;
+      if (decoded > layout.declaredContentSize) {
+        throw new HistoryArchiveError(
+          filePath,
+          new Error(`History archive content exceeds its declared size: ${filePath}`),
+        );
+      }
+      onChunk(next.value);
+    }
+  } finally {
+    if (!streamEnded) {
+      // The failure that left the loop propagates; cancelling only releases
+      // the decoder, and its own outcome adds nothing to that failure.
+      await reader.cancel().then(ignoreCancellationOutcome, ignoreCancellationOutcome);
+    }
   }
-  if (decompressed.length !== layout.declaredContentSize) {
+  if (decoded !== layout.declaredContentSize) {
     throw new HistoryArchiveError(
       filePath,
       new Error(`History archive content does not match its declared size: ${filePath}`),
     );
   }
-  return decompressed;
+  return decoded;
 };
 
 /**
  * Read a zstd archive of newline-delimited text with the same file hardening
  * and per-line bound as the plain reader. A readable archive is exactly one
  * zstd frame that declares its content size, which every Codex archive does.
- * `maxBytes` bounds the compressed file; the declared size is refused above
- * the smaller of `maxBytes` and `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`
- * before any decompression, and the decompressed length must equal the
- * declaration, so the bound holds for every archive. Unlike the plain reader,
- * which streams, the archive is decompressed whole, so peak memory follows
- * that declared size. `bytes` reports the decompressed count so byte budgets
- * follow what the parser saw.
+ * `maxBytes` bounds the compressed file, which is read whole (the frame walk
+ * needs all of it); the declared size is refused above the smaller of
+ * `maxBytes` and `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES` before any decoding,
+ * and the decoded length must equal the declaration, so the bound holds for
+ * every archive. Its lines then stream past a constant buffer like a plain
+ * file's (see `streamHistoryArchive`). `bytes` reports the decoded count so
+ * byte budgets follow what the parser saw. `signal` stops decoding between
+ * chunks when the read is interrupted.
  */
-export const visitCompressedFileLines = (
+export const visitCompressedFileLines = async (
   filePath: string,
   visit: (line: string) => void,
   maxBytes: number,
   maxLineBytes: number,
-): { bytes: number; lines: number; oversizedLines: number } => {
+  signal?: AbortSignal,
+): Promise<{ bytes: number; lines: number; oversizedLines: number }> => {
   const before = fs.lstatSync(filePath);
   if (before.isSymbolicLink() || !before.isFile()) {
     throw new Error(`History input is not a regular file: ${filePath}`);
@@ -621,28 +716,32 @@ export const visitCompressedFileLines = (
   }
   // biome-ignore lint/suspicious/noBitwiseOperators: Node combines open flags as a bit mask.
   const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  let compressed: Buffer<ArrayBuffer>;
   try {
     const opened = fs.fstatSync(descriptor);
     if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
       throw new Error(`History input changed while it was opened: ${filePath}`);
     }
-    const compressed = readDescriptorBounded(descriptor, filePath, maxBytes);
-    const decompressed = decompressHistoryArchive(compressed, filePath, maxBytes);
-    const decoder = new TextDecoder('utf-8', { fatal: true });
-    const emitter = createBoundedLineEmitter(visit, maxLineBytes);
-    for (let offset = 0; offset < decompressed.length; offset += READ_CHUNK_BYTES) {
-      emitter.push(decoder.decode(decompressed.subarray(offset, offset + READ_CHUNK_BYTES), { stream: true }));
-    }
-    emitter.push(decoder.decode());
-    emitter.finish();
+    compressed = readDescriptorBounded(descriptor, filePath, maxBytes);
     const after = fs.lstatSync(filePath);
     if (after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino) {
       throw new Error(`History input changed while it was read: ${filePath}`);
     }
-    return { bytes: decompressed.length, lines: emitter.lines, oversizedLines: emitter.oversizedLines };
   } finally {
     fs.closeSync(descriptor);
   }
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const emitter = createBoundedLineEmitter(visit, maxLineBytes);
+  const bytes = await streamHistoryArchive(
+    compressed,
+    filePath,
+    maxBytes,
+    (chunk) => emitter.push(decoder.decode(chunk, { stream: true })),
+    signal,
+  );
+  emitter.push(decoder.decode());
+  emitter.finish();
+  return { bytes, lines: emitter.lines, oversizedLines: emitter.oversizedLines };
 };
 
 const MAX_CONFIG_SYMLINK_DEPTH = 16;
@@ -688,20 +787,25 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
       try: () => readConfigFileText(filePath, maxBytes),
       catch: localHistoryError('readConfigText', { path: filePath }),
     }),
-  readLines: (filePath, visit, limits = {}) =>
-    Effect.try({
-      try: () =>
-        (filePath.endsWith('.zst') ? visitCompressedFileLines : visitRegularFileLines)(
-          filePath,
-          visit,
-          limits.maxBytes ?? HISTORY_JSONL_MAX_BYTES,
-          limits.maxLineBytes ?? HISTORY_LINE_MAX_BYTES,
-        ),
-      catch: (cause) =>
-        localHistoryError(cause instanceof HistoryArchiveError ? 'readLines.decompress' : 'readLines', {
-          path: filePath,
-        })(cause),
-    }),
+  readLines: (filePath, visit, limits = {}) => {
+    const maxBytes = limits.maxBytes ?? HISTORY_JSONL_MAX_BYTES;
+    const maxLineBytes = limits.maxLineBytes ?? HISTORY_LINE_MAX_BYTES;
+    const readFailure = (cause: unknown): LocalHistoryError =>
+      localHistoryError(cause instanceof HistoryArchiveError ? 'readLines.decompress' : 'readLines', {
+        path: filePath,
+      })(cause);
+    // An archive decodes as a stream, so its read is asynchronous and stops
+    // between chunks when the reading fiber is interrupted.
+    return filePath.endsWith('.zst')
+      ? Effect.tryPromise({
+          try: (signal) => visitCompressedFileLines(filePath, visit, maxBytes, maxLineBytes, signal),
+          catch: readFailure,
+        })
+      : Effect.try({
+          try: () => visitRegularFileLines(filePath, visit, maxBytes, maxLineBytes),
+          catch: readFailure,
+        });
+  },
   readFileMetadata: (filePath) =>
     Effect.try({
       try: () => readRegularFileMetadata(filePath),

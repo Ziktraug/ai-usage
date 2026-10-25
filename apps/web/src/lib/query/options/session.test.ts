@@ -281,13 +281,13 @@ describe('Session Query options', () => {
     const queryClient = createWebQueryClient();
     const options = sessionPageQueryOptions(
       createSessionClientStub({
-        page: (_request, signal) => {
-          if (!signal) {
+        page: (_request, querySignal) => {
+          if (!querySignal) {
             return Promise.reject(new Error('Missing Query signal'));
           }
-          started.resolve(signal);
+          started.resolve(querySignal);
           return new Promise((_resolve, reject) => {
-            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            querySignal.addEventListener('abort', () => reject(querySignal.reason), { once: true });
           });
         },
       }),

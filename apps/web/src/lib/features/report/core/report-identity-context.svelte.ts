@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { createContext } from 'svelte';
 
 export interface ReportQueryIdentity {
   readonly requestFingerprint: string;
@@ -6,11 +6,13 @@ export interface ReportQueryIdentity {
 }
 
 export interface ReportIdentityChannel {
-  clear(identity: ReportQueryIdentity): void;
-  publish(identity: ReportQueryIdentity): void;
+  clear: (identity: ReportQueryIdentity) => void;
+  publish: (identity: ReportQueryIdentity) => void;
 }
 
-const reportIdentityKey = Symbol('ai-usage-report-query-identity');
+const [useReportIdentityChannel, setReportIdentityChannel] = createContext<ReportIdentityChannel>();
+
+export { useReportIdentityChannel };
 
 const identityMatches = (left: ReportQueryIdentity, right: ReportQueryIdentity): boolean =>
   left.requestFingerprint === right.requestFingerprint && left.revision === right.revision;
@@ -39,16 +41,4 @@ export const createReportIdentityChannel = (
 
 export const provideReportIdentityChannel = (
   onChange: (identity: ReportQueryIdentity | undefined) => void,
-): ReportIdentityChannel => {
-  const channel = createReportIdentityChannel(onChange);
-  setContext(reportIdentityKey, channel);
-  return channel;
-};
-
-export const useReportIdentityChannel = (): ReportIdentityChannel => {
-  const channel = getContext<ReportIdentityChannel | undefined>(reportIdentityKey);
-  if (!channel) {
-    throw new Error('Report query identity context is unavailable.');
-  }
-  return channel;
-};
+): ReportIdentityChannel => setReportIdentityChannel(createReportIdentityChannel(onChange));

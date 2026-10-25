@@ -31,7 +31,11 @@ export const table = css({
 });
 
 export const sessionsTable = css({
+  // The row, not its last cell, anchors the chevron: the row's outline (its keyboard focus ring, and
+  // the forced-colours selection ring from the preset globalCss) paints over its unpositioned cells,
+  // where a positioned cell would paint its fill over the ring.
   '& tbody tr[data-selected]': {
+    position: 'relative',
     cursor: 'pointer',
     transition: 'background-color 0.1s',
   },
@@ -42,19 +46,23 @@ export const sessionsTable = css({
     boxShadow: 'inset 2px 0 0 token(colors.lineStrong)',
   },
   '& tbody tr[data-selected] td:last-child': {
-    position: 'relative',
     pr: '26px',
   },
   '& tbody tr[data-selected] td:last-child::after': {
     content: '"›"',
     position: 'absolute',
     right: '10px',
-    top: '50%',
+    // Centred on the cell above its 1px bottom rule, which the row's box includes.
+    top: 'calc(50% - 0.5px)',
     transform: 'translateY(-50%)',
     color: 'faint',
     fontSize: '14px',
     opacity: 0,
     transition: 'opacity 0.1s',
+  },
+  // The table's last row has no bottom rule (`table` above).
+  '& tbody tr[data-selected]:last-child td:last-child::after': {
+    top: '50%',
   },
   '& tbody tr[data-selected]:hover td:last-child::after': {
     opacity: 1,
@@ -72,7 +80,7 @@ export const sessionsTable = css({
   },
 });
 
-export const tableWrap = css({
+export const tableWrapStyle = css.raw({
   overflow: 'auto',
   maxH: 'var(--ai-usage-table-max-height, calc(100dvh - 240px))',
   minH: 'var(--ai-usage-table-min-height, 320px)',
@@ -89,8 +97,9 @@ export const tableWrap = css({
   backgroundAttachment: 'local, local, scroll, scroll',
   _print: { maxH: 'none', overflow: 'visible', boxShadow: 'none' },
 });
+export const tableWrap = css(tableWrapStyle);
 
-export const sessionViewportSurface = css({
+export const sessionViewportSurfaceStyle = css.raw({
   '--ai-usage-table-max-height': 'none',
   '--ai-usage-table-min-height': '0px',
   h: 'var(--session-surface-height, 100dvh)',
@@ -98,6 +107,7 @@ export const sessionViewportSurface = css({
   overflowAnchor: 'none',
   _print: { h: 'auto' },
 });
+export const sessionViewportSurface = css(sessionViewportSurfaceStyle);
 
 export const desktopTableSurface = css({
   display: { base: 'none', md: 'block' },
@@ -122,7 +132,8 @@ export const tableControls = css({
 
 export const right = css({ textAlign: 'right' });
 export const muted = css({ color: 'muted' });
-export const strongCell = css({ fontWeight: 550, overflowWrap: 'anywhere' });
+export const strongCellStyle = css.raw({ fontWeight: 550, overflowWrap: 'anywhere' });
+export const strongCell = css(strongCellStyle);
 export const numCell = css({
   textStyle: 'numeric',
   textAlign: 'right',

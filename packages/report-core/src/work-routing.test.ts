@@ -181,20 +181,17 @@ describe('read-only review routing simulation', () => {
     ).toBe('claude-code');
   });
 
-  test.each([
-    'partial',
-    'unsupported',
-    'stale',
-    'error',
-    'auth-required',
-  ] as const)('excludes %s quota without manufacturing capacity', (state) => {
-    const result = simulate([
-      candidate('claude-code', { quota: quotaFixture('claude-code', { state }) }),
-      candidate('codex'),
-    ]);
-    expect(result.chosenCandidateId).toBe('codex');
-    expect(excluded(result, 'claude-code')).toContain(state);
-  });
+  test.each(['partial', 'unsupported', 'stale', 'error', 'auth-required'] as const)(
+    'excludes %s quota without manufacturing capacity',
+    (state) => {
+      const result = simulate([
+        candidate('claude-code', { quota: quotaFixture('claude-code', { state }) }),
+        candidate('codex'),
+      ]);
+      expect(result.chosenCandidateId).toBe('codex');
+      expect(excluded(result, 'claude-code')).toContain(state);
+    },
+  );
 
   test('prefers an eligible near-reset Codex window before the harness preference, without granting authorization', () => {
     const codex = candidate('codex', {
@@ -247,18 +244,17 @@ describe('read-only review routing simulation', () => {
     expect(result.evaluations.find((entry) => entry.candidateId === 'claude-code')?.eligible).toBe(false);
   });
 
-  test.each([
-    'invalid',
-    '2026-10-21T12:01:00.000Z',
-    '2026-02-30T12:00:00.000Z',
-  ])('rejects invalid or future timestamps: %s', (observedAt) => {
-    for (const override of [
-      { quota: quotaFixture('claude-code', { generatedAt: observedAt }) },
-      { evidence: { source: 'Fixture', observedAt } },
-    ]) {
-      expect(simulate([candidate('claude-code', override), candidate('codex')]).chosenCandidateId).toBe('codex');
-    }
-  });
+  test.each(['invalid', '2026-10-21T12:01:00.000Z', '2026-02-30T12:00:00.000Z'])(
+    'rejects invalid or future timestamps: %s',
+    (observedAt) => {
+      for (const override of [
+        { quota: quotaFixture('claude-code', { generatedAt: observedAt }) },
+        { evidence: { source: 'Fixture', observedAt } },
+      ]) {
+        expect(simulate([candidate('claude-code', override), candidate('codex')]).chosenCandidateId).toBe('codex');
+      }
+    },
+  );
 
   test.each(
     [
@@ -818,7 +814,7 @@ describe('qualifyReviewCandidates', () => {
   describe('the case of the day: the Fable limit is exhausted, the all-models limit is not, Opus is declared', () => {
     /** The stored reading exactly as the Agent SDK collector writes it and every reader projects it. */
     const sdkQuota = (overrides: { readonly fable?: number; readonly weeklyAll?: number } = {}): ProviderStatus => {
-      const observation = normalizeClaudeAgentSdkQuotaObservation({
+      const reading = normalizeClaudeAgentSdkQuotaObservation({
         machineId: MACHINE,
         observedAt: RECENT,
         result: {
@@ -841,10 +837,10 @@ describe('qualifyReviewCandidates', () => {
           subscription_type: 'max',
         },
       });
-      if (!observation) {
+      if (!reading) {
         throw new Error('fixture payload did not normalize');
       }
-      return projectLatestProviderQuotaObservation({ lastObservedAt: RECENT, observation });
+      return projectLatestProviderQuotaObservation({ lastObservedAt: RECENT, observation: reading });
     };
     const fableThenOpus = declaration({ alternateModels: ['Opus'], model: 'Fable' });
 
@@ -949,16 +945,16 @@ describe('qualifyReviewCandidates', () => {
       }),
     ];
     for (const model of ['Opus', 'claude-opus-4-1', 'opus']) {
-      const candidate = only(
+      const chosen = only(
         qualify({ declarations: [declaration({ model })], providers: [bareQuota('claude', { windows })] }),
       );
-      expect(excluded(run([candidate]).result, candidate.id)).toContain('Quota window Weekly · Opus is exhausted');
+      expect(excluded(run([chosen]).result, chosen.id)).toContain('Quota window Weekly · Opus is exhausted');
     }
     for (const model of ['Sonnet', 'weekly', 'model']) {
-      const candidate = only(
+      const chosen = only(
         qualify({ declarations: [declaration({ model })], providers: [bareQuota('claude', { windows })] }),
       );
-      expect(run([candidate]).result.chosenCandidateId).toBe(candidate.id);
+      expect(run([chosen]).result.chosenCandidateId).toBe(chosen.id);
     }
     // A model-scoped window that names no model cannot be attributed and blocks every model.
     const anonymous = [windowFixture({ group: 'weekly', id: 'weekly', label: 'Weekly', scope: 'model' })];

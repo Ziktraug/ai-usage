@@ -1,5 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "cacheMaxAge": "30d",
+  "cacheMaxSize": "1GB",
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -24,15 +26,15 @@
     },
     "@ai-usage/web#check": {
       "dependsOn": ["^build"],
-      "outputs": [".svelte-kit/check/**", "styled-system/**"]
+      "outputs": [
+        ".svelte-kit/check/**",
+        "node_modules/$app/**",
+        "styled-system/**"
+      ]
     },
     "test": {
       "dependsOn": ["^build"],
-      "env": [
-        "AI_USAGE_PG_HARNESS_KEEP_ON_FAILURE",
-        "AI_USAGE_PRINT_MEMORY_SEARCH_METRICS",
-        "AI_USAGE_RUN_POSTGRES_TESTS"
-      ],
+      "env": ["AI_USAGE_PRINT_MEMORY_SEARCH_METRICS"],
       "outputs": []
     },
     "@ai-usage/design-system#test": {
@@ -136,29 +138,6 @@
         "XDG_CACHE_HOME",
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME"
-      ],
-      "persistent": true
-    },
-    "@ai-usage/server#dev": {
-      "cache": false,
-      "passThroughEnv": [
-        "AI_USAGE_AUTH_SECRETS",
-        "AI_USAGE_DEVICE_TOKEN_KEYS",
-        "AI_USAGE_FIRST_OWNER_BOOTSTRAP",
-        "AI_USAGE_GITHUB_CLIENT_ID",
-        "AI_USAGE_GITHUB_CLIENT_SECRET",
-        "AI_USAGE_PLATFORM_BASE_URL",
-        "AI_USAGE_PLATFORM_CONNECT_TIMEOUT_MS",
-        "AI_USAGE_PLATFORM_DATABASE_TLS",
-        "AI_USAGE_PLATFORM_DATABASE_URL",
-        "AI_USAGE_PLATFORM_HOST",
-        "AI_USAGE_PLATFORM_MIGRATION_MODE",
-        "AI_USAGE_PLATFORM_POOL_SIZE",
-        "AI_USAGE_PLATFORM_PORT",
-        "AI_USAGE_PLATFORM_QUERY_TIMEOUT_MS",
-        "AI_USAGE_PLATFORM_SHUTDOWN_TIMEOUT_MS",
-        "NODE_ENV",
-        "PATH"
       ],
       "persistent": true
     },

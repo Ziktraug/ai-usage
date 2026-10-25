@@ -1,5 +1,5 @@
 <script lang="ts">
-  import ReportRoot from '$lib/features/report/core/report-root.svelte';
+  import ReportRoot from '#lib/features/report/core/report-root.svelte';
   import type { LayoutProps } from './$types';
 
   let { children, data }: LayoutProps = $props();

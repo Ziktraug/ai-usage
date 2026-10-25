@@ -253,7 +253,7 @@ export const ensureInfiniteDepth = async <Page extends { readonly nextCursor: Se
   try {
     let data = queryClient.getQueryData<InfiniteData<Page, SessionCursor>>(options.queryKey);
     if (data === undefined) {
-      data = await queryClient.fetchInfiniteQuery({ ...options, pages: 1 });
+      data = await queryClient.infiniteQuery({ ...options, pages: 1 });
     }
     while (data.pages.length < depth && data.pages.at(-1)?.nextCursor !== null) {
       signal.throwIfAborted();

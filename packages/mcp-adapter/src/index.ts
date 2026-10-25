@@ -27,6 +27,12 @@ export const reservedMemoryMcpToolNames = Object.freeze([
 
 export const memoryMcpBounds = Object.freeze({
   maxOutputBytes: 192 * 1024,
+  /**
+   * Array elements plus object members one `tools/call` payload may carry, counted by the SDK before
+   * any schema runs, so a hostile payload is refused without being walked by a validator. The largest
+   * valid input is a full `memory.search` (10 members, 8 kinds, 4 statuses, 2 trust levels: 24).
+   */
+  maxToolInputElements: 64,
 });
 
 /** The Work context tool (ADR 0058); not a Memory tool and not one of the reserved Work-thread names. */
@@ -294,7 +300,11 @@ export const createMemoryMcpServer = (
 ): McpServer => {
   const server = new McpServer(
     { name: 'ai-usage-memory', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: retrievedDataNotice },
+    {
+      capabilities: { tools: {} },
+      instructions: retrievedDataNotice,
+      maxToolInputElements: memoryMcpBounds.maxToolInputElements,
+    },
   );
   server.registerTool(
     'memory.search',

@@ -1,7 +1,15 @@
 # ADR 0025: Trusted capabilities before public plugins
 
-- **Status**: Accepted
+- **Status**: Retired 2026-10-24 (ADR review of plan 120); its guardrail is
+  carried by [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
+
+> Retired because nothing implements it: no capability ID, registry or
+> capability-disabled command result exists in the code, and three of its seven
+> conceptual capabilities (`replication`, `work-handoff`,
+> `organization-governance`) die with the connected platform or were never
+> built. The binding part, no public plugin SDK and no arbitrary user code in a
+> trusted process, is stated in ADR 0074.
 
 ## Context
 

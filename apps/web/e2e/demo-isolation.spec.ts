@@ -5,6 +5,8 @@ const BUSINESS_RESOURCE_TYPES = new Set(['eventsource', 'fetch', 'xhr']);
 const KNOWN_RPC_PROBE_PATH = '/rpc/report/revisionManifest';
 const NON_REPORT_NAVIGATION_PATTERN = /Skills|Sources|Sync/;
 const OPEN_BUILD_REPORT_UI_PATTERN = /^Open details for Build report UI\./;
+/** Session buttons are named by their content: the "Open session" prefix, the title, then metadata. */
+const OPEN_NESTED_SESSION_PATTERN = /^Open session Verify ingestion edge cases(?:\s|$)/;
 const STANDALONE_CAMPAIGN_PATTERN = /^Review release notes /;
 const INCOMPLETE_CAMPAIGN_PATTERN = /^Explore dashboard layout /;
 const UNKNOWN_RPC_PROBE_PATH = '/rpc/demo-boundary-probe';
@@ -69,7 +71,7 @@ test('explores Campaigns and individual session details without local data or bu
   const map = page.getByRole('region', { name: 'Agent Map', exact: true });
   await expect(map.getByRole('heading', { name: 'Build forecast model', exact: true })).toBeVisible();
   await expect(page.locator('[data-campaign-node]')).toHaveCount(5);
-  await page.getByRole('button', { name: 'Open session Verify ingestion edge cases', exact: true }).click();
+  await page.getByRole('button', { name: OPEN_NESTED_SESSION_PATTERN }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details', exact: true });
   await expect(drawer).toBeVisible();
   await expect(drawer.locator('[data-detail-item="Total tokens"]')).toContainText('160k');
@@ -90,7 +92,7 @@ test('explores Campaigns and individual session details without local data or bu
   await page.getByRole('button', { name: 'Expand sessions for Build forecast model', exact: true }).click();
   await expect(page.locator('[data-timeline-session]')).toHaveCount(5);
   await expect(page.locator('[data-timeline-session][data-depth="2"]')).toBeVisible();
-  await page.getByRole('button', { name: 'Open session Verify ingestion edge cases', exact: true }).click();
+  await page.getByRole('button', { name: OPEN_NESTED_SESSION_PATTERN }).click();
   await expect(drawer).toBeVisible();
   await expect(drawer.locator('[data-detail-item="Total tokens"]')).toContainText('160k');
   await page.keyboard.press('Escape');

@@ -244,14 +244,14 @@
   {#if drawerModule}
     {@const SessionDrawer = drawerModule.default}
     <SessionDrawer
-      {...(campaignLabelSlot === undefined ? {} : { campaignLabelSlot })}
-      {...(campaignSlot === undefined ? {} : { campaignSlot })}
+      {...campaignLabelSlot === undefined ? {} : { campaignLabelSlot }}
+      {...campaignSlot === undefined ? {} : { campaignSlot }}
       {client}
       {controller}
       {memberRows}
       onClosingChange={handleClosingChange}
-      {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
-      {...(onSelectMember === undefined ? {} : { onSelectMember })}
+      {...onFieldFilter === undefined ? {} : { onFieldFilter }}
+      {...onSelectMember === undefined ? {} : { onSelectMember }}
       {queryClient}
       {rows}
       {snapshot}

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -306,6 +306,57 @@ const requireRejected = async (label: string, response: Promise<HttpResponse>): 
   }
 };
 
+const SVELTEKIT_FORM_CSRF_REJECTION = 'Cross-site POST form submissions are forbidden';
+const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
+
+/**
+ * `@sveltejs/adapter-bun` would otherwise derive `https://<Host>` as every request's origin; the
+ * Web build binds it to `http://127.0.0.1:<PORT>` at start. These requests fail unless the
+ * request URL, SvelteKit's CSRF self-origin and the RPC origin policy all see that origin.
+ */
+const assertRuntimeOriginContract = async (port: number): Promise<void> => {
+  const listenerHost = `${LOOPBACK_HOST}:${port}`;
+  const listenerOrigin = `http://${listenerHost}`;
+  const metadataFreeCommand = await sendHttpRequest(port, {
+    body: '{"command":"detect-all"}',
+    headers: { 'content-type': 'application/json', host: listenerHost, origin: listenerOrigin },
+    method: 'POST',
+    path: SOURCE_CONTROL_COMMAND_PATH,
+  });
+  if (metadataFreeCommand.status !== 200 || !metadataFreeCommand.body.includes('"ok":true')) {
+    throw new Error(
+      `A same-origin command without fetch metadata was rejected (status ${metadataFreeCommand.status}); the request origin is not the listener origin.`,
+    );
+  }
+  const sameOriginForm = await sendHttpRequest(port, {
+    body: 'detect-all',
+    headers: { 'content-type': 'text/plain', host: listenerHost, origin: listenerOrigin },
+    method: 'POST',
+    path: SOURCE_CONTROL_COMMAND_PATH,
+  });
+  if (sameOriginForm.status !== 415 || sameOriginForm.body.includes(SVELTEKIT_FORM_CSRF_REJECTION)) {
+    throw new Error(
+      `A same-origin plain-text POST did not reach the command route (status ${sameOriginForm.status}); SvelteKit's CSRF self-origin is not the listener origin.`,
+    );
+  }
+  for (const [label, origin] of [
+    ['cross-site', 'http://attacker.example'],
+    ['missing', undefined],
+  ] as const) {
+    const formRequest = await sendHttpRequest(port, {
+      body: 'detect-all',
+      headers: { 'content-type': 'text/plain', host: listenerHost, ...(origin === undefined ? {} : { origin }) },
+      method: 'POST',
+      path: SOURCE_CONTROL_COMMAND_PATH,
+    });
+    if (formRequest.status !== 403 || !formRequest.body.includes(SVELTEKIT_FORM_CSRF_REJECTION)) {
+      throw new Error(
+        `A plain-text POST with a ${label} Origin was not rejected by SvelteKit's CSRF check (status ${formRequest.status}).`,
+      );
+    }
+  }
+};
+
 const requireNonLoopbackConnectionFailure = async (host: string, port: number): Promise<void> => {
   try {
     await sendHttpRequest(port, { connectHost: host });
@@ -451,7 +502,7 @@ const stopChild = async (
     }
   }
   await within('owned direct child exit', deadlines.forceExitMs, child.exited);
-  if (shutdownObservation) {
+  if (shutdownObservation !== undefined) {
     const observation = await shutdownObservation;
     if (observation.kind === 'error') {
       throw observation.error;
@@ -560,6 +611,25 @@ const isolatedInheritedEnvironment = (): Record<string, string> => ({
   TURBO_TELEMETRY_DISABLED: '1',
 });
 
+/**
+ * Inherited under the web adapter's own, unprefixed names, none of which may configure the
+ * production listener: a socket path would take it off TCP, the headers would make client input a
+ * trusted address or scheme, the shutdown timeout would outlive the supervisor's grace and the
+ * idle timeout would cut keep-alive connections. Stray variables under the adapter's prefix would
+ * stop it from starting unless `apps/web/start.mjs` purges them.
+ */
+const inheritedWebAdapterEnvironment = (homeDirectory: string): Record<string, string> => ({
+  ADDRESS_HEADER: 'x-forwarded-for',
+  AI_USAGE_WEB_ADAPTER_INHERITED: '1',
+  AI_USAGE_WEB_ADAPTER_PORT: '1',
+  CONNECTION_IDLE_TIMEOUT: '1',
+  DEVELOPMENT: '1',
+  PROTOCOL_HEADER: 'x-forwarded-proto',
+  SHUTDOWN_TIMEOUT: '600',
+  SOCKET_PATH: path.join(homeDirectory, 'inherited-adapter.sock'),
+  XFF_DEPTH: '9',
+});
+
 const createProductionRuntimeFixture = async (
   prefix: string,
   webPort: number,
@@ -586,9 +656,9 @@ const createProductionRuntimeFixture = async (
       AI_USAGE_PRODUCTION_SMOKE: '1',
       AI_USAGE_ROOT_DIR: rootDir,
       AI_USAGE_TEMP_ROOT: temporaryDirectory,
+      CONNECTION_IDLE_TIMEOUT: '45',
       HOME: homeDirectory,
       HOST: '0.0.0.0',
-      IDLE_TIMEOUT: '45',
       PORT: String(webPort),
       TMPDIR: temporaryDirectory,
       TURBO_CACHE_DIR: path.join(homeDirectory, 'turbo-cache'),
@@ -697,7 +767,9 @@ const runRootDevelopmentSmoke = async (): Promise<void> => {
     process.stdout.write('Root development starts one shared engine/Web target and reaps both task trees.\n');
   } catch (error) {
     const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`, {
+      cause: error,
+    });
   } finally {
     await fixture.dispose();
   }
@@ -725,7 +797,7 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
         {
           command: ['bun', '--no-env-file', 'run', 'start'],
           cwd: rootDir,
-          env: childEnvironment,
+          env: { ...childEnvironment, ...inheritedWebAdapterEnvironment(homeDirectory) },
           port,
         },
         async (child, logs) =>
@@ -763,6 +835,7 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
               if (commandResponse.status !== 200 || !commandResponse.body.includes('"ok":true')) {
                 throw new Error(`Source-control command route did not converge (status ${commandResponse.status}).`);
               }
+              await assertRuntimeOriginContract(port);
               const probeStartedAt = performance.now();
               const probe = await sendHttpRequest(port, { path: '/' });
               const probeDurationMs = performance.now() - probeStartedAt;
@@ -840,7 +913,9 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
       await assertRuntimeReleased(fixture, 'Production supervisor');
     } catch (error) {
       const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
-      throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`, {
+        cause: error,
+      });
     }
   } finally {
     await fixture.dispose();
@@ -896,11 +971,120 @@ const runProductionPortCollisionSmoke = async (role: CollisionRole): Promise<voi
   }
 };
 
+const TCP_LISTEN_STATE = '0A';
+const PROCFS_IPV4_ADDRESS_PATTERN = /^[0-9A-F]{8}$/;
+const PROCFS_FIELD_SEPARATOR = /\s+/;
+const PROCFS_OCTET_PATTERN = /../g;
+
+/**
+ * Local addresses of every TCP socket listening on `port`, from Linux procfs: IPv4 as dotted
+ * quads, IPv6 as procfs's raw hex (any IPv6 listener on the port is already a failure here).
+ */
+export const parseProcfsListeningAddresses = (table: string, port: number): string[] =>
+  table
+    .split('\n')
+    .slice(1)
+    .flatMap((line) => {
+      const [, localAddress, , state] = line.trim().split(PROCFS_FIELD_SEPARATOR);
+      const [address, hexPort] = localAddress?.split(':') ?? [];
+      if (state !== TCP_LISTEN_STATE || address === undefined || Number.parseInt(hexPort ?? '', 16) !== port) {
+        return [];
+      }
+      if (!PROCFS_IPV4_ADDRESS_PATTERN.test(address)) {
+        return [`ipv6:${address}`];
+      }
+      const octets = (address.match(PROCFS_OCTET_PATTERN) ?? []).map((octet) => Number.parseInt(octet, 16)).reverse();
+      return [octets.join('.')];
+    });
+
+const readIpv6ListenerTable = async (): Promise<string> => {
+  try {
+    return await readFile('/proc/net/tcp6', 'utf8');
+  } catch (error) {
+    // A kernel without IPv6 has no tcp6 table, and so no IPv6 listener.
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return '';
+    }
+    throw error;
+  }
+};
+
+const readListeningAddresses = async (port: number): Promise<string[]> =>
+  [await readFile('/proc/net/tcp', 'utf8'), await readIpv6ListenerTable()]
+    .flatMap((table) => parseProcfsListeningAddresses(table, port))
+    .sort();
+
+const BUILT_SERVER_ENTRY = path.join(rootDir, 'apps', 'web', '.output-build', 'sveltekit', 'index.js');
+
+/**
+ * Waits for the listener to answer HTTP at all. Without an engine or a store a page is a 500,
+ * which is still the listener answering: this smoke checks where it listens, not what it serves.
+ */
+const waitForHttpListener = async (port: number, child: Bun.Subprocess): Promise<void> => {
+  const deadline = Date.now() + START_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`The built server exited before it listened (code ${child.exitCode}).`);
+    }
+    try {
+      await sendHttpRequest(port, { method: 'HEAD' });
+      return;
+    } catch {
+      // The bounded retry loop reports one stable failure below.
+    }
+    await Bun.sleep(100);
+  }
+  throw new Error('The directly launched built server did not answer HTTP before its deadline.');
+};
+
+/**
+ * The built server launched directly, without `apps/web/start.mjs` and so without any of the
+ * adapter's prefixed variables except its port: the unprefixed `HOST=0.0.0.0` it inherits must not
+ * configure it, and the hostname built into it keeps the listener on numeric loopback.
+ */
+const runDirectBuiltServerSmoke = async (): Promise<void> => {
+  const port = await reserveFreePort();
+  const fixture = await createProductionRuntimeFixture('plan052-direct-built-server-', port);
+  try {
+    if (fixture.childEnvironment.HOST !== '0.0.0.0') {
+      throw new Error('The direct built-server smoke must inherit an unprefixed all-interfaces HOST.');
+    }
+    await withOwnedProcess(
+      {
+        command: ['bun', '--no-env-file', BUILT_SERVER_ENTRY],
+        cwd: path.join(rootDir, 'apps', 'web'),
+        env: {
+          ...fixture.childEnvironment,
+          AI_USAGE_WEB_ADAPTER_PORT: String(port),
+          ORIGIN: `http://${LOOPBACK_HOST}:${port}`,
+        },
+        port,
+      },
+      async (child) => {
+        await waitForHttpListener(port, child);
+        if (process.platform === 'linux') {
+          const addresses = await readListeningAddresses(port);
+          if (JSON.stringify(addresses) !== JSON.stringify([LOOPBACK_HOST])) {
+            throw new Error(
+              `The directly launched built server listens on ${JSON.stringify(addresses)}, not only ${LOOPBACK_HOST}.`,
+            );
+          }
+        }
+        await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
+        process.stdout.write('The directly launched built server listens on IPv4 loopback only.\n');
+      },
+    );
+  } finally {
+    await fixture.dispose();
+  }
+};
+
 const runProductionSmoke = async (): Promise<void> => {
   await runRootDevelopmentSmoke();
   await runHealthyProductionSmoke();
   await runProductionPortCollisionSmoke('engine');
   await runProductionPortCollisionSmoke('web');
+  await runDirectBuiltServerSmoke();
 };
 
 if (import.meta.main) {

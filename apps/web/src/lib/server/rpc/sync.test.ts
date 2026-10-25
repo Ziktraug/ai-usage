@@ -239,6 +239,23 @@ describe('manual merge explicit HTTP adapters', () => {
     expect(receivedSignal).toBe(request.signal);
   });
 
+  test('accepts the explicit JSON content type a browser export declares without a body', async () => {
+    const handlers = createManualMergeExplicitHandlers({
+      canonicalizeExport,
+      exportBundle: () => Promise.resolve(exportSuccess()),
+      handleUpload: () => Promise.resolve(new Response()),
+    });
+    const response = await handlers.download(
+      new Request('http://localhost/api/manual-merge/download', {
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(bundleText);
+  });
+
   test('rejects unsafe metadata, bodies, and methods without leaking private data', async () => {
     const privatePath = '/private/export.json';
     let exports = 0;
@@ -364,6 +381,7 @@ describe('manual merge explicit HTTP adapters', () => {
     const controller = new AbortController();
     let cleanupCount = 0;
     let receivedRequest: Request | undefined;
+    let lateCleanup: Promise<void> | undefined;
     let resolveLateStaging: (() => void) | undefined;
     let stagingStarted: (() => void) | undefined;
     const stagingStartedPromise = new Promise<void>((resolve) => {
@@ -381,7 +399,7 @@ describe('manual merge explicit HTTP adapters', () => {
         await new Promise<void>((resolve) => {
           request.signal.addEventListener('abort', () => resolve(), { once: true });
         });
-        lateStaging.then(() => {
+        lateCleanup = lateStaging.then(() => {
           cleanupCount += 1;
         });
         return new Response(null, { status: 499 });
@@ -393,8 +411,7 @@ describe('manual merge explicit HTTP adapters', () => {
     controller.abort();
     const response = await responsePromise;
     resolveLateStaging?.();
-    await lateStaging;
-    await Promise.resolve();
+    await lateCleanup;
 
     expect(response.status).toBe(499);
     expect(receivedRequest).toBe(upload);

@@ -47,9 +47,14 @@ const CampaignSessionControls = componentFrom(componentModule);
 const { render } = rendererFrom(serverModule);
 
 const campaignKey = 'machine-a:codex:root-a';
-const query = (campaign: string | undefined): SessionQueryRequest => ({
+const query = (campaignFilter: string | undefined): SessionQueryRequest => ({
   cursor: null,
-  filters: { fields: campaign === undefined ? {} : { campaign }, harness: [], machine: [], query: '' },
+  filters: {
+    fields: campaignFilter === undefined ? {} : { campaign: campaignFilter },
+    harness: [],
+    machine: [],
+    query: '',
+  },
   pageSize: 50,
   range: { from: null, to: null },
   revision: 'revision-campaign-controls',

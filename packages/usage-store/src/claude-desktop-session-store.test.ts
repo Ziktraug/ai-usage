@@ -123,8 +123,8 @@ const importBatch = (dbPath: string, observations: readonly unknown[], overrides
   );
 
 const failureReason = async (effect: Effect.Effect<unknown, UsageStoreError>): Promise<string | undefined> => {
-  const result = await Effect.runPromise(Effect.either(effect));
-  return result._tag === 'Left' ? result.left.reason : undefined;
+  const result = await Effect.runPromise(Effect.result(effect));
+  return result._tag === 'Failure' ? result.failure.reason : undefined;
 };
 
 describe('claude desktop session store', () => {

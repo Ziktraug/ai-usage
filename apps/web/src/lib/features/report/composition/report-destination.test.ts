@@ -484,46 +484,48 @@ describe('report destination Query', () => {
     }
   });
 
-  test.each([
-    '',
-    'changed-filter',
-  ])('surfaces an inspected Overview expiry for scope "%s" without substituting the current revision', async (filter) => {
-    let expire = false;
-    const calls: string[] = [];
-    const dependencies = overviewDependencies((request) => {
-      calls.push(request.query.revision);
-      return Promise.resolve(
-        expire && request.query.revision === 'revision-refresh'
-          ? {
-              error: { message: 'expired', revision: request.query.revision, tag: 'RevisionExpired' as const },
-              ok: false as const,
-              requestFingerprint: focusedOverviewFingerprint(request),
-              revision: request.query.revision,
-            }
-          : successfulOverview(request),
-      );
-    });
-    const destination = overviewDestination();
-    try {
-      const original = await refreshReportDestination(dependencies, destination);
-      dependencies.queryClient.setQueryData(
-        reportBootstrapQueryOptions(dependencies.reportClient, { browser: true }).queryKey,
-        bootstrap('new-publication'),
-      );
-      // The visible alias may outlive its inactive exact entries during a long read.
-      dependencies.queryClient.removeQueries({ queryKey: ['web', 'immutable-revision'] });
-      expire = true;
-      const requested = overviewDestination(filter);
-      await expect(
-        refreshReportDestination(dependencies, requested, initialSessionWindowIntent(), true),
-      ).rejects.toThrow(FocusedReportRevisionExpiredError);
-      expect(calls).toEqual(['revision-refresh', 'revision-refresh']);
-      expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toBe(original);
-      expect((await refreshReportDestination(dependencies, requested)).descriptor.revision).toBe('new-publication');
-    } finally {
-      dependencies.queryClient.clear();
-    }
-  });
+  test.each(['', 'changed-filter'])(
+    'surfaces an inspected Overview expiry for scope "%s" without substituting the current revision',
+    async (filter) => {
+      let expire = false;
+      const calls: string[] = [];
+      const dependencies = overviewDependencies((request) => {
+        calls.push(request.query.revision);
+        return Promise.resolve(
+          expire && request.query.revision === 'revision-refresh'
+            ? {
+                error: { message: 'expired', revision: request.query.revision, tag: 'RevisionExpired' as const },
+                ok: false as const,
+                requestFingerprint: focusedOverviewFingerprint(request),
+                revision: request.query.revision,
+              }
+            : successfulOverview(request),
+        );
+      });
+      const destination = overviewDestination();
+      try {
+        const original = await refreshReportDestination(dependencies, destination);
+        dependencies.queryClient.setQueryData(
+          reportBootstrapQueryOptions(dependencies.reportClient, { browser: true }).queryKey,
+          bootstrap('new-publication'),
+        );
+        // The visible alias may outlive its inactive exact entries during a long read.
+        dependencies.queryClient.removeQueries({ queryKey: ['web', 'immutable-revision'] });
+        expire = true;
+        const requested = overviewDestination(filter);
+        await expect(
+          refreshReportDestination(dependencies, requested, initialSessionWindowIntent(), true),
+        ).rejects.toThrow(FocusedReportRevisionExpiredError);
+        expect(calls).toEqual(['revision-refresh', 'revision-refresh']);
+        expect(dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey())).toBe(
+          original,
+        );
+        expect((await refreshReportDestination(dependencies, requested)).descriptor.revision).toBe('new-publication');
+      } finally {
+        dependencies.queryClient.clear();
+      }
+    },
+  );
 
   test('QUERY-REPORT-DESTINATION: caches one complete Breakdown value and reuses it while fresh', async () => {
     const queryClient = createWebQueryClient();
@@ -586,9 +588,11 @@ describe('report destination Query', () => {
       reportDestinationQueryOptions(dependencies, breakdown, { browser: true }),
     );
     let breakdownSettled = false;
-    pendingBreakdown.finally(() => {
+    const markBreakdownSettled = (): void => {
       breakdownSettled = true;
-    });
+    };
+    // Observes settlement only; a rejection still fails the test at `await pendingBreakdown`.
+    pendingBreakdown.then(markBreakdownSettled, markBreakdownSettled);
     await Promise.resolve();
     const breakdownOverviewRequest = {
       includeAdvanced: false,
@@ -613,9 +617,11 @@ describe('report destination Query', () => {
       reportDestinationQueryOptions(dependencies, sessions, { browser: true }),
     );
     let sessionsSettled = false;
-    pendingSessions.finally(() => {
+    const markSessionsSettled = (): void => {
       sessionsSettled = true;
-    });
+    };
+    // Observes settlement only; a rejection still fails the test at `await pendingSessions`.
+    pendingSessions.then(markSessionsSettled, markSessionsSettled);
     await Promise.resolve();
     expect(sessionsSettled).toBe(false);
     const sessionsOverviewRequest = {

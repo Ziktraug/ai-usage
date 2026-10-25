@@ -133,7 +133,7 @@ export const createRuntimeLifecycle = (dependencies: RuntimeLifecycleDependencie
   };
 
   const start = (): Promise<void> => {
-    if (startPromise) {
+    if (startPromise !== undefined) {
       return startPromise;
     }
     if (abortController.signal.aborted) {
@@ -178,7 +178,7 @@ export const createRuntimeLifecycle = (dependencies: RuntimeLifecycleDependencie
     if (!releaseWriterLease) {
       releaseWriterLeaseDuringCleanup = false;
     }
-    if (disposalPromise) {
+    if (disposalPromise !== undefined) {
       return disposalPromise;
     }
     disposalPromise = (async () => {

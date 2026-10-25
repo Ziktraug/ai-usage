@@ -45,6 +45,9 @@ import {
   parseProcessIo,
 } from './measure-process-tree-io';
 
+// Rendered into every page's head by `apps/web/src/routes/+layout.svelte`; the visible heading
+// text it replaced ('Usage report') left the shell with the 2026-09 interface refresh.
+export const APPLICATION_SHELL_MARKER = '<title>ai-usage report</title>';
 const BLOCK_DEVICE_SECTOR_BYTES = 512;
 const BUILD_DEADLINE_MS = 180_000;
 const CHILD_STOP_DEADLINE_MS = 3000;
@@ -489,7 +492,7 @@ const readText = async (filePath: string): Promise<string | undefined> => {
   try {
     return await Bun.file(filePath).text();
   } catch {
-    return;
+    // An unreadable file has no text.
   }
 };
 
@@ -945,7 +948,7 @@ const stopCapturedProcessOnce = async (ownedProcess: CapturedOwnedProcess): Prom
 
 const stopCapturedProcess = (ownedProcess: CapturedOwnedProcess): Promise<void> => {
   const existing = stopPromises.get(ownedProcess);
-  if (existing) {
+  if (existing !== undefined) {
     return existing;
   }
   const stopping = stopCapturedProcessOnce(ownedProcess);
@@ -1212,8 +1215,8 @@ export const validateContainedSourceSymlinks = async (sourceDirectory: string): 
         let resolvedTarget: string;
         try {
           resolvedTarget = await realpath(entryPath);
-        } catch {
-          throw new Error('The source snapshot contains a broken or cyclic symlink.');
+        } catch (error) {
+          throw new Error('The source snapshot contains a broken or cyclic symlink.', { cause: error });
         }
         if (!isContainedPath(resolvedTarget, canonicalSourceDirectory)) {
           throw new Error('The source snapshot contains a symlink that escapes its private root.');
@@ -1627,7 +1630,7 @@ const requestApplication = async (baseUrl: string, signal?: AbortSignal, pathnam
     signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
   });
   const body = await response.text();
-  if (!(response.status === 200 && body.includes('Usage report'))) {
+  if (!(response.status === 200 && body.includes(APPLICATION_SHELL_MARKER))) {
     throw new Error(`Development application ${pathname} returned HTTP ${response.status} without the report shell.`);
   }
 };

@@ -65,19 +65,19 @@ describe('Work evidence projection boundary (synthetic observations, not collect
       },
     ]);
   });
-  test.each([
-    'unanswered',
-    'dismissed',
-  ] as const)('a %s proposal carries no execution authorization or invented reason', (response) => {
-    const result = projectWorkEvidence(session, [
-      { ...base, id: 'proposal', observedAt: opened.observedAt, kind: 'proposal', response },
-    ]);
-    expect(result[0]?.kind).toBe('proposal');
-    expect(result[0]?.uncertainty).toContain('not authorization');
-    expect(result[0]?.text).toBe(
-      response === 'unanswered' ? 'Proposal unanswered' : 'Proposal dismissed; reason undeclared',
-    );
-  });
+  test.each(['unanswered', 'dismissed'] as const)(
+    'a %s proposal carries no execution authorization or invented reason',
+    (response) => {
+      const result = projectWorkEvidence(session, [
+        { ...base, id: 'proposal', observedAt: opened.observedAt, kind: 'proposal', response },
+      ]);
+      expect(result[0]?.kind).toBe('proposal');
+      expect(result[0]?.uncertainty).toContain('not authorization');
+      expect(result[0]?.text).toBe(
+        response === 'unanswered' ? 'Proposal unanswered' : 'Proposal dismissed; reason undeclared',
+      );
+    },
+  );
   test('same checkout or branch never replaces machine, harness and session identity', () => {
     const other = { ...session, sessionId: 'distinct-work-same-checkout' };
     expect(workIdentityKey(session)).not.toBe(workIdentityKey(other));

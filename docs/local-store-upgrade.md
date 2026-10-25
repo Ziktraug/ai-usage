@@ -2,9 +2,7 @@
 
 This is the operator procedure for moving the two local SQLite stores across
 code versions. It applies to every checkout that runs the real stores, not to
-the demo runtime or to PostgreSQL (see
-[`platform-server-operations.md`](platform-server-operations.md) for the
-connected database).
+the demo runtime.
 
 The two stores and their owners (ADR 0009, ADR 0024, ADR 0038):
 
@@ -280,12 +278,12 @@ it restarts the Memory stream at generation 1 for the same enrolled Device.
 - Forward-only: there is no downgrade migration for either store.
 - One process lifetime for both stores: the engine has no usage-only mode when
   Memory cannot open (ADR 0038).
-- The procedure covers the two local stores only. PostgreSQL has its own
-  backup/restore order and migration ledger; the harness caches beside the
+- The procedure covers the two local stores only. The harness caches beside the
   usage store (`*-cache.json`, `codex-session-cache.sqlite`, `machine.json`) are
   not part of either store and are untouched by PR #53.
-- Local-only mode never contacts PostgreSQL, a server, or an account
-  (`bun run test:local-platform` proves it); the outbox tables stay empty.
+- Without `AI_USAGE_PLATFORM_BASE_URL` (the default; the connected server it
+  pointed at was removed in plan 120) the engine starts no replication, contacts
+  no server or account, and the outbox tables stay empty.
 - Schema-7 migration, preservation and rollback tests use disposable stores.
   They do not establish that an operator's real stores have been backed up,
   migrated or validated. Real-history reading and provider processing require

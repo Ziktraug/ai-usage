@@ -17,7 +17,7 @@ export const createLazyModuleLoader = <Module>({
 }): LazyModuleLoader => {
   let active: Promise<LazyModuleLoadResult> | undefined;
   const start = (): void => {
-    if (active) {
+    if (active !== undefined) {
       return;
     }
     const run = async (): Promise<LazyModuleLoadResult> => {

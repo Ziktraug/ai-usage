@@ -10,14 +10,14 @@ const ORPHAN_TITLE = 'Check migration compatibility';
 const STANDALONE_KEY = 'campaign-demo-machine:claude:release-notes';
 
 const timeline = (page: Page): Locator => page.locator('[data-project-timeline]');
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Timeline buttons are named by their content: the action prefix, the title, then the visible metadata. */
+const namedButton = (page: Page, prefix: string, title: string): Locator =>
+  page.getByRole('button', { name: new RegExp(`^${prefix} ${escapeRegExp(title)}(?:\\s|$)`) });
 const campaign = (page: Page, title: string): Locator =>
-  page.locator('[data-timeline-campaign]').filter({
-    has: page.getByRole('button', { exact: true, name: `Select campaign ${title}` }),
-  });
+  page.locator('[data-timeline-campaign]').filter({ has: namedButton(page, 'Select campaign', title) });
 const session = (page: Page, title: string): Locator =>
-  page.locator('[data-timeline-session]').filter({
-    has: page.getByRole('button', { exact: true, name: `Open session ${title}` }),
-  });
+  page.locator('[data-timeline-session]').filter({ has: namedButton(page, 'Open session', title) });
 
 const revealTimelineRow = async (page: Page, target: Locator): Promise<void> => {
   const viewport = page.locator('[data-campaign-scroll="timeline"]');
@@ -60,9 +60,7 @@ const revealTimelineRow = async (page: Page, target: Locator): Promise<void> => 
 };
 
 const projectHeader = (page: Page, label: string): Locator =>
-  page
-    .locator('[data-timeline-project]')
-    .filter({ has: page.getByRole('button', { name: `Collapse project ${label}`, exact: true }) });
+  page.locator('[data-timeline-project]').filter({ has: namedButton(page, 'Collapse project', label) });
 
 const openTimeline = async (page: Page, url = '/campaigns?campaignView=timeline'): Promise<void> => {
   await page.goto(url);
@@ -72,7 +70,7 @@ const openTimeline = async (page: Page, url = '/campaigns?campaignView=timeline'
 };
 
 const selectCampaign = async (page: Page, title: string, sessionCount: number): Promise<void> => {
-  const trigger = page.getByRole('button', { exact: true, name: `Select campaign ${title}` });
+  const trigger = namedButton(page, 'Select campaign', title);
   await revealTimelineRow(page, trigger);
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-pressed', 'true');
@@ -117,14 +115,14 @@ test('collapses projects independently and expands only the selected campaign', 
   await revealTimelineRow(page, campaign(page, STANDALONE_TITLE));
   await revealTimelineRow(page, campaign(page, ORPHAN_TITLE));
   await selectCampaign(page, STANDALONE_TITLE, 1);
-  await page.getByRole('button', { exact: true, name: 'Collapse project ai-usage' }).click();
+  await namedButton(page, 'Collapse project', 'ai-usage').click();
   await expect(campaign(page, STANDALONE_TITLE)).toHaveCount(0);
   await expect(campaign(page, ORPHAN_TITLE)).toHaveCount(0);
   await revealTimelineRow(page, campaign(page, ROOT_TITLE));
   await expect(campaign(page, ROOT_TITLE)).toBeVisible();
   await expect(page.locator('[data-timeline-session]')).toHaveCount(0);
   await expect.poll(() => new URL(page.url()).searchParams.get('selectedCampaign')).toBe(STANDALONE_KEY);
-  const expandProject = page.getByRole('button', { exact: true, name: 'Expand project ai-usage' });
+  const expandProject = namedButton(page, 'Expand project', 'ai-usage');
   await revealTimelineRow(page, expandProject);
   await expandProject.click();
   await revealTimelineRow(page, campaign(page, STANDALONE_TITLE));
@@ -150,7 +148,7 @@ test('opens standalone and nested sessions with the keyboard and restores detail
   ]) {
     await selectCampaign(page, title, count);
     const sessionTitle = title === ROOT_TITLE ? NESTED_TITLE : title;
-    const trigger = page.getByRole('button', { exact: true, name: `Open session ${sessionTitle}` });
+    const trigger = namedButton(page, 'Open session', sessionTitle);
     await trigger.focus();
     await page.keyboard.press('Enter');
     const drawer = page.getByRole('dialog', { exact: true, name: 'Session details' });
@@ -338,4 +336,21 @@ test('keeps project and session chronology accessible on desktop and narrow scre
     await page.screenshot({ fullPage: true, path: screenshotPath });
     await testInfo.attach(`campaign-timeline-${width}px`, { contentType: 'image/png', path: screenshotPath });
   }
+});
+
+test('names a session row by its visible metadata and speaks only the detail it leaves out', async ({ page }) => {
+  await openTimeline(page);
+  await expect(namedButton(page, 'Open session', ROOT_TITLE)).toHaveAccessibleName(
+    'Open session Build forecast model Root session ·gpt-5.3-codex 06-11 08:00 → 06-11 09:20 ' +
+      'Codex. Started 2026-06-11T08:00:00.000Z. Ended 2026-06-11T09:20:00.000Z.',
+  );
+  await selectCampaign(page, CURSOR_TITLE, 1);
+  // No end time is recorded, so the visible "End not recorded" stands alone and nothing repeats it.
+  await expect(namedButton(page, 'Open session', CURSOR_TITLE)).toHaveAccessibleName(
+    'Open session Explore dashboard layout Root session ·cursor-agent 06-11 07:00 → End not recorded ' +
+      'Cursor. Started 2026-06-11T07:00:00.000Z.',
+  );
+  // WCAG 2.5.3: the visible label stays part of the accessible name.
+  const { violations } = await new AxeBuilder({ page }).withRules(['label-content-name-mismatch']).analyze();
+  expect(violations.map(({ id, nodes }) => ({ id, targets: nodes.flatMap(({ target }) => target) }))).toEqual([]);
 });

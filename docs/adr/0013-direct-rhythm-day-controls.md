@@ -5,6 +5,24 @@
 - **Formerly**: numbered ADR 0009; renumbered 2026-08-25 to resolve the
   collision with the sole-writer usage-engine ADR
 - **Supersedes**: the synchronized labelled heatmap day input required by ADR 0005
+  (2026-08-01), and the rest of
+  [ADR 0005](0005-compact-accessible-visualizations.md) by consolidation
+  (2026-10-24)
+
+## Consolidated decision (2026-10-24)
+
+This record is the one accessibility decision for compact report visuals. It
+carries what ADR 0005 decided and this record did not replace:
+
+- compact visualization geometry stays unchanged; enlarging every heatmap cell
+  to a 24-pixel touch target was rejected because it destroys the density the
+  visual exists for;
+- Rhythm's day buttons are the single activity-day control (below);
+- Punchcard exposes an equivalent semantic table of its non-empty activity
+  periods (weekday, hour, sessions, estimated API-equivalent value);
+- shared navigation, contrast, narrow layouts and reduced motion follow one
+  accessibility contract, so mouse, touch, keyboard and assistive-technology
+  users reach equivalent behaviour without overlapping hit areas.
 
 ## Context
 
@@ -43,6 +61,8 @@ day buttons and could suggest dates outside the heatmap's rendered report data.
 ## Evidence
 
 - [Heatmap implementation](../../apps/web/src/lib/features/report/overview/activity-heatmap.svelte)
+- [Punchcard implementation](../../apps/web/src/lib/features/report/overview/punchcard.svelte)
+  (semantic table)
 - [Accessibility browser coverage](../../apps/web/e2e/accessibility.spec.ts)
 - [Interaction coverage](../../apps/web/e2e/time-range.spec.ts)
 - [Presentation regression plan](../../plans/061-close-reopened-presentation-regressions.md)

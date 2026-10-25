@@ -43,7 +43,9 @@
   rows loaded · {requests} acquisitions
 </p>
 <CampaignVirtualList estimate={80} label="Short page sessions" onNearEnd={loadMore} {rows} surface="list">
-  {#snippet children(_row)}
+  {#snippet children(
+    _row,
+  )}
     <button data-short-page-row={_row.key} style="box-sizing: border-box; height: 80px; width: 100%;" type="button">
       {_row.label}
     </button>

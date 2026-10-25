@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page, shell } from '@ai-usage/design-system/svelte';
   import { onMount } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { page as pageState } from '$app/state';
   import { activeReportTab, reportDestinationHeading } from '../../shell/navigation';
   import ReportDestinationOwner from '../composition/report-destination-owner.svelte';
@@ -31,6 +31,8 @@
   });
   const liveQuery = createHydratedReportBootstrapQuery(() => browser && data.mode === 'live');
   const liveResult = $derived(liveQuery.data);
+  // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
+  const pageUrl = $derived(new URL(pageState.url.href));
   const model = $derived(
     data.mode === 'live' ? liveReportShellModel(liveResult) : syntheticReportShellModel(data.mode, data.payload),
   );
@@ -41,7 +43,7 @@
     <ReportHeader
       generatedAt={model.generatedAt}
       hasReportData={model.hasReportData}
-      heading={reportDestinationHeading(activeReportTab(pageState.url))}
+      heading={reportDestinationHeading(activeReportTab(pageUrl))}
       isDemo={model.isDemo}
       showFreshness={data.mode !== 'live' || !liveResult?.ok}
     />

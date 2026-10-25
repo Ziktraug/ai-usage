@@ -15,7 +15,7 @@
   import type { WorkRoutingContext, WorkRoutingQualifyOutput } from '@ai-usage/web-contract/work-routing';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import type { RuntimeMode } from '../../../runtime-mode';
   import { workAttemptsKey, workAttemptsQueryOptions } from '../../query/options/work-attempts';
   import { workRoutingContextKey, workRoutingContextQueryOptions } from '../../query/options/work-routing';
@@ -364,9 +364,13 @@
           </ul>
         </div>
       {/if}
-      {#if resolvedContext.observationRead && (resolvedContext.observationRead.skipped > 0 || resolvedContext.observationRead.truncated)}
+      {#if resolvedContext.observationRead &&
+        (resolvedContext.observationRead.skipped > 0 || resolvedContext.observationRead.truncated)}
         <p class={workMuted}>
-          Executor observations partially read: {resolvedContext.observationRead.skipped} refused on re-validation{resolvedContext.observationRead.truncated ? '; read bound reached' : ''}.
+          Executor observations partially read: {resolvedContext.observationRead.skipped} refused on re-validation{resolvedContext
+            .observationRead.truncated
+            ? '; read bound reached'
+            : ''}.
         </p>
       {/if}
     {/if}
@@ -555,7 +559,9 @@
         {@const alternative = candidateById(evaluation.candidateId)}
         <div class={workPanel}>
           <h5 class={workHeading}>
-            {alternative ? `${harnessLabel(alternative.harness)} · ${alternative.accountScope ?? 'account unknown'}` : evaluation.candidateId}:
+            {alternative
+              ? `${harnessLabel(alternative.harness)} · ${alternative.accountScope ?? 'account unknown'}`
+              : evaluation.candidateId}:
             {evaluation.eligible ? 'Eligible, not preferred' : 'Excluded'}
           </h5>
           <ul>
@@ -598,7 +604,7 @@
     <WorkAttempts
       attempts={resolvedAttempts}
       pending={attemptsPending}
-      {...(mode === 'live' ? { onRelease: releaseReservation } : {})}
+      {...mode === 'live' ? { onRelease: releaseReservation } : {}}
     />
   {/if}
   <details>
@@ -647,7 +653,10 @@
     <details>
       <summary class={workHeading}>Synthetic evidence examples</summary>
       <p class={workMuted}>Projection-boundary fixtures; these are not collected native outcomes.</p>
-      {#each projectWorkEvidence({ machineId: reviewTarget.machineId, harness: reviewTarget.harness, sessionId: reviewTarget.sourceSessionId }, demoWorkEvidence(reviewTarget)) as interpretation}
+      {#each projectWorkEvidence(
+        { machineId: reviewTarget.machineId, harness: reviewTarget.harness, sessionId: reviewTarget.sourceSessionId },
+        demoWorkEvidence(reviewTarget),
+      ) as interpretation}
         <div class={workPanel}>
           <h3 class={workHeading}>{interpretation.text}</h3>
           <p class={workMuted}>Interpretation: {interpretation.uncertainty}</p>

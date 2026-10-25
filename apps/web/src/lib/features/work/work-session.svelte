@@ -8,7 +8,7 @@
   } from '@ai-usage/report-core/session-query';
   import { createInfiniteQuery } from '@tanstack/svelte-query';
   import { onMount } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { loadNextCampaignPage } from '../../query/options/campaigns';
   import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
   import { workRequest } from '../../query/options/work';
@@ -57,7 +57,9 @@
       · Last recorded activity across related sessions: {row.activeDate ?? row.endDate ?? row.date ?? 'unavailable'}
     </p>
     <p class={workMuted}>
-      {row.partial || row.usageUnavailable ? 'Partial session coverage' : 'Recorded usage only; work outcomes unobserved'}
+      {row.partial || row.usageUnavailable
+        ? 'Partial session coverage'
+        : 'Recorded usage only; work outcomes unobserved'}
     </p>
     {#if row.originProvenance}
       <p class={workMuted}>{originProvenanceFor(row.originProvenance).description}</p>
@@ -80,7 +82,12 @@
       <a class={workLink} href={detailHref(row)}>Open session detail</a>
     </div>
     {#if memberCount > 0}
-      <details ontoggle={(event) => { expanded = event.currentTarget.open; }} bind:this={relatedDetails}>
+      <details
+        ontoggle={(event) => {
+          expanded = event.currentTarget.open;
+        }}
+        bind:this={relatedDetails}
+      >
         <summary class={workLink}>{memberCount} related sessions and technical reviews</summary>
         {#if expanded}
           {#if children.error}
@@ -97,7 +104,9 @@
                   >
                   · {child.origin ? sessionOriginLabel(child.origin) : 'Origin undeclared'}
                   ·
-                  {child.source?.parentSourceSessionId ? `Declared parent: ${child.source.parentSourceSessionId}` : 'Parent not declared'}
+                  {child.source?.parentSourceSessionId
+                    ? `Declared parent: ${child.source.parentSourceSessionId}`
+                    : 'Parent not declared'}
                 </li>
               {/each}
             </ul>

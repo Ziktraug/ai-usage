@@ -81,18 +81,18 @@ describe('machine config', () => {
       const runUpdate = (update: Parameters<typeof updateAiUsageConfig>[0]) =>
         Effect.runPromise(updateAiUsageConfig(update).pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
-      const projectAliasesUpdate = runUpdate(async (config) => {
+      const projectAliasesUpdate = runUpdate(async (current) => {
         firstUpdateStarted?.();
         await firstUpdateCanFinish;
         return {
-          ...config,
+          ...current,
           projectAliases: [{ match: ['/work/alpha'], name: 'alpha' }],
         };
       });
       await firstUpdateHasStarted;
-      const cursorUpdate = runUpdate((config) => ({
-        ...config,
-        cursor: { ...(config.cursor ?? {}), clusterGapMs: 1234 },
+      const cursorUpdate = runUpdate((current) => ({
+        ...current,
+        cursor: { ...(current.cursor ?? {}), clusterGapMs: 1234 },
       }));
 
       releaseFirstUpdate?.();
@@ -615,8 +615,8 @@ describe('machine config', () => {
 });
 
 const mkdtemp = async (prefix: string) => {
-  const { mkdtemp } = await import('node:fs/promises');
-  return mkdtemp(path.join(tmpdir(), prefix));
+  const { mkdtemp: makeTemporaryDirectory } = await import('node:fs/promises');
+  return makeTemporaryDirectory(path.join(tmpdir(), prefix));
 };
 
 describe('github config', () => {
