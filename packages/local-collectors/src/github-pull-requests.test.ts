@@ -5,7 +5,7 @@ import path from 'node:path';
 import { type BoundedProcessRunner, runBoundedProcess } from '@ai-usage/local-machine/bounded-process';
 import { canonicalInstantFromDate, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { parsePullRequestObservation } from '@ai-usage/report-core/work-attention';
-import { Effect } from 'effect';
+import { Effect, Exit } from 'effect';
 import { observePullRequests, parsePullRequestView, rollupChecks } from './github-pull-requests';
 
 const NOW = new Date('2026-10-21T21:00:00.000Z');
@@ -871,6 +871,73 @@ describe('pull request dates and unresolved review threads', () => {
       ['pr', 'view'],
     ]);
   });
+});
+
+test.each(['throw', 'effect defect'] as const)(
+  'contains a review-thread runner %s without losing the observation or later reads',
+  async (failureKind) => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout: reviewThreadsBody([{ isResolved: false }]) } },
+      pullRequests: {
+        'fixture/project#66': { stdout: view() },
+        'fixture/project#67': { stdout: view({ url: 'https://github.com/fixture/project/pull/67' }) },
+      },
+    });
+    const calls: (readonly string[])[] = [];
+    const run: BoundedProcessRunner = (options) => {
+      calls.push(options.args);
+      if (options.args[1] === 'graphql') {
+        expect(options.env?.GH_TOKEN).toBe(TOKEN_SENTINEL);
+        if (options.args.includes('number=66')) {
+          const defect = new Error(`PRIVATE_REVIEW_RUNNER_DEFECT ${TOKEN_SENTINEL}`);
+          if (failureKind === 'throw') {
+            throw defect;
+          }
+          return Effect.die(defect);
+        }
+      }
+      return fake.run(options);
+    };
+    const batch = await observe(fake, { links: [link(66), link(67)], run });
+    expect(batch.observations[0]).toMatchObject({
+      outcome: 'observed',
+      outcomeMessage: 'Review threads unavailable: gh runner failed',
+      title: 'Add the Work view',
+      unresolvedReviewThreads: null,
+    });
+    expect(batch.observations[1]).toMatchObject({
+      outcome: 'observed',
+      outcomeMessage: null,
+      unresolvedReviewThreads: 1,
+    });
+    expect(calls.map((args) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+    expect(JSON.stringify(batch)).not.toContain('PRIVATE_REVIEW_RUNNER_DEFECT');
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+  },
+);
+
+test('does not convert review-thread interruption into a successful observation', async () => {
+  const fake = installFakeGh({ pullRequests: { 'fixture/project#66': { stdout: view() } } });
+  const calls: (readonly string[])[] = [];
+  const run: BoundedProcessRunner = (options) => {
+    calls.push(options.args);
+    return options.args[1] === 'graphql' ? Effect.interrupt : fake.run(options);
+  };
+  const result = await Effect.runPromiseExit(
+    observePullRequests({ links: [link(66), link(67)], machineId: 'machine-a', now: () => NOW, run }),
+  );
+  expect(Exit.hasInterrupts(result)).toBe(true);
+  expect(calls.map((args) => args.slice(0, 2))).toEqual([
+    ['auth', 'token'],
+    ['pr', 'view'],
+    ['api', 'graphql'],
+  ]);
 });
 
 test('review-thread output obeys the same process ceiling and remains a visible partial observation', async () => {

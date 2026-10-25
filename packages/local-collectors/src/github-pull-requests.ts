@@ -498,7 +498,7 @@ const observeReviewThreads = (context: RunContext, link: PullRequestLink): Effec
       return unknownReviewThreads(`gh exited ${String(response.exitCode)}`);
     }
     return parseReviewThreads(response.stdout);
-  });
+  }).pipe(Effect.catchDefect(() => Effect.succeed(unknownReviewThreads('gh runner failed'))));
 
 const observeLink = (
   context: RunContext,
