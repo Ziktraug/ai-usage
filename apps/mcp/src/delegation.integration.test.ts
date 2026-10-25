@@ -321,6 +321,7 @@ test('a job started by one client is found, with its result, by another client a
     });
     expect(engine.launches()).toBe(1);
     const list = await b.callTool('delegation.list', {});
+    expect(list.structuredContent).toMatchObject({ omitted: 0, skipped: 0, truncated: false });
     expect((list.structuredContent as { jobs: unknown[] }).jobs).toHaveLength(1);
     expect((list.structuredContent as { jobs: unknown[] }).jobs[0]).toMatchObject({
       frozenScope: { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40), kind: 'commit' },

@@ -3,7 +3,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { delegationMcpBounds, delegationMcpVocabulary, memoryMcpBounds } from '@ai-usage/mcp-adapter';
+import {
+  boundDelegationListPayload,
+  delegationMcpBounds,
+  delegationMcpVocabulary,
+  memoryMcpBounds,
+} from '@ai-usage/mcp-adapter';
 import { connectInMemoryMcpClient, type InMemoryMcpClient } from '@ai-usage/mcp-adapter/testing';
 import type {
   DelegationQualification,
@@ -11,10 +16,17 @@ import type {
   FrozenDelegationScope,
 } from '@ai-usage/report-core/delegation-contracts';
 import {
+  DELEGATION_JOB_BOUNDS,
+  DELEGATION_JOB_SUMMARY_BOUNDS,
+  type DelegationJobSummary,
+} from '@ai-usage/report-core/delegation-job';
+import {
   DELEGATION_ABSTENTION_REASONS,
   DELEGATION_ACTIONS,
   DELEGATION_BOUNDS,
   DELEGATION_IDEMPOTENCY_KEY_PATTERN,
+  DELEGATION_JOB_STATES,
+  DELEGATION_REFUSAL_REASONS,
   DELEGATION_RESERVED_ACTIONS,
   DELEGATION_RESERVED_SCOPE_KINDS,
   DELEGATION_REVISION_PATTERN,
@@ -302,7 +314,12 @@ describe('delegation composition', () => {
         job: { jobId: JOB_ID, state: 'requested', status: { executed: 'not-run' } },
       });
       const list = await client.callTool('delegation.list', {});
-      expect(list.structuredContent).toMatchObject({ jobs: [{ jobId: JOB_ID }], skipped: 0, truncated: false });
+      expect(list.structuredContent).toMatchObject({
+        jobs: [{ jobId: JOB_ID }],
+        omitted: 0,
+        skipped: 0,
+        truncated: false,
+      });
 
       // The engine is down: a start says so, and the connection was asked for the installation root, not the cwd.
       const start = await client.callTool('delegation.start', {
@@ -505,10 +522,15 @@ describe('delegation composition', () => {
     try {
       const list = await client.callTool('delegation.list', { limit: 20 });
       expect(list.isError).not.toBe(true);
-      const content = list.structuredContent as { jobs: { jobId: string }[]; skipped: number; truncated: boolean };
+      const content = list.structuredContent as {
+        jobs: { jobId: string }[];
+        omitted: number;
+        skipped: number;
+        truncated: boolean;
+      };
       expect(content.jobs).toHaveLength(20);
       expect(content.jobs.map(({ jobId }) => jobId)).toEqual([...jobIds].reverse());
-      expect(content).toMatchObject({ skipped: 0, truncated: false });
+      expect(content).toMatchObject({ omitted: 0, skipped: 0, truncated: false });
       const status = await client.callTool('delegation.status', { jobId: jobIds[0] ?? '' });
       expect(status.isError).not.toBe(true);
       const job = (
@@ -516,6 +538,129 @@ describe('delegation composition', () => {
       ).job;
       expect(job.result.findings.length + job.truncation.findings).toBe(50);
       expect(job.result.findings.length).toBeGreaterThan(0);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test('delegation.list keeps the newest of fifty jobs with checkout paths at the request bound under the response bound and counts the rest in omitted', async () => {
+    const root = await temporaryRoot();
+    const dbPath = path.join(root, 'store', 'usage.sqlite');
+    await mkdir(path.dirname(dbPath), { recursive: true });
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const END = '2026-10-25T10:20:00.000Z';
+    // A checkout path at the request bound makes one summary about 4.6 KiB: fifty of them pass 192 KiB.
+    const wideCheckout = `/${'p'.repeat(DELEGATION_BOUNDS.maxCheckoutPathCharacters - 1)}`;
+    const jobIds: string[] = [];
+    for (let index = 0; index < DELEGATION_READ_BOUNDS.maxListLimit; index++) {
+      const suffix = String(index).padStart(12, '0');
+      const jobId = `1a3d4e5f-7c2b-4d1e-8a9f-${suffix}`;
+      const inserted = await Effect.runPromise(
+        requestDelegationJob({
+          dbPath,
+          job: {
+            ...storedJob,
+            checkoutPath: wideCheckout,
+            idempotencyKey: `caller:session-1:wide-${index}`,
+            jobId,
+            launchMarker: `3a7b1c5f-6e8d-4b0c-9f2e-${suffix}`,
+            qualification: {
+              ...qualification,
+              checkout: { admittedBy: '/fixture/home/work', path: wideCheckout, projectLabel: 'project' },
+            },
+            request: { ...request, checkout: { path: wideCheckout } },
+            requestedAt: new Date(Date.parse(NOW) + index * 1000).toISOString(),
+          },
+          limits: { maxAttempts: 2, maxConcurrent: 1 },
+        }),
+      );
+      if (inserted.kind !== 'inserted') {
+        throw new Error(`job ${index} was not inserted: ${inserted.kind}`);
+      }
+      await Effect.runPromise(
+        transitionDelegationJob({
+          at: END,
+          dbPath,
+          jobId,
+          patch: {
+            endedAt: END,
+            exitCode: 0,
+            result: {
+              excerpt: null,
+              kind: 'review',
+              review: {
+                checks: [],
+                coverage: { notReviewed: [], reviewed: 'x' },
+                findings: [],
+                limits: [],
+                summary: 'Holds.',
+              },
+            },
+            startedAt: NOW,
+            state: 'finished',
+          },
+        }),
+      );
+      jobIds.push(jobId);
+    }
+
+    // The port answers every summary whole; the response bound is the adapter's.
+    const port = createLocalDelegationMcpPort({
+      configCwd: '/install/ai-usage',
+      databasePath: dbPath,
+      now: () => END,
+      rendezvousPath: path.join(root, 'state', 'rendezvous.json'),
+    });
+    const listed = await port.list(
+      { limit: DELEGATION_READ_BOUNDS.maxListLimit, liveOnly: false },
+      new AbortController().signal,
+    );
+    if (listed.kind !== 'success') {
+      throw new Error(`list failed: ${listed.code}`);
+    }
+    expect(listed.value.jobs).toHaveLength(DELEGATION_READ_BOUNDS.maxListLimit);
+    expect(listed.value).toMatchObject({ omitted: 0, skipped: 0, truncated: false });
+    expect(Buffer.byteLength(JSON.stringify(listed.value), 'utf8')).toBeGreaterThan(memoryMcpBounds.maxOutputBytes);
+
+    let client: InMemoryMcpClient | undefined;
+    await runMemoryMcpProcess({
+      connect: async (server) => {
+        client = await connectInMemoryMcpClient(server, { name: 'mcp-main-wide-list-test' });
+      },
+      connectDelegationEngine: () =>
+        Promise.reject(new DelegationEngineConnectionError('engine-unavailable', 'no engine (fixture)')),
+      cwd: '/workspace',
+      environment: {
+        AI_USAGE_DATABASE_PATH: dbPath,
+        AI_USAGE_ENGINE_STATE_DIR: path.join(root, 'state'),
+        AI_USAGE_HOME: path.join(root, 'home'),
+      },
+      installationRoot: '/install/ai-usage',
+    });
+    if (client === undefined) {
+      throw new Error('The composition did not connect its server.');
+    }
+    try {
+      const list = await client.callTool('delegation.list', { limit: DELEGATION_READ_BOUNDS.maxListLimit });
+      expect(list.isError).not.toBe(true);
+      expect(Buffer.byteLength(firstText(list.content), 'utf8')).toBeLessThanOrEqual(memoryMcpBounds.maxOutputBytes);
+      const content = list.structuredContent as {
+        jobs: { checkoutPath: string; frozenScope: FrozenDelegationScope | null; jobId: string }[];
+        omitted: number;
+        skipped: number;
+        truncated: boolean;
+      };
+      // The newest jobs are kept whole, the oldest are counted; nothing is cut inside a summary.
+      expect(content.omitted).toBeGreaterThan(0);
+      expect(content.jobs.length + content.omitted).toBe(DELEGATION_READ_BOUNDS.maxListLimit);
+      expect(content.jobs.map(({ jobId }) => jobId)).toEqual([...jobIds].reverse().slice(0, content.jobs.length));
+      expect(content.jobs.every((job) => job.checkoutPath === wideCheckout)).toBe(true);
+      expect(content.jobs.every((job) => job.frozenScope?.headSha === scope.headSha)).toBe(true);
+      expect(content).toMatchObject({ skipped: 0, truncated: false });
+      // A job left out of the list is still readable one at a time.
+      const oldest = await client.callTool('delegation.status', { jobId: jobIds[0] ?? '' });
+      expect(oldest.isError).not.toBe(true);
+      expect(oldest.structuredContent).toMatchObject({ job: { jobId: jobIds[0], state: 'finished' } });
     } finally {
       await client.close();
     }
@@ -626,5 +771,53 @@ describe('delegation composition', () => {
     expect(idempotencyKey.pattern.source).toBe(DELEGATION_IDEMPOTENCY_KEY_PATTERN.source);
     expect(delegationMcpBounds.maxListLimit).toBe(DELEGATION_READ_BOUNDS.maxListLimit);
     expect(delegationMcpBounds.defaultListLimit).toBe(DELEGATION_READ_BOUNDS.defaultListLimit);
+  });
+
+  test('one summary at every field bound stays far below the response bound, so a list always keeps its newest job', () => {
+    // Four UTF-8 bytes per character wherever the bound counts characters; the longest enumerated values.
+    const text = (characters: number): string => '\u{1F600}'.repeat(characters);
+    const longest = <const Values extends readonly string[]>(values: Values): Values[number] =>
+      values.reduce((best, value) => (value.length > best.length ? value : best));
+    const widestSummary: DelegationJobSummary = {
+      checkoutPath: `/${text(DELEGATION_BOUNDS.maxCheckoutPathCharacters - 1)}`,
+      endedAt: NOW,
+      failure: text(DELEGATION_JOB_SUMMARY_BOUNDS.maxTextCharacters),
+      findingCount: Number.MAX_SAFE_INTEGER,
+      frozenScope: {
+        base: 'range-base',
+        baseRef: text(DELEGATION_BOUNDS.maxRevisionCharacters),
+        baseSha: 'b'.repeat(64),
+        commitCount: Number.MAX_SAFE_INTEGER,
+        headRef: text(DELEGATION_BOUNDS.maxRevisionCharacters),
+        headSha: 'a'.repeat(64),
+        kind: 'range',
+      },
+      jobId: 'j'.repeat(DELEGATION_JOB_BOUNDS.maxIdCharacters),
+      live: false,
+      refusalReason: longest(DELEGATION_REFUSAL_REASONS),
+      requestedAt: NOW,
+      resultKind: 'review',
+      route: {
+        context: 'professional',
+        harness: 'claude-code',
+        modelRequested: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+        modelResolved: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+      },
+      scope: {
+        base: text(DELEGATION_BOUNDS.maxRevisionCharacters),
+        head: text(DELEGATION_BOUNDS.maxRevisionCharacters),
+        kind: longest(DELEGATION_RESERVED_SCOPE_KINDS),
+      },
+      state: longest(DELEGATION_JOB_STATES),
+      status: { accepted: 'pending', executed: 'succeeded', verified: 'partially-confirmed' },
+      summary: text(DELEGATION_JOB_SUMMARY_BOUNDS.maxTextCharacters),
+    };
+    // About 26 KiB: the checkout path is the bulk, the rest a few KiB. At least four such fit the 192 KiB bound.
+    const bytes = Buffer.byteLength(JSON.stringify(widestSummary), 'utf8');
+    expect(bytes * 4).toBeLessThan(memoryMcpBounds.maxOutputBytes);
+    const payload = boundDelegationListPayload({ jobs: [widestSummary], omitted: 0, skipped: 0, truncated: false });
+    expect(payload.jobs).toEqual([widestSummary]);
+    expect(payload.omitted).toBe(0);
+    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeLessThanOrEqual(memoryMcpBounds.maxOutputBytes);
   });
 });

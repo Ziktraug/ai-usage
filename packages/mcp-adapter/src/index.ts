@@ -32,6 +32,7 @@ export {
   type DelegationMcpEvaluationInput,
   type DelegationMcpJobList,
   type DelegationMcpListInput,
+  type DelegationMcpListPayload,
   type DelegationMcpOptions,
   type DelegationMcpPort,
   type DelegationMcpQualifyAnswer,
@@ -48,6 +49,7 @@ export {
   delegationMcpVocabulary,
   registerDelegationTools,
 } from './delegation';
+export { boundDelegationListPayload } from './delegation-list';
 
 export const memoryMcpToolNames = Object.freeze(['memory.search', 'memory.get', 'memory.project_context'] as const);
 

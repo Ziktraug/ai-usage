@@ -96,7 +96,7 @@ const recordingPort = (answers: PortAnswers = {}) => {
   const port: DelegationMcpPort = {
     cancel: (jobId) => answer('cancel', jobId, { jobId, result: 'cancelling', state: 'running' }),
     evaluate: (input) => answer('evaluate', input, { evaluationId: 'e1', refusal: null }),
-    list: (input) => answer('list', input, { jobs: [jobView], skipped: 0, truncated: false }),
+    list: (input) => answer('list', input, { jobs: [jobView], omitted: 0, skipped: 0, truncated: false }),
     qualify: (input) => answer('qualify', input, { qualification, refusal: null }),
     start: (input) =>
       answer('start', input, { job: { jobId: JOB_ID, reused: false, state: 'requested' }, refusal: null }),
@@ -408,6 +408,7 @@ describe('delegation MCP tools: status, list, cancel', () => {
         contentRole: 'retrieved-data',
         jobs: [jobView],
         notice: NOTICE,
+        omitted: 0,
         skipped: 0,
         truncated: false,
       });

@@ -163,12 +163,14 @@ export const createLocalDelegationMcpPort = (options: LocalDelegationMcpPortOpti
       if (listed.kind !== 'success') {
         return { code: listed.failure.code, kind: 'error' };
       }
-      // One compact summary per job keeps fifty bounded views under the MCP response bound; the
-      // full view (findings, evidence, evaluations, notes) is read one job at a time with `status`.
+      // One compact summary per job, every one the read answered: the adapter keeps as many as fit
+      // its response bound and counts the rest in `omitted`. The full view (findings, evidence,
+      // evaluations, notes) is read one job at a time with `status`.
       return {
         kind: 'success',
         value: {
           jobs: listed.value.jobs.map(summarizeDelegationJobView),
+          omitted: 0,
           skipped: listed.value.skipped,
           truncated: listed.value.truncated,
         },
