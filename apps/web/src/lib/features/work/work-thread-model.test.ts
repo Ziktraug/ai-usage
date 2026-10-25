@@ -211,7 +211,17 @@ describe('task presentation model', () => {
         ...payment.row,
         markers: {
           ...payment.row.markers,
-          pullRequests: [{ ...marker, latest: { ...marker.latest, checksRollup: 'failure', reviewDecision: null } }],
+          pullRequests: [
+            {
+              ...marker,
+              latest: {
+                ...marker.latest,
+                checksRollup: 'failure',
+                reviewDecision: null,
+                unresolvedReviewThreads: null,
+              },
+            },
+          ],
         },
       },
       payment.generatedAt,

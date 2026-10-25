@@ -238,7 +238,12 @@ describe('work thread SSR presentation', () => {
       ...payments.row,
       markers: {
         ...payments.row.markers,
-        pullRequests: [{ ...marker, latest: { ...marker.latest, checksRollup: 'failure', reviewDecision: null } }],
+        pullRequests: [
+          {
+            ...marker,
+            latest: { ...marker.latest, checksRollup: 'failure', reviewDecision: null, unresolvedReviewThreads: null },
+          },
+        ],
       },
     };
     const sources = [
