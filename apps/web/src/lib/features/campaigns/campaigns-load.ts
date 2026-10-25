@@ -42,7 +42,7 @@ export const loadCampaignsPageData = async (
     const bootstrap =
       mode === 'live'
         ? requireAvailableReportBootstrap(
-            await runtime.queryClient.fetchQuery(
+            await runtime.queryClient.query(
               reportBootstrapQueryOptions(createReportClient(runtime.rpc), { browser: false }),
             ),
           )
@@ -52,17 +52,21 @@ export const loadCampaignsPageData = async (
     const search = parseDashboardSearchUrl(options.url, dashboardSearchCodec);
     const request = campaignsRequest(search, generatedAt, revision);
     const [list] = await Promise.all([
-      runtime.queryClient.fetchInfiniteQuery(campaignsListOptions(sessionClient, request)),
+      runtime.queryClient.infiniteQuery(campaignsListOptions(sessionClient, request)),
       mode === 'live'
-        ? runtime.queryClient.prefetchQuery(
-            campaignLabelOverridesQueryOptions(createReportClient(runtime.rpc), { browser: false }),
-          )
+        ? runtime.queryClient
+            .query(campaignLabelOverridesQueryOptions(createReportClient(runtime.rpc), { browser: false }))
+            // Saved labels are optional data (plan 068, SSR rule 7), so a failed read must not fail
+            // the page. It is not dehydrated either: the page's labels query starts empty, requests
+            // the labels again in the browser and, if that fails too, says so beside the derived
+            // titles ("Saved campaign labels are unavailable", campaigns-page.svelte).
+            .catch(() => undefined)
         : Promise.resolve(),
     ]);
     const selection = readCampaignSelection(options.url, request);
     const selectedKey = selection.status === 'selected' ? selection.campaignKey : list.pages[0]?.items[0]?.campaignKey;
     if (selectedKey) {
-      const exploration = await runtime.queryClient.fetchQuery(
+      const exploration = await runtime.queryClient.query(
         campaignsExplorationOptions({
           client: sessionClient,
           intent: { ...initialSessionWindowIntent(), campaignSessionsDepth: { [selectedKey]: 1 } },
@@ -94,7 +98,7 @@ export const loadCampaignsPageData = async (
       }
       // The browser observes this same exact identity. Hydrate metadata only;
       // native history remains behind its dependent detail query.
-      await runtime.queryClient.fetchQuery(sessionLookupQueryOptions(sessionClient, lookupRequest, { browser: false }));
+      await runtime.queryClient.query(sessionLookupQueryOptions(sessionClient, lookupRequest, { browser: false }));
     }
   }),
 });

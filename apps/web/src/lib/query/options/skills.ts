@@ -123,7 +123,7 @@ export const fetchManagedSkillMarkdown = async (
   client: SkillsQueryClient,
   skillName: string,
 ): Promise<SkillMarkdownDocument> =>
-  await queryClient.fetchQuery(managedSkillMarkdownQueryOptions(client, skillName, { browser: true, enabled: true }));
+  await queryClient.query(managedSkillMarkdownQueryOptions(client, skillName, { browser: true, enabled: true }));
 
 export const skillsMutationOptions = <Variables, Result>(
   identity: string,
@@ -176,7 +176,7 @@ export const applySkillsConfigurationSnapshotToCache = async (
   if (!snapshot.configured) {
     return;
   }
-  await queryClient.fetchQuery(skillsProjectInventoriesQueryOptions(skillsClient, { browser: true, enabled: true }));
+  await queryClient.query(skillsProjectInventoriesQueryOptions(skillsClient, { browser: true, enabled: true }));
 };
 
 export const applyManagedMarkdownSaveToCache = (

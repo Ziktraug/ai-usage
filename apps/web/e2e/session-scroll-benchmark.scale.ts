@@ -167,7 +167,8 @@ const readHeapBytes = async (client: CDPSession): Promise<number | null> => {
 };
 
 const resetPerfSnapshot = async (request: APIRequestContext): Promise<void> => {
-  const response = await request.delete(`${BASE_URL}${SESSION_PERF_PATH}`);
+  // SvelteKit 3 refuses a production DELETE without a content type unless its Origin is the listener.
+  const response = await request.delete(`${BASE_URL}${SESSION_PERF_PATH}`, { headers: { origin: BASE_URL } });
   expect(response.status()).toBe(204);
 };
 
@@ -367,7 +368,7 @@ const readCapturedSessionPage = async (
       rowIds: rpcStringFieldValues(responseBody, 'rowId'),
     };
   } catch {
-    return;
+    // An unreadable response body is not a captured session page.
   }
 };
 

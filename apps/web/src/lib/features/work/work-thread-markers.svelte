@@ -21,12 +21,17 @@
 
 {#if !(markers.local.length || markers.pullRequests.length || markers.jiraIssues.length)}
   <p class="wt-no-artifact">
-    {analysisOnly ? 'Analysis only · no branch, PR or ticket needed' : 'No branch, PR or ticket linked. This does not establish that the task is complete.'}
+    {analysisOnly
+      ? 'Analysis only · no branch, PR or ticket needed'
+      : 'No branch, PR or ticket linked. This does not establish that the task is complete.'}
   </p>
 {:else}
   <div class="wt-markers">
     {#if markers.local.length}
-      {@const main = markers.local[0]?.latest?.outcome === 'observed' ? markers.local[0]?.latest : markers.local[0]?.latestSuccessful}
+      {@const main =
+        markers.local[0]?.latest?.outcome === 'observed'
+          ? markers.local[0]?.latest
+          : markers.local[0]?.latestSuccessful}
       <details class="wt-source">
         <summary>
           <span class="wt-source-label">LOCAL <span aria-hidden="true">›</span></span
@@ -80,7 +85,10 @@
       </details>
     {/if}
     {#if markers.pullRequests.length}
-      {@const main = markers.pullRequests[0]?.latest?.outcome === 'observed' ? markers.pullRequests[0]?.latest : markers.pullRequests[0]?.latestSuccessful}
+      {@const main =
+        markers.pullRequests[0]?.latest?.outcome === 'observed'
+          ? markers.pullRequests[0]?.latest
+          : markers.pullRequests[0]?.latestSuccessful}
       <details class="wt-source">
         <summary>
           <span class="wt-source-label">GITHUB <span aria-hidden="true">›</span></span
@@ -135,7 +143,9 @@
                   <div>
                     <dt>Behind base</dt>
                     <dd>
-                      {marker.mergeStateStatus === 'BEHIND' ? `Behind ${fact.baseRef ?? 'unknown base'}` : 'No behind observation'}
+                      {marker.mergeStateStatus === 'BEHIND'
+                        ? `Behind ${fact.baseRef ?? 'unknown base'}`
+                        : 'No behind observation'}
                     </dd>
                   </div>
                 </dl>
@@ -161,7 +171,10 @@
       </details>
     {/if}
     {#if markers.jiraIssues.length}
-      {@const main = markers.jiraIssues[0]?.latest?.outcome === 'observed' ? markers.jiraIssues[0]?.latest : markers.jiraIssues[0]?.latestSuccessful}
+      {@const main =
+        markers.jiraIssues[0]?.latest?.outcome === 'observed'
+          ? markers.jiraIssues[0]?.latest
+          : markers.jiraIssues[0]?.latestSuccessful}
       <details class="wt-source">
         <summary>
           <span class="wt-source-label">JIRA <span aria-hidden="true">›</span></span

@@ -305,19 +305,19 @@ describe('Work thread situation', () => {
     expect(deriveWorkThreadSituation(withPr(pr({ state: 'MERGED', observedAt: older })), at).hint).toBe('undecided');
     expect(deriveWorkThreadSituation(withPr(pr({ state: 'MERGED' })), at).hint).toBe('ready-to-close');
   });
-  test.each([
-    'pull-request',
-    'jira-issue',
-    'branch',
-    'session',
-  ] as const)('missing linked %s evidence is unknown', (kind) => {
-    const value = row({
-      thread: { ...thread, intent: 'analysis' },
-      links: [{ createdAt: at, detachedAt: null, key: 'missing', kind, linkId: id, provenance: 'user', threadId: id }],
-    });
-    expect(kinds(value)).toContain('source-unknown');
-    expect(deriveWorkThreadSituation(value, at).hint).toBe('undecided');
-  });
+  test.each(['pull-request', 'jira-issue', 'branch', 'session'] as const)(
+    'missing linked %s evidence is unknown',
+    (kind) => {
+      const value = row({
+        thread: { ...thread, intent: 'analysis' },
+        links: [
+          { createdAt: at, detachedAt: null, key: 'missing', kind, linkId: id, provenance: 'user', threadId: id },
+        ],
+      });
+      expect(kinds(value)).toContain('source-unknown');
+      expect(deriveWorkThreadSituation(value, at).hint).toBe('undecided');
+    },
+  );
   test('unknown local counts and Jira category remain explicit', () => {
     const fact = local({ modifiedCount: null });
     const issue = jira({ statusCategory: 'unknown' });

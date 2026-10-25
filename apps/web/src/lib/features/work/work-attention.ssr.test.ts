@@ -32,7 +32,7 @@ const server = await createServer({
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: {
-    alias: { '$app/environment': fileURLToPath(new URL('../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
+    alias: { '$app/env': fileURLToPath(new URL('../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
     conditions: ['svelte'],
     dedupe: ['svelte'],
   },
@@ -157,7 +157,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(rowsIn(body, 'none')).toBe(10);
   });
   test('a Codex row shows a plain one-line title; the detail keeps the prompt as written', () => {
-    const codex = dataset.roots.find((root) => root.key.harness === 'codex');
+    const codex = dataset.roots.find((candidate) => candidate.key.harness === 'codex');
     if (codex === undefined) {
       throw new Error('Synthetic dataset must carry a Codex root');
     }
@@ -296,7 +296,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(clean).not.toContain('checkout clean');
   });
   test('the coverage line says why checkouts were not read, and a removed checkout reads as a past fact', () => {
-    const base = dataset.roots.find((root) => root.title === 'Recover Claude history');
+    const base = dataset.roots.find((candidate) => candidate.title === 'Recover Claude history');
     const fact = base?.facts.find((candidate) => candidate.kind === 'checkout-status');
     if (base === undefined || fact?.kind !== 'checkout-status') {
       throw new Error('Synthetic root must carry a checkout fact');

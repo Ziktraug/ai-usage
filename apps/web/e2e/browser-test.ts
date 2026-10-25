@@ -13,7 +13,11 @@ import {
   isCancelledSvelteKitRouteDataRequest,
 } from './browser-request-abort-allowance';
 import { createBrowserScriptResponseAllowance } from './browser-script-response-allowance';
-import { isExpectedSkillsSaveFailureResponse, RPC_PATH_PREFIX } from './rpc-test-transport';
+import {
+  isExpectedCampaignLabelsFailureResponse,
+  isExpectedSkillsSaveFailureResponse,
+  RPC_PATH_PREFIX,
+} from './rpc-test-transport';
 
 const CRITICAL_RESOURCE_TYPES = new Set(['document', 'fetch', 'xhr']);
 const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
@@ -66,13 +70,17 @@ interface PageListeners {
 export interface BrowserFailureGate {
   allowRequestAbortOnce: (expectation: BrowserRequestAbortExpectation) => () => void;
   allowScriptResponseOnce: (expectation: { url: string; status: number }) => () => void;
+  allowScriptResponses: (expectation: { url: string; status: number; maximum: number }) => () => void;
 }
 
 export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
 
+/** A cold Vite dev server needs over 5 s; no suite's expect timeout exceeds 20 s, so none waits under its default. */
+const FIRST_HYDRATION_TIMEOUT_MS = 20_000;
+
 export const waitForHydratedReport = async (page: Page): Promise<void> => {
   await playwrightExpect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible({
-    timeout: 15_000,
+    timeout: FIRST_HYDRATION_TIMEOUT_MS,
   });
 };
 
@@ -82,7 +90,9 @@ export const waitForHydratedReport = async (page: Page): Promise<void> => {
  * test installed. Await this before any click that must stay a client-side navigation.
  */
 export const waitForHydratedNavigation = async (page: Page): Promise<void> => {
-  await playwrightExpect(page.locator('[data-app-navigation="desktop"][data-hydrated="true"]')).toBeVisible();
+  await playwrightExpect(page.locator('[data-app-navigation="desktop"][data-hydrated="true"]')).toBeVisible({
+    timeout: FIRST_HYDRATION_TIMEOUT_MS,
+  });
 };
 
 export const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<ReturnType<Page['goto']>>> => {
@@ -98,7 +108,9 @@ export const waitForFocusedReportSettled = async (page: Page): Promise<void> => 
 };
 
 export const waitForHydratedSkills = async (page: Page): Promise<void> => {
-  await playwrightExpect(page.locator('[data-skills-workspace][data-skills-hydrated="true"]')).toBeVisible();
+  await playwrightExpect(page.locator('[data-skills-workspace][data-skills-hydrated="true"]')).toBeVisible({
+    timeout: FIRST_HYDRATION_TIMEOUT_MS,
+  });
 };
 
 export const openHydratedSkills = async (page: Page, url: string): Promise<Awaited<ReturnType<Page['goto']>>> => {
@@ -199,13 +211,12 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
               expectedShellErrorUrls.add(response.url());
               return;
             }
-            if (
-              isExpectedSkillsSaveFailureResponse({
-                headers: response.headers(),
-                pathname: requestPath(response.request()),
-                status: response.status(),
-              })
-            ) {
+            const identity = {
+              headers: response.headers(),
+              pathname: requestPath(response.request()),
+              status: response.status(),
+            };
+            if (isExpectedSkillsSaveFailureResponse(identity) || isExpectedCampaignLabelsFailureResponse(identity)) {
               expectedShellErrorUrls.add(response.url());
               return;
             }
@@ -229,6 +240,7 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
       await use({
         allowRequestAbortOnce: requestAbortAllowance.allowOnce,
         allowScriptResponseOnce: scriptResponseAllowance.allowOnce,
+        allowScriptResponses: scriptResponseAllowance.allowResponses,
       });
 
       context.off('page', attach);

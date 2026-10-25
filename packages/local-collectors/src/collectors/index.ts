@@ -213,9 +213,8 @@ export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
       const harnessExtraWarnings = new Map<HarnessKey, LocalHistoryWarning[]>();
       const globalWarnings: LocalHistoryWarning[] = [];
       const addHarnessWarning = (harness: HarnessKey, warning: LocalHistoryWarning) => {
-        const warnings = harnessExtraWarnings.get(harness) ?? [];
+        const warnings = harnessExtraWarnings.getOrInsertComputed(harness, () => []);
         warnings.push(warning);
-        harnessExtraWarnings.set(harness, warnings);
       };
 
       if (!selection.harness || selection.harness === 'claude') {

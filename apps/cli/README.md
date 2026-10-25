@@ -3,7 +3,7 @@
 ## Owns
 
 Arguments, terminal/CSV/JSON/payload rendering, bounded portable snapshot
-files, setup UI, quota/import/merge commands, cancellation, exit codes, and
+files, quota/import/merge commands, cancellation, exit codes, and
 file-only CLI diagnostics.
 
 ## Does not own

@@ -121,7 +121,7 @@ describe('analytics calculation', () => {
       row({ project: 'beta', costApprox: 0, costKnown: false }),
     ];
     const totalCost = 4;
-    const groups = groupAnalytics(rows, rowToAnalyticsInput, (row) => row.project, totalCost);
+    const groups = groupAnalytics(rows, rowToAnalyticsInput, (groupedRow) => groupedRow.project, totalCost);
 
     const alpha = groups.find((group) => group.key === 'alpha');
     const beta = groups.find((group) => group.key === 'beta');

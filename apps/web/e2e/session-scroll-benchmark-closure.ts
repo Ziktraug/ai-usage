@@ -23,14 +23,16 @@ export const reportRouteClientEntryKeys = (appDir: string): readonly string[] =>
     throw new Error(`Expected the generated SvelteKit route manifest at ${manifestPath}`);
   }
   const generated: unknown = requireGeneratedManifest(manifestPath);
+  // SvelteKit 3 flattened the manifest: `routes` moved from `manifest._` to the manifest itself.
   const manifest = isRecord(generated) ? generated.manifest : undefined;
-  const internal = isRecord(manifest) ? manifest._ : undefined;
-  if (!(isRecord(internal) && Array.isArray(internal.routes))) {
+  if (!(isRecord(manifest) && Array.isArray(manifest.routes))) {
     throw new Error('Expected the generated SvelteKit manifest to expose routes');
   }
-  const matches = internal.routes.filter(
-    (route: unknown) =>
-      isRecord(route) && typeof route.id === 'string' && (route.id.replace(ROUTE_GROUP_PATTERN, '') || '/') === '/',
+  const matches = manifest.routes.filter(
+    (candidate: unknown) =>
+      isRecord(candidate) &&
+      typeof candidate.id === 'string' &&
+      (candidate.id.replace(ROUTE_GROUP_PATTERN, '') || '/') === '/',
   );
   const route: unknown = matches[0];
   const page = isRecord(route) ? route.page : undefined;
@@ -41,7 +43,7 @@ export const reportRouteClientEntryKeys = (appDir: string): readonly string[] =>
   if (!nodes.every((node) => typeof node === 'number' && Number.isSafeInteger(node) && node >= 0)) {
     throw new Error('Expected report route nodes to have valid generated indexes');
   }
-  return [...new Set(nodes)].map((node) => `.svelte-kit/build/generated/client-optimized/nodes/${node}.js`);
+  return [...new Set(nodes)].map((node) => `.svelte-kit/build/generated/build/client-optimized/nodes/${node}.js`);
 };
 
 const optionalStringArray = (value: unknown, label: string): readonly string[] | undefined => {
@@ -90,7 +92,7 @@ const initialAssetPaths = (appDir: string): string[] => {
   const manifest = parseClientManifest(parsedManifest);
   const pending = [
     '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
-    '.svelte-kit/build/generated/client-optimized/app.js',
+    '.svelte-kit/build/generated/build/client-optimized/app.js',
     ...reportRouteClientEntryKeys(appDir),
   ];
   const visited = new Set<string>();

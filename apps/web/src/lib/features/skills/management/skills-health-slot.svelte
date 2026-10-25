@@ -192,7 +192,6 @@
     textTransform: 'uppercase',
   });
   const planActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
-  const planSkippedList = css({ color: 'muted' });
   const positionedButton = css({ position: 'relative' });
 </script>
 
@@ -211,7 +210,7 @@
       {/if}
       {#if reconcilePlan.skipped.length > 0}
         <div class={planLabel}>Skipped ({reconcilePlan.skipped.length}) — unmanaged content is never touched</div>
-        <ul class={cx(skillsReconcilePlanList, planSkippedList)}>
+        <ul class={skillsReconcilePlanList}>
           {#each reconcilePlan.skipped as line (line)}
             <li>{line}</li>
           {/each}

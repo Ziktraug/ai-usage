@@ -19,7 +19,9 @@
         <strong>{sourceName(source.source)}: {source.state === 'ok' ? 'stale observation' : source.state}</strong>
         {source.message ? ` · ${source.message}` : ''}
         <span
-          >{source.lastRunAt ? ` · last read ${threadDate(source.lastRunAt, timeZone)}` : ' · no successful read observed'}</span
+          >{source.lastRunAt
+            ? ` · last read ${threadDate(source.lastRunAt, timeZone)}`
+            : ' · no successful read observed'}</span
         >
       </p>
     {/each}

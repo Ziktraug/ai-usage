@@ -303,7 +303,7 @@
     <button
       class="wt-button"
       disabled={busy}
-      onclick={() => thread.followState === 'done' ? setFollowState('following') : end()}
+      onclick={() => (thread.followState === 'done' ? setFollowState('following') : end())}
       type="button"
     >
       {thread.followState === 'done' ? 'Reopen' : 'End follow-up'}
@@ -314,7 +314,8 @@
 {#if thread.followState === 'done'}
   <div class="wt-done-banner">
     <strong
-      >You ended this follow-up on {threadDate(thread.doneAt ?? thread.updatedAt, timeZone)} · history and links stay.</strong
+      >You ended this follow-up on {threadDate(thread.doneAt ?? thread.updatedAt, timeZone)} · history and links
+      stay.</strong
     >
     <p>Nothing in GitHub, Jira or any session was changed.</p>
     {#if row.afterDone}
@@ -336,7 +337,12 @@
         <button class="wt-button wt-primary" disabled={busy} onclick={primary} type="button">{primaryLabel}</button>
       {/if}
       {#if thread.followState === 'following'}
-        <button class="wt-link" disabled={busy} onclick={() => panel = panel === 'wait' ? null : 'wait'} type="button">
+        <button
+          class="wt-link"
+          disabled={busy}
+          onclick={() => (panel = panel === 'wait' ? null : 'wait')}
+          type="button"
+        >
           Mark as waiting
         </button>
       {/if}
@@ -356,7 +362,9 @@
             <small
               >{sourceName(remainder.source)}
               · {remainder.key} ·
-              {remainder.observedAt ? `observed ${threadDate(remainder.observedAt, timeZone)} at ${threadTime(remainder.observedAt, timeZone)}` : 'observation date unknown'}</small
+              {remainder.observedAt
+                ? `observed ${threadDate(remainder.observedAt, timeZone)} at ${threadTime(remainder.observedAt, timeZone)}`
+                : 'observation date unknown'}</small
             >
           </li>
         {/each}
@@ -367,13 +375,18 @@
       <div class="wt-actions">
         <button class="wt-button wt-primary" disabled={busy} onclick={() => setFollowState('done')} type="button">
           End anyway
-        </button><button class="wt-button" onclick={() => panel = null} type="button">Keep following</button>
+        </button><button class="wt-button" onclick={() => (panel = null)} type="button">Keep following</button>
       </div>
     </div>
   {:else if panel === 'wait'}
     <form
       class="wt-inline-panel"
-      onsubmit={(event) => { event.preventDefault(); if (waitingFor.trim()) { setFollowState('waiting'); } }}
+      onsubmit={(event) => {
+        event.preventDefault();
+        if (waitingFor.trim()) {
+          setFollowState('waiting');
+        }
+      }}
     >
       <label class="wt-field"
         >Waiting for<input
@@ -396,7 +409,7 @@
       {/if}
       <div class="wt-actions">
         <button class="wt-button wt-primary" disabled={busy || !waitingFor.trim()} type="submit">Wait</button
-        ><button class="wt-button" onclick={() => panel = null} type="button">Cancel</button>
+        ><button class="wt-button" onclick={() => (panel = null)} type="button">Cancel</button>
       </div>
     </form>
   {/if}
@@ -421,11 +434,11 @@
     <h2 id="work-thread-history-title">The thread of this task</h2>
     <div class="wt-history-controls">
       <fieldset aria-label="History filter" class="wt-mini-tabs">
-        <button aria-pressed={sessionsOnly ? 'false' : 'true'} onclick={() => sessionsOnly = false} type="button">
+        <button aria-pressed={sessionsOnly ? 'false' : 'true'} onclick={() => (sessionsOnly = false)} type="button">
           All
         </button><button
           aria-pressed={sessionsOnly ? 'true' : 'false'}
-          onclick={() => sessionsOnly = true}
+          onclick={() => (sessionsOnly = true)}
           type="button"
         >
           Sessions
@@ -495,7 +508,12 @@
     · one task</span
   ><button
     class="wt-link"
-    onclick={() => { panel = panel === 'link' ? null : 'link'; if (panel === 'link') { onPickerOpen(); } }}
+    onclick={() => {
+      panel = panel === 'link' ? null : 'link';
+      if (panel === 'link') {
+        onPickerOpen();
+      }
+    }}
     type="button"
   >
     Link an earlier session
@@ -536,7 +554,7 @@
           Load more sessions
         </button>
       {/if}
-      <button class="wt-button" onclick={() => panel = null} type="button">Cancel</button>
+      <button class="wt-button" onclick={() => (panel = null)} type="button">Cancel</button>
     </div>
   </section>
 {/if}
@@ -554,13 +572,19 @@
 <details class="wt-note">
   <summary>Resume note, if needed</summary>
   <form
-    onsubmit={(event) => { event.preventDefault(); act({ op: 'set-note', threadId: thread.threadId, note: (note ?? thread.note ?? '').trim() || null }, () => { toast = 'Resume note saved'; undo = null; }); }}
+    onsubmit={(event) => {
+      event.preventDefault();
+      act({ op: 'set-note', threadId: thread.threadId, note: (note ?? thread.note ?? '').trim() || null }, () => {
+        toast = 'Resume note saved';
+        undo = null;
+      });
+    }}
   >
     <label class="wt-field"
       >Resume note<textarea
         class="wt-input"
         maxlength="2000"
-        oninput={(event) => note = event.currentTarget.value}
+        oninput={(event) => (note = event.currentTarget.value)}
         value={note ?? thread.note ?? ''}
       ></textarea></label
     ><button class="wt-button" disabled={busy} type="submit">Save note</button>
@@ -572,6 +596,15 @@
     {#if undo}
       <button disabled={busy} onclick={undo} type="button">Undo</button>
     {/if}
-    <button aria-label="Dismiss notification" onclick={() => { toast = null; undo = null; }} type="button">×</button>
+    <button
+      aria-label="Dismiss notification"
+      onclick={() => {
+        toast = null;
+        undo = null;
+      }}
+      type="button"
+    >
+      ×
+    </button>
   </div>
 {/if}

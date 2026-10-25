@@ -2473,50 +2473,50 @@ Preserve the existing aggregation semantics.`,
     { contextual: true, completeLastUsage: true, rejected: 0 },
     { contextual: true, completeLastUsage: false, rejected: 1 },
     { contextual: false, completeLastUsage: true, rejected: 1 },
-  ])('only clears a counter-reset warning when its usage is fully attributable: %j', ({
-    contextual,
-    completeLastUsage,
-    rejected,
-  }) => {
-    const parser = createCodexSessionParser();
-    const visit = (event: object) => parser.visit(JSON.stringify({ timestamp: '2026-10-01T12:00:00.000Z', ...event }));
-    visit({ type: 'session_meta', payload: { id: 'reset-session' } });
-    if (contextual) {
-      visit({ payload: { type: 'task_started', turn_id: 'task' } });
-      visit({ type: 'turn_context', payload: { turn_id: 'task', model: 'gpt-5.6-sol' } });
-    }
-    const usage = (input: number, cache: number, output: number) => ({
-      input_tokens: input,
-      cached_input_tokens: cache,
-      output_tokens: output,
-      total_tokens: input + output,
-    });
-    visit({
-      payload: {
-        type: 'token_count',
-        info: { total_token_usage: usage(100, 60, 20), last_token_usage: usage(100, 60, 20) },
-      },
-    });
-    const reset = {
-      payload: {
-        type: 'token_count',
-        info: {
-          total_token_usage: usage(10, 6, 2),
-          last_token_usage: completeLastUsage ? usage(10, 6, 2) : usage(5, 3, 1),
+  ])(
+    'only clears a counter-reset warning when its usage is fully attributable: %j',
+    ({ contextual, completeLastUsage, rejected }) => {
+      const parser = createCodexSessionParser();
+      const visit = (event: object) =>
+        parser.visit(JSON.stringify({ timestamp: '2026-10-01T12:00:00.000Z', ...event }));
+      visit({ type: 'session_meta', payload: { id: 'reset-session' } });
+      if (contextual) {
+        visit({ payload: { type: 'task_started', turn_id: 'task' } });
+        visit({ type: 'turn_context', payload: { turn_id: 'task', model: 'gpt-5.6-sol' } });
+      }
+      const usage = (input: number, cache: number, output: number) => ({
+        input_tokens: input,
+        cached_input_tokens: cache,
+        output_tokens: output,
+        total_tokens: input + output,
+      });
+      visit({
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: usage(100, 60, 20), last_token_usage: usage(100, 60, 20) },
         },
-      },
-    };
-    visit(reset);
-    visit(reset); // Repeated snapshots must not double-count the recovery.
-    const result = parser.finish();
-    expect(result.rejectedMetricRecords).toBe(rejected);
-    if (contextual && completeLastUsage) {
-      expect([result.session.tin, result.session.tcr, result.session.tout]).toEqual([44, 66, 22]);
-      expect(result.session.lastRejectedMetricAt).toBeUndefined();
-    } else {
-      expect(result.session.lastRejectedMetricAt).toBe('2026-10-01T12:00:00.000Z');
-    }
-  });
+      });
+      const reset = {
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: usage(10, 6, 2),
+            last_token_usage: completeLastUsage ? usage(10, 6, 2) : usage(5, 3, 1),
+          },
+        },
+      };
+      visit(reset);
+      visit(reset); // Repeated snapshots must not double-count the recovery.
+      const result = parser.finish();
+      expect(result.rejectedMetricRecords).toBe(rejected);
+      if (contextual && completeLastUsage) {
+        expect([result.session.tin, result.session.tcr, result.session.tout]).toEqual([44, 66, 22]);
+        expect(result.session.lastRejectedMetricAt).toBeUndefined();
+      } else {
+        expect(result.session.lastRejectedMetricAt).toBe('2026-10-01T12:00:00.000Z');
+      }
+    },
+  );
 
   test('resets cumulative token baselines without producing negative deltas', async () => {
     const storage = new TestMemoryStorage();
@@ -3331,23 +3331,22 @@ describe('Codex child token ownership', () => {
   test.each([
     { resetLast: 40, partial: false, expected: 190 },
     { resetLast: 30, partial: true, expected: 180 },
-  ])('only treats an owned reset as complete when its snapshot is the last generation: %j', async ({
-    resetLast,
-    partial,
-    expected,
-  }) => {
-    const { session, total } = await read([
-      task('own'),
-      context('own'),
-      tokens(100, 100),
-      tokens(40, resetLast),
-      tokens(40, resetLast),
-      tokens(90, 50),
-      complete('own'),
-    ]);
-    expect(total).toBe(expected);
-    expect(session.partial).toBe(partial);
-  });
+  ])(
+    'only treats an owned reset as complete when its snapshot is the last generation: %j',
+    async ({ resetLast, partial, expected }) => {
+      const { session, total } = await read([
+        task('own'),
+        context('own'),
+        tokens(100, 100),
+        tokens(40, resetLast),
+        tokens(40, resetLast),
+        tokens(90, 50),
+        complete('own'),
+      ]);
+      expect(total).toBe(expected);
+      expect(session.partial).toBe(partial);
+    },
+  );
 
   test('rejects an inconsistent last usage as evidence of an owned generation', async () => {
     const { session, total } = await read(
@@ -3608,12 +3607,12 @@ describe('Codex compressed rollouts', () => {
     // could not observe, so the skipped archive's failure is the answer.
     const corruptOnly = new TestMemoryStorage();
     corruptOnly.writeBytes('.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst', Buffer.alloc(48, 0xff));
-    const quotaRead = await runWithStorage(Effect.either(findLatestCodexQuotaSnapshot()), corruptOnly);
-    const statusRead = await runWithStorage(Effect.either(findLatestCodexProviderStatus()), corruptOnly);
+    const quotaRead = await runWithStorage(Effect.result(findLatestCodexQuotaSnapshot()), corruptOnly);
+    const statusRead = await runWithStorage(Effect.result(findLatestCodexProviderStatus()), corruptOnly);
     for (const read of [quotaRead, statusRead]) {
-      expect(read._tag).toBe('Left');
-      if (read._tag === 'Left') {
-        expect(read.left).toMatchObject({
+      expect(read._tag).toBe('Failure');
+      if (read._tag === 'Failure') {
+        expect(read.failure).toMatchObject({
           operation: 'readLines.decompress',
           path: path.join(corruptOnly.home, '.codex/sessions/2026/09/02/rollout-2026-09-02-corrupt.jsonl.zst'),
         });
@@ -3650,11 +3649,11 @@ describe('Codex compressed rollouts', () => {
     );
     storage.writeText('.codex/sessions/2026/09/02/rollout-2026-09-02-denied.jsonl', jsonl(...rolloutEvents('d', 1)));
 
-    const read = await runWithStorage(Effect.either(findLatestCodexQuotaSnapshot()), storage);
-    expect(read._tag).toBe('Left');
-    if (read._tag === 'Left') {
-      expect(read.left).toMatchObject({ operation: 'readLines' });
-      expect(read.left.path?.endsWith('rollout-2026-09-02-denied.jsonl')).toBe(true);
+    const read = await runWithStorage(Effect.result(findLatestCodexQuotaSnapshot()), storage);
+    expect(read._tag).toBe('Failure');
+    if (read._tag === 'Failure') {
+      expect(read.failure).toMatchObject({ operation: 'readLines' });
+      expect(read.failure.path?.endsWith('rollout-2026-09-02-denied.jsonl')).toBe(true);
     }
   });
 
@@ -3783,6 +3782,90 @@ describe('Codex compressed rollouts', () => {
         invocation: { rejected: 1, truncated: false },
       });
 
+      const db = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
+      try {
+        const row = db
+          .query('SELECT count(*) as count FROM codex_session_cache WHERE file_path = ?')
+          .get(archivePath) as { count: number };
+        expect(row.count).toBe(0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * An archive decodes as a stream, so a block that fails late reaches the
+   * parser only after the earlier lines of the rollout were visited. The read
+   * still fails as a whole: the rollout yields no row and no cache entry, is
+   * reported once, and the rollouts beside it are collected.
+   */
+  test('drops a rollout whose archive fails after some of its lines were read', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-archive-late-failure-'));
+    try {
+      const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026', '09', '01');
+      mkdirSync(sessionsDirectory, { recursive: true });
+      writeFileSync(path.join(sessionsDirectory, 'rollout-valid.jsonl'), jsonl(...rolloutEvents('valid-thread', 1)));
+      const padding = Array.from({ length: 96 }, (_, index) => ({
+        timestamp: '2026-09-01T08:59:59.000Z',
+        type: 'padding',
+        payload: { index, text: 'p'.repeat(1000) },
+      }));
+      const payload = Buffer.from(jsonl(...rolloutEvents('late-failure-thread', 2), ...padding));
+      // One Raw block of the rollout (not last), then a Compressed block of
+      // garbage (last) inside a single-segment frame declaring both.
+      const rawHeader = Buffer.alloc(3);
+      // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size above the type and last-block bits.
+      rawHeader.writeUIntLE(payload.length << 3, 0, 3);
+      const garbageHeader = Buffer.alloc(3);
+      // biome-ignore lint/suspicious/noBitwiseOperators: Block_Header packs Block_Size, Block_Type and Last_Block.
+      garbageHeader.writeUIntLE((8 << 3) | (2 << 1) | 1, 0, 3);
+      const contentSize = Buffer.alloc(4);
+      contentSize.writeUInt32LE(payload.length + 16);
+      const archivePath = path.join(sessionsDirectory, 'rollout-late-failure.jsonl.zst');
+      writeFileSync(
+        archivePath,
+        Buffer.concat([
+          Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0xa0]),
+          contentSize,
+          rawHeader,
+          payload,
+          garbageHeader,
+          Buffer.alloc(8, 0xff),
+        ]),
+      );
+      const real = createLocalHistoryStorage(home);
+      let archiveLinesVisited = 0;
+      const counting: LocalHistoryStorageService = {
+        ...real,
+        readLines: (filePath, visit, limits) =>
+          real.readLines(
+            filePath,
+            (line) => {
+              if (filePath === archivePath) {
+                archiveLinesVisited++;
+              }
+              visit(line);
+            },
+            limits,
+          ),
+      };
+
+      const result = await Effect.runPromise(
+        collectCodexResult.pipe(Effect.provideService(LocalHistoryStorage, counting)),
+      );
+      expect(archiveLinesVisited).toBeGreaterThan(0);
+      expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['valid-thread']);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toMatchObject({
+        harness: 'codex',
+        operation: 'unreadableHistoryFile',
+        path: archivePath,
+        rejectedRecords: 1,
+      });
+      expect(result.warnings[0]?.message).toContain('readLines.decompress');
       const db = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
       try {
         const row = db
@@ -3999,10 +4082,10 @@ describe('Codex compressed rollouts', () => {
       const activeDetail = await runWithRealStorage(readCodexDetailForTest('active-thread'), home);
       expect(activeDetail?.turns).toHaveLength(1);
       // An id missing from a partial listing is not "no such session".
-      const archivedDetail = await runWithRealStorage(Effect.either(readCodexDetailForTest('archived-thread')), home);
-      expect(archivedDetail._tag).toBe('Left');
-      if (archivedDetail._tag === 'Left') {
-        expect(archivedDetail.left).toMatchObject({ operation: 'readDir', path: archivedDirectory });
+      const archivedDetail = await runWithRealStorage(Effect.result(readCodexDetailForTest('archived-thread')), home);
+      expect(archivedDetail._tag).toBe('Failure');
+      if (archivedDetail._tag === 'Failure') {
+        expect(archivedDetail.failure).toMatchObject({ operation: 'readDir', path: archivedDirectory });
       }
 
       rmSync(archivedDirectory);

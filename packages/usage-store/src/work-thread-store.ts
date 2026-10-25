@@ -93,11 +93,11 @@ export const workThreadSchemaSql = `
 `;
 
 interface SqliteDatabase {
-  exec(sql: string): unknown;
-  query(sql: string): {
-    all(...params: unknown[]): unknown[];
-    get(...params: unknown[]): unknown;
-    run(...params: unknown[]): unknown;
+  exec: (sql: string) => unknown;
+  query: (sql: string) => {
+    all: (...params: unknown[]) => unknown[];
+    get: (...params: unknown[]) => unknown;
+    run: (...params: unknown[]) => unknown;
   };
 }
 

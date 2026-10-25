@@ -141,7 +141,9 @@
     style:--session-members-height={`${availableHeight}px`}
   >
     <CampaignVirtualList estimate={72} label="Campaign members" {onNearEnd} rows={virtualRows} surface="list">
-      {#snippet children(_member)}
+      {#snippet children(
+        _member,
+      )}
         <button
           class={button}
           data-campaign-session-row-id={_member.row.rowId}

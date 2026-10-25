@@ -1035,7 +1035,7 @@ export const workRootNativeRequests = (root: WorkRoot) =>
 
 export const workRootNativeQuestion = (root: WorkRoot): string | null => {
   const pending = workRootNativeRequests(root).flatMap((fact) =>
-    fact.request.rejectedAt === null ? fact.request.questions.filter((question) => question.answeredAt === null) : [],
+    fact.request.rejectedAt === null ? fact.request.questions.filter((candidate) => candidate.answeredAt === null) : [],
   );
   const question = pending[0];
   return question

@@ -50,7 +50,9 @@ import {
 } from './live';
 import {
   createInitialUsageEngineSourceControlView,
+  createUsageEngineRuntime,
   UsageEngineFatalConsistencyError,
+  type UsageEngineRuntimeDependencies,
   UsageEngineSoftSourceError,
 } from './runtime';
 import { type ScheduledSource, SourceRunError } from './source-adapters';
@@ -1060,7 +1062,7 @@ describe('live usage engine publication', () => {
       terminal = next.value;
     }
 
-    expect(String(failure)).toContain('UsageEngineFatalConsistencyError');
+    expect(failure).toBeInstanceOf(UsageEngineFatalConsistencyError);
     expect(writerGate.isClosed()).toBe(true);
     expect(sourceRuns).toBe(0);
     expect(terminal.sources.find(({ id }) => id === 'claude.sessions')?.lifecycle).not.toBe('queued');
@@ -1608,7 +1610,7 @@ describe('live usage engine publication', () => {
     let eventSinkAcquisitions = 0;
     let eventSinkReleases = 0;
     const wideEventSinkLayer = Layer.merge(
-      Layer.scoped(
+      Layer.effect(
         WideEventSink,
         Effect.acquireRelease(
           Effect.sync(() => {
@@ -1808,5 +1810,200 @@ describe('live usage engine publication', () => {
       'historical-inferred',
     ]);
     await runtime.dispose();
+  });
+});
+
+const idleSourceControlPort = (
+  instanceId: string,
+  calls: string[],
+): UsageEngineRuntimeDependencies['sourceControl'] => {
+  const snapshot = createInitialUsageEngineSourceControlView(instanceId, now);
+  return {
+    changes: (signal) => ({
+      async *[Symbol.asyncIterator]() {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve();
+            return;
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+    }),
+    detectAll: async () => undefined,
+    dispose: async () => undefined,
+    publish: async () => snapshot,
+    redetectAndRunSource: async () => snapshot,
+    runAllEnabled: async () => undefined,
+    runSource: async () => snapshot,
+    setSourceEnabled: async () => undefined,
+    start: async () => snapshot,
+    stopAutonomousCollection: () => {
+      calls.push('stop-autonomous-collection');
+      return Promise.resolve();
+    },
+  };
+};
+
+// Effect 3 rejected `runPromise` with a `FiberFailure` wrapper, so typed mutation errors thrown under the
+// writer gate reached the command coordinator wrapped and its typed branches never matched. These pin the
+// Effect 4 behaviour, where the coordinator sees the typed error itself (ADR 0071).
+describe('live mutation command outcomes through the writer gate', () => {
+  test('completes typed mutation failures with their own codes instead of command-failed', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'effect4-engine-typed-command-failures-'));
+    roots.push(root);
+    const dbPath = path.join(root, 'state', 'usage.sqlite');
+    const inboxDirectory = path.join(root, 'state', 'inbox');
+    const temporaryRoot = path.join(root, 'temporary');
+    await Promise.all([
+      mkdir(inboxDirectory, { mode: 0o700, recursive: true }),
+      mkdir(temporaryRoot, { mode: 0o700, recursive: true }),
+    ]);
+    const storage = createLocalHistoryStorage(path.join(root, 'home'));
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    await Effect.runPromise(writeMachineConfig(machine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+    const runtime = createLiveUsageEngineRuntime({
+      acquireWriterLease: async () => ({ release: async () => undefined }),
+      codexLiveAvailable: () => false,
+      configCwd: root,
+      dbPath,
+      inboxDirectory,
+      initialSourceDetection: 'deferred',
+      instanceId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+      now: () => now,
+      operatorCwd: root,
+      storage,
+      temporaryRoot,
+      wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+    });
+    await runtime.start();
+    const served = await Effect.runPromise(queryCurrentServedReportRevision({ dbPath, now: now.getTime() }));
+    const invalidJson = '{';
+    const handoffId = parseUsageEngineHandoffId('invalid-json-confirm');
+    const handoffPath = path.join(inboxDirectory, `${handoffId}.upload`);
+    await writeFile(handoffPath, invalidJson, { mode: 0o600 });
+
+    await runtime.executeCommand(
+      {
+        ...parseMergePreviewProof({
+          confirmationToken: `v1.${'b'.repeat(64)}`,
+          documentDigest: createHash('sha256').update(invalidJson).digest('hex'),
+        }),
+        command: 'confirm-merge',
+        input: { handoffId, kind: 'inbox-handoff' },
+      },
+      'invalid-json-confirm',
+    );
+    await runtime.executeCommand(
+      {
+        command: 'replace-project-groups-by-reference',
+        projectGroups: [
+          {
+            id: 'stale-group',
+            name: 'Stale Group',
+            sources: [parseUsageEngineProjectSourceReference(`project-source:${'0'.repeat(64)}`)],
+          },
+        ],
+        revision: parseUsageEnginePublicationRevision(served.revision),
+      },
+      'stale-project-selection',
+    );
+    const invalidJsonCompletion = await runtime.waitForCommand('invalid-json-confirm');
+    const staleSelectionCompletion = await runtime.waitForCommand('stale-project-selection');
+    const status = await runtime.status();
+    await runtime.dispose();
+
+    expect(invalidJsonCompletion).toMatchObject({ error: { code: 'merge-invalid-json' }, state: 'failed' });
+    expect(staleSelectionCompletion).toMatchObject({ error: { code: 'command-rejected' }, state: 'failed' });
+    expect(status).toMatchObject({ degradedReason: null, readiness: 'ready' });
+    await expect(Bun.file(handoffPath).exists()).resolves.toBe(false);
+  });
+
+  test('degrades terminally when a live machine-label compensation fails under the writer gate', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'effect4-engine-fatal-consistency-'));
+    roots.push(root);
+    const inboxDirectory = path.join(root, 'state', 'inbox');
+    await mkdir(inboxDirectory, { mode: 0o700, recursive: true });
+    const storage = createLocalHistoryStorage(path.join(root, 'home'));
+    const mutableMachine = { id: 'fatal-consistency-machine', label: 'Old Label' };
+    await Effect.runPromise(
+      writeMachineConfig(mutableMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    const writerGate = createUsageEngineWriterGate();
+    let releaseConfigWrite = (): void => undefined;
+    let signalConfigWriteStarted = (): void => undefined;
+    const configWriteBlocked = new Promise<void>((resolve) => {
+      releaseConfigWrite = resolve;
+    });
+    const configWriteStarted = new Promise<void>((resolve) => {
+      signalConfigWriteStarted = resolve;
+    });
+    let updateCalls = 0;
+    const mutation = createLiveUsageEngineMutationPort({
+      configCwd: root,
+      dbPath: path.join(root, 'state', 'usage.sqlite'),
+      inboxDirectory,
+      machine: mutableMachine,
+      now: () => now,
+      operatorCwd: root,
+      storage,
+      updateMachineLabel: () => {
+        updateCalls++;
+        return updateCalls === 1
+          ? Promise.resolve()
+          : Promise.reject(new Error('injected database compensation failure'));
+      },
+      writeMachine: async () => {
+        signalConfigWriteStarted();
+        await configWriteBlocked;
+        throw new Error('injected config write failure');
+      },
+      writerGate,
+    });
+    const instanceId = 'efefefef-efef-4fef-8fef-efefefefefef';
+    const sourceCalls: string[] = [];
+    const runtime = createUsageEngineRuntime({
+      acquireWriterLease: async () => ({ release: async () => undefined }),
+      initializeStore: async () => 1,
+      initialSourceControl: createInitialUsageEngineSourceControlView(instanceId, now),
+      instanceId,
+      mutation,
+      now: () => now,
+      publishInitialRevision: async () => ({
+        publishedAt: now.toISOString(),
+        revision: parseUsageEnginePublicationRevision('fatal-consistency-initial'),
+      }),
+      quiesceStore: async () => undefined,
+      recover: async () => undefined,
+      sourceControl: idleSourceControlPort(instanceId, sourceCalls),
+      validateConfig: async () => undefined,
+    });
+    await runtime.start();
+
+    await runtime.executeCommand({ command: 'set-machine-label', label: 'New Label' }, 'fatal-label');
+    await configWriteStarted;
+    await runtime.executeCommand(
+      { command: 'replace-project-aliases', projectAliases: [{ match: ['/work/queued'], name: 'Queued' }] },
+      'queued-aliases',
+    );
+    releaseConfigWrite();
+    const fatalCompletion = await runtime.waitForCommand('fatal-label');
+    const queuedCompletion = await runtime.waitForCommand('queued-aliases');
+    const status = await runtime.status();
+    const afterFatal = await runtime.executeCommand({ command: 'publish' }, 'after-fatal');
+    const config = await Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+    await runtime.disposeRetainingWriterLease();
+
+    expect(fatalCompletion).toMatchObject({ error: { code: 'command-failed' }, state: 'failed' });
+    expect(status).toMatchObject({
+      degradedReason: { code: 'mutation-consistency-unknown' },
+      readiness: 'degraded',
+    });
+    expect(queuedCompletion).toMatchObject({ error: { code: 'engine-busy' }, state: 'failed' });
+    expect(afterFatal).toMatchObject({ error: { code: 'engine-busy' }, ok: false });
+    expect(writerGate.isClosed()).toBe(true);
+    expect(sourceCalls).toContain('stop-autonomous-collection');
+    expect(config.projectAliases).toBeUndefined();
+    expect(mutableMachine.label).toBe('Old Label');
   });
 });

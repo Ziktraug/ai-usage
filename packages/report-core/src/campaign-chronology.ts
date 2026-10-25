@@ -22,8 +22,8 @@ const minimum = (current: number | null, next: number): number => (current === n
 const maximum = (current: number | null, next: number): number => (current === null ? next : Math.max(current, next));
 
 export interface CampaignChronologyAccumulator {
-  add(row: CampaignTimingRow): void;
-  finish(): CampaignChronology;
+  add: (row: CampaignTimingRow) => void;
+  finish: () => CampaignChronology;
 }
 
 /** Keeps only the observed bounds and counts while a campaign's members stream past. */

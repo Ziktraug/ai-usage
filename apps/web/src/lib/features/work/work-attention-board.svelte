@@ -182,7 +182,8 @@
         <button
           aria-pressed={search.attention.includes(option.value as WorkAttentionKind)}
           class={workChipButton}
-          onclick={() => onSearch({ attention: toggleListValue(search.attention, option.value) as WorkAttentionKind[] })}
+          onclick={() =>
+            onSearch({ attention: toggleListValue(search.attention, option.value) as WorkAttentionKind[] })}
           type="button"
         >
           {attentionLabel(option.value as WorkAttentionKind)}

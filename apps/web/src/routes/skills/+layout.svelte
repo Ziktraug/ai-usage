@@ -2,12 +2,12 @@
   import { css } from '@ai-usage/design-system/css';
   import { meta } from '@ai-usage/design-system/svelte';
   import { untrack } from 'svelte';
+  import RouteFrame from '#lib/features/shell/route-frame.svelte';
+  import SkillsEditorSlot from '#lib/features/skills/editor/skills-editor-slot.svelte';
+  import SkillsHealthSlot from '#lib/features/skills/management/skills-health-slot.svelte';
+  import SkillsShell from '#lib/features/skills/shell/skills-shell.svelte';
+  import type { SkillsShellSlotContext } from '#lib/features/skills/shell/slot-context.ts';
   import { page } from '$app/state';
-  import RouteFrame from '$lib/features/shell/route-frame.svelte';
-  import SkillsEditorSlot from '$lib/features/skills/editor/skills-editor-slot.svelte';
-  import SkillsHealthSlot from '$lib/features/skills/management/skills-health-slot.svelte';
-  import SkillsShell from '$lib/features/skills/shell/skills-shell.svelte';
-  import type { SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
   import type { LayoutProps } from './$types';
 
   let { children, data }: LayoutProps = $props();
@@ -17,7 +17,7 @@
   let refreshPending = $state(false);
   let refreshButtonElement = $state<HTMLButtonElement>();
   const refreshBusyAttributes = $derived({ 'aria-busy': refreshPending ? 'true' : 'false' } as const);
-  const headerButton = css({
+  const headerButtonStyle = css.raw({
     appearance: 'none',
     display: 'inline-flex',
     alignItems: 'center',
@@ -36,15 +36,18 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     _disabled: { cursor: 'default', opacity: 0.5 },
   });
-  const primaryHeaderButton = css({
+  const headerButton = css(headerButtonStyle);
+  const primaryHeaderButton = css.raw({
     borderColor: 'ink',
     bg: 'ink',
     color: 'canvas',
-    _hover: { bg: 'inkHover', borderColor: 'inkHover', color: 'canvas' },
+    _hover: { bg: 'inkHover', color: 'canvas' },
   });
 </script>
 
-{#snippet editorSlot(_context: SkillsShellSlotContext)}
+{#snippet editorSlot(
+  _context: SkillsShellSlotContext,
+)}
   <SkillsEditorSlot context={_context} />
 {/snippet}
 {#snippet headerMeta()}
@@ -62,7 +65,7 @@
     Refresh skills
   </button>
   <button
-    class={[headerButton, primaryHeaderButton]}
+    class={css(headerButtonStyle, primaryHeaderButton)}
     data-management-operation="preview-reconcile"
     disabled={refreshPending || reconcileAction === undefined}
     onclick={() => reconcileAction?.()}
@@ -72,7 +75,9 @@
   </button>
 {/snippet}
 
-{#snippet healthSlot(_context: SkillsShellSlotContext)}
+{#snippet healthSlot(
+  _context: SkillsShellSlotContext,
+)}
   <SkillsHealthSlot
     context={_context}
     onReconcileReady={(action) => (reconcileAction = action)}

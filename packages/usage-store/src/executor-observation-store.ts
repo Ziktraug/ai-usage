@@ -48,14 +48,14 @@ export interface QueryLatestExecutorObservationsResult {
 }
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  run(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  get: (...params: unknown[]) => unknown;
+  run: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  exec(sql: string): unknown;
-  query(sql: string): SqliteStatement;
+  exec: (sql: string) => unknown;
+  query: (sql: string) => SqliteStatement;
 }
 
 interface ExecutorObservationStoreDependencies {

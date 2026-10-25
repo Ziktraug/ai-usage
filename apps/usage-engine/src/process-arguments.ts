@@ -30,8 +30,8 @@ const parseForegroundRequest = (text: string): UsageEngineCommandRequest => {
   let value: unknown;
   try {
     value = JSON.parse(text) as unknown;
-  } catch {
-    throw new Error('Usage engine foreground command must be valid JSON.');
+  } catch (error) {
+    throw new Error('Usage engine foreground command must be valid JSON.', { cause: error });
   }
   return parseUsageEngineCommandRequest(value);
 };

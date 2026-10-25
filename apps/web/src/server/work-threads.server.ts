@@ -43,12 +43,12 @@ const STORE_NOT_UPGRADED_MESSAGE =
   'The usage store has not been upgraded for this version yet; the engine upgrades it when it next starts.';
 
 const readFromStore = async <Data>(operation: Effect.Effect<Data, unknown>): Promise<Data> => {
-  const result = await Effect.runPromise(Effect.either(operation));
-  if (result._tag === 'Right') {
-    return result.right;
+  const result = await Effect.runPromise(Effect.result(operation));
+  if (result._tag === 'Success') {
+    return result.success;
   }
   throw new WorkThreadServiceUnavailableError(
-    usageStoreErrorReasonFrom(result.left) === 'schema-too-old'
+    usageStoreErrorReasonFrom(result.failure) === 'schema-too-old'
       ? STORE_NOT_UPGRADED_MESSAGE
       : 'Tasks could not be read from the usage store.',
   );

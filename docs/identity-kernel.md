@@ -1,15 +1,14 @@
 # Identity kernel and Project resolution
 
 > **Implementation status:** Integrated on `main` via PR #53 (plan 102
-> `DONE`).
+> `DONE`). Plan 120 removed the connected PostgreSQL adapter; the local kernel
+> below is unchanged.
 
-This is the accepted reference for the identity kernel specified by plan 102. It
-defines stable identities shared by the local SQLite and connected PostgreSQL
-adapters, the local single-user authorization boundary, repository resolution,
-and the smallest review workflow. Organization ReBAC is documented in
-[authorization](authorization.md); connected GitHub login and Device enrollment
-are documented in [authentication and Device enrollment](authentication-and-device-enrollment.md).
-Agent Memory content, replication, and Work handoffs remain dependent work.
+This is the reference for the local identity kernel specified by plan 102. It
+defines the stable identities stored in `memory.sqlite`, the local single-user
+authorization boundary, repository resolution, and the smallest review
+workflow. The `Authorizer` port and its local policy are documented in
+[authorization](authorization.md).
 
 ## Stable identity model
 
@@ -20,50 +19,40 @@ provenance, never primary identities.
 
 | Identity | Stable meaning | Explicitly separate from |
 | --- | --- | --- |
-| `Space` | Personal or organization ownership/authorization root | Repository owner, SCM login, Project group |
-| `Person` | One human with one personal Space | Authentication identity, SCM account, Device |
+| `Space` | The personal ownership/authorization root | Repository owner, provider login, Project group |
+| `Person` | One human with one personal Space | Provider account, Device |
 | `Device` | One local ai-usage runtime | Usage machine label, hostname, credential |
-| `ScmAccount` | Person-scoped provider identity | Installation, login identity, secret |
-| `ScmInstallation` | Space-scoped provider grant | Account, organization ownership inference |
-| `ScmCredential` | Secret reference attached to exactly one account or installation | Identity and Device credential |
 | `Repository` | Space-scoped source-control identity | Remote URL and Project |
 | `Project` | Stable cross-device work identity | Repository, Checkout, Project source/group |
 | `Checkout` | Device-local working-copy observation | Project and filesystem authority |
-| `CaptureContext` | Explicit Person, Device, Space, optional Project and SCM assignment | Post-hoc ownership inference |
+| `CaptureContext` | Explicit Person, Device, Space, and optional Project assignment for replication | Post-hoc ownership inference |
 
 `ProjectId` remains unchanged when a repository is attached later, when the
 checkout path or Device changes, and when a provider repository is renamed or
 transferred. Non-Git Projects and unresolved Checkouts are valid states.
 Repository aliases preserve historical remote locators; identity events record
 repository rename/transfer facts without rewriting historical identity.
+`CaptureContext` rows exist only for the dormant replication client and go
+with it in plan 120 phase B.
 
-## Local and connected authorities
+## Local authority
 
-The local identity kernel lives in the dedicated `memory.sqlite`, not the usage
+The identity kernel lives in the dedicated `memory.sqlite`, not the usage
 SQLite data plane. On first open it atomically creates exactly one local Person,
 personal Space, and opaque local Device, then preserves their IDs across
 restarts. The database is owner-only, uses SQLite foreign keys, WAL, strict
 tables, and one schema version. The usage engine owns its only write-capable
 connection.
 
-The local schema intentionally contains only the identity subset needed before
-Agent Memory: Space, Person, Device, Repository and aliases, Project, Checkout,
-Capture Context, identity events, resolution candidates, and acknowledged
-Project-source mappings. It does not emulate organization membership, login,
-SCM credentials, or connected Device enrollment.
+The schema contains only the identity subset Memory needs: Space (personal
+only), Person, Device, Repository and aliases, Project, Checkout, Capture
+Context, identity events, resolution candidates, and acknowledged
+Project-source mappings. There is no organization membership, login, provider
+credential, or Device enrollment.
 
-The connected adapter uses PostgreSQL migration ordinal 2,
-`0002_identity_kernel`. Tenant-scoped records carry a non-null `space_id`, and
-composite foreign keys prevent Repository, alias, Project, Checkout, Capture
-Context, and mapping references from crossing Spaces. PostgreSQL additionally
-stores the separately constrained SCM account, installation, and credential
-records. Every connected timestamp is `timestamptz`; lifecycle references use
-restricted deletion rather than destructive cascades, except ephemeral
-resolution candidates owned by a Checkout.
-
-Both adapters consume domain contracts from `@ai-usage/platform-core` and pure
+The adapter consumes domain contracts from `@ai-usage/platform-core` and pure
 resolution/review contracts from `@ai-usage/project-registry`. Storage row
-shapes and database clients do not escape their adapters.
+shapes and database clients do not escape it.
 
 ## Authorization boundary
 
@@ -75,8 +64,7 @@ never becomes a denial or an allow.
 resources in that Person's personal Space. It denies foreign Spaces,
 non-local/service principals, and permission/resource mismatches. Resource
 listing is Space-scoped, deterministic, cursor-based, and bounded to 100 items
-per page. Complete opaque scope, organization relations, explicit PostgreSQL
-queries, RLS, and the authorized Project vertical are documented in
+per page. The complete opaque scope is documented in
 [authorization](authorization.md).
 
 ## Repository resolution
@@ -91,17 +79,17 @@ Repository resolution is pure and adapter-independent:
 5. otherwise match the normalized alias;
 6. resolve exactly one match, return every match when ambiguous, or create an
    explicit candidate/unassigned outcome;
-7. never choose across Spaces or infer organization ownership.
+7. never choose across Spaces or infer ownership.
 
 Known GitHub/GitLab aliases normalize provider case and `.git`/separator
 differences. Self-hosted hosts and case-sensitive paths stay distinct. A
 provider-ID match reports alias disagreement so a rename can retain the old
 alias rather than silently merging another Repository.
 
-Adapters persist the pure outcome and keep ambiguity visible. A new resolution
-observation resets any previous review acknowledgement. Explicit review actions
-can create a local Project, link the Checkout to a candidate Repository (and
-optionally an existing Project), or leave it unassigned.
+The adapter persists the pure outcome and keeps ambiguity visible. A new
+resolution observation resets any previous review acknowledgement. Explicit
+review actions can create a local Project, link the Checkout to a candidate
+Repository (and optionally an existing Project), or leave it unassigned.
 
 ## Compatibility with usage reports
 
@@ -152,14 +140,7 @@ and leave the query stale for a later authoritative read.
 The focused gates are:
 
 ```sh
-bun run test:local-platform
-nix develop --command bun run test:postgres
+bun test packages/memory-sqlite packages/project-registry packages/authorization
 flock /tmp/ai-usage-e2e.lock bash -lc \
   'cd apps/web && bun --bun playwright test e2e/projects.spec.ts --workers=1'
 ```
-
-The local-platform gate injects a PostgreSQL connector that records and fails
-every consultation; local package/runtime/CLI/Web operations must pass with an
-exact call count of zero. PostgreSQL integration tests cover migration order,
-Space fences, SCM separation, stable identity, additive mappings, and the
-review actions against repository-owned PostgreSQL 17 binaries.

@@ -87,9 +87,8 @@ const configLockMetadataFrom = (text: string): ConfigLockMetadata | undefined =>
       return value as ConfigLockMetadata;
     }
   } catch {
-    return;
+    // Unparseable lock metadata reads as absent.
   }
-  return;
 };
 
 const localProcessIsAlive = (pid: number): boolean => {
@@ -142,13 +141,13 @@ const withConfigFileLock = async <A>(filePath: string, update: () => A | Promise
       }
       const lockStat = await lstat(lockPath).catch(() => undefined);
       if (lockStat?.isSymbolicLink()) {
-        throw new Error(`ai-usage config lock must not be a symlink: ${lockPath}`);
+        throw new Error(`ai-usage config lock must not be a symlink: ${lockPath}`, { cause: error });
       }
       if (await removeStaleConfigLock(lockPath)) {
         continue;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`timed out waiting for ai-usage config lock: ${canonicalFilePath}`);
+        throw new Error(`timed out waiting for ai-usage config lock: ${canonicalFilePath}`, { cause: error });
       }
       await delay(configLockRetryMs);
     }
@@ -325,7 +324,7 @@ export const readMachineConfigIfPresent: Effect.Effect<
 > = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const filePath = machineConfigPath(storage);
-  if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
+  if (!(yield* storage.exists(filePath).pipe(Effect.catch(() => Effect.succeed(false))))) {
     return null;
   }
   const text = yield* storage.readText(filePath);
@@ -531,7 +530,7 @@ export const readAiUsageConfig: Effect.Effect<AiUsageConfig, LocalHistoryError, 
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const filePath = aiUsageConfigPath(storage);
-    if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
+    if (!(yield* storage.exists(filePath).pipe(Effect.catch(() => Effect.succeed(false))))) {
       return {};
     }
     assertPrivateAuthoritativeFile(filePath);

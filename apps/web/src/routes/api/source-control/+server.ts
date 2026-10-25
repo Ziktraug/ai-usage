@@ -1,4 +1,4 @@
-import { handleSourceControlEndpoint } from '$lib/features/sources/endpoint.server';
+import { handleSourceControlEndpoint } from '#lib/features/sources/endpoint.server.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, request }) =>

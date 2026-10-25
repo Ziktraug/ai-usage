@@ -110,20 +110,20 @@ const fixture = async (
   let jiraStatus = 'To Do';
   let beforeView: (() => void | Promise<void>) | undefined;
   const calls: string[][] = [];
-  const runner: BoundedProcessRunner = (options) =>
+  const runner: BoundedProcessRunner = (request) =>
     Effect.promise(async () => {
-      calls.push([options.command, ...options.args]);
-      if (options.command === 'gh' && options.args.join(' ') === 'auth token --hostname github.com') {
+      calls.push([request.command, ...request.args]);
+      if (request.command === 'gh' && request.args.join(' ') === 'auth token --hostname github.com') {
         return { durationMs: 1, exitCode: 0, stdout: 'fixture-token\n' };
       }
       if (
-        (options.command === 'gh' && options.args[0] === 'search') ||
-        (options.command === 'acli' && options.args.includes('search'))
+        (request.command === 'gh' && request.args[0] === 'search') ||
+        (request.command === 'acli' && request.args.includes('search'))
       ) {
         return { durationMs: 1, exitCode: 0, stdout: '[]' };
       }
-      if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
-        if (options.env?.GH_TOKEN !== 'fixture-token') {
+      if (request.command === 'gh' && request.args[0] === 'pr' && request.args[1] === 'view') {
+        if (request.env?.GH_TOKEN !== 'fixture-token') {
           return { durationMs: 1, exitCode: 4, stdout: '' };
         }
         await beforeView?.();
@@ -144,7 +144,7 @@ const fixture = async (
           }),
         };
       }
-      if (options.command === 'acli' && options.args.slice(0, 3).join(' ') === 'jira workitem view') {
+      if (request.command === 'acli' && request.args.slice(0, 3).join(' ') === 'jira workitem view') {
         await beforeView?.();
         return {
           durationMs: 1,
@@ -159,7 +159,7 @@ const fixture = async (
           }),
         };
       }
-      throw new Error(`Unexpected fixture process: ${options.command} ${options.args.join(' ')}`);
+      throw new Error(`Unexpected fixture process: ${request.command} ${request.args.join(' ')}`);
     });
   const registry = await Effect.runPromise(
     createScheduledSourceRegistry({
@@ -221,31 +221,31 @@ const fixture = async (
 };
 
 describe('external observations satisfy identified waits through the engine', () => {
-  test.each([
-    'APPROVED',
-    'CHANGES_REQUESTED',
-  ] as const)('%s satisfies a PR wait once, with source evidence in the event', async (decision) => {
-    const input = await fixture('pull-request-review');
-    await input.poll();
-    expect((await input.read()).followState).toBe('waiting');
-    input.next({ minute: 20, updatedAt: at(10), decision });
-    await input.poll();
-    expect(await input.read()).toMatchObject({
-      followState: 'following',
-      followRevision: 3,
-      waitingFor: null,
-      waitingOn: null,
-    });
-    const events = await input.events();
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ fromState: 'waiting', toState: 'following', linkKey: PR_KEY });
-    expect(events[0]?.reason).toContain(decision);
-    expect(events[0]?.reason).toContain(at(10));
-    input.next({ minute: 21 });
-    await input.poll();
-    expect(await input.events()).toEqual(events);
-    expect((await input.read()).followRevision).toBe(3);
-  });
+  test.each(['APPROVED', 'CHANGES_REQUESTED'] as const)(
+    '%s satisfies a PR wait once, with source evidence in the event',
+    async (decision) => {
+      const input = await fixture('pull-request-review');
+      await input.poll();
+      expect((await input.read()).followState).toBe('waiting');
+      input.next({ minute: 20, updatedAt: at(10), decision });
+      await input.poll();
+      expect(await input.read()).toMatchObject({
+        followState: 'following',
+        followRevision: 3,
+        waitingFor: null,
+        waitingOn: null,
+      });
+      const events = await input.events();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ fromState: 'waiting', toState: 'following', linkKey: PR_KEY });
+      expect(events[0]?.reason).toContain(decision);
+      expect(events[0]?.reason).toContain(at(10));
+      input.next({ minute: 21 });
+      await input.poll();
+      expect(await input.events()).toEqual(events);
+      expect((await input.read()).followRevision).toBe(3);
+    },
+  );
 
   test('a merge with its own source timestamp satisfies without a prior review baseline', async () => {
     const input = await fixture('pull-request-review');
@@ -258,91 +258,89 @@ describe('external observations satisfy identified waits through the engine', ()
     expect(await input.events()).toHaveLength(1);
   });
 
-  test.each([
-    'review',
-    'merge',
-    'jira-status',
-  ] as const)('%s changing during a provider read is bounded by apply time, not fetch-start time', async (evidence) => {
-    const input = await fixture(evidence === 'jira-status' ? 'jira-update' : 'pull-request-review');
-    await input.poll();
-    input.next({ minute: 20 });
-    input.beforeView(() => {
-      input.next({
-        minute: 22,
-        updatedAt: at(21),
-        ...(evidence === 'review' ? { decision: 'APPROVED' as const } : {}),
-        ...(evidence === 'merge' ? { mergedAt: at(21) } : {}),
-        ...(evidence === 'jira-status' ? { status: 'In Progress' } : {}),
+  test.each(['review', 'merge', 'jira-status'] as const)(
+    '%s changing during a provider read is bounded by apply time, not fetch-start time',
+    async (evidence) => {
+      const input = await fixture(evidence === 'jira-status' ? 'jira-update' : 'pull-request-review');
+      await input.poll();
+      input.next({ minute: 20 });
+      input.beforeView(() => {
+        input.next({
+          minute: 22,
+          updatedAt: at(21),
+          ...(evidence === 'review' ? { decision: 'APPROVED' as const } : {}),
+          ...(evidence === 'merge' ? { mergedAt: at(21) } : {}),
+          ...(evidence === 'jira-status' ? { status: 'In Progress' } : {}),
+        });
       });
-    });
-    await input.poll();
-    expect(await input.read()).toMatchObject({ followState: 'following', followRevision: 3 });
-    const events = await input.events();
-    expect(events).toHaveLength(1);
-    expect(events[0]?.reason).toContain(at(21));
-    await input.poll();
-    expect(await input.events()).toEqual(events);
-  });
+      await input.poll();
+      expect(await input.read()).toMatchObject({ followState: 'following', followRevision: 3 });
+      const events = await input.events();
+      expect(events).toHaveLength(1);
+      expect(events[0]?.reason).toContain(at(21));
+      await input.poll();
+      expect(await input.events()).toEqual(events);
+    },
+  );
 
-  test.each([
-    'review',
-    'merge',
-  ] as const)('recovers a PR %s imported before an interrupted wait transition', async (evidence) => {
-    const input = await fixture('pull-request-review');
-    await input.poll();
-    const baseline = (await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: input.dbPath }))).items[0]
-      ?.latest;
-    if (!baseline) {
-      throw new Error('Missing PR baseline');
-    }
-    await Effect.runPromise(
-      importPullRequestObservations({
-        dbPath: input.dbPath,
-        observations: [
-          {
-            ...baseline,
-            observedAt: at(20),
-            updatedAt: at(10),
-            state: evidence === 'merge' ? 'MERGED' : 'OPEN',
-            mergedAt: evidence === 'merge' ? at(10) : null,
-            reviewDecision: evidence === 'review' ? 'APPROVED' : 'REVIEW_REQUIRED',
-          },
-        ],
-      }),
-    );
-    input.next({
-      minute: 21,
-      updatedAt: at(10),
-      ...(evidence === 'merge' ? { mergedAt: at(10) } : { decision: 'APPROVED' as const }),
-    });
-    expect(await input.poll()).toMatchObject({ inputCount: 1, outputCount: 1 });
-    expect((await input.read()).followState).toBe('following');
-    const events = await input.events();
-    expect(events).toHaveLength(1);
-    input.next({ minute: 22 });
-    expect(await input.poll()).toMatchObject({ inputCount: evidence === 'merge' ? 0 : 1 });
-    expect(await input.events()).toEqual(events);
-  });
+  test.each(['review', 'merge'] as const)(
+    'recovers a PR %s imported before an interrupted wait transition',
+    async (evidence) => {
+      const input = await fixture('pull-request-review');
+      await input.poll();
+      const baseline = (await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: input.dbPath }))).items[0]
+        ?.latest;
+      if (!baseline) {
+        throw new Error('Missing PR baseline');
+      }
+      await Effect.runPromise(
+        importPullRequestObservations({
+          dbPath: input.dbPath,
+          observations: [
+            {
+              ...baseline,
+              observedAt: at(20),
+              updatedAt: at(10),
+              state: evidence === 'merge' ? 'MERGED' : 'OPEN',
+              mergedAt: evidence === 'merge' ? at(10) : null,
+              reviewDecision: evidence === 'review' ? 'APPROVED' : 'REVIEW_REQUIRED',
+            },
+          ],
+        }),
+      );
+      input.next({
+        minute: 21,
+        updatedAt: at(10),
+        ...(evidence === 'merge' ? { mergedAt: at(10) } : { decision: 'APPROVED' as const }),
+      });
+      expect(await input.poll()).toMatchObject({ inputCount: 1, outputCount: 1 });
+      expect((await input.read()).followState).toBe('following');
+      const events = await input.events();
+      expect(events).toHaveLength(1);
+      input.next({ minute: 22 });
+      expect(await input.poll()).toMatchObject({ inputCount: evidence === 'merge' ? 0 : 1 });
+      expect(await input.events()).toEqual(events);
+    },
+  );
 
-  test.each([
-    'old-decision',
-    'comment-on-approval',
-    'ci-or-agent-review',
-  ] as const)('%s cannot lift a PR wait', async (scenario) => {
-    const input = await fixture('pull-request-review');
-    if (scenario === 'comment-on-approval') {
-      input.next({ minute: 6, decision: 'APPROVED' });
-    }
-    await input.poll();
-    input.next({
-      minute: 20,
-      updatedAt: at(scenario === 'old-decision' ? 4 : 10),
-      decision: scenario === 'ci-or-agent-review' ? 'REVIEW_REQUIRED' : 'APPROVED',
-    });
-    await input.poll();
-    expect(await input.read()).toMatchObject({ followState: 'waiting', followRevision: 2 });
-    expect(await input.events()).toHaveLength(0);
-  });
+  test.each(['old-decision', 'comment-on-approval', 'ci-or-agent-review'] as const)(
+    '%s cannot lift a PR wait',
+    async (scenario) => {
+      const input = await fixture('pull-request-review');
+      if (scenario === 'comment-on-approval') {
+        input.next({ minute: 6, decision: 'APPROVED' });
+      }
+      await input.poll();
+      input.next({
+        minute: 20,
+        updatedAt: at(scenario === 'old-decision' ? 4 : 10),
+        decision: scenario === 'ci-or-agent-review' ? 'REVIEW_REQUIRED' : 'APPROVED',
+      });
+      await input.poll();
+      expect(await input.read()).toMatchObject({ followState: 'waiting', followRevision: 2 });
+      expect(await input.events()).toHaveLength(0);
+    },
+  );
 
   test('a review decision without a usable post-wait baseline remains waiting and reports why', async () => {
     const input = await fixture('pull-request-review', false);
@@ -367,27 +365,26 @@ describe('external observations satisfy identified waits through the engine', ()
     expect(await input.events()).toHaveLength(0);
   });
 
-  test.each([
-    'following',
-    'done',
-    'waiting-again',
-  ] as const)('operator transition to %s while the provider runs wins', async (state) => {
-    const input = await fixture('pull-request-review');
-    await input.poll();
-    input.next({ minute: 20, updatedAt: at(10), decision: 'APPROVED' });
-    input.beforeView(async () => {
-      await input.follow(state === 'done' ? 'done' : 'following');
-      if (state === 'waiting-again') {
-        await input.follow('waiting');
-      }
-    });
-    await input.poll();
-    expect(await input.read()).toMatchObject({
-      followState: state === 'waiting-again' ? 'waiting' : state,
-      followRevision: state === 'waiting-again' ? 4 : 3,
-    });
-    expect(await input.events()).toHaveLength(0);
-  });
+  test.each(['following', 'done', 'waiting-again'] as const)(
+    'operator transition to %s while the provider runs wins',
+    async (state) => {
+      const input = await fixture('pull-request-review');
+      await input.poll();
+      input.next({ minute: 20, updatedAt: at(10), decision: 'APPROVED' });
+      input.beforeView(async () => {
+        await input.follow(state === 'done' ? 'done' : 'following');
+        if (state === 'waiting-again') {
+          await input.follow('waiting');
+        }
+      });
+      await input.poll();
+      expect(await input.read()).toMatchObject({
+        followState: state === 'waiting-again' ? 'waiting' : state,
+        followRevision: state === 'waiting-again' ? 4 : 3,
+      });
+      expect(await input.events()).toHaveLength(0);
+    },
+  );
 
   test('an already Done thread remains Done when explicit session evidence observes an approval', async () => {
     const input = await fixture('pull-request-review', true, { explicitPullRequest: true });

@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { ORPCError } from '@orpc/client';
 import {
+  CAMPAIGN_LABELS_RPC_PATH,
+  campaignLabelsFailureFulfillment,
   decodeRpcResponseBody,
   encodeRpcResponseBody,
+  isExpectedCampaignLabelsFailureResponse,
   isExpectedSkillsSaveFailureResponse,
   isRpcPathname,
   type RpcRouteFulfillment,
@@ -10,6 +14,7 @@ import {
   SKILLS_SAVE_RPC_PATH,
 } from './e2e/rpc-test-transport';
 import { createWebRpcClient } from './src/lib/rpc/client';
+import { createReportClient } from './src/lib/rpc/report-client';
 import { createSkillsClient } from './src/lib/rpc/skills-client';
 
 const saveInput = {
@@ -87,6 +92,35 @@ describe('RPC test transport helpers', () => {
     expect(await skillsClientFor(failure).saveManagedSkillMarkdown(saveInput)).toEqual({
       error: { message: 'Storage unavailable', tag: 'E2ESaveFailure' },
       ok: false,
+    });
+  });
+
+  test('fails the saved campaign labels read through the real RPCLink as its procedure does', async () => {
+    const failure = campaignLabelsFailureFulfillment();
+    const identity = { headers: failure.headers, pathname: CAMPAIGN_LABELS_RPC_PATH, status: failure.status };
+    expect(isExpectedCampaignLabelsFailureResponse(identity)).toBe(true);
+    expect(isExpectedCampaignLabelsFailureResponse({ ...identity, headers: {} })).toBe(false);
+    expect(isExpectedCampaignLabelsFailureResponse({ ...identity, pathname: SKILLS_SAVE_RPC_PATH })).toBe(false);
+    expect(isExpectedSkillsSaveFailureResponse(identity)).toBe(false);
+
+    const client = createReportClient(
+      createWebRpcClient({
+        fetch: () =>
+          Promise.resolve(
+            new Response(failure.body, {
+              headers: { 'content-type': 'application/json', ...failure.headers },
+              status: failure.status,
+            }),
+          ),
+        url: 'http://127.0.0.1/rpc',
+      }),
+    );
+    const error = await client.getCampaignLabelOverrides().catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ORPCError);
+    expect(error).toMatchObject({
+      code: 'Unavailable',
+      defined: true,
+      message: 'Campaign labels are temporarily unavailable.',
     });
   });
 });

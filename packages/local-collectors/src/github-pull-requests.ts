@@ -334,7 +334,7 @@ const ghReadFailure = (kind: BoundedProcessError['kind']): GhRead => {
 const gh = (context: RunContext, args: readonly string[]): Effect.Effect<GhRead> =>
   context.run({ ...context.base, args, command: 'gh', env: context.environment }).pipe(
     Effect.map((result): GhRead => ({ exitCode: result.exitCode, kind: 'completed', stdout: result.stdout })),
-    Effect.catchAll((error) => Effect.succeed<GhRead>(ghReadFailure(error.kind))),
+    Effect.catch((error) => Effect.succeed<GhRead>(ghReadFailure(error.kind))),
   );
 
 interface Classification {

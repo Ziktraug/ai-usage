@@ -150,9 +150,9 @@ describe('Skills management operation episode', () => {
       get isPending() {
         return isPending;
       },
-      mutateAsync: async (command: SkillsManagementOperationCommand) => {
+      mutateAsync: async (mutationCommand: SkillsManagementOperationCommand) => {
         mutations += 1;
-        variables = command;
+        variables = mutationCommand;
         isPending = true;
         try {
           data = await pending.promise;

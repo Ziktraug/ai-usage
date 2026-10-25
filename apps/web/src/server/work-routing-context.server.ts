@@ -57,22 +57,22 @@ export const createWorkRoutingContextReaders = (
   readDeclarations: () => readLocalRoutingDeclarations(paths.homeDirectory),
   readObservations: async (machineId) => {
     const outcome = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryLatestExecutorObservations({
           dbPath: paths.databasePath,
           ...(machineId === null ? {} : { machineId }),
         }),
       ),
     );
-    if (outcome._tag === 'Right') {
-      return outcome.right;
+    if (outcome._tag === 'Success') {
+      return outcome.success;
     }
     // A machine that has never collected has no store yet; that is an empty answer, not a failure.
     // Every other reason (older schema without the table, corruption, busy) stays a failure.
-    if (usageStoreErrorReasonFrom(outcome.left) === 'store-missing') {
+    if (usageStoreErrorReasonFrom(outcome.failure) === 'store-missing') {
       return EMPTY_OBSERVATIONS;
     }
-    throw outcome.left;
+    throw outcome.failure;
   },
 });
 

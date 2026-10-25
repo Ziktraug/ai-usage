@@ -12,7 +12,7 @@
   } from '@tanstack/svelte-query';
   import { onMount, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { page } from '$app/state';
   import { loadNextCampaignPage, retainedCampaignOptions } from '../../query/options/campaigns';
   import { quotaRailQueryOptions } from '../../query/options/quota';
@@ -80,7 +80,7 @@
   });
 
   // --- Declared outcomes (the resume surface) ---------------------------------------------------
-  const contextRead = $derived(workAttentionRequestFromSearch(page.url.searchParams));
+  const contextRead = $derived(workAttentionRequestFromSearch(new URL(page.url.href).searchParams));
   const attentionQuery = createQuery(() =>
     workAttentionQueryOptions(clients.attention, contextRead.ok ? contextRead.input : workAttentionRequest(), {
       browser,
@@ -102,7 +102,7 @@
   });
 
   // --- URL state: filters, selection -------------------------------------------------------------
-  const search = $derived<WorkAttentionSearch>(parseWorkAttentionSearch(page.url.searchParams));
+  const search = $derived<WorkAttentionSearch>(parseWorkAttentionSearch(new URL(page.url.href).searchParams));
   const selectedId = $derived(search.root);
   const selectedRoot = $derived<WorkRoot | null>(
     selectedId && dataset ? (dataset.roots.find((root) => workRootId(root) === selectedId) ?? null) : null,
@@ -113,9 +113,9 @@
   let board = $state<{ focusRoot: (id: string) => Promise<boolean> }>();
   let drawerCloseButton = $state<HTMLButtonElement>();
   const navigate = (next: URL, replace: boolean): Promise<void> =>
-    shellNavigation.goto(next, { keepFocus: true, noScroll: true, replaceState: replace });
+    shellNavigation.goto(next, { replace, reset: false });
   const updateSearch = (patch: Partial<WorkAttentionSearch>): void => {
-    navigate(writeWorkAttentionSearch(new URL(page.url), { ...search, ...patch }), true);
+    navigate(writeWorkAttentionSearch(new URL(page.url.href), { ...search, ...patch }), true);
   };
   const exploreContext = (event: SubmitEvent): void => {
     event.preventDefault();
@@ -123,7 +123,7 @@
       return;
     }
     const fields = new FormData(event.currentTarget);
-    const next = new URL(page.url);
+    const next = new URL(page.url.href);
     for (const name of ['context-project', 'context-days']) {
       const value = String(fields.get(name) ?? '').trim();
       if (value && !(name === 'context-days' && value === '30')) {
@@ -142,7 +142,7 @@
     if (!switching) {
       openedFromList = true;
     }
-    navigate(writeWorkAttentionSearch(new URL(page.url), { ...search, root: id }), switching);
+    navigate(writeWorkAttentionSearch(new URL(page.url.href), { ...search, root: id }), switching);
   };
   const close = (): void => {
     pendingFocusId = lastFocusedId ?? selectedId;
@@ -151,7 +151,7 @@
       window.history.back();
       return;
     }
-    navigate(writeWorkAttentionSearch(new URL(page.url), { ...search, root: null }), true);
+    navigate(writeWorkAttentionSearch(new URL(page.url.href), { ...search, root: null }), true);
   };
   // Whatever closed the detail (the close control, Escape, the drawer, or history traversal), the
   // reader lands back on the row they left: the address change is the one signal all paths share.
@@ -437,14 +437,21 @@
             </section>
           {:else if items.length === 0}
             <p class={workMuted} role="status">
-              {sessions.isPending ? 'Reading stored session observations…' : 'No session roots were observed in this revision.'}
+              {sessions.isPending
+                ? 'Reading stored session observations…'
+                : 'No session roots were observed in this revision.'}
             </p>
           {/if}
           {#each ordinary as item (item.row.rowId)}
             <WorkSession client={clients.session} {item} revision={displayedRevision} />
           {/each}
           {#if reviews.length > 0}
-            <details class={workPanel} ontoggle={(event) => { reviewsOpen = event.currentTarget.open; }}>
+            <details
+              class={workPanel}
+              ontoggle={(event) => {
+                reviewsOpen = event.currentTarget.open;
+              }}
+            >
               <summary class={workHeading}>Standalone automated reviews ({reviews.length})</summary>
               {#if reviewsOpen}
                 {#each reviews as item (item.row.rowId)}

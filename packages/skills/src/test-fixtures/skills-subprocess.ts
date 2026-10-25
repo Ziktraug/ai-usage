@@ -3,11 +3,11 @@ import path from 'node:path';
 import { writeSkillMarkdown } from '../skill-markdown-io';
 import { setSkillEnabled } from '../source-state';
 
-const waitForBarrier = async (readyDirectory: string, barrierPath: string, label: string): Promise<void> => {
-  await writeFile(path.join(readyDirectory, label), 'ready', 'utf8');
+const waitForBarrier = async (directory: string, barrierFile: string, label: string): Promise<void> => {
+  await writeFile(path.join(directory, label), 'ready', 'utf8');
   while (true) {
     try {
-      await access(barrierPath);
+      await access(barrierFile);
       return;
     } catch {
       await Bun.sleep(5);

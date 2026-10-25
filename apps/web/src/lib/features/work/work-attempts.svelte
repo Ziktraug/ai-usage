@@ -162,9 +162,9 @@
             {/if}
             <p class={workMuted}>
               Requested {when(attempt.requestedAt)}{attempt.startedAt ? ` · started ${when(attempt.startedAt)}` : ''}
-              {attempt.endedAt
-              ? ` · ended ${when(attempt.endedAt)}`
-              : ''}{live ? ` · last heartbeat ${formatRelativeAge(attempt.updatedAt, reference)}` : ''}.
+              {attempt.endedAt ? ` · ended ${when(attempt.endedAt)}` : ''}{live
+                ? ` · last heartbeat ${formatRelativeAge(attempt.updatedAt, reference)}`
+                : ''}.
             </p>
             {#if attempt.declared}
               <p class={workMuted}>
@@ -174,9 +174,7 @@
             {/if}
             <p class={workMuted}>
               Checkout: {attempt.target.checkoutPath ?? 'unknown'}
-              {attempt.target.checkoutOrigin
-              ? ` (${checkoutOriginLabel(attempt.target.checkoutOrigin)})`
-              : ''}.
+              {attempt.target.checkoutOrigin ? ` (${checkoutOriginLabel(attempt.target.checkoutOrigin)})` : ''}.
             </p>
             <p class={workMuted}>
               Native session: {attempt.nativeSessionId ?? 'not reported yet'}
@@ -201,9 +199,7 @@
           </details>
           <p class={workMuted}>
             Validations executed:
-            {attempt.validations.length === 0
-              ? 'none (read-only review)'
-              : attempt.validations.join('; ')}.
+            {attempt.validations.length === 0 ? 'none (read-only review)' : attempt.validations.join('; ')}.
           </p>
           <p class={workMuted}>
             Acceptance: {attempt.acceptance === 'pending' ? 'pending — not reviewed by you' : attempt.acceptance}.

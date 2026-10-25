@@ -1,12 +1,12 @@
 import path from 'node:path';
 import { LocalHistoryError } from '@ai-usage/local-machine/errors';
 import {
-  decompressHistoryArchive,
   HistoryArchiveError,
   type LocalHistoryDatabase,
   type LocalHistoryDirEntry,
   type LocalHistorySqlParameter,
   type LocalHistoryStorage,
+  streamHistoryArchive,
 } from '@ai-usage/local-machine/local-history';
 import { Effect } from 'effect';
 
@@ -145,54 +145,56 @@ export class TestMemoryStorage implements LocalHistoryStorage {
         }),
       );
     }
-    // Mirrors the real reader: a `.zst` path is a zstd archive of the text
-    // read through the reader's own frame walk, capped decompression and
-    // length check, so a fixture fails exactly as a file would: the limits
-    // apply to the compressed and the declared bytes, a malformed, truncated
-    // or corrupt archive is its own typed failure, and a budget breach is a
-    // plain read error.
-    let bytes: string | Uint8Array = stored;
-    if (filePath.endsWith('.zst')) {
-      const archive = typeof stored === 'string' ? Buffer.from(stored, 'utf8') : Buffer.from(stored);
-      const maxBytes = limits.maxBytes ?? Number.POSITIVE_INFINITY;
-      if (archive.byteLength > maxBytes) {
-        return Effect.fail(
-          new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Fixture exceeds limit') }),
-        );
+    const maxBytes = limits.maxBytes ?? Number.POSITIVE_INFINITY;
+    const visitFixture = (bytes: string | Uint8Array) => {
+      if (fixtureByteLength(bytes) > maxBytes) {
+        throw new Error('Fixture exceeds limit');
       }
-      try {
-        bytes = decompressHistoryArchive(archive, filePath, maxBytes);
-      } catch (cause) {
-        return Effect.fail(
-          new LocalHistoryError({
-            operation: cause instanceof HistoryArchiveError ? 'readLines.decompress' : 'readLines',
-            path: filePath,
-            cause,
-          }),
-        );
+      const content = decodeFixture(bytes);
+      let lines = 0;
+      let oversizedLines = 0;
+      for (const line of content.split(LINE_SEPARATOR)) {
+        // Mirrors the real reader: an oversized record is dropped and
+        // counted, never thrown.
+        if (Buffer.byteLength(line, 'utf8') > (limits.maxLineBytes ?? Number.POSITIVE_INFINITY)) {
+          oversizedLines++;
+          continue;
+        }
+        visit(line);
+        lines++;
       }
+      return { bytes: Buffer.byteLength(content, 'utf8'), lines, oversizedLines };
+    };
+    if (!filePath.endsWith('.zst')) {
+      return Effect.try({
+        try: () => visitFixture(stored),
+        catch: (cause) => new LocalHistoryError({ operation: 'readLines', path: filePath, cause }),
+      });
     }
-    return Effect.try({
-      try: () => {
-        if (fixtureByteLength(bytes) > (limits.maxBytes ?? Number.POSITIVE_INFINITY)) {
-          throw new Error('Fixture exceeds limit');
-        }
-        const content = decodeFixture(bytes);
-        let lines = 0;
-        let oversizedLines = 0;
-        for (const line of content.split(LINE_SEPARATOR)) {
-          // Mirrors the real reader: an oversized record is dropped and
-          // counted, never thrown.
-          if (Buffer.byteLength(line, 'utf8') > (limits.maxLineBytes ?? Number.POSITIVE_INFINITY)) {
-            oversizedLines++;
-            continue;
-          }
-          visit(line);
-          lines++;
-        }
-        return { bytes: Buffer.byteLength(content, 'utf8'), lines, oversizedLines };
+    // Mirrors the real reader: a `.zst` path is a zstd archive of the text
+    // decoded through the reader's own frame walk, streaming decoder and size
+    // checks, so a fixture fails exactly as a file would (and, like the real
+    // archive read, asynchronously): the limits apply to the compressed and
+    // the declared bytes, a malformed, truncated or corrupt archive is its own
+    // typed failure, and a budget breach is a plain read error.
+    const archive = typeof stored === 'string' ? Buffer.from(stored, 'utf8') : Buffer.from(stored);
+    if (archive.byteLength > maxBytes) {
+      return Effect.fail(
+        new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Fixture exceeds limit') }),
+      );
+    }
+    return Effect.tryPromise({
+      try: async (signal) => {
+        const chunks: Uint8Array[] = [];
+        await streamHistoryArchive(archive, filePath, maxBytes, (chunk) => chunks.push(chunk.slice()), signal);
+        return visitFixture(Buffer.concat(chunks));
       },
-      catch: (cause) => new LocalHistoryError({ operation: 'readLines', path: filePath, cause }),
+      catch: (cause) =>
+        new LocalHistoryError({
+          operation: cause instanceof HistoryArchiveError ? 'readLines.decompress' : 'readLines',
+          path: filePath,
+          cause,
+        }),
     });
   }
 

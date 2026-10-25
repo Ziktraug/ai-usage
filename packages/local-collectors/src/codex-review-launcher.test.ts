@@ -234,21 +234,20 @@ describe('native quota denials before generation', () => {
     expect(await launch.outcome).toMatchObject({ kind: 'finished' });
     expect((await f.requests()).filter((request) => request.method === 'turn/start')).toHaveLength(1);
   });
-  test.each([
-    'other-denied-update',
-    'selected-denied-update',
-    'other-credit-update',
-  ])('keeps native scope and credit guard on %s during the turn', async (mode) => {
-    const f = await fixture(mode);
-    const launch = await launchCodexReview(f.spec, {}, f.options);
-    const interrupted = mode !== 'other-denied-update';
-    expect(await launch.outcome).toMatchObject({
-      kind: interrupted ? 'failed' : 'finished',
-      stopConfirmed: interrupted,
-    });
-    expect((await f.requests()).filter((request) => request.method === 'turn/start')).toHaveLength(1);
-    expect((await f.requests()).filter((request) => request.method === 'turn/interrupt')).toHaveLength(
-      interrupted ? 1 : 0,
-    );
-  });
+  test.each(['other-denied-update', 'selected-denied-update', 'other-credit-update'])(
+    'keeps native scope and credit guard on %s during the turn',
+    async (mode) => {
+      const f = await fixture(mode);
+      const launch = await launchCodexReview(f.spec, {}, f.options);
+      const interrupted = mode !== 'other-denied-update';
+      expect(await launch.outcome).toMatchObject({
+        kind: interrupted ? 'failed' : 'finished',
+        stopConfirmed: interrupted,
+      });
+      expect((await f.requests()).filter((request) => request.method === 'turn/start')).toHaveLength(1);
+      expect((await f.requests()).filter((request) => request.method === 'turn/interrupt')).toHaveLength(
+        interrupted ? 1 : 0,
+      );
+    },
+  );
 });

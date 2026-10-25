@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { meta, page, panel, shell } from '@ai-usage/design-system/svelte';
+  import { meta, page, panel, panelStyle, shell } from '@ai-usage/design-system/svelte';
   import type { CollectionSourceGroup, SourceControlCommand } from '@ai-usage/report-core/source-control';
   import { onDestroy } from 'svelte';
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';
@@ -78,8 +78,8 @@
     gridTemplateColumns: 'minmax(0, 1fr)',
     gap: 0,
   });
-  const sourceCard = css({ display: 'grid', gap: '14px', minW: 0, p: { base: '18px', md: '22px 24px' } });
-  const publicationCard = css({ borderLeft: '2px solid token(colors.accent)', bg: 'accentTint' });
+  const sourceCard = css.raw({ display: 'grid', gap: '14px', minW: 0, p: { base: '18px', md: '22px 24px' } });
+  const publicationCard = css.raw({ borderLeft: '2px solid token(colors.accent)', bg: 'accentTint' });
   const statusLine = css({
     display: 'flex',
     flexWrap: 'wrap',
@@ -175,7 +175,7 @@
           <span><strong class={statusCount}>{fmtNum(healthy.length)}</strong> healthy sources</span>
           <span>Snapshot {fmtDate(snapshot.generatedAt)}</span>
         </section>
-        <section class={cx(panel, sourceCard, publicationCard)}>
+        <section class={css(panelStyle, sourceCard, publicationCard)}>
           <h2 class={groupTitle}>Report publishing</h2>
           <p class={meta} data-publication-status>{publicationStatus(snapshot.publication)}</p>
           <details data-publication-details>
@@ -205,7 +205,9 @@
                 <span class={axisLabel}>Last publish</span
                 ><span class={axisValue} data-publication-outcome={snapshot.publication.lastOutcome}
                   >{publicationOutcomeLabel(snapshot.publication)}
-                  {snapshot.publication.lastPublishedAt ? ` · ${fmtDate(snapshot.publication.lastPublishedAt)}` : ''}</span
+                  {snapshot.publication.lastPublishedAt
+                    ? ` · ${fmtDate(snapshot.publication.lastPublishedAt)}`
+                    : ''}</span
                 >
               </div>
               <div class={axis}>
@@ -228,7 +230,7 @@
         </section>
         <ReplicationStatus />
         {#if firstRun}
-          <section class={cx(panel, sourceCard)} data-first-run-guidance>
+          <section class={css(panelStyle, sourceCard)} data-first-run-guidance>
             <h2 class={groupTitle}>No local history detected yet</h2>
             <p class={meta}>
               ai-usage reads the session history that installed coding tools write on this machine. Use one of these

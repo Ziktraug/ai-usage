@@ -155,8 +155,7 @@ an otherwise complete invocation verdict. Adopting unmanaged evidence into the
 source repository remains future work.
 
 See [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md) for the
-invariants and `docs/skills-management-spec.md` for the per-harness coverage
-table.
+invariants and the per-harness coverage table.
 
 Bulk runtime reconciliation remains preview-first and is distinct from saving a
 source document. "Reconcile all…" plans the actions server-side without mutating

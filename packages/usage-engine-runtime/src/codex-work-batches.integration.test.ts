@@ -114,7 +114,7 @@ test('cancellation after a committed request batch prevents the next batch and a
       },
     } as AbortSignal;
     const exit = await Effect.runPromiseExit(source.run({ reportProgress: () => Effect.void, signal }));
-    expect(Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)).toBe(true);
+    expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     expect(countStored(dbPath)).toBe(10_000);
     const resumed = await Effect.runPromise(source.run({ reportProgress: () => Effect.void }));
     expect(resumed.changed).toBe(true);

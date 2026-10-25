@@ -219,8 +219,8 @@ test('project scope and exploration window reach the transport instead of being 
   const seen: unknown[] = [];
   const client = createWorkAttentionClient({
     work: {
-      attention: (input) => {
-        seen.push(input);
+      attention: (received) => {
+        seen.push(received);
         return Promise.resolve({ ok: true, data: dataset });
       },
     },

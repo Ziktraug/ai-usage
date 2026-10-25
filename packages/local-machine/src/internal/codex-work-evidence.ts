@@ -168,7 +168,7 @@ export const createCodexWorkObserver = () => {
         observation = { ...observation, rejectedRecords: observation.rejectedRecords + 1 };
         return;
       }
-      if (observation.requests.some((request) => request.callId === callId)) {
+      if (observation.requests.some((candidate) => candidate.callId === callId)) {
         return;
       }
       const requests = [

@@ -399,7 +399,7 @@ const acliReadFailure = (kind: BoundedProcessError['kind']): AcliRead => {
 const acli = (context: RunContext, args: readonly string[]): Effect.Effect<AcliRead> =>
   context.run({ ...context.base, args, command: 'acli', env: ACLI_ENVIRONMENT }).pipe(
     Effect.map((result): AcliRead => ({ exitCode: result.exitCode, kind: 'completed', stdout: result.stdout })),
-    Effect.catchAll((error) => Effect.succeed<AcliRead>(acliReadFailure(error.kind))),
+    Effect.catch((error) => Effect.succeed<AcliRead>(acliReadFailure(error.kind))),
   );
 
 interface Classification {

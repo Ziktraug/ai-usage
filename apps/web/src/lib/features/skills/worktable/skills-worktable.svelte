@@ -325,7 +325,17 @@
     cursor: 'not-allowed',
     opacity: 0.7,
   });
-  const selectedRow = css({ bg: 'accentTint', '& > th[scope="row"]': { bg: 'accentTint' } });
+  // The row of the skill open in the drawer has no state attribute for the design system's
+  // forced-colours ring to key on, and forced colours repaint its tint as Canvas, so it draws its own.
+  // The sticky name cell paints over the row's ring, so it carries one too.
+  const selectedRow = css({
+    bg: 'accentTint',
+    '& > th[scope="row"]': {
+      bg: 'accentTint',
+      _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
+    },
+    _highContrast: { outline: '2px solid Highlight', outlineOffset: '-2px' },
+  });
   const visuallyHidden = css({
     position: 'absolute',
     w: '1px',
@@ -350,7 +360,9 @@
   const stack = css({ display: 'grid', gap: '16px', minW: 0 });
 </script>
 
-{#snippet evidenceCells(_row: SkillsWorktableSkillRow)}
+{#snippet evidenceCells(
+  _row: SkillsWorktableSkillRow,
+)}
   {#each _row.cells as cell (cell.columnKey)}
     <td data-worktable-cell={cell.columnKey}>
       <span class={cx(cellStack, _row.enabled ? undefined : dimmed)}>
@@ -375,7 +387,9 @@
   {/each}
 {/snippet}
 
-{#snippet activityCellFor(_row: SkillsWorktableSkillRow)}
+{#snippet activityCellFor(
+  _row: SkillsWorktableSkillRow,
+)}
   <td class={activityCell} data-observation-recency={_row.lastSignalRecency}>
     {#if _row.lastObservedAt}
       <time datetime={_row.lastObservedAt} title={formatObservedAt(_row.lastObservedAt)}>{_row.lastSignalText}</time>
@@ -388,11 +402,13 @@
   </td>
 {/snippet}
 
-{#snippet skillNameCell(_row: SkillsWorktableSkillRow)}
+{#snippet skillNameCell(
+  _row: SkillsWorktableSkillRow,
+)}
   <th scope="row">
     <span class={cx(nameCell, _row.enabled ? undefined : dimmed)}>
       {#if _row.href}
-        <a class={nameLink} data-sveltekit-noscroll href={_row.href}>{_row.name}</a>
+        <a class={nameLink} data-ai-usage-preserve-scroll href={_row.href}>{_row.name}</a>
       {:else}
         <span class={nameText}>{_row.name}</span>
       {/if}
@@ -408,7 +424,7 @@
     {#each model.filters as entry (entry.id)}
       {@const provisional = entry.value.endsWith(provisionalSuffix)}
       <button
-        aria-label={`${entry.label} — ${entry.accessibleValue}`}
+        aria-label={`${entry.label} — ${entry.value}, ${entry.accessibleValue}`}
         aria-pressed={filter === entry.id ? 'true' : 'false'}
         class={chip}
         data-worktable-filter={entry.id}

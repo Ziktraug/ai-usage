@@ -2,10 +2,9 @@
 
 `ai-usage` turns local AI coding-tool history (Claude Code, Codex, OpenCode,
 Cursor) into a usage report: a Bun workspace with a SvelteKit web app, a CLI,
-and a background usage engine. It is local-first: the default composition is
-single-operator with no remote service and no provider credentials; the
-connected platform (`apps/server`, PostgreSQL 17, GitHub login, outbound Device
-replication) is an explicit opt-in that local mode never contacts.
+and a background usage engine. It is local-only and single-operator: there is
+no remote service and no provider credentials. The connected platform was
+removed (plan 120); its dormant outbound replication client goes in phase B.
 
 ## Read the references relevant to the change
 
@@ -22,9 +21,6 @@ project documentation for a small edit or repeat context already available.
 - Finding other documentation: consult `docs/README.md` as needed.
 - Executing or resuming a plan: consult `plans/README.md`, the target plan,
   and its handoff. Plans are historical execution records, not current docs.
-- Executing platform plans 100–110: first read
-  `plans/099-ai-operations-memory-platform-program.md` and the specific child
-  plan for dependencies, offline guarantees, and STOP conditions.
 
 ## Completion and verification
 
@@ -58,12 +54,6 @@ and external systems; reuse authorization already granted for the current scope.
 - `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
 - `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
 - `bun run test:e2e` — browser regressions (run the relevant E2E variant)
-- `bun run test:postgres` — PostgreSQL 17 suites; needs `nix develop` (CI runs
-  them flake-locked). Not part of `verify`.
-- `bun run test:local-platform` — proves local mode never consults the
-  PostgreSQL or authentication factories. CI-only, not part of `verify`.
-- `bun run dev:platform` — disposable PostgreSQL + connected server
-  (`docs/platform-server-operations.md`); `dev` stays PostgreSQL-free
 - `bun run mcp` / `bun run mcp:register:codex` — local stdio Memory MCP server
   and its Codex registration
 - `bun x ultracite fix` — format and autofix before committing (Biome)

@@ -136,7 +136,7 @@ const collectFromDb = (
     Effect.gen(function* () {
       const exists = yield* withPerfSpan(
         'aiUsage.collect.opencode.db.exists',
-        storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))),
+        storage.exists(dbPath).pipe(Effect.catch(() => Effect.succeed(false))),
         (value) => ({ db: source, exists: value }),
       );
       if (!exists) {
@@ -253,11 +253,7 @@ const collectFromDb = (
                     continue;
                   }
                   tokenRows++;
-                  let current = agg.get(row.session_id);
-                  if (!current) {
-                    current = { facts: [] };
-                    agg.set(row.session_id, current);
-                  }
+                  const current = agg.getOrInsertComputed(row.session_id, () => ({ facts: [] }));
                   current.facts.push(decoded.value);
                 }
                 return { assistantRows, tokenRows, userRows };
@@ -297,7 +293,7 @@ const collectFromDb = (
       const sessions = yield* withPerfSpan(
         'aiUsage.collect.opencode.mapSessions',
         Effect.sync(() => {
-          const sessions: CollectedSession[] = [];
+          const mappedSessions: CollectedSession[] = [];
           const vcsByDirectory = new Map<string, SessionVcsContext | undefined>();
           const vcsForDirectory = (directory: string): SessionVcsContext | undefined => {
             if (vcsByDirectory.has(directory)) {
@@ -332,7 +328,7 @@ const collectFromDb = (
             const title = classifyOpenCodeTitle(sessionMeta?.title ?? null, sid);
             const sourcePath = sessionMeta?.dir ?? null;
             const vcs = vcsForDirectory(sourcePath ?? '');
-            sessions.push({
+            mappedSessions.push({
               source: {
                 harnessKey: 'opencode',
                 sourceSessionId: sid,
@@ -371,7 +367,7 @@ const collectFromDb = (
               linesDeleted: sessionMeta?.del ?? null,
             });
           }
-          return sessions.map(sessionToUsageRow);
+          return mappedSessions.map(sessionToUsageRow);
         }),
         (rows) => ({ db: source, rows: rows.length, sessions: rows.length }),
       );
@@ -488,7 +484,7 @@ export const collectOpenCodeResult: Effect.Effect<
     const result = yield* collectFromDb(dbPath, storage, 'live', cache).pipe(
       Effect.match({
         onFailure: (error) => ({ _tag: 'failure' as const, error }),
-        onSuccess: (result) => ({ _tag: 'success' as const, result }),
+        onSuccess: (collected) => ({ _tag: 'success' as const, result: collected }),
       }),
     );
     if (result._tag === 'failure') {
@@ -509,7 +505,7 @@ export const collectOpenCodeResult: Effect.Effect<
     const result = yield* collectFromDb(dbPath, storage, 'stable', cache).pipe(
       Effect.match({
         onFailure: (error) => ({ _tag: 'failure' as const, error }),
-        onSuccess: (result) => ({ _tag: 'success' as const, result }),
+        onSuccess: (collected) => ({ _tag: 'success' as const, result: collected }),
       }),
     );
     if (result._tag === 'failure') {

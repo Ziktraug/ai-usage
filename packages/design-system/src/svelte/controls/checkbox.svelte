@@ -34,6 +34,14 @@
     fontSize: '10px',
     lineHeight: 1,
     '&[data-state=checked]': { bg: 'accent', borderColor: 'accent' },
+    // Focus lands on the visually hidden native input, so the box it mirrors draws the ring. Ark
+    // sets data-focus-visible here for keyboard focus only, so a pointer click draws none. Forced
+    // colours repaint the accent, so the ring takes the system Highlight there.
+    _focusVisible: {
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
+      _highContrast: { outline: '2px solid Highlight' },
+    },
   });
 
   const columnToggleText = css({

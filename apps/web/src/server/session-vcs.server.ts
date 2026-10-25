@@ -32,18 +32,18 @@ interface ResolverInput {
 }
 
 export interface SessionVcsProviderResolver {
-  resolve(input: ResolverInput, options?: { readonly signal?: AbortSignal }): Promise<SessionVcsResolveResponse>;
+  resolve: (input: ResolverInput, options?: { readonly signal?: AbortSignal }) => Promise<SessionVcsResolveResponse>;
 }
 
 export interface SessionVcsServerDependencies {
-  readMachine(): Promise<{ id: string }>;
-  resolveAnchor(request: SessionVcsResolveRequest): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
+  readMachine: () => Promise<{ id: string }>;
+  resolveAnchor: (request: SessionVcsResolveRequest) => Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
   resolver: SessionVcsProviderResolver;
 }
 
 interface GhResolverDependencies {
-  findExecutable(command: string): Promise<string | null>;
-  run(options: BoundedStdoutProcessOptions): Promise<{ stdout: string }>;
+  findExecutable: (command: string) => Promise<string | null>;
+  run: (options: BoundedStdoutProcessOptions) => Promise<{ stdout: string }>;
 }
 
 const findExecutable = async (command: string): Promise<string | null> => {

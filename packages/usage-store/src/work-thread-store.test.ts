@@ -341,11 +341,11 @@ const evidenceFixture = async () => {
           exec: (sql) => reader.exec(sql),
           query: (sql) => {
             queries++;
-            return reader.query(sql);
+            return reader.query(sql) as unknown as ReturnType<Parameters<typeof use>[0]['query']>;
           },
         }).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
       }),
-    withUsageStoreWriter: (_path, use) => use(db),
+    withUsageStoreWriter: (_path, use) => use(db as unknown as Parameters<typeof use>[0]),
   });
   let ordinal = 0;
   const addSession = (
@@ -543,7 +543,7 @@ describe('work thread store', () => {
         return {
           threadId,
           machineId: MACHINE,
-          links: Array.from({ length: 32 }, (_, index) => {
+          links: Array.from({ length: 32 }, (_session, index) => {
             const id = `thread-${thread}-session-${index}`;
             addSession(id, id);
             return evidenceLink(threadId, id);
@@ -588,21 +588,21 @@ describe('work thread store', () => {
       expect(await run(store.queryWorkThreadSessionEvidence({ dbPath, threads: [] }))).toEqual([]);
       const tooMany = Array.from({ length: 65 }, (_, index) => evidenceLink(first.threadId, `extra-${index}`));
       const invalid = await Effect.runPromise(
-        Effect.either(store.queryWorkThreadSessionEvidence({ dbPath, threads: [{ ...first, links: tooMany }] })),
+        Effect.result(store.queryWorkThreadSessionEvidence({ dbPath, threads: [{ ...first, links: tooMany }] })),
       );
-      expect(invalid._tag).toBe('Left');
-      if (invalid._tag === 'Left') {
-        expect(invalid.left.reason).toBe('invalid-input');
+      expect(invalid._tag).toBe('Failure');
+      if (invalid._tag === 'Failure') {
+        expect(invalid.failure.reason).toBe('invalid-input');
       }
       const crossThread = await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           store.queryWorkThreadSessionEvidence({
             dbPath,
             threads: [{ ...first, links: [evidenceLink(emptyId, 'thread-0-session-0')] }],
           }),
         ),
       );
-      expect(crossThread._tag).toBe('Left');
+      expect(crossThread._tag).toBe('Failure');
     } finally {
       db.close();
     }
@@ -1134,44 +1134,44 @@ describe('work thread store', () => {
     ).toEqual({ created: 0, existing: 1 });
   });
 
-  test.each([
-    seed(),
-    seed({ origin: 'jira-issue', linkKind: 'jira-issue', originKey: 'jira:default/FIX-42' }),
-  ])('preserves detached $linkKind seed suppression while allowing an explicit relink', async (candidate) => {
-    const dbPath = await createStore();
-    const threadId = await create(dbPath, {
-      links: [{ kind: candidate.linkKind, key: candidate.originKey }],
-    });
-    const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
-    if (!link) {
-      throw new Error('Expected operator link');
-    }
-    await command(dbPath, { op: 'detach-link', commandId: randomUUID(), threadId, linkId: link.linkId });
-    const before = threadSnapshot(dbPath);
-    const input = { dbPath, machineId: MACHINE, now: LATER, seeds: [candidate] };
-    expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
-    expect(threadSnapshot(dbPath)).toEqual(before);
-    expect(
-      await command(
-        dbPath,
-        { op: 'link', commandId: randomUUID(), threadId, kind: candidate.linkKind, key: candidate.originKey },
-        LATER,
-      ),
-    ).toMatchObject({ applied: true, ok: true, threadId });
-    const links = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
-    expect(links).toHaveLength(2);
-    expect(links.find((item) => item.linkId === link.linkId)?.detachedAt).toBe(NOW);
-    expect(links.filter((item) => item.detachedAt === null)).toMatchObject([
-      { kind: candidate.linkKind, key: candidate.originKey, provenance: 'user', createdAt: LATER },
-    ]);
-    expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
-    expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
-    expect(await run(queryWorkThreadEvents({ dbPath, threadId }))).toMatchObject([
-      { kind: 'created' },
-      { kind: 'link-detached' },
-      { kind: 'link-added' },
-    ]);
-  });
+  test.each([seed(), seed({ origin: 'jira-issue', linkKind: 'jira-issue', originKey: 'jira:default/FIX-42' })])(
+    'preserves detached $linkKind seed suppression while allowing an explicit relink',
+    async (candidate) => {
+      const dbPath = await createStore();
+      const threadId = await create(dbPath, {
+        links: [{ kind: candidate.linkKind, key: candidate.originKey }],
+      });
+      const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+      if (!link) {
+        throw new Error('Expected operator link');
+      }
+      await command(dbPath, { op: 'detach-link', commandId: randomUUID(), threadId, linkId: link.linkId });
+      const before = threadSnapshot(dbPath);
+      const input = { dbPath, machineId: MACHINE, now: LATER, seeds: [candidate] };
+      expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
+      expect(threadSnapshot(dbPath)).toEqual(before);
+      expect(
+        await command(
+          dbPath,
+          { op: 'link', commandId: randomUUID(), threadId, kind: candidate.linkKind, key: candidate.originKey },
+          LATER,
+        ),
+      ).toMatchObject({ applied: true, ok: true, threadId });
+      const links = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+      expect(links).toHaveLength(2);
+      expect(links.find((item) => item.linkId === link.linkId)?.detachedAt).toBe(NOW);
+      expect(links.filter((item) => item.detachedAt === null)).toMatchObject([
+        { kind: candidate.linkKind, key: candidate.originKey, provenance: 'user', createdAt: LATER },
+      ]);
+      expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
+      expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
+      expect(await run(queryWorkThreadEvents({ dbPath, threadId }))).toMatchObject([
+        { kind: 'created' },
+        { kind: 'link-detached' },
+        { kind: 'link-added' },
+      ]);
+    },
+  );
 
   test('canonicalizes PR and branch authorities while preserving branch ref case and legacy deduplication', async () => {
     const dbPath = await createStore();
@@ -1210,11 +1210,11 @@ describe('work thread store', () => {
     for (const links of ['bad', [null], [{ kind: 'pull-request', key: 42 }]]) {
       const malformed: WorkThreadCommand = JSON.parse(JSON.stringify({ ...createCommand(), links }));
       const result = await Effect.runPromise(
-        Effect.either(applyWorkThreadCommand({ dbPath, machineId: MACHINE, now: NOW, command: malformed })),
+        Effect.result(applyWorkThreadCommand({ dbPath, machineId: MACHINE, now: NOW, command: malformed })),
       );
-      expect(result._tag).toBe('Left');
-      if (result._tag === 'Left') {
-        expect(result.left.reason).toBe('invalid-input');
+      expect(result._tag).toBe('Failure');
+      if (result._tag === 'Failure') {
+        expect(result.failure.reason).toBe('invalid-input');
       }
     }
     const omitted: WorkThreadCommand = JSON.parse(JSON.stringify({ ...createCommand(), links: undefined }));
@@ -1225,7 +1225,7 @@ describe('work thread store', () => {
   test('seed validation rolls back the complete batch and canonicalizes discovered instants', async () => {
     const dbPath = await createStore();
     const failed = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         seedWorkThreads({
           dbPath,
           machineId: MACHINE,
@@ -1234,7 +1234,7 @@ describe('work thread store', () => {
         }),
       ),
     );
-    expect(failed._tag).toBe('Left');
+    expect(failed._tag).toBe('Failure');
     expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 0 });
     await run(
       seedWorkThreads({
@@ -1294,14 +1294,14 @@ describe('work thread store', () => {
     );
     expect(third.nextCursor).toBeNull();
     const invalid = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryWorkThreadsPage({
           dbPath,
           query: { cursor: first.nextCursor, limit: 1, project: 'other', search: null, tab: 'open' },
         }),
       ),
     );
-    expect(invalid._tag).toBe('Left');
+    expect(invalid._tag).toBe('Failure');
     const id = ids[0];
     if (!id) {
       throw new Error('Expected thread');
@@ -1411,10 +1411,10 @@ describe('work thread store', () => {
     const db = new Database(dbPath);
     db.query('UPDATE work_threads SET title = ? WHERE thread_id = ?').run('', threadId);
     db.close();
-    const result = await Effect.runPromise(Effect.either(queryWorkThreadById({ dbPath, threadId })));
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left.reason).toBe('corrupt');
+    const result = await Effect.runPromise(Effect.result(queryWorkThreadById({ dbPath, threadId })));
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure.reason).toBe('corrupt');
     }
   });
 
@@ -1425,10 +1425,10 @@ describe('work thread store', () => {
       'DROP TABLE work_thread_commands; DROP TABLE work_thread_events; DROP TABLE work_thread_links; DROP TABLE work_threads',
     );
     db.close();
-    const result = await Effect.runPromise(Effect.either(countWorkThreads({ dbPath })));
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left.reason).toBe('schema-too-old');
+    const result = await Effect.runPromise(Effect.result(countWorkThreads({ dbPath })));
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure.reason).toBe('schema-too-old');
     }
     const reopened = new Database(dbPath, { readonly: true });
     expect(reopened.query("SELECT name FROM sqlite_schema WHERE name = 'work_threads'").get()).toBeNull();
@@ -1500,71 +1500,71 @@ const captureWaits = (
 ) => run(queryWorkThreadWaitCandidates({ dbPath, machineId: MACHINE, kind, linkKeys }));
 
 describe('work thread waits', () => {
-  test.each([
-    'APPROVED',
-    'CHANGES_REQUESTED',
-  ])('satisfies a proven %s review once and records its source time', async (reviewDecision) => {
-    const dbPath = await createStore();
-    const threadId = await createWaiting(dbPath, 'pull-request-review', 'github.com/Fixture/Repo#42');
-    await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest()] }));
-    const { candidates } = await captureWaits(dbPath);
-    expect(candidates).toHaveLength(1);
-    const generations = await run(queryUsageStoreGenerations({ dbPath }));
-    const observation = waitPullRequest({ reviewDecision, observedAt: LATER, updatedAt: waitAt(40) });
-    // Unstored provider payloads are not durable evidence.
-    expect(
-      await run(
-        applyWorkThreadWaitObservations({
-          dbPath,
-          machineId: MACHINE,
-          now: LATER,
-          candidates,
-          pullRequests: [observation],
-        }),
-      ),
-    ).toMatchObject({ satisfied: 0 });
-    await run(importPullRequestObservations({ dbPath, observations: [observation] }));
-    expect(
-      await run(
-        applyWorkThreadWaitObservations({
-          dbPath,
-          machineId: MACHINE,
-          now: LATER,
-          candidates,
-          pullRequests: [observation],
-        }),
-      ),
-    ).toEqual({ satisfied: 1, unchanged: 0, unproven: 0 });
-    expect(await run(queryWorkThreadById({ dbPath, threadId }))).toMatchObject({
-      followState: 'following',
-      followRevision: 3,
-      waitingOn: null,
-      waitingFor: null,
-    });
-    const events = await run(queryWorkThreadEvents({ dbPath, threadId }));
-    expect(events.filter(({ kind }) => kind === 'wait-satisfied')).toMatchObject([
-      {
-        fromState: 'waiting',
-        toState: 'following',
-        linkKey: PR,
-        reason: `Pull request review ${reviewDecision}; source updated at ${waitAt(40)}; previous REVIEW_REQUIRED observed at ${waitAt(20)}`,
-      },
-    ]);
-    expect(
-      await run(
-        applyWorkThreadWaitObservations({
-          dbPath,
-          machineId: MACHINE,
-          now: waitAt(90),
-          candidates,
-          pullRequests: [observation],
-        }),
-      ),
-    ).toEqual({ satisfied: 0, unchanged: 1, unproven: 0 });
-    expect((await captureWaits(dbPath)).candidates).toHaveLength(0);
-    expect(await run(queryWorkThreadEvents({ dbPath, threadId }))).toEqual(events);
-    expect(await run(queryUsageStoreGenerations({ dbPath }))).toEqual(generations);
-  });
+  test.each(['APPROVED', 'CHANGES_REQUESTED'])(
+    'satisfies a proven %s review once and records its source time',
+    async (reviewDecision) => {
+      const dbPath = await createStore();
+      const threadId = await createWaiting(dbPath, 'pull-request-review', 'github.com/Fixture/Repo#42');
+      await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest()] }));
+      const { candidates } = await captureWaits(dbPath);
+      expect(candidates).toHaveLength(1);
+      const generations = await run(queryUsageStoreGenerations({ dbPath }));
+      const observation = waitPullRequest({ reviewDecision, observedAt: LATER, updatedAt: waitAt(40) });
+      // Unstored provider payloads are not durable evidence.
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: LATER,
+            candidates,
+            pullRequests: [observation],
+          }),
+        ),
+      ).toMatchObject({ satisfied: 0 });
+      await run(importPullRequestObservations({ dbPath, observations: [observation] }));
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: LATER,
+            candidates,
+            pullRequests: [observation],
+          }),
+        ),
+      ).toEqual({ satisfied: 1, unchanged: 0, unproven: 0 });
+      expect(await run(queryWorkThreadById({ dbPath, threadId }))).toMatchObject({
+        followState: 'following',
+        followRevision: 3,
+        waitingOn: null,
+        waitingFor: null,
+      });
+      const events = await run(queryWorkThreadEvents({ dbPath, threadId }));
+      expect(events.filter(({ kind }) => kind === 'wait-satisfied')).toMatchObject([
+        {
+          fromState: 'waiting',
+          toState: 'following',
+          linkKey: PR,
+          reason: `Pull request review ${reviewDecision}; source updated at ${waitAt(40)}; previous REVIEW_REQUIRED observed at ${waitAt(20)}`,
+        },
+      ]);
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: waitAt(90),
+            candidates,
+            pullRequests: [observation],
+          }),
+        ),
+      ).toEqual({ satisfied: 0, unchanged: 1, unproven: 0 });
+      expect((await captureWaits(dbPath)).candidates).toHaveLength(0);
+      expect(await run(queryWorkThreadEvents({ dbPath, threadId }))).toEqual(events);
+      expect(await run(queryUsageStoreGenerations({ dbPath }))).toEqual(generations);
+    },
+  );
 
   test('satisfies a merge by its explicit date without a review baseline', async () => {
     const dbPath = await createStore();
@@ -1588,42 +1588,94 @@ describe('work thread waits', () => {
     );
   });
 
-  test.each([
-    'following',
-    'done',
-    'waiting',
-    'relinked',
-  ] as const)('does not overwrite an operator change to %s', async (move) => {
-    const dbPath = await createStore();
-    const threadId = await createWaiting(dbPath);
-    await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest()] }));
-    const { candidates } = await captureWaits(dbPath);
-    if (move === 'relinked') {
-      const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
-      await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: link!.linkId }, waitAt(25));
-      await command(
-        dbPath,
-        { commandId: randomUUID(), op: 'link', threadId, key: PR, kind: 'pull-request' },
-        waitAt(26),
-      );
-    } else {
-      await command(dbPath, follow(threadId, 2, move === 'waiting' ? 'following' : move), waitAt(25));
-      if (move === 'waiting') {
+  test.each(['following', 'done', 'waiting', 'relinked'] as const)(
+    'does not overwrite an operator change to %s',
+    async (move) => {
+      const dbPath = await createStore();
+      const threadId = await createWaiting(dbPath);
+      await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest()] }));
+      const { candidates } = await captureWaits(dbPath);
+      if (move === 'relinked') {
+        const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
         await command(
           dbPath,
-          follow(threadId, 3, 'waiting', {
-            waitingFor: 'New wait',
-            waitingOn: { kind: 'pull-request-review', linkKey: PR, since: waitAt(10) },
-          }),
+          { commandId: randomUUID(), op: 'detach-link', threadId, linkId: link!.linkId },
+          waitAt(25),
+        );
+        await command(
+          dbPath,
+          { commandId: randomUUID(), op: 'link', threadId, key: PR, kind: 'pull-request' },
           waitAt(26),
         );
+      } else {
+        await command(dbPath, follow(threadId, 2, move === 'waiting' ? 'following' : move), waitAt(25));
+        if (move === 'waiting') {
+          await command(
+            dbPath,
+            follow(threadId, 3, 'waiting', {
+              waitingFor: 'New wait',
+              waitingOn: { kind: 'pull-request-review', linkKey: PR, since: waitAt(10) },
+            }),
+            waitAt(26),
+          );
+        }
       }
-    }
-    const before = threadSnapshot(dbPath);
-    const observation = waitPullRequest({ reviewDecision: 'APPROVED', observedAt: LATER, updatedAt: waitAt(40) });
-    await run(importPullRequestObservations({ dbPath, observations: [observation] }));
-    expect(
-      await run(
+      const before = threadSnapshot(dbPath);
+      const observation = waitPullRequest({ reviewDecision: 'APPROVED', observedAt: LATER, updatedAt: waitAt(40) });
+      await run(importPullRequestObservations({ dbPath, observations: [observation] }));
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: LATER,
+            candidates,
+            pullRequests: [observation],
+          }),
+        ),
+      ).toMatchObject({ satisfied: 0 });
+      expect(threadSnapshot(dbPath)).toEqual(before);
+      if (move === 'done') {
+        expect((await captureWaits(dbPath)).candidates).toHaveLength(0);
+      }
+    },
+  );
+
+  test.each(['older', 'equal', 'comment', 'ci', 'agent-review', 'future', 'old-baseline', 'no-baseline'] as const)(
+    'leaves %s review evidence waiting',
+    async (scenario) => {
+      const dbPath = await createStore();
+      const threadId = await createWaiting(dbPath);
+      if (scenario !== 'no-baseline') {
+        await run(
+          importPullRequestObservations({
+            dbPath,
+            observations: [
+              waitPullRequest({
+                reviewDecision: scenario === 'comment' ? 'APPROVED' : 'REVIEW_REQUIRED',
+                observedAt: scenario === 'old-baseline' ? waitAt(5) : waitAt(20),
+                updatedAt: scenario === 'old-baseline' ? waitAt(4) : waitAt(15),
+              }),
+            ],
+          }),
+        );
+      }
+      const { candidates } = await captureWaits(dbPath);
+      let updatedAt = waitAt(40);
+      if (scenario === 'older') {
+        updatedAt = waitAt(9);
+      }
+      if (scenario === 'equal') {
+        updatedAt = waitAt(10);
+      }
+      const observation = waitPullRequest({
+        observedAt: scenario === 'future' ? waitAt(90) : LATER,
+        updatedAt,
+        reviewDecision: scenario === 'ci' || scenario === 'agent-review' ? 'REVIEW_REQUIRED' : 'APPROVED',
+        checksRollup: 'success',
+      });
+      await run(importPullRequestObservations({ dbPath, observations: [observation] }));
+      const result = await run(
         applyWorkThreadWaitObservations({
           dbPath,
           machineId: MACHINE,
@@ -1631,73 +1683,17 @@ describe('work thread waits', () => {
           candidates,
           pullRequests: [observation],
         }),
-      ),
-    ).toMatchObject({ satisfied: 0 });
-    expect(threadSnapshot(dbPath)).toEqual(before);
-    if (move === 'done') {
-      expect((await captureWaits(dbPath)).candidates).toHaveLength(0);
-    }
-  });
-
-  test.each([
-    'older',
-    'equal',
-    'comment',
-    'ci',
-    'agent-review',
-    'future',
-    'old-baseline',
-    'no-baseline',
-  ] as const)('leaves %s review evidence waiting', async (scenario) => {
-    const dbPath = await createStore();
-    const threadId = await createWaiting(dbPath);
-    if (scenario !== 'no-baseline') {
-      await run(
-        importPullRequestObservations({
-          dbPath,
-          observations: [
-            waitPullRequest({
-              reviewDecision: scenario === 'comment' ? 'APPROVED' : 'REVIEW_REQUIRED',
-              observedAt: scenario === 'old-baseline' ? waitAt(5) : waitAt(20),
-              updatedAt: scenario === 'old-baseline' ? waitAt(4) : waitAt(15),
-            }),
-          ],
-        }),
       );
-    }
-    const { candidates } = await captureWaits(dbPath);
-    let updatedAt = waitAt(40);
-    if (scenario === 'older') {
-      updatedAt = waitAt(9);
-    }
-    if (scenario === 'equal') {
-      updatedAt = waitAt(10);
-    }
-    const observation = waitPullRequest({
-      observedAt: scenario === 'future' ? waitAt(90) : LATER,
-      updatedAt,
-      reviewDecision: scenario === 'ci' || scenario === 'agent-review' ? 'REVIEW_REQUIRED' : 'APPROVED',
-      checksRollup: 'success',
-    });
-    await run(importPullRequestObservations({ dbPath, observations: [observation] }));
-    const result = await run(
-      applyWorkThreadWaitObservations({
-        dbPath,
-        machineId: MACHINE,
-        now: LATER,
-        candidates,
-        pullRequests: [observation],
-      }),
-    );
-    expect(result.satisfied).toBe(0);
-    expect(result.unproven).toBe(
-      scenario === 'old-baseline' || scenario === 'no-baseline' || scenario === 'comment' ? 1 : 0,
-    );
-    expect((await run(queryWorkThreadById({ dbPath, threadId })))?.followState).toBe('waiting');
-    expect((await run(queryWorkThreadEvents({ dbPath, threadId }))).some(({ kind }) => kind === 'wait-satisfied')).toBe(
-      false,
-    );
-  });
+      expect(result.satisfied).toBe(0);
+      expect(result.unproven).toBe(
+        scenario === 'old-baseline' || scenario === 'no-baseline' || scenario === 'comment' ? 1 : 0,
+      );
+      expect((await run(queryWorkThreadById({ dbPath, threadId })))?.followState).toBe('waiting');
+      expect(
+        (await run(queryWorkThreadEvents({ dbPath, threadId }))).some(({ kind }) => kind === 'wait-satisfied'),
+      ).toBe(false);
+    },
+  );
 
   test('uses Jira status transitions proved after the wait, never just a newer update or another site', async () => {
     const dbPath = await createStore();
@@ -1744,147 +1740,156 @@ describe('work thread waits', () => {
     );
   });
 
-  test.each([
-    true,
-    false,
-  ])('leaves Jira without a usable baseline waiting (older baseline: %s)', async (oldBaseline) => {
-    const dbPath = await createStore();
-    const threadId = await createWaiting(dbPath, 'jira-update', 'jira:default/ABC-42');
-    if (oldBaseline) {
-      await run(
-        importJiraIssueObservations({
-          dbPath,
-          observations: [waitJira({ observedAt: waitAt(5), updatedAt: waitAt(4) })],
-        }),
-      );
-    }
-    const { candidates } = await captureWaits(dbPath, 'jira-update', ['jira:default/ABC-42']);
-    const observation = waitJira({ observedAt: LATER, updatedAt: waitAt(40), status: 'Done', statusCategory: 'done' });
-    await run(importJiraIssueObservations({ dbPath, observations: [observation] }));
-    expect(
-      await run(
-        applyWorkThreadWaitObservations({
-          dbPath,
-          machineId: MACHINE,
-          now: LATER,
-          candidates,
-          jiraIssues: [observation],
-        }),
-      ),
-    ).toEqual({ satisfied: 0, unchanged: 1, unproven: 1 });
-    expect((await run(queryWorkThreadById({ dbPath, threadId })))?.followState).toBe('waiting');
-  });
+  test.each([true, false])(
+    'leaves Jira without a usable baseline waiting (older baseline: %s)',
+    async (oldBaseline) => {
+      const dbPath = await createStore();
+      const threadId = await createWaiting(dbPath, 'jira-update', 'jira:default/ABC-42');
+      if (oldBaseline) {
+        await run(
+          importJiraIssueObservations({
+            dbPath,
+            observations: [waitJira({ observedAt: waitAt(5), updatedAt: waitAt(4) })],
+          }),
+        );
+      }
+      const { candidates } = await captureWaits(dbPath, 'jira-update', ['jira:default/ABC-42']);
+      const observation = waitJira({
+        observedAt: LATER,
+        updatedAt: waitAt(40),
+        status: 'Done',
+        statusCategory: 'done',
+      });
+      await run(importJiraIssueObservations({ dbPath, observations: [observation] }));
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: LATER,
+            candidates,
+            jiraIssues: [observation],
+          }),
+        ),
+      ).toEqual({ satisfied: 0, unchanged: 1, unproven: 1 });
+      expect((await run(queryWorkThreadById({ dbPath, threadId })))?.followState).toBe('waiting');
+    },
+  );
 });
 
 describe('work thread wait recovery', () => {
-  test.each([
-    'review',
-    'merge',
-    'jira',
-  ] as const)('accepts a %s change during a provider read, before apply time', async (kind) => {
-    const dbPath = await createStore();
-    const jira = kind === 'jira';
-    const threadId = await createWaiting(
-      dbPath,
-      jira ? 'jira-update' : 'pull-request-review',
-      jira ? 'jira:default/ABC-42' : PR,
-    );
-    if (jira) {
-      await run(importJiraIssueObservations({ dbPath, observations: [waitJira()] }));
-    } else {
-      await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest()] }));
-    }
-    const { candidates } = await captureWaits(dbPath, jira ? 'jira-update' : 'pull-request-review', [
-      jira ? 'jira:default/ABC-42' : PR,
-    ]);
-    const pullRequests = jira
-      ? []
-      : [
-          waitPullRequest({
-            observedAt: waitAt(30),
-            updatedAt: waitAt(31),
-            reviewDecision: 'APPROVED',
-            state: kind === 'merge' ? 'MERGED' : 'OPEN',
-            mergedAt: kind === 'merge' ? waitAt(31) : null,
+  test.each(['review', 'merge', 'jira'] as const)(
+    'accepts a %s change during a provider read, before apply time',
+    async (kind) => {
+      const dbPath = await createStore();
+      const jira = kind === 'jira';
+      const threadId = await createWaiting(
+        dbPath,
+        jira ? 'jira-update' : 'pull-request-review',
+        jira ? 'jira:default/ABC-42' : PR,
+      );
+      if (jira) {
+        await run(importJiraIssueObservations({ dbPath, observations: [waitJira()] }));
+      } else {
+        await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest()] }));
+      }
+      const { candidates } = await captureWaits(dbPath, jira ? 'jira-update' : 'pull-request-review', [
+        jira ? 'jira:default/ABC-42' : PR,
+      ]);
+      const pullRequests = jira
+        ? []
+        : [
+            waitPullRequest({
+              observedAt: waitAt(30),
+              updatedAt: waitAt(31),
+              reviewDecision: 'APPROVED',
+              state: kind === 'merge' ? 'MERGED' : 'OPEN',
+              mergedAt: kind === 'merge' ? waitAt(31) : null,
+            }),
+          ];
+      const jiraIssues = jira
+        ? [waitJira({ observedAt: waitAt(30), updatedAt: waitAt(31), status: 'Done', statusCategory: 'done' })]
+        : [];
+      await run(importPullRequestObservations({ dbPath, observations: pullRequests }));
+      await run(importJiraIssueObservations({ dbPath, observations: jiraIssues }));
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: waitAt(32),
+            candidates,
+            pullRequests,
+            jiraIssues,
           }),
-        ];
-    const jiraIssues = jira
-      ? [waitJira({ observedAt: waitAt(30), updatedAt: waitAt(31), status: 'Done', statusCategory: 'done' })]
-      : [];
-    await run(importPullRequestObservations({ dbPath, observations: pullRequests }));
-    await run(importJiraIssueObservations({ dbPath, observations: jiraIssues }));
-    expect(
-      await run(
-        applyWorkThreadWaitObservations({
-          dbPath,
-          machineId: MACHINE,
-          now: waitAt(32),
-          candidates,
-          pullRequests,
-          jiraIssues,
-        }),
-      ),
-    ).toMatchObject({ satisfied: 1 });
-    expect((await run(queryWorkThreadById({ dbPath, threadId })))?.followState).toBe('following');
-    expect((await run(queryWorkThreadEvents({ dbPath, threadId }))).at(-1)?.reason).toContain(waitAt(31));
-  });
+        ),
+      ).toMatchObject({ satisfied: 1 });
+      expect((await run(queryWorkThreadById({ dbPath, threadId })))?.followState).toBe('following');
+      expect((await run(queryWorkThreadEvents({ dbPath, threadId }))).at(-1)?.reason).toContain(waitAt(31));
+    },
+  );
 
-  test.each([
-    'review',
-    'jira',
-  ] as const)('recovers a stored %s transition after interrupted apply without duplicating its event', async (kind) => {
-    const dbPath = await createStore();
-    const jira = kind === 'jira';
-    const threadId = await createWaiting(
-      dbPath,
-      jira ? 'jira-update' : 'pull-request-review',
-      jira ? 'jira:default/ABC-42' : PR,
-    );
-    const approved = waitPullRequest({ observedAt: waitAt(30), updatedAt: waitAt(25), reviewDecision: 'APPROVED' });
-    const changed = waitJira({ observedAt: waitAt(30), updatedAt: waitAt(25), status: 'Done', statusCategory: 'done' });
-    if (jira) {
-      await run(importJiraIssueObservations({ dbPath, observations: [waitJira(), changed] }));
-    } else {
-      await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest(), approved] }));
-    }
-    // A new capture after a restart still includes the successful baseline and transition.
-    const { candidates } = await captureWaits(dbPath, jira ? 'jira-update' : 'pull-request-review', [
-      jira ? 'jira:default/ABC-42' : PR,
-    ]);
-    const pullRequests = jira ? [] : [{ ...approved, observedAt: waitAt(40) }];
-    const jiraIssues = jira ? [{ ...changed, observedAt: waitAt(40) }] : [];
-    await run(importPullRequestObservations({ dbPath, observations: pullRequests }));
-    await run(importJiraIssueObservations({ dbPath, observations: jiraIssues }));
-    expect(
-      await run(
-        applyWorkThreadWaitObservations({
-          dbPath,
-          machineId: MACHINE,
-          now: waitAt(40),
-          candidates,
-          pullRequests,
-          jiraIssues,
-        }),
-      ),
-    ).toMatchObject({ satisfied: 1 });
-    expect(
-      await run(
-        applyWorkThreadWaitObservations({
-          dbPath,
-          machineId: MACHINE,
-          now: waitAt(41),
-          candidates,
-          pullRequests,
-          jiraIssues,
-        }),
-      ),
-    ).toMatchObject({ satisfied: 0 });
-    expect(
-      (await run(queryWorkThreadEvents({ dbPath, threadId }))).filter(
-        ({ kind: eventKind }) => eventKind === 'wait-satisfied',
-      ),
-    ).toHaveLength(1);
-  });
+  test.each(['review', 'jira'] as const)(
+    'recovers a stored %s transition after interrupted apply without duplicating its event',
+    async (kind) => {
+      const dbPath = await createStore();
+      const jira = kind === 'jira';
+      const threadId = await createWaiting(
+        dbPath,
+        jira ? 'jira-update' : 'pull-request-review',
+        jira ? 'jira:default/ABC-42' : PR,
+      );
+      const approved = waitPullRequest({ observedAt: waitAt(30), updatedAt: waitAt(25), reviewDecision: 'APPROVED' });
+      const changed = waitJira({
+        observedAt: waitAt(30),
+        updatedAt: waitAt(25),
+        status: 'Done',
+        statusCategory: 'done',
+      });
+      if (jira) {
+        await run(importJiraIssueObservations({ dbPath, observations: [waitJira(), changed] }));
+      } else {
+        await run(importPullRequestObservations({ dbPath, observations: [waitPullRequest(), approved] }));
+      }
+      // A new capture after a restart still includes the successful baseline and transition.
+      const { candidates } = await captureWaits(dbPath, jira ? 'jira-update' : 'pull-request-review', [
+        jira ? 'jira:default/ABC-42' : PR,
+      ]);
+      const pullRequests = jira ? [] : [{ ...approved, observedAt: waitAt(40) }];
+      const jiraIssues = jira ? [{ ...changed, observedAt: waitAt(40) }] : [];
+      await run(importPullRequestObservations({ dbPath, observations: pullRequests }));
+      await run(importJiraIssueObservations({ dbPath, observations: jiraIssues }));
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: waitAt(40),
+            candidates,
+            pullRequests,
+            jiraIssues,
+          }),
+        ),
+      ).toMatchObject({ satisfied: 1 });
+      expect(
+        await run(
+          applyWorkThreadWaitObservations({
+            dbPath,
+            machineId: MACHINE,
+            now: waitAt(41),
+            candidates,
+            pullRequests,
+            jiraIssues,
+          }),
+        ),
+      ).toMatchObject({ satisfied: 0 });
+      expect(
+        (await run(queryWorkThreadEvents({ dbPath, threadId }))).filter(
+          ({ kind: eventKind }) => eventKind === 'wait-satisfied',
+        ),
+      ).toHaveLength(1);
+    },
+  );
 
   test('missing native review decision never establishes a baseline, and its diagnostic survives a repeated poll', async () => {
     const dbPath = await createStore();

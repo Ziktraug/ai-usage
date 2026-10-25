@@ -41,11 +41,11 @@ const fixture = () => {
       new UsageStoreError({ operation, message: String(cause), cause, reason: 'storage-failure' }),
     withUsageStoreWriter: (_path, use) => {
       db.exec('PRAGMA query_only = OFF');
-      return use(db);
+      return use(db as unknown as Parameters<typeof use>[0]);
     },
     withUsageStoreReader: (_path, use) => {
       db.exec('PRAGMA query_only = ON');
-      return use(db);
+      return use(db as unknown as Parameters<typeof use>[0]);
     },
   });
   return { db, ...store };
@@ -57,11 +57,11 @@ describe('local Codex request evidence', () => {
     try {
       store.db.exec('DROP TABLE codex_work_observations');
       const result = await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           store.queryCodexWorkObservations({ dbPath: ':memory:', machineId: 'a', sourceSessionIds: ['session'] }),
         ),
       );
-      expect(result._tag === 'Left' ? result.left.reason : null).toBe('schema-too-old');
+      expect(result._tag === 'Failure' ? result.failure.reason : null).toBe('schema-too-old');
     } finally {
       store.db.close();
     }
@@ -147,7 +147,7 @@ describe('local Codex request evidence', () => {
         ),
       ).toEqual({ observations: [], skipped: 1 });
       const failed = await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           store.queryCodexWorkObservations({
             dbPath: ':memory:',
             machineId: 'a',
@@ -155,7 +155,7 @@ describe('local Codex request evidence', () => {
           }),
         ),
       );
-      expect(failed._tag).toBe('Left');
+      expect(failed._tag).toBe('Failure');
     } finally {
       store.db.close();
     }

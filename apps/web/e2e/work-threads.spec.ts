@@ -269,7 +269,7 @@ test('links a recent served session of the project, detaches it, and can undo th
   );
   await expect(linkedEvent).not.toContainText('session:fixture-machine/codex/campaign-root');
   const linked = await detail(request, task.threadId);
-  expect(linked.episodes.map((episode) => episode.sourceSessionId)).toContain('campaign-root');
+  expect(linked.episodes.map((entry) => entry.sourceSessionId)).toContain('campaign-root');
   const episode = page.locator('[data-session-key="session:fixture-machine/codex/campaign-root"]');
   await episode.getByRole('button', { name: 'Build report UI' }).click();
   await expect(episode.getByText('Resume unavailable: Synthetic demo')).toBeVisible();
@@ -306,7 +306,7 @@ test('a second tab receives a revision conflict and reloads without overwriting 
   await other.getByLabel('Waiting for', { exact: true }).fill('A product decision');
   await endFollowUp(page);
   await expect(page.locator('[data-follow-state="done"]')).toBeVisible();
-  const conflicted = other.waitForResponse((response) => new URL(response.url()).pathname === commandPath);
+  const conflicted = other.waitForResponse((candidate) => new URL(candidate.url()).pathname === commandPath);
   await other.getByRole('button', { name: 'Wait', exact: true }).click();
   const response = await conflicted;
   expect(parseWorkThreadsCommandOutput(decodeRpcResponseBody(await response.text()))).toMatchObject({
@@ -413,7 +413,7 @@ test('session intake creates a task through the inline form and opens its linked
   const title = `Intake analysis ${crypto.randomUUID().slice(0, 8)}`;
   await session.getByLabel('Task title', { exact: true }).fill(title);
   await session.getByRole('combobox', { name: 'Intent', exact: true }).selectOption('analysis');
-  const createdResponse = page.waitForResponse((response) => new URL(response.url()).pathname === commandPath);
+  const createdResponse = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === commandPath);
   await session.getByRole('button', { name: 'Create task', exact: true }).click();
   const response = await createdResponse;
   expect(response.status()).toBe(200);

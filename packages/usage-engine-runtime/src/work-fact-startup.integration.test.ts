@@ -7,7 +7,8 @@ import type { BoundedProcessOptions, BoundedProcessRunner } from '@ai-usage/loca
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import type { CollectionSourceId, SourceControlView } from '@ai-usage/report-core/source-control';
 import { queryWorkFactRunStates, usageStorePath } from '@ai-usage/usage-store/testing';
-import { Effect, Layer, TestContext } from 'effect';
+import { Effect, Layer } from 'effect';
+import { TestClock } from 'effect/testing';
 import { createScheduledSourceRegistry } from './source-adapters';
 import { createSourceControl, type SourceControlService } from './source-control';
 import { isolatedSourceOptions } from './source-test-fixtures';
@@ -32,7 +33,7 @@ afterEach(() => {
 const MACHINE = { id: 'machine-startup', label: 'Startup machine' } as const;
 const NOW = new Date('2026-10-21T21:00:00.000Z');
 const SHA = 'a'.repeat(40);
-const testEnvLayer = Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(noopWideEventSink));
+const testEnvLayer = Layer.merge(TestClock.layer(), makeTestWideEventSinkLayer(noopWideEventSink));
 
 const cleanPorcelain = [
   `# branch.oid ${SHA}`,

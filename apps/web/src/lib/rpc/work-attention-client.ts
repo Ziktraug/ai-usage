@@ -56,13 +56,16 @@ export type WorkAttentionClientResult =
   | { readonly error: WorkAttentionClientError; readonly ok: false };
 
 export interface WorkAttentionClient {
-  attention(input: WorkAttentionRequest, options?: WorkAttentionClientCallOptions): Promise<WorkAttentionClientResult>;
+  attention: (
+    input: WorkAttentionRequest,
+    options?: WorkAttentionClientCallOptions,
+  ) => Promise<WorkAttentionClientResult>;
 }
 
 /** The minimal structural shape of the oRPC client; the integrator binds the generated contract type. */
 export interface WorkAttentionRpc {
   readonly work: {
-    attention(input: WorkAttentionRequest, options?: WorkAttentionClientCallOptions): Promise<unknown>;
+    attention: (input: WorkAttentionRequest, options?: WorkAttentionClientCallOptions) => Promise<unknown>;
   };
 }
 

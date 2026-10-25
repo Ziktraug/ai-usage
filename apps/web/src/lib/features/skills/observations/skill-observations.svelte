@@ -2,13 +2,16 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import {
     meta,
+    metaStyle,
     muted,
     panel,
     panelSub,
+    panelSubStyle,
     panelTitle,
     strongCell,
+    strongCellStyle,
     table,
-    tableWrap,
+    tableWrapStyle,
   } from '@ai-usage/design-system/report';
   import type { SkillsObservationPresentation, SkillsSelectedPresentation } from '../presentation';
   import {
@@ -56,7 +59,6 @@
       ? `${count} provisional`
       : formatObservationCount(count, view?.lowerBound ?? false);
 
-  const stack = css({ display: 'grid', gap: '12px' });
   const section = css({ display: 'grid', gap: '12px', minW: 0 });
   const sectionHeader = css({ display: 'grid', gap: '6px' });
   const coverageList = css({
@@ -90,7 +92,7 @@
   });
   // The shared table style renders every `th` as an uppercase column label. A skill name is data,
   // not a label, so the row header opts out rather than shouting the inventory back at the reader.
-  const skillRowHeader = css({
+  const skillRowHeader = css.raw({
     minW: 0,
     textTransform: 'none',
     letterSpacing: 'normal',
@@ -144,7 +146,7 @@
   });
   // Tighter than the exposure matrix on purpose: six columns of short phrases fit the 1280 band
   // beside the tree, so the "not observable" column stays on screen instead of behind a scroll.
-  const observationsTableWrap = css({
+  const observationsTableWrap = css.raw({
     contain: 'inline-size paint',
     maxW: 'full',
     minH: 'auto',
@@ -247,12 +249,7 @@
     {/if}
   </section>
 {:else}
-  <section
-    aria-label="Skill observations"
-    class={cx(panel, stack)}
-    data-skill-observations="overview"
-    id="observed-usage"
-  >
+  <section aria-label="Skill observations" class={panel} data-skill-observations="overview" id="observed-usage">
     <div class={sectionHeader}>
       <h2 class={panelTitle}>Skill observations</h2>
       <p class={panelSub}>
@@ -292,7 +289,7 @@
          region: a keyboard user must be able to reach the columns a pointer user can drag to. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-reachable -->
     <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: axe requires a scrollable region to be keyboard-focusable -->
-    <section aria-label="Skill observations by harness" class={cx(tableWrap, observationsTableWrap)} tabindex="0">
+    <section aria-label="Skill observations by harness" class={css(tableWrapStyle, observationsTableWrap)} tabindex="0">
       <table class={table}>
         <thead>
           <tr>
@@ -315,11 +312,13 @@
           {:else}
             {#each view.invocationRows as observationRow (observationRow.skillName)}
               <tr data-observation-verdict={observationRow.verdict}>
-                <th class={cx(strongCell, skillRowHeader)} scope="row">
+                <th class={css(strongCellStyle, skillRowHeader)} scope="row">
                   {observationRow.skillName}
                   <span class={managedTag}>{observationRow.managed ? ' managed' : ' unmanaged'}</span>
                 </th>
-                {#each observationRow.harnesses.filter((cell) => cell.state !== 'not-observable') as cell (cell.harnessKey)}
+                {#each observationRow.harnesses.filter(
+                  (cell) => cell.state !== 'not-observable',
+                ) as cell (cell.harnessKey)}
                   <td class={observationCell} data-harness={cell.harnessKey} data-observation-state={cell.state}>
                     {#if cell.state === 'no-observations'}
                       <span aria-hidden="true" class={emptyCellMark}>—</span>
@@ -430,7 +429,7 @@
                   >{formatObservationCount(group.rows.length, view.invocationLowerBound)}</span
                 >
               </h4>
-              <p class={cx(panelSub, meta)}>{ADOPTION_GROUP_COPY[group.residence].description}</p>
+              <p class={css(metaStyle, panelSubStyle)}>{ADOPTION_GROUP_COPY[group.residence].description}</p>
             </div>
             <ul class={candidateList}>
               {#each group.rows as candidate (candidate.skillName)}

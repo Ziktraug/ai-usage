@@ -53,9 +53,8 @@ export const normalizeSessionLineage = <T extends UsageRowWithOptionalSource>(ro
     }
 
     const groupKey = lineageGroupKey(row);
-    const group = groupedRows.get(groupKey) ?? new Map<string, UsageRowWithOptionalSource>();
+    const group = groupedRows.getOrInsertComputed(groupKey, () => new Map<string, UsageRowWithOptionalSource>());
     group.set(sourceSessionId, row);
-    groupedRows.set(groupKey, group);
   }
 
   return rows.map((row) => {

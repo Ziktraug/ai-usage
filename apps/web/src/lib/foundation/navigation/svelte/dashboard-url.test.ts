@@ -125,7 +125,9 @@ describe('dashboard URL parity', () => {
     const run = createSearchEditRun();
     const port = createMemoryNavigationPort('http://local/?utm=kept');
     const failures: unknown[] = [];
-    const navigate = createDashboardSearchNavigation(port, codec, (failure) => failures.push(failure));
+    const navigate = createDashboardSearchNavigation(port, codec, (navigationFailure) =>
+      failures.push(navigationFailure),
+    );
     navigate((current) => ({ ...current, q: '  report  ' }), run.next());
     expect(port.entries()).toHaveLength(2);
     expect(run.next()).toEqual({ keepFocus: true, replace: true, resetScroll: false });

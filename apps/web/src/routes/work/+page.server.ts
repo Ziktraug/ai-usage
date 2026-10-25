@@ -1,4 +1,4 @@
-import { deferredThreadPageData, loadThreadPageData } from '$lib/features/work/work-thread-load';
+import { deferredThreadPageData, loadThreadPageData } from '#lib/features/work/work-thread-load.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, isDataRequest, locals, untrack, url }) => {

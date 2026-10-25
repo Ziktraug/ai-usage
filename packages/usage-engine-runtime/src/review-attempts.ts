@@ -416,7 +416,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     );
     signal?.throwIfAborted();
     const sameIdentity = reservingForTarget.attempts.find(
-      (attempt) => attempt.idempotencyKey === idempotencyKey && isLiveReviewAttemptState(attempt.state),
+      (existing) => existing.idempotencyKey === idempotencyKey && isLiveReviewAttemptState(existing.state),
     );
     if (sameIdentity) {
       return {
@@ -428,12 +428,11 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     // A lost attempt on this target keeps its reservation until the process it started is shown
     // gone; the first one still held is the refusal's subject.
     let unresolvedAttempt: UnresolvedReviewReservation | null = null;
-    for (const lost of reservingForTarget.attempts.filter((attempt) => attempt.state === 'lost')) {
+    for (const lost of reservingForTarget.attempts.filter((entry) => entry.state === 'lost')) {
       const held = await settleLostReservation(lost, (operation) => gated(operation, signal));
       unresolvedAttempt ??= held;
     }
-    const otherLiveAttempt =
-      reservingForTarget.attempts.find((attempt) => isLiveReviewAttemptState(attempt.state)) ?? null;
+    const otherLiveAttempt = reservingForTarget.attempts.find((entry) => isLiveReviewAttemptState(entry.state)) ?? null;
     const decision = decideReviewLaunch({
       candidateId: command.candidateId,
       checkout,

@@ -73,13 +73,19 @@
       <button
         aria-expanded={expanded ? 'true' : 'false'}
         class={workButton}
-        onclick={() => expanded = !expanded}
+        onclick={() => (expanded = !expanded)}
         type="button"
       >
         Follow as a task
       </button>
       {#if expanded}
-        <form class={workStack} onsubmit={(event) => { event.preventDefault(); create(); }}>
+        <form
+          class={workStack}
+          onsubmit={(event) => {
+            event.preventDefault();
+            create();
+          }}
+        >
           <label class={workMuted}
             >Task title<input
               class={workInput}
@@ -102,7 +108,7 @@
           <div class={workRow}>
             <button class={workButton} disabled={pending || !title.trim()} type="submit">
               {retryCommand ? 'Retry creation' : 'Create task'}
-            </button><button class={workButton} onclick={() => expanded = false} type="button">Cancel</button>
+            </button><button class={workButton} onclick={() => (expanded = false)} type="button">Cancel</button>
           </div>
         </form>
       {/if}

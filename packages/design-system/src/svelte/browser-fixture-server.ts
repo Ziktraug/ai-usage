@@ -4,7 +4,7 @@ import { createServer as createViteServer, type InlineConfig } from 'vite';
 const LOOPBACK_HOST = '127.0.0.1';
 
 export interface BrowserFixtureServer {
-  close(): Promise<void>;
+  close: () => Promise<void>;
   readonly port: number;
 }
 

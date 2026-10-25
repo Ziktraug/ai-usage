@@ -155,13 +155,14 @@
               <button
                 class={primaryButton}
                 disabled={pending}
-                onclick={async () => await apply({
-                  checkoutId: review.checkoutId,
-                  kind: 'link',
-                  projectId: null,
-                  repositoryId: match.repositoryId,
-                  spaceId: review.destinationSpaceId,
-                })}
+                onclick={async () =>
+                  await apply({
+                    checkoutId: review.checkoutId,
+                    kind: 'link',
+                    projectId: null,
+                    repositoryId: match.repositoryId,
+                    spaceId: review.destinationSpaceId,
+                  })}
                 type="button"
               >
                 Link
@@ -181,11 +182,12 @@
       <button
         class={button}
         disabled={pending}
-        onclick={async () => await apply({
-          checkoutId: review.checkoutId,
-          kind: 'leave-unassigned',
-          spaceId: review.destinationSpaceId,
-        })}
+        onclick={async () =>
+          await apply({
+            checkoutId: review.checkoutId,
+            kind: 'leave-unassigned',
+            spaceId: review.destinationSpaceId,
+          })}
         type="button"
       >
         Leave unassigned

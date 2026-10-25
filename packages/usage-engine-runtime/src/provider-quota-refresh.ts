@@ -73,13 +73,13 @@ export interface ResolvedProviderQuotaRefreshInput<SourceError = unknown> {
 }
 
 export interface ProviderQuotaPersistence<Error> {
-  importBatch(input: ImportProviderQuotaBatchInput): Effect.Effect<ProviderQuotaImportResult, Error>;
-  queryBackfillStates(input: QueryProviderQuotaSourceStatesInput): Effect.Effect<ProviderQuotaSourceState[], Error>;
-  queryLatest(
+  importBatch: (input: ImportProviderQuotaBatchInput) => Effect.Effect<ProviderQuotaImportResult, Error>;
+  queryBackfillStates: (input: QueryProviderQuotaSourceStatesInput) => Effect.Effect<ProviderQuotaSourceState[], Error>;
+  queryLatest: (
     input: QueryLatestProviderQuotaObservationsInput,
-  ): Effect.Effect<QueryProviderQuotaObservationsResult, Error>;
-  queryLiveState(input: QueryProviderQuotaSourceStateInput): Effect.Effect<ProviderQuotaSourceState | null, Error>;
-  recordAttempt(input: RecordProviderQuotaSourceAttemptInput): Effect.Effect<void, Error>;
+  ) => Effect.Effect<QueryProviderQuotaObservationsResult, Error>;
+  queryLiveState: (input: QueryProviderQuotaSourceStateInput) => Effect.Effect<ProviderQuotaSourceState | null, Error>;
+  recordAttempt: (input: RecordProviderQuotaSourceAttemptInput) => Effect.Effect<void, Error>;
 }
 
 interface ProviderQuotaFlight<Error> {
@@ -94,7 +94,7 @@ const abortError = (): ProviderQuotaRefreshAborted =>
   new ProviderQuotaRefreshAborted({ message: 'Provider quota refresh was aborted' });
 
 const waitForAbort = (signal: AbortSignal): Effect.Effect<never, ProviderQuotaRefreshAborted> =>
-  Effect.async<never, ProviderQuotaRefreshAborted>((resume) => {
+  Effect.callback<never, ProviderQuotaRefreshAborted>((resume) => {
     if (signal.aborted) {
       resume(Effect.fail(abortError()));
       return;
@@ -108,8 +108,8 @@ const quotaRefreshWasInterrupted = <A>(exit: Exit.Exit<A, unknown>): boolean => 
   if (Exit.isSuccess(exit)) {
     return false;
   }
-  const failure = Option.getOrUndefined(Cause.failureOption(exit.cause));
-  return Cause.isInterruptedOnly(exit.cause) || failure instanceof ProviderQuotaRefreshAborted;
+  const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+  return Cause.hasInterruptsOnly(exit.cause) || failure instanceof ProviderQuotaRefreshAborted;
 };
 
 const classifyQuotaRefreshWaitOutcome = (exit: Exit.Exit<ProviderQuotaRefreshResult, unknown>): BoundaryOutcome => {
@@ -208,7 +208,7 @@ const runRefresh = <PersistenceError, SourceError>(
         });
         return 'refreshed' as const;
       }).pipe(
-        Effect.catchAll((error) => {
+        Effect.catch((error) => {
           const failure = errorReason(error);
           warnings.push(liveWarning(failure, providerLabel));
           return persistence
@@ -261,7 +261,7 @@ const runRefresh = <PersistenceError, SourceError>(
         });
         return batch.hasMore ? ('advanced' as const) : ('complete' as const);
       }).pipe(
-        Effect.catchAll(() => {
+        Effect.catch(() => {
           warnings.push(
             `${providerLabel} backfill could not advance; live and previously stored history remain available.`,
           );

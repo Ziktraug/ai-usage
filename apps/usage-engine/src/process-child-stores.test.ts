@@ -613,14 +613,14 @@ describe('usage engine real process store lifecycle', () => {
       expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(memoryBefore);
 
       // `check` is the operator's read-only verification: it names the dead lease and the unavailable
-      // store without mutating either. (The typed store reason is not surfaced here: `inspectStore`
-      // sees the Effect fiber failure, not the `UsageStoreError` inside it.)
+      // store without mutating either. Effect 4's `runPromise` rejects with the `UsageStoreError` itself,
+      // so `inspectStore` reports its typed reason rather than a generic storage failure.
       const check = await checkEngine(fixture);
       expect(check.exitCode).toBe(1);
       expect(check.report).toMatchObject({
         lock: { pid: refused.pid, state: 'stale' },
         ok: false,
-        store: { state: 'unavailable' },
+        store: { reason: 'schema-too-new', state: 'unavailable' },
       });
       expect(await sha256AfterHeader(fixture.databasePath)).toBe(usagePagesBefore);
       expect(usageStoreSnapshot(fixture.databasePath)).toEqual(usageBefore);

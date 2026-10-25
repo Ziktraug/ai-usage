@@ -176,7 +176,7 @@ const runGitHubSourceFromUi = async (page: Page, request: APIRequestContext): Pr
   const run = source.getByRole('button', { name: 'Run now', exact: true });
   await expect(run).toBeEnabled();
   const commandResponse = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === SOURCE_COMMAND_PATH && response.request().method() === 'POST',
+    (candidate) => new URL(candidate.url()).pathname === SOURCE_COMMAND_PATH && candidate.request().method() === 'POST',
   );
   await run.click();
   const response = await commandResponse;
@@ -232,7 +232,7 @@ const createAnalysisFromServedSession = async (
   await session.getByRole('button', { name: 'Follow as a task', exact: true }).click();
   await session.getByRole('textbox', { name: 'Task title', exact: true }).fill(ANALYSIS_TITLE);
   await session.getByRole('combobox', { name: 'Intent', exact: true }).selectOption('analysis');
-  const commandResponse = page.waitForResponse((response) => new URL(response.url()).pathname === COMMAND_PATH);
+  const commandResponse = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === COMMAND_PATH);
   await session.getByRole('button', { name: 'Create task', exact: true }).click();
   const response = await commandResponse;
   expect(response.status()).toBe(200);
@@ -455,7 +455,7 @@ test('production Work threads survive source refresh, follow-up transitions and 
       await second.getByRole('button', { name: 'Mark as waiting', exact: true }).click();
       await second.getByRole('textbox', { name: 'Waiting for', exact: true }).fill('A product answer');
       await endAnalysis(page);
-      const commandResponse = second.waitForResponse((response) => new URL(response.url()).pathname === COMMAND_PATH);
+      const commandResponse = second.waitForResponse((candidate) => new URL(candidate.url()).pathname === COMMAND_PATH);
       await second.getByRole('button', { name: 'Wait', exact: true }).click();
       const response = await commandResponse;
       expect(decodeRpcResponseBody(response.request().postData() ?? '')).toMatchObject({

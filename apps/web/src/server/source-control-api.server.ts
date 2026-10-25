@@ -129,6 +129,14 @@ const toUsageEngineCommand = (command: SourceControlCommand): UsageEngineCommand
   }
 };
 
+/**
+ * No engine to reach: no rendezvous for this target, or nothing listening behind it. An engine
+ * restart looks exactly like this for the second or two between one instance and the next.
+ */
+const isUnreachableEngineError = (error: unknown): boolean =>
+  error instanceof UsageEngineControlError &&
+  (error.code === 'engine-unavailable' || error.code === 'transport-failed');
+
 const controlStateForStatus = (status: UsageEngineStatus): SourceControlControlState => {
   if (status.storeSchemaVersion !== null && status.storeSchemaVersion !== USAGE_STORE_SCHEMA_VERSION) {
     return 'protocol-mismatch';
@@ -317,6 +325,10 @@ export const createSourceControlEventStream = (
   let observedPublicationRevision: string | undefined;
   let lastControlState: SourceControlControlState | undefined;
   let lastSnapshotIdentity: string | undefined;
+  // The event client reconnects through an unreachable engine on its own, so a restart in progress
+  // ends the stream only once a second consecutive health probe, one interval later and with no
+  // status seen in between, still finds no engine. Every other probe failure ends it at once.
+  let unreachableHealthProbe = false;
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   let control: UsageEngineControlClient | undefined;
 
@@ -378,6 +390,7 @@ export const createSourceControlEventStream = (
   };
 
   const acceptStatus = (status: UsageEngineStatus): boolean => {
+    unreachableHealthProbe = false;
     queueSnapshot(status.sourceControl);
     const state = controlStateForStatus(status);
     if (state !== 'live') {
@@ -474,6 +487,10 @@ export const createSourceControlEventStream = (
                 }
               })
               .catch((error: unknown) => {
+                if (!(closed || unreachableHealthProbe) && isUnreachableEngineError(error)) {
+                  unreachableHealthProbe = true;
+                  return;
+                }
                 if (!closed) {
                   closeWithState(
                     error instanceof UsageEngineControlError && error.code === 'protocol-mismatch'

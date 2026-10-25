@@ -128,8 +128,8 @@ export const reportSliceRequestFingerprint = (kind: WebReportSliceKind): ReportR
 export const parseReportRevision = (value: unknown): ReportRevision => {
   try {
     return parseServedRevision(value, 'Report revision');
-  } catch {
-    throw new Error('Report revision must be a non-empty opaque identifier');
+  } catch (error) {
+    throw new Error('Report revision must be a non-empty opaque identifier', { cause: error });
   }
 };
 

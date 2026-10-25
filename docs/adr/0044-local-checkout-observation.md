@@ -1,8 +1,24 @@
 # ADR 0044: Observe local Checkouts and bind them to Projects without review
 
-- **Status**: Accepted
+- **Status**: Accepted; acknowledgment step loses its reader with ADR 0049 on
+  `feat/work-resume-cockpit`; the Memory-kernel half retires in plan 120
+  phase B ([ADR 0074](0074-local-only-single-operator-product.md))
 - **Date**: 2026-10-07
 - **Amends**: 0024, 0042
+
+> Amended 2026-10-24: this record's motivating consumer, Session distillation
+> discovery (ADR 0042), is retired by ADR 0049 on `feat/work-resume-cockpit`.
+> The Project-source acknowledgments of the fourth Decision paragraph
+> (`acknowledgeProjectSourceMapping`, `project_source_mappings`) are read only
+> by the distillation runtime and catalogue and by this observer's own
+> no-change check, so once ADR 0049 lands they are writes without a reader and
+> die with distillation; plan 120 phase B removes them with the rest of the
+> Memory kernel. The Checkout binding keeps serving `/projects` until then.
+> The canonical-path and worktree grouping plan outlives the binding: ADR 0051
+> on that branch applies the same plan for checkout status in its own
+> enumeration (`packages/usage-engine-runtime` source adapters), which does not
+> read the Memory store, and report Session grouping has its own projection
+> (ADR 0074). Under ADR 0075 the tables are kept.
 
 ## Context
 

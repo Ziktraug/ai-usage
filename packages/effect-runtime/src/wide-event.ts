@@ -1,4 +1,4 @@
-import { Context, Effect, FiberRef, Layer, Ref } from 'effect';
+import { Context, Effect, Layer, Option, Ref } from 'effect';
 import type {
   BoundaryOutcome,
   LogValue,
@@ -69,12 +69,17 @@ export interface WideEventController extends WideEventShape {
   }) => Effect.Effect<WideEventSnapshot>;
 }
 
-export class WideEventService extends Context.Tag('@ai-usage/effect-runtime/WideEventService')<
-  WideEventService,
-  WideEventShape
->() {}
+export class WideEventService extends Context.Service<WideEventService, WideEventShape>()(
+  '@ai-usage/effect-runtime/WideEventService',
+) {}
 
-export const currentWideEventHop = FiberRef.unsafeMake<string | undefined>(undefined);
+/** Fiber-local id of the hop currently open on this fiber; inherited by child fibers. */
+export const currentWideEventHop = Context.Reference<string | undefined>(
+  '@ai-usage/effect-runtime/CurrentWideEventHop',
+  {
+    defaultValue: () => undefined,
+  },
+);
 
 const mergeAnnotations = (
   existing: Readonly<Record<string, LogValue>>,
@@ -150,7 +155,7 @@ export const createWideEventController = ({
   readonly resource: WideEventResource;
   readonly startedAt: string;
 }): WideEventController => {
-  const state = Ref.unsafeMake<WideEventState>({
+  const state = Ref.makeUnsafe<WideEventState>({
     canonicalSnapshot: undefined,
     completedHops: [],
     emitted: false,
@@ -207,7 +212,7 @@ export const createWideEventController = ({
   return {
     annotate: (fields) => {
       const sanitizedFields = sanitizeWideEventAnnotations(fields);
-      return FiberRef.get(currentWideEventHop).pipe(
+      return Effect.service(currentWideEventHop).pipe(
         Effect.flatMap((hopId) =>
           Ref.update(state, (current) => {
             if (current.emitted) {
@@ -301,3 +306,12 @@ export const makeWideEventLayer = (wideEvent: WideEventShape) => Layer.succeed(W
 
 export const annotateWideEvent = (fields: Readonly<Record<string, LogValue>>) =>
   WideEventService.pipe(Effect.flatMap((wideEvent) => wideEvent.annotate(fields)));
+
+/**
+ * Annotate the wide event the caller runs under, if it runs under one. For code handed to a layer
+ * that owns no observability (a collector), which must not require the service in its type.
+ */
+export const annotateWideEventIfAvailable = (fields: Readonly<Record<string, LogValue>>): Effect.Effect<void> =>
+  Effect.serviceOption(WideEventService).pipe(
+    Effect.flatMap((wideEvent) => (Option.isNone(wideEvent) ? Effect.void : wideEvent.value.annotate(fields))),
+  );

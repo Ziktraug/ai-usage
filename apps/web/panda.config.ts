@@ -1,17 +1,20 @@
-import { aiUsagePreset } from '@ai-usage/design-system/preset';
 import { defineConfig } from '@pandacss/dev';
-
-const designSystemBuildInfoPackage = '@ai-usage/design-system/panda.buildinfo.json';
-const designSystemBuildInfo = require.resolve(designSystemBuildInfoPackage);
 
 export default defineConfig({
   preflight: true,
-  include: ['./src/**/*.{ts,svelte}', designSystemBuildInfo],
+  include: ['./src/**/*.{ts,svelte}'],
   exclude: [],
   outdir: 'styled-system',
-  importMap: '@ai-usage/design-system',
-  // '@pandacss/preset-panda' restores the default theme (colors, spacing,
-  // shadows…) that specifying `presets` would otherwise drop; aiUsagePreset
-  // layers our design tokens, conditions, and globalCss on top via `extend`.
-  presets: ['@pandacss/preset-panda', aiUsagePreset],
+  // `panda lib` publishes the design system's theme (its presets and aiUsagePreset), import map
+  // and extracted styles; `designSystem` loads all three, so none of them is wired here by hand.
+  designSystem: '@ai-usage/design-system',
+  // Set here, not in the design system: this is the stylesheet the app serves, and its extraction
+  // covers the app sources plus the design system's published styles, so only here is "unused"
+  // known. bundle/client-bundle.test.ts checks the served stylesheet declares exactly the tokens
+  // and keyframes it references; no runtime code reads a token variable by name, which
+  // theme-token-references.test.ts checks on the app and design-system sources.
+  optimize: {
+    removeUnusedTokens: true,
+    removeUnusedKeyframes: true,
+  },
 });

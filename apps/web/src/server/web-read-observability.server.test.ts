@@ -6,7 +6,7 @@ import { createWebReadObservabilityRuntime } from './web-read-observability.serv
 test('acquires one web event sink for all reads and releases it once at shutdown', async () => {
   let acquisitions = 0;
   let releases = 0;
-  const sinkLayer = Layer.scoped(
+  const sinkLayer = Layer.effect(
     WideEventSink,
     Effect.acquireRelease(
       Effect.sync(() => {

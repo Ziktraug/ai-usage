@@ -48,15 +48,17 @@
 
   const queryClient = useQueryClient();
   const shellNavigation = useShellNavigationOwner();
+  // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
+  const pageUrl = $derived(new URL(page.url.href));
   const gotoReport = createReportNavigation({
     currentState: () => page.state,
-    currentUrl: () => page.url,
+    currentUrl: () => pageUrl,
     goto: shellNavigation.goto,
   });
   let navigationFailure = $state<string | null>(null);
   let browserNavigate: SearchNavigationIntent<DashboardSearch> = () => undefined;
   const navigate: SearchNavigationIntent<DashboardSearch> = (update, options) => browserNavigate(update, options);
-  const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  const search = $derived(parseDashboardSearchUrl(pageUrl, dashboardSearchCodec));
   // The detail panel's identity is the pathname: `/sessions/<rowId>` or `/campaigns/<key>` over the
   // same mounted report. Opening pushes one entry marked as opened from the report; browsing with
   // j/k replaces it; closing travels back to the list entry when it exists, or navigates to the list
@@ -144,7 +146,7 @@
         window.history.back();
         return;
       }
-      gotoReport(sessionListUrl(page.url), { keepFocus: true, noScroll: true }).catch(reportNavigationFailure);
+      gotoReport(sessionListUrl(pageUrl), { reset: false }).catch(reportNavigationFailure);
       return;
     }
     if (detailRoute === null) {
@@ -155,16 +157,15 @@
       return;
     }
     const replacing = detailRoute !== null;
-    gotoReport(sessionRouteUrl(page.url, route), {
-      keepFocus: true,
-      noScroll: true,
-      replaceState: replacing,
+    gotoReport(sessionRouteUrl(pageUrl, route), {
+      replace: replacing,
+      reset: false,
       state: replacing && !panelOpenedFromReport(page.state) ? page.state : sessionPanelHistoryState(page.state),
     }).catch(reportNavigationFailure);
   };
   const modelsHref = $derived.by((): string => {
     const modelsSearch: DashboardSearch = { ...search, tab: 'models' };
-    const url = dashboardUrlFor(page.url, modelsSearch, dashboardSearchCodec);
+    const url = dashboardUrlFor(pageUrl, modelsSearch, dashboardSearchCodec);
     return `${url.pathname}${url.search}${url.hash}`;
   });
   const browserRpc = useOptionalWebQueryRpcContext()?.rpc;
@@ -192,7 +193,7 @@
 
   onMount(() => {
     const port = createSvelteNavigationPort({
-      getCurrentUrl: () => page.url,
+      getCurrentUrl: () => pageUrl,
       goto: gotoReport,
       history: window.history,
       onFailure: ({ cause }) => {

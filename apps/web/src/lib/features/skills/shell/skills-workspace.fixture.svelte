@@ -57,7 +57,9 @@
   };
 </script>
 
-{#snippet editorSlot(_context: SkillsShellSlotContext)}
+{#snippet editorSlot(
+  _context: SkillsShellSlotContext,
+)}
   <section aria-label="Synthetic editor slot">
     <h3>Editable SKILL.md</h3>
     <pre>{_context.document?.content}</pre>

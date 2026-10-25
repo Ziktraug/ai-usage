@@ -23,7 +23,7 @@
     fontSize: '12px',
     lineHeight: 1.5,
   });
-  const warningNotice = css({ bg: 'status.warnSoft', borderColor: 'status.warn', color: 'ink' });
+  const warningNotice = css({ borderColor: 'status.warn', color: 'ink' });
   const timelineShell = css({
     display: 'grid',
     gap: '8px',
@@ -446,7 +446,9 @@
   );
 </script>
 
-{#snippet renderTimelineAxis(_showTokens: boolean)}
+{#snippet renderTimelineAxis(
+  _showTokens: boolean,
+)}
   {#if detail && scale}
     <div class={timelineAxis}>
       <span aria-hidden="true" class={timelineAxisSpacer}></span>
@@ -566,7 +568,9 @@
               aria-label="Show real gaps"
               aria-pressed={scaleMode === 'wall-clock' ? 'true' : 'false'}
               class={scaleButton}
-              onclick={() => { scaleMode = scaleMode === 'compressed' ? 'wall-clock' : 'compressed'; }}
+              onclick={() => {
+                scaleMode = scaleMode === 'compressed' ? 'wall-clock' : 'compressed';
+              }}
               type="button"
             >
               {scaleMode === 'compressed' ? 'Show real gaps' : 'Compress gaps'}

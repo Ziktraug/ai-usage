@@ -310,10 +310,10 @@ describe('queryWorkContext', () => {
       { kind: 'project-label' as const, projectLabel: '   ' },
       { kind: 'project-label' as const, projectLabel: 'work/fixture' },
     ]) {
-      const result = await Effect.runPromise(Effect.either(queryWorkContext({ dbPath, now: EPOCH, scope })));
-      expect(result._tag).toBe('Left');
-      if (result._tag === 'Left') {
-        expect(result.left.reason).toBe('invalid-input');
+      const result = await Effect.runPromise(Effect.result(queryWorkContext({ dbPath, now: EPOCH, scope })));
+      expect(result._tag).toBe('Failure');
+      if (result._tag === 'Failure') {
+        expect(result.failure.reason).toBe('invalid-input');
       }
     }
   });

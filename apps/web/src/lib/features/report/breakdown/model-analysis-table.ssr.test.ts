@@ -6,7 +6,7 @@ import { createServer } from 'vite';
 import { modelAnalysisEmptyMessage } from './model';
 
 interface SvelteServerModule {
-  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+  render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
 const componentFrom = (loaded: unknown): Component => {

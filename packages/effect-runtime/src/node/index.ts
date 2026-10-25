@@ -71,7 +71,7 @@ const makeProcessWideEventSinkLayer = (
   options: ProcessWideEventSinkOptions,
 ): Layer.Layer<WideEventResourceService | WideEventSink> =>
   Layer.merge(
-    Layer.scoped(
+    Layer.effect(
       WideEventSink,
       Effect.gen(function* () {
         const directory =

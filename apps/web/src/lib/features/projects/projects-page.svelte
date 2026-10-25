@@ -3,7 +3,7 @@
   import { page, shell } from '@ai-usage/design-system/svelte';
   import type { ProjectResolutionAction } from '@ai-usage/web-contract/projects';
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { acknowledgeProjectResolutionReview } from '../../query/options/projects';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import type { ProjectsPageData } from './projects-load';

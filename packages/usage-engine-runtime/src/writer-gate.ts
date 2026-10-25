@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Semaphore } from 'effect';
 
 export interface UsageEngineWriterGate {
   readonly close: () => void;
@@ -17,7 +17,7 @@ export class UsageEngineWriterGateClosedError extends Error {
 }
 
 export const createUsageEngineWriterGate = (): UsageEngineWriterGate => {
-  const semaphore = Effect.runSync(Effect.makeSemaphore(1));
+  const semaphore = Semaphore.makeUnsafe(1);
   let closed = false;
   const withPermit: UsageEngineWriterGate['withPermit'] = (effect) => semaphore.withPermits(1)(effect);
   const withEffect: UsageEngineWriterGate['withEffect'] = (effect) =>
@@ -32,8 +32,11 @@ export const createUsageEngineWriterGate = (): UsageEngineWriterGate => {
       closed = true;
     },
     isClosed: () => closed,
-    run: async <Value>(operation: () => Promise<Value>, signal?: AbortSignal): Promise<Value> =>
-      await Effect.runPromise(
+    run: async <Value>(operation: () => Promise<Value>, signal?: AbortSignal): Promise<Value> => {
+      // `runPromise` evaluates synchronously before it looks at the signal, so with a free permit an
+      // already-aborted run would start its uninterruptible operation and only then be interrupted.
+      signal?.throwIfAborted();
+      return await Effect.runPromise(
         withEffect(
           Effect.uninterruptible(
             Effect.tryPromise({
@@ -43,7 +46,8 @@ export const createUsageEngineWriterGate = (): UsageEngineWriterGate => {
           ),
         ),
         signal === undefined ? undefined : { signal },
-      ),
+      );
+    },
     withEffect,
     withPermit,
   };

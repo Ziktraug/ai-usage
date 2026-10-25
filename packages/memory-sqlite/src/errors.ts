@@ -9,8 +9,8 @@ export class MemoryIdentityStoreError extends Error {
   readonly code: MemoryIdentityStoreErrorCode;
   readonly operation: string;
 
-  constructor(code: MemoryIdentityStoreErrorCode, operation: string) {
-    super('The local Memory identity store operation failed.');
+  constructor(code: MemoryIdentityStoreErrorCode, operation: string, options?: ErrorOptions) {
+    super('The local Memory identity store operation failed.', options);
     this.name = 'MemoryIdentityStoreError';
     this.code = code;
     this.operation = operation;

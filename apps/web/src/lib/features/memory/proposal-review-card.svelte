@@ -277,7 +277,14 @@
         </select>
       </label>
       <button class={primaryButton} disabled={pending} onclick={accept} type="button">Accept proposal</button>
-      <button class={button} disabled={pending} onclick={() => { editing = !editing; }} type="button">
+      <button
+        class={button}
+        disabled={pending}
+        onclick={() => {
+          editing = !editing;
+        }}
+        type="button"
+      >
         {editing ? 'Keep original' : 'Edit before accepting'}
       </button>
     </div>

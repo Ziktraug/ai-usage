@@ -82,7 +82,7 @@ const directoryNames = (
         .map((entry) => entry.name)
         .sort(),
     ),
-    Effect.catchAll(() => Effect.succeed(null)),
+    Effect.catch(() => Effect.succeed(null)),
   );
 
 /**
@@ -151,7 +151,7 @@ export const collectClaudeDesktopSessions = (
       }
       for (const organization of organizations) {
         const organizationDirectory = path.join(accountDirectory, organization);
-        const entries = yield* storage.readDir(organizationDirectory).pipe(Effect.catchAll(() => Effect.succeed(null)));
+        const entries = yield* storage.readDir(organizationDirectory).pipe(Effect.catch(() => Effect.succeed(null)));
         if (entries === null) {
           truncated = true;
           continue;
@@ -179,8 +179,8 @@ export const collectClaudeDesktopSessions = (
           const read = yield* Effect.all({
             metadata: readMetadata(filePath),
             text: storage.readText(filePath, maximumFileBytes),
-          }).pipe(Effect.either);
-          if (read._tag === 'Left') {
+          }).pipe(Effect.result);
+          if (read._tag === 'Failure') {
             // A file listed and then removed or replaced mid-sweep is counted, not fatal: the
             // rest of the registry still answers and the count says one did not.
             counts.unreadable++;
@@ -189,13 +189,13 @@ export const collectClaudeDesktopSessions = (
           }
           let raw: unknown;
           try {
-            raw = JSON.parse(read.right.text);
+            raw = JSON.parse(read.success.text);
           } catch {
             counts.invalidJson++;
             counts.rejected++;
             continue;
           }
-          const fileModifiedAt = normalizeIsoTimestamp(read.right.metadata.mtimeMs);
+          const fileModifiedAt = normalizeIsoTimestamp(read.success.metadata.mtimeMs);
           if (fileModifiedAt === null) {
             counts.unreadable++;
             counts.rejected++;

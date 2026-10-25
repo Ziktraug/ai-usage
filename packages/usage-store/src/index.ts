@@ -923,63 +923,63 @@ export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 
 export interface UsageStore {
-  confirmPeerMergeBundle(input: ConfirmPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
-  exportLocalMergeBundle(input: ExportLocalMergeBundleInput): Effect.Effect<UsageMergeBundle, UsageStoreError>;
-  importLocalRows(input: ImportLocalRowsInput): Effect.Effect<ImportResult, UsageStoreError>;
-  importNormalizedDatasetItems(
+  confirmPeerMergeBundle: (input: ConfirmPeerMergeBundleInput) => Effect.Effect<ImportResult, UsageStoreError>;
+  exportLocalMergeBundle: (input: ExportLocalMergeBundleInput) => Effect.Effect<UsageMergeBundle, UsageStoreError>;
+  importLocalRows: (input: ImportLocalRowsInput) => Effect.Effect<ImportResult, UsageStoreError>;
+  importNormalizedDatasetItems: (
     input: ImportNormalizedDatasetItemsInput,
-  ): Effect.Effect<NormalizedDatasetImportResult, UsageStoreError>;
-  importPeerMergeBundle(input: ImportPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
-  previewPeerMergeBundle(
+  ) => Effect.Effect<NormalizedDatasetImportResult, UsageStoreError>;
+  importPeerMergeBundle: (input: ImportPeerMergeBundleInput) => Effect.Effect<ImportResult, UsageStoreError>;
+  previewPeerMergeBundle: (
     input: PreviewPeerMergeBundleInput,
-  ): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError>;
-  queryEnrichableUsageRows(
+  ) => Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError>;
+  queryEnrichableUsageRows: (
     input?: QueryEnrichableUsageRowsInput,
-  ): Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError>;
-  queryNormalizedDatasetItems(
+  ) => Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError>;
+  queryNormalizedDatasetItems: (
     input?: QueryNormalizedDatasetItemsInput,
-  ): Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError>;
-  queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
-  queryStoredReportCapture(
+  ) => Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError>;
+  queryReportRows: (input?: QueryReportRowsInput) => Effect.Effect<QueryRowsResult, UsageStoreError>;
+  queryStoredReportCapture: (
     input?: QueryStoredReportCaptureInput,
-  ): Effect.Effect<QueryStoredReportCaptureResult, UsageStoreError>;
-  queryUsageMachineFleet(
+  ) => Effect.Effect<QueryStoredReportCaptureResult, UsageStoreError>;
+  queryUsageMachineFleet: (
     input?: QueryUsageMachineFleetInput,
-  ): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError>;
-  queryUsageStoreGeneration(input?: QueryUsageStoreGenerationInput): Effect.Effect<number, UsageStoreError>;
-  queryUsageStoreGenerations(
+  ) => Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError>;
+  queryUsageStoreGeneration: (input?: QueryUsageStoreGenerationInput) => Effect.Effect<number, UsageStoreError>;
+  queryUsageStoreGenerations: (
     input?: QueryUsageStoreGenerationInput,
-  ): Effect.Effect<UsageStoreGenerations, UsageStoreError>;
-  updateUsageMachineLabel(
+  ) => Effect.Effect<UsageStoreGenerations, UsageStoreError>;
+  updateUsageMachineLabel: (
     input: UpdateUsageMachineLabelInput,
-  ): Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError>;
-  upsertRtkSavingsContributions(
+  ) => Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError>;
+  upsertRtkSavingsContributions: (
     input: UpsertRtkSavingsContributionsInput,
-  ): Effect.Effect<EnrichmentImportResult, UsageStoreError>;
+  ) => Effect.Effect<EnrichmentImportResult, UsageStoreError>;
 }
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  finalize(): void;
-  get(...params: unknown[]): unknown;
-  iterate(...params: unknown[]): IterableIterator<unknown>;
-  run(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  finalize: () => void;
+  get: (...params: unknown[]) => unknown;
+  iterate: (...params: unknown[]) => IterableIterator<unknown>;
+  run: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  clearStatements(): void;
-  close(throwOnError?: boolean): void;
-  exec(sql: string): unknown;
+  clearStatements: () => void;
+  close: (throwOnError?: boolean) => void;
+  exec: (sql: string) => unknown;
   readonly inTransaction: boolean;
-  query(sql: string): SqliteStatement;
+  query: (sql: string) => SqliteStatement;
 }
 
 interface RawSqliteDatabase {
-  clearQueryCache(): void;
-  close(throwOnError?: boolean): void;
-  exec(sql: string): unknown;
+  clearQueryCache: () => void;
+  close: (throwOnError?: boolean) => void;
+  exec: (sql: string) => unknown;
   readonly inTransaction: boolean;
-  query(sql: string): SqliteStatement;
+  query: (sql: string) => SqliteStatement;
 }
 
 const createTrackedSqliteDatabase = (database: RawSqliteDatabase): SqliteDatabase => {
@@ -3925,14 +3925,14 @@ export const queryUsageSyncFleet = (
         });
         return { currentMachine, ...fleet };
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             try {
               db.exec('ROLLBACK');
             } catch {
               // The read failure remains authoritative.
             }
-          }).pipe(Effect.zipRight(Effect.fail(error))),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
     }),
@@ -4015,14 +4015,14 @@ export const queryLocalMergeBundle = (
         });
         return bundle;
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             try {
               db.exec('ROLLBACK');
             } catch {
               // The read failure remains authoritative.
             }
-          }).pipe(Effect.zipRight(Effect.fail(error))),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
     }),
@@ -4180,14 +4180,14 @@ export const queryStoredReportCapture = (
         });
         return { generations, machineFleet, reportRows };
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             try {
               db.exec('ROLLBACK');
             } catch {
               // The capture failure remains authoritative.
             }
-          }).pipe(Effect.zipRight(Effect.fail(error))),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
     }),

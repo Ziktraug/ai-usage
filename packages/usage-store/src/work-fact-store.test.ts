@@ -137,8 +137,8 @@ const rowCount = (dbPath: string, table: string): number => {
 };
 
 const failureReason = async (effect: Effect.Effect<unknown, UsageStoreError>): Promise<string | undefined> => {
-  const result = await Effect.runPromise(Effect.either(effect));
-  return result._tag === 'Left' ? result.left.reason : undefined;
+  const result = await Effect.runPromise(Effect.result(effect));
+  return result._tag === 'Failure' ? result.failure.reason : undefined;
 };
 
 describe('work fact store: pull request observations', () => {
@@ -170,7 +170,7 @@ describe('work fact store: pull request observations', () => {
         )
         .get(),
     ).toEqual({ discovery_role: 'author', mergeable: 'MERGEABLE', merge_state_status: 'BEHIND' });
-    expect(migrateWorkFactSchema(migrated)).toBe(false);
+    expect(migrateWorkFactSchema(migrated as unknown as Parameters<typeof migrateWorkFactSchema>[0])).toBe(false);
     migrated.close();
   });
 

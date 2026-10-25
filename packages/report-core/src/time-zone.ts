@@ -30,8 +30,8 @@ export const parseReportTimeZone = (value: unknown): string => {
   }
   try {
     return formatterForTimeZone(value).resolvedOptions().timeZone;
-  } catch {
-    throw new Error(`Report time zone is invalid: ${value}`);
+  } catch (error) {
+    throw new Error(`Report time zone is invalid: ${value}`, { cause: error });
   }
 };
 

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {
   createUsageEngineDevChanges,
@@ -161,4 +163,73 @@ describe('development usage engine supervisor', () => {
     expect(relativePaths).not.toContain(path.join('packages', 'design-system', 'src'));
     expect(rootFileTarget?.entryName).toBe('bun.lock');
   });
+});
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe('development usage engine process', () => {
+  /**
+   * The supervisor can die without running its graceful stop (`turbo watch`
+   * killing its task outright, an OOM kill). The engine is in its own process
+   * group, so nothing else reaches it: it must notice its parent is gone and
+   * exit instead of holding the writer lock and the task's output open.
+   */
+  test('the engine exits when its supervisor is killed', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'usage-engine-dev-orphan-'));
+    const childPidPath = path.join(root, 'engine.pid');
+    let childPid: number | undefined;
+    try {
+      // A stand-in engine directory: `src/main.ts` publishes its PID and idles.
+      const engineDirectory = path.join(root, 'engine');
+      await mkdir(path.join(engineDirectory, 'src'), { recursive: true });
+      await writeFile(
+        path.join(engineDirectory, 'src', 'main.ts'),
+        `await Bun.write(${JSON.stringify(childPidPath)}, String(process.pid));\nsetInterval(() => undefined, 1000);\n`,
+      );
+      const supervisorPath = path.join(root, 'supervisor.ts');
+      await writeFile(
+        supervisorPath,
+        `import { spawnUsageEngineDevChild } from ${JSON.stringify(path.join(import.meta.dir, 'dev.ts'))};\nspawnUsageEngineDevChild(${JSON.stringify(engineDirectory)});\nsetInterval(() => undefined, 1000);\n`,
+      );
+      const supervisor = Bun.spawn([process.execPath, '--no-env-file', supervisorPath], {
+        stderr: 'inherit',
+        stdin: 'ignore',
+        stdout: 'ignore',
+      });
+      const publishDeadline = Date.now() + 10_000;
+      while (childPid === undefined && Date.now() < publishDeadline) {
+        if (await Bun.file(childPidPath).exists()) {
+          const text = await Bun.file(childPidPath).text();
+          childPid = text === '' ? undefined : Number(text);
+        }
+        await Bun.sleep(10);
+      }
+      if (childPid === undefined) {
+        throw new Error('The stand-in engine did not publish its PID.');
+      }
+      // Alive under a live supervisor: the parent-death watch does not fire early.
+      await Bun.sleep(200);
+      expect(processIsAlive(childPid)).toBe(true);
+
+      supervisor.kill('SIGKILL');
+      await supervisor.exited;
+      const exitDeadline = Date.now() + 5000;
+      while (processIsAlive(childPid) && Date.now() < exitDeadline) {
+        await Bun.sleep(10);
+      }
+      expect(processIsAlive(childPid)).toBe(false);
+    } finally {
+      if (childPid !== undefined && processIsAlive(childPid)) {
+        process.kill(childPid, 'SIGKILL');
+      }
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 20_000);
 });

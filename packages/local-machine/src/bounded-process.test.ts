@@ -20,7 +20,7 @@ const run = (options: Parameters<typeof runBoundedProcess>[0]) => Effect.runProm
 const failure = async (options: Parameters<typeof runBoundedProcess>[0]): Promise<BoundedProcessError> => {
   const exit = await Effect.runPromiseExit(runBoundedProcess(options));
   if (Exit.isFailure(exit)) {
-    const error = Cause.failureOption(exit.cause);
+    const error = Cause.findErrorOption(exit.cause);
     if (error._tag === 'Some') {
       return error.value;
     }
@@ -165,7 +165,7 @@ describe('bounded process runner', () => {
     );
     setTimeout(() => controller.abort(), 20);
     const exit = await running;
-    expect(Exit.isInterrupted(exit)).toBe(true);
+    expect(Exit.hasInterrupts(exit)).toBe(true);
     const alreadyAborted = await Effect.runPromiseExit(
       runBoundedProcess({
         ...script('setInterval(() => undefined, 1000)'),
@@ -174,7 +174,7 @@ describe('bounded process runner', () => {
         timeoutMs: 10_000,
       }),
     );
-    expect(Exit.isInterrupted(alreadyAborted)).toBe(true);
+    expect(Exit.hasInterrupts(alreadyAborted)).toBe(true);
   });
 
   test('promise form rejects with the abort reason, never with a stray error type', async () => {

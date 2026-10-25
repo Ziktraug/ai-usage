@@ -527,8 +527,6 @@ URL; a selected campaign outside the loaded page can still open in the Agent Map
 
 `merge` accepts one or more snapshot file paths plus the same report options. Add `--local` to include this machine's local history.
 
-`setup [files...] [--local] [--port <number>]` launches the loopback-only project-grouping UI. Supply at least one snapshot file, `--local`, or both; `--port` changes its local listener port.
-
 Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.machineId`, harness key, and source session ID) when available. The terminal table shows `Machine` in `--wide` mode.
 
 ## Project layout
@@ -603,7 +601,6 @@ direct revision-keyed SQLite query path:
 ```sh
 bun run test:web-production
 bun run test:web-dev-build-isolation
-bun run test:setup-loopback
 bun run test:e2e-production
 bun run --cwd apps/web benchmark:session-scroll
 ```

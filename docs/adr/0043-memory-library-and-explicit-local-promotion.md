@@ -1,6 +1,11 @@
 # ADR 0043: Browse Session accounts and explicitly promote local knowledge
 
-- **Status**: Accepted; superseded in part by [ADR 0049](0049-retire-session-distillation.md) for the retired feature; data-preservation and publication restrictions remain.
+- **Status**: Accepted; superseded in part by [ADR 0049](0049-retire-session-distillation.md)
+  for the retired feature. The `local-only` publication policy guards against replication, which
+  stays dormant until [ADR 0074](0074-local-only-single-operator-product.md) phase B removes it
+  (the client still starts when `AI_USAGE_PLATFORM_BASE_URL` is set), so the guard stays until
+  then; the no-deletion obligation is the general rule of
+  [ADR 0075](0075-local-store-schema-evolution.md).
 - **Date**: 2026-10-06
 - **Amends**: 0042
 

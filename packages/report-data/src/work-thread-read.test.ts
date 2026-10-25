@@ -268,49 +268,47 @@ describe('work-thread reader', () => {
     { head: 'feat/x', checkout: 'Feat/x', recorded: 'Feat/x', expected: 0 },
     { head: null, checkout: 'feat/x', recorded: 'feat/x', expected: 0 },
     { head: 'feat/x', checkout: null, recorded: 'feat/x', expected: 0 },
-  ])('keeps PR session checkouts only on the observed head branch: $head / $checkout', async ({
-    head,
-    checkout,
-    recorded,
-    expected,
-  }) => {
-    const dbPath = await fixture();
-    await publish(dbPath, [withBranch(session('declaring'), recorded)]);
-    const threadId = await create(dbPath, [
-      sessionLink('declaring'),
-      { kind: 'pull-request', key: 'github.com/fixture/repo#7' },
-    ]);
-    await run(
-      importPullRequestObservations({ dbPath, observations: [{ ...pr(-3), headRef: head }, pr(-1, 'timeout')] }),
-    );
-    const observation = parseCheckoutStatusObservation({
-      machineId: MACHINE,
-      checkoutPath: '/fixture/project',
-      outcome: 'observed',
-      observedAt: at(-2),
-      branch: checkout,
-      untrackedCount: 2,
-    });
-    if (!observation) {
-      throw new Error('Invalid branch checkout');
-    }
-    await run(importCheckoutStatusObservations({ dbPath, observations: [observation] }));
-    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
-    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
-    expect(detail?.episodes).toHaveLength(1);
-    for (const row of [detail?.row, list.rows[0]]) {
-      expect(row?.markers.local).toHaveLength(expected);
-    }
-    if (expected === 1) {
+  ])(
+    'keeps PR session checkouts only on the observed head branch: $head / $checkout',
+    async ({ head, checkout, recorded, expected }) => {
+      const dbPath = await fixture();
+      await publish(dbPath, [withBranch(session('declaring'), recorded)]);
+      const threadId = await create(dbPath, [
+        sessionLink('declaring'),
+        { kind: 'pull-request', key: 'github.com/fixture/repo#7' },
+      ]);
       await run(
-        importCheckoutStatusObservations({
-          dbPath,
-          observations: [{ ...observation, observedAt: at(0), outcome: 'timeout', branch: null }],
-        }),
+        importPullRequestObservations({ dbPath, observations: [{ ...pr(-3), headRef: head }, pr(-1, 'timeout')] }),
       );
-      expect((await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.markers.local).toEqual([]);
-    }
-  });
+      const observation = parseCheckoutStatusObservation({
+        machineId: MACHINE,
+        checkoutPath: '/fixture/project',
+        outcome: 'observed',
+        observedAt: at(-2),
+        branch: checkout,
+        untrackedCount: 2,
+      });
+      if (!observation) {
+        throw new Error('Invalid branch checkout');
+      }
+      await run(importCheckoutStatusObservations({ dbPath, observations: [observation] }));
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+      expect(detail?.episodes).toHaveLength(1);
+      for (const row of [detail?.row, list.rows[0]]) {
+        expect(row?.markers.local).toHaveLength(expected);
+      }
+      if (expected === 1) {
+        await run(
+          importCheckoutStatusObservations({
+            dbPath,
+            observations: [{ ...observation, observedAt: at(0), outcome: 'timeout', branch: null }],
+          }),
+        );
+        expect((await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.markers.local).toEqual([]);
+      }
+    },
+  );
 
   test('analysis checkouts require a matching recorded branch and retain the matching session identity', async () => {
     const dbPath = await fixture();
@@ -349,13 +347,13 @@ describe('work-thread reader', () => {
     expect(list.machineId).toBe(MACHINE);
     expect(await run(queryWorkThreadDetail({ dbPath, threadId: randomUUID(), now: NOW }))).toBeNull();
     const missing = await run(
-      Effect.either(
+      Effect.result(
         queryWorkThreadList({ dbPath: path.join(path.dirname(dbPath), 'missing'), query: QUERY, now: NOW }),
       ),
     );
-    expect(missing._tag).toBe('Left');
-    if (missing._tag === 'Left') {
-      expect(missing.left.reason).toBe('store-missing');
+    expect(missing._tag).toBe('Failure');
+    if (missing._tag === 'Failure') {
+      expect(missing.failure.reason).toBe('store-missing');
     }
     await publish(dbPath, [session('unlinked')]);
     const published = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
@@ -619,99 +617,93 @@ describe('work-thread reader', () => {
     }
   });
 
-  test.each([
-    'missing',
-    'not-a-repository',
-    'timeout',
-    'denied',
-    'invalid',
-  ] as const)('keeps the %s checkout fact separate from the source run outcome', async (outcome) => {
-    const dbPath = await fixture();
-    await publish(dbPath, [session('local-session')]);
-    const threadId = await create(dbPath, [sessionLink('local-session')]);
-    const observation = parseCheckoutStatusObservation({
-      machineId: MACHINE,
-      checkoutPath: '/fixture/project',
-      observedAt: at(-1),
-      outcome,
-    });
-    if (observation === null) {
-      throw new Error('Invalid checkout outcome fixture');
-    }
-    await run(importCheckoutStatusObservations({ dbPath, observations: [observation] }));
-    const failed = outcome === 'missing' || outcome === 'not-a-repository' ? 0 : 1;
-    const message = failed === 0 ? '1 known path no longer exists or is not a repository.' : 'One git read failed.';
-    await run(
-      recordWorkFactRun({
-        dbPath,
+  test.each(['missing', 'not-a-repository', 'timeout', 'denied', 'invalid'] as const)(
+    'keeps the %s checkout fact separate from the source run outcome',
+    async (outcome) => {
+      const dbPath = await fixture();
+      await publish(dbPath, [session('local-session')]);
+      const threadId = await create(dbPath, [sessionLink('local-session')]);
+      const observation = parseCheckoutStatusObservation({
         machineId: MACHINE,
-        sourceId: 'checkouts.status',
-        disabled: false,
-        failed,
-        observed: 0,
-        message,
-        ranAt: NOW,
-      }),
-    );
-    for (const result of [
-      await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })),
-      await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW })),
-    ]) {
-      const row = result && ('row' in result ? result.row : result.rows[0]);
-      expect(row?.markers.local).toEqual([]);
-      expect(result?.sources.find((source) => source.source === 'checkouts')).toMatchObject({
-        state: failed === 0 ? 'ok' : 'failed',
-        message,
+        checkoutPath: '/fixture/project',
+        observedAt: at(-1),
+        outcome,
       });
-    }
-  });
-
-  test.each([
-    'never-run',
-    'ok',
-    'unauthenticated',
-    'failed',
-    'disabled',
-  ] as const)('returns the newest 64 detached links without hiding the %s source state', async (state) => {
-    const dbPath = await fixture();
-    const threadId = await create(dbPath);
-    if (state !== 'never-run') {
+      if (observation === null) {
+        throw new Error('Invalid checkout outcome fixture');
+      }
+      await run(importCheckoutStatusObservations({ dbPath, observations: [observation] }));
+      const failed = outcome === 'missing' || outcome === 'not-a-repository' ? 0 : 1;
+      const message = failed === 0 ? '1 known path no longer exists or is not a repository.' : 'One git read failed.';
       await run(
         recordWorkFactRun({
           dbPath,
           machineId: MACHINE,
-          sourceId: 'github.pull-requests',
-          disabled: state === 'disabled',
-          failed: state === 'failed' || state === 'unauthenticated' ? 1 : 0,
-          observed: state === 'ok' ? 1 : 0,
+          sourceId: 'checkouts.status',
+          disabled: false,
+          failed,
+          observed: 0,
+          message,
           ranAt: NOW,
-          message: 'Fixture collection result.',
-          outcomeCode: state === 'unauthenticated' ? 'unauthenticated' : null,
         }),
       );
-    }
-    const db = new Database(dbPath);
-    try {
-      for (let i = 0; i < 70; i++) {
-        db.query(
-          'INSERT INTO work_thread_links (link_id, thread_id, kind, link_key, provenance, created_at, detached_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).run(randomUUID(), threadId, 'pull-request', `github.com/fixture/repo#${i + 1}`, 'user', at(-100), at(-i));
+      for (const result of [
+        await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })),
+        await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW })),
+      ]) {
+        const row = result && ('row' in result ? result.row : result.rows[0]);
+        expect(row?.markers.local).toEqual([]);
+        expect(result?.sources.find((source) => source.source === 'checkouts')).toMatchObject({
+          state: failed === 0 ? 'ok' : 'failed',
+          message,
+        });
       }
-    } finally {
-      db.close();
-    }
-    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
-    expect(detail?.detachedLinks).toHaveLength(64);
-    expect(detail?.detachedLinks[0]?.key).toBe('github.com/fixture/repo#1');
-    expect(detail?.detachedLinks.at(-1)?.key).toBe('github.com/fixture/repo#64');
-    expect(detail?.sources.find((source) => source.source === 'github')).toMatchObject({
-      state: state === 'ok' ? 'truncated' : state,
-      message:
-        state === 'never-run'
-          ? 'Older detached links are omitted from this history.'
-          : 'Fixture collection result. Older detached links are omitted from this history.',
-    });
-  });
+    },
+  );
+
+  test.each(['never-run', 'ok', 'unauthenticated', 'failed', 'disabled'] as const)(
+    'returns the newest 64 detached links without hiding the %s source state',
+    async (state) => {
+      const dbPath = await fixture();
+      const threadId = await create(dbPath);
+      if (state !== 'never-run') {
+        await run(
+          recordWorkFactRun({
+            dbPath,
+            machineId: MACHINE,
+            sourceId: 'github.pull-requests',
+            disabled: state === 'disabled',
+            failed: state === 'failed' || state === 'unauthenticated' ? 1 : 0,
+            observed: state === 'ok' ? 1 : 0,
+            ranAt: NOW,
+            message: 'Fixture collection result.',
+            outcomeCode: state === 'unauthenticated' ? 'unauthenticated' : null,
+          }),
+        );
+      }
+      const db = new Database(dbPath);
+      try {
+        for (let i = 0; i < 70; i++) {
+          db.query(
+            'INSERT INTO work_thread_links (link_id, thread_id, kind, link_key, provenance, created_at, detached_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          ).run(randomUUID(), threadId, 'pull-request', `github.com/fixture/repo#${i + 1}`, 'user', at(-100), at(-i));
+        }
+      } finally {
+        db.close();
+      }
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(detail?.detachedLinks).toHaveLength(64);
+      expect(detail?.detachedLinks[0]?.key).toBe('github.com/fixture/repo#1');
+      expect(detail?.detachedLinks.at(-1)?.key).toBe('github.com/fixture/repo#64');
+      expect(detail?.sources.find((source) => source.source === 'github')).toMatchObject({
+        state: state === 'ok' ? 'truncated' : state,
+        message:
+          state === 'never-run'
+            ? 'Older detached links are omitted from this history.'
+            : 'Fixture collection result. Older detached links are omitted from this history.',
+      });
+    },
+  );
 
   test('unauthenticated discovery has a typed source state with no linked observations', async () => {
     const dbPath = await fixture();
@@ -1754,8 +1746,8 @@ describe('work-thread reader', () => {
     const selected = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, search: 'old wait' }, now: NOW }));
     expect(selected.rows.map((row) => row.thread.threadId)).toEqual([old]);
     const invalid = await run(
-      Effect.either(queryWorkThreadList({ dbPath, query: { ...QUERY, limit: 101 }, now: NOW })),
+      Effect.result(queryWorkThreadList({ dbPath, query: { ...QUERY, limit: 101 }, now: NOW })),
     );
-    expect(invalid._tag).toBe('Left');
+    expect(invalid._tag).toBe('Failure');
   });
 });

@@ -243,18 +243,18 @@ const lockScopeKey = (lockPath: string): string =>
 
 const recoveryOwnerFromMatch = (match: RegExpExecArray): RecoveryOwner | undefined => {
   const pid = Number(match[2]);
-  const processStartTimeTicks = match[3] === 'none' ? null : match[3];
+  const startTimeTicks = match[3] === 'none' ? null : match[3];
   const createdAtMs = Number(match[4]);
   if (
     !Number.isSafeInteger(pid) ||
     pid <= 0 ||
     !Number.isSafeInteger(createdAtMs) ||
     createdAtMs < 0 ||
-    processStartTimeTicks === undefined
+    startTimeTicks === undefined
   ) {
     return;
   }
-  return { createdAtMs, pid, processStartTimeTicks };
+  return { createdAtMs, pid, processStartTimeTicks: startTimeTicks };
 };
 
 const recoveryOwnerFileSegment = (owner: RecoveryOwner): string =>
@@ -316,7 +316,7 @@ const parseLockMetadata = (text: string): UsageEngineLockMetadata | undefined =>
       version: LOCK_METADATA_VERSION,
     };
   } catch {
-    return;
+    // Unparseable lock metadata reads as absent.
   }
 };
 
@@ -1052,7 +1052,7 @@ const recoverStaleLock = async (
   let claims = await listRecoveryClaims(lockPath, directory, databasePath);
   if (finalStats) {
     const observedFinalStats = finalStats;
-    const detachedClaims = claims.filter((claim) => !sameIdentity(claim.identity, observedFinalStats));
+    const detachedClaims = claims.filter((listedClaim) => !sameIdentity(listedClaim.identity, observedFinalStats));
     for (const detached of detachedClaims) {
       if (
         !(
@@ -1063,7 +1063,7 @@ const recoverStaleLock = async (
         throw new Error(`Usage engine detached recovery claim was preserved: ${detached.path}`);
       }
     }
-    claims = claims.filter((claim) => sameIdentity(claim.identity, observedFinalStats));
+    claims = claims.filter((listedClaim) => sameIdentity(listedClaim.identity, observedFinalStats));
   }
 
   let claim: RecoveryClaim | undefined;
@@ -1315,7 +1315,9 @@ const publishLock = async (
         }
         if (recoveryClaim) {
           if (!(await removePrivateFileIfUnchanged(recoveryClaim.path, recoveryClaim.identity))) {
-            throw new Error(`Usage engine lock recovery claim changed after publication loss: ${recoveryClaim.path}`);
+            throw new Error(`Usage engine lock recovery claim changed after publication loss: ${recoveryClaim.path}`, {
+              cause: error,
+            });
           }
           recoveryClaim = undefined;
         }

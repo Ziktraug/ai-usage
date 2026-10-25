@@ -2,7 +2,7 @@
   import { css } from '@ai-usage/design-system/css';
   import { page, shell } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { buildSyncFleetMachineViews, manualTransferMutationAvailability } from '../../../manual-transfer-model';
   import type { SourceControlConnectionState } from '../../../source-control-client';
   import { buildSyncFleetComparisonRows } from '../../../sync-machine-comparison-model';

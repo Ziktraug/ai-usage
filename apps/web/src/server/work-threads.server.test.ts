@@ -247,49 +247,53 @@ describe('synthetic task dataset', () => {
     expect(parseWorkThreadsListOutput({ ok: true, data: await ports.readList(query) }).ok).toBe(true);
   });
 
-  test.each([
-    'ok',
-    'failed',
-    'unavailable',
-  ] as const)('delegation never conceals a missing explicit session (source=%s)', async (state) => {
-    const sources = [
-      { source: 'sessions' as const, state, lastRunAt: WORK_THREADS_SYNTHETIC_NOW, message: 'Synthetic source status' },
-    ];
-    const ports = createSyntheticWorkThreadStore({ sources });
-    const payment = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments);
-    const parent = payment?.episodes.find((episode) => episode.children.length > 0);
-    if (!parent) {
-      throw new Error('Missing the declared fixture delegation.');
-    }
-    const input = {
-      ...create(),
-      title: 'Analysis with incomplete session evidence',
-      links: [parent.linkKey, 'session:fixture-machine/codex/missing-review-check'].map((key) => ({
-        kind: 'session' as const,
-        key,
-      })),
-    };
-    const created = await ports.executeCommand(input);
-    if (!created.ok) {
-      throw new Error('Could not create the analysis.');
-    }
-    const detail = await ports.readDetail(created.threadId);
-    if (!detail) {
-      throw new Error('Missing the created analysis.');
-    }
-    expect(detail.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
-    const expectedState = state === 'ok' ? 'truncated' : state;
-    expect(detail.sources[0]?.state).toBe(expectedState);
-    const situation = threadSituationCopy(detail.row, detail.generatedAt, detail.sources);
-    expect(situation.hint).toBe('undecided');
-    expect(situation.remainders).toContainEqual(
-      expect.objectContaining({ source: 'sessions', kind: 'source-unavailable', outcome: expectedState }),
-    );
-    const list = await ports.readList({ ...query, search: input.title });
-    expect(list.sources).toEqual(detail.sources);
-    expect(list.rows).toHaveLength(1);
-    expect((await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments))?.sources).toEqual(sources);
-  });
+  test.each(['ok', 'failed', 'unavailable'] as const)(
+    'delegation never conceals a missing explicit session (source=%s)',
+    async (state) => {
+      const sources = [
+        {
+          source: 'sessions' as const,
+          state,
+          lastRunAt: WORK_THREADS_SYNTHETIC_NOW,
+          message: 'Synthetic source status',
+        },
+      ];
+      const ports = createSyntheticWorkThreadStore({ sources });
+      const payment = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments);
+      const parent = payment?.episodes.find((episode) => episode.children.length > 0);
+      if (!parent) {
+        throw new Error('Missing the declared fixture delegation.');
+      }
+      const input = {
+        ...create(),
+        title: 'Analysis with incomplete session evidence',
+        links: [parent.linkKey, 'session:fixture-machine/codex/missing-review-check'].map((key) => ({
+          kind: 'session' as const,
+          key,
+        })),
+      };
+      const created = await ports.executeCommand(input);
+      if (!created.ok) {
+        throw new Error('Could not create the analysis.');
+      }
+      const detail = await ports.readDetail(created.threadId);
+      if (!detail) {
+        throw new Error('Missing the created analysis.');
+      }
+      expect(detail.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 1 });
+      const expectedState = state === 'ok' ? 'truncated' : state;
+      expect(detail.sources[0]?.state).toBe(expectedState);
+      const situation = threadSituationCopy(detail.row, detail.generatedAt, detail.sources);
+      expect(situation.hint).toBe('undecided');
+      expect(situation.remainders).toContainEqual(
+        expect.objectContaining({ source: 'sessions', kind: 'source-unavailable', outcome: expectedState }),
+      );
+      const list = await ports.readList({ ...query, search: input.title });
+      expect(list.sources).toEqual(detail.sources);
+      expect(list.rows).toHaveLength(1);
+      expect((await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments))?.sources).toEqual(sources);
+    },
+  );
 
   test('searches PR numbers and linked session titles; filters, pagination and cursor scope agree', async () => {
     const ports = createSyntheticWorkThreadStore();

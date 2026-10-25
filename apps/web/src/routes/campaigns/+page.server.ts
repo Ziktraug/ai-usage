@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
-import { deferredCampaignsPageData, loadCampaignsPageData } from '$lib/features/campaigns/campaigns-load';
-import { ReportBootstrapUnavailableError } from '$lib/features/report/core/report-bootstrap';
-import { SessionRevisionExpiredError } from '$lib/query/options/session-window';
+import { deferredCampaignsPageData, loadCampaignsPageData } from '#lib/features/campaigns/campaigns-load.ts';
+import { ReportBootstrapUnavailableError } from '#lib/features/report/core/report-bootstrap.ts';
+import { SessionRevisionExpiredError } from '#lib/query/options/session-window.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, isDataRequest, locals, untrack, url }) => {

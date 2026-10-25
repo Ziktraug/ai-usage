@@ -165,7 +165,6 @@ const metricForColumn = (id: SessionColumnId): UsageMetricKey | undefined => {
   if (id === 'lines') {
     return 'lines';
   }
-  return;
 };
 
 const valueTitle = (row: SessionPresentationRow, id: SessionColumnId): string | undefined => {

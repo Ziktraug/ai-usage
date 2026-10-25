@@ -91,7 +91,7 @@ const readCodexChildLinksForSession = (
       nicknames.set(child, metadata?.agentNickname ?? null);
     }
     return codexChildLinksFromEdges(sourceSessionId, edges, nicknames, CODEX_DETAIL_MAX_CHILDREN);
-  }).pipe(Effect.catchAll(() => Effect.succeed(codexChildLinksWithoutDatabase())));
+  }).pipe(Effect.catch(() => Effect.succeed(codexChildLinksWithoutDatabase())));
 
 const readCodexThreadMetadataForSession = (
   database: LocalHistoryDatabase,
@@ -106,7 +106,7 @@ const readCodexThreadMetadataForSession = (
     const edges = yield* database.all<CodexThreadSpawnEdgeRow>(THREAD_PARENT_FOR_CHILD_SQL, [sourceSessionId]);
     const parent = codexParentsFromEdges(edges).get(sourceSessionId) ?? null;
     return codexThreadMetadataFromRow(row, parent);
-  }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+  }).pipe(Effect.catch(() => Effect.succeed(null)));
 
 const indexCodexRolloutFiles = (files: readonly string[]): ReadonlyMap<string, readonly string[]> => {
   const filesBySessionId = new Map<string, string[]>();
@@ -178,10 +178,12 @@ export const readCodexSessionAnalysis = (
     const parser = targetRead.parser;
     const parsedSession = targetRead.session;
     const initialRemainingBytes = Math.max(0, CODEX_DETAIL_MAX_TOTAL_BYTES - targetRead.bytes);
-    const analyzeWithMetadata = (database: LocalHistoryDatabase | null) =>
+    const analyzeWithMetadata = (historyDatabase: LocalHistoryDatabase | null) =>
       Effect.gen(function* () {
         let remainingBytes = initialRemainingBytes;
-        const metadata = database ? yield* readCodexThreadMetadataForSession(database, sourceSessionId) : null;
+        const metadata = historyDatabase
+          ? yield* readCodexThreadMetadataForSession(historyDatabase, sourceSessionId)
+          : null;
         mergeMetadata(parsedSession, metadata ?? undefined);
 
         const sessionsById = new Map<string, CodexSession>([[sourceSessionId, parsedSession]]);
@@ -202,7 +204,7 @@ export const readCodexSessionAnalysis = (
           }
           const ancestorRead = yield* readIndexedSession(currentAncestorId, false, remainingBytes).pipe(
             Effect.map((result) => ({ ok: true as const, result })),
-            Effect.catchAll(() => Effect.succeed({ ok: false as const })),
+            Effect.catch(() => Effect.succeed({ ok: false as const })),
           );
           if (!ancestorRead.ok) {
             lineageBudgetTruncated = true;
@@ -213,8 +215,8 @@ export const readCodexSessionAnalysis = (
           if (!ancestor) {
             break;
           }
-          const ancestorMetadata = database
-            ? yield* readCodexThreadMetadataForSession(database, currentAncestorId)
+          const ancestorMetadata = historyDatabase
+            ? yield* readCodexThreadMetadataForSession(historyDatabase, currentAncestorId)
             : null;
           mergeMetadata(ancestor, ancestorMetadata ?? undefined);
           sessionsById.set(currentAncestorId, ancestor);
@@ -227,7 +229,9 @@ export const readCodexSessionAnalysis = (
         } else if (isCodexUsageOwnedByRoot(parsedSession, sessionsById)) {
           usageOwnership = 'root';
         }
-        const links = database ? yield* readCodexChildLinksForSession(database, sourceSessionId) : undefined;
+        const links = historyDatabase
+          ? yield* readCodexChildLinksForSession(historyDatabase, sourceSessionId)
+          : undefined;
         return parser.analysis(usageOwnership, links);
       });
 
@@ -235,7 +239,7 @@ export const readCodexSessionAnalysis = (
     if (!dbPath) {
       return yield* analyzeWithMetadata(null);
     }
-    const database = yield* storage.openDatabase(dbPath).pipe(Effect.catchAll(() => Effect.succeed(null)));
+    const database = yield* storage.openDatabase(dbPath).pipe(Effect.catch(() => Effect.succeed(null)));
     if (!database) {
       return yield* analyzeWithMetadata(null);
     }

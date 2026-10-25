@@ -26,7 +26,6 @@ import {
 } from '@ai-usage/skills';
 import { createSkillsApplication } from '@ai-usage/skills/application';
 import { usageStoreErrorReasonFrom, usageStorePath } from '@ai-usage/usage-store/reader';
-import { Cause, Option, Runtime } from 'effect';
 import { joinSkillObservations } from './skill-observation-join';
 import type {
   KnownSkillProjectPath,
@@ -40,20 +39,14 @@ import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-const unwrapEffectFailure = (error: unknown) => {
-  if (!Runtime.isFiberFailure(error)) {
-    return error;
-  }
-  return Option.getOrUndefined(Cause.failureOption(error[Runtime.FiberFailureCauseId])) ?? error;
-};
-
+// `Effect.runPromise` rejects with the typed failure itself (or the defect), so
+// the rejection needs no unwrapping before it is sanitized here.
 const errorResult = (error: unknown): SkillsServerResult<never> => {
-  const unwrapped = unwrapEffectFailure(error);
-  const record = typeof unwrapped === 'object' && unwrapped !== null ? (unwrapped as Record<string, unknown>) : {};
+  const record = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : {};
   return {
     ok: false,
     error: {
-      message: unwrapped instanceof Error ? unwrapped.message : String(unwrapped),
+      message: error instanceof Error ? error.message : String(error),
       tag: typeof record._tag === 'string' ? record._tag : 'Error',
     },
   };
@@ -493,7 +486,7 @@ export const createSkillsServerDependencies = (
         return { projectGroups: [], sources: [] };
       }
       if (reason !== undefined) {
-        throw new Error('Project discovery is unavailable.');
+        throw new Error('Project discovery is unavailable.', { cause: error });
       }
       throw error;
     }
@@ -527,7 +520,7 @@ export const createSkillsServerDependencies = (
       });
     } catch (error) {
       if (usageStoreErrorReasonFrom(error) !== undefined) {
-        throw new Error('Skill observations are unavailable.');
+        throw new Error('Skill observations are unavailable.', { cause: error });
       }
       throw error;
     }

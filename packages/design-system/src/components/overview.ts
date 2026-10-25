@@ -180,6 +180,12 @@ export const heatWeekColumn = css({
   gap: '3px',
 });
 
+// A day's fill is its data. Forced colours would repaint every fill as the canvas and flatten the
+// intensity the marks carry, so the calendar and Punchcard marks and their legends keep their own
+// paint; their text labels, and the controls around them, still take the forced palette. The kept
+// paint is drawn from the forced palette's system colours, never from the theme tokens: those follow
+// the page's theme pin, which need not match the forced palette (a light pin on a black Canvas would
+// make the empty days the brightest marks).
 export const heatCell = css({
   w: { base: '18px', md: '12px' },
   h: { base: '18px', md: '12px' },
@@ -187,6 +193,7 @@ export const heatCell = css({
   border: '0',
   borderRadius: '3px',
   cursor: 'pointer',
+  forcedColorAdjust: 'none',
   transition: 'transform 0.1s',
   _hover: {
     transform: 'scale(1.25)',
@@ -194,14 +201,34 @@ export const heatCell = css({
   _focusVisible: {
     outline: '1px solid token(colors.accent)',
     outlineOffset: '1px',
+    // Keeping the day's paint keeps the accent ring too, so the focus takes the forced palette's.
+    _highContrast: { outline: '2px solid Highlight' },
   },
 });
 
-export const heatCellZero = css({ bg: 'track' });
+// An empty day under forced colours is the Canvas itself, set apart by its outline.
+export const heatCellZero = css({ bg: 'track', _highContrast: { bg: 'Canvas', border: '1px solid GrayText' } });
+
+/**
+ * The fill of a Rhythm or Punchcard mark that carries an intensity: `--mark-strength`, a percentage,
+ * fades one accent fill. Under forced colours the mark stays opaque, so the forced focus ring around a
+ * faint mark is not faded with it, and the strength mixes CanvasText into Canvas from 45% up: in
+ * either the black or the white palette the faintest level stands at least 3:1 off the Canvas, and
+ * each level is darker or brighter than the last in the palette's own direction.
+ */
+export const intensityFill = css({
+  bg: 'accent',
+  opacity: 'var(--mark-strength)',
+  _highContrast: {
+    bg: 'color-mix(in srgb, CanvasText calc(45% + 0.55 * var(--mark-strength)), Canvas)',
+    opacity: 1,
+  },
+});
 
 export const heatCellToday = css({
   outline: '1px solid token(colors.accent)',
   outlineOffset: '1px',
+  _highContrast: { outlineColor: 'CanvasText' },
 });
 
 export const heatLegend = css({
@@ -216,6 +243,7 @@ export const heatLegendCell = css({
   w: '10px',
   h: '10px',
   borderRadius: '3px',
+  forcedColorAdjust: 'none',
 });
 
 export const heatDayControl = css({
@@ -288,6 +316,7 @@ export const punchDot = css({
   w: 'var(--punch-size)',
   h: 'var(--punch-size)',
   borderRadius: 'full',
+  forcedColorAdjust: 'none',
   transition: 'transform 0.16s ease-out',
 });
 
@@ -305,6 +334,7 @@ export const punchIntensityKeyCell = css({
   w: 'var(--punch-size)',
   h: 'var(--punch-size)',
   borderRadius: 'full',
+  forcedColorAdjust: 'none',
 });
 
 export const punchHourLabel = css({

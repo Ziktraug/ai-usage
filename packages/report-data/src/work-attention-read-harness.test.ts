@@ -562,7 +562,7 @@ describe('Codex sessions on the Work read', () => {
   test('rejects a family read out of its bounds as invalid input', async () => {
     const dbPath = await createStore([]);
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryRecentServedHarnessSessions({
           activeSince: 0,
           dbPath,
@@ -571,7 +571,7 @@ describe('Codex sessions on the Work read', () => {
         }),
       ),
     );
-    expect(result._tag).toBe('Left');
+    expect(result._tag).toBe('Failure');
   });
 });
 
@@ -616,7 +616,7 @@ describe('assembleWorkAttention with harness sessions', () => {
       sessions: NO_SERVED_REVISION,
     });
 
-    expect(dataset.roots.map((root) => root.key.sourceSessionId)).toEqual(['kept']);
+    expect(dataset.roots.map((entry) => entry.key.sourceSessionId)).toEqual(['kept']);
     const [root] = dataset.roots;
     expect(root?.title).toHaveLength(256);
     expect(root?.title.endsWith('…')).toBe(true);

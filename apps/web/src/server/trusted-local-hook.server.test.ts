@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import type { Handle } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
 import { handleTrustedLocalRequest } from './trusted-local-hook.server';
 
 interface HookResult {

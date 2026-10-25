@@ -36,6 +36,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
+import type { SqliteQueryBinding } from './served-revision';
 import { createSessionQueryExactRevisionCache } from './session-query-exact-revision-cache';
 import { measureSessionQueryPerfPhase, recordSessionQueryPerfCounter } from './session-query-perf';
 
@@ -47,16 +48,16 @@ export type SessionQueryKind =
   | 'sessions';
 
 export interface SessionQuerySqliteStatement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  iterate(...params: unknown[]): IterableIterator<unknown>;
+  all: (...params: SqliteQueryBinding[]) => unknown[];
+  get: (...params: SqliteQueryBinding[]) => unknown;
+  iterate: (...params: SqliteQueryBinding[]) => IterableIterator<unknown>;
 }
 
 export interface SessionQuerySqliteDatabase {
-  query(sql: string): SessionQuerySqliteStatement;
+  query: (sql: string) => SessionQuerySqliteStatement;
 }
 
-export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
+export type SessionQuerySqliteTrace = (query: { params: readonly SqliteQueryBinding[]; sql: string }) => void;
 
 const SESSION_QUERY_SCHEMA_VERSION = 17;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
@@ -180,7 +181,7 @@ interface CampaignRootRecord {
 const executeAll = <RecordType>(
   database: SessionQuerySqliteDatabase,
   sql: string,
-  params: readonly unknown[],
+  params: readonly SqliteQueryBinding[],
   trace?: SessionQuerySqliteTrace,
 ): RecordType[] => {
   trace?.({ params, sql });
@@ -190,7 +191,7 @@ const executeAll = <RecordType>(
 const executeGet = <RecordType>(
   database: SessionQuerySqliteDatabase,
   sql: string,
-  params: readonly unknown[],
+  params: readonly SqliteQueryBinding[],
   trace?: SessionQuerySqliteTrace,
 ): RecordType | null => {
   trace?.({ params, sql });
@@ -239,8 +240,8 @@ export const assertSessionQueryCursorScope = (
 
 export const buildSessionQuerySqlFilter = (request: SessionQueryRequest, alias = 'session_rows') => {
   const conditions: string[] = [];
-  const params: unknown[] = [];
-  const add = (condition: string, ...values: unknown[]): void => {
+  const params: SqliteQueryBinding[] = [];
+  const add = (condition: string, ...values: SqliteQueryBinding[]): void => {
     conditions.push(condition);
     params.push(...values);
   };
@@ -643,7 +644,7 @@ const hydrateCampaignRoots = (
 const hydrateCampaignSummaries = (
   database: SessionQuerySqliteDatabase,
   records: ItemRecord[],
-  filter: { params: unknown[]; where: string },
+  filter: { params: SqliteQueryBinding[]; where: string },
   trace?: SessionQuerySqliteTrace,
 ): void => {
   const campaignRecords = records.filter(
@@ -980,8 +981,8 @@ const runSessionDetailAnchor = (
   let serializedRow: unknown;
   try {
     serializedRow = JSON.parse(sourceRow.source_row_json);
-  } catch {
-    throw new Error('Report revision session detail source row is invalid JSON');
+  } catch (error) {
+    throw new Error('Report revision session detail source row is invalid JSON', { cause: error });
   }
   const source = isUnknownRecord(serializedRow) ? serializedRow.source : null;
   const projectionSource = isUnknownRecord(serializedRow) ? withoutSource(serializedRow) : serializedRow;

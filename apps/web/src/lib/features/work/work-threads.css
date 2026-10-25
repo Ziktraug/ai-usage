@@ -545,7 +545,7 @@
 .wt-source summary::-webkit-details-marker {
   display: none;
 }
-.wt-source summary > strong {
+.wt-source :where(summary > strong) {
   font-size: 12px;
   font-weight: 550;
   overflow-wrap: anywhere;
@@ -833,7 +833,7 @@
   line-height: 1.8;
   color: var(--wt-muted);
 }
-.wt-inline-panel li small {
+.wt-inline-panel :where(li small) {
   display: block;
   font-size: 10px;
   overflow-wrap: anywhere;

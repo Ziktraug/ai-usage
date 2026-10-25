@@ -468,24 +468,23 @@ test('resolves the active account token before observing when automatic credenti
   }
 });
 
-test.each([
-  { stdout: '' },
-  { stdout: '  \n\t' },
-  { exitCode: 1, stdout: '' },
-])('halts the active-account batch when no usable token is returned: %j', async (authToken) => {
-  const fake = installFakeGh({
-    authToken,
-    pullRequests: { 'fixture/project#66': { stdout: view() } },
-  });
-  const batch = await observe(fake, { links: [link(66), link(67)] });
-  expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
-    ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
-    ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
-  ]);
-  expect(fake.calls().map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
-  expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
-  expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
-});
+test.each([{ stdout: '' }, { stdout: '  \n\t' }, { exitCode: 1, stdout: '' }])(
+  'halts the active-account batch when no usable token is returned: %j',
+  async (authToken) => {
+    const fake = installFakeGh({
+      authToken,
+      pullRequests: { 'fixture/project#66': { stdout: view() } },
+    });
+    const batch = await observe(fake, { links: [link(66), link(67)] });
+    expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
+      ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
+      ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
+    ]);
+    expect(fake.calls().map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
+  },
+);
 
 test('halts after a bounded active-account token read timeout without observing a link', async () => {
   const fake = installFakeGh({ authToken: { delayMs: 3000, stdout: TOKEN_SENTINEL } });

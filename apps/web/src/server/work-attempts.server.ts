@@ -113,7 +113,7 @@ export const createWorkAttemptsServerReaders = (
 ): WorkAttemptsServerReaders => ({
   readAttempts: async ({ limit, machineId, target }) => {
     const outcome = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryReviewAttempts({
           dbPath: paths.databasePath,
           limit,
@@ -122,14 +122,14 @@ export const createWorkAttemptsServerReaders = (
         }),
       ),
     );
-    if (outcome._tag === 'Right') {
-      return outcome.right;
+    if (outcome._tag === 'Success') {
+      return outcome.success;
     }
     // No store yet means no attempt yet; every other reason stays a failure the caller classifies.
-    if (usageStoreErrorReasonFrom(outcome.left) === 'store-missing') {
+    if (usageStoreErrorReasonFrom(outcome.failure) === 'store-missing') {
       return EMPTY_READ;
     }
-    throw outcome.left;
+    throw outcome.failure;
   },
   readRouting: async () => {
     const routing = await readLocalRoutingDeclarations(paths.homeDirectory);
@@ -140,27 +140,27 @@ export const createWorkAttemptsServerReaders = (
       return new Map();
     }
     const outcome = await Effect.runPromise(
-      Effect.either(querySessionRowsBySourceSessionIds({ dbPath: paths.databasePath, ...input })),
+      Effect.result(querySessionRowsBySourceSessionIds({ dbPath: paths.databasePath, ...input })),
     );
-    if (outcome._tag === 'Right') {
-      return new Map(outcome.right.rows.map((row) => [row.sourceSessionId, row.rowId] as const));
+    if (outcome._tag === 'Success') {
+      return new Map(outcome.success.rows.map((row) => [row.sourceSessionId, row.rowId] as const));
     }
-    if (usageStoreErrorReasonFrom(outcome.left) === 'store-missing') {
+    if (usageStoreErrorReasonFrom(outcome.failure) === 'store-missing') {
       return new Map();
     }
-    throw outcome.left;
+    throw outcome.failure;
   },
   resolveTarget: async (input) => {
     const outcome = await Effect.runPromise(
-      Effect.either(queryReviewTargetResolution({ dbPath: paths.databasePath, ...input })),
+      Effect.result(queryReviewTargetResolution({ dbPath: paths.databasePath, ...input })),
     );
-    if (outcome._tag === 'Right') {
-      return outcome.right;
+    if (outcome._tag === 'Success') {
+      return outcome.success;
     }
-    if (usageStoreErrorReasonFrom(outcome.left) === 'store-missing') {
+    if (usageStoreErrorReasonFrom(outcome.failure) === 'store-missing') {
       return { desktop: null, session: null };
     }
-    throw outcome.left;
+    throw outcome.failure;
   },
 });
 

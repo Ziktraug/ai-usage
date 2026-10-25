@@ -5,7 +5,7 @@
   import type { MemoryProposalReviewAction, MemoryProposalReviewInput } from '@ai-usage/web-contract/memory';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { acknowledgeMemoryProposalReview, memoryProposalReviewsKey } from '../../query/options/memory';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import { isMemoryProposalUnavailable } from './memory-errors';
@@ -90,7 +90,7 @@
     }
   };
 </script>
-<div class={shell} data-query-state={data.queryState.dehydratedState.queries.length>0 ? 'hydrated':'deferred'}>
+<div class={shell} data-query-state={data.queryState.dehydratedState.queries.length > 0 ? 'hydrated' : 'deferred'}>
   <main class={page} data-route-shell="memory">
     <WorkspaceHeader
       description="Read accepted guidance and review proposals before adding them to Memory."
@@ -100,21 +100,21 @@
     <div class={memoryStack}>
       <nav aria-label="Memory views" class={navigation}>
         <a
-          aria-current={location.view==='knowledge' ? 'page':undefined}
-          class={location.view==='knowledge' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
-          href={memoryHref(address,{view:'knowledge',cursor:null,proposal:null})}
+          aria-current={location.view === 'knowledge' ? 'page' : undefined}
+          class={location.view === 'knowledge' ? memoryCurrentButton : memoryButton}
+          data-ai-usage-preserve-scroll
+          href={memoryHref(address, { view: 'knowledge', cursor: null, proposal: null })}
           >Knowledge</a
         >
         <a
-          aria-current={location.view==='review' ? 'page':undefined}
-          class={location.view==='review' ? memoryCurrentButton : memoryButton}
-          data-sveltekit-noscroll
-          href={memoryHref(address,{view:'review',cursor:null,proposal:null})}
+          aria-current={location.view === 'review' ? 'page' : undefined}
+          class={location.view === 'review' ? memoryCurrentButton : memoryButton}
+          data-ai-usage-preserve-scroll
+          href={memoryHref(address, { view: 'review', cursor: null, proposal: null })}
           >Pending review</a
         >
       </nav>
-      {#if location.view==='review'}
+      {#if location.view === 'review'}
         <p class={memoryCopy}>
           Review each proposal's source and edit the guidance before explicitly accepting or rejecting it.
         </p>
@@ -124,13 +124,15 @@
               This Memory proposal is not pending review or is not accessible. It may already have been accepted or
               rejected.
             </p>
-            <a class={memoryButton} href={memoryHref(address,{proposal:null,cursor:null})}>Open the review queue</a>
+            <a class={memoryButton} href={memoryHref(address, { proposal: null, cursor: null })}
+              >Open the review queue</a
+            >
           </section>
         {:else if snapshot}
           {#if targetProposalId}
             <p class={memoryCopy} role="status">The requested proposal is shown first, followed by later proposals.</p>
           {/if}
-          {#if snapshot.proposals.length===0}
+          {#if snapshot.proposals.length === 0}
             <section aria-live="polite" class={memoryPanel}>No Memory proposals need review.</section>
           {:else}
             {#each snapshot.proposals as proposal (proposal.proposalId)}
@@ -138,19 +140,19 @@
                 {onAction}
                 {proposal}
                 spaceId={snapshot.spaceId}
-                targeted={proposal.proposalId===targetProposalId}
+                targeted={proposal.proposalId === targetProposalId}
               />
             {/each}
           {/if}
           <div class={memoryRow}>
             {#if location.cursor || targetProposalId}
-              <a class={memoryButton} href={memoryHref(address,{cursor:null,proposal:null})}>Newest proposals</a>
+              <a class={memoryButton} href={memoryHref(address, { cursor: null, proposal: null })}>Newest proposals</a>
             {/if}
             {#if snapshot.nextCursor}
               <a
                 class={memoryButton}
-                data-sveltekit-noscroll
-                href={memoryHref(address,{cursor:snapshot.nextCursor,proposal:null})}
+                data-ai-usage-preserve-scroll
+                href={memoryHref(address, { cursor: snapshot.nextCursor, proposal: null })}
                 >More proposals</a
               >
             {/if}

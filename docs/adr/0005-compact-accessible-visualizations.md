@@ -1,9 +1,12 @@
 # ADR 0005: Keep compact visuals and provide equivalent controls
 
-- **Status**: Accepted; partially superseded by
-  [ADR 0013](0013-direct-rhythm-day-controls.md) (formerly numbered 0009)
+- **Status**: Superseded 2026-10-24 by
+  [ADR 0013](0013-direct-rhythm-day-controls.md) (formerly numbered 0009),
+  which first replaced the heatmap day input and now restates the rest of this
+  record as the one compact-visual accessibility decision
+- **Superseded by**: [ADR 0013](0013-direct-rhythm-day-controls.md)
 - **Date**: 2026-07-22
-- **Superseded clause**: the synchronized labelled heatmap day input
+- **Superseded clause** (2026-08-01): the synchronized labelled heatmap day input
 
 ## Context
 

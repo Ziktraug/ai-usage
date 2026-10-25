@@ -1091,7 +1091,7 @@ export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaun
     target: input.target,
   });
   const candidate = candidates.find((entry) => entry.id === input.candidateId);
-  const declared = input.declarations.filter((declaration) => declaration.machineId === input.target.machineId);
+  const declared = input.declarations.filter((entry) => entry.machineId === input.target.machineId);
   if (declared.length === 0) {
     return refusal(
       'no-declaration',

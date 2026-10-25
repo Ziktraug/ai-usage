@@ -54,7 +54,8 @@ const fixture = (count: number) => {
       new UsageStoreError({ operation, message: String(cause), reason }),
     usageStoreReadError: (operation, _dbPath, cause) =>
       new UsageStoreError({ operation, message: String(cause), reason: 'storage-failure' }),
-    withUsageStoreReader: (_dbPath, use) => use(db),
+    // Bun 1.4 types `query` bindings more narrowly than the store's structural reader seam.
+    withUsageStoreReader: (_dbPath, use) => use(db as unknown as Parameters<typeof use>[0]),
   });
   return { db, store };
 };

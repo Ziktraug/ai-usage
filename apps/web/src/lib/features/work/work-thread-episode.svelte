@@ -47,7 +47,7 @@
   <button
     aria-expanded={expanded ? 'true' : 'false'}
     class="wt-session-button"
-    onclick={() => expanded = !expanded}
+    onclick={() => (expanded = !expanded)}
     type="button"
   >
     <span class="wt-glyph" data-harness={episode.harness}>{harnessGlyph(episode.harness)}</span>
@@ -137,7 +137,7 @@
     <button
       aria-expanded={showDelegations || childrenOpen ? 'true' : 'false'}
       class="wt-delegations"
-      onclick={() => childrenOpen = !childrenOpen}
+      onclick={() => (childrenOpen = !childrenOpen)}
       type="button"
     >
       {showDelegations || childrenOpen ? '−' : '+'} {episode.children.length} delegated

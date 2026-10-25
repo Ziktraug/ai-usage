@@ -27,7 +27,7 @@
   import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
   import { skillObservationQueryPresentation } from './observation-query-presentation';
-  import { createSkillsFallbackNavigationRequest } from './skills-fallback-navigation';
+  import { createSkillsFallbackNavigator } from './skills-fallback-navigation';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
@@ -271,24 +271,47 @@
     return () => window.cancelAnimationFrame(activationFrame);
   });
 
+  let fallbackFailed = $state(false);
+  const fallbackNavigator = createSkillsFallbackNavigator({
+    currentHref: () => window.location.href,
+    onAccepted: () => {
+      fallbackFailed = false;
+    },
+    onFailure: () => {
+      fallbackFailed = true;
+    },
+    // A URL rewrite in place, as in SvelteKit 2: the deprecated `replaceState` runs no navigation
+    // hooks, where a shallow `goto` would run the dirty-editor guard and could be cancelled by it.
+    replace: (url, state) => replaceState(url, state),
+  });
+
   $effect(() => {
-    if (!(mounted && view?.fallbackHref)) {
+    if (!(mounted && view)) {
       return;
     }
-    const request = createSkillsFallbackNavigationRequest(window.location.href, navigationState);
-    replaceState(request.intent.url, request.state);
+    if (!view.fallbackHref) {
+      // The address names no missing skill any more, so an earlier rejected rewrite no longer applies.
+      fallbackFailed = false;
+      return;
+    }
+    // Reading the history state re-arms the fallback after a navigation; the navigator turns the
+    // re-run every rewrite causes into a no-op.
+    fallbackNavigator.apply(navigationState);
   });
 </script>
 
+{#if fallbackFailed}
+  <p aria-live="polite" role="status">Navigation failed. Try again.</p>
+{/if}
 {#if view && presentation}
   <SkillsWorkspace
-    {...(editorSlot === undefined ? {} : { editorSlot })}
-    {...(healthSlot === undefined ? {} : { healthSlot })}
+    {...editorSlot === undefined ? {} : { editorSlot }}
+    {...healthSlot === undefined ? {} : { healthSlot }}
     {hydrated}
     {management}
     {presentation}
     {selectedDocument}
-    {...(onSourceChange === undefined ? {} : { onSourceChange })}
+    {...onSourceChange === undefined ? {} : { onSourceChange }}
     snapshot={view.snapshot}
     {snapshotUpdates}
     {view}

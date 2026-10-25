@@ -17,7 +17,9 @@
   let { content, contentClass, openDelay = 300, trigger }: Props = $props();
 </script>
 
-{#snippet triggerElement(_getTriggerProps: TriggerPropsGetter)}
+{#snippet triggerElement(
+  _getTriggerProps: TriggerPropsGetter,
+)}
   {@render trigger(_getTriggerProps())}
 {/snippet}
 

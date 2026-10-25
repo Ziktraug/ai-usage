@@ -3,12 +3,12 @@
 > **Implementation status:** Integrated on `main` via PR #53 (plan 106
 > `DONE`). Corpus measurements and verification evidence below record the
 > validation run at integration time, not a continuously refreshed benchmark.
+> Plan 120 removed the connected PostgreSQL search adapter and its suite; this
+> page describes the local mode only.
 
 Memory retrieval is specified as one authorization-first application contract
-with two storage projections and several edge adapters. Local/offline mode uses
-the dedicated `memory.sqlite` authority and FTS5. Connected mode uses
-PostgreSQL full-text search plus `pg_trgm`. Web, CLI, and MCP never query either
-database directly.
+over the dedicated `memory.sqlite` authority and its FTS5 projection, with
+several edge adapters. Web, CLI, and MCP never query the database directly.
 
 This document is the accepted operating and safety specification. The synthetic
 corpus and its measured numbers are regression evidence, not a production
@@ -56,31 +56,29 @@ projection in the same transaction. Rebuilding unchanged source state is
 idempotent. Structured Space, Project, status, trust, sensitivity, and current
 revision predicates are applied before candidates are returned.
 
-PostgreSQL stores a generated weighted `tsvector` plus indexed trigram support:
-
-- A: exact title and accepted command text;
-- B: summary, decisions, and pitfall symptoms/causes;
-- C: guidance and structured terms;
-- D: bounded supporting text.
-
-Both adapters use the `simple` text-search configuration plus normalized
-trigrams. The committed English/French corpus did not justify per-document
-stemming, and `simple` avoids selecting an incorrect language stemmer.
+Two external-content FTS5 tables index each chunk's title, summary, guidance,
+structured terms, and supporting text: a `unicode61` table (diacritics removed,
+2–4 character prefixes) for lexical candidates and a `trigram` table for
+bounded fuzzy candidates. Literal mode draws candidates only from a substring
+match of the normalized literal; hybrid mode adds both FTS5 candidate sets.
+The exact, lexical, and trigram scores weight the title highest and supporting
+text lowest. No language stemmer is applied: the committed English/French
+corpus did not justify per-document stemming, and leaving it out avoids
+selecting an incorrect one.
 
 ### Authorization before ranking
 
 The application first obtains one complete opaque authorized-resource scope.
-SQLite binds that scope to its structured predicates. PostgreSQL materializes
-the complete authorized relation in the query and joins it before FTS/trigram
-eligibility and scoring. Result limit and cursor are applied only afterward.
+SQLite binds its complete ID set into the eligible-chunk relation, together
+with the structured predicates, before any FTS5 match or scoring. Result limit
+and cursor are applied only afterward.
 
 The target implementation must never rank a global corpus and post-filter it or
 rank an arbitrary bounded page returned by the Authorizer. If a complete scope
-cannot be represented, search fails closed. The no-leak fixtures compare the
+cannot be represented, search fails closed. The no-leak fixture compares the
 entire response with a deliberately stronger forbidden match present and
 absent; IDs, order, total, snippets, cursor, page boundary, and every rank
-component remain identical. A direct unsafe SQL fixture proves that the
-forbidden row exists and would rank without the authorization join.
+component remain identical.
 
 ## Evaluation and vector gate
 
@@ -95,28 +93,27 @@ Measured on 2026-08-30 in this repository's Nix/Bun test environment:
 | Adapter | Cases | Recall@1 | Recall@10 | MRR | No-answer FPR | No-leak | Latency median / p95 / max | Response bytes median / p95 / max |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
 | SQLite FTS5 | 11 | 0.888889 | 0.888889 | 0.888889 | 0 | pass | 9.504 / 15.943 / 15.943 ms | 1,357 / 3,858 / 3,858 |
-| PostgreSQL FTS + `pg_trgm` | 11 | 0.888889 | 0.888889 | 0.888889 | 0 | pass | 16.549 / 21.200 / 21.200 ms | 1,366 / 2,769 / 2,769 |
 
 Per-class samples (one query per class, so sample = median = p95):
 
-| Query class | Expected outcome | SQLite ms / bytes | PostgreSQL ms / bytes |
-| --- | --- | ---: | ---: |
-| exact identifier | hit@1 | 7.416 / 1,252 | 18.820 / 1,257 |
-| exact command | hit@1 | 6.543 / 1,401 | 8.454 / 1,399 |
-| typo/fuzzy | hit@1 | 5.112 / 1,312 | 11.508 / 1,318 |
-| semantic paraphrase | lexical miss | 10.233 / 185 | 16.874 / 191 |
-| explicit history | hit@1 | 5.157 / 1,357 | 6.395 / 1,366 |
-| scope precedence | hit@1 | 11.964 / 2,756 | 15.976 / 2,769 |
-| trust | hit@1 | 11.859 / 1,517 | 17.122 / 1,523 |
-| no answer | empty | 9.504 / 185 | 14.622 / 191 |
-| authorization negative | empty/no leak | 6.695 / 185 | 16.549 / 191 |
-| multilingual | hit@1 | 10.174 / 3,858 | 21.200 / 1,386 |
-| prompt injection | hit@1, quoted data | 15.943 / 2,745 | 16.916 / 1,557 |
+| Query class | Expected outcome | SQLite ms / bytes |
+| --- | --- | ---: |
+| exact identifier | hit@1 | 7.416 / 1,252 |
+| exact command | hit@1 | 6.543 / 1,401 |
+| typo/fuzzy | hit@1 | 5.112 / 1,312 |
+| semantic paraphrase | lexical miss | 10.233 / 185 |
+| explicit history | hit@1 | 5.157 / 1,357 |
+| scope precedence | hit@1 | 11.964 / 2,756 |
+| trust | hit@1 | 11.859 / 1,517 |
+| no answer | empty | 9.504 / 185 |
+| authorization negative | empty/no leak | 6.695 / 185 |
+| multilingual | hit@1 | 10.174 / 3,858 |
+| prompt injection | hit@1, quoted data | 15.943 / 2,745 |
 
 The single miss is the intentionally lexically disjoint semantic paraphrase.
 Although failures are concentrated in that class, lexical recall@10 is above
 the required 0.8 threshold. Both gate clauses therefore do not fire and
-`pgvector` is deliberately absent. Adding embeddings requires a new reviewed
+vector search is deliberately absent. Adding embeddings requires a new reviewed
 migration with model/version/dimension/input hashes, sensitive-derivative
 handling, rebuild/mixed-version behavior, fusion, and no external disclosure of
 private content by default.
@@ -125,8 +122,6 @@ To reproduce and print the synthetic report:
 
 ```sh
 AI_USAGE_PRINT_MEMORY_SEARCH_METRICS=1 bun test packages/memory-sqlite/src/search.test.ts
-nix develop -c bash -lc \
-  'AI_USAGE_RUN_POSTGRES_TESTS=1 AI_USAGE_PRINT_MEMORY_SEARCH_METRICS=1 bun test tools/memory.postgres.test.ts'
 ```
 
 The print flag is test-only and the corpus is synthetic. Production query,
@@ -138,8 +133,7 @@ The supervised local engine owns `memory.sqlite` and exposes a separately
 authenticated numeric-loopback Memory service. Its owner-only rendezvous and
 bearer token are distinct from usage-engine control. Web's server-side oRPC
 handler, the CLI, and local MCP call this service; browser code imports only the
-oRPC contract. Connected composition calls the same Memory application service
-over PostgreSQL with an established Person/Device authorization context.
+oRPC contract.
 
 Web `/memory` provides active accepted search with hybrid/literal selection.
 TanStack Query owns one key containing every result-shaping input. Search is
@@ -162,8 +156,7 @@ bun run cli -- memory search 'authorized ranking' --json
 
 Optional `--project <uuid> --include-space-wide`, `--limit 1..25`, and
 `--cursor <opaque>` retain the same service contract. If the local Memory
-service is unavailable, CLI/Web/MCP fail explicitly; connected failure never
-falls back to a different local corpus.
+service is unavailable, CLI/Web/MCP fail explicitly.
 
 ## MCP tools and retrieved-content safety
 
@@ -193,9 +186,8 @@ quoted JSON data and cannot override the current user request, system
 instructions, code, or tests. Raw Observations are excluded, and exact command
 text can come only from an accepted command item.
 
-The adapter imports application ports, never SQLite/PostgreSQL adapters. The
-same protocol tests run through the SDK's in-memory transport; the connected
-PostgreSQL test runs the same `memory.search` composition.
+The adapter imports application ports, never the SQLite adapter. Its protocol
+tests run through the SDK's in-memory transport.
 
 ## Local MCP and registration
 
@@ -233,6 +225,6 @@ No shared credential is written to repository configuration.
 - private paths, bearer tokens, database errors, queries, result text, and
   unauthorized IDs never enter MCP/Web/CLI diagnostics;
 - response-size overflow becomes a fixed sanitized error, never a partial card;
-- local search never calls PostgreSQL or a connected server;
-- shared search never returns a local fallback;
+- search reads only `memory.sqlite` through the local Memory service and never
+  calls a remote server;
 - harness-specific configuration cannot change tool names or schemas.

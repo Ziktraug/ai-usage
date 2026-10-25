@@ -108,7 +108,7 @@ export const discoverJiraIssues = (options: DiscoverJiraIssuesOptions = {}): Eff
         truncated: parsed.keys.length >= limit || (parsed.total !== null && parsed.total > parsed.keys.length),
       };
     }),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed(
         failed(
           (

@@ -41,9 +41,9 @@ export interface SkillsProjectMarkdownDocument {
 
 export interface SkillsApplicationPorts {
   homePath: string;
-  projectPaths?(): Promise<readonly string[]>;
-  readConfig(): Promise<SkillManagementConfigDocument>;
-  writeConfig(config: SkillManagementConfigDocument): Promise<void>;
+  projectPaths?: () => Promise<readonly string[]>;
+  readConfig: () => Promise<SkillManagementConfigDocument>;
+  writeConfig: (config: SkillManagementConfigDocument) => Promise<void>;
 }
 
 export interface SkillsApplicationWorkflows {
@@ -60,19 +60,19 @@ export interface SkillsApplicationWorkflows {
 }
 
 export interface SkillsApplication {
-  createTarget(targetId: string): Promise<SkillManagementSnapshot>;
-  previewReconcile(): Promise<SkillReconcileResult>;
-  readMarkdown(skillName: string): Promise<SkillMarkdownDocument>;
-  readProjectInventories(): Promise<readonly ProjectSkillInventory[]>;
-  readProjectMarkdown(input: SkillsProjectMarkdownInput): Promise<SkillsProjectMarkdownDocument>;
-  readSnapshot(): Promise<SkillManagementSnapshot>;
-  reconcileAll(): Promise<SkillReconcileResult>;
-  reconcileSkill(skillName: string): Promise<SkillReconcileResult>;
-  toggleSkill(input: SkillToggleInput): Promise<SkillReconcileResult>;
-  writeConfig(skills: unknown): Promise<SkillManagementSnapshot>;
-  writeMarkdown(
+  createTarget: (targetId: string) => Promise<SkillManagementSnapshot>;
+  previewReconcile: () => Promise<SkillReconcileResult>;
+  readMarkdown: (skillName: string) => Promise<SkillMarkdownDocument>;
+  readProjectInventories: () => Promise<readonly ProjectSkillInventory[]>;
+  readProjectMarkdown: (input: SkillsProjectMarkdownInput) => Promise<SkillsProjectMarkdownDocument>;
+  readSnapshot: () => Promise<SkillManagementSnapshot>;
+  reconcileAll: () => Promise<SkillReconcileResult>;
+  reconcileSkill: (skillName: string) => Promise<SkillReconcileResult>;
+  toggleSkill: (input: SkillToggleInput) => Promise<SkillReconcileResult>;
+  writeConfig: (skills: unknown) => Promise<SkillManagementSnapshot>;
+  writeMarkdown: (
     input: SkillMarkdownWriteInput,
-  ): Promise<
+  ) => Promise<
     | { reason: 'conflict' | 'not-found' | 'too-large' }
     | { document: SkillMarkdownDocument; snapshot: SkillManagementSnapshot }
   >;

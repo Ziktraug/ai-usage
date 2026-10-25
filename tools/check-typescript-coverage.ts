@@ -4,7 +4,6 @@ import ts from 'typescript';
 export const TYPECHECK_PROJECTS = [
   'apps/cli/tsconfig.json',
   'apps/mcp/tsconfig.json',
-  'apps/server/tsconfig.json',
   'apps/usage-engine/tsconfig.json',
   'apps/web/tsconfig.json',
   'apps/web/tsconfig.e2e.json',
@@ -20,8 +19,6 @@ export const TYPECHECK_PROJECTS = [
   'packages/memory-search/tsconfig.json',
   'packages/memory-service/tsconfig.json',
   'packages/platform-core/tsconfig.json',
-  'packages/postgres-store/tsconfig.json',
-  'packages/project-application/tsconfig.json',
   'packages/project-registry/tsconfig.json',
   'packages/replication-client/tsconfig.json',
   'packages/replication-outbox/tsconfig.json',

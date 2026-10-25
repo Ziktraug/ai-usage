@@ -364,9 +364,10 @@ export const launchCodexReview = async (
       timeout = true;
       terminate();
     }, spec.timeoutMs ?? REVIEW_ATTEMPT_RUN_LIMITS.timeoutMs);
-    client.closed.then(() =>
-      finish('lost', 'Codex app-server contact lost before a terminal turn; reservation retained'),
-    );
+    // `closed` only resolves and `finish` settles once; the launch must not wait for the exit here.
+    client.closed
+      .then(() => finish('lost', 'Codex app-server contact lost before a terminal turn; reservation retained'))
+      .catch(() => undefined);
     // Once sent, a missing start response is an uncertain launch, never a safe retry.
     client
       .request('turn/start', {

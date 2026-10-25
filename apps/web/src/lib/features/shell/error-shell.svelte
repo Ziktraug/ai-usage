@@ -20,7 +20,7 @@
   } = $props();
 
   const retryForm = css({ m: 0 });
-  const statusPanel = css({ display: 'grid', gap: '12px', maxW: '640px' });
+  const statusPanel = css({ display: 'grid', maxW: '640px' });
   const submitRetry = async (event: SubmitEvent): Promise<void> => {
     if (!onRetry) {
       return;
@@ -45,7 +45,7 @@
         <p class={panelSub}>{message}</p>
         {#if onRetry}
           <form action={retryHref} class={retryForm} method="get" onsubmit={submitRetry}>
-            {#each retryParameters as [ name, value ], index (`${index}:${name}:${value}`)}
+            {#each retryParameters as [name, value], index (`${index}:${name}:${value}`)}
               <input {name} type="hidden" {value}>
             {/each}
             <button class={commandButton} disabled={pending} type="submit">

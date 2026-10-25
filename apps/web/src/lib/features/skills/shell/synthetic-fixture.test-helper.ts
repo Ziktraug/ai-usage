@@ -199,9 +199,9 @@ export const syntheticProvisionalObservations: SkillObservations = {
   harnessIncompleteness: { exposure: [], exposureUnattributed: true, invocation: [], invocationUnattributed: true },
   invocationLowerBound: true,
   lowerBound: true,
-  skills: syntheticObservations.skills.map((skill) => ({
-    ...skill,
-    verdictProvisional: !skill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
+  skills: syntheticObservations.skills.map((observedSkill) => ({
+    ...observedSkill,
+    verdictProvisional: !observedSkill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
   })),
 };
 
@@ -233,9 +233,9 @@ export const syntheticCodexRejectedObservations: SkillObservations = {
   },
   invocationLowerBound: true,
   lowerBound: true,
-  skills: syntheticObservations.skills.map((skill) => ({
-    ...skill,
-    verdictProvisional: !skill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
+  skills: syntheticObservations.skills.map((observedSkill) => ({
+    ...observedSkill,
+    verdictProvisional: !observedSkill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
   })),
 };
 

@@ -30,6 +30,7 @@ import {
   Layer,
   Option,
   Queue,
+  Semaphore,
   Stream,
   SubscriptionRef,
 } from 'effect';
@@ -87,7 +88,7 @@ export interface SourceControlOptions {
   readonly policyStore: SourcePolicyStore;
   readonly publication: ReportPublicationPort;
   readonly sources: ReadonlyMap<CollectionSourceId, ScheduledSource>;
-  readonly sourceTimeout?: Duration.DurationInput;
+  readonly sourceTimeout?: Duration.Input;
   readonly workerCount?: number;
   readonly writerGate?: UsageEngineWriterGate;
 }
@@ -116,10 +117,9 @@ export interface SourceControlService {
   readonly stopAutonomousCollection: Effect.Effect<void>;
 }
 
-export class SourceControl extends Context.Tag('@ai-usage/usage-engine-runtime/SourceControl')<
-  SourceControl,
-  SourceControlService
->() {}
+export class SourceControl extends Context.Service<SourceControl, SourceControlService>()(
+  '@ai-usage/usage-engine-runtime/SourceControl',
+) {}
 
 type ControlPlaneJob = PublicationJob | SourceJob;
 
@@ -167,7 +167,7 @@ const validateSourceControlOptions = (options: SourceControlOptions): Effect.Eff
         ),
       );
     }
-    const sourceTimeout = Duration.decode(options.sourceTimeout ?? DEFAULT_SOURCE_TIMEOUT);
+    const sourceTimeout = Duration.fromInputUnsafe(options.sourceTimeout ?? DEFAULT_SOURCE_TIMEOUT);
     const sourceTimeoutMs = Duration.toMillis(sourceTimeout);
     if (!(sourceTimeoutMs > 0 && sourceTimeoutMs <= sourceControlBounds.maxDurationMs)) {
       return yield* Effect.die(new Error('Source control timeout must be positive and no longer than 24 hours.'));
@@ -228,7 +228,7 @@ const createSourceControlScheduler = (runtime: SourceControlRuntime): SourceCont
       if (!queued) {
         return false;
       }
-      yield* runtime.queue.offer(queued);
+      yield* Queue.offer(runtime.queue, queued);
       return true;
     });
 
@@ -238,7 +238,7 @@ const createSourceControlScheduler = (runtime: SourceControlRuntime): SourceCont
       if (!job) {
         return false;
       }
-      yield* runtime.queue.offer(job);
+      yield* Queue.offer(runtime.queue, job);
       return true;
     });
 
@@ -568,7 +568,7 @@ const processPublicationJob = (
     if (settle.defer) {
       // The wait runs off the worker so the writer stays free for the burst
       // and for commands; an explicit request joining this job ends it early.
-      const explicitRequestJoined = runtime.stateRef.changes.pipe(
+      const explicitRequestJoined = SubscriptionRef.changes(runtime.stateRef).pipe(
         Stream.filter((current) => current.publication.explicitRequestPending),
         Stream.take(1),
         Stream.runDrain,
@@ -576,7 +576,7 @@ const processPublicationJob = (
       yield* FiberHandle.run(
         runtime.publicationSettle,
         Effect.race(Effect.sleep(settle.waitMs), explicitRequestJoined).pipe(
-          Effect.andThen(runtime.queue.offer({ ...job, deferrals: job.deferrals + 1 })),
+          Effect.andThen(Queue.offer(runtime.queue, { ...job, deferrals: job.deferrals + 1 })),
           Effect.asVoid,
         ),
       );
@@ -642,7 +642,7 @@ const startSourceControlWorkers = (
     for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
       yield* Effect.forkScoped(
         Effect.forever(
-          runtime.queue.take.pipe(Effect.flatMap((job) => yieldToHost.pipe(Effect.andThen(processJob(job))))),
+          Queue.take(runtime.queue).pipe(Effect.flatMap((job) => yieldToHost.pipe(Effect.andThen(processJob(job))))),
         ),
       );
     }
@@ -652,7 +652,7 @@ const createSourceControlCommands = (
   runtime: SourceControlRuntime,
   scheduler: SourceControlScheduler,
 ): Pick<SourceControlService, 'runAllEnabled' | 'runNow' | 'setEnabled'> => {
-  const policyMutationSemaphore = Effect.runSync(Effect.makeSemaphore(1));
+  const policyMutationSemaphore = Semaphore.makeUnsafe(1);
   const runNow = (sourceId: CollectionSourceId): Effect.Effect<boolean, SourceControlCommandError> =>
     Effect.gen(function* () {
       if (!runtime.options.sources.has(sourceId)) {
@@ -753,7 +753,7 @@ const createSourceControlCommands = (
           yield* scheduler.enqueueSource(sourceId, 'manual');
         }
         yield* scheduler.requestPublication;
-      }).pipe(Effect.catchAll((error) => rollback.pipe(Effect.andThen(Effect.fail(error)))));
+      }).pipe(Effect.catch((error) => rollback.pipe(Effect.andThen(Effect.fail(error)))));
       yield* runtime.options.writerGate ? runtime.options.writerGate.withEffect(commit) : commit;
     });
   const setEnabled = (sourceId: CollectionSourceId, enabled: boolean): Effect.Effect<void, SourceControlCommandError> =>
@@ -794,7 +794,7 @@ export const createSourceControl = (
     }
     yield* startSourceControlWorkers(runtime, scheduler, validatedOptions.workerCount);
     return {
-      changes: Stream.map(runtime.stateRef.changes, sourceControlView),
+      changes: Stream.map(SubscriptionRef.changes(runtime.stateRef), sourceControlView),
       detectAll: scheduler.detectAll,
       detectSource: scheduler.detectSource,
       getSnapshot: SubscriptionRef.get(runtime.stateRef).pipe(Effect.map(sourceControlView)),
@@ -807,4 +807,4 @@ export const createSourceControl = (
 export const sourceControlLayer = (
   options: SourceControlOptions,
 ): Layer.Layer<SourceControl, never, WideEventResourceService | WideEventSink> =>
-  Layer.scoped(SourceControl, createSourceControl(options));
+  Layer.effect(SourceControl, createSourceControl(options));

@@ -2,6 +2,21 @@
 
 - **Status**: Accepted
 - **Date**: 2026-07-22
+- **Amended by**: [ADR 0039](0039-continuous-campaign-exploration.md)
+  (continuous campaign exploration), itself amended by
+  [ADR 0041](0041-exact-detail-selection-with-continuous-exploration.md)
+  (exact detail identity); paging lifecycle ownership is in
+  [ADR 0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md)
+  (formerly ADR 0012)
+
+> Consolidation note 2026-10-24: bounded exploration is three records with
+> distinct scopes, not three versions of one rule. This record owns Sessions
+> paging and DOM windowing, ADR 0039 owns campaign and member continuity and
+> revision pinning, and ADR 0041 owns detail identity, which never consumes
+> scroll recovery. Since the SvelteKit migration (PR #27) a served Sessions
+> page is 200 rows, equal to the response cap (`SERVED_SESSION_PAGE_SIZE`,
+> `MAX_SESSION_QUERY_PAGE_SIZE`), rather than the 100 rows recorded below; the
+> decision is unchanged.
 
 ## Context
 

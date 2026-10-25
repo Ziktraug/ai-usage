@@ -112,8 +112,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
 ];
 
 interface MigrationDatabase {
-  exec(sql: string): unknown;
-  query(sql: string): { all(...params: unknown[]): unknown[]; get(...params: unknown[]): unknown };
+  exec: (sql: string) => unknown;
+  query: (sql: string) => { all: (...params: unknown[]) => unknown[]; get: (...params: unknown[]) => unknown };
 }
 
 /**
@@ -327,14 +327,14 @@ export interface ReviewTargetResolutionFacts {
 }
 
 interface SqliteStatement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  run(...params: unknown[]): unknown;
+  all: (...params: unknown[]) => unknown[];
+  get: (...params: unknown[]) => unknown;
+  run: (...params: unknown[]) => unknown;
 }
 
 interface SqliteDatabase {
-  exec(sql: string): unknown;
-  query(sql: string): SqliteStatement;
+  exec: (sql: string) => unknown;
+  query: (sql: string) => SqliteStatement;
 }
 
 interface ReviewAttemptStoreDependencies {
@@ -409,7 +409,7 @@ const SELECTED_COLUMN_NAMES = SELECT_COLUMNS.split(',').map((name) => name.trim(
  * The query-only readers cannot migrate: a table the engine has not upgraded since the reservation
  * columns (ADR 0055) is reported as typed `schema-too-old`, never as a raw storage failure.
  */
-const missingReviewAttemptColumns = (db: { query(sql: string): { all(): unknown[] } }): readonly string[] => {
+const missingReviewAttemptColumns = (db: { query: (sql: string) => { all: () => unknown[] } }): readonly string[] => {
   const present = new Set(
     (db.query('PRAGMA table_info(review_attempts)').all() as { name?: unknown }[]).map((column) => column.name),
   );
@@ -423,7 +423,7 @@ const parseJsonOrNull = (text: string | null): unknown => {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    return;
+    return null;
   }
 };
 

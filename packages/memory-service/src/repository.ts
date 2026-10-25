@@ -40,8 +40,8 @@ export class MemoryRepositoryError extends Error {
   readonly code: MemoryRepositoryErrorCode;
   readonly operation: string;
 
-  constructor(code: MemoryRepositoryErrorCode, operation: string) {
-    super('The Memory repository operation failed.');
+  constructor(code: MemoryRepositoryErrorCode, operation: string, options?: ErrorOptions) {
+    super('The Memory repository operation failed.', options);
     this.name = 'MemoryRepositoryError';
     this.code = code;
     this.operation = operation;

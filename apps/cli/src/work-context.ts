@@ -75,8 +75,8 @@ export const renderWorkContext = (context: WorkContextDataset, json: boolean): s
     counted('Sessions', context.sessions.length, omitted.sessions),
     ...orNone(
       context.sessions.map(
-        ({ root, age, attention }) =>
-          `  - ${root.title} [${root.key.harness}; ${attention}] ${root.key.sourceSessionId} (last activity ${age.lastActivityAt ?? 'unknown'})`,
+        ({ root, age, attention: sessionAttention }) =>
+          `  - ${root.title} [${root.key.harness}; ${sessionAttention}] ${root.key.sourceSessionId} (last activity ${age.lastActivityAt ?? 'unknown'})`,
       ),
     ),
     counted('Decided', context.decisions.length, omitted.decisions),

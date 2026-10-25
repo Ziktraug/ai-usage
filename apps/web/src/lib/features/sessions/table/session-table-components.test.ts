@@ -12,7 +12,7 @@ const INHERITED_TITLE_PATTERN =
   /data-session-inherited-title[^>]*title="Title inherited from the campaign root session"[^>]*>Synthetic session 1<\/span><span class="[^"]*"> · <\/span>/;
 
 interface SvelteServerModule {
-  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+  render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
 const componentFrom = (loaded: unknown): Component => {

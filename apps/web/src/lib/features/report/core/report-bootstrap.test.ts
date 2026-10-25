@@ -318,72 +318,75 @@ describe('report bootstrap', () => {
     browserClient.clear();
   });
 
-  it.each([
-    'campaign-root',
-    'campaign-child',
-  ])('hydrates one exact metadata lookup for a directly addressed %s outside the Session window', async (sourceSessionId) => {
-    const sourceRow = demoReportPayload.rows.find((row) => row.source?.sourceSessionId === sourceSessionId);
-    if (!sourceRow) {
-      throw new Error('Expected the directly addressed Session fixture');
-    }
-    const request = { revision: successfulResult().manifest.revision, rowId: sessionRowIdentity(sourceRow) };
-    const lookups: SessionLookupRequest[] = [];
-    let pages = 0;
-    let nativeReads = 0;
-    const sessionClient = sessionClientFixture({
-      detail: () => {
-        nativeReads += 1;
-        return Promise.reject(new Error('Native history must not be prefetched for SSR'));
-      },
-      lookup: (input) => {
-        lookups.push(input);
-        const data = projectSessionLookup(demoReportPayload.rows, input);
-        return Promise.resolve({
-          data,
-          ok: true,
-          requestFingerprint: data.requestFingerprint,
-          revision: data.revision,
-        });
-      },
-      page: (input) => {
-        pages += 1;
-        const data = projectSessionPage(demoReportPayload.rows, input);
-        return Promise.resolve({
-          data,
-          ok: true,
-          requestFingerprint: data.requestFingerprint,
-          revision: data.revision,
-        });
-      },
-    });
-    const queryState = await acquireLiveReportQueryState(
-      { ...liveOptions(), pageUrl: new URL(`http://report.invalid/sessions/${request.rowId}?tab=sessions&range=all`) },
-      { createClient: () => successfulOverviewClient(), createSessionClient: () => sessionClient },
-    );
-    expect(lookups).toEqual([request]);
-    expect(pages).toBe(1);
-    expect(nativeReads).toBe(0);
-    const lookup = queryState.dehydratedState.queries.find(
-      (query) => JSON.stringify(query.queryKey) === JSON.stringify(sessionLookupKey(request)),
-    );
-    expect(lookup?.state.data).toMatchObject({
-      data: { found: true, row: { rowId: request.rowId } },
-      ok: true,
-      revision: request.revision,
-    });
-    expect(countDehydratedSessionPagePayloads(queryState)).toBe(1);
-    const browserClient = createHydratedWebQueryClient(queryState);
-    try {
-      const hydrated = await browserClient.fetchQuery(
-        sessionLookupQueryOptions(sessionClient, request, { browser: true }),
+  it.each(['campaign-root', 'campaign-child'])(
+    'hydrates one exact metadata lookup for a directly addressed %s outside the Session window',
+    async (sourceSessionId) => {
+      const sourceRow = demoReportPayload.rows.find((row) => row.source?.sourceSessionId === sourceSessionId);
+      if (!sourceRow) {
+        throw new Error('Expected the directly addressed Session fixture');
+      }
+      const request = { revision: successfulResult().manifest.revision, rowId: sessionRowIdentity(sourceRow) };
+      const lookups: SessionLookupRequest[] = [];
+      let pages = 0;
+      let nativeReads = 0;
+      const sessionClient = sessionClientFixture({
+        detail: () => {
+          nativeReads += 1;
+          return Promise.reject(new Error('Native history must not be prefetched for SSR'));
+        },
+        lookup: (input) => {
+          lookups.push(input);
+          const data = projectSessionLookup(demoReportPayload.rows, input);
+          return Promise.resolve({
+            data,
+            ok: true,
+            requestFingerprint: data.requestFingerprint,
+            revision: data.revision,
+          });
+        },
+        page: (input) => {
+          pages += 1;
+          const data = projectSessionPage(demoReportPayload.rows, input);
+          return Promise.resolve({
+            data,
+            ok: true,
+            requestFingerprint: data.requestFingerprint,
+            revision: data.revision,
+          });
+        },
+      });
+      const queryState = await acquireLiveReportQueryState(
+        {
+          ...liveOptions(),
+          pageUrl: new URL(`http://report.invalid/sessions/${request.rowId}?tab=sessions&range=all`),
+        },
+        { createClient: () => successfulOverviewClient(), createSessionClient: () => sessionClient },
       );
-      expect(lookup?.state.data).toEqual(hydrated);
       expect(lookups).toEqual([request]);
+      expect(pages).toBe(1);
       expect(nativeReads).toBe(0);
-    } finally {
-      browserClient.clear();
-    }
-  });
+      const lookup = queryState.dehydratedState.queries.find(
+        (query) => JSON.stringify(query.queryKey) === JSON.stringify(sessionLookupKey(request)),
+      );
+      expect(lookup?.state.data).toMatchObject({
+        data: { found: true, row: { rowId: request.rowId } },
+        ok: true,
+        revision: request.revision,
+      });
+      expect(countDehydratedSessionPagePayloads(queryState)).toBe(1);
+      const browserClient = createHydratedWebQueryClient(queryState);
+      try {
+        const hydrated = await browserClient.fetchQuery(
+          sessionLookupQueryOptions(sessionClient, request, { browser: true }),
+        );
+        expect(lookup?.state.data).toEqual(hydrated);
+        expect(lookups).toEqual([request]);
+        expect(nativeReads).toBe(0);
+      } finally {
+        browserClient.clear();
+      }
+    },
+  );
 
   it.each(['sessions', 'overview'])('reuses a directly addressed singleton already present in %s', async (tab) => {
     const sourceRow = demoReportPayload.rows.find((row) => row.source?.sourceSessionId === 'claude-history-fallback');
@@ -420,71 +423,71 @@ describe('report bootstrap', () => {
     expect(lookups).toBe(0);
   });
 
-  it.each([
-    'sessions',
-    'overview',
-  ])('hydrates one bounded campaign projection outside the acquired %s scope', async (tab) => {
-    const revision = successfulResult().manifest.revision;
-    const campaign = projectSessionPage(
-      demoReportPayload.rows,
-      parseSessionQueryRequest({
-        cursor: null,
-        filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
-        pageSize: 100,
-        range: { from: null, to: null },
+  it.each(['sessions', 'overview'])(
+    'hydrates one bounded campaign projection outside the acquired %s scope',
+    async (tab) => {
+      const revision = successfulResult().manifest.revision;
+      const campaign = projectSessionPage(
+        demoReportPayload.rows,
+        parseSessionQueryRequest({
+          cursor: null,
+          filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+          pageSize: 100,
+          range: { from: null, to: null },
+          revision,
+          sort: [{ desc: true, id: 'date' }],
+        }),
+      ).items.find((item) => (item.row.campaignTotalCount ?? 1) > 1);
+      if (!campaign) {
+        throw new Error('Expected the multi-session campaign fixture');
+      }
+      const pages: SessionQueryRequest[] = [];
+      let nativeReads = 0;
+      const sessionClient = sessionClientFixture({
+        detail: () => {
+          nativeReads += 1;
+          return Promise.reject(new Error('SSR must not read native detail'));
+        },
+        page: (pageRequest) => {
+          pages.push(pageRequest);
+          const data = projectSessionPage(demoReportPayload.rows, pageRequest);
+          return Promise.resolve({ data, ok: true, requestFingerprint: data.requestFingerprint, revision });
+        },
+      });
+      const queryState = await acquireLiveReportQueryState(
+        {
+          ...liveOptions(),
+          pageUrl: new URL(
+            `http://report.invalid/campaigns/${encodeURIComponent(campaign.campaignKey)}?tab=${tab}&range=all&q=missing-campaign-background&origin=%5B%5D`,
+          ),
+        },
+        { createClient: () => successfulOverviewClient(), createSessionClient: () => sessionClient },
+      );
+      const projections = pages.filter((pageRequest) => pageRequest.filters.fields.campaign === campaign.campaignKey);
+      expect(projections).toHaveLength(1);
+      const request = projections[0]!;
+      expect(request).toMatchObject({ cursor: null, pageSize: 1, revision });
+      const hydrated = queryState.dehydratedState.queries.find(
+        (query) => JSON.stringify(query.queryKey) === JSON.stringify(sessionPageKey(request)),
+      );
+      expect(hydrated?.state.data).toMatchObject({
+        data: { items: [{ campaignKey: campaign.campaignKey }] },
+        ok: true,
         revision,
-        sort: [{ desc: true, id: 'date' }],
-      }),
-    ).items.find((item) => (item.row.campaignTotalCount ?? 1) > 1);
-    if (!campaign) {
-      throw new Error('Expected the multi-session campaign fixture');
-    }
-    const pages: SessionQueryRequest[] = [];
-    let nativeReads = 0;
-    const sessionClient = sessionClientFixture({
-      detail: () => {
-        nativeReads += 1;
-        return Promise.reject(new Error('SSR must not read native detail'));
-      },
-      page: (request) => {
-        pages.push(request);
-        const data = projectSessionPage(demoReportPayload.rows, request);
-        return Promise.resolve({ data, ok: true, requestFingerprint: data.requestFingerprint, revision });
-      },
-    });
-    const queryState = await acquireLiveReportQueryState(
-      {
-        ...liveOptions(),
-        pageUrl: new URL(
-          `http://report.invalid/campaigns/${encodeURIComponent(campaign.campaignKey)}?tab=${tab}&range=all&q=missing-campaign-background&origin=%5B%5D`,
-        ),
-      },
-      { createClient: () => successfulOverviewClient(), createSessionClient: () => sessionClient },
-    );
-    const projections = pages.filter((request) => request.filters.fields.campaign === campaign.campaignKey);
-    expect(projections).toHaveLength(1);
-    const request = projections[0]!;
-    expect(request).toMatchObject({ cursor: null, pageSize: 1, revision });
-    const hydrated = queryState.dehydratedState.queries.find(
-      (query) => JSON.stringify(query.queryKey) === JSON.stringify(sessionPageKey(request)),
-    );
-    expect(hydrated?.state.data).toMatchObject({
-      data: { items: [{ campaignKey: campaign.campaignKey }] },
-      ok: true,
-      revision,
-    });
-    expect(pages).toHaveLength(tab === 'sessions' ? 2 : 1);
-    expect(nativeReads).toBe(0);
-    const browserClient = createHydratedWebQueryClient(queryState);
-    try {
-      expect(
-        await browserClient.fetchQuery(sessionPageQueryOptions(sessionClient, request, { browser: true })),
-      ).toEqual(hydrated?.state.data);
+      });
       expect(pages).toHaveLength(tab === 'sessions' ? 2 : 1);
-    } finally {
-      browserClient.clear();
-    }
-  });
+      expect(nativeReads).toBe(0);
+      const browserClient = createHydratedWebQueryClient(queryState);
+      try {
+        expect(
+          await browserClient.fetchQuery(sessionPageQueryOptions(sessionClient, request, { browser: true })),
+        ).toEqual(hydrated?.state.data);
+        expect(pages).toHaveLength(tab === 'sessions' ? 2 : 1);
+      } finally {
+        browserClient.clear();
+      }
+    },
+  );
 
   it('prefetches deep session metadata at the acquired destination revision after bootstrap expiry recovery', async () => {
     const sourceRow = demoReportPayload.rows.find((row) => row.source?.sourceSessionId === 'campaign-child');
@@ -502,22 +505,22 @@ describe('report bootstrap', () => {
       {
         createClient: () => ({
           ...reportClient,
-          getFocusedReportOverview: (request) =>
-            request.query.revision === oldBootstrap.manifest.revision
+          getFocusedReportOverview: (overviewRequest) =>
+            overviewRequest.query.revision === oldBootstrap.manifest.revision
               ? Promise.resolve({
-                  error: { message: 'expired', revision: request.query.revision, tag: 'RevisionExpired' },
+                  error: { message: 'expired', revision: overviewRequest.query.revision, tag: 'RevisionExpired' },
                   ok: false,
-                  requestFingerprint: focusedOverviewFingerprint(request),
-                  revision: request.query.revision,
+                  requestFingerprint: focusedOverviewFingerprint(overviewRequest),
+                  revision: overviewRequest.query.revision,
                 })
-              : reportClient.getFocusedReportOverview(request),
+              : reportClient.getFocusedReportOverview(overviewRequest),
           getReportRevisionBootstrap: () => Promise.resolve(++bootstraps === 1 ? oldBootstrap : newBootstrap),
         }),
         createSessionClient: () =>
           sessionClientFixture({
-            lookup: (request) => {
-              lookups.push(request);
-              const data = projectSessionLookup(demoReportPayload.rows, request);
+            lookup: (lookupRequest) => {
+              lookups.push(lookupRequest);
+              const data = projectSessionLookup(demoReportPayload.rows, lookupRequest);
               return Promise.resolve({
                 data,
                 ok: true,

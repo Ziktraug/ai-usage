@@ -3,7 +3,7 @@
   import { isWorkThreadId, sessionLinkKey, type WorkThreadCommand } from '@ai-usage/report-core/work-thread';
   import { createInfiniteQuery, createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { onMount, tick, untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { page } from '$app/state';
   import { reportBootstrapQueryOptions } from '../../query/options/report';
   import { workSessionsOptions } from '../../query/options/work';
@@ -61,9 +61,10 @@
     timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     hydrated = true;
   });
-  const taskId = $derived(page.url.searchParams.get('task'));
-  const query = $derived(threadListQuery(page.url.searchParams));
-  const cursors = $derived(threadPageCursors(page.url.searchParams));
+  const currentUrl = $derived(new URL(page.url.href));
+  const taskId = $derived(currentUrl.searchParams.get('task'));
+  const query = $derived(threadListQuery(currentUrl.searchParams));
+  const cursors = $derived(threadPageCursors(currentUrl.searchParams));
   const listQueries = createQueries(() => ({
     queries: cursors.map((cursor) =>
       workThreadListQueryOptions(clients.threads, { ...query, cursor }, { browser, enabled: true }),
@@ -104,10 +105,10 @@
       : (detailQuery.error?.message ?? null);
   });
   const navigate = (url: string | URL, replaceState = false): Promise<void> =>
-    navigation.goto(url, { keepFocus: true, noScroll: true, replaceState });
-  const href = (id: string, day?: string): string => threadUrl(page.url, id, day);
+    navigation.goto(url, { replace: replaceState, reset: false });
+  const href = (id: string, day?: string): string => threadUrl(currentUrl, id, day);
   const updateFilter = (patch: Partial<ReturnType<typeof threadListQuery>>): Promise<void> => {
-    const url = new URL(page.url);
+    const url = new URL(currentUrl);
     url.searchParams.delete('cursor');
     url.searchParams.delete('start');
     url.searchParams.delete('scroll');
@@ -135,7 +136,7 @@
       return;
     }
     event.preventDefault();
-    const saved = new URL(page.url);
+    const saved = new URL(currentUrl);
     saved.searchParams.set('scroll', String(Math.round(window.scrollY)));
     saved.searchParams.set('focus', id);
     await navigate(saved, true);
@@ -149,13 +150,13 @@
       return;
     }
     event.preventDefault();
-    await navigate(threadUrl(page.url, null));
+    await navigate(threadUrl(currentUrl, null));
     await tick();
     restoreList();
   };
   const restoreList = (): void => {
-    const scroll = Number(page.url.searchParams.get('scroll') ?? 0);
-    const focus = page.url.searchParams.get('focus');
+    const scroll = Number(currentUrl.searchParams.get('scroll') ?? 0);
+    const focus = currentUrl.searchParams.get('focus');
     if (focus && isWorkThreadId(focus)) {
       document
         .querySelector<HTMLElement>(`[data-work-thread="${focus}"] .wt-task-title`)
@@ -234,18 +235,20 @@
         <WorkThreadSources now={detail.generatedAt} sources={detail.sources} {timeZone} />
         {#key detail.row.thread.threadId}
           <WorkThreadDetail
-            backHref={threadUrl(page.url, null)}
+            backHref={threadUrl(currentUrl, null)}
             data={detail}
             moreSessions={sessions.hasNextPage}
             nextHref={next ? href(next) : null}
             onBack={back}
             onCommand={command}
             onMoreSessions={() => loadNextLinkableSessionPage(sessions)}
-            onPickerOpen={() => pickerOpen = true}
+            onPickerOpen={() => (pickerOpen = true)}
             previousHref={previous ? href(previous) : null}
-            selectedDay={page.url.searchParams.get('day')}
+            selectedDay={currentUrl.searchParams.get('day')}
             sessionChoices={choices}
-            sessionsError={sessions.error?.message ?? bootstrapQuery.error?.message ?? (bootstrapQuery.data && !bootstrapQuery.data.ok ? 'Recent sessions are unavailable.' : null)}
+            sessionsError={sessions.error?.message ??
+              bootstrapQuery.error?.message ??
+              (bootstrapQuery.data && !bootstrapQuery.data.ok ? 'Recent sessions are unavailable.' : null)}
             sessionsLoading={sessions.isFetching || bootstrapQuery.isFetching}
             {timeZone}
           />
@@ -254,7 +257,7 @@
         <div class="wt-empty" role="alert">
           <h1>Task unavailable</h1>
           <p>{detailError}</p>
-          <a class="wt-link" href={threadUrl(page.url, null)}>← My work</a
+          <a class="wt-link" href={threadUrl(currentUrl, null)}>← My work</a
           ><button class="wt-button" onclick={() => detailQuery.refetch()} type="button">Retry task</button>
         </div>
       {:else}
@@ -283,7 +286,11 @@
           <p>{listError} This does not establish that there are no tasks.</p>
           <button
             class="wt-button"
-            onclick={() => { for (const result of listQueries) { result.refetch(); } }}
+            onclick={() => {
+              for (const result of listQueries) {
+                result.refetch();
+              }
+            }}
             type="button"
           >
             Retry tasks
@@ -297,7 +304,12 @@
           {href}
           loadingMore={listQueries.some((result) => result.isFetching)}
           onFilter={updateFilter}
-          onMore={() => { if (dataset.nextCursor) { const more = threadMoreUrl(page.url, dataset.nextCursor); navigate(more.url, !more.continuation); } }}
+          onMore={() => {
+            if (dataset.nextCursor) {
+              const more = threadMoreUrl(currentUrl, dataset.nextCursor);
+              navigate(more.url, !more.continuation);
+            }
+          }}
           onOpen={open}
           {query}
           {rows}

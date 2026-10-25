@@ -78,18 +78,18 @@ export const openCodexAppServer = async (options: CodexAppServerOptions = {}): P
     }
     pending.clear();
   };
+  let forceStop: ReturnType<typeof setTimeout> | undefined;
   const closed = new Promise<void>((resolve) => {
     child.once('close', () => {
+      clearTimeout(forceStop);
       fail(new CodexAppServerError('closed', 'Codex app-server contact ended'));
       resolve();
     });
   });
-  let forceStop: ReturnType<typeof setTimeout> | undefined;
   const terminateFailedProcess = (): void => {
     child.kill('SIGTERM');
     forceStop ??= setTimeout(() => child.kill('SIGKILL'), 1000);
   };
-  closed.then(() => clearTimeout(forceStop));
   child.on('error', () => fail(new CodexAppServerError('unavailable', 'Codex app-server could not start')));
   child.stdin.on('error', () => fail(new CodexAppServerError('closed', 'Codex app-server input closed')));
   child.stderr.on('data', () => undefined);

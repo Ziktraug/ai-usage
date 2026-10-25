@@ -34,7 +34,7 @@ export const projectionLockIdentityForTarget = async (targetPath: string): Promi
       }
       const parent = path.dirname(existingParent);
       if (parent === existingParent) {
-        throw new Error('Skill target has no observable directory ancestor');
+        throw new Error('Skill target has no observable directory ancestor', { cause: error });
       }
       existingParent = parent;
     }

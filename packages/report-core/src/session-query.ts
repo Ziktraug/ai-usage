@@ -170,8 +170,8 @@ export interface SessionLookupRequest {
 }
 
 export class SessionQueryValidationError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'SessionQueryValidationError';
   }
 }
@@ -187,8 +187,8 @@ const assertSessionQueryResultSize = (value: unknown, label: string): void => {
   let serialized: string;
   try {
     serialized = JSON.stringify(value);
-  } catch {
-    throw new SessionQueryValidationError(`${label} must be JSON serializable`);
+  } catch (error) {
+    throw new SessionQueryValidationError(`${label} must be JSON serializable`, { cause: error });
   }
   if (new TextEncoder().encode(serialized).byteLength > MAX_SESSION_QUERY_RESULT_BYTES) {
     throw new SessionQueryValidationError(`${label} exceeds the ${MAX_SESSION_QUERY_RESULT_BYTES}-byte limit`);
@@ -471,7 +471,7 @@ const parseFilters = (value: unknown): SessionQueryFilters => {
     throw new SessionQueryValidationError('filters.query must be a bounded string');
   }
   const origin = record.origin === undefined ? [] : normalizeStringList(record.origin, 'filters.origin');
-  if (origin.some((value) => !isSessionOrigin(value))) {
+  if (origin.some((candidate) => !isSessionOrigin(candidate))) {
     throw new SessionQueryValidationError('filters.origin contains an invalid origin');
   }
   return {
@@ -542,7 +542,7 @@ const parseSessionRevision = (value: unknown): string => {
   try {
     return parseServedRevision(value, 'revision');
   } catch (cause) {
-    throw new SessionQueryValidationError(cause instanceof Error ? cause.message : 'revision is invalid');
+    throw new SessionQueryValidationError(cause instanceof Error ? cause.message : 'revision is invalid', { cause });
   }
 };
 
@@ -715,8 +715,8 @@ export const parseSessionPresentationRow = (value: unknown, label: string): Sess
     let priceMeasurement: ApiPriceMeasurement;
     try {
       priceMeasurement = parseApiPriceMeasurement(record.priceMeasurement);
-    } catch {
-      throw new SessionQueryValidationError(`${label}.priceMeasurement is invalid`);
+    } catch (error) {
+      throw new SessionQueryValidationError(`${label}.priceMeasurement is invalid`, { cause: error });
     }
     if (
       priceMeasurement.knownCost !== record.costApprox ||

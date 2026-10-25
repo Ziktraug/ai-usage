@@ -12,7 +12,7 @@
   import { type SessionPresentationRow, sessionOriginLabel } from '@ai-usage/report-core/session-query';
   import type { WorkRoot } from '@ai-usage/report-core/work-attention';
   import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import type { RuntimeMode } from '../../../runtime-mode';
   import { loadNextCampaignPage } from '../../query/options/campaigns';
   import { optionalSessionLookupQueryOptions } from '../../query/options/session';
@@ -381,7 +381,11 @@
       <p class={workMuted}>No child session declared under this root.</p>
     {/if}
     {#if campaignKey}
-      <details ontoggle={(event) => { childrenOpen = event.currentTarget.open; }}>
+      <details
+        ontoggle={(event) => {
+          childrenOpen = event.currentTarget.open;
+        }}
+      >
         <summary class={workLink}>Related served sessions</summary>
         {#if childrenOpen}
           {#if children.error}

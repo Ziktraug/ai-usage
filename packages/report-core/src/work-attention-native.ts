@@ -650,8 +650,8 @@ export const claudeDesktopDeclarationKey = (summary: ClaudeDesktopTurnSummary): 
   summary.summarizesUuid ??
   `content:${contentDigest(JSON.stringify([summary.status, summary.needsAction, summary.detail]))}`;
 
-const laterThan = (instant: CanonicalInstant | null, reference: CanonicalInstant): CanonicalInstant | null =>
-  instant !== null && instant > reference ? instant : null;
+const laterThan = (candidate: CanonicalInstant | null, reference: CanonicalInstant): CanonicalInstant | null =>
+  candidate !== null && candidate > reference ? candidate : null;
 
 /**
  * Advances one session's declaration history with one sweep's observation and returns the

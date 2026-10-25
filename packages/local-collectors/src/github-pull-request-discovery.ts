@@ -104,7 +104,7 @@ const read = (run: BoundedProcessRunner, options: BoundedProcessOptions): Effect
       }
       return { outcome, outcomeMessage: `gh discovery ${outcome} (exit ${String(result.exitCode)})` };
     }),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed<Read>({
         outcome: (
           { unavailable: 'unavailable', 'timed-out': 'timeout', failed: 'invalid', 'output-limit': 'invalid' } as const

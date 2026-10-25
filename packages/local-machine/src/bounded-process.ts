@@ -181,7 +181,7 @@ export const executeBoundedProcess = async (options: BoundedProcessOptions): Pro
  * the effect; the typed failures are the runner's own vocabulary only.
  */
 export const runBoundedProcess: BoundedProcessRunner = (options) =>
-  Effect.async<BoundedProcessResult, BoundedProcessError>((resume) => {
+  Effect.callback<BoundedProcessResult, BoundedProcessError>((resume) => {
     const controller = new AbortController();
     const forward = (): void => controller.abort(options.signal?.reason);
     options.signal?.addEventListener('abort', forward, { once: true });

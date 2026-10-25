@@ -1,4 +1,4 @@
-import { deferredWorkPageData, loadWorkPageData } from '$lib/features/work/work-load';
+import { deferredWorkPageData, loadWorkPageData } from '#lib/features/work/work-load.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, isDataRequest, locals, untrack, url }) => {

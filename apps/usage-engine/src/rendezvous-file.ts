@@ -182,7 +182,7 @@ export const publishUsageEngineRendezvous = async ({
       await link(temporaryPath, filePath);
     } catch (error) {
       if (errorHasCode(error, 'EEXIST')) {
-        throw new Error(`Usage engine rendezvous already exists and was preserved: ${filePath}`);
+        throw new Error(`Usage engine rendezvous already exists and was preserved: ${filePath}`, { cause: error });
       }
       throw error;
     }

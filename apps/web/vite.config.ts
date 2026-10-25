@@ -1,6 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
-import { resolveSvelteKitOutputPaths } from './sveltekit-output-paths.ts';
+import { loopbackBunAdapter } from './sveltekit-loopback-adapter.ts';
+import { resolveSvelteKitOutputPaths, resolveSvelteKitVersionName } from './sveltekit-output-paths.ts';
 import { webClientModuleManifest } from './vite-client-module-manifest.ts';
 
 const LOOPBACK_HOST = '127.0.0.1' as const;
@@ -27,12 +28,17 @@ export const resolveViteDevelopmentServerBinding = (
   return { host: LOOPBACK_HOST, port, strictPort: true };
 };
 
-const { intermediateDirectory, viteCacheDirectory } = resolveSvelteKitOutputPaths();
+const { adapterDirectory, intermediateDirectory, viteCacheDirectory } = resolveSvelteKitOutputPaths();
 
 export default defineConfig(({ command }) => ({
   cacheDir: viteCacheDirectory,
   plugins: [
-    sveltekit(),
+    sveltekit({
+      adapter: loopbackBunAdapter({ out: adapterDirectory, precompress: true }),
+      outDir: intermediateDirectory,
+      // SvelteKit 3 polls `version.json` hourly by default; this app has never polled.
+      version: { name: resolveSvelteKitVersionName(), pollInterval: 0 },
+    }),
     webClientModuleManifest({
       manifestFile: `${intermediateDirectory}/private/client-modules.json`,
     }),

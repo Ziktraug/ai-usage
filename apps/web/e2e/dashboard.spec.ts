@@ -892,7 +892,8 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   );
   const sessionControlGeometry = await page
     .locator('[data-session-surface="mobile"]')
-    .locator('button:visible, input:visible, a:visible, select:visible')
+    .locator('button, input, a, select')
+    .visible()
     .evaluateAll((elements) =>
       elements.map((element) => {
         const box = element.getBoundingClientRect();

@@ -1004,7 +1004,7 @@ describe('owned Codex review attempts', () => {
   test('concurrent starts reserve once and preserve selected executor, session and native turn', async () => {
     const f = await codexFixture();
     const run = controlledCodex();
-    const service = createReviewAttemptService({
+    const attemptService = createReviewAttemptService({
       dbPath: f.dbPath,
       storage: f.storage,
       machine: () => machine,
@@ -1012,11 +1012,11 @@ describe('owned Codex review attempts', () => {
       codexLauncher: run.launcher,
     });
     const launchCommand = command({ candidateId: codexCandidate });
-    const results = await Promise.all([service.start(launchCommand), service.start(launchCommand)]);
+    const results = await Promise.all([attemptService.start(launchCommand), attemptService.start(launchCommand)]);
     expect(results[0].attempt.attemptId).toBe(results[1].attempt.attemptId);
     expect(run.launches()).toBe(1);
     run.settle(codexFinished);
-    await service.settle();
+    await attemptService.settle();
     const stored = await Effect.runPromise(queryReviewAttempts({ dbPath: f.dbPath, machineId: machine.id }));
     expect(stored.attempts[0]).toMatchObject({
       executorHarness: 'codex',
@@ -1030,7 +1030,7 @@ describe('owned Codex review attempts', () => {
     const f = await codexFixture();
     const run = controlledCodex();
     let scans = 0;
-    const service = createReviewAttemptService({
+    const attemptService = createReviewAttemptService({
       dbPath: f.dbPath,
       storage: f.storage,
       machine: () => machine,
@@ -1041,10 +1041,10 @@ describe('owned Codex review attempts', () => {
         return Promise.resolve({ kind: 'absent' });
       },
     });
-    await service.start(command({ candidateId: codexCandidate }));
+    await attemptService.start(command({ candidateId: codexCandidate }));
     run.settle({ ...codexFinished, kind: 'lost', failureReason: 'lost acknowledgement', resultExcerpt: 'partial' });
-    await service.settle();
-    const again = await service.start(command({ candidateId: codexCandidate }));
+    await attemptService.settle();
+    const again = await attemptService.start(command({ candidateId: codexCandidate }));
     expect(again.refusal?.reason).toBe('attempt-unresolved');
     expect(run.launches()).toBe(1);
     expect(scans).toBe(0);
@@ -1053,21 +1053,23 @@ describe('owned Codex review attempts', () => {
     );
     expect(rows.attempts[0]).toMatchObject({ state: 'lost', releasedAt: null, resultExcerpt: 'partial' });
     expect(
-      await service.stop({ command: 'stop-review-attempt', attemptId: rows.attempts[0]?.attemptId ?? '' }),
+      await attemptService.stop({ command: 'stop-review-attempt', attemptId: rows.attempts[0]?.attemptId ?? '' }),
     ).toMatchObject({ result: 'not-owned' });
   });
   test('records stop requested before confirmation and retains interruption partial result', async () => {
     const f = await codexFixture();
     const run = controlledCodex();
-    const service = createReviewAttemptService({
+    const attemptService = createReviewAttemptService({
       dbPath: f.dbPath,
       storage: f.storage,
       machine: () => machine,
       now: () => NOW,
       codexLauncher: run.launcher,
     });
-    const result = await service.start(command({ candidateId: codexCandidate }));
-    expect(await service.stop({ command: 'stop-review-attempt', attemptId: result.attempt.attemptId })).toMatchObject({
+    const result = await attemptService.start(command({ candidateId: codexCandidate }));
+    expect(
+      await attemptService.stop({ command: 'stop-review-attempt', attemptId: result.attempt.attemptId }),
+    ).toMatchObject({
       result: 'requested',
     });
     const before = await Effect.runPromise(queryReviewAttempts({ dbPath: f.dbPath, machineId: machine.id }));
@@ -1079,7 +1081,7 @@ describe('owned Codex review attempts', () => {
       resultExcerpt: 'partial',
       failureReason: 'native interrupted',
     });
-    await service.settle();
+    await attemptService.settle();
     const after = await Effect.runPromise(queryReviewAttempts({ dbPath: f.dbPath, machineId: machine.id }));
     expect(after.attempts[0]).toMatchObject({
       state: 'failed',

@@ -27,7 +27,9 @@
     <Tooltip
       content={`Observed ${fmtDate(freshness.observedAt)} across ${fmtNum(freshness.machines.length)} machines.`}
     >
-      {#snippet trigger(_triggerProps)}
+      {#snippet trigger(
+        _triggerProps,
+      )}
         <button {..._triggerProps} class={pill} type="button">Sources observed</button>
       {/snippet}
     </Tooltip>
@@ -39,7 +41,9 @@
     {/if}
   {:else}
     <Tooltip content={unavailableDescription}>
-      {#snippet trigger(_triggerProps)}
+      {#snippet trigger(
+        _triggerProps,
+      )}
         <button {..._triggerProps} class={pill} type="button">Freshness unavailable</button>
       {/snippet}
     </Tooltip>

@@ -1,7 +1,16 @@
 # ADR 0031: Outbound-only Device replication
 
-- **Status**: Accepted
+- **Status**: Superseded on 2026-10-24: the connected platform is deleted (plan 120)
+- **Superseded by**: [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
+
+> The replication code outlives this decision until plan 120 phase B, which
+> runs after PR #67 lands: the dormant client, both stores' outbox writers and
+> the `replication-status` command are then removed, and the usage store's
+> outbox tables are dropped by a forward-only schema change after a backup
+> (ADR 0074, [ADR 0075](0075-local-store-schema-evolution.md)). Manual merge
+> bundles, which this record kept as a fallback, are the only cross-machine
+> path.
 
 ## Context
 

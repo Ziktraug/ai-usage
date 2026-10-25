@@ -1,8 +1,10 @@
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createUsageEngineBearerToken, usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
+import { USAGE_STORE_SCHEMA_VERSION } from '@ai-usage/usage-store/reader';
 import { initializeUsageStore, quiesceUsageStoreForShutdown } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { acquireUsageEngineLock } from './engine-lock';
@@ -73,6 +75,26 @@ test('check reads a compatible stopped store without creating or changing runtim
   expect(await readdir(paths.stateDirectory)).toEqual(entriesBefore);
   await expect(Bun.file(paths.inboxDirectory).exists()).resolves.toBe(false);
   await expect(Bun.file(paths.temporaryRoot).exists()).resolves.toBe(false);
+});
+
+test('check reports the typed reason of an unavailable store', async () => {
+  const paths = await createPaths();
+  await mkdir(path.dirname(paths.databasePath), { mode: 0o700, recursive: true });
+  await Effect.runPromise(initializeUsageStore({ dbPath: paths.databasePath }));
+  await Effect.runPromise(quiesceUsageStoreForShutdown({ dbPath: paths.databasePath }));
+  const database = new Database(paths.databasePath, { strict: true });
+  try {
+    database.exec(`PRAGMA user_version = ${USAGE_STORE_SCHEMA_VERSION + 1}`);
+  } finally {
+    database.close();
+  }
+
+  const report = await checkUsageEngine(paths);
+
+  expect(report).toMatchObject({
+    ok: false,
+    store: { reason: 'schema-too-new', state: 'unavailable' },
+  });
 });
 
 describe('running engine check identity', () => {
