@@ -2,6 +2,22 @@ import { untrack } from 'svelte';
 import type { DelegationPageClient, DelegationSaveOutcome, DelegationSaveSettingsInput } from './delegation-contract';
 import { type DraftResolution, type EntryIdentity, keyIdentity, rebaseDraft, sameWritten } from './delegation-rebase';
 
+/**
+ * A plain deep copy of a draft (arrays, plain objects, primitives: settings JSON), read through
+ * Svelte's state proxies. `$state.snapshot` does the same but imports the runtime's clone
+ * warnings, which Rollup places in the shared runtime chunk every page downloads, the report's
+ * first load included.
+ */
+const plainCopy = <Value>(value: Value): Value => {
+  if (Array.isArray(value)) {
+    return value.map((entry: unknown) => plainCopy(entry)) as Value;
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, plainCopy(entry)])) as Value;
+  }
+  return value;
+};
+
 export interface DraftSyncOptions<Draft> {
   /** The draft the current settings would produce. */
   readonly from: () => Draft;
@@ -62,7 +78,7 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
    * is the latest keyed as the draft is, so the next merge matches the operator's entries by key.
    */
   const rebind = (latest: Draft, revision: string): void => {
-    const rebased = rebaseDraft(base, $state.snapshot(draft) as Draft, latest, identity);
+    const rebased = rebaseDraft(base, plainCopy(draft), latest, identity);
     if (rebased.conflicts.length > 0) {
       stale = true;
       return;
@@ -131,7 +147,7 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
     reapply(): DraftResolution {
       const revision = untrack(options.revision);
       const latest = untrack(options.from);
-      const rebased = rebaseDraft(base, $state.snapshot(draft) as Draft, latest, identity);
+      const rebased = rebaseDraft(base, plainCopy(draft), latest, identity);
       base = rebased.base;
       draft = rebased.draft;
       baseRevision = revision;
@@ -165,7 +181,7 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
       base = saved;
       baseRevision = revision;
       stale = false;
-      dirty = !sameWritten($state.snapshot(draft), saved);
+      dirty = !sameWritten(plainCopy(draft), saved);
       const loaded = untrack(options.revision);
       if (loaded !== loadedRevision) {
         reconcile(loaded);
@@ -173,7 +189,7 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
     },
     /** The draft as a plain copy: what a save carries, and what `settle` compares the live draft to. */
     snapshot(): Draft {
-      return $state.snapshot(draft) as Draft;
+      return plainCopy(draft);
     },
   };
 };

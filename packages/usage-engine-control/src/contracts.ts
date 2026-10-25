@@ -76,6 +76,12 @@ const maxOpaqueIdBytes = 160;
 const maxReviewIdentityBytes = 512;
 /** A refusal message names a checkout path, so it is allowed more than one status message. */
 const maxReviewMessageBytes = 1024;
+/**
+ * Refusal and status messages of the review-attempt and delegation answers (UTF-8 bytes). Exported
+ * on its own rather than in `usageEngineControlBounds`: that object is in the report's first load,
+ * and only the engine and tests read this bound.
+ */
+export const usageEngineMaxReviewMessageBytes = maxReviewMessageBytes;
 /** Policy and catalog revisions are 16 hexadecimal characters; the bound leaves room for a later format. */
 const maxDelegationRevisionBytes = 64;
 /** Config issues one `update-delegation-config` answer lists (the rule bound of the config). */
@@ -100,8 +106,6 @@ export const usageEngineControlBounds = {
   maxProjectAliasMatches: 500,
   maxProjectGroups: 256,
   maxRendezvousBytes: 4 * kibibyte,
-  /** Refusal and status messages of the review-attempt and delegation answers (UTF-8 bytes). */
-  maxReviewMessageBytes,
   maxSnapshotEventBytes: sourceControlBounds.maxSnapshotBytes + 2 * kibibyte,
   maxStatusEventBytes: sourceControlBounds.maxSnapshotBytes + 34 * kibibyte,
   maxStatusBytes,

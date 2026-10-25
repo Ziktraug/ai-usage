@@ -22,6 +22,7 @@ import {
   parseWebUsageEngineCommand,
   USAGE_ENGINE_PROTOCOL_VERSION,
   usageEngineControlBounds,
+  usageEngineMaxReviewMessageBytes,
 } from './contracts';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
 
@@ -856,7 +857,7 @@ describe('usage engine control contracts', () => {
   });
 
   test('bounds a review or delegation message by UTF-8 bytes on a code-point boundary', () => {
-    const limit = usageEngineControlBounds.maxReviewMessageBytes;
+    const limit = usageEngineMaxReviewMessageBytes;
     const bytesOf = (value: string): number => new TextEncoder().encode(value).byteLength;
     expect(limit).toBe(1024);
 

@@ -29,7 +29,7 @@ import type { ExecutorObservation } from '@ai-usage/report-core/work-executors';
 import {
   type UsageEngineCommand,
   type UsageEngineCommandId,
-  usageEngineControlBounds,
+  usageEngineMaxReviewMessageBytes,
 } from '@ai-usage/usage-engine-control';
 import {
   importClaudeDesktopSessions,
@@ -891,7 +891,7 @@ describe('one review policy before any launch (legacy Work command and delegatio
     expect(busy).toMatchObject({ job: { reused: false, state: 'refused' }, refusal: { reason: 'pool-busy' } });
     expect(() => completionOf(busyCommand, busy)).not.toThrow();
     const busyMessage = busy.refusal?.message ?? '';
-    expect(encoder.encode(busyMessage).byteLength).toBeLessThanOrEqual(usageEngineControlBounds.maxReviewMessageBytes);
+    expect(encoder.encode(busyMessage).byteLength).toBeLessThanOrEqual(usageEngineMaxReviewMessageBytes);
     expect(busyMessage).toContain('review attempt old-unknown-pool-日本語-1');
     expect(busyMessage.endsWith('…')).toBe(true);
     // The refused row is recorded with the whole sentence, under the store's own larger bound.
@@ -907,9 +907,7 @@ describe('one review policy before any launch (legacy Work command and delegatio
     expect(refused).toMatchObject({ attempt: { reused: false, state: 'refused' }, refusal: { reason: 'pool-busy' } });
     expect(() => completionOf(legacy, refused)).not.toThrow();
     const refusedMessage = refused.refusal?.message ?? '';
-    expect(encoder.encode(refusedMessage).byteLength).toBeLessThanOrEqual(
-      usageEngineControlBounds.maxReviewMessageBytes,
-    );
+    expect(encoder.encode(refusedMessage).byteLength).toBeLessThanOrEqual(usageEngineMaxReviewMessageBytes);
     expect(refusedMessage).toContain('old-unknown-pool-日本語-1');
     expect(refusedMessage.endsWith('…')).toBe(true);
     const row = await attemptById(fixture.dbPath, refused.attempt.attemptId);
@@ -946,9 +944,7 @@ describe('one review policy before any launch (legacy Work command and delegatio
       successfulCommandCompletion({ command: legacy, commandId: 'command-2' as UsageEngineCommandId }, refused, NOW),
     ).not.toThrow();
     const message = refused.refusal?.message ?? '';
-    expect(new TextEncoder().encode(message).byteLength).toBeLessThanOrEqual(
-      usageEngineControlBounds.maxReviewMessageBytes,
-    );
+    expect(new TextEncoder().encode(message).byteLength).toBeLessThanOrEqual(usageEngineMaxReviewMessageBytes);
     expect(message.startsWith('Pool declared:')).toBe(true);
     expect(message).toContain('review attempt old-unknown-pool-1 (running) [pool unknown');
     expect(message.endsWith('…')).toBe(true);

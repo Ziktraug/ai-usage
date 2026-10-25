@@ -6,7 +6,7 @@ import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-
 import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import { readLocalRoutingDeclarations } from '@ai-usage/local-machine/routing-config';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import { type UsageEngineCommandId, usageEngineControlBounds } from '@ai-usage/usage-engine-control';
+import { type UsageEngineCommandId, usageEngineMaxReviewMessageBytes } from '@ai-usage/usage-engine-control';
 import { initializeUsageStore } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import { createDelegationService } from './delegation';
@@ -211,10 +211,8 @@ describe('update-delegation-config answers through the control plane', () => {
     const reasons = answer.issues.map((issue) => issue.reason);
     expect(reasons.some((reason) => reason.startsWith('unknown field(s): '))).toBe(true);
     for (const issue of answer.issues) {
-      expect(Buffer.byteLength(issue.reason, 'utf8')).toBeLessThanOrEqual(
-        usageEngineControlBounds.maxReviewMessageBytes,
-      );
-      expect(Buffer.byteLength(issue.path, 'utf8')).toBeLessThanOrEqual(usageEngineControlBounds.maxReviewMessageBytes);
+      expect(Buffer.byteLength(issue.reason, 'utf8')).toBeLessThanOrEqual(usageEngineMaxReviewMessageBytes);
+      expect(Buffer.byteLength(issue.path, 'utf8')).toBeLessThanOrEqual(usageEngineMaxReviewMessageBytes);
     }
     // The answer passes the completion parser the coordinator runs, instead of failing the command.
     expect(() =>
