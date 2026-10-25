@@ -170,7 +170,6 @@ export const createLocalDelegationMcpPort = (options: LocalDelegationMcpPortOpti
         kind: 'success',
         value: {
           jobs: listed.value.jobs.map(summarizeDelegationJobView),
-          omitted: 0,
           skipped: listed.value.skipped,
           truncated: listed.value.truncated,
         },

@@ -16,7 +16,6 @@ const summary = (index: number, checkoutPath: string) => ({
 
 const list = (jobs: readonly object[], extra: Partial<DelegationMcpJobList> = {}): DelegationMcpJobList => ({
   jobs,
-  omitted: 0,
   skipped: 0,
   truncated: false,
   ...extra,
@@ -25,12 +24,12 @@ const list = (jobs: readonly object[], extra: Partial<DelegationMcpJobList> = {}
 describe('boundDelegationListPayload', () => {
   test('forwards a list that fits untouched, inside the exact tool envelope', () => {
     const jobs = Array.from({ length: 50 }, (_, index) => summary(index, '/home/operator/src/project'));
-    const payload = boundDelegationListPayload(list(jobs, { omitted: 2, skipped: 1, truncated: true }));
+    const payload = boundDelegationListPayload(list(jobs, { skipped: 1, truncated: true }));
     expect(payload).toEqual({
       contentRole: 'retrieved-data',
       jobs,
       notice: retrievedDataNotice,
-      omitted: 2,
+      omitted: 0,
       skipped: 1,
       truncated: true,
     });
@@ -43,10 +42,10 @@ describe('boundDelegationListPayload', () => {
     // Fifty 4 KiB paths: about 210 KiB of summaries, past the 192 KiB bound.
     const jobs = Array.from({ length: 50 }, (_, index) => summary(index, `/${'p'.repeat(4095)}`));
     expect(utf8Bytes(list(jobs))).toBeGreaterThan(BOUND);
-    const payload = boundDelegationListPayload(list(jobs, { omitted: 3 }));
+    const payload = boundDelegationListPayload(list(jobs));
     expect(payload.jobs.length).toBeGreaterThan(0);
     expect(payload.jobs.length).toBeLessThan(jobs.length);
-    expect(payload.omitted).toBe(3 + jobs.length - payload.jobs.length);
+    expect(payload.omitted).toBe(jobs.length - payload.jobs.length);
     // A prefix, each entry the very object the port answered: nothing is cut inside a summary.
     expect(payload.jobs.every((job, index) => job === jobs[index])).toBe(true);
     expect(utf8Bytes(payload)).toBeLessThanOrEqual(BOUND);

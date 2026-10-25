@@ -15,8 +15,6 @@ export interface DelegationMcpJobList {
    * included. The full job view is `delegation.status`'s.
    */
   readonly jobs: readonly object[];
-  /** Jobs the port left out of `jobs` before the adapter's bound; the adapter adds the ones it drops. */
-  readonly omitted: number;
   readonly skipped: number;
   readonly truncated: boolean;
 }
@@ -26,7 +24,7 @@ export interface DelegationMcpListPayload {
   readonly contentRole: 'retrieved-data';
   readonly jobs: readonly object[];
   readonly notice: typeof retrievedDataNotice;
-  /** Jobs beyond the response bound or left out by the port; each is readable with `delegation.status`. */
+  /** Jobs beyond the response bound, the oldest ones; each is readable with `delegation.status`. */
   readonly omitted: number;
   readonly skipped: number;
   readonly truncated: boolean;
@@ -36,8 +34,8 @@ const utf8Bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(v
 
 /**
  * Keeps the longest prefix (the newest jobs) of `list.jobs` whose serialized payload, envelope
- * included, stays within `mcpToolOutputBounds.maxOutputBytes`; the rest are counted in `omitted`
- * together with what the port already left out. A summary is kept whole or not at all.
+ * included, stays within `mcpToolOutputBounds.maxOutputBytes`; the rest are counted in `omitted`. A
+ * summary is kept whole or not at all.
  */
 export const boundDelegationListPayload = (list: DelegationMcpJobList): DelegationMcpListPayload => {
   const payload = (jobs: readonly object[], omitted: number): DelegationMcpListPayload => ({
@@ -50,7 +48,7 @@ export const boundDelegationListPayload = (list: DelegationMcpJobList): Delegati
   });
   // The envelope with no job and the largest `omitted` the answer can carry (the most digits): the
   // final envelope is never larger, so a prefix admitted here fits whatever `omitted` ends up being.
-  let bytes = utf8Bytes(payload([], list.omitted + list.jobs.length));
+  let bytes = utf8Bytes(payload([], list.jobs.length));
   const kept: object[] = [];
   for (const job of list.jobs) {
     // The serialized summary, preceded by its separator once the array has an element.
@@ -61,5 +59,5 @@ export const boundDelegationListPayload = (list: DelegationMcpJobList): Delegati
     kept.push(job);
     bytes += size;
   }
-  return payload(kept, list.omitted + list.jobs.length - kept.length);
+  return payload(kept, list.jobs.length - kept.length);
 };

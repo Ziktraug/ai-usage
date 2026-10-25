@@ -619,7 +619,7 @@ describe('delegation composition', () => {
       throw new Error(`list failed: ${listed.code}`);
     }
     expect(listed.value.jobs).toHaveLength(DELEGATION_READ_BOUNDS.maxListLimit);
-    expect(listed.value).toMatchObject({ omitted: 0, skipped: 0, truncated: false });
+    expect(listed.value).toMatchObject({ skipped: 0, truncated: false });
     expect(Buffer.byteLength(JSON.stringify(listed.value), 'utf8')).toBeGreaterThan(memoryMcpBounds.maxOutputBytes);
 
     let client: InMemoryMcpClient | undefined;
@@ -815,7 +815,7 @@ describe('delegation composition', () => {
     // About 26 KiB: the checkout path is the bulk, the rest a few KiB. At least four such fit the 192 KiB bound.
     const bytes = Buffer.byteLength(JSON.stringify(widestSummary), 'utf8');
     expect(bytes * 4).toBeLessThan(memoryMcpBounds.maxOutputBytes);
-    const payload = boundDelegationListPayload({ jobs: [widestSummary], omitted: 0, skipped: 0, truncated: false });
+    const payload = boundDelegationListPayload({ jobs: [widestSummary], skipped: 0, truncated: false });
     expect(payload.jobs).toEqual([widestSummary]);
     expect(payload.omitted).toBe(0);
     expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeLessThanOrEqual(memoryMcpBounds.maxOutputBytes);
