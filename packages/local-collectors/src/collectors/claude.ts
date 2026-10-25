@@ -83,7 +83,8 @@ interface ClaudeCache {
 // counters and the resolved origin repository, with the pricing provider shared
 // by the entire cache.
 // Bumped to 16 to retain explicit launch identities for cross-transcript lineage.
-const CLAUDE_CACHE_VERSION = 16;
+// Bumped to 17 so unchanged transcripts gain attested Claude-to-Codex delegations.
+const CLAUDE_CACHE_VERSION = 17;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
@@ -435,6 +436,7 @@ const parseClaudeFile = (
       source: {
         harnessKey: 'claude',
         sourceSessionId,
+        ...(source.delegatedSessions ? { delegatedSessions: source.delegatedSessions } : {}),
         ...(source.parentSourceSessionId === null ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
         sourcePath: source.sourcePath,
         ...(source.vcs ? { vcs: source.vcs } : {}),

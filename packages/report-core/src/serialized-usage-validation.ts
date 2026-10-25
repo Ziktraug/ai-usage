@@ -63,6 +63,7 @@ export const SERIALIZED_USAGE_ROW_KEYS: ReadonlySet<string> = new Set([
 const MACHINE_KEYS = new Set(['id', 'label']);
 const SERIALIZED_SOURCE_KEYS = new Set([
   'artifactPath',
+  'delegatedSessions',
   'harnessKey',
   'machineId',
   'machineLabel',
@@ -91,6 +92,7 @@ const PROJECT_GROUPING_WARNING_REASONS = new Set([
   'unmatched-group',
 ]);
 const MODEL_SEGMENT_KEYS = new Set(['costApprox', 'costKnown', 'model', 'tokCr', 'tokCw', 'tokIn', 'tokOut']);
+const DELEGATED_SESSION_KEYS = new Set(['harness', 'sourceSessionId']);
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -143,7 +145,7 @@ export const isUsageMachine = (value: unknown): value is { id: string; label: st
   );
 };
 
-export const isSerializedUsageRowSource = (value: unknown): value is SerializedUsageRowSource => {
+const hasValidSerializedSourceFields = (value: unknown): value is Record<string, unknown> => {
   if (!isRecord(value)) {
     return false;
   }
@@ -166,6 +168,36 @@ export const isSerializedUsageRowSource = (value: unknown): value is SerializedU
     (value.vcs === undefined || isSessionVcsContext(value.vcs))
   );
 };
+
+export type SerializedUsageRowSourceValidationReason = 'invalid-source' | 'invalid-delegated-sessions';
+
+/** Keep historical source fields readable; delegation bounds belong to the producer. */
+export const serializedUsageRowSourceValidationReason = (
+  value: unknown,
+): SerializedUsageRowSourceValidationReason | null => {
+  if (!hasValidSerializedSourceFields(value)) {
+    return 'invalid-source';
+  }
+  if (
+    value.delegatedSessions !== undefined &&
+    !(
+      Array.isArray(value.delegatedSessions) &&
+      value.delegatedSessions.every(
+        (session) =>
+          isRecord(session) &&
+          hasOnlyKeys(session, DELEGATED_SESSION_KEYS) &&
+          session.harness === 'codex' &&
+          typeof session.sourceSessionId === 'string',
+      )
+    )
+  ) {
+    return 'invalid-delegated-sessions';
+  }
+  return null;
+};
+
+export const isSerializedUsageRowSource = (value: unknown): value is SerializedUsageRowSource =>
+  serializedUsageRowSourceValidationReason(value) === null;
 
 const isProjectSourceSelector = (value: unknown): boolean =>
   isRecord(value) &&
