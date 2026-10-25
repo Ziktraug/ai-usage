@@ -439,6 +439,22 @@ transcript is read, and quiet roots older than the window are left out. Lists ar
 `truncation` says what was left out. A missing or not-yet-upgraded store is an
 error (exit 1, or an MCP error such as `store-missing`), never an empty answer.
 
+### 11. Delegate a read-only review from any MCP client
+
+The agent you work with (Claude Code, Codex or any MCP client) can hand a
+read-only review of a commit or a `base..head` range to another local harness
+through the same stdio MCP server: `delegation.qualify` returns the routes your
+rules admit now, the agent chooses one or abstains, `delegation.start` runs it
+in the engine, and `delegation.status` reads the job and its result from the
+store, so another client can follow it. Rules (professional/personal contexts,
+repository, owner, declared GitHub account, Git author, reserves, concurrency,
+attempts, identity proof) and the model catalog are edited in **Manage ›
+Delegation**, which also simulates a request. Claude Code and Codex run as
+workers with their own read-only controls; OpenCode and Cursor are listed as
+callers only. Setup, MCP registration for each client, the instruction to give
+your agent and the limits are in [`docs/delegation.md`](docs/delegation.md)
+([ADR 0077](docs/adr/0077-delegation-independent-of-the-calling-harness.md)).
+
 ## Output formats
 
 The default output is a terminal table with an analytics summary. The same report can be emitted in other formats:

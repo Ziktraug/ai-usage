@@ -86,7 +86,7 @@ was deleted.
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
 | [0049](0049-retire-session-distillation.md) | Retire Session distillation while preserving Memory and stored evidence | 2026-10-21 | Accepted; supersedes feature clauses of 0042 and 0043; preserves 0044 |
 | [0050](0050-work-attention-facts-outside-the-served-revision.md) | Work attention facts stay outside the served revision | 2026-10-21 | Accepted; extends 0009, 0016, 0017; amended by 0056 |
-| [0051](0051-engine-read-only-github-and-checkout-observation.md) | Engine-side read-only GitHub and checkout status observation | 2026-10-21 | Accepted; extends 0009, 0044 |
+| [0051](0051-engine-read-only-github-and-checkout-observation.md) | Engine-side read-only GitHub and checkout status observation | 2026-10-21 | Accepted; extends 0009, 0044; amended 2026-10-25 by 0077 (stderr classification) |
 | [0052](0052-review-routing-qualification.md) | Review routing qualification: declared executors, observed availability, observed quota | 2026-10-21 | Accepted; extends 0009, 0016, 0017, 0045 |
 | [0053](0053-first-read-only-review-attempt-launched-by-the-engine.md) | First read-only review attempt launched by the engine | 2026-10-22 | Accepted; extends 0009, 0050, 0052; amended by 0055 |
 | [0054](0054-jira-issue-facts-explicit-keys-read-only.md) | Jira issue facts: explicit keys only, read through the operator's CLI session, never written | 2026-10-22 | Accepted; extends 0009, 0050, 0051 |
@@ -102,6 +102,7 @@ was deleted.
 | [0074](0074-local-only-single-operator-product.md) | Local-only, single-operator product; manual transfer bundles are the only cross-machine path | 2026-10-24 | Accepted; supersedes 0023, 0030, 0031, 0033–0036; amends 0024, 0026–0029, 0038 |
 | [0075](0075-local-store-schema-evolution.md) | Local store schema evolution: forward-only, additive where possible, widen-only reads | 2026-10-24 | Accepted; extends 0009 |
 | [0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md) | Browser boundary: oRPC contract + TanStack Query, derived once | 2026-10-24 | Accepted; supersedes 0010 and 0012 |
+| [0077](0077-delegation-independent-of-the-calling-harness.md) | Delegation owned by AI Usage, independent of the calling harness (read-only reviews, Claude Code and Codex executors) | 2026-10-25 | Accepted; extends 0009, 0052, 0053, 0055, 0057, 0058, 0074, 0075; amends 0051 (stderr classification) |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

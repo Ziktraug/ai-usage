@@ -11,6 +11,9 @@ living reference, the living reference wins.
 
 - [`architecture.md`](architecture.md) — data flow, process/package ownership,
   the data-plane/control-plane split.
+- [`delegation.md`](delegation.md) — delegating read-only reviews from any MCP
+  client: setup, MCP registration (Claude Code, Codex, generic stdio), the
+  portable caller instruction, rules, results and limits.
 - [`local-store-upgrade.md`](local-store-upgrade.md) — operator procedure for
   moving the local usage and Memory SQLite stores across code versions
   (backup, update, verify, recover) and its limits.

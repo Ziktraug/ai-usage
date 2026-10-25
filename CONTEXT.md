@@ -161,6 +161,49 @@ pending. A proposal is not a task, has no owner and no deadline, and is never
 ranked above a question a person was asked.
 _Avoid_: task, todo, backlog item, pending action
 
+**Delegation**:
+A bounded task that a caller (any MCP client or the CLI) hands to AI Usage,
+which decides from its own rules and fresh observations which routes may run
+it. This version executes one action, a read-only review of a commit or an
+explicit commit range in an admitted local checkout. The caller's name and
+session are metadata; they never authorize, route or bill (ADR 0077).
+_Avoid_: handoff, leader, sub-agent call, work thread
+
+**Route**:
+One explicit way to run a delegation: machine, executor harness, account,
+quota pool, model and effort, declared by the operator under
+`routing.executors[]` with a context (professional or personal). Models of one
+account share one pool. A route is admissible only when every rule and
+observation allows it now.
+_Avoid_: provider, harness alone, best model
+
+**Qualification**:
+The engine's dated, versioned answer to a delegation request: the admissible
+routes with factual advantages and limits, the excluded ones with their
+blockers, the applied rules and assumptions, and how long it holds. A start
+re-qualifies with the same function and refuses what changed.
+_Avoid_: recommendation, ranking, simulation result presented as a decision
+
+**Selector**:
+Whoever chooses one admissible route or abstains. In this version it is the
+calling model; its stated confidence is its own statement, never a measured
+probability of success.
+_Avoid_: router, policy, judge
+
+**Delegation job**:
+The durable record of one delegation decision and its execution: request,
+cited and launch qualifications, selection, route, frozen scope, process
+facts, bounded result and evaluations. It belongs to AI Usage, not to the
+caller's connection; it is not a Round or a Session.
+_Avoid_: attempt (the session review of ADR 0053), task, thread
+
+**Delegation evaluation**:
+A dated statement about a finished job, kept apart from its execution: a
+structural `automated-check` by the engine, a `verification` by the calling
+model, or an `acceptance` by the operator in the Work view. A model or a check
+never records an acceptance.
+_Avoid_: success, score, approval inferred from an exit code
+
 **Collected session**:
 An intermediate collector result that preserves harness-specific local history details before normalization into a usage row. It is the seam used by collectors that need shared row conversion.
 _Avoid_: raw event, source row
