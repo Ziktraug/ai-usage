@@ -48,7 +48,10 @@ export interface WebQueryOwnership {
     | 'skill-observations'
     | 'skills'
     | 'sources'
-    | 'sync';
+    | 'sync'
+    | 'work-attempts'
+    | 'work-attention'
+    | 'work-routing';
   readonly policy: WebQueryPolicyName;
   readonly publication: PublicationQueryEffect;
   readonly rendering: 'browser-only' | 'ssr-awaited';
@@ -116,6 +119,34 @@ export const webQueryOwnership = [
     policy: 'collection-swr',
     publication: 'invalidate-collection-identity',
     rendering: 'ssr-awaited',
+  },
+  {
+    // Declared outcomes, pull-request and checkout facts are written by the engine's collection
+    // sources, so the family lives on the collection cadence. Its identity carries the request's
+    // limit and machine, and publication invalidation is exact-key only, so the cycle does not sweep
+    // it: interval and focus revalidation are its freshness path. It carries no proof with a
+    // lifetime, so its own policy refetches on mount only when stale: the SSR read is the page
+    // load's one read.
+    family: 'work-attention',
+    policy: 'collection-facts-swr',
+    publication: 'none',
+    rendering: 'ssr-awaited',
+  },
+  {
+    // Routing declarations are read from the home config and executor observations from the store;
+    // the panel reads them in the browser when a root is selected.
+    family: 'work-routing',
+    policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
+  {
+    // Review attempts are written by the engine when the operator launches one; the list polls
+    // every five seconds exactly while an attempt is live (requested, starting, running), and stops.
+    family: 'work-attempts',
+    policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'browser-only',
   },
   {
     family: 'memory',

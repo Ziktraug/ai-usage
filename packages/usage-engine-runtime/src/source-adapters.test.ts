@@ -3,24 +3,41 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
+import { claudeAccountFingerprint } from '@ai-usage/local-collectors/executor-observations';
+import {
+  BoundedProcessError,
+  type BoundedProcessOptions,
+  type BoundedProcessRunner,
+} from '@ai-usage/local-machine/bounded-process';
 import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { collectionSourceIds } from '@ai-usage/report-core/source-control';
 import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
   initializeUsageStore,
+  queryClaudeDesktopSessions,
+  queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
   querySkillObservations,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
+import {
+  importPullRequestObservations,
+  queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
+  queryLatestPullRequestObservations,
+  queryWorkFactRunStates,
+} from '@ai-usage/usage-store/writer';
 import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
 import { createScheduledSourceRegistry, prepareSkillObservationImport, type SourceRunContext } from './source-adapters';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
+const SECRET_LIKE_VARIABLE = /TOKEN|SECRET/i;
 
 afterEach(() => {
   setClaudeSkillObservationCeilingForTesting(null);
@@ -113,6 +130,53 @@ const writeClaudeSkillSession = (home: string, skillNames: readonly string[] = [
   writeFileSync(
     path.join(directory, 'skill-session-1.jsonl'),
     `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+  );
+};
+
+/** Two Claude Desktop registry files: one complete blocked root, one of an unknown shape. */
+const writeClaudeDesktopRegistry = (home: string): void => {
+  const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+  mkdirSync(directory, { recursive: true });
+  const base = {
+    cliSessionId: 'cli-desktop-root',
+    createdAt: Date.UTC(2026, 9, 20, 9),
+    cwd: '/home/fixture/work/project',
+    isArchived: false,
+    lastActivityAt: Date.UTC(2026, 9, 20, 11),
+    title: 'Fixture: desktop root',
+    titleSource: 'auto',
+  };
+  writeFileSync(
+    path.join(directory, 'local_desktop-root.json'),
+    JSON.stringify({
+      ...base,
+      backgroundTaskSuggestions: [
+        {
+          createdAt: Date.UTC(2026, 9, 20, 10),
+          id: 'task_1',
+          prompt: 'PRIVATE_DESKTOP_PROMPT_SENTINEL',
+          title: 'Fixture proposal',
+          tldr: 'tldr',
+        },
+      ],
+      postTurnSummary: {
+        needs_action: 'Decide whether to open the pull request.',
+        status_category: 'blocked',
+        status_detail: 'Waiting on a decision.',
+        summarizes_uuid: 'uuid-1',
+      },
+      sessionId: 'local_desktop-root',
+    }),
+  );
+  writeFileSync(
+    path.join(directory, 'local_desktop-unknown.json'),
+    JSON.stringify({
+      ...base,
+      cliSessionId: 'cli-desktop-unknown',
+      lastActivityAt: Date.UTC(2026, 9, 20, 10),
+      postTurnSummary: { status_category: 'waiting_for_person', status_detail: 'x' },
+      sessionId: 'local_desktop-unknown',
+    }),
   );
 };
 
@@ -233,6 +297,83 @@ describe('scheduled source adapters', () => {
       expect(
         (await Effect.runPromise(registry.get('opencode.sessions')?.detect ?? Effect.die('missing'))).availability,
       ).toBe('not-detected');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('observes executor capabilities through injected seams and stores them without a publication', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-executors-'));
+    try {
+      const spawned: string[] = [];
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const registry = await createRegistry(home, {
+        executorObservation: {
+          run: (spec) => {
+            spawned.push(`${spec.command} ${spec.args.join(' ')}`);
+            if (spec.command === 'claude') {
+              return Promise.resolve(
+                spec.args[0] === '--version'
+                  ? { exitCode: 0, stdout: '2.1.303 (Claude Code)\n' }
+                  : { exitCode: 0, stdout: JSON.stringify({ loggedIn: true, email: 'hidden@example.test' }) },
+              );
+            }
+            return Promise.resolve({ exitCode: 1, stdout: '' });
+          },
+          which: (command) => (command === 'claude' ? '/usr/bin/claude' : null),
+        },
+        now: () => now,
+      });
+      const source = registry.get('executors.capabilities');
+      expect(Duration.toMillis(source?.cadence ?? Duration.zero)).toBe(900_000);
+      expect((await Effect.runPromise(source?.detect ?? Effect.die('missing'))).availability).toBe('detected');
+      const progress: unknown[] = [];
+      const result = await Effect.runPromise(source?.run(progressContext(progress)) ?? Effect.die('missing'));
+      expect(result).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
+      // The missing Codex binary is observed, not probed.
+      expect(spawned).toEqual(['claude --version', 'claude auth status']);
+
+      const stored = await Effect.runPromise(
+        queryLatestExecutorObservations({ dbPath: usageStorePath(home), machineId: machine.id }),
+      );
+      expect(stored.skipped).toBe(0);
+      expect(stored.observations).toEqual([
+        {
+          // Only the hash of the reported account reaches the store (ADR 0057).
+          accountFingerprint: claudeAccountFingerprint({ email: 'hidden@example.test' }) ?? 'missing',
+          authEvidence: 'claude auth status exit 0 loggedIn=true',
+          authMethod: null,
+          authState: 'logged-in',
+          binaryPath: '/usr/bin/claude',
+          harness: 'claude-code',
+          machineId: machine.id,
+          observedAt: now.toISOString(),
+          outcome: 'observed',
+          version: '2.1.303 (Claude Code)',
+        },
+        {
+          authEvidence: 'codex binary not found on PATH',
+          authMethod: null,
+          authState: 'unknown',
+          binaryPath: null,
+          harness: 'codex',
+          machineId: machine.id,
+          observedAt: now.toISOString(),
+          outcome: 'unavailable',
+          version: null,
+        },
+      ]);
+      expect(JSON.stringify(stored)).not.toContain('hidden@example.test');
+
+      const withoutBinaries = await createRegistry(home, { executorObservation: { which: () => null } });
+      expect(
+        (await Effect.runPromise(withoutBinaries.get('executors.capabilities')?.detect ?? Effect.die('missing')))
+          .availability,
+      ).toBe('not-detected');
+      const unavailable = await Effect.runPromise(
+        withoutBinaries.get('executors.capabilities')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(unavailable.unavailable?.code).toBe('run-unavailable');
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
@@ -615,6 +756,798 @@ describe('scheduled source adapters', () => {
       expect(dataset.skills.map(({ skillName }) => skillName)).toEqual(['improve']);
       expect(dataset.lowerBound).toBe(true);
       expect(dataset.invocationLowerBound).toBe(true);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('imports the Claude Desktop registry into its own tables without waking a publication', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan117-engine-source-desktop-'));
+    try {
+      const absent = await createRegistry(home, { codexLiveAvailable: () => false });
+      expect(
+        (await Effect.runPromise(absent.get('claude.desktop-sessions')?.detect ?? Effect.die('missing'))).availability,
+      ).toBe('not-detected');
+
+      writeClaudeDesktopRegistry(home);
+      const registry = await createRegistry(home, {
+        codexLiveAvailable: () => false,
+        now: () => new Date('2026-10-20T12:00:00.000Z'),
+      });
+      const source = registry.get('claude.desktop-sessions');
+      expect(Duration.toMillis(source?.cadence ?? Duration.zero)).toBe(60_000);
+      expect((await Effect.runPromise(source?.detect ?? Effect.die('missing'))).availability).toBe('detected');
+
+      const progress: unknown[] = [];
+      const first = await Effect.runPromise(source?.run(progressContext(progress)) ?? Effect.die('missing source'));
+      const stored = await Effect.runPromise(
+        queryClaudeDesktopSessions({ dbPath: usageStorePath(home), machineId: machine.id }),
+      );
+
+      // The family is outside the served revision: a full import is not a report change, but new
+      // rows wake the two fact producers that read them.
+      expect(first).toEqual({
+        changed: false,
+        inputCount: 2,
+        outputCount: 2,
+        wake: ['checkouts.status', 'github.pull-requests', 'jira.issues'],
+        warnings: [],
+      });
+      expect(progress.map((update) => (update as { phase: string }).phase)).toEqual([
+        'reading',
+        'normalizing',
+        'importing',
+      ]);
+      expect(stored.skipped).toBe(0);
+      expect(stored.observations.map(({ desktopSessionId, format }) => [desktopSessionId, format])).toEqual([
+        ['local_desktop-root', 'claude-desktop-session-v1'],
+        ['local_desktop-unknown', 'unsupported'],
+      ]);
+      expect(stored.observations[0]?.turnSummary?.needsAction).toBe('Decide whether to open the pull request.');
+      expect(JSON.stringify(stored)).not.toContain('PRIVATE_DESKTOP_PROMPT_SENTINEL');
+
+      // An unchanged registry wakes nothing.
+      const second = await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      expect(second).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+});
+
+const SHA = 'f'.repeat(40);
+const cleanPorcelain = [
+  `# branch.oid ${SHA}`,
+  '# branch.head main',
+  '# branch.upstream origin/main',
+  '# branch.ab +0 -0',
+  '',
+].join('\n');
+const pullRequestView = (repository: string, number: number) =>
+  JSON.stringify({
+    baseRefName: 'main',
+    headRefName: 'feat/work-view',
+    isDraft: false,
+    mergedAt: null,
+    reviewDecision: 'REVIEW_REQUIRED',
+    state: 'OPEN',
+    statusCheckRollup: [{ __typename: 'CheckRun', conclusion: 'SUCCESS', status: 'COMPLETED' }],
+    title: 'Fixture pull request',
+    updatedAt: '2026-10-21T18:30:00Z',
+    url: `https://github.com/${repository}/pull/${String(number)}`,
+  });
+
+/** A runner that answers git status/log and gh pr view without spawning anything. */
+const fakeWorkFactRunner =
+  (calls: BoundedProcessOptions[]): BoundedProcessRunner =>
+  (options) => {
+    calls.push(options);
+    const respond = (stdout: string, exitCode = 0) => Effect.succeed({ durationMs: 1, exitCode, stdout });
+    if (options.command === 'git') {
+      const subcommand = options.args[options.args.indexOf('-C') + 2];
+      return subcommand === 'status' ? respond(cleanPorcelain) : respond('2026-10-20T10:00:00+00:00\n');
+    }
+    if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
+      return respond(pullRequestView(options.args[4] ?? '', Number(options.args[2])));
+    }
+    return respond('', 1);
+  };
+
+const writeHomeConfig = (home: string, value: unknown): void => {
+  const configPath = path.join(home, '.config', 'ai-usage', 'config.json');
+  mkdirSync(path.dirname(configPath), { mode: 0o700, recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+};
+
+describe('work fact sources', () => {
+  test('registers both fact sources with their cadences and detects them by executable presence', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-detection-'));
+    try {
+      const registry = await createRegistry(home, { ghAvailable: () => false, gitAvailable: () => true });
+      expect(Duration.toMillis(registry.get('checkouts.status')?.cadence ?? Duration.zero)).toBe(300_000);
+      expect(Duration.toMillis(registry.get('github.pull-requests')?.cadence ?? Duration.zero)).toBe(600_000);
+      expect(await Effect.runPromise(registry.get('checkouts.status')?.detect ?? Effect.die('missing'))).toEqual({
+        availability: 'detected',
+        reason: { code: 'none' },
+      });
+      expect(await Effect.runPromise(registry.get('github.pull-requests')?.detect ?? Effect.die('missing'))).toEqual({
+        availability: 'not-detected',
+        reason: {
+          code: 'input-missing',
+          message: 'The GitHub CLI (gh) was not found on PATH, so pull requests cannot be observed.',
+        },
+      });
+      const withoutGit = await createRegistry(home, { ghAvailable: () => true, gitAvailable: () => false });
+      expect(
+        (await Effect.runPromise(withoutGit.get('checkouts.status')?.detect ?? Effect.die('missing'))).availability,
+      ).toBe('not-detected');
+      expect(
+        (await Effect.runPromise(withoutGit.get('github.pull-requests')?.detect ?? Effect.die('missing'))).availability,
+      ).toBe('detected');
+      writeHomeConfig(home, { github: { enabled: 'yes' } });
+      const misconfigured = await createRegistry(home, { ghAvailable: () => true });
+      expect(
+        (await Effect.runPromise(misconfigured.get('github.pull-requests')?.detect ?? Effect.die('missing')))
+          .availability,
+      ).toBe('misconfigured');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('observes injected checkout paths through the injected runner and records the run', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-checkouts-'));
+    try {
+      const checkoutPath = path.join(home, 'projects', 'example');
+      mkdirSync(checkoutPath, { recursive: true });
+      const calls: BoundedProcessOptions[] = [];
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const registry = await createRegistry(home, {
+        gitAvailable: () => true,
+        now: () => now,
+        workFactInputs: {
+          candidateCheckoutPaths: () => Effect.succeed([checkoutPath, `${checkoutPath}/`, path.join(home, 'gone')]),
+        },
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      const progress: unknown[] = [];
+      const result = await Effect.runPromise(
+        registry.get('checkouts.status')?.run(progressContext(progress)) ?? Effect.die('missing'),
+      );
+      expect(result).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
+      expect(progress).toEqual([
+        { phase: 'discovering' },
+        { completed: 0, phase: 'reading', total: 2 },
+        { completed: 0, phase: 'importing', total: 2 },
+      ]);
+      expect(calls.map(({ command }) => command)).toEqual(['git', 'git']);
+      const stored = await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath: usageStorePath(home) }));
+      // Both observations share one instant, so the reader falls back to path order.
+      expect(
+        stored.items.map(({ latest }) => [latest.checkoutPath, latest.outcome, latest.branch, latest.dirty]),
+      ).toEqual([
+        [path.join(home, 'gone'), 'missing', null, null],
+        [checkoutPath, 'observed', 'main', false],
+      ]);
+      expect(await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }))).toEqual({
+        runs: [
+          {
+            disabled: false,
+            failed: 1,
+            machineId: machine.id,
+            message: null,
+            observed: 1,
+            ranAt: canonicalInstantFromDate(now),
+            sourceId: 'checkouts.status',
+          },
+        ],
+        skipped: 0,
+      });
+      expect(JSON.stringify(result)).not.toContain(home);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('observes injected pull request links through the injected runner and records the run', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-pull-requests-'));
+    try {
+      const calls: BoundedProcessOptions[] = [];
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const registry = await createRegistry(home, {
+        ghAvailable: () => true,
+        now: () => now,
+        workFactInputs: {
+          linkedPullRequests: () =>
+            Effect.succeed([
+              { host: 'github.com', number: 66, repository: 'fixture/project' },
+              { host: 'github.com', number: 66, repository: 'fixture/project' },
+              { host: 'gitlab.com', number: 3, repository: 'group/project' },
+            ]),
+        },
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      const result = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
+      expect(calls.map(({ command, args }) => [command, args[0], args[1], args[2]])).toEqual([
+        ['gh', 'pr', 'view', '66'],
+      ]);
+      expect(calls[0]?.env).toMatchObject({ GH_PROMPT_DISABLED: '1' });
+      expect(calls[0]?.env?.GH_TOKEN).toBeUndefined();
+      const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => [latest.host, latest.number, latest.outcome, latest.state])).toEqual([
+        ['github.com', 66, 'observed', 'OPEN'],
+        ['gitlab.com', 3, 'disabled', null],
+      ]);
+      expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }))).runs).toEqual([
+        {
+          disabled: false,
+          failed: 0,
+          machineId: machine.id,
+          message: null,
+          observed: 1,
+          ranAt: canonicalInstantFromDate(now),
+          sourceId: 'github.pull-requests',
+        },
+      ]);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('records a disabled run without calling gh when github.enabled is false', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-disabled-'));
+    try {
+      writeHomeConfig(home, { github: { enabled: false } });
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        ghAvailable: () => true,
+        workFactInputs: {
+          linkedPullRequests: () => Effect.succeed([{ host: 'github.com', number: 66, repository: 'fixture/project' }]),
+        },
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      const result = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toEqual({
+        changed: false,
+        inputCount: 0,
+        outputCount: 0,
+        unavailable: { code: 'policy-disabled', message: 'github.enabled is false in the local config.' },
+        warnings: [],
+      });
+      expect(calls).toHaveLength(0);
+      expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }))).runs).toEqual([
+        expect.objectContaining({ disabled: true, sourceId: 'github.pull-requests' }),
+      ]);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('passes a configured account token to gh for that owner only', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-account-'));
+    try {
+      writeHomeConfig(home, { github: { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'Fixture' }] } });
+      const calls: BoundedProcessOptions[] = [];
+      const runner: BoundedProcessRunner = (options) => {
+        if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'token') {
+          calls.push(options);
+          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: 'PRIVATE_ENGINE_TOKEN_SENTINEL\n' });
+        }
+        return fakeWorkFactRunner(calls)(options);
+      };
+      const registry = await createRegistry(home, {
+        ghAvailable: () => true,
+        // One instant for both batches: the reader then orders the stored rows by key, not by clock.
+        now: () => new Date('2026-10-21T21:00:00.000Z'),
+        workFactInputs: {
+          linkedPullRequests: () =>
+            Effect.succeed([
+              { host: 'github.com', number: 66, repository: 'fixture/project' },
+              { host: 'github.com', number: 7, repository: 'other/project' },
+            ]),
+        },
+        workFactProcessRunner: runner,
+      });
+      const result = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toMatchObject({ inputCount: 2, outputCount: 2 });
+      const ghCalls = calls.map(({ args, env }) => [args.slice(0, 3).join(' '), env?.GH_TOKEN ?? null]);
+      // The configured owner's batch runs first (link order); the active-account batch never sees the token.
+      expect(ghCalls).toEqual([
+        ['auth token --user', null],
+        ['pr view 66', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
+        ['pr view 7', null],
+      ]);
+      const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => [latest.number, latest.accountLabel])).toEqual([
+        [66, 'alice'],
+        [7, null],
+      ]);
+      expect(JSON.stringify(stored)).not.toContain('PRIVATE_ENGINE_TOKEN_SENTINEL');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('observes the checkouts and pull requests active Desktop sessions declared, ahead of injected ones', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-desktop-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const checkoutPath = path.join(home, 'projects', 'example');
+      const worktreePath = path.join(checkoutPath, '.claude', 'worktrees', 'wt-1');
+      const oldPath = path.join(home, 'projects', 'old');
+      const injectedPath = path.join(home, 'projects', 'injected');
+      for (const directory of [worktreePath, oldPath, injectedPath]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeClaudeDesktopWorkRegistry(home, { checkoutPath, now, oldPath, worktreePath });
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        ghAvailable: () => true,
+        gitAvailable: () => true,
+        now: () => now,
+        workFactInputs: {
+          candidateCheckoutPaths: () => Effect.succeed([injectedPath, checkoutPath]),
+          linkedPullRequests: () => Effect.succeed([{ host: 'github.com', number: 70, repository: 'fixture/project' }]),
+        },
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      // The registry reaches the store through the Desktop source itself, as in the engine.
+      const imported = await Effect.runPromise(
+        registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(imported).toMatchObject({ inputCount: 3, outputCount: 3 });
+
+      const checkouts = await Effect.runPromise(
+        registry.get('checkouts.status')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      // Child (30 min ago) before root (1 h ago), the old session outside the window; the injected
+      // duplicate of the child's checkout is one path; `git` runs status and log per checkout.
+      expect(checkouts).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      const gitPaths = calls.filter(({ command }) => command === 'git').map(({ args }) => args[args.indexOf('-C') + 1]);
+      expect(gitPaths).toEqual([checkoutPath, checkoutPath, worktreePath, worktreePath, injectedPath, injectedPath]);
+      expect(gitPaths).not.toContain(oldPath);
+
+      calls.length = 0;
+      const pullRequests = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(pullRequests).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      expect(calls.map(({ args }) => [args[0], args[1], args[2], args[4]])).toEqual([
+        ['pr', 'view', '67', 'fixture/project'],
+        ['pr', 'view', '66', 'fixture/project'],
+        ['pr', 'view', '70', 'fixture/project'],
+      ]);
+      const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => latest.number).sort((left, right) => left - right)).toEqual([66, 67, 70]);
+      expect(JSON.stringify(stored)).not.toContain('#99');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('does not re-observe a declared pull request whose latest stored read showed it merged', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-work-fact-merged-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      const checkoutPath = path.join(home, 'projects', 'example');
+      const worktreePath = path.join(checkoutPath, '.claude', 'worktrees', 'wt-1');
+      mkdirSync(worktreePath, { recursive: true });
+      writeClaudeDesktopWorkRegistry(home, { checkoutPath, now, oldPath: path.join(home, 'old'), worktreePath });
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        ghAvailable: () => true,
+        gitAvailable: () => true,
+        now: () => now,
+        workFactProcessRunner: fakeWorkFactRunner(calls),
+      });
+      await Effect.runPromise(
+        registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      const stored = (number: number, overrides: Record<string, unknown>) => ({
+        accountLabel: null,
+        baseRef: 'main',
+        checksRollup: 'success',
+        draft: false,
+        headRef: `feat/pr-${String(number)}`,
+        host: 'github.com',
+        machineId: machine.id,
+        mergedAt: null,
+        number,
+        observedAt: '2026-10-21T20:00:00.000Z',
+        outcome: 'observed',
+        outcomeMessage: null,
+        repository: 'fixture/project',
+        reviewDecision: null,
+        state: 'OPEN',
+        title: 'Fixture pull request',
+        updatedAt: '2026-10-21T19:00:00.000Z',
+        url: `https://github.com/fixture/project/pull/${String(number)}`,
+        ...overrides,
+      });
+      // #66 was last seen merged; #67 was seen open and then could not be read: only #67 is live.
+      await Effect.runPromise(
+        importPullRequestObservations({
+          dbPath: usageStorePath(home),
+          observations: [
+            stored(66, { mergedAt: '2026-10-21T19:30:00.000Z', state: 'MERGED' }),
+            stored(67, {}),
+            stored(67, {
+              baseRef: null,
+              checksRollup: null,
+              draft: null,
+              headRef: null,
+              observedAt: '2026-10-21T20:30:00.000Z',
+              outcome: 'network',
+              outcomeMessage: 'gh exited 1',
+              state: null,
+              title: null,
+              updatedAt: null,
+              url: null,
+            }),
+          ],
+        }),
+      );
+
+      const pullRequests = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(pullRequests).toEqual({ changed: false, inputCount: 1, outputCount: 1, warnings: [] });
+      expect(calls.map(({ args }) => [args[0], args[1], args[2], args[4]])).toEqual([
+        ['pr', 'view', '67', 'fixture/project'],
+      ]);
+      const latest = await Effect.runPromise(
+        queryLatestPullRequestObservations({ dbPath: usageStorePath(home), machineId: machine.id }),
+      );
+      expect(
+        latest.items.map(({ latest: item }) => [item.number, item.outcome, item.state, item.observedAt]).sort(),
+      ).toEqual([
+        [66, 'observed', 'MERGED', canonicalInstantFromDate(new Date('2026-10-21T20:00:00.000Z'))],
+        [67, 'observed', 'OPEN', canonicalInstantFromDate(now)],
+      ]);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+});
+
+/**
+ * Three Desktop registry files for the fact sources: a root working in a worktree that declared
+ * pull request 66, its child in the main checkout that declared 67, and a session last active
+ * twenty days ago that declared 99 in a third checkout, which the fourteen-day window leaves out.
+ */
+const writeClaudeDesktopWorkRegistry = (
+  home: string,
+  input: { readonly checkoutPath: string; readonly now: Date; readonly oldPath: string; readonly worktreePath: string },
+): void => {
+  const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+  mkdirSync(directory, { recursive: true });
+  const hour = 3_600_000;
+  const pullRequest = (number: number) => ({
+    autoFix: false,
+    baseRef: 'main',
+    branch: `feat/pr-${String(number)}`,
+    host: 'github.com',
+    own: true,
+    prNumber: number,
+    provider: 'github',
+    repo: 'fixture/project',
+    state: 'OPEN',
+    url: `https://github.com/fixture/project/pull/${String(number)}`,
+  });
+  const document = (spec: {
+    readonly cwd: string;
+    readonly hoursAgo: number;
+    readonly id: string;
+    readonly pullRequestNumber: number;
+    readonly spawnedFrom?: string;
+    readonly worktreePath?: string;
+  }) => {
+    const lastActivityAt = input.now.getTime() - spec.hoursAgo * hour;
+    return {
+      cliSessionId: `cli-${spec.id}`,
+      createdAt: lastActivityAt - hour,
+      cwd: spec.cwd,
+      isArchived: false,
+      lastActivityAt,
+      postTurnSummary: {
+        needs_action: '',
+        status_category: 'completed',
+        status_detail: 'Done.',
+        summarizes_uuid: `uuid-${spec.id}`,
+      },
+      prs: [pullRequest(spec.pullRequestNumber)],
+      sessionId: `local_${spec.id}`,
+      title: `Fixture: ${spec.id}`,
+      titleSource: 'auto',
+      ...(spec.spawnedFrom === undefined
+        ? {}
+        : { spawnedFrom: { sessionId: spec.spawnedFrom, taskId: 'task_1', title: 'spawn' } }),
+      ...(spec.worktreePath === undefined
+        ? {}
+        : { branch: 'feat/wt-1', worktreeName: path.basename(spec.worktreePath), worktreePath: spec.worktreePath }),
+    };
+  };
+  const documents = [
+    document({
+      cwd: input.checkoutPath,
+      hoursAgo: 1,
+      id: 'desktop-work-root',
+      pullRequestNumber: 66,
+      worktreePath: input.worktreePath,
+    }),
+    document({
+      cwd: input.checkoutPath,
+      hoursAgo: 0.5,
+      id: 'desktop-work-child',
+      pullRequestNumber: 67,
+      spawnedFrom: 'local_desktop-work-root',
+    }),
+    document({ cwd: input.oldPath, hoursAgo: 20 * 24, id: 'desktop-work-old', pullRequestNumber: 99 }),
+  ];
+  for (const entry of documents) {
+    writeFileSync(path.join(directory, `${entry.sessionId}.json`), JSON.stringify(entry));
+  }
+};
+
+/** A runner that answers the assumed `acli jira workitem view <KEY> --json` without spawning anything. */
+const fakeJiraRunner =
+  (calls: BoundedProcessOptions[]): BoundedProcessRunner =>
+  (options) => {
+    calls.push(options);
+    if (options.command === 'acli' && options.args.slice(0, 3).join(' ') === 'jira workitem view') {
+      return Effect.succeed({
+        durationMs: 1,
+        exitCode: 0,
+        stdout: JSON.stringify({
+          fields: {
+            comment: {
+              comments: [
+                { author: { displayName: 'Sam' }, body: 'Reply.', created: '2026-10-21T20:00:00.000Z', id: '1' },
+              ],
+              total: 1,
+            },
+            status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } },
+            summary: `Issue ${options.args[3] ?? ''}`,
+            updated: '2026-10-21T20:00:00.000Z',
+          },
+          key: options.args[3],
+        }),
+      });
+    }
+    return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: '' });
+  };
+
+/**
+ * Three Desktop registry files for the Jira source: a root whose declared pull request branch and
+ * own branch carry XLB-2090 and whose written branches add XLB-2091 and the XLB-0 placeholder, its
+ * more recent child writing XLB-2091 again and XLB-2092, and a session last active twenty days ago
+ * on XLB-1999, which the fourteen-day window leaves out. Titles carry a key that must never link.
+ */
+const writeClaudeDesktopJiraRegistry = (home: string, now: Date): void => {
+  const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
+  mkdirSync(directory, { recursive: true });
+  const hour = 3_600_000;
+  const document = (spec: {
+    readonly branch?: string;
+    readonly hoursAgo: number;
+    readonly id: string;
+    readonly pullRequestBranch?: string;
+    readonly spawnedFrom?: string;
+    readonly writtenBranches?: readonly string[];
+  }) => {
+    const lastActivityAt = now.getTime() - spec.hoursAgo * hour;
+    return {
+      cliSessionId: `cli-${spec.id}`,
+      createdAt: lastActivityAt - hour,
+      cwd: path.join(home, 'projects', 'example'),
+      isArchived: false,
+      lastActivityAt,
+      postTurnSummary: {
+        needs_action: '',
+        status_category: 'completed',
+        status_detail: 'Done.',
+        summarizes_uuid: `uuid-${spec.id}`,
+      },
+      prs:
+        spec.pullRequestBranch === undefined
+          ? []
+          : [
+              {
+                autoFix: false,
+                baseRef: 'main',
+                branch: spec.pullRequestBranch,
+                host: 'github.com',
+                own: true,
+                prNumber: 66,
+                provider: 'github',
+                repo: 'fixture/project',
+                state: 'OPEN',
+                url: 'https://github.com/fixture/project/pull/66',
+              },
+            ],
+      sessionId: `local_${spec.id}`,
+      title: `XLB-7777 ${spec.id}`,
+      titleSource: 'auto',
+      ...(spec.branch === undefined ? {} : { branch: spec.branch }),
+      ...(spec.writtenBranches === undefined ? {} : { writtenBranches: spec.writtenBranches }),
+      ...(spec.spawnedFrom === undefined
+        ? {}
+        : { spawnedFrom: { sessionId: spec.spawnedFrom, taskId: 'task_1', title: 'spawn' } }),
+    };
+  };
+  const documents = [
+    document({
+      branch: 'feat/XLB-2090/collector',
+      hoursAgo: 1,
+      id: 'desktop-jira-root',
+      pullRequestBranch: 'feat/XLB-2090/collector',
+      writtenBranches: ['fix/XLB-2091/nav', 'chore/XLB-0/agent-setup'],
+    }),
+    document({
+      hoursAgo: 0.5,
+      id: 'desktop-jira-child',
+      spawnedFrom: 'local_desktop-jira-root',
+      writtenBranches: ['XLB-2091', 'hotfix/XLB-2092/urgent'],
+    }),
+    document({ hoursAgo: 20 * 24, id: 'desktop-jira-old', writtenBranches: ['feat/XLB-1999/old'] }),
+  ];
+  for (const entry of documents) {
+    writeFileSync(path.join(directory, `${entry.sessionId}.json`), JSON.stringify(entry));
+  }
+};
+
+describe('jira issue source', () => {
+  test('registers the source at the pull request cadence and detects it by the acli executable', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-detection-'));
+    try {
+      const absent = await createRegistry(home, { acliAvailable: () => false });
+      expect(Duration.toMillis(absent.get('jira.issues')?.cadence ?? Duration.zero)).toBe(600_000);
+      expect(await Effect.runPromise(absent.get('jira.issues')?.detect ?? Effect.die('missing'))).toEqual({
+        availability: 'not-detected',
+        reason: {
+          code: 'input-missing',
+          message: 'The Atlassian CLI (acli) was not found on PATH, so Jira issues cannot be observed.',
+        },
+      });
+      expect(
+        await Effect.runPromise(absent.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing')),
+      ).toMatchObject({ unavailable: expect.anything() });
+      const present = await createRegistry(home, { acliAvailable: () => true });
+      expect((await Effect.runPromise(present.get('jira.issues')?.detect ?? Effect.die('missing'))).availability).toBe(
+        'detected',
+      );
+      writeHomeConfig(home, { jira: { enabled: 'yes' } });
+      const misconfigured = await createRegistry(home, { acliAvailable: () => true });
+      expect(
+        (await Effect.runPromise(misconfigured.get('jira.issues')?.detect ?? Effect.die('missing'))).availability,
+      ).toBe('misconfigured');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('observes the keys active Desktop sessions wrote in branch names, never titles, and records the run', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-desktop-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      writeClaudeDesktopJiraRegistry(home, now);
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        now: () => now,
+        workFactProcessRunner: fakeJiraRunner(calls),
+      });
+      expect(
+        await Effect.runPromise(
+          registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+        ),
+      ).toMatchObject({ inputCount: 3, outputCount: 3 });
+      const result = await Effect.runPromise(
+        registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      // Child (30 min ago) before root (1 h ago); each key once; the placeholder, the title's key
+      // and the twenty-day-old session's key are never read.
+      expect(calls.map(({ command, args }) => [command, ...args])).toEqual([
+        ['acli', 'jira', 'workitem', 'view', 'XLB-2091', '--json'],
+        ['acli', 'jira', 'workitem', 'view', 'XLB-2092', '--json'],
+        ['acli', 'jira', 'workitem', 'view', 'XLB-2090', '--json'],
+      ]);
+      expect(calls.every(({ env }) => !Object.keys(env ?? {}).some((name) => SECRET_LIKE_VARIABLE.test(name)))).toBe(
+        true,
+      );
+      const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => latest.key).sort()).toEqual(['XLB-2090', 'XLB-2091', 'XLB-2092']);
+      expect(stored.items.every(({ latest }) => latest.outcome === 'observed' && latest.comments.length === 1)).toBe(
+        true,
+      );
+      const serialized = JSON.stringify(stored);
+      expect(serialized).not.toContain('XLB-1999');
+      expect(serialized).not.toContain('XLB-7777');
+      expect(serialized).not.toContain('XLB-0"');
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs).toContainEqual({
+        disabled: false,
+        failed: 0,
+        machineId: machine.id,
+        message: null,
+        observed: 3,
+        ranAt: canonicalInstantFromDate(now),
+        sourceId: 'jira.issues',
+      });
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('records a disabled run without calling acli when jira.enabled is false', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-disabled-'));
+    try {
+      writeHomeConfig(home, { jira: { enabled: false, site: 'example.atlassian.net' } });
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        workFactProcessRunner: fakeJiraRunner(calls),
+      });
+      const result = await Effect.runPromise(
+        registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toMatchObject({ unavailable: { code: 'policy-disabled' } });
+      expect(calls).toEqual([]);
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs).toContainEqual(
+        expect.objectContaining({
+          disabled: true,
+          message: 'jira.enabled is false in the local config.',
+          sourceId: 'jira.issues',
+        }),
+      );
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('an acli that disappeared after detection records the run as disabled with the reason', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-vanished-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      writeClaudeDesktopJiraRegistry(home, now);
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        now: () => now,
+        workFactProcessRunner: (options) => {
+          calls.push(options);
+          return Effect.fail(new BoundedProcessError({ kind: 'unavailable', message: 'Bounded process unavailable' }));
+        },
+      });
+      await Effect.runPromise(
+        registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      const result = await Effect.runPromise(
+        registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      expect(result).toEqual({ changed: false, inputCount: 3, outputCount: 3, warnings: [] });
+      expect(calls).toHaveLength(1);
+      const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
+      expect(stored.items.map(({ latest }) => latest.outcome)).toEqual(['disabled', 'disabled', 'disabled']);
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs).toContainEqual(
+        expect.objectContaining({
+          disabled: true,
+          failed: 0,
+          message: 'acli not installed',
+          observed: 0,
+          sourceId: 'jira.issues',
+        }),
+      );
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

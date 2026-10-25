@@ -2,10 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { type BoundaryClassification, classifyExit, runBoundaryEffect } from '@ai-usage/effect-runtime';
-import { MemoryServiceClientError } from '@ai-usage/memory-service/client';
-import { distillationServiceError } from '@ai-usage/memory-service/distillation-errors';
 import { parseProjectId } from '@ai-usage/platform-core/identity';
-import { DistillationError } from '@ai-usage/platform-core/session-distillation';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryPoint } from '@ai-usage/report-core/provider-quota';
@@ -18,6 +15,7 @@ import {
   collectProjectSourcesFromSnapshots,
   type ProjectSource,
 } from '@ai-usage/report-data/portable-report';
+import { readWorkContext } from '@ai-usage/report-data/work-context-read';
 import type {
   UsageEngineCollectionOutput,
   UsageEngineCommand,
@@ -25,9 +23,8 @@ import type {
 } from '@ai-usage/usage-engine-control';
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
 import { Console, Effect, Exit } from 'effect';
-import { executeAnalysesCommand } from './analyses';
 import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
-import { type AppError, CliArgumentError, formatAppError } from './errors';
+import { type AppError, CliArgumentError, CliWorkContextError, formatAppError } from './errors';
 import { renderMemorySearch } from './memory';
 import { quotaStatusDataset, renderQuota, renderQuotaHistory, renderQuotaJson } from './quota';
 import { setColor } from './render/colors';
@@ -49,6 +46,7 @@ import {
   sourceExecutionOutcomes,
   sourceExecutionWarnings,
 } from './usage-read-model';
+import { renderWorkContext } from './work-context';
 
 interface CliQuotaRefreshBoundaryResult {
   readonly kind: 'refresh';
@@ -157,25 +155,6 @@ const fromPromise = <Value>(run: () => Promise<Value>): Effect.Effect<Value, unk
 const isStoreMissing = (error: unknown): error is UsageStoreError =>
   error instanceof UsageStoreError && error.reason === 'store-missing';
 
-class CliAnalysesError extends Error {
-  readonly code: MemoryServiceClientError['code'];
-
-  constructor(cause: unknown) {
-    super('Session analysis operation failed.');
-    if (cause instanceof MemoryServiceClientError) {
-      this.code = cause.code;
-    } else if (cause instanceof DistillationError) {
-      this.code = distillationServiceError(cause.code).code;
-    } else if (cause instanceof DOMException && cause.name === 'AbortError') {
-      this.code = 'cancelled';
-    } else if (cause instanceof SyntaxError) {
-      this.code = 'invalid-request';
-    } else {
-      this.code = 'service-unavailable';
-    }
-  }
-}
-
 const executeEngine = (runtime: CliRuntimeService, command: UsageEngineCommand) =>
   fromPromise(() => runtime.usageEngine.execute(command, { signal: runtime.signal }));
 
@@ -274,14 +253,6 @@ const renderReport = (args: Args, report: Awaited<ReturnType<typeof readServedUs
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
   const command = yield* parseCommand(runtime.argv);
-  if (command._tag === 'Analyses') {
-    const output = yield* fromPromise(() => executeAnalysesCommand(command.args, runtime.memory, runtime.signal)).pipe(
-      Effect.mapError((error) => new CliAnalysesError(error)),
-    );
-    yield* writeStdout(output);
-    return;
-  }
-
   if (command._tag === 'Help') {
     yield* Console.log(helpText);
     return;
@@ -388,6 +359,26 @@ export const app = Effect.gen(function* () {
       return yield* Effect.fail(new CliUsageEngineError('invalid-response', 'Replication status result is invalid.'));
     }
     yield* writeStdout(`${renderReplicationStatus(completion.output, command.args.json)}\n`);
+    return;
+  }
+
+  if (command._tag === 'WorkContext') {
+    // A stored read (ADR 0058): the store opens read-only, no engine starts, none is contacted.
+    const { scope } = command.args;
+    const result = yield* fromPromise(() =>
+      readWorkContext({
+        dbPath: runtime.paths.databasePath,
+        scope:
+          scope.kind === 'checkout'
+            ? { checkoutPath: path.resolve(runtime.paths.operatorCwd, scope.checkoutPath), kind: 'checkout' }
+            : scope,
+        signal: runtime.signal,
+      }),
+    );
+    if (result.kind === 'error') {
+      return yield* Effect.fail(new CliWorkContextError(result.failure));
+    }
+    yield* writeStdout(`${renderWorkContext(result.value, command.args.json)}\n`);
     return;
   }
 
@@ -598,16 +589,12 @@ const writePortableFile = (filePath: string, text: string) =>
 const formatDefect = (defect: unknown): string => (defect instanceof Error ? defect.message : String(defect));
 
 const isAppError = (error: unknown): error is AppError =>
-  error instanceof CliArgumentError || error instanceof CliUsageEngineError;
+  error instanceof CliArgumentError || error instanceof CliUsageEngineError || error instanceof CliWorkContextError;
 
 export const runnableApp = app.pipe(
   Effect.as(0 as number),
   Effect.catch((error: unknown) =>
-    Console.error(
-      error instanceof CliAnalysesError
-        ? JSON.stringify({ error: { code: error.code } })
-        : `Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`,
-    ).pipe(Effect.as(1)),
+    Console.error(`Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`).pipe(Effect.as(1)),
   ),
   Effect.catchDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
 );

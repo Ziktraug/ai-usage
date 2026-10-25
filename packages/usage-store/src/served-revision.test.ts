@@ -17,6 +17,7 @@ import {
   queryServedReportRevisionSlices,
   queryServedReportRevisionSupport,
   queryServedRevisionData,
+  queryServedSessionPullRequestLinks,
   queryUsageStoreGenerations,
   type UsageStoreError,
 } from './reader';
@@ -943,4 +944,77 @@ describe('durable served report revisions', () => {
       await Effect.runPromise(retainServedReportRevisions({ abandonedAfterMs: 1000, dbPath, now: 2000 })),
     ).toMatchObject({ deletedRevisions: 1, expiredRevisions: 0 });
   });
+});
+
+test('reads explicitly recorded pull request links from recent local sessions only', async () => {
+  const dbPath = await createStore();
+  const vcs = (urls: readonly string[]) => ({
+    branches: [],
+    headCommit: null,
+    partial: false,
+    pullRequests: urls.map((url) => ({ number: null, observedAt: null, repository: null, url })),
+    repository: null,
+  });
+  const withPullRequests = (base: SerializedRow, urls: readonly string[], activeDate?: string): SerializedRow => ({
+    ...base,
+    ...(activeDate === undefined ? {} : { activeDate, date: activeDate, endDate: activeDate }),
+    source: { ...base.source!, vcs: vcs(urls) },
+  });
+  const rows = [
+    // Session VCS contexts keep their pull requests sorted by URL; a merge request on another forge
+    // and a GitHub-shaped URL on an unknown host are both kept as links, host included.
+    withPullRequests(row('recent-a', 1, { sourcePath: '/private/project' }), [
+      'https://github.com/fixture/project/pull/66',
+      'https://gitlab.com/group/project/-/merge_requests/3',
+    ]),
+    withPullRequests(row('recent-b', 2, { sourcePath: '/private/project' }), [
+      'https://example.com/fixture/project/pull/68',
+      'https://github.com/fixture/project/pull/66',
+    ]),
+    withPullRequests(
+      row('stale', 3, { sourcePath: '/private/project' }),
+      ['https://github.com/fixture/project/pull/1'],
+      '2026-05-01T10:00:00.000Z',
+    ),
+    withPullRequests(row('portable', 4, { sourcePath: '/private/project' }), [
+      'https://github.com/fixture/project/pull/2',
+    ]),
+  ];
+  await Effect.runPromise(
+    publishServedReportRevision(
+      publication(dbPath, 'revision-links', rows, {
+        capture: { sourceAuthorities: ['local-observed', 'local-observed', 'local-observed', 'portable-opaque'] },
+      }),
+    ),
+  );
+  const now = Date.parse('2026-07-02T00:00:00.000Z');
+  expect(await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, now }))).toEqual({
+    links: [
+      {
+        host: 'github.com',
+        number: 66,
+        repository: 'fixture/project',
+        url: 'https://github.com/fixture/project/pull/66',
+      },
+      {
+        host: 'example.com',
+        number: 68,
+        repository: 'fixture/project',
+        url: 'https://example.com/fixture/project/pull/68',
+      },
+    ],
+    revision: 'revision-links',
+    scannedRows: 2,
+    truncated: false,
+  });
+  expect(await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, limit: 1, now }))).toMatchObject({
+    links: [{ number: 66 }],
+    truncated: true,
+  });
+  expect(await Effect.runPromise(queryServedSessionPullRequestLinks({ dbPath, now, sinceDays: 365 }))).toMatchObject({
+    links: [{ number: 66 }, { number: 68 }, { number: 1 }],
+    scannedRows: 3,
+  });
+  expect(await failureReason(queryServedSessionPullRequestLinks({ dbPath, limit: 501, now }))).toBe('invalid-input');
+  expect(await failureReason(queryServedSessionPullRequestLinks({ dbPath, now, sinceDays: 0 }))).toBe('invalid-input');
 });

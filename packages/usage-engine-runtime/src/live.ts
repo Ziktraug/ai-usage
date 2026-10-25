@@ -60,6 +60,8 @@ import {
   stageCursorUsageExport,
 } from './input-file';
 import { type LegacyArtifactScavengeResult, scavengeLegacyUsageEngineArtifacts } from './recovery';
+import { createReviewAttemptService } from './review-attempts';
+import { createRoutingQualificationService } from './routing-qualification';
 import {
   createInitialUsageEngineSourceControlView,
   createUsageEngineRuntime,
@@ -508,6 +510,8 @@ export interface LiveUsageEngineRuntimeOptions {
   readonly readInput?: typeof readUsageEngineInput;
   readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly reportRecovery?: (result: UsageEngineRecoveryReport) => void;
+  /** One operator-log line per review attempt transition (ADR 0053); never a transcript. */
+  readonly reportReviewAttempt?: (line: string) => void;
   readonly retainRevisions?: (input: { readonly dbPath: string; readonly now: number }) => Promise<void>;
   readonly storage?: LocalHistoryStorageService;
   readonly temporaryRoot: string;
@@ -1035,6 +1039,24 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     setMachineLabel: async (label, signal) => await requireMutation().setMachineLabel(label, signal),
   };
 
+  // The review launcher writes short rows through the gate and runs the harness outside it; its
+  // startup recovery is called from the gated `recover` below, so that path writes ungated.
+  const reviewAttempts = createReviewAttemptService({
+    dbPath: options.dbPath,
+    machine: requireMachine,
+    now,
+    ...(options.reportReviewAttempt === undefined ? {} : { report: options.reportReviewAttempt }),
+    runWithWriter: (operation, signal) => writerGate.run(operation, signal),
+    storage,
+  });
+  // On-demand qualification (ADR 0057): reads only; its fresh observation is the source's own run.
+  const routingQualification = createRoutingQualificationService({
+    dbPath: options.dbPath,
+    machine: requireMachine,
+    now,
+    storage,
+  });
+
   return createUsageEngineRuntime({
     acquireWriterLease: options.acquireWriterLease,
     initialSourceControl: createInitialUsageEngineSourceControlView(options.instanceId, now()),
@@ -1063,6 +1085,9 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
       }),
     quiesceStore: async () => {
       try {
+        // Running reviews are terminated and recorded as lost before the store is quiesced, so no
+        // background write can reopen the writer afterwards.
+        await reviewAttempts.shutdown();
         await writerGate.run(async () => {
           await Effect.runPromise(quiesceUsageStoreForShutdown({ dbPath: options.dbPath }));
         });
@@ -1072,6 +1097,8 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
       }
     },
     ...(options.readReplicationStatus === undefined ? {} : { readReplicationStatus: options.readReplicationStatus }),
+    reviewAttempts,
+    routingQualification,
     recover: async () =>
       await writerGate.run(async () => {
         await observe(
@@ -1085,6 +1112,9 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
           },
           { phase: 'startup' },
         );
+        // A restart holds no pipe to any review the previous engine started: those rows become
+        // `lost` (to verify in the harness), never relaunched.
+        await reviewAttempts.recoverLost();
         const gracePeriodMs = options.legacyArtifactGracePeriodMs ?? 5 * 60 * 1000;
         const recoveryTime = now().getTime();
         await repairManagedCursorUsageExportModes(options.configCwd);

@@ -6,7 +6,6 @@ import { parseProjectId } from '@ai-usage/platform-core/identity';
 import type {
   MemoryKnowledgeGetInput,
   MemoryKnowledgeInput,
-  MemoryPromotionInput,
   MemoryProposalReviewAction,
   MemoryProposalReviewInput,
   MemorySearchInput,
@@ -47,8 +46,6 @@ export const listMemoryKnowledgeForServer = async (input: MemoryKnowledgeInput, 
   );
   return page;
 };
-export const promoteMemoryAnalysisForServer = async (input: MemoryPromotionInput, signal?: AbortSignal) =>
-  await createClient().promoteAnalysis(input, signal ? { signal } : {});
 export const getMemoryKnowledgeForServer = async (input: MemoryKnowledgeGetInput, signal?: AbortSignal) => {
   const { item, revision } = await createClient().getMemoryItem(
     parseMemoryItemReadRequest(input),

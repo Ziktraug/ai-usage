@@ -71,17 +71,18 @@ test('Back across a kept-focus Analysis tab change resets focus to the page', as
 });
 
 test('Back across a Memory filter resets focus to the page', async ({ page }) => {
-  await page.goto('/memory?view=analyses');
+  const projectId = '0198f179-4837-7000-8000-00000000f0c5';
+  await page.goto('/memory?view=knowledge');
   await waitForHydratedNavigation(page);
-  await page.getByLabel('Search session accounts').fill('history focus');
+  await page.getByLabel('Project ID (optional)').fill(projectId);
   const apply = page.getByRole('button', { name: 'Apply filters', exact: true });
   await apply.focus();
   await page.keyboard.press('Enter');
-  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('history focus');
+  await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBe(projectId);
   await expect(apply).toBeFocused();
 
   await page.goBack();
-  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBeNull();
+  await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBeNull();
   await expect.poll(() => settledFocus(page)).toBe('body');
 });
 

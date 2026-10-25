@@ -5,39 +5,16 @@ import {
 } from '@ai-usage/report-core/provider-quota';
 import {
   createProviderStatusDataset,
-  LIVE_PROVIDER_STATUS_MAX_AGE_MS,
   type ProviderLimitWindow,
   type ProviderStatus,
   type ProviderStatusDataset,
-  type ProviderStatusState,
+  providerStatusWithFeedFreshness,
 } from '@ai-usage/report-core/provider-status';
 import type { QuotaHistoryRange } from './cli';
 import { clr } from './render/colors';
 import { fmtDate, pad, trunc } from './render/format';
 
-const FEED_AGED_SOURCES: ReadonlySet<ProviderStatus['source']> = new Set(['live-api', 'local-history']);
-const FEED_TERMINAL_STATES: ReadonlySet<ProviderStatusState> = new Set([
-  'auth-required',
-  'error',
-  'stale',
-  'unsupported',
-]);
-
-/**
- * Freshness for the quota feed, deliberately stricter than report-core's `providerStatusWithFreshness`.
- * The report ages only `live-api` readings, because a session-log reading is history it presents as
- * such. The feed answers "is this current?" for a status bar, so a reading recovered from Codex session
- * logs after the live source failed ages on the same budget; otherwise a days-old reading reads `ok`
- * forever. Other sources and the states that already explain themselves (`error`, `auth-required`,
- * `stale`, `unsupported`) pass through unchanged, so aging never overwrites a reason with `stale`.
- */
-export const providerStatusWithFeedFreshness = (provider: ProviderStatus, now: Date): ProviderStatus => {
-  if (!FEED_AGED_SOURCES.has(provider.source) || FEED_TERMINAL_STATES.has(provider.state)) {
-    return provider;
-  }
-  const ageMs = now.getTime() - Date.parse(provider.generatedAt);
-  return Number.isFinite(ageMs) && ageMs > LIVE_PROVIDER_STATUS_MAX_AGE_MS ? { ...provider, state: 'stale' } : provider;
-};
+export { providerStatusWithFeedFreshness } from '@ai-usage/report-core/provider-status';
 
 /**
  * The machine-readable quota feed: the newest observation per provider, in stored order, as a

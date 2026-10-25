@@ -602,12 +602,14 @@ describe('Svelte Skills workspace SSR', () => {
           report: unavailableServices<WebRpcRouterDependencies['report']>(),
           replication: unavailableServices<WebRpcRouterDependencies['replication']>(),
           session: unavailableServices<WebRpcRouterDependencies['session']>(),
-          sessionDistillation: unavailableServices<WebRpcRouterDependencies['sessionDistillation']>(),
           skills: {
             preflight: () => ({ allowed: true }),
             selectCapability: () => capability,
           },
           sync: unavailableServices<WebRpcRouterDependencies['sync']>(),
+          work: unavailableServices<WebRpcRouterDependencies['work']>(),
+          workAttempts: unavailableServices<WebRpcRouterDependencies['workAttempts']>(),
+          workRouting: unavailableServices<WebRpcRouterDependencies['workRouting']>(),
         });
       },
     });

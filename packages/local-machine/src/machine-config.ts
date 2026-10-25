@@ -6,10 +6,16 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { isCampaignLabelOverrides } from '@ai-usage/report-core/campaign-label';
-import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
+import type {
+  AiUsageConfig,
+  AiUsageGitHubAccountConfig,
+  AiUsageGitHubConfig,
+  AiUsageJiraConfig,
+} from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { isSourcePolicyOverrides } from '@ai-usage/report-core/source-control';
+import { isRoutingConfigShape } from '@ai-usage/report-core/work-executors';
 import { parseSkillConfigInput, type SkillManagementConfig } from '@ai-usage/skills';
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -224,6 +230,57 @@ const isUsageMachine = (value: unknown): value is UsageMachine => {
   return typeof record.id === 'string' && record.id.length > 0 && typeof record.label === 'string';
 };
 
+const GITHUB_CONFIG_KEYS = new Set(['accounts', 'enabled']);
+const GITHUB_ACCOUNT_KEYS = new Set(['ghUser', 'host', 'owner']);
+const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+
+const isGitHubAccountConfig = (value: unknown): value is AiUsageGitHubAccountConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => GITHUB_ACCOUNT_KEYS.has(key)) &&
+    record.host === 'github.com' &&
+    typeof record.owner === 'string' &&
+    GITHUB_OWNER_PATTERN.test(record.owner) &&
+    typeof record.ghUser === 'string' &&
+    record.ghUser.trim().length > 0 &&
+    record.ghUser.length <= 256
+  );
+};
+
+/** Strict: unknown keys, a non-boolean flag or a malformed account make the whole config invalid. */
+const isGitHubConfig = (value: unknown): value is AiUsageGitHubConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => GITHUB_CONFIG_KEYS.has(key)) &&
+    (record.enabled === undefined || typeof record.enabled === 'boolean') &&
+    (record.accounts === undefined || (Array.isArray(record.accounts) && record.accounts.every(isGitHubAccountConfig)))
+  );
+};
+
+const JIRA_CONFIG_KEYS = new Set(['enabled', 'site']);
+/** A host name such as `example.atlassian.net`: labels of letters, digits and dashes, at least one dot. */
+const JIRA_SITE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
+
+/** Strict (ADR 0054): unknown keys, a non-boolean flag or a site that is not a host name invalidate the config. */
+const isJiraConfig = (value: unknown): value is AiUsageJiraConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => JIRA_CONFIG_KEYS.has(key)) &&
+    (record.enabled === undefined || typeof record.enabled === 'boolean') &&
+    (record.site === undefined ||
+      (typeof record.site === 'string' && record.site.length <= 256 && JIRA_SITE_PATTERN.test(record.site)))
+  );
+};
+
 const isSkillManagementConfig = (value: unknown): value is SkillManagementConfig => {
   try {
     parseSkillConfigInput(value);
@@ -255,6 +312,34 @@ export const ensureMachineConfig: Effect.Effect<UsageMachine, LocalHistoryError,
       catch: machineConfigError('writeMachineConfig', filePath),
     });
   });
+
+/**
+ * Reads this machine's identity without creating one. Readers that must not write (Web, CLI stored
+ * reads) use this; the engine owns creation through `ensureMachineConfig`.
+ */
+export const readMachineConfigIfPresent: Effect.Effect<
+  UsageMachine | null,
+  LocalHistoryError,
+  LocalHistoryStorageService
+> = Effect.gen(function* () {
+  const storage = yield* LocalHistoryStorage;
+  const filePath = machineConfigPath(storage);
+  if (!(yield* storage.exists(filePath).pipe(Effect.catch(() => Effect.succeed(false))))) {
+    return null;
+  }
+  const text = yield* storage.readText(filePath);
+  return yield* Effect.try({
+    try: () => {
+      assertPrivateAuthoritativeFile(filePath);
+      const parsed = JSON.parse(text) as unknown;
+      if (!isUsageMachine(parsed)) {
+        throw new Error(`Invalid machine config: ${filePath}`);
+      }
+      return parsed;
+    },
+    catch: machineConfigError('readMachineConfig', filePath),
+  });
+});
 
 export const writeMachineConfig = (
   machine: UsageMachine,
@@ -360,6 +445,21 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   if (sourcePolicies !== undefined && !isSourcePolicyOverrides(sourcePolicies)) {
     return false;
   }
+
+  // Only the section shape is checked here; each `routing.executors[]` entry is validated by
+  // `parseExecutorDeclarations`, which reports an invalid entry without hiding the others.
+  const routing = config.routing;
+  if (routing !== undefined && !isRoutingConfigShape(routing)) {
+    return false;
+  }
+  const github = config.github;
+  if (github !== undefined && !isGitHubConfig(github)) {
+    return false;
+  }
+  const jira = config.jira;
+  if (jira !== undefined && !isJiraConfig(jira)) {
+    return false;
+  }
   return true;
 };
 
@@ -453,7 +553,9 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
       (module as { default?: unknown; config?: unknown }).config;
     const homeOnlyField =
       typeof exportedConfig === 'object' && exportedConfig !== null
-        ? ['campaignLabelOverrides', 'sourcePolicies'].find((field) => Object.hasOwn(exportedConfig, field))
+        ? ['campaignLabelOverrides', 'github', 'jira', 'routing', 'sourcePolicies'].find((field) =>
+            Object.hasOwn(exportedConfig, field),
+          )
         : undefined;
     if (homeOnlyField) {
       return yield* Effect.fail(

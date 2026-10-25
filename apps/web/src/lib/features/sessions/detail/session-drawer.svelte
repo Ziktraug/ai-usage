@@ -4,7 +4,7 @@
 
   // Wide enough for the rounds rail beside its reading column; the table stays
   // visible on the left so j/k browsing keeps its context.
-  const readingDrawer = css.raw({ w: { base: 'full', md: 'min(960px, max(480px, calc(100vw - 360px)))' } });
+  const readingDrawer = css({ w: { base: 'full', md: 'min(960px, max(480px, calc(100vw - 360px)))' } });
   const sessionIdentity = css({ display: 'grid', gap: '6px', minW: 0 });
   const sessionProject = css({ color: 'accent', fontSize: '11px', letterSpacing: '0.02em', overflowWrap: 'anywhere' });
   // Four tiles when the panel is wide, two when it is not: labels never wrap.
@@ -33,6 +33,7 @@
   import {
     type BarSegment,
     Drawer,
+    drawer,
     drawerActions,
     drawerBody,
     drawerClose,
@@ -44,7 +45,6 @@
     drawerLegendValue,
     drawerNav,
     drawerPosition,
-    drawerStyle,
     drawerTitle,
     drawerTop,
     ghostButton,
@@ -62,7 +62,6 @@
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
-  import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
   import DrawerDetailItem from './drawer-detail-item.svelte';
   import { buildRoundsViewForRevision } from './rounds-model';
   import RoundsReader from './rounds-reader.svelte';
@@ -70,8 +69,7 @@
   import SessionVcsSummary from './session-vcs-summary.svelte';
   import type { SessionDetailController, SessionDetailControllerSnapshot } from './types';
 
-  type DetailTab = 'analysis' | 'members' | 'rounds' | 'summary' | 'timeline';
-  type DistillationModule = typeof import('./session-distillation.svelte');
+  type DetailTab = 'members' | 'rounds' | 'summary' | 'timeline';
 
   let {
     campaignLabelSlot,
@@ -201,17 +199,6 @@
   const roundsView = $derived(buildRoundsViewForRevision(snapshot.analysisResponse, snapshot.revision, memberRows));
   const membersAvailable = $derived(campaignScope !== null && campaignSlot !== undefined);
   let activeTab = $state<DetailTab>('rounds');
-  let distillationModule = $state<DistillationModule>();
-  let distillationLoadFailed = $state(false);
-  const distillationLoader = createLazyModuleLoader({
-    importModule: () => import('./session-distillation.svelte'),
-    onFailureChange: (failed) => {
-      distillationLoadFailed = failed;
-    },
-    onLoaded: (module) => {
-      distillationModule = module;
-    },
-  });
   // The reader's place survives a tab switch; a new row starts at its first round.
   let readerRoundId = $state<string | null>(null);
   let bodyElement = $state<HTMLDivElement>();
@@ -229,17 +216,10 @@
     { content: panes.rounds, label: roundsLabel, value: 'rounds' },
     ...(membersAvailable ? [{ content: panes.members, label: membersLabel, value: 'members' }] : []),
     { content: panes.timeline, label: 'Timeline', value: 'timeline' },
-    { content: panes.analysis, label: 'Analysis', value: 'analysis' },
     { content: panes.summary, label: 'Summary', value: 'summary' },
   ];
   const isDetailTab = (value: string): value is DetailTab =>
-    value === 'analysis' || value === 'members' || value === 'rounds' || value === 'summary' || value === 'timeline';
-
-  $effect(() => {
-    if (drawerOpen && selectedTab === 'analysis' && !distillationModule) {
-      distillationLoader.start();
-    }
-  });
+    value === 'members' || value === 'rounds' || value === 'summary' || value === 'timeline';
 
   const changeTab = async (value: string): Promise<void> => {
     if (!isDetailTab(value) || value === selectedTab) {
@@ -415,23 +395,6 @@
   </div>
 {/snippet}
 
-{#snippet analysisPane()}
-  {#if distillationModule && target && snapshot.revision}
-    {@const Distillation = distillationModule.default}
-    <Distillation
-      active={drawerOpen && selectedTab === 'analysis' && !closing}
-      selection={{ revision: snapshot.revision, rowId: target.reportRowId }}
-    />
-  {:else if distillationLoadFailed}
-    <p role="status">The Analysis view could not be loaded.</p>
-    <button class={ghostButton} onclick={() => distillationLoader.retry()} type="button">Retry Analysis view</button>
-  {:else if !snapshot.revision}
-    <p class={muted}>Session analysis requires a local served report revision.</p>
-  {:else}
-    <p class={muted} role="status">Loading Analysis view…</p>
-  {/if}
-{/snippet}
-
 {#snippet timelinePane()}
   {#if row && target}
     <SessionAnalysis
@@ -549,7 +512,7 @@
 <Drawer
   closeOnInteractOutside={mobileDrawer}
   contentAriaLabel="Session details"
-  contentClass={css(drawerStyle, readingDrawer)}
+  contentClass={cx(drawer, readingDrawer)}
   finalFocusEl={previousFocusElement}
   initialFocusEl={() => (mobileDrawer ? (closeButton ?? null) : previousFocusElement())}
   modal={mobileDrawer}
@@ -648,13 +611,7 @@
         {#key `${row.rowId}:${target?.kind}`}
           <Tabs
             ariaLabel="Session detail views"
-            items={tabItems({
-              analysis: analysisPane,
-              members: membersPane,
-              rounds: roundsPane,
-              summary: summaryPane,
-              timeline: timelinePane,
-            })}
+            items={tabItems({ members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
             onValueChange={changeTab}
             unmountOnExit={false}
             value={selectedTab}

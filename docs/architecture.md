@@ -112,13 +112,13 @@ bounded events. Memory data and mutations do not cross under that name. If a
 local application-service boundary needs IPC, it receives a separately named,
 authenticated, bounded Memory service seam.
 
-[Session distillation](session-distillation.md) adds a separate local generated
-corpus in the same Memory database: bounded jobs, immutable Session analyses
-and a dedicated FTS index. The active harness generates outside database
-transactions and submits through that Memory service; only the engine writes.
-The Session panel and `analyses` CLI read the same saved content. These tables
-do not participate in accepted Memory search, portable export, usage snapshots
-or replication, and distillation is unavailable in connected mode.
+[Session distillation is retired](session-distillation.md) by ADR 0049. Its
+CLI, skill, generated-account library, promotion endpoints and engine runtime
+are withdrawn. Existing jobs, accounts and evidence remain in the Memory
+database with their schema history; they do not enter accepted Memory search,
+portable export, usage snapshots or replication. Accepted knowledge, proposal
+review, native harness memory and native Session analysis remain. There is no
+replacement summary library; future automatic interpretation remains possible.
 
 ### Local guarantees
 
@@ -208,7 +208,7 @@ opens the separate owner-only `memory.sqlite` identity kernel, and starts its
 independently authenticated Memory service. Memory bootstrap failure is an
 engine startup failure that releases both leases; there is no usage-only
 degraded mode (ADR 0038). The service carries bounded Project review, Memory
-review, exact-item, Project-context, search and local Session distillation
+review, accepted-knowledge browse, exact-item, Project-context and search
 operations; it is not the usage control plane. The engine closes the Memory
 service before the identity kernel and the
 usage runtime. Only this post-writer-lease startup path replaces a stale Memory
@@ -224,8 +224,8 @@ per canonical parent of a linked worktree (the id the rows carry), reads the
 working tree's `origin` remote through the bounded `.git/config` reader,
 resolves it with the pure `project-registry` resolver, binds the Checkout to a
 Repository Project or a local Project (a worktree follows its parent's
-Repository Project), and acknowledges the published Project-source ids that
-distillation discovery requires. Only an ambiguous remote waits
+Repository Project), and acknowledges the published Project-source ids as
+durable Project/Checkout mappings. Only an ambiguous remote waits
 for the `/projects` review, and a successful review action triggers one more
 observation before the reply. Observation failures are reported with a closed
 vocabulary and never affect engine readiness.
@@ -479,9 +479,10 @@ which Memory observations and the replication snapshot reference, and the SCM
 account/installation IDs that snapshot carries. The snapshot contract itself
 lives in `@ai-usage/replication-protocol`; phase B removes both with
 replication and Memory. It is pure and exports no storage or transport
-implementation. Its Session distillation contracts validate evidence packets,
-generated assertions, analysis revisions and bounded operation requests;
-Memory services can use them without importing the usage-report domain.
+implementation. Retained historical account/evidence contracts support existing
+Memory storage and validation; they are part of the
+[residual retirement lot](session-distillation.md#residual-deletion-lot), with no
+published generation runtime.
 
 ### `@ai-usage/authorization-contract`
 
@@ -522,8 +523,10 @@ local replication outbox. It also owns deterministic FTS5 revision chunks,
 transactional projection maintenance, structured eligibility, cursor binding,
 and authorization-scoped local ranking. Only
 the usage-engine composition may open this write-capable adapter in production.
-Its local-only distillation repository shares that connection and owns job
-leases, analysis revisions and their separate FTS projection.
+Its retained account repository shares that connection and preserves existing
+jobs, revisions, progress and the separate FTS projection. The generation
+runtime is retired; schema history and existing promotion publication guards
+remain.
 
 ### `@ai-usage/memory-service`
 
@@ -732,9 +735,8 @@ files, and CLI diagnostics. Stored reads use the SQLite
 reader without an engine. Fresh or mutating operations use one engine client or
 one bounded foreground engine, then read the committed revision. The CLI never
 imports collectors, engine-runtime, or `usage-store/writer`. `memory search` uses the separately authenticated local
-Memory client and never opens `memory.sqlite` or PostgreSQL. `analyses` uses
-that client for explicit batches, exact analysis reads and bounded generated
-context. It requires an already running engine and starts no provider process.
+Memory client and never opens `memory.sqlite` or PostgreSQL. The retired
+`analyses` command has no CLI entry point.
 
 `quota` refreshes through `collect-fresh-quota` on the engine seam, then reads
 the newest stored observation per provider; `quota --stored` and
@@ -873,6 +875,16 @@ admission, cadence, dependencies, or publication ordering here.
   `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`,
   and `cursor.commit-attribution`. `claude.usage-limits` is an eighth,
   default-enabled experimental source whose upstream API may change.
+  `executors.capabilities` is a ninth, default-enabled source that runs
+  harness CLI metadata commands every fifteen minutes and never changes the
+  served report.
+  `checkouts.status` and `github.pull-requests` (ADR 0051) are two further
+  default-enabled producers that read known checkouts and explicitly linked
+  pull requests for the Work view; their facts stay outside the served
+  revision and never mark the report dirty.
+  `claude.desktop-sessions` is a ninth, default-enabled enrichment that reads
+  the Claude Desktop session registry into its own tables outside the served
+  revision (ADR 0050); its runs never wake a publication.
 - Sparse source-policy overrides are read only from user-home config. Repository
   config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, outcome, and progress are independent.

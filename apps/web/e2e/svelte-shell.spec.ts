@@ -338,7 +338,7 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
 // so a link that asks to keep the scroll position must be honoured from its own click. SvelteKit 2
 // carried `noScroll` on each navigation.
 test('a preserve-scroll link keeps the scroll position while it supersedes a pending navigation', async ({ page }) => {
-  await page.goto('/memory?view=analyses');
+  await page.goto('/memory?view=review');
   await waitForHydratedNavigation(page);
   const views = page.getByRole('navigation', { name: 'Memory views' });
   const viewLink = (name: string): Locator => views.getByRole('link', { name, exact: true });
@@ -381,10 +381,10 @@ test('a preserve-scroll link keeps the scroll position while it supersedes a pen
   try {
     await activate(page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Sync' }));
     await syncHeld;
-    await activate(viewLink('Analysed sessions'));
-    await expect(viewLink('Analysed sessions')).toHaveAttribute('aria-current', 'page');
+    await activate(viewLink('Pending review'));
+    await expect(viewLink('Pending review')).toHaveAttribute('aria-current', 'page');
     expect(new URL(page.url()).pathname).toBe('/memory');
-    expect(new URL(page.url()).searchParams.get('view')).toBe('analyses');
+    expect(new URL(page.url()).searchParams.get('view')).toBe('review');
     expect(await settledScrollY()).toBe(700);
   } finally {
     await releaseSync();
@@ -543,8 +543,15 @@ test('redirects Svelte demo routes before protected acquisition', async ({ conte
   await page.goto('/skills/global');
   await expect(page).toHaveURL('/');
   await expect(page.locator('[data-route-shell="report"]')).toBeAttached();
-  await expect(page.getByRole('button', { name: 'Manage' })).toHaveCount(0);
+  await page.setViewportSize({ height: 844, width: 390 });
+  const mobileNavigation = page.locator('[data-app-navigation="mobile"][data-hydrated="true"]');
+  await expect(mobileNavigation).toBeVisible();
+  await mobileNavigation.getByRole('button', { name: 'Manage', exact: true }).click();
+  await expect(
+    page.getByRole('navigation', { name: 'Manage destinations' }).getByRole('link', { name: 'Campaigns', exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole('link', { name: MANAGEMENT_DESTINATION_PATTERN })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   expect(businessRequests).toEqual([]);
 
   for (const path of [

@@ -184,26 +184,6 @@ export const memoryKnowledgeDetailSchema = pipe(
 );
 export type MemoryKnowledgeDetail = InferOutput<typeof memoryKnowledgeDetailSchema>;
 
-export const memoryPromotionInputSchema = pipe(
-  jsonWireValueSchema,
-  strictObject({
-    analysisId: pipe(string(), minLength(1), maxLength(128)),
-    projectId: uuidSchema,
-    elementKey: pipe(string(), minLength(1), maxLength(160)),
-    title: titleSchema,
-    kind: memoryKindSchema,
-    formulation: pipe(string(), minLength(1), maxLength(4096)),
-    sensitivity: sensitivitySchema,
-    localOnly: literal(true),
-  }),
-);
-export type MemoryPromotionInput = InferOutput<typeof memoryPromotionInputSchema>;
-export const memoryPromotionResultSchema = strictObject({
-  proposalId: uuidSchema,
-  sourceLocator: sourceLocatorSchema,
-  localOnly: literal(true),
-});
-export type MemoryPromotionResult = InferOutput<typeof memoryPromotionResultSchema>;
 /** A page continues after `cursor` or starts at one addressed pending `proposalId`, never both. */
 export const memoryProposalReviewInputSchema = union([
   strictObject({ cursor: optional(nullable(cursorSchema)) }),
@@ -323,11 +303,6 @@ export const memoryContract = {
     .input(memoryKnowledgeInputSchema)
     .output(memoryKnowledgePageSchema)
     .errors(searchErrors),
-  promote: oc
-    .route({ method: 'POST', path: '/memory/promote' })
-    .input(memoryPromotionInputSchema)
-    .output(memoryPromotionResultSchema)
-    .errors(mutationErrors),
   applyProposalReviewAction: oc
     .route({ method: 'POST', path: '/memory/applyProposalReviewAction' })
     .input(memoryProposalReviewActionSchema)

@@ -85,13 +85,15 @@ still gates `await` in components behind `compilerOptions.experimental.async`.
   same named Query options for a document request, dehydrate the bounded
   successful data and clear the client; an SPA entry gets an empty hydration
   delta and the browser cache answers.
-- Freshness comes from five named policies, not from components:
+- Freshness comes from six named policies, not from components:
   `current-alias-swr` (30 s plus publication invalidation), `finite-swr`
   (30 s), `collection-swr` (skill observations: one-minute revalidation,
   focus and mount revalidation, a server-provided proof deadline as a
   data-aware stale time, provisional qualification of stale or in-flight
-  data), `bounded-control-plane` (5 s), and `immutable-revision` (fresh
-  indefinitely, bounded garbage collection).
+  data), `collection-facts-swr` (Work attention facts outside the served
+  revision, ADR 0050: one-minute stale time and polling, focus and mount
+  revalidation), `bounded-control-plane` (5 s), and `immutable-revision`
+  (fresh indefinitely, bounded garbage collection).
 - The report destination is one composite Query result that becomes visible
   only when every required exact leg validates at one revision, with one typed
   expiry retry and the last complete value retained on a failed refresh.

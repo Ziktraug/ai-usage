@@ -49,7 +49,9 @@
       "dependencies": {
         "@ai-usage/mcp-adapter": "workspace:*",
         "@ai-usage/memory-service": "workspace:*",
+        "@ai-usage/report-data": "workspace:*",
         "@ai-usage/usage-engine-control": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
       },
     },
     "apps/usage-engine": {
@@ -331,7 +333,6 @@
       "name": "@ai-usage/web-contract",
       "version": "0.1.0",
       "dependencies": {
-        "@ai-usage/platform-core": "workspace:*",
         "@ai-usage/report-core": "workspace:*",
         "@ai-usage/skills": "workspace:*",
         "@orpc/contract": "1.16.0",

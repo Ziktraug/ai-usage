@@ -11,11 +11,17 @@ export const FINITE_SWR_STALE_TIME_MS = 30 * MILLISECONDS_PER_SECOND;
  * proof expires instead of receiving a second full freshness window.
  */
 export const COLLECTION_SWR_STALE_TIME_MS = SKILL_OBSERVATION_PRODUCER_REVALIDATION_MS;
+/**
+ * Collection-written facts that carry no time-bounded proof: revalidated on the collection
+ * cadence class (one minute), never because a surface mounted while its answer was still fresh.
+ */
+export const COLLECTION_FACTS_STALE_TIME_MS = 60 * MILLISECONDS_PER_SECOND;
 export const SHORT_CONTROL_GC_TIME_MS = 2 * SECONDS_PER_MINUTE * MILLISECONDS_PER_SECOND;
 export const DEFAULT_BOUNDED_GC_TIME_MS = 10 * SECONDS_PER_MINUTE * MILLISECONDS_PER_SECOND;
 
 export type WebQueryPolicyName =
   | 'bounded-control-plane'
+  | 'collection-facts-swr'
   | 'collection-swr'
   | 'current-alias-swr'
   | 'finite-swr'
@@ -75,6 +81,23 @@ export const webQueryPolicies = {
     retry: false,
     staleTime: COLLECTION_SWR_STALE_TIME_MS,
   }),
+  /**
+   * For data the collection cycle writes that carries no producer proof with a lifetime, and that
+   * no publication invalidates (the Work attention dataset: declared outcomes, pull-request,
+   * checkout and Jira facts). The interval and focus keep an open tab on the collection cadence;
+   * a mount refetches only a stale answer, so the server-rendered answer is the page load's one
+   * read instead of being read again at hydration. A reader returning after the stale time, or
+   * after garbage collection, still gets a new answer.
+   */
+  collectionFactsSwr: policy({
+    gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
+    refetchInterval: COLLECTION_FACTS_STALE_TIME_MS,
+    refetchOnMount: true,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: true,
+    retry: false,
+    staleTime: COLLECTION_FACTS_STALE_TIME_MS,
+  }),
   currentAliasSwr: policy({
     gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
     refetchOnMount: true,
@@ -105,6 +128,7 @@ export type PolicyQueryOptions = WebQueryPolicy;
 
 const policiesByName = {
   'bounded-control-plane': webQueryPolicies.boundedControlPlane,
+  'collection-facts-swr': webQueryPolicies.collectionFactsSwr,
   'collection-swr': webQueryPolicies.collectionSwr,
   'current-alias-swr': webQueryPolicies.currentAliasSwr,
   'finite-swr': webQueryPolicies.finiteSwr,

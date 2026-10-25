@@ -12,6 +12,14 @@ export const collectionSourceIds = [
   'claude.usage-limits',
   'rtk.savings',
   'cursor.commit-attribution',
+  // The Desktop registry names the checkouts and pull requests the two fact producers read, so it
+  // precedes them: the single worker runs the startup jobs in catalogue order, and a first cycle
+  // that read the producers before the registry observed nothing for up to ten minutes.
+  'claude.desktop-sessions',
+  'executors.capabilities',
+  'checkouts.status',
+  'github.pull-requests',
+  'jira.issues',
 ] as const;
 
 export type CollectionSourceId = (typeof collectionSourceIds)[number];
@@ -40,6 +48,8 @@ export interface CollectionSourceDefinition {
 
 const oneMinuteMs = 60_000;
 const fiveMinutesMs = 5 * oneMinuteMs;
+const fifteenMinutesMs = 15 * oneMinuteMs;
+const tenMinutesMs = 10 * oneMinuteMs;
 
 export const collectionSourceDefinitions = [
   {
@@ -113,6 +123,57 @@ export const collectionSourceDefinitions = [
     id: 'cursor.commit-attribution',
     kind: 'dataset-producer',
     label: 'Cursor commit attribution',
+  },
+  {
+    cadenceMs: oneMinuteMs,
+    defaultEnabled: true,
+    // Claude Desktop's per-session registry: declared turn outcomes, proposals and declared pull
+    // requests (ADR 0050). An auxiliary fact family like the Cursor attribution dataset, hence the
+    // same kind; it carries no `harnessKey` because it produces no Session rows and must not join
+    // the session harness roster. Listed before the fact producers it feeds (see the id list).
+    group: 'enrichments',
+    id: 'claude.desktop-sessions',
+    kind: 'dataset-producer',
+    label: 'Claude Desktop sessions',
+  },
+  {
+    // Spawns `claude --version` / `codex login status` style metadata commands, so it polls far
+    // less often than the file readers. It qualifies review routing; it is never report data.
+    cadenceMs: fifteenMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'executors.capabilities',
+    kind: 'producer',
+    label: 'Executor capabilities',
+  },
+  // The two fact producers of the Work view (ADR 0051) spawn one read-only process per known
+  // checkout or linked pull request, so they poll more slowly than the file-based sources. Their
+  // facts stay outside the served revision; a run never marks the report dirty.
+  {
+    cadenceMs: fiveMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'checkouts.status',
+    kind: 'producer',
+    label: 'Checkout status',
+  },
+  {
+    cadenceMs: tenMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'github.pull-requests',
+    kind: 'producer',
+    label: 'GitHub pull requests',
+  },
+  {
+    // Spawns one read-only `acli` process per Jira key a Desktop session linked explicitly
+    // (ADR 0054); the same cadence and placement as the pull request producer.
+    cadenceMs: tenMinutesMs,
+    defaultEnabled: true,
+    group: 'enrichments',
+    id: 'jira.issues',
+    kind: 'producer',
+    label: 'Jira issues',
   },
 ] as const satisfies readonly CollectionSourceDefinition[];
 
@@ -302,6 +363,13 @@ export interface SourceRunResult {
   readonly outputCount: number;
   readonly servedProjectionChanged?: boolean;
   readonly unavailable?: SourceReason;
+  /**
+   * Sources this run produced new inputs for, to be queued once as a dependency run instead of
+   * waiting for their cadence (the Desktop registry feeds the two Work fact producers). A woken
+   * source never wakes anything itself, so there is no chain and no loop; a source already queued
+   * or running is left alone.
+   */
+  readonly wake?: readonly CollectionSourceId[];
   readonly warnings: readonly SourceWarning[];
 }
 

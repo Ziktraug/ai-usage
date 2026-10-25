@@ -5,6 +5,7 @@ import {
 } from '@ai-usage/report-core/skill-observation-evidence';
 import { collectionSwrKey, controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
 import {
+  COLLECTION_FACTS_STALE_TIME_MS,
   COLLECTION_SWR_STALE_TIME_MS,
   DEFAULT_BOUNDED_GC_TIME_MS,
   FINITE_SWR_STALE_TIME_MS,
@@ -41,6 +42,7 @@ describe('Web query key and policy vocabulary', () => {
     expect(queryPolicy('finite-swr')).toBe(webQueryPolicies.finiteSwr);
     expect(queryPolicy('bounded-control-plane')).toBe(webQueryPolicies.boundedControlPlane);
     expect(queryPolicy('collection-swr')).toBe(webQueryPolicies.collectionSwr);
+    expect(queryPolicy('collection-facts-swr')).toBe(webQueryPolicies.collectionFactsSwr);
 
     // The answer contains a time-bounded producer-completeness proof. It must therefore revalidate
     // when that proof can expire, even if no collection event arrives, and on focus after a tab was
@@ -55,6 +57,17 @@ describe('Web query key and policy vocabulary', () => {
       staleTime: COLLECTION_SWR_STALE_TIME_MS,
     });
     expect(COLLECTION_SWR_STALE_TIME_MS).toBeGreaterThan(FINITE_SWR_STALE_TIME_MS);
+    // Collection facts without a proof lifetime keep the cadence but refetch on mount only when stale,
+    // so a server-rendered answer is not read a second time at hydration.
+    expect(webQueryPolicies.collectionFactsSwr).toMatchObject({
+      gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
+      refetchInterval: COLLECTION_FACTS_STALE_TIME_MS,
+      refetchOnMount: true,
+      refetchOnReconnect: false,
+      refetchOnWindowFocus: true,
+      retry: false,
+      staleTime: COLLECTION_FACTS_STALE_TIME_MS,
+    });
     expect(SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS + COLLECTION_SWR_STALE_TIME_MS).toBe(
       SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS,
     );

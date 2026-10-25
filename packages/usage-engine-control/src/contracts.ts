@@ -26,6 +26,11 @@ import {
   type SourceControlView,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
+// The import-free vocabulary module: the shell closure must not pull the launch policy with two arrays.
+import type { ReviewAttemptState, ReviewLaunchRefusalReason } from '@ai-usage/report-core/work-attempts-vocabulary';
+import { REVIEW_ATTEMPT_STATES, REVIEW_LAUNCH_REFUSAL_REASONS } from '@ai-usage/report-core/work-attempts-vocabulary';
+// Likewise for the routing qualification: the parser without the routing policy (ADR 0057).
+import { parseRoutingQualification, type RoutingQualification } from '@ai-usage/report-core/work-routing-vocabulary';
 
 declare const usageEngineBrand: unique symbol;
 
@@ -48,6 +53,10 @@ export const USAGE_ENGINE_PROTOCOL_VERSION = 3 as UsageEngineProtocolVersion;
 
 const kibibyte = 1024;
 const maxOpaqueIdBytes = 160;
+/** Native session ids, candidate ids and attempt ids (report-core `REVIEW_ATTEMPT_BOUNDS.maxId`). */
+const maxReviewIdentityBytes = 512;
+/** A refusal message names a checkout path, so it is allowed more than one status message. */
+const maxReviewMessageBytes = 1024;
 const maxCommandCompletionEventBytes = sourceControlBounds.maxSnapshotBytes;
 const maxStatusBytes = sourceControlBounds.maxSnapshotBytes + 32 * kibibyte;
 const maxForegroundEnvelopeBytes = 4 * kibibyte;
@@ -289,6 +298,15 @@ export type UsageEngineCommand =
     }
   | { readonly command: 'set-machine-label'; readonly label: string }
   | ({ readonly command: 'set-campaign-label-override' } & CampaignLabelOverrideMutation)
+  | {
+      readonly action: 'read-only-review';
+      readonly candidateId: string;
+      readonly command: 'start-review-attempt';
+      readonly target: UsageEngineReviewAttemptTarget;
+    }
+  | { readonly command: 'qualify-review-routing'; readonly target: UsageEngineReviewAttemptTarget }
+  /** The operator declares that the lost attempt's review no longer runs (ADR 0055); nothing is stopped. */
+  | { readonly attemptId: string; readonly command: 'release-review-reservation' }
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
   | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
@@ -555,6 +573,36 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         return fail('Usage engine replace-project-aliases command contains unknown fields.');
       }
       return { command: 'replace-project-aliases', projectAliases: parseProjectAliases(command.projectAliases) };
+    case 'start-review-attempt':
+      if (!hasExactKeys(command, ['action', 'candidateId', 'command', 'target'])) {
+        return fail('Usage engine start-review-attempt command contains unknown fields.');
+      }
+      if (command.action !== 'read-only-review') {
+        return fail('Usage engine review attempt action is unsupported.');
+      }
+      return {
+        action: 'read-only-review',
+        candidateId: parseBoundedString(
+          command.candidateId,
+          maxReviewIdentityBytes,
+          'Usage engine review candidate id',
+        ),
+        command: 'start-review-attempt',
+        target: parseReviewAttemptTarget(command.target),
+      };
+    case 'qualify-review-routing':
+      if (!hasExactKeys(command, ['command', 'target'])) {
+        return fail('Usage engine qualify-review-routing command contains unknown fields.');
+      }
+      return { command: 'qualify-review-routing', target: parseReviewAttemptTarget(command.target) };
+    case 'release-review-reservation':
+      if (!hasExactKeys(command, ['attemptId', 'command'])) {
+        return fail('Usage engine release-review-reservation command contains unknown fields.');
+      }
+      return {
+        attemptId: parseBoundedString(command.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+        command: 'release-review-reservation',
+      };
     case 'set-machine-label':
       if (!hasExactKeys(command, ['command', 'label'])) {
         return fail('Usage engine set-machine-label command contains unknown fields.');
@@ -848,6 +896,50 @@ export interface UsageEngineMachineOutput {
   readonly machine: { readonly id: string; readonly label: string };
 }
 
+export interface UsageEngineReviewAttemptTarget {
+  /** The Claude Desktop session that declared the transcript, when the cockpit knows it. */
+  readonly desktopSessionId: string | null;
+  /** The target session's harness key (`claude`, `codex`, ...). */
+  readonly harness: string;
+  readonly sourceSessionId: string;
+}
+
+/**
+ * What a `start-review-attempt` command answers: the attempt row the engine created or reused, and
+ * the typed refusal when the policy launched nothing. A refusal is a decision, not an engine failure,
+ * so it travels in a succeeded completion.
+ */
+export interface UsageEngineReviewAttemptOutput {
+  readonly attempt: { readonly attemptId: string; readonly reused: boolean; readonly state: ReviewAttemptState };
+  readonly kind: 'review-attempt';
+  readonly refusal: { readonly message: string; readonly reason: ReviewLaunchRefusalReason } | null;
+}
+
+/**
+ * What a `qualify-review-routing` command answers (ADR 0057): the decision the engine took from the
+ * executor observation it has just run, the declarations re-read from the home config and the
+ * stored quota. A decision, not report data; it starts nothing.
+ */
+export interface UsageEngineRoutingQualificationOutput {
+  readonly kind: 'routing-qualification';
+  readonly qualification: RoutingQualification;
+}
+
+/**
+ * What a `release-review-reservation` command answers (ADR 0055): `released` with the evidence
+ * recorded (`process-absent` when the scan could look and found nothing, otherwise the operator's
+ * declaration), `process-found` when a process still carries the attempt's marker (nothing is
+ * released, stopped or adopted), or `not-held` when the attempt holds no reservation.
+ */
+export interface UsageEngineReviewReservationReleaseOutput {
+  readonly attemptId: string;
+  readonly evidence: 'operator-declared-ended' | 'process-absent' | null;
+  readonly kind: 'review-reservation-release';
+  readonly pids: readonly number[];
+  readonly releasedAt: string | null;
+  readonly result: 'not-held' | 'process-found' | 'released';
+}
+
 export interface UsageEnginePublicationOutput {
   readonly kind: 'publication';
   readonly publication: UsageEngineCurrentPublication;
@@ -947,6 +1039,21 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
+      readonly command: 'start-review-attempt';
+      readonly output: UsageEngineReviewAttemptOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'qualify-review-routing';
+      readonly output: UsageEngineRoutingQualificationOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'release-review-reservation';
+      readonly output: UsageEngineReviewReservationReleaseOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
       readonly command: Exclude<
         UsageEngineCommandName,
         | 'collect-fresh-quota'
@@ -956,6 +1063,9 @@ export type UsageEngineCommandCompletion =
         | 'publish'
         | 'replication-status'
         | 'set-machine-label'
+        | 'start-review-attempt'
+        | 'qualify-review-routing'
+        | 'release-review-reservation'
       >;
       readonly output: { readonly kind: 'none' };
       readonly state: 'succeeded';
@@ -974,6 +1084,8 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'import-cursor',
   'preview-merge',
   'publish',
+  'qualify-review-routing',
+  'release-review-reservation',
   'replication-status',
   'replace-project-aliases',
   'replace-project-groups',
@@ -983,6 +1095,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'set-campaign-label-override',
   'set-machine-label',
   'set-source-enabled',
+  'start-review-attempt',
 ]);
 
 const parseUsageEngineCommandName = (value: unknown): UsageEngineCommandName => {
@@ -1198,6 +1311,119 @@ export const parseUsageEnginePublicationOutput = (value: unknown): UsageEnginePu
   return { kind: 'publication', publication: parseRequiredPublication(value.publication) };
 };
 
+const parseReviewAttemptTarget = (value: unknown): UsageEngineReviewAttemptTarget => {
+  if (
+    !(
+      isRecord(value) &&
+      (hasExactKeys(value, ['harness', 'sourceSessionId']) ||
+        hasExactKeys(value, ['desktopSessionId', 'harness', 'sourceSessionId']))
+    )
+  ) {
+    return fail('Usage engine review attempt target is invalid.');
+  }
+  return {
+    desktopSessionId:
+      value.desktopSessionId === undefined || value.desktopSessionId === null
+        ? null
+        : parseBoundedString(value.desktopSessionId, maxReviewIdentityBytes, 'Usage engine review desktop session id'),
+    harness: parseBoundedString(value.harness, usageEngineControlBounds.maxMessageBytes, 'Usage engine review harness'),
+    sourceSessionId: parseBoundedString(
+      value.sourceSessionId,
+      maxReviewIdentityBytes,
+      'Usage engine review session id',
+    ),
+  };
+};
+
+export const parseUsageEngineReviewAttemptOutput = (value: unknown): UsageEngineReviewAttemptOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['attempt', 'kind', 'refusal']) &&
+      value.kind === 'review-attempt' &&
+      isRecord(value.attempt) &&
+      hasExactKeys(value.attempt, ['attemptId', 'reused', 'state']) &&
+      typeof value.attempt.reused === 'boolean' &&
+      typeof value.attempt.state === 'string' &&
+      (REVIEW_ATTEMPT_STATES as readonly string[]).includes(value.attempt.state)
+    )
+  ) {
+    return fail('Usage engine review attempt output is invalid.');
+  }
+  let refusal: UsageEngineReviewAttemptOutput['refusal'] = null;
+  if (value.refusal !== null) {
+    if (
+      !(
+        isRecord(value.refusal) &&
+        hasExactKeys(value.refusal, ['message', 'reason']) &&
+        typeof value.refusal.reason === 'string' &&
+        (REVIEW_LAUNCH_REFUSAL_REASONS as readonly string[]).includes(value.refusal.reason)
+      )
+    ) {
+      return fail('Usage engine review attempt refusal is invalid.');
+    }
+    refusal = {
+      message: parseBoundedString(value.refusal.message, maxReviewMessageBytes, 'Usage engine review refusal message'),
+      reason: value.refusal.reason as ReviewLaunchRefusalReason,
+    };
+  }
+  return {
+    attempt: {
+      attemptId: parseBoundedString(value.attempt.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+      reused: value.attempt.reused,
+      state: value.attempt.state as ReviewAttemptState,
+    },
+    kind: 'review-attempt',
+    refusal,
+  };
+};
+
+export const parseUsageEngineRoutingQualificationOutput = (value: unknown): UsageEngineRoutingQualificationOutput => {
+  if (!(isRecord(value) && hasExactKeys(value, ['kind', 'qualification']) && value.kind === 'routing-qualification')) {
+    return fail('Usage engine routing qualification output is invalid.');
+  }
+  const qualification = parseRoutingQualification(value.qualification);
+  if (qualification === null) {
+    return fail('Usage engine routing qualification is invalid or exceeds its bounds.');
+  }
+  return { kind: 'routing-qualification', qualification };
+};
+
+const RESERVATION_RELEASE_RESULTS = ['not-held', 'process-found', 'released'] as const;
+const RESERVATION_RELEASE_EVIDENCE = ['operator-declared-ended', 'process-absent'] as const;
+const MAX_RELEASE_PIDS = 16;
+
+export const parseUsageEngineReviewReservationReleaseOutput = (
+  value: unknown,
+): UsageEngineReviewReservationReleaseOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['attemptId', 'evidence', 'kind', 'pids', 'releasedAt', 'result']) &&
+      value.kind === 'review-reservation-release' &&
+      typeof value.result === 'string' &&
+      (RESERVATION_RELEASE_RESULTS as readonly string[]).includes(value.result) &&
+      (value.evidence === null ||
+        (typeof value.evidence === 'string' &&
+          (RESERVATION_RELEASE_EVIDENCE as readonly string[]).includes(value.evidence))) &&
+      Array.isArray(value.pids) &&
+      value.pids.length <= MAX_RELEASE_PIDS &&
+      value.pids.every((pid) => Number.isSafeInteger(pid) && (pid as number) > 0) &&
+      (value.releasedAt === null || typeof value.releasedAt === 'string')
+    )
+  ) {
+    return fail('Usage engine review reservation release output is invalid.');
+  }
+  return {
+    attemptId: parseBoundedString(value.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
+    evidence: value.evidence as UsageEngineReviewReservationReleaseOutput['evidence'],
+    kind: 'review-reservation-release',
+    pids: value.pids as number[],
+    releasedAt: value.releasedAt === null ? null : parseIsoTimestamp(value.releasedAt, 'Usage engine release time'),
+    result: value.result as UsageEngineReviewReservationReleaseOutput['result'],
+  };
+};
+
 const replicationDiagnosticCodes = new Set<UsageEngineReplicationDiagnosticCode>([
   'acknowledged',
   'blocked',
@@ -1409,6 +1635,25 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
   }
   if (command === 'set-machine-label') {
     return { ...base, command, output: parseUsageEngineMachineOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'start-review-attempt') {
+    return { ...base, command, output: parseUsageEngineReviewAttemptOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'qualify-review-routing') {
+    return {
+      ...base,
+      command,
+      output: parseUsageEngineRoutingQualificationOutput(value.output),
+      state: 'succeeded',
+    };
+  }
+  if (command === 'release-review-reservation') {
+    return {
+      ...base,
+      command,
+      output: parseUsageEngineReviewReservationReleaseOutput(value.output),
+      state: 'succeeded',
+    };
   }
   if (command === 'publish') {
     return { ...base, command, output: parseUsageEnginePublicationOutput(value.output), state: 'succeeded' };

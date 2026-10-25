@@ -12,10 +12,12 @@
     "./schema-conventions": "./src/schema-conventions.ts",
     "./report": "./src/report.ts",
     "./session": "./src/session.ts",
-    "./session-distillation": "./src/session-distillation.ts",
     "./skills": "./src/skills.ts",
     "./control": "./src/control.ts",
-    "./sync": "./src/sync.ts"
+    "./sync": "./src/sync.ts",
+    "./work": "./src/work.ts",
+    "./work-attempts": "./src/work-attempts.ts",
+    "./work-routing": "./src/work-routing.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -25,7 +27,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ai-usage/platform-core": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/skills": "workspace:*",
     "@orpc/contract": "1.16.0",

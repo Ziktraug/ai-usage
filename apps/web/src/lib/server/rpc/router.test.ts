@@ -9,9 +9,11 @@ test('composes every router leaf under one root router', () => {
     report: {},
     replication: {},
     session: {},
-    sessionDistillation: {},
     skills: {},
     sync: {},
+    work: {},
+    workAttempts: {},
+    workRouting: {},
   } as unknown as WebRpcRouterDependencies);
 
   expect(Object.keys(router).sort()).toEqual([
@@ -24,8 +26,10 @@ test('composes every router leaf under one root router', () => {
     'report',
     'runtime',
     'session',
-    'sessionDistillation',
     'skills',
     'sync',
+    'work',
+    'workAttempts',
+    'workRouting',
   ]);
 });

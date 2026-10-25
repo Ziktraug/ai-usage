@@ -2,14 +2,12 @@ import { MemoryServiceClientError } from '@ai-usage/memory-service/client';
 import {
   type MemoryKnowledgeGetInput,
   type MemoryKnowledgeInput,
-  type MemoryPromotionInput,
   type MemoryProposalReviewAction,
   type MemoryProposalReviewInput,
   type MemorySearchInput,
   memoryContract,
   memoryKnowledgeDetailSchema,
   memoryKnowledgePageSchema,
-  memoryPromotionResultSchema,
   memoryProposalReviewActionResultSchema,
   memoryProposalReviewSnapshotSchema,
   memorySearchPageSchema,
@@ -29,7 +27,6 @@ export interface MemoryRpcDependencies {
     signal: AbortSignal | undefined,
     position: MemoryProposalReviewInput,
   ) => Promise<unknown>;
-  readonly promoteAnalysis: (input: MemoryPromotionInput, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly searchMemory: (input: MemorySearchInput, signal: AbortSignal | undefined) => Promise<unknown>;
 }
 
@@ -82,32 +79,6 @@ export const createMemoryRpcRouter = (dependencies: MemoryRpcDependencies) => {
         throw errors.Unavailable({
           data: { reason: 'memory-service-unavailable' },
           message: 'Accepted Memory could not be read.',
-        });
-      }
-    }),
-    promote: memory.promote.handler(async ({ errors, input, signal }) => {
-      if (await dependencies.isDemo(signal)) {
-        throw errors.ForbiddenDemo({
-          data: { reason: 'demo-read-only' },
-          message: 'Proposals are unavailable in demo mode.',
-        });
-      }
-      try {
-        return parse(memoryPromotionResultSchema, await dependencies.promoteAnalysis(input, signal));
-      } catch (error) {
-        signal?.throwIfAborted();
-        if (isAbortError(error, signal)) {
-          throw error;
-        }
-        if (error instanceof MemoryServiceClientError && error.code === 'forbidden') {
-          throw errors.Forbidden({
-            data: { reason: 'memory-promotion-forbidden' },
-            message: 'This analysis cannot be proposed as knowledge.',
-          });
-        }
-        throw errors.Unavailable({
-          data: { reason: 'memory-promotion-unavailable' },
-          message: 'The proposal could not be saved. Its analysis remains unchanged.',
         });
       }
     }),

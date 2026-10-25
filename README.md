@@ -122,9 +122,10 @@ bun run cli -- --stored
 ```
 
 The dedicated usage engine runs collection independently from browser
-visibility. Its eight collection sources are Claude, Codex, OpenCode, and
-Cursor sessions; Codex and experimental Claude usage limits; RTK savings; and
-Cursor commit attribution.
+visibility. Its nine collection sources are Claude, Codex, OpenCode, and
+Cursor sessions; Codex and experimental Claude usage limits; RTK savings;
+Cursor commit attribution; and executor capabilities (which harness CLIs this
+machine can run, for the Work view's review routing).
 Each source has separate policy, detection, lifecycle, outcome, and cadence
 state on `/sources`. Sparse policy overrides live only in
 `~/.config/ai-usage/config.json`; repository config cannot enable background
@@ -253,6 +254,190 @@ See all project folders across machines to decide which ones to alias:
 ```sh
 bun run cli -- projects list --paths ./mac-usage.json --local
 ```
+
+### 7. Declare which local harness may run a read-only review
+
+The Work view simulates assigning a read-only review of a session to a local
+harness (Claude Code or Codex). History and quota never prove that a harness is
+*allowed* to act, so authorization is declared once, by you, in the home config
+(`~/.config/ai-usage/config.json`, section `routing`; repository config cannot
+declare it). The engine observes the rest on a 15-minute cadence
+(`executors.capabilities` on `/sources`): whether the binary is present, its
+version, and the sign-in state that `claude auth status` / `codex login status`
+report. Quota comes from the existing usage-limit sources. Each field of a
+candidate shows where it came from (`declared <date>`, `observed-now`,
+`stale <date>`, `unknown`) and the simulation never starts anything.
+
+```json
+{
+  "routing": {
+    "executors": [
+      {
+        "harness": "claude-code",
+        "accountScope": "personal",
+        "authorization": "allowed",
+        "targets": [{ "kind": "any-local-session" }],
+        "subscription": "verified",
+        "capabilities": ["read-only-review"],
+        "quality": "review-capable",
+        "model": "Fable",
+        "effort": "high",
+        "declaredAt": "2026-10-21T22:00:00+02:00"
+      }
+    ]
+  }
+}
+```
+
+- `harness`: `claude-code` or `codex`.
+- `accountScope`: the account this route bills against. When the stored quota
+  key carries an account suffix (`claude:<accountScope>` on `/sources` or in
+  `ai-usage quota --stored --json`), use that suffix; when the key is bare
+  (`claude`, the usual case today), any stable name you choose binds the
+  declaration to that machine's single quota stream for the family.
+- `machineId` (optional): defaults to this machine
+  (`~/.config/ai-usage/machine.json`). Set it only to declare a route on another
+  machine's behalf.
+- `authorization`: `allowed` or `forbidden`. A quota never grants it.
+- `targets`: `{ "kind": "any-local-session" }` or
+  `{ "kind": "project", "projectLabel": "<project as shown in the report>" }`;
+  one entry is required.
+- `subscription`: `verified` (you confirmed the account is on a subscription)
+  or `api` (metered API billing, excluded by the subscription-only policy).
+  Nothing verifies billing for you: the observed plan is shown beside your
+  declaration, never used to infer it.
+- `capabilities` (`read-only-review`), `quality` (`review-capable`): the only
+  values the current simulation understands.
+- `model`, `effort` (optional): the model and effort the review would run with.
+  Declare `model` when the provider reports model-scoped quota windows (ids
+  `model:<name>` in the quota feed, for example `model:Fable` on a Claude Max
+  plan today); the declared name must equal `<name>` exactly, otherwise those
+  windows cannot be attributed and the candidate stays excluded.
+- `alternateModels` (optional, requires `model`): further models of the same
+  account, in preference order, at most 8 and none repeated (for example
+  `["Opus"]` after `"model": "Fable"`). Each becomes its own candidate on the
+  same account and the same quota reading, never an extra reserve: a window
+  scoped to one model (`model:Fable`) excludes only that model, while an
+  exhausted all-models window excludes every model of the account.
+- `accountFingerprint` (optional, Claude Code): pins the route to the account
+  the CLI is signed in to (ADR 0057). The engine keeps only a 16-character
+  lowercase hexadecimal hash of the organization and email that
+  `claude auth status` reports, never the identifiers, and reads no credential
+  file. While the CLI reports an account and the entry pins none, the
+  candidate stays conditional and the Work view shows the exact line to add
+  (`"accountFingerprint": "<16 hex>"`): pinning is a one-time act per machine.
+  A later sign-in to another account then excludes the route until you sign
+  back in or re-declare. Codex exposes no account outside its credential
+  file, so a Codex entry has nothing to pin.
+- `declaredAt`: required RFC 3339 date-time; the declaration is a dated
+  statement, not a current observation.
+
+An invalid entry is reported on the Work view with its config path and reason
+and does not hide the other entries. Declarations are read, never written, by
+the app.
+
+### 8. Show Jira replies on explicitly linked tickets (optional)
+
+When the Atlassian CLI (`acli`) is installed and signed in, the engine reads,
+every 10 minutes, the Jira tickets your Claude Desktop sessions linked
+**explicitly**: a key written as a whole segment of a branch name
+(`feat/XLB-2090/slug`, `fix/XLB-2091/nav`, `XLB-2092`) in the session's
+written branches, its own branch, or the branch of a pull request it declared.
+Keys in titles, prompts or paths never link; `XLB-0` is ignored as the
+"no ticket" placeholder. The Work view then shows the ticket's dated status
+and, when comments arrived after the latest activity on that key across your
+sessions, "N new replies" as a request for you on the session family that was
+last active on the key (an older family on the same key is only told which
+family carries it), without claiming you have not read them elsewhere. Only
+`acli jira workitem view` is ever run; nothing is written to
+Jira. The engine never reads or stores a Jira token: `acli`'s own sign-in
+answers, and a signed-out CLI is reported as `unauthenticated` with the last
+successful read kept beside it.
+
+```json
+{
+  "jira": {
+    "enabled": true,
+    "site": "example.atlassian.net"
+  }
+}
+```
+
+- `enabled` (optional, default on when `acli` is found): `false` records the
+  source as disabled instead of reading.
+- `site` (optional): the Jira site your keys belong to, kept for your record;
+  this version does not pass it to the CLI.
+
+The section lives in the home config only (`~/.config/ai-usage/config.json`);
+repository config cannot enable provider communication. The `acli` command
+shape is taken from the Atlassian CLI documentation and was not exercised on
+the machine this feature was built on (ADR 0054); an unexpected response is
+recorded as `invalid`, never as a fact.
+
+
+### 9. Declare which checkouts a launched review may run in
+
+A `real` recommendation for Claude Code can become one execution (ADR 0053):
+the engine runs `claude -p` in plan mode with read-only tools, in the
+session's checkout, with your own Claude Code sign-in, and records the attempt.
+It does so only when that checkout is equal to, or below, an entry you
+declared under `routing.reviewTargets` in the same home config:
+
+```json
+{
+  "routing": {
+    "executors": [{ "...": "see section 7" }],
+    "reviewTargets": [{ "checkoutPath": "/home/you/src/ai-usage", "label": "AI Usage checkout" }]
+  }
+}
+```
+
+- `checkoutPath`: absolute path of a checkout; its worktrees under it are
+  admitted too. The checkout a session is reviewed in is the Desktop session's
+  worktree, else its cwd, else the served session's path; the Work view names
+  it beside the button.
+- `label` (optional): how the entry is referred to in the cockpit.
+
+Without a matching entry the button stays absent and the view says exactly
+what to add (`add routing.reviewTargets for <path>`). The engine re-reads the
+declaration, the executor observation, the quota and the checkout at launch
+time; the browser never decides. One attempt is live per target at a time: a
+second click, a retry or a reload returns the existing one. An attempt the
+engine lost contact with (restart, shutdown) is shown as "contact lost; verify
+in the harness" and is never relaunched. Only Claude Code launches in this
+version; Codex stays at simulation.
+
+### 10. Give a harness session the Work context of its checkout
+
+A Claude Code or Codex session can ask what is waiting, what was decided and
+what is linked for the checkout or project it works in, from the same data as
+the Work view ([ADR 0058](docs/adr/0058-harness-sessions-read-work-context-through-one-bounded-projection.md)).
+Both forms read the usage store read-only, start no engine and never write:
+
+```sh
+bun run cli -- work context --checkout "$PWD" --json   # this checkout and paths inside it
+bun run cli -- work context --project-label ai-usage   # the project directory's name, exact
+```
+
+The local stdio MCP server (`bun run mcp`) exposes the same read as the
+read-only tool `work.context`, with exactly one of `checkoutPath` (absolute)
+or `projectLabel`. Adding the tool registers nothing: the server is still
+registered only by your explicit `bun run mcp:register:codex` (or your own
+harness configuration).
+
+The answer (`schemaVersion` 1) has `waiting` (human requests and external
+waits, each with the session's own declaration, its date and provenance),
+`decisions` (requests answered, handled elsewhere, archived or superseded,
+newest first, each with its evidence), `linked` (pull request, checkout and
+Jira facts) and `coverage`. Coverage states per harness what was read: Claude
+Desktop sessions with their declared waits, and the recent Codex sessions as
+sessions only (Codex declares no wait, so none appears in `waiting`; at most 20
+Codex campaigns, counted against those in the window). OpenCode, Cursor and
+Claude Code sessions started outside Claude Desktop are not represented, no
+transcript is read, and quiet roots older than the window are left out. Lists are bounded (at most
+20 waits and 20 decisions) and the whole answer stays under 64 KiB of JSON;
+`truncation` says what was left out. A missing or not-yet-upgraded store is an
+error (exit 1, or an MCP error such as `store-missing`), never an empty answer.
 
 ## Output formats
 

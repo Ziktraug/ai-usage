@@ -40,9 +40,7 @@ const text = (value: unknown, max: number): string => {
 export const projectMemoryItemsBrowsePage = (page: MemoryItemPage): MemoryItemsBrowsePage => ({
   nextCursor: page.nextCursor,
   items: page.items.map(({ item, revision, analysisProvenance: source }) => {
-    const sourceLocator = source
-      ? `/memory?view=analyses&project=${encodeURIComponent(source.projectId)}&analysis=${encodeURIComponent(source.analysisId)}&element=${encodeURIComponent(source.elementKey)}`
-      : null;
+    const sourceLocator = source ? `Session account ${source.analysisId}, element ${source.elementKey}` : null;
     return {
       id: item.id,
       revisionId: revision.id,

@@ -47,7 +47,11 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
 // Plan 120 web opportunities: Svelte createContext (-331 B), Kit snapshot() (+240 B, shared by the
 // navigation chunk) and the forced-colours selection rings and switch thumb (+223 B of CSS)
 // bring it to 300,502 B.
-const RECORDED_GZIP_CLOSURE_BYTES = 300_502;
+// Merging feat/work-resume-cockpit (PR #67) adds the Work destination to the shell: the navigation
+// model with the Work and mobile destinations, the import-free attempt and routing vocabularies and
+// the Work query policy, 304,220 B in a local production build (Bun 1.4.3); the Work route itself
+// stays out of the initial closure.
+const RECORDED_GZIP_CLOSURE_BYTES = 304_220;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */

@@ -3,6 +3,7 @@ import {
   type CollectionSourceId,
   collectionSourceDefinitions,
   parseSourceControlSnapshot,
+  type SourceControlEntryView,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
 import {
@@ -20,6 +21,9 @@ import {
   type UsageEngineInstanceId,
   type UsageEngineMergePreviewOutput,
   type UsageEngineReplicationStatusOutput,
+  type UsageEngineReviewAttemptOutput,
+  type UsageEngineReviewReservationReleaseOutput,
+  type UsageEngineRoutingQualificationOutput,
   type UsageEngineStatus,
 } from '@ai-usage/usage-engine-control';
 import { createRuntimeCommandCoordinator, type RuntimeCommandCoordinator } from './runtime-command-coordinator';
@@ -106,6 +110,43 @@ export interface UsageEngineMutationPort {
   readonly setMachineLabel: (label: string, signal?: AbortSignal) => Promise<UsageMachine>;
 }
 
+type StartReviewAttemptCommand = Extract<UsageEngineCommand, { readonly command: 'start-review-attempt' }>;
+type QualifyReviewRoutingCommand = Extract<UsageEngineCommand, { readonly command: 'qualify-review-routing' }>;
+type ReleaseReviewReservationCommand = Extract<UsageEngineCommand, { readonly command: 'release-review-reservation' }>;
+
+/** The executor observation the engine ran for one qualification, as the source reported it. */
+export interface RoutingQualificationExecutorRun {
+  /** `null` when the source is absent from this composition. */
+  readonly source: SourceControlEntryView | null;
+  /** When the qualification started; a run that finished earlier is not fresh. */
+  readonly startedAt: string;
+}
+
+export interface UsageEngineRoutingQualificationPort {
+  /** Re-reads the declarations and stored facts, then decides; starts nothing and writes nothing. */
+  readonly qualify: (
+    command: QualifyReviewRoutingCommand,
+    executorRun: RoutingQualificationExecutorRun,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineRoutingQualificationOutput>;
+}
+
+export interface UsageEngineReviewAttemptPort {
+  /**
+   * Releases a lost attempt's held reservation on the operator's declaration that its review no
+   * longer runs (ADR 0055); a process still carrying the marker keeps it held. Never stops anything.
+   */
+  readonly releaseReservation: (
+    command: ReleaseReviewReservationCommand,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineReviewReservationReleaseOutput>;
+  /**
+   * Decides, records and spawns; resolves once the attempt row exists (reused, refused, or spawned).
+   * The signal bounds the decision and the spawn only: an abort never kills a started review.
+   */
+  readonly start: (command: StartReviewAttemptCommand, signal?: AbortSignal) => Promise<UsageEngineReviewAttemptOutput>;
+}
+
 export interface UsageEngineRuntimeDependencies {
   readonly acquireWriterLease: () => Promise<UsageEngineWriterLease>;
   readonly initializeStore: () => Promise<number>;
@@ -121,6 +162,10 @@ export interface UsageEngineRuntimeDependencies {
   readonly quiesceStore: () => Promise<void>;
   readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly recover: () => Promise<void>;
+  /** The review launcher (ADR 0053); absent in compositions that cannot execute anything. */
+  readonly reviewAttempts?: UsageEngineReviewAttemptPort;
+  /** The on-demand routing qualification (ADR 0057); absent in compositions without routing. */
+  readonly routingQualification?: UsageEngineRoutingQualificationPort;
   readonly sourceControl: Omit<UsageEngineSourceControlPort, 'runSource' | 'setSourceEnabled'> & {
     readonly runSource: (sourceId: RunSourceCommand['sourceId'], signal?: AbortSignal) => Promise<SourceControlView>;
     readonly setSourceEnabled: (

@@ -42,6 +42,18 @@ open a version-8 store. Publication policy is independent from sensitivity;
 knowledge explicitly promoted from a local analysis stays excluded from both
 live replication and later backfill.
 
+## Additive tables under usage version 4 (2026-10-21)
+
+The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
+and `claude_desktop_collection_state` to the usage store without changing
+`user_version`, following the `skill_observations` precedent: the engine
+creates them on the next open when they are absent, moves no existing row, and
+does not advance the store generation. They hold one bounded row per Claude
+Desktop session registry file (`local_<uuid>.json`), never a proposal's prompt,
+and they stay outside the served report revision, the replication outbox and
+the merge bundle. A binary from before this change reopens the upgraded store
+unchanged and ignores the two tables.
+
 Migrations are forward-only and run inside one transaction per store, so an
 interrupted upgrade leaves the previous version in place. Code refuses a store
 that is newer than it supports: the usage store fails with
@@ -55,6 +67,143 @@ backup together with the code that wrote it.
 PR #53 also raised the engine control-plane protocol from 2 to 3. A Web or
 CLI process from the previous revision fails closed against the new engine,
 so the whole supervised stack restarts together.
+
+## Additive tables under usage version 4 (2026-10-21)
+
+### Additive tables under usage version 4 (2026-10-21, executor observations)
+
+The `executors.capabilities` source adds one table, `executor_observations`
+(machine, harness, observed time, binary path, version, sign-in state, bounded
+evidence, outcome), created `IF NOT EXISTS` on the next engine start without
+changing `user_version`. Absence of the table is the migration signal, exactly
+as for the skill-observation tables. Rows are retained ten per machine and
+harness, never advance the store generation, and never enter a served revision,
+a snapshot, or replication. An older binary ignores the table; after a restore
+from a pre-table backup the source simply recreates it on its next run.
+
+2026-10-22: the table gained a nullable `auth_method` column (the sign-in
+method word the CLI reports, such as `claude.ai` or `api-key`). A store whose
+table predates it receives `ALTER TABLE … ADD COLUMN` on the next open, under
+the same `user_version`; existing rows read as "no method recorded".
+
+2026-10-22 (ADR 0057): the table gained a nullable `account_fingerprint`
+column (the 16-character hexadecimal hash of the account `claude auth status`
+reports; the organization id and email themselves are never stored). Same rule
+as `auth_method`: a store whose table predates it receives
+`ALTER TABLE … ADD COLUMN` on the next engine open, under the same
+`user_version`, with no backfill and no store-generation change; existing rows
+read as "no identity reported", so a pinned declaration stays conditional
+until the next executor observation. The query-only Web and CLI readers cannot
+add the column: against a store the engine has not reopened since, they detect
+its absence (`PRAGMA table_info`) and read every row as carrying no
+fingerprint. An older binary opens the upgraded store and ignores the column.
+There is no downgrade path: back up before the first start with the new code
+(see [Backup](#backup)); rollback means restoring that backup together with the
+code that wrote it.
+
+### Additive tables under usage version 4 (2026-10-21, external and local facts)
+
+The Work view's external and local fact family (ADR 0051) adds three tables to
+the usage store without changing `user_version`: `pull_request_observations`
+(dated `gh pr view` reads of explicitly linked pull requests),
+`checkout_status_observations` (dated `git status --porcelain=v2` reads of
+known checkouts) and `work_fact_run_state` (one row per producing source).
+The engine creates them on its next start when they are absent, the way the
+skill-observation tables were added; no backfill runs, existing rows and the
+served report revisions are untouched, and the store generation does not move.
+Rows are re-validated on read with the shared contract parsers; the readers
+keep the latest observation and the latest successful one apart, and
+retention keeps the five newest rows per pull request or checkout plus the
+newest successful one. These tables are outside the served revision, the
+export and the replication outbox: they describe this machine only and never
+leave it. A binary from before this change opens the store normally and
+ignores the tables; nothing is stored in them that an older reader needs.
+
+### Additive table under usage version 4 (2026-10-22, Jira issue observations)
+
+The Jira fact producer (ADR 0054) adds one more table to the same family,
+`jira_issue_observations` (dated `acli jira workitem view` reads of issues a
+Desktop session linked explicitly, with the ten newest comments stored as
+JSON), and a third `work_fact_run_state` source id, `jira.issues`. The same
+rules apply: created by the engine on its next start when absent, no
+backfill, no change to `user_version` or to the store generation, rows
+re-validated on read (a row whose comments column no longer parses is counted
+as skipped, never shown), retention of five rows per issue plus the newest
+success, outside the served revision, the export and the replication outbox.
+A binary from before this change ignores the table; a binary from after it
+reads an older store with no Jira rows as "not observed".
+
+### Additive table and column under usage version 4 (2026-10-22, declaration history)
+
+The Claude Desktop family (ADR 0056) adds one table,
+`claude_desktop_turn_declarations` (the distinct turn declarations of each
+desktop session, at most eight per session, with the session's own dates and the
+time of a message recorded after each), and one nullable column,
+`claude_desktop_sessions.latest_user_frame_at`. The engine creates the table
+and adds the column on its next open when they are absent, without changing
+`user_version` or the store generation; no backfill runs: the history starts
+with the next sweep, and older rows read as "no message recorded". Both stay
+outside the served revision, the export and the replication outbox. An older
+binary opens the store normally and ignores the table and the column: a session
+row it inserts leaves the column empty, and a row it updates keeps the value the
+newer binary last wrote. There is no downgrade path: back up before the first
+start with the new code (see [Backup](#backup)).
+
+### Additive table under usage version 4 (2026-10-22, review attempts)
+
+The first execution launched by the product (ADR 0053) adds one table,
+`review_attempts`, without changing `user_version`: one row per attempt the
+engine recorded (identity, target, checkout, the declaration it rested on,
+state, timestamps, pid, native session id, bounded result excerpt, executed
+validations, acceptance, failure reason), with a partial unique index that
+keeps one live attempt per idempotency key. The engine creates it on its next
+start when it is absent, the way the executor-observation table was added;
+nothing is backfilled and the store generation does not move. Rows are
+re-validated on read with the shared parser. At every engine start, rows still
+`requested`, `starting` or `running` are marked `lost`: a restarted engine
+holds no pipe to a process the previous one started, and nothing is relaunched.
+The table is outside the served revision, the export and the replication
+outbox; an older binary opens the store normally and ignores it.
+
+2026-10-22 (ADR 0055): the table gains five nullable columns,
+`launch_session_id`, `released_at`, `release_evidence` (`process-absent`,
+`outcome-recorded-late` or `recorded-before-reservations`), `scope_json` and
+`guarantee_json`, through `ALTER TABLE … ADD COLUMN` on the next engine open,
+under the same `user_version` and without moving the store generation. The
+same open drops the first version's live-only unique index
+`idx_review_attempts_live_identity` and creates
+`idx_review_attempts_reserved_identity`, which also covers `lost` rows not yet
+released, so a lost attempt keeps its target reserved. Rows the first version
+had marked `lost` were recorded under a rule that kept no reservation: the
+migration releases them as `recorded-before-reservations` at the instant they
+were marked lost, never with a process fact nobody observed. The migration is
+idempotent (column and index presence are the signals; a second open changes
+nothing). An older binary still opens the upgraded store, recreates its old
+index beside the new one and ignores the new columns, but a launch it attempts
+on a held identity fails visibly. There is no downgrade path: back up before
+the first start with the new code (see [Backup](#backup)).
+
+The same day the release evidence gained `operator-declared-ended`: the
+operator's declaration, from the Work view, that a lost attempt's review no
+longer runs, recorded with its time where the engine cannot look (a first
+version row without a launch marker, or a machine whose process list does not
+show the engine itself). SQLite cannot alter a column check, so a table whose
+`release_evidence` check predates that value is rebuilt on the next engine open:
+a new table with the current definition, every row copied, the old table
+dropped and the new one renamed, then its two indexes recreated, all inside the
+migration transaction and under the same `user_version`. The rebuild is
+idempotent (the stored table definition is the signal). A first-version row
+that was still live at an unclean stop is marked `lost` at the next start and
+stays reserved until that declaration or a process check releases it. A binary
+from before the rebuild opens the store and reads an operator-released row as a
+row it refuses on re-validation, counted, never shown.
+
+Until the engine has reopened an upgraded store, the query-only Web reads of
+`review_attempts` (missing reservation columns) and of
+`claude_desktop_turn_declarations` (missing table) cannot add them: they answer
+a typed `schema-too-old`, shown on the Work view as "not upgraded for this
+version yet; the engine upgrades it when it next starts", never as a raw
+storage failure.
 
 ## Backup
 

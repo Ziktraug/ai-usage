@@ -24,6 +24,7 @@ import type {
   QueryServedReportRevisionInput,
   QueryServedReportRevisionLocalSnapshotInput,
   QueryServedRevisionDataInput,
+  QueryServedSessionPullRequestLinksInput,
   RetainServedReportRevisionsInput,
   RetainServedReportRevisionsResult,
   ServedLocalProjectSource,
@@ -36,6 +37,8 @@ import type {
   ServedReportRevisionRows,
   ServedReportRevisionSlices,
   ServedReportRevisionSupport,
+  ServedSessionPullRequestLink,
+  ServedSessionPullRequestLinks,
   UsageStoreGenerations,
 } from './index';
 import {
@@ -76,6 +79,39 @@ interface ServedReportRevisionReadContext {
 }
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+const DEFAULT_SESSION_PULL_REQUEST_LINK_DAYS = 14;
+const MAX_SESSION_PULL_REQUEST_LINK_DAYS = 365;
+const DEFAULT_SESSION_PULL_REQUEST_LINK_LIMIT = 200;
+const MAX_SESSION_PULL_REQUEST_LINK_LIMIT = 500;
+const PULL_REQUEST_PATH = /^\/([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\/([A-Za-z0-9._-]+)\/pull\/(\d{1,9})$/;
+
+/** `https://host/owner/name/pull/N` and nothing else: no credentials, query or fragment. */
+const sessionPullRequestLink = (candidate: string): ServedSessionPullRequestLink | null => {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    return null;
+  }
+  const match = PULL_REQUEST_PATH.exec(url.pathname);
+  if (match === null) {
+    return null;
+  }
+  const number = Number(match[3]);
+  if (!Number.isSafeInteger(number) || number <= 0) {
+    return null;
+  }
+  return {
+    host: url.hostname.toLowerCase(),
+    number,
+    repository: `${match[1]}/${match[2]}`,
+    url: url.toString(),
+  };
+};
 
 interface ServedReportStoreDependencies {
   readonly readUsageLocalMachineWithDatabase: (database: SqliteDatabase, dbPath: string) => UsageMachine;
@@ -631,6 +667,86 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
         ),
       };
     });
+
+  /**
+   * The pull requests local Sessions of the served revision explicitly recorded, read from
+   * `source.vcs.pullRequests` of each row active within `sinceDays`. Only `https` GitHub-style
+   * `/owner/name/pull/N` URLs yield a link; the reader never infers a pull request from a branch
+   * or from proximity in time. Bounded by rows scanned and distinct links returned.
+   */
+  const queryServedSessionPullRequestLinks = (
+    input: QueryServedSessionPullRequestLinksInput,
+  ): Effect.Effect<ServedSessionPullRequestLinks, UsageStoreError> => {
+    const sinceDays = input.sinceDays ?? DEFAULT_SESSION_PULL_REQUEST_LINK_DAYS;
+    const limit = input.limit ?? DEFAULT_SESSION_PULL_REQUEST_LINK_LIMIT;
+    if (
+      !(
+        Number.isSafeInteger(sinceDays) &&
+        sinceDays > 0 &&
+        sinceDays <= MAX_SESSION_PULL_REQUEST_LINK_DAYS &&
+        Number.isSafeInteger(limit) &&
+        limit > 0 &&
+        limit <= MAX_SESSION_PULL_REQUEST_LINK_LIMIT
+      )
+    ) {
+      return Effect.fail(
+        usageStoreError(
+          'queryServedSessionPullRequestLinks',
+          input.dbPath,
+          'Session pull request link query is out of bounds',
+          'invalid-input',
+        ),
+      );
+    }
+    return readServedReportRevision(input, ({ database, revision }) => {
+      const since = (input.now ?? Date.now()) - sinceDays * MILLISECONDS_PER_DAY;
+      const records = database.query(`
+          SELECT source_row_json
+          FROM session_rows
+          WHERE source_authority = 'local-observed' AND sort_date >= ?
+          ORDER BY sort_date DESC, ordinal
+          LIMIT ${MAX_PORTABLE_USAGE_ROWS + 1}
+        `);
+      const links = new Map<string, ServedSessionPullRequestLink>();
+      let scannedRows = 0;
+      let truncated = false;
+      for (const value of records.iterate(since)) {
+        scannedRows += 1;
+        if (scannedRows > MAX_PORTABLE_USAGE_ROWS) {
+          throw usageStoreError(
+            'queryServedSessionPullRequestLinks',
+            input.dbPath,
+            `Served session pull request links exceed ${MAX_PORTABLE_USAGE_ROWS} input rows`,
+            'invalid-input',
+          );
+        }
+        const record = value as { source_row_json?: unknown };
+        if (typeof record.source_row_json !== 'string') {
+          throw new Error('Served session row is invalid');
+        }
+        const rowValue: unknown = JSON.parse(record.source_row_json);
+        if (!isSerializedUsageRow(rowValue)) {
+          throw new Error('Served session row is invalid');
+        }
+        for (const pullRequest of rowValue.source?.vcs?.pullRequests ?? []) {
+          const link = sessionPullRequestLink(pullRequest.url);
+          if (link === null) {
+            continue;
+          }
+          const key = JSON.stringify([link.host, link.repository, link.number]);
+          if (links.has(key)) {
+            continue;
+          }
+          if (links.size >= limit) {
+            truncated = true;
+            continue;
+          }
+          links.set(key, link);
+        }
+      }
+      return { links: [...links.values()], revision, scannedRows, truncated };
+    });
+  };
 
   const readServedReportSupport = (
     database: ServedRevisionReadDatabase,
@@ -1249,6 +1365,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
     queryCurrentServedReportRevision,
     queryCurrentServedReportRevisionBootstrap,
     queryCurrentServedLocalProjectSources,
+    queryServedSessionPullRequestLinks,
     queryServedReportRevisionSupport,
     queryServedReportRevisionRows,
     queryServedReportRevisionSlices,

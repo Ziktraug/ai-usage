@@ -77,13 +77,24 @@ was deleted.
 | [0039](0039-continuous-campaign-exploration.md) | Preserve context during continuous campaign exploration | 2026-10-04 | Accepted; amends 0004 and 0012; amended by 0041 |
 | [0040](0040-rounds-are-derived-once-from-native-turns.md) | Rounds are derived once from native turns; child links carry their evidence | 2026-09-09 | Accepted; applies 0017 and 0018 to session detail |
 | [0041](0041-exact-detail-selection-with-continuous-exploration.md) | Resolve exact detail identity independently from bounded scroll restoration | 2026-10-04 | Accepted; amends 0039 |
-| [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Accepted; to be superseded by 0049 with PR #67; preservation rule in 0075 |
-| [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Accepted; to be superseded by 0049 with PR #67; preservation rule in 0075 |
+| [0042](0042-local-session-distillation.md) | Keep generated session accounts local and distinct from accepted Memory | 2026-10-04 | Accepted; feature superseded by 0049; preservation rule in 0075 |
+| [0043](0043-memory-library-and-explicit-local-promotion.md) | Browse Session accounts and explicitly promote local knowledge | 2026-10-06 | Accepted; feature superseded by 0049; publication restrictions remain; preservation rule in 0075 |
 | [0044](0044-local-checkout-observation.md) | Observe local Checkouts and bind them to Projects without review | 2026-10-07 | Accepted; amends 0024, 0042; amended 2026-10-24; Memory-kernel half retires in plan 120 phase B |
 | [0045](0045-desktop-quota-feed-through-the-cli.md) | Desktop consumers read quota through the CLI JSON feed | 2026-10-12 | Accepted; extends 0009 |
 | [0046](0046-hourly-fleet-freshness-heartbeat.md) | Row freshness heartbeats are recorded at hour granularity | 2026-10-17 | Accepted; extends 0009 |
 | [0047](0047-codex-compressed-rollout-discovery.md) | Discover Codex rollouts in their compressed and archived forms | 2026-10-17 | Accepted; extends 0009, 0016; amended 2026-10-24 |
 | [0048](0048-publication-settle-window.md) | Source-woken publications settle behind the collection burst | 2026-10-20 | Accepted; extends 0009 |
+| [0049](0049-retire-session-distillation.md) | Retire Session distillation while preserving Memory and stored evidence | 2026-10-21 | Accepted; supersedes feature clauses of 0042 and 0043; preserves 0044 |
+| [0050](0050-work-attention-facts-outside-the-served-revision.md) | Work attention facts stay outside the served revision | 2026-10-21 | Accepted; extends 0009, 0016, 0017; amended by 0056 |
+| [0051](0051-engine-read-only-github-and-checkout-observation.md) | Engine-side read-only GitHub and checkout status observation | 2026-10-21 | Accepted; extends 0009, 0044 |
+| [0052](0052-review-routing-qualification.md) | Review routing qualification: declared executors, observed availability, observed quota | 2026-10-21 | Accepted; extends 0009, 0016, 0017, 0045 |
+| [0053](0053-first-read-only-review-attempt-launched-by-the-engine.md) | First read-only review attempt launched by the engine | 2026-10-22 | Accepted; extends 0009, 0050, 0052; amended by 0055 |
+| [0054](0054-jira-issue-facts-explicit-keys-read-only.md) | Jira issue facts: explicit keys only, read through the operator's CLI session, never written | 2026-10-22 | Accepted; extends 0009, 0050, 0051 |
+| [0055](0055-review-attempt-reservation-scope-and-harness-guarantee.md) | Review attempt reservation, reviewed scope and harness guarantee | 2026-10-22 | Accepted; amends 0053 |
+| [0056](0056-native-records-may-settle-a-derived-wait.md) | A dated native record may settle a derived wait; an inference may not | 2026-10-22 | Accepted; amends 0050 |
+| [0057](0057-observed-account-identity-and-on-demand-routing-qualification.md) | Observed account identity, models of one account, on-demand routing qualification | 2026-10-22 | Accepted; extends 0009, 0052, 0053 |
+| [0058](0058-harness-sessions-read-work-context-through-one-bounded-projection.md) | Harness sessions read Work context through one bounded, read-only projection (CLI and local MCP) | 2026-10-22 | Accepted; extends 0009, 0027, 0050, 0056 |
+| [0059](0059-work-roots-for-harnesses-that-declare-no-wait.md) | Work shows sessions of a harness that declares no wait, with their attention not observable | 2026-10-22 | Accepted; extends 0016, 0050, 0056 |
 | [0070](0070-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011; amended 2026-10-24 |
 | [0071](0071-effect-4.md) | Run every Effect surface on Effect 4 | 2026-10-22 | Accepted; amends 0001; amended 2026-10-24 |
 | [0072](0072-sveltekit-3-official-bun-adapter.md) | Run SvelteKit 3 on the official `@sveltejs/adapter-bun` | 2026-10-22 | Accepted; amends 0011; amended 2026-10-24 |

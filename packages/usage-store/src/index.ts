@@ -61,8 +61,19 @@ import type {
 import type { SkillObservationRefusalCounts } from '@ai-usage/report-core/skill-observation-evidence';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
+import type {
+  CheckoutStatusObservation,
+  JiraIssueObservation,
+  PullRequestObservation,
+} from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
+import {
+  CLAUDE_DESKTOP_SESSION_TABLES,
+  claudeDesktopSessionSchemaSql,
+  createClaudeDesktopSessionStore,
+} from './claude-desktop-session-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import { createExecutorObservationStore } from './executor-observation-store';
 import {
   inspectPrivateStoreForConfirmation,
   type PrivateStoreConfirmationIdentity,
@@ -70,6 +81,7 @@ import {
   revalidatePrivateStoreForConfirmation,
 } from './private-storage';
 import { createProviderQuotaStore, MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-store';
+import { createReviewAttemptStore, migrateReviewAttemptSchema, REVIEW_ATTEMPT_TABLES } from './review-attempt-store';
 import type { ServedRevisionQueryKind } from './served-query-catalog';
 import { createServedReportStore } from './served-report-store';
 import {
@@ -80,6 +92,8 @@ import {
   servedReportSchemaSql,
 } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
+import { createWorkFactStore, WORK_FACT_TABLES, type WorkFactSourceId, workFactSchemaSql } from './work-fact-store';
+import { createWorkSessionJoinStore } from './work-session-join';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -716,6 +730,140 @@ export interface CurrentServedLocalProjectSources {
   readonly sources: readonly ServedLocalProjectSource[];
 }
 
+/** A pull request a local Session explicitly recorded (`source.vcs.pullRequests`), never inferred. */
+export interface ServedSessionPullRequestLink {
+  readonly host: string;
+  readonly number: number;
+  /** `owner/name` as read from the pull request URL. */
+  readonly repository: string;
+  readonly url: string;
+}
+
+export interface QueryServedSessionPullRequestLinksInput extends Omit<QueryServedReportRevisionInput, 'revision'> {
+  /** Distinct links returned at most; more sets `truncated`. Default 200, maximum 500. */
+  readonly limit?: number;
+  /** Only Sessions active within this many days before `now`. Default 14, maximum 365. */
+  readonly sinceDays?: number;
+}
+
+export interface ServedSessionPullRequestLinks {
+  readonly links: readonly ServedSessionPullRequestLink[];
+  readonly revision: string;
+  readonly scannedRows: number;
+  readonly truncated: boolean;
+}
+
+export interface ImportPullRequestObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parsePullRequestObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface ImportCheckoutStatusObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parseCheckoutStatusObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface ImportJiraIssueObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parseJiraIssueObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface WorkFactImportResult {
+  readonly inserted: number;
+  /** Rows removed by the per-identity retention after this batch. */
+  readonly pruned: number;
+  readonly rejected: number;
+  /** Rows whose identity and observation time were already stored. */
+  readonly unchanged: number;
+}
+
+export interface RecordWorkFactRunInput {
+  readonly dbPath: string;
+  readonly disabled: boolean;
+  readonly failed: number;
+  readonly machineId: string;
+  readonly message: string | null;
+  readonly observed: number;
+  readonly ranAt: Date | string;
+  readonly sourceId: WorkFactSourceId;
+}
+
+export interface WorkFactRunState {
+  readonly disabled: boolean;
+  readonly failed: number;
+  readonly machineId: string;
+  readonly message: string | null;
+  readonly observed: number;
+  readonly ranAt: PullRequestObservation['observedAt'];
+  readonly sourceId: WorkFactSourceId;
+}
+
+export interface QueryWorkFactRunStatesInput {
+  readonly dbPath: string;
+}
+
+export interface WorkFactRunStates {
+  readonly runs: readonly WorkFactRunState[];
+  readonly skipped: number;
+}
+
+export interface QueryLatestPullRequestObservationsInput {
+  readonly dbPath: string;
+  /** Distinct pull requests returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly links?: readonly { readonly host: string; readonly number: number; readonly repository: string }[];
+  readonly machineId?: string;
+}
+
+/** Per pull request: the latest observation of any outcome, and the latest successful one when it differs. */
+export interface LatestPullRequestObservations {
+  readonly items: readonly {
+    readonly latest: PullRequestObservation;
+    readonly latestObserved: PullRequestObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
+export interface QueryLatestJiraIssueObservationsInput {
+  readonly dbPath: string;
+  /** Issue keys as Jira writes them (`XLB-2090`); no filter means every stored key. */
+  readonly keys?: readonly string[];
+  /** Distinct issues returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly machineId?: string;
+}
+
+/** Per issue: the latest observation of any outcome, and the latest successful one when it differs. */
+export interface LatestJiraIssueObservations {
+  readonly items: readonly {
+    readonly latest: JiraIssueObservation;
+    readonly latestObserved: JiraIssueObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
+export interface QueryLatestCheckoutStatusObservationsInput {
+  readonly dbPath: string;
+  /** Distinct checkout paths returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly machineId?: string;
+  readonly paths?: readonly string[];
+}
+
+export interface LatestCheckoutStatusObservations {
+  readonly items: readonly {
+    readonly latest: CheckoutStatusObservation;
+    readonly latestObserved: CheckoutStatusObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
 export interface RetainServedReportRevisionsInput {
   readonly abandonedAfterMs?: number;
   readonly dbPath: string;
@@ -1298,6 +1446,28 @@ const migrate = (db: SqliteDatabase): boolean => {
       .query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'skill_observation_collection_state'")
       .get() === null;
   schemaChanged ||= skillObservationsMissing || skillObservationCollectionStateMissing;
+  // Executor observations (review routing) are additive under the same user_version; presence is
+  // again the only signal.
+  const executorObservationsMissing =
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'executor_observations'").get() === null;
+  schemaChanged ||= executorObservationsMissing;
+  // The external and local fact family (ADR 0051) is additive under the same user_version; the
+  // tables' absence is again the only signal.
+  const workFactTablesMissing = WORK_FACT_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= workFactTablesMissing;
+  // Same precedent for the Claude Desktop session family (ADR 0050): additive tables under the
+  // current user_version, so presence is the only signal.
+  const claudeDesktopSessionsMissing = CLAUDE_DESKTOP_SESSION_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= claudeDesktopSessionsMissing;
+  // Review attempts (ADR 0053) follow the same additive rule: presence of the table is the signal.
+  const reviewAttemptsMissing = REVIEW_ATTEMPT_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= reviewAttemptsMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1572,7 +1742,44 @@ const migrate = (db: SqliteDatabase): boolean => {
       ON skill_observations(tier, observed_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_skill_observations_machine
       ON skill_observations(machine_id, observed_at, id);
+
+    -- Executor observations: which harness CLIs a machine can run and whether they are signed
+    -- in, observed by the executors.capabilities source. Retention is 10 rows per machine and
+    -- harness, enforced on import. auth_evidence is a bounded, credential-free classification.
+    CREATE TABLE IF NOT EXISTS executor_observations (
+      id INTEGER PRIMARY KEY,
+      machine_id TEXT NOT NULL,
+      harness TEXT NOT NULL CHECK (harness IN ('claude-code', 'codex')),
+      observed_at TEXT NOT NULL,
+      binary_path TEXT,
+      version TEXT,
+      auth_state TEXT NOT NULL CHECK (auth_state IN ('logged-in', 'logged-out', 'unknown')),
+      auth_evidence TEXT NOT NULL,
+      auth_method TEXT,
+      account_fingerprint TEXT,
+      outcome TEXT NOT NULL CHECK (outcome IN ('observed', 'unavailable', 'timeout', 'invalid'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_executor_observations_latest
+      ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
+    db.exec(workFactSchemaSql);
+    // Additive under the same user_version: a store that created executor_observations before the
+    // sign-in method was recorded gains the nullable column; older rows read as "no method".
+    const executorColumns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
+    if (!executorColumns.some((column) => column.name === 'auth_method')) {
+      schemaChanged = true;
+      db.exec('ALTER TABLE executor_observations ADD COLUMN auth_method TEXT');
+    }
+    // Same rule for the account fingerprint (ADR 0057): older rows read as "no identity reported".
+    if (!executorColumns.some((column) => column.name === 'account_fingerprint')) {
+      schemaChanged = true;
+      db.exec('ALTER TABLE executor_observations ADD COLUMN account_fingerprint TEXT');
+    }
+    // Review attempts gain the reservation, scope and guarantee columns and the reserving unique
+    // index additively (ADR 0055); the helper reports whether it changed anything.
+    if (migrateReviewAttemptSchema(db)) {
+      schemaChanged = true;
+    }
     if (skillObservationCollectionStateMissing) {
       // Stores written by the first implementation have observation/session
       // rows but no durable producer bound. The lost answer cannot be
@@ -1603,6 +1810,14 @@ const migrate = (db: SqliteDatabase): boolean => {
       if (changed > 0) {
         db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
       }
+    }
+    db.exec(claudeDesktopSessionSchemaSql);
+    // Additive under the same user_version (ADR 0056): a claude_desktop_sessions table created before
+    // the harness's message time was recorded gains the nullable column; older rows read as "none".
+    const desktopColumns = db.query('PRAGMA table_info(claude_desktop_sessions)').all() as Array<{ name?: unknown }>;
+    if (!desktopColumns.some((column) => column.name === 'latest_user_frame_at')) {
+      schemaChanged = true;
+      db.exec('ALTER TABLE claude_desktop_sessions ADD COLUMN latest_user_frame_at TEXT');
     }
     db.exec(replicationOutboxSchemaSql);
     db.exec(servedReportSchemaSql);
@@ -3957,6 +4172,7 @@ export const {
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
   queryCurrentServedLocalProjectSources,
+  queryServedSessionPullRequestLinks,
   queryServedReportRevisionSupport,
   queryServedReportRevisionRows,
   queryServedReportRevisionSlices,
@@ -4189,6 +4405,54 @@ export const { importSkillObservations, querySkillObservations, retainSkillObser
   },
 );
 
+export const { importExecutorObservations, queryLatestExecutorObservations } = createExecutorObservationStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export const {
+  importCheckoutStatusObservations,
+  importJiraIssueObservations,
+  importPullRequestObservations,
+  queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
+  queryLatestPullRequestObservations,
+  queryWorkFactRunStates,
+  recordWorkFactRun,
+} = createWorkFactStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export { WORK_FACT_SOURCE_IDS, type WorkFactSourceId } from './work-fact-store';
+export const {
+  countClaudeDesktopSessions,
+  importClaudeDesktopSessions,
+  queryClaudeDesktopCollectionState,
+  queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
+} = createClaudeDesktopSessionStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export const {
+  markReviewAttemptsLost,
+  queryReviewAttempts,
+  queryReviewTargetResolution,
+  releaseReviewAttemptReservation,
+  requestReviewAttempt,
+  transitionReviewAttempt,
+} = createReviewAttemptStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,
 ): Effect.Effect<UsageMergeBundle, UsageStoreError> =>
@@ -4225,4 +4489,10 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   updateUsageMachineLabel: (input) => updateUsageMachineLabel({ ...input, dbPath: input.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
+});
+
+export const { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds } = createWorkSessionJoinStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
 });

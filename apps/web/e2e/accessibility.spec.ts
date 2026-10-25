@@ -20,6 +20,7 @@ const CUSTOM_RANGE_URL_PATTERN = /[?&]range=\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{
 const EDITED_FROM_RANGE_URL_PATTERN = /[?&]range=2026-05-20\.\./;
 const MAX_PROJECT_EXPANSIONS = 12;
 const NAVIGATION_DESTINATIONS = [
+  'Work',
   'Overview',
   'Sessions',
   'Analysis',
@@ -30,6 +31,7 @@ const NAVIGATION_DESTINATIONS = [
   'Sources',
 ] as const;
 const routes = [
+  { heading: 'Work', path: '/work' },
   { heading: 'Usage overview', path: '/' },
   { heading: 'Memory', path: '/memory' },
   { heading: 'Projects', path: '/projects' },
@@ -241,13 +243,13 @@ for (const route of routes) {
     const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
     await expect(mobileNavigation).toBeVisible();
     await expect(desktopNavigation).toHaveCount(0);
-    for (const label of ['Overview', 'Sessions', 'Analysis']) {
+    for (const label of ['Work', 'Overview', 'Sessions', 'Analysis']) {
       await expect(mobileNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });
     await manageButton.click();
     const manageNavigation = page.getByRole('navigation', { name: 'Manage destinations' });
-    for (const label of ['Memory', 'Projects', 'Skills', 'Sync', 'Sources']) {
+    for (const label of ['Campaigns', 'Memory', 'Projects', 'Skills', 'Sync', 'Sources']) {
       await expect(manageNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     await page.keyboard.press('Escape');
@@ -1150,7 +1152,8 @@ test('the skills worktable has no detectable accessibility violations', async ({
 test('Memory has no detectable accessibility violations', async ({ page }) => {
   await page.goto('/memory');
   await waitForHydratedNavigation(page);
-  await expect(page.getByRole('heading', { level: 2, name: 'Your session library starts here' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Knowledge', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { level: 2, name: 'Search accepted Memory' })).toBeVisible();
   await expectNoAxeViolations(page);
 
   await page.getByRole('link', { name: 'Pending review', exact: true }).click();

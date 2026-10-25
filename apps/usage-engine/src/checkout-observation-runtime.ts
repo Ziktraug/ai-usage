@@ -43,8 +43,8 @@ const runStoreQuery = <Value>(
  * Local Checkout observation: the producer that turns the usage store's local
  * Project sources (this machine, one absolute path each) into Device-local
  * Checkouts in the Memory store, resolves each new Checkout against known
- * Repositories, and acknowledges the Project-source mapping that session
- * distillation discovery requires.
+ * Repositories, and acknowledges each published Project source against its
+ * stable Project and Checkout identities.
  *
  * The projection publishes a linked worktree under its parent repository's
  * project source id while keeping the physical path, so each run observes the
@@ -117,7 +117,7 @@ const repositoryDisplayName = (candidate: RepositoryResolutionCandidate): string
 const usableLocalPath = (value: string): boolean => path.isAbsolute(value) && !value.includes('\0');
 
 interface CanonicalCheckoutPlan {
-  /** Published ids, verbatim, that decode to this path; distillation discovery matches them exactly. */
+  /** Published ids, verbatim, that decode to this path and retain their exact identity mapping. */
   readonly mappingIds: Set<string>;
   readonly source: ServedLocalProjectSource;
 }
