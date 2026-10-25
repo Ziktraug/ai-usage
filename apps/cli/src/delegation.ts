@@ -419,6 +419,19 @@ const resultSummary = (view: DelegationJobView): string => {
   return result.excerpt === null ? result.kind : `${result.kind} — ${result.excerpt}`;
 };
 
+/** The scope as the engine froze it, object ids whole: what was reviewed, whatever the refs point to now. */
+const frozenScopeLine = (scope: DelegationJobView['frozenScope']): string => {
+  if (scope === null) {
+    return 'Scope frozen: none recorded';
+  }
+  const commits = `${scope.commitCount} commit${scope.commitCount === 1 ? '' : 's'}`;
+  if (scope.kind === 'commit') {
+    const base = scope.base === 'empty-tree' ? 'the empty tree' : 'its first parent';
+    return `Scope frozen: commit ${scope.headSha} (${scope.headRef}) against ${base} ${scope.baseSha} · ${commits}`;
+  }
+  return `Scope frozen: range ${scope.baseSha}..${scope.headSha} (${scope.baseRef ?? 'base'}..${scope.headRef}) · ${commits}`;
+};
+
 /** One job as the operator reads it: state and route first, then the three facts, each on its own line. */
 export const renderDelegationJob = (view: DelegationJobView, json: boolean): string => {
   if (json) {
@@ -432,6 +445,7 @@ export const renderDelegationJob = (view: DelegationJobView, json: boolean): str
         ? `commit ${view.request.scope.commit}`
         : `range ${view.request.scope.base}..${view.request.scope.head}`
     }`,
+    frozenScopeLine(view.frozenScope),
     `Route: ${routeSummary(view)}`,
     `Executed: ${view.status.executed}`,
     `Verified: ${view.status.verified}`,

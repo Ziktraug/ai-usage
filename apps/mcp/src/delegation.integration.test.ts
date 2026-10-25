@@ -302,7 +302,10 @@ test('a job started by one client is found, with its result, by another client a
       contentRole: 'retrieved-data',
       job: {
         cancelRequestedAt: null,
+        // The scope frozen at admission travels with the result, apart from the requested `HEAD`.
+        frozenScope: { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40), kind: 'commit' },
         jobId,
+        request: { scope: { commit: 'HEAD', kind: 'commit' } },
         result: { kind: 'review', summary: 'The lock refactor holds.' },
         state: 'finished',
         status: { accepted: 'pending', executed: 'succeeded', verified: 'not-verified' },
@@ -319,6 +322,11 @@ test('a job started by one client is found, with its result, by another client a
     expect(engine.launches()).toBe(1);
     const list = await b.callTool('delegation.list', {});
     expect((list.structuredContent as { jobs: unknown[] }).jobs).toHaveLength(1);
+    expect((list.structuredContent as { jobs: unknown[] }).jobs[0]).toMatchObject({
+      frozenScope: { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40), kind: 'commit' },
+      jobId,
+      scope: { base: null, head: 'HEAD', kind: 'commit' },
+    });
 
     // B verifies the result; the record carries B's declared name as a label and the forced author.
     const evaluated = await b.callTool('delegation.evaluate', {

@@ -135,10 +135,46 @@ export const evidenceText = (evidence: readonly { readonly line: number | null; 
     ? 'no evidence path'
     : evidence.map((entry) => (entry.line === null ? entry.path : `${entry.path}:${entry.line}`)).join(', ');
 
-export const truncationText = (truncation: DelegationJobViewWire['truncation']): string | null =>
-  truncation.findings + truncation.evidence + truncation.notReviewed + truncation.evaluations === 0
+const TRUNCATION_LABELS: Readonly<Record<keyof DelegationJobViewWire['truncation'], string>> = {
+  automatedChecks: 'automated check(s)',
+  characters: 'character(s) of free text',
+  constraints: 'constraint(s)',
+  criteria: 'criteria',
+  evaluationChecks: 'evaluation check line(s)',
+  evaluations: 'evaluation(s)',
+  evidence: 'evidence entr(y/ies)',
+  findings: 'finding(s)',
+  guaranteeControls: 'guarantee control(s)',
+  guaranteeLimits: 'guarantee limit(s)',
+  notReviewed: 'not-reviewed entr(y/ies)',
+  rationale: 'rationale line(s)',
+  resultChecks: 'result check(s)',
+  resultLimits: 'result limit(s)',
+  scopeFiles: 'scope file(s)',
+};
+
+/** What the server left out of this view to stay under its byte bound, counter by counter; `null` when nothing was. */
+export const truncationText = (truncation: DelegationJobViewWire['truncation']): string | null => {
+  const omitted = (Object.keys(TRUNCATION_LABELS) as (keyof typeof TRUNCATION_LABELS)[])
+    .filter((key) => truncation[key] > 0)
+    .map((key) => `${truncation[key]} ${TRUNCATION_LABELS[key]}`);
+  return omitted.length === 0
     ? null
-    : `Cut for this view: ${truncation.findings} finding(s), ${truncation.evidence} evidence entr(y/ies), ${truncation.notReviewed} not-reviewed entr(y/ies) and ${truncation.evaluations} evaluation(s) omitted; the store keeps the whole result and every evaluation.`;
+    : `Cut for this view: ${omitted.join(', ')} omitted; the store keeps the whole record.`;
+};
+
+/** The scope as the engine froze it when the job was admitted: what was reviewed, whatever the refs point to now. */
+export const frozenScopeText = (scope: DelegationJobViewWire['frozenScope']): string => {
+  if (scope === null) {
+    return 'Frozen scope: none recorded; nothing was resolved for this job.';
+  }
+  const commits = `${scope.commitCount} commit${scope.commitCount === 1 ? '' : 's'}`;
+  if (scope.kind === 'commit') {
+    const base = scope.base === 'empty-tree' ? 'the empty tree' : 'its first parent';
+    return `Frozen scope: commit ${scope.headSha} (${scope.headRef}) against ${base} ${scope.baseSha}; ${commits}.`;
+  }
+  return `Frozen scope: range ${scope.baseSha}..${scope.headSha} (${scope.baseRef ?? 'base'}..${scope.headRef}); ${commits}.`;
+};
 
 const formatBytes = (bytes: number): string =>
   bytes < 1024 ? `${bytes} B` : `${Math.round((bytes / 1024) * 10) / 10} KB`;

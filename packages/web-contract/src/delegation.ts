@@ -629,6 +629,8 @@ export const delegationJobViewSchema = pipe(
     executedScope: nullable(delegationExecutedScopeSchema),
     /** The failure recorded on a job that was not refused; a refusal's message is under `refusal`. */
     failure: nullable(pipe(string(), maxLength(DELEGATION_JOB_BOUNDS.maxFailureReasonCharacters))),
+    /** The scope the engine froze when it admitted the job, as recorded; `null` when none was. Never re-resolved. */
+    frozenScope: nullable(delegationFrozenScopeSchema),
     guarantee: nullable(delegationGuaranteeSchema),
     heartbeatAgeSeconds: nullable(countSchema),
     jobId: uuidSchema,
@@ -700,12 +702,23 @@ export const delegationJobViewSchema = pipe(
       executed: picklist(delegationExecutionStatuses),
       verified: picklist(['not-verified', ...DELEGATION_VERIFICATION_VERDICTS]),
     }),
-    /** What the byte bound cut from this view; the store keeps the whole result and every evaluation. */
+    /** What the byte bound cut from this view, entry counts per list and free-text characters; the store keeps the whole record. */
     truncation: strictObject({
+      automatedChecks: countSchema,
+      characters: countSchema,
+      constraints: countSchema,
+      criteria: countSchema,
+      evaluationChecks: countSchema,
       evaluations: countSchema,
       evidence: countSchema,
       findings: countSchema,
+      guaranteeControls: countSchema,
+      guaranteeLimits: countSchema,
       notReviewed: countSchema,
+      rationale: countSchema,
+      resultChecks: countSchema,
+      resultLimits: countSchema,
+      scopeFiles: countSchema,
     }),
     updatedAt: timestampSchema,
     usage: nullable(delegationUsageSchema),

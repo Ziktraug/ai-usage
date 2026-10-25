@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { DELEGATION_BOUNDS } from '@ai-usage/report-core/delegation-vocabulary';
+import type { DelegationEvaluation, DelegationJob } from '@ai-usage/report-core/delegation-contracts';
+import { DELEGATION_JOB_BOUNDS, projectDelegationJobView } from '@ai-usage/report-core/delegation-job';
+import { DELEGATION_RESULT_BOUNDS } from '@ai-usage/report-core/delegation-result';
+import { DELEGATION_BOUNDS, DELEGATION_ROUTE_BLOCKERS } from '@ai-usage/report-core/delegation-vocabulary';
 import { parse, safeParse } from 'valibot';
 import {
   DELEGATION_WEB_BOUNDS,
@@ -10,6 +13,7 @@ import {
   delegationContract,
   delegationJobInputSchema,
   delegationJobsInputSchema,
+  delegationJobViewSchema,
   delegationRecordAcceptanceInputSchema,
   delegationSaveSettingsInputSchema,
   delegationSimulateInputSchema,
@@ -199,6 +203,15 @@ const jobFixture: DelegationJobViewWire = {
     workingTreeDirty: false,
   },
   failure: null,
+  frozenScope: {
+    base: 'first-parent',
+    baseRef: null,
+    baseSha: 'c'.repeat(40),
+    commitCount: 1,
+    headRef: 'HEAD',
+    headSha: 'b'.repeat(40),
+    kind: 'commit',
+  },
   guarantee: {
     cliVersion: '2.1.306',
     controls: ['tools Read Grep Glob', 'safe mode', 'no MCP servers'],
@@ -272,7 +285,23 @@ const jobFixture: DelegationJobViewWire = {
   startedAt: '2026-10-25T09:00:02.000Z',
   state: 'finished',
   status: { accepted: 'pending', executed: 'succeeded', verified: 'not-verified' },
-  truncation: { evaluations: 0, evidence: 0, findings: 0, notReviewed: 0 },
+  truncation: {
+    automatedChecks: 0,
+    characters: 0,
+    constraints: 0,
+    criteria: 0,
+    evaluationChecks: 0,
+    evaluations: 0,
+    evidence: 0,
+    findings: 0,
+    guaranteeControls: 0,
+    guaranteeLimits: 0,
+    notReviewed: 0,
+    rationale: 0,
+    resultChecks: 0,
+    resultLimits: 0,
+    scopeFiles: 0,
+  },
   updatedAt: '2026-10-25T09:05:01.000Z',
   usage: { cachedInputTokens: null, inputTokens: 12_000, outputTokens: 900, source: 'harness-reported' },
 };
@@ -345,6 +374,460 @@ const qualificationFixture: DelegationQualificationWire = {
     selectorContract: 'delegation-selection/1',
   },
 };
+
+// ---------------------------------------------------------------------------------------------
+// Views projected by report-core through this schema: under the byte bound and accepted as is
+// ---------------------------------------------------------------------------------------------
+
+const NOW = '2026-10-25T09:00:00.000Z';
+const LATER = '2026-10-25T09:05:00.000Z';
+const FILL = '語';
+const fill = (length: number, char = FILL): string => char.repeat(length);
+const lines = (count: number, length: number, char = FILL): string[] =>
+  Array.from({ length: count }, (_, index) => `${index} ${fill(length - 3, char)}`);
+const bytesOf = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+/** A lone surrogate: what a cut inside a pair would leave behind. */
+const LONE_SURROGATE = /\p{Cs}/u;
+
+const frozenCommit = {
+  base: 'first-parent',
+  baseRef: null,
+  baseSha: 'b'.repeat(40),
+  commitCount: 1,
+  headRef: 'HEAD',
+  headSha: 'a'.repeat(40),
+  kind: 'commit',
+} as const;
+
+const EXCLUDED_ROUTE_ID = 'declared:["machine-a","codex","work"]';
+
+/** A finished review as the store returns it; the projection under test turns it into the view. */
+const storedJob: DelegationJob = {
+  accountScope: 'personal',
+  action: 'read-only-review',
+  attemptNumber: 1,
+  cancelRequestedAt: null,
+  checkoutPath: '/home/operator/src/ai-usage',
+  context: 'personal',
+  effort: 'high',
+  endedAt: LATER,
+  executedScope: {
+    fileCount: 1,
+    files: [{ coverage: 'complete', path: 'src/a.ts' }],
+    includedBytes: 10,
+    patchBytes: 10,
+    patchSha256: 'd'.repeat(64),
+    truncated: false,
+    workingTreeDirty: false,
+  },
+  executorHarness: 'claude-code',
+  exitCode: 0,
+  failureReason: null,
+  guarantee: {
+    cliVersion: '2.1.306',
+    controls: ['tools Read Grep Glob'],
+    effort: 'high',
+    harness: 'claude-code',
+    limits: ['managed policy hooks still run'],
+    model: 'claude-opus-4-1',
+  },
+  harnessVersion: '2.1.306',
+  idempotencyKey: 'caller:session-1:review-7',
+  jobId: JOB_ID,
+  launchMarker: '2f6a0c4e-5d7b-4a9c-8e1f-2b3c4d5e6f70',
+  machineId: 'machine-a',
+  modelRequested: 'claude-opus-4-1',
+  modelResolved: 'claude-opus-4-1-20260901',
+  nativeSessionId: 'native-1',
+  pid: 4242,
+  poolId: ROUTE_ID,
+  qualification: {
+    admissibleRouteIds: [ROUTE_ID],
+    appliedRules: [],
+    assumptions: [],
+    checkout: { admittedBy: '/home/operator/src', path: '/home/operator/src/ai-usage', projectLabel: 'ai-usage' },
+    checkoutFacts: null,
+    omittedRoutes: 0,
+    outcome: 'routes-available',
+    purpose: 'delegation',
+    qualificationId: QUALIFICATION_ID,
+    qualifiedAt: NOW,
+    refusal: null,
+    request: { action: 'read-only-review', digest: 'd'.repeat(64), taskCategory: 'correctness' },
+    routes: [
+      {
+        accountScope: 'work',
+        admissible: false,
+        advantages: [],
+        blockers: ['forbidden-by-rule'],
+        context: 'professional',
+        effort: null,
+        exclusions: ['forbidden by rule no-personal-on-work'],
+        harness: 'codex',
+        identity: null,
+        label: 'Codex (work)',
+        limits: [],
+        liveJobsInPool: 0,
+        missing: [],
+        model: 'gpt-5-codex',
+        orderHint: null,
+        poolId: EXCLUDED_ROUTE_ID,
+        provider: 'openai',
+        quota: [],
+        requirements: { identityEvidence: 'declared', maxAttempts: 2, maxConcurrent: 1, reservePercent: 20 },
+        routeId: EXCLUDED_ROUTE_ID,
+      },
+    ],
+    schemaVersion: 1,
+    scope: frozenCommit,
+    validUntil: LATER,
+    versions: {
+      catalogRevision: '0123456789abcdef',
+      policyRevision: 'fedcba9876543210',
+      qualifier: 'delegation-qualifier/1',
+      selectorContract: 'delegation-selection/1',
+    },
+  },
+  qualificationId: QUALIFICATION_ID,
+  refusalReason: null,
+  releasedAt: null,
+  releaseEvidence: null,
+  request: {
+    action: 'read-only-review',
+    checkout: { path: '/home/operator/src/ai-usage' },
+    constraints: ['do not run tests'],
+    criteria: ['every public function is covered'],
+    objective: 'Review the delegation contract for bounds.',
+    schemaVersion: 1,
+    scope: { commit: 'HEAD', kind: 'commit' },
+    taskCategory: 'correctness',
+  },
+  requestDigest: 'd'.repeat(64),
+  requestedAt: NOW,
+  result: {
+    excerpt: null,
+    kind: 'review',
+    review: {
+      checks: ['bun test'],
+      coverage: { notReviewed: [], reviewed: 'src/a.ts' },
+      findings: [
+        {
+          detail: 'The limit is not bounded before the read.',
+          evidence: [{ line: 12, path: 'src/a.ts' }],
+          severity: 'major',
+          title: 'Unbounded list limit',
+        },
+      ],
+      limits: [],
+      summary: 'One major finding; the rest holds.',
+    },
+  },
+  retryOf: null,
+  routeId: ROUTE_ID,
+  scope: frozenCommit,
+  selection: {
+    confidence: 0.7,
+    kind: 'choice',
+    qualificationId: QUALIFICATION_ID,
+    rationale: ['recommended for correctness'],
+    routeId: ROUTE_ID,
+    selectorVersion: 'calling-model/claude-code',
+  },
+  startedAt: NOW,
+  state: 'finished',
+  taskCategory: 'correctness',
+  traceVersion: 1,
+  updatedAt: LATER,
+  usage: { cachedInputTokens: null, inputTokens: 12_000, outputTokens: 900, source: 'harness-reported' },
+};
+
+const storedEvaluation = (
+  index: number,
+  kind: DelegationEvaluation['kind'],
+  author: DelegationEvaluation['author'],
+  char = FILL,
+): DelegationEvaluation => ({
+  author,
+  authorLabel: fill(DELEGATION_JOB_BOUNDS.maxTextCharacters, char),
+  checks: lines(DELEGATION_BOUNDS.maxEvaluationChecks, DELEGATION_BOUNDS.maxEvaluationCheckCharacters, char),
+  evaluationId: `${kind}-${author}-${String(index).padStart(2, '0')}`,
+  jobId: JOB_ID,
+  kind,
+  note: fill(DELEGATION_BOUNDS.maxEvaluationNoteCharacters, char),
+  recordedAt: new Date(Date.parse(LATER) + index * 60_000).toISOString(),
+  verdict: kind === 'verification' ? 'confirmed' : 'taken-over',
+});
+
+/** Sixty-one evaluations at every bound: the three lists full, plus the operator's acceptance. */
+const crowd = (char = FILL): DelegationEvaluation[] => [
+  ...Array.from({ length: 20 }, (_, index) => storedEvaluation(index, 'verification', 'calling-model', char)),
+  ...Array.from({ length: 20 }, (_, index) => storedEvaluation(index, 'acceptance', 'calling-model', char)),
+  ...Array.from({ length: 20 }, (_, index) => storedEvaluation(index, 'verification', 'automated-check', char)),
+  storedEvaluation(-1, 'acceptance', 'operator', char),
+];
+
+const maximalReview = (char = FILL): NonNullable<DelegationJob['result']> => ({
+  excerpt: fill(DELEGATION_RESULT_BOUNDS.maxExcerptCharacters, char),
+  kind: 'review',
+  review: {
+    checks: lines(DELEGATION_RESULT_BOUNDS.maxChecks, DELEGATION_RESULT_BOUNDS.maxCheckCharacters, char),
+    coverage: {
+      notReviewed: lines(
+        DELEGATION_RESULT_BOUNDS.maxCoverageNotReviewed,
+        DELEGATION_RESULT_BOUNDS.maxCoverageNotReviewedCharacters,
+        char,
+      ),
+      reviewed: fill(DELEGATION_RESULT_BOUNDS.maxCoverageReviewedCharacters, char),
+    },
+    findings: Array.from({ length: DELEGATION_RESULT_BOUNDS.maxFindings }, (_, index) => ({
+      detail: fill(DELEGATION_RESULT_BOUNDS.maxDetailCharacters, char),
+      evidence: Array.from({ length: DELEGATION_RESULT_BOUNDS.maxEvidencePerFinding }, (_entry, line) => ({
+        line: line + 1,
+        path: `${index}/${fill(DELEGATION_RESULT_BOUNDS.maxPathCharacters - 4, char)}`,
+      })),
+      severity: 'major' as const,
+      title: `${index} ${fill(DELEGATION_RESULT_BOUNDS.maxTitleCharacters - 3, char)}`,
+    })),
+    limits: lines(DELEGATION_RESULT_BOUNDS.maxLimits, DELEGATION_RESULT_BOUNDS.maxLimitCharacters, char),
+    summary: fill(DELEGATION_RESULT_BOUNDS.maxSummaryCharacters, char),
+  },
+});
+
+const maximalScope = (char = FILL): NonNullable<DelegationJob['executedScope']> => ({
+  fileCount: DELEGATION_JOB_BOUNDS.maxScopeFiles,
+  files: Array.from({ length: DELEGATION_JOB_BOUNDS.maxScopeFiles }, (_, index) => ({
+    coverage: 'complete' as const,
+    path: `${index}/${fill(DELEGATION_JOB_BOUNDS.maxScopePathCharacters - 4, char)}`,
+  })),
+  includedBytes: 1,
+  patchBytes: 2,
+  patchSha256: 'c'.repeat(64),
+  truncated: true,
+  workingTreeDirty: true,
+});
+
+/** Every list and free text of the stored job at its bound, filled with `char` wherever the parsers admit text. */
+const maximalJob = (char = FILL): DelegationJob => {
+  const text = (length: number): string => fill(length, char);
+  const excluded = storedJob.qualification?.routes[0];
+  if (storedJob.qualification === null || excluded === undefined) {
+    throw new Error('the stored job fixture needs a qualification with an excluded route');
+  }
+  const checkoutPath = `/${text(DELEGATION_BOUNDS.maxCheckoutPathCharacters - 1)}`;
+  return {
+    ...storedJob,
+    accountScope: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    checkoutPath,
+    effort: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    executedScope: maximalScope(char),
+    failureReason: text(DELEGATION_JOB_BOUNDS.maxFailureReasonCharacters),
+    guarantee: {
+      cliVersion: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+      controls: lines(
+        DELEGATION_JOB_BOUNDS.maxGuaranteeEntries,
+        DELEGATION_JOB_BOUNDS.maxGuaranteeEntryCharacters,
+        char,
+      ),
+      effort: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+      harness: 'claude-code',
+      limits: lines(DELEGATION_JOB_BOUNDS.maxGuaranteeEntries, DELEGATION_JOB_BOUNDS.maxGuaranteeEntryCharacters, char),
+      model: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    },
+    harnessVersion: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    machineId: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    modelRequested: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    modelResolved: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    poolId: text(DELEGATION_JOB_BOUNDS.maxIdCharacters),
+    qualification: {
+      ...storedJob.qualification,
+      admissibleRouteIds: [],
+      routes: Array.from({ length: 32 }, (_, index) => ({
+        ...excluded,
+        blockers: [...DELEGATION_ROUTE_BLOCKERS],
+        routeId: `${index} ${text(DELEGATION_JOB_BOUNDS.maxIdCharacters - 3)}`,
+      })),
+    },
+    request: {
+      ...storedJob.request,
+      checkout: { path: checkoutPath },
+      constraints: lines(DELEGATION_BOUNDS.maxConstraints, DELEGATION_BOUNDS.maxConstraintCharacters, char),
+      criteria: lines(DELEGATION_BOUNDS.maxCriteria, DELEGATION_BOUNDS.maxCriterionCharacters, char),
+      objective: text(DELEGATION_BOUNDS.maxObjectiveCharacters),
+      scope: {
+        base: 'r'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+        head: 'h'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+        kind: 'range',
+      },
+    },
+    result: maximalReview(char),
+    retryOf: '1e2d3c4b-5a69-4788-9a1b-2c3d4e5f6a7b',
+    routeId: text(DELEGATION_JOB_BOUNDS.maxIdCharacters),
+    scope: {
+      base: 'range-base',
+      baseRef: 'r'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+      baseSha: 'b'.repeat(64),
+      commitCount: Number.MAX_SAFE_INTEGER,
+      headRef: 'h'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+      headSha: 'a'.repeat(64),
+      kind: 'range',
+    },
+    selection: {
+      confidence: 1,
+      kind: 'choice',
+      qualificationId: QUALIFICATION_ID,
+      rationale: lines(
+        DELEGATION_BOUNDS.maxSelectionRationale,
+        DELEGATION_BOUNDS.maxSelectionRationaleCharacters,
+        char,
+      ),
+      routeId: text(256),
+      selectorVersion: text(DELEGATION_BOUNDS.maxSelectorVersionCharacters),
+    },
+    usage: {
+      cachedInputTokens: Number.MAX_SAFE_INTEGER,
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      outputTokens: Number.MAX_SAFE_INTEGER,
+      source: 'harness-reported',
+    },
+  };
+};
+
+const projected = (job: DelegationJob, evaluations: readonly DelegationEvaluation[] = []) => {
+  const view = projectDelegationJobView(job, evaluations, { now: LATER });
+  const parsed = safeParse(delegationJobViewSchema, view);
+  return {
+    bytes: bytesOf(view),
+    issues: parsed.success ? [] : parsed.issues.map((issue) => issue.message),
+    view,
+  };
+};
+
+/** How a projected view stands against the schema and the byte bound; `ACCEPTED` when it passes both. */
+const acceptance = (result: ReturnType<typeof projected>): { issues: string[]; overBy: number } => ({
+  issues: result.issues,
+  overBy: Math.max(0, result.bytes - DELEGATION_BOUNDS.maxJobViewBytes),
+});
+const ACCEPTED: ReturnType<typeof acceptance> = { issues: [], overBy: 0 };
+
+describe('job views projected by report-core through the web schema', () => {
+  test('many long scope paths with realistic coverages: accepted, with scope files omitted and the findings kept', () => {
+    // 64 files with 943-character paths (components of at most 200 characters), twelve criteria and
+    // twelve constraints of 200 characters: what the producer admits, over the bound before any finding.
+    const component = (seed: string): string => `${seed}${'x'.repeat(200 - seed.length)}`;
+    const longPath = (index: number): string => {
+      const parts = [component(`dir${index}-a`), component('b'), component('c'), component('d')];
+      return `${parts.join('/')}/${`f${index}`.padEnd(943 - parts.join('/').length - 1, 'y')}`;
+    };
+    const coverages = ['complete', 'partial', 'omitted', 'binary'] as const;
+    const wide: DelegationJob = {
+      ...storedJob,
+      executedScope: {
+        fileCount: 64,
+        files: Array.from({ length: 64 }, (_, index) => ({
+          coverage: coverages[index % coverages.length] ?? 'complete',
+          path: longPath(index),
+        })),
+        includedBytes: 60_000,
+        patchBytes: 120_000,
+        patchSha256: 'c'.repeat(64),
+        truncated: true,
+        workingTreeDirty: false,
+      },
+      request: { ...storedJob.request, constraints: lines(12, 203, 'k'), criteria: lines(12, 203, 'c') },
+    };
+    const result = projected(wide);
+    expect(acceptance(result)).toEqual(ACCEPTED);
+    expect(result.view.truncation.scopeFiles).toBeGreaterThan(0);
+    expect(result.view.truncation.findings).toBe(0);
+    expect(result.view.result?.findings).toHaveLength(1);
+    expect(result.view.executedScope?.fileCount).toBe(64);
+  });
+
+  test('multibyte paths, findings and notes are accepted under the bound', () => {
+    const emoji = '😀';
+    const multibyte: DelegationJob = {
+      ...storedJob,
+      executedScope: maximalScope(),
+      request: { ...storedJob.request, objective: fill(DELEGATION_BOUNDS.maxObjectiveCharacters / 2, emoji) },
+      result: maximalReview(),
+    };
+    const result = projected(multibyte, crowd());
+    expect(acceptance(result)).toEqual(ACCEPTED);
+    expect(result.view.truncation.scopeFiles).toBeGreaterThan(0);
+    expect(LONE_SURROGATE.test(result.view.request.objective)).toBe(false);
+  });
+
+  test('a job without a result, and a refused decision with no frozen scope, are accepted', () => {
+    const bare = projected({ ...maximalJob(), result: null }, crowd());
+    expect(acceptance(bare)).toEqual(ACCEPTED);
+    expect(bare.view.result).toBeNull();
+    expect(bare.view.frozenScope).toEqual(maximalJob().scope);
+    const refused = projected({
+      ...storedJob,
+      failureReason: 'No route is admissible for this request.',
+      refusalReason: 'no-admissible-route',
+      result: null,
+      routeId: null,
+      scope: null,
+      startedAt: null,
+      state: 'refused',
+    });
+    expect(acceptance(refused)).toEqual(ACCEPTED);
+    expect(refused.view.frozenScope).toBeNull();
+    expect(refused.view.refusal).toEqual({
+      message: 'No route is admissible for this request.',
+      reason: 'no-admissible-route',
+    });
+  });
+
+  test('large evaluations with every finding already removed are accepted; the operator acceptance stays listed', () => {
+    const heavy: DelegationJob = { ...storedJob, executedScope: null, result: maximalReview() };
+    const result = projected(heavy, crowd());
+    expect(acceptance(result)).toEqual(ACCEPTED);
+    expect(result.view.truncation.findings).toBe(DELEGATION_RESULT_BOUNDS.maxFindings);
+    expect(result.view.result?.findings).toEqual([]);
+    expect(result.view.evaluations.acceptance?.evaluationId).toBe('acceptance-operator--1');
+    expect(result.view.status).toEqual({ accepted: 'taken-over', executed: 'succeeded', verified: 'confirmed' });
+  });
+
+  test('the frozen scope travels in the view for a commit and for a base..head range', () => {
+    const commit = projected(storedJob);
+    expect(acceptance(commit)).toEqual(ACCEPTED);
+    expect(commit.view.frozenScope).toEqual(frozenCommit);
+    expect(commit.view.request.scope).toEqual({ commit: 'HEAD', kind: 'commit' });
+    const frozenRange = {
+      base: 'range-base',
+      baseRef: 'main',
+      baseSha: 'e'.repeat(40),
+      commitCount: 3,
+      headRef: 'release/1.2',
+      headSha: 'f'.repeat(40),
+      kind: 'range',
+    } as const;
+    const range = projected({
+      ...storedJob,
+      request: { ...storedJob.request, scope: { base: 'main', head: 'release/1.2', kind: 'range' } },
+      scope: frozenRange,
+    });
+    expect(acceptance(range)).toEqual(ACCEPTED);
+    expect(range.view.frozenScope).toEqual(frozenRange);
+  });
+
+  test('the maximal record is accepted, its notes within the note bound, and fifty such views pass the list schema', () => {
+    const result = projected(maximalJob(), crowd());
+    expect(acceptance(result)).toEqual(ACCEPTED);
+    expect(result.view.truncation.characters).toBeGreaterThan(0);
+    expect(result.view.truncation.scopeFiles).toBe(DELEGATION_JOB_BOUNDS.maxScopeFiles);
+    expect(result.view.notes.every((note) => note.length <= DELEGATION_WEB_BOUNDS.maxNoteCharacters)).toBe(true);
+    // The Web list carries whole views; its byte bound is the server's (`maxJobsListBytes`, counted in `omitted`).
+    const list = parseDelegationJobsOutput({
+      jobs: Array.from({ length: DELEGATION_WEB_BOUNDS.maxListLimit }, () => result.view),
+      omitted: 0,
+      skipped: 0,
+    });
+    expect(list.jobs).toHaveLength(DELEGATION_WEB_BOUNDS.maxListLimit);
+  });
+});
 
 describe('delegation web contract', () => {
   test('accepts the settings, job and qualification fixtures unchanged', () => {

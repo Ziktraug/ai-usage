@@ -422,6 +422,11 @@ describe('runDelegationCliCommand', () => {
     expect(status).toContain('Executed: succeeded\nVerified: not-verified\nAccepted: pending');
     expect(status).toContain('Result: review — One major finding. (1 finding)');
     expect(status).toContain('A finished execution is not a verification');
+    // The requested revision stays as given; the scope frozen when the job was admitted is shown whole.
+    expect(status).toContain(`Request: read-only-review · correctness · ${CHECKOUT} · commit HEAD`);
+    expect(status).toContain(
+      `Scope frozen: commit ${'a'.repeat(40)} (HEAD) against its first parent ${'b'.repeat(40)} · 1 commit`,
+    );
     const list = await runDelegationCliCommand(
       { _tag: 'DelegationList', args: { json: false, limit: null, live: false } },
       deps,
@@ -435,7 +440,17 @@ describe('runDelegationCliCommand', () => {
     );
     expect(JSON.parse(live)).toMatchObject({ jobs: [], skipped: 0, truncated: false });
     const json = await runDelegationCliCommand({ _tag: 'DelegationStatus', args: { jobId: JOB_ID, json: true } }, deps);
-    expect(JSON.parse(json)).toMatchObject({ jobId: JOB_ID, status: { accepted: 'pending', executed: 'succeeded' } });
+    expect(JSON.parse(json)).toMatchObject({
+      frozenScope: scope,
+      jobId: JOB_ID,
+      request: { scope: { commit: 'HEAD', kind: 'commit' } },
+      status: { accepted: 'pending', executed: 'succeeded' },
+    });
+    const listJson = await runDelegationCliCommand(
+      { _tag: 'DelegationList', args: { json: true, limit: null, live: false } },
+      deps,
+    );
+    expect(JSON.parse(listJson)).toMatchObject({ jobs: [{ frozenScope: scope, jobId: JOB_ID }] });
     expect(deps.connects).toBe(0);
     await expect(
       runDelegationCliCommand(

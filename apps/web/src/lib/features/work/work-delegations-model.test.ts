@@ -8,6 +8,7 @@ import {
   evaluationLine,
   evidenceText,
   executedLabel,
+  frozenScopeText,
   guaranteeText,
   isEndedDelegationState,
   refusalOrFailureText,
@@ -22,6 +23,25 @@ import {
 } from './work-delegations-model';
 
 const QUALIFICATION_ID = '7d3a9b2c-1e4f-4a5b-8c6d-9e0f1a2b3c4d';
+
+/** Every truncation counter at zero: the view carried the whole record. */
+const NO_CUT = {
+  automatedChecks: 0,
+  characters: 0,
+  constraints: 0,
+  criteria: 0,
+  evaluationChecks: 0,
+  evaluations: 0,
+  evidence: 0,
+  findings: 0,
+  guaranteeControls: 0,
+  guaranteeLimits: 0,
+  notReviewed: 0,
+  rationale: 0,
+  resultChecks: 0,
+  resultLimits: 0,
+  scopeFiles: 0,
+} as const;
 
 describe('Work delegations model', () => {
   test('names states, ended-ness and the three facts in words', () => {
@@ -74,6 +94,45 @@ describe('Work delegations model', () => {
     expect(scopeLine({ base: 'main', head: 'feature/x', kind: 'range' })).toBe('range main..feature/x');
   });
 
+  test('states the frozen scope with its object ids whole, and says when none was recorded', () => {
+    expect(
+      frozenScopeText({
+        base: 'first-parent',
+        baseRef: null,
+        baseSha: 'b'.repeat(40),
+        commitCount: 1,
+        headRef: 'HEAD',
+        headSha: 'a'.repeat(40),
+        kind: 'commit',
+      }),
+    ).toBe(`Frozen scope: commit ${'a'.repeat(40)} (HEAD) against its first parent ${'b'.repeat(40)}; 1 commit.`);
+    expect(
+      frozenScopeText({
+        base: 'empty-tree',
+        baseRef: null,
+        baseSha: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+        commitCount: 1,
+        headRef: 'HEAD',
+        headSha: 'a'.repeat(40),
+        kind: 'commit',
+      }),
+    ).toBe(
+      `Frozen scope: commit ${'a'.repeat(40)} (HEAD) against the empty tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904; 1 commit.`,
+    );
+    expect(
+      frozenScopeText({
+        base: 'range-base',
+        baseRef: 'main',
+        baseSha: 'e'.repeat(40),
+        commitCount: 3,
+        headRef: 'release/1.2',
+        headSha: 'f'.repeat(40),
+        kind: 'range',
+      }),
+    ).toBe(`Frozen scope: range ${'e'.repeat(40)}..${'f'.repeat(40)} (main..release/1.2); 3 commits.`);
+    expect(frozenScopeText(null)).toBe('Frozen scope: none recorded; nothing was resolved for this job.');
+  });
+
   test('keeps refusal and failure apart and labels the selector statement and the harness usage', () => {
     expect(
       refusalOrFailureText({ failure: null, refusal: { message: 'No route.', reason: 'no-admissible-route' } }),
@@ -120,12 +179,12 @@ describe('Work delegations model', () => {
       ]),
     ).toBe('a.ts:12, b.ts');
     expect(evidenceText([])).toBe('no evidence path');
-    expect(truncationText({ evaluations: 0, evidence: 0, findings: 0, notReviewed: 0 })).toBeNull();
-    expect(truncationText({ evaluations: 0, evidence: 2, findings: 1, notReviewed: 0 })).toContain(
-      '1 finding(s), 2 evidence',
+    expect(truncationText(NO_CUT)).toBeNull();
+    expect(truncationText({ ...NO_CUT, evidence: 2, findings: 1 })).toBe(
+      'Cut for this view: 2 evidence entr(y/ies), 1 finding(s) omitted; the store keeps the whole record.',
     );
-    expect(truncationText({ evaluations: 3, evidence: 0, findings: 0, notReviewed: 0 })).toContain(
-      '3 evaluation(s) omitted',
+    expect(truncationText({ ...NO_CUT, characters: 400, evaluations: 3, scopeFiles: 12 })).toBe(
+      'Cut for this view: 400 character(s) of free text, 3 evaluation(s), 12 scope file(s) omitted; the store keeps the whole record.',
     );
     expect(
       guaranteeText({

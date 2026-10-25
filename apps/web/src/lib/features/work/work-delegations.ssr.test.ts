@@ -87,6 +87,15 @@ const job = (overrides: Partial<DelegationJobViewWire>): DelegationJobViewWire =
     workingTreeDirty: false,
   },
   failure: null,
+  frozenScope: {
+    base: 'first-parent',
+    baseRef: null,
+    baseSha: 'c'.repeat(40),
+    commitCount: 1,
+    headRef: 'HEAD',
+    headSha: 'b'.repeat(40),
+    kind: 'commit',
+  },
   guarantee: {
     cliVersion: '2.1.306',
     controls: ['tools Read Grep Glob', 'safe mode', 'no MCP servers'],
@@ -160,7 +169,23 @@ const job = (overrides: Partial<DelegationJobViewWire>): DelegationJobViewWire =
   startedAt: '2026-10-25T09:20:02.000Z',
   state: 'finished',
   status: { accepted: 'pending', executed: 'succeeded', verified: 'not-verified' },
-  truncation: { evaluations: 0, evidence: 0, findings: 0, notReviewed: 0 },
+  truncation: {
+    automatedChecks: 0,
+    characters: 0,
+    constraints: 0,
+    criteria: 0,
+    evaluationChecks: 0,
+    evaluations: 0,
+    evidence: 0,
+    findings: 0,
+    guaranteeControls: 0,
+    guaranteeLimits: 0,
+    notReviewed: 0,
+    rationale: 0,
+    resultChecks: 0,
+    resultLimits: 0,
+    scopeFiles: 0,
+  },
   updatedAt: '2026-10-25T09:25:01.000Z',
   usage: { cachedInputTokens: 2000, inputTokens: 18_000, outputTokens: 1200, source: 'harness-reported' },
   ...overrides,
@@ -170,6 +195,7 @@ const refused = job({
   endedAt: '2026-10-25T09:30:00.000Z',
   evaluations: { acceptance: null, acceptances: [], automatedChecks: [], verifications: [] },
   executedScope: null,
+  frozenScope: null,
   guarantee: null,
   jobId: REFUSED_ID,
   qualification: null,
@@ -232,6 +258,12 @@ describe('Work delegations Svelte rendering', () => {
       'Claude Code · personal (personal) · model requested claude-opus-4-1, resolved: unknown · effort high.',
     );
     expect(body).toContain('Checkout /home/operator/src/ai-usage · commit HEAD · attempt 1.');
+    // The requested revision stays as given; the scope frozen at admission is shown with whole object ids.
+    expect(body).toContain(
+      `Frozen scope: commit ${'b'.repeat(40)} (HEAD) against its first parent ${'c'.repeat(40)}; 1 commit.`,
+    );
+    expect(body).toContain('Frozen scope: none recorded; nothing was resolved for this job.');
+    expect(body.match(/data-work-delegation-frozen-scope/gu)).toHaveLength(4);
     expect(body).toContain('Objective: Review the store migration for data loss.');
     expect(body).toContain('Requested 40 min ago (');
     expect(body).toContain('· started 39 min ago (');

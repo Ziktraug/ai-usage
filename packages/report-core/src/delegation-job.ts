@@ -849,6 +849,13 @@ export interface DelegationJobView {
   readonly executedScope: DelegationExecutedScope | null;
   /** The failure recorded on a job that was not refused; a refusal's message is under `refusal`. */
   readonly failure: string | null;
+  /**
+   * The scope as the engine froze it when the job was admitted: the object ids actually reviewed,
+   * read from the record and never re-resolved, so a client reading after `HEAD` moved still knows
+   * which revision the result is about. `null` when nothing was frozen (refused before the scope
+   * was resolved) or when an older record carries none; it is never rebuilt from the checkout.
+   */
+  readonly frozenScope: FrozenDelegationScope | null;
   readonly guarantee: DelegationHarnessGuarantee | null;
   /** Seconds since the last heartbeat or transition, for live states; `null` otherwise. */
   readonly heartbeatAgeSeconds: number | null;
@@ -915,18 +922,55 @@ export interface DelegationJobView {
     readonly verified: 'not-verified' | DelegationVerificationVerdict;
   };
   /**
-   * What the byte bound cut from this view; the store keeps the whole result and every evaluation.
-   * `evaluations` counts the verifications and acceptances not listed: the oldest go first, and the
-   * latest operator acceptance is always listed.
+   * What the byte bound cut from this view; the store keeps the whole record. Every counter is a
+   * number of entries omitted from the list it names, except `characters`, the characters cut from
+   * the free texts (objective, summary, excerpt, coverage, notes, failure and refusal messages,
+   * finding details) as a last resort. `evaluations` counts the verifications and acceptances not
+   * listed: the oldest go first, and the latest operator acceptance is always listed. Excluded routes
+   * left out of the qualification summary are counted in `qualification.omittedExcludedRoutes`.
    */
   readonly truncation: {
+    readonly automatedChecks: number;
+    readonly characters: number;
+    readonly constraints: number;
+    readonly criteria: number;
+    /** Check lines omitted from the listed evaluations. */
+    readonly evaluationChecks: number;
     readonly evaluations: number;
     readonly evidence: number;
     readonly findings: number;
+    readonly guaranteeControls: number;
+    readonly guaranteeLimits: number;
     readonly notReviewed: number;
+    /** Rationale lines omitted from a selector's choice. */
+    readonly rationale: number;
+    readonly resultChecks: number;
+    readonly resultLimits: number;
+    /** Scope files omitted from `executedScope.files`; `executedScope.fileCount` keeps the total. */
+    readonly scopeFiles: number;
   };
   readonly updatedAt: string;
   readonly usage: DelegationUsage | null;
+}
+
+/**
+ * Thrown when no admissible reduction brings a view under `DELEGATION_BOUNDS.maxJobViewBytes`. By
+ * construction it is unreachable for a record the parsers admit (every list can be emptied and every
+ * free text cut to one character; what is left is bounded by the field bounds well under the
+ * budget), so reaching it means the field bounds changed without this projection.
+ */
+export class DelegationJobViewBoundError extends Error {
+  readonly bytes: number;
+  readonly jobId: string;
+  override readonly name = 'DelegationJobViewBoundError';
+
+  constructor(jobId: string, bytes: number) {
+    super(
+      `The delegation job view stays at ${bytes} bytes after every reduction, over its bound of ${DELEGATION_BOUNDS.maxJobViewBytes}.`,
+    );
+    this.bytes = bytes;
+    this.jobId = jobId;
+  }
 }
 
 export interface DelegationJobViewOptions {
@@ -945,31 +989,18 @@ const EXECUTION_STATUS: Readonly<Record<DelegationJobState, DelegationExecutionS
   starting: 'running',
 };
 
-const toEvaluationView = (evaluation: DelegationEvaluation): DelegationEvaluationView => ({
-  author: evaluation.author,
-  authorLabel: evaluation.authorLabel,
-  checks: [...evaluation.checks],
-  evaluationId: evaluation.evaluationId,
-  kind: evaluation.kind,
-  note: evaluation.note,
-  recordedAt: evaluation.recordedAt,
-  verdict: evaluation.verdict,
-});
-
 const newestFirst = (evaluations: readonly DelegationEvaluation[]): DelegationEvaluation[] =>
   [...evaluations].sort(
     (left, right) =>
       right.recordedAt.localeCompare(left.recordedAt) || right.evaluationId.localeCompare(left.evaluationId),
   );
 
-/** The qualification snapshot is opaque to the job parser, so the view reads it defensively. */
-const summarizeQualification = (qualification: DelegationQualification | null): DelegationJobView['qualification'] => {
-  if (qualification === null) {
-    return null;
-  }
-  const raw = qualification as unknown as Record<string, unknown>;
-  const versions = isRecord(raw.versions) ? raw.versions : {};
-  const routes = Array.isArray(raw.routes) ? raw.routes : [];
+type ExcludedRouteSummary = NonNullable<DelegationJobView['qualification']>['excludedRoutes'][number];
+
+/** The excluded routes a qualification snapshot carries, read defensively: the snapshot is opaque to the job parser. */
+const excludedRoutesOf = (qualification: DelegationQualification | null): readonly ExcludedRouteSummary[] => {
+  const raw = qualification as unknown as Record<string, unknown> | null;
+  const routes = raw !== null && Array.isArray(raw.routes) ? raw.routes : [];
   const excluded: { blockers: DelegationRouteBlocker[]; routeId: string }[] = [];
   for (const route of routes) {
     if (!(isRecord(route) && route.admissible === false && typeof route.routeId === 'string')) {
@@ -980,12 +1011,31 @@ const summarizeQualification = (qualification: DelegationQualification | null): 
       : [];
     excluded.push({ blockers, routeId: route.routeId });
   }
+  return excluded;
+};
+
+/**
+ * The qualification snapshot is opaque to the job parser, so the view reads it defensively. `shown`
+ * is how many excluded routes the view lists; the rest are counted in `omittedExcludedRoutes`.
+ */
+const summarizeQualification = (
+  qualification: DelegationQualification | null,
+  shown: number,
+): DelegationJobView['qualification'] => {
+  if (qualification === null) {
+    return null;
+  }
+  const raw = qualification as unknown as Record<string, unknown>;
+  const versions = isRecord(raw.versions) ? raw.versions : {};
+  const excluded = excludedRoutesOf(qualification);
   const admissibleIds = Array.isArray(raw.admissibleRouteIds) ? raw.admissibleRouteIds.length : 0;
   return {
     admissibleRoutes: admissibleIds,
     catalogRevision: typeof versions.catalogRevision === 'string' ? versions.catalogRevision : null,
-    excludedRoutes: excluded.slice(0, DELEGATION_JOB_BOUNDS.maxExcludedRoutesInView),
-    omittedExcludedRoutes: Math.max(0, excluded.length - DELEGATION_JOB_BOUNDS.maxExcludedRoutesInView),
+    excludedRoutes: excluded
+      .slice(0, shown)
+      .map((route) => ({ blockers: [...route.blockers], routeId: route.routeId })),
+    omittedExcludedRoutes: Math.max(0, excluded.length - shown),
     policyRevision: typeof versions.policyRevision === 'string' ? versions.policyRevision : null,
     qualificationId: qualification.qualificationId,
     qualifiedAt: typeof raw.qualifiedAt === 'string' ? raw.qualifiedAt : null,
@@ -1000,57 +1050,82 @@ const heartbeatAge = (job: DelegationJob, now: string): number | null => {
   return Number.isFinite(age) ? Math.max(0, Math.floor(age)) : null;
 };
 
-/** What the view has cut so far, in the order it cuts: the oldest verifications, the older acceptances, then the result. */
+/**
+ * Every cut the byte bound may make, as entries dropped from the list each names, plus `prose`,
+ * the character cap applied to every free text (`null` = none). Lists are cut from their tail
+ * (evaluations: the oldest first; evidence: from the last kept finding backwards).
+ */
 interface ViewTrim {
   readonly acceptances: number;
+  readonly automatedChecks: number;
+  readonly constraints: number;
+  readonly criteria: number;
+  readonly evaluationChecks: number;
   readonly evidence: number;
+  readonly excludedRoutes: number;
   readonly findings: number;
+  readonly guaranteeControls: number;
+  readonly guaranteeLimits: number;
   readonly notReviewed: number;
+  readonly prose: number | null;
+  readonly rationale: number;
+  readonly resultChecks: number;
+  readonly resultLimits: number;
+  readonly scopeFiles: number;
   readonly verifications: number;
 }
 
-const trimmedResult = (result: DelegationJobResult | null, trim: ViewTrim): DelegationJobView['result'] => {
-  if (result === null) {
+const NO_TRIM: ViewTrim = {
+  acceptances: 0,
+  automatedChecks: 0,
+  constraints: 0,
+  criteria: 0,
+  evaluationChecks: 0,
+  evidence: 0,
+  excludedRoutes: 0,
+  findings: 0,
+  guaranteeControls: 0,
+  guaranteeLimits: 0,
+  notReviewed: 0,
+  prose: null,
+  rationale: 0,
+  resultChecks: 0,
+  resultLimits: 0,
+  scopeFiles: 0,
+  verifications: 0,
+};
+
+const isHighSurrogate = (unit: number): boolean => unit >= 0xd8_00 && unit <= 0xdb_ff;
+
+/**
+ * The first `limit` UTF-16 units of a text, never splitting a surrogate pair (the pair is kept when
+ * the cut falls inside it). Shrinking `limit` never lengthens the result, which the search relies on.
+ */
+const clipText = (text: string, limit: number): string => {
+  if (text.length <= limit) {
+    return text;
+  }
+  return text.slice(0, isHighSurrogate(text.charCodeAt(limit - 1)) ? limit + 1 : limit);
+};
+
+const dropTail = <Entry>(entries: readonly Entry[], count: number): Entry[] =>
+  entries.slice(0, Math.max(0, entries.length - count));
+
+/** The selection as the view carries it: a choice with `rationaleCut` lines dropped, an abstention with its note as `prose` keeps it. */
+const trimmedSelection = (
+  selection: DelegationSelection | null,
+  rationaleCut: number,
+  prose: (text: string) => string,
+): DelegationSelection | null => {
+  if (selection === null) {
     return null;
   }
-  const review = result.review;
-  if (review === null) {
-    return {
-      checks: [],
-      coverage: null,
-      excerpt: result.excerpt,
-      findings: [],
-      kind: result.kind,
-      limits: [],
-      summary: null,
-    };
-  }
-  const findings = review.findings.slice(0, review.findings.length - trim.findings).map((finding) => ({
-    ...finding,
-    evidence: [...finding.evidence],
-  }));
-  // Evidence goes from the last finding backwards, one entry at a time.
-  let evidenceToDrop = trim.evidence;
-  for (let index = findings.length - 1; index >= 0 && evidenceToDrop > 0; index--) {
-    const finding = findings[index];
-    if (finding === undefined) {
-      continue;
-    }
-    const drop = Math.min(evidenceToDrop, finding.evidence.length);
-    finding.evidence.splice(finding.evidence.length - drop, drop);
-    evidenceToDrop -= drop;
+  if (selection.kind === 'abstain') {
+    return { ...selection, ...(selection.note === undefined ? {} : { note: prose(selection.note) }) };
   }
   return {
-    checks: [...review.checks],
-    coverage: {
-      notReviewed: review.coverage.notReviewed.slice(0, review.coverage.notReviewed.length - trim.notReviewed),
-      reviewed: review.coverage.reviewed,
-    },
-    excerpt: result.excerpt,
-    findings,
-    kind: result.kind,
-    limits: [...review.limits],
-    summary: review.summary,
+    ...selection,
+    ...(selection.rationale === undefined ? {} : { rationale: dropTail(selection.rationale, rationaleCut) }),
   };
 };
 
@@ -1059,7 +1134,26 @@ const EXECUTION_NOT_VERIFICATION =
 const VERIFICATION_NOT_ACCEPTANCE =
   'A verification is not an acceptance: only an acceptance records that the result was accepted, rejected or taken over.';
 
-const buildNotes = (job: DelegationJob, trim: DelegationJobView['truncation']): string[] => {
+/** Short labels, so that the omission note stays within an edge's note bound with every counter set. */
+const TRUNCATION_LABELS: Readonly<Record<keyof DelegationJobView['truncation'], string>> = {
+  automatedChecks: 'automated checks',
+  characters: 'free-text characters',
+  constraints: 'constraints',
+  criteria: 'criteria',
+  evaluationChecks: 'evaluation checks',
+  evaluations: 'evaluations',
+  evidence: 'evidence entries',
+  findings: 'findings',
+  guaranteeControls: 'guarantee controls',
+  guaranteeLimits: 'guarantee limits',
+  notReviewed: 'notReviewed entries',
+  rationale: 'rationale lines',
+  resultChecks: 'result checks',
+  resultLimits: 'result limits',
+  scopeFiles: 'scope files',
+};
+
+const buildNotes = (job: DelegationJob, truncation: DelegationJobView['truncation']): string[] => {
   const notes = [EXECUTION_NOT_VERIFICATION, VERIFICATION_NOT_ACCEPTANCE];
   if (job.state === 'lost') {
     notes.push(
@@ -1076,9 +1170,12 @@ const buildNotes = (job: DelegationJob, trim: DelegationJobView['truncation']): 
   if (job.executedScope?.truncated === true) {
     notes.push('The worker received a truncated patch; its review is partial by construction.');
   }
-  if (trim.findings > 0 || trim.evidence > 0 || trim.notReviewed > 0 || trim.evaluations > 0) {
+  const omitted = (Object.keys(TRUNCATION_LABELS) as (keyof typeof TRUNCATION_LABELS)[])
+    .filter((key) => truncation[key] > 0)
+    .map((key) => `${truncation[key]} ${TRUNCATION_LABELS[key]}`);
+  if (omitted.length > 0) {
     notes.push(
-      `This view omitted ${trim.findings} finding(s), ${trim.evidence} evidence entr(y/ies), ${trim.notReviewed} notReviewed entr(y/ies) and ${trim.evaluations} evaluation(s) to stay under its byte bound; the store keeps the whole result and every evaluation.`,
+      `This view omitted ${omitted.join(', ')} to stay under its byte bound; the store keeps the whole record.`,
     );
   }
   return notes;
@@ -1087,13 +1184,53 @@ const buildNotes = (job: DelegationJob, trim: DelegationJobView['truncation']): 
 const viewBytes = (view: DelegationJobView): number => new TextEncoder().encode(JSON.stringify(view)).byteLength;
 
 /**
+ * The smallest cut in `0..available` after which `fits` holds, or `available` when none does. Valid
+ * because a larger cut never produces a larger view, so `fits` is monotone in the cut.
+ */
+const smallestFittingCut = (available: number, fits: (cut: number) => boolean): number => {
+  if (available <= 0 || fits(0)) {
+    return 0;
+  }
+  if (!fits(available)) {
+    return available;
+  }
+  let low = 0;
+  let high = available;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (fits(middle)) {
+      high = middle;
+    } else {
+      low = middle;
+    }
+  }
+  return high;
+};
+
+/** The listed evaluations at a trim, in list order; the checks cut counts down from the last listed one. */
+interface ListedEvaluations {
+  readonly acceptances: readonly DelegationEvaluation[];
+  readonly automatedChecks: readonly DelegationEvaluation[];
+  readonly verifications: readonly DelegationEvaluation[];
+}
+
+/**
  * The bounded, JSON-safe view of one job with its evaluations, as MCP, CLI and Web read it. The
  * status separates what ran (`executed`), what a verification found (`verified`) and what the
- * operator recorded (`accepted`); the notes say that no step implies the next. The JSON is kept
- * under `DELEGATION_BOUNDS.maxJobViewBytes` by cutting, in this order, the oldest verifications,
- * the older acceptances (never the latest operator acceptance), then findings, evidence and the
- * `notReviewed` list, counting every cut in `truncation`. The status facts are read from every
- * evaluation, listed or not.
+ * operator recorded (`accepted`); the notes say that no step implies the next. The status facts are
+ * read from every evaluation, listed or not.
+ *
+ * The serialized JSON is kept under `DELEGATION_BOUNDS.maxJobViewBytes` (UTF-8 bytes) on every
+ * return path. The reductions apply in this order, each only as far as needed and each counted in
+ * `truncation`: scope files, criteria, constraints, excluded routes, rationale lines, the oldest
+ * verifications, the older acceptances (never the latest operator acceptance), the oldest automated
+ * checks, findings, evidence, the `notReviewed` list, result checks and limits, guarantee controls
+ * and limits, the check lines of the listed evaluations, and last the free texts (cut to a common
+ * character cap, never below one character). Identifiers, object ids, timestamps, the state, the
+ * frozen scope, the refusal and failure facts and the route are never cut. What remains once every
+ * list is empty and every free text is one character is bounded by the field bounds (for well-formed
+ * strings, at most three UTF-8 bytes per UTF-16 unit) well under the budget, so the final guard is
+ * unreachable for a record the parsers admit.
  */
 export const projectDelegationJobView = (
   job: DelegationJob,
@@ -1116,62 +1253,182 @@ export const projectDelegationJobView = (
     otherAcceptances.length,
     DELEGATION_JOB_BOUNDS.maxEvaluationsInView - (operatorAcceptance === null ? 0 : 1),
   );
+  const automatedSlots = Math.min(automated.length, DELEGATION_JOB_BOUNDS.maxEvaluationsInView);
+  const excludedRouteSlots = Math.min(
+    excludedRoutesOf(job.qualification).length,
+    DELEGATION_JOB_BOUNDS.maxExcludedRoutesInView,
+  );
   const latestVerification = verifications[0];
-  const refusal =
-    job.refusalReason === null
-      ? null
-      : { message: job.failureReason ?? `refused: ${job.refusalReason}`, reason: job.refusalReason };
   const review = job.result?.review ?? null;
-  const build = (cut: ViewTrim): DelegationJobView => {
-    const shownVerifications = verifications.slice(0, Math.max(0, verificationSlots - cut.verifications));
-    const keptOthers = new Set(otherAcceptances.slice(0, Math.max(0, otherAcceptanceSlots - cut.acceptances)));
-    const shownAcceptances = acceptances.filter(
-      (evaluation) => evaluation === operatorAcceptance || keptOthers.has(evaluation),
-    );
-    const truncation: DelegationJobView['truncation'] = {
-      evaluations: verifications.length - shownVerifications.length + (acceptances.length - shownAcceptances.length),
-      evidence: cut.evidence,
-      findings: cut.findings,
-      notReviewed: cut.notReviewed,
+  const heartbeatAgeSeconds = heartbeatAge(job, options.now);
+
+  const listedAt = (trim: ViewTrim): ListedEvaluations => {
+    const keptOthers = new Set(dropTail(otherAcceptances.slice(0, otherAcceptanceSlots), trim.acceptances));
+    return {
+      acceptances: acceptances.filter((evaluation) => evaluation === operatorAcceptance || keptOthers.has(evaluation)),
+      automatedChecks: dropTail(automated.slice(0, automatedSlots), trim.automatedChecks),
+      verifications: dropTail(verifications.slice(0, verificationSlots), trim.verifications),
     };
+  };
+  const keptFindings = (trim: ViewTrim): DelegationReviewResult['findings'] =>
+    review === null ? [] : dropTail(review.findings, trim.findings);
+  const keptEvidenceCount = (trim: ViewTrim): number =>
+    keptFindings(trim).reduce((count, finding) => count + finding.evidence.length, 0);
+  const listedChecksCount = (trim: ViewTrim): number => {
+    const listed = listedAt(trim);
+    return [...listed.automatedChecks, ...listed.verifications, ...listed.acceptances].reduce(
+      (count, evaluation) => count + evaluation.checks.length,
+      0,
+    );
+  };
+
+  const build = (trim: ViewTrim): DelegationJobView => {
+    let characters = 0;
+    const prose = (text: string): string => {
+      if (trim.prose === null) {
+        return text;
+      }
+      const kept = clipText(text, trim.prose);
+      characters += text.length - kept.length;
+      return kept;
+    };
+    const optionalProse = (text: string | null): string | null => (text === null ? null : prose(text));
+    const listed = listedAt(trim);
+    const listedOrder = [...listed.automatedChecks, ...listed.verifications, ...listed.acceptances];
+    // Check lines go from the last listed evaluation backwards, one line at a time.
+    const keptChecks = new Map<string, number>();
+    let checksToDrop = trim.evaluationChecks;
+    for (let index = listedOrder.length - 1; index >= 0; index--) {
+      const evaluation = listedOrder[index];
+      if (evaluation === undefined) {
+        continue;
+      }
+      const drop = Math.min(checksToDrop, evaluation.checks.length);
+      keptChecks.set(evaluation.evaluationId, evaluation.checks.length - drop);
+      checksToDrop -= drop;
+    }
+    const evaluationView = (evaluation: DelegationEvaluation): DelegationEvaluationView => ({
+      author: evaluation.author,
+      authorLabel: evaluation.authorLabel,
+      checks: evaluation.checks.slice(0, keptChecks.get(evaluation.evaluationId) ?? evaluation.checks.length),
+      evaluationId: evaluation.evaluationId,
+      kind: evaluation.kind,
+      note: optionalProse(evaluation.note),
+      recordedAt: evaluation.recordedAt,
+      verdict: evaluation.verdict,
+    });
+    // One view per listed evaluation, so a text cut is counted once even where the view lists it twice.
+    const views = new Map(listedOrder.map((evaluation) => [evaluation.evaluationId, evaluationView(evaluation)]));
+    const viewOf = (evaluation: DelegationEvaluation): DelegationEvaluationView =>
+      views.get(evaluation.evaluationId) ?? evaluationView(evaluation);
+    const shownAcceptances = listed.acceptances.map(viewOf);
+    const findings = keptFindings(trim).map((finding) => ({
+      ...finding,
+      detail: prose(finding.detail),
+      evidence: [...finding.evidence],
+    }));
+    // Evidence goes from the last kept finding backwards, one entry at a time.
+    let evidenceToDrop = trim.evidence;
+    for (let index = findings.length - 1; index >= 0 && evidenceToDrop > 0; index--) {
+      const finding = findings[index];
+      if (finding === undefined) {
+        continue;
+      }
+      const drop = Math.min(evidenceToDrop, finding.evidence.length);
+      finding.evidence.splice(finding.evidence.length - drop, drop);
+      evidenceToDrop -= drop;
+    }
+    const result: DelegationJobView['result'] =
+      job.result === null
+        ? null
+        : {
+            checks: review === null ? [] : dropTail(review.checks, trim.resultChecks),
+            coverage:
+              review === null
+                ? null
+                : {
+                    notReviewed: dropTail(review.coverage.notReviewed, trim.notReviewed),
+                    reviewed: prose(review.coverage.reviewed),
+                  },
+            excerpt: optionalProse(job.result.excerpt),
+            findings,
+            kind: job.result.kind,
+            limits: review === null ? [] : dropTail(review.limits, trim.resultLimits),
+            summary: review === null ? null : prose(review.summary),
+          };
+    const selection = trimmedSelection(job.selection, trim.rationale, prose);
+    const truncation: DelegationJobView['truncation'] = {
+      automatedChecks: automated.length - listed.automatedChecks.length,
+      characters: 0,
+      constraints: trim.constraints,
+      criteria: trim.criteria,
+      evaluationChecks: trim.evaluationChecks,
+      evaluations:
+        verifications.length - listed.verifications.length + (acceptances.length - listed.acceptances.length),
+      evidence: trim.evidence,
+      findings: trim.findings,
+      guaranteeControls: trim.guaranteeControls,
+      guaranteeLimits: trim.guaranteeLimits,
+      notReviewed: trim.notReviewed,
+      rationale: trim.rationale,
+      resultChecks: trim.resultChecks,
+      resultLimits: trim.resultLimits,
+      scopeFiles: trim.scopeFiles,
+    };
+    const refusal =
+      job.refusalReason === null
+        ? null
+        : { message: prose(job.failureReason ?? `refused: ${job.refusalReason}`), reason: job.refusalReason };
+    const failure = job.refusalReason === null ? optionalProse(job.failureReason) : null;
+    const objective = prose(job.request.objective);
+    // The counter is read after every free text above went through `prose`.
+    const counted: DelegationJobView['truncation'] = { ...truncation, characters };
     return {
       attemptNumber: job.attemptNumber,
       cancelRequestedAt: job.cancelRequestedAt,
       endedAt: job.endedAt,
       evaluations: {
-        acceptance: operatorAcceptance === null ? null : toEvaluationView(operatorAcceptance),
-        acceptances: shownAcceptances.map(toEvaluationView),
-        automatedChecks: automated.slice(0, DELEGATION_JOB_BOUNDS.maxEvaluationsInView).map(toEvaluationView),
-        verifications: shownVerifications.map(toEvaluationView),
+        acceptance: operatorAcceptance === null ? null : viewOf(operatorAcceptance),
+        acceptances: shownAcceptances,
+        automatedChecks: listed.automatedChecks.map(viewOf),
+        verifications: listed.verifications.map(viewOf),
       },
       executedScope:
         job.executedScope === null
           ? null
-          : { ...job.executedScope, files: job.executedScope.files.map((file) => ({ ...file })) },
-      failure: job.refusalReason === null ? job.failureReason : null,
+          : {
+              ...job.executedScope,
+              files: dropTail(job.executedScope.files, trim.scopeFiles).map((file) => ({ ...file })),
+            },
+      failure,
+      frozenScope: job.scope === null ? null : { ...job.scope },
       guarantee:
         job.guarantee === null
           ? null
-          : { ...job.guarantee, controls: [...job.guarantee.controls], limits: [...job.guarantee.limits] },
-      heartbeatAgeSeconds: heartbeatAge(job, options.now),
+          : {
+              ...job.guarantee,
+              controls: dropTail(job.guarantee.controls, trim.guaranteeControls),
+              limits: dropTail(job.guarantee.limits, trim.guaranteeLimits),
+            },
+      heartbeatAgeSeconds,
       jobId: job.jobId,
       live: isLiveDelegationState(job.state),
       machineId: job.machineId,
-      notes: buildNotes(job, truncation),
-      qualification: summarizeQualification(job.qualification),
+      notes: buildNotes(job, counted),
+      qualification: summarizeQualification(job.qualification, excludedRouteSlots - trim.excludedRoutes),
       refusal,
       request: {
         action: job.request.action,
         checkoutPath: job.request.checkout.path,
-        constraints: [...job.request.constraints],
-        criteria: [...job.request.criteria],
-        objective: job.request.objective,
+        constraints: dropTail(job.request.constraints, trim.constraints),
+        criteria: dropTail(job.request.criteria, trim.criteria),
+        objective,
         scope: { ...job.request.scope },
         taskCategory: job.request.taskCategory,
       },
       requestedAt: job.requestedAt,
       reservation: { evidence: job.releaseEvidence, held: holdsDelegationReservation(job), releasedAt: job.releasedAt },
-      result: trimmedResult(job.result, cut),
+      result,
       retryOf: job.retryOf,
       route:
         job.routeId === null
@@ -1187,7 +1444,7 @@ export const projectDelegationJobView = (
               poolId: job.poolId,
               routeId: job.routeId,
             },
-      selection: job.selection === null ? null : { ...job.selection },
+      selection,
       startedAt: job.startedAt,
       state: job.state,
       status: {
@@ -1198,42 +1455,71 @@ export const projectDelegationJobView = (
             ? 'not-verified'
             : (latestVerification.verdict as DelegationVerificationVerdict),
       },
-      truncation,
+      truncation: counted,
       updatedAt: job.updatedAt,
       usage: job.usage === null ? null : { ...job.usage },
     };
   };
-  const trim = { acceptances: 0, evidence: 0, findings: 0, notReviewed: 0, verifications: 0 };
-  let view = build(trim);
-  const overBound = (): boolean => viewBytes(view) > DELEGATION_BOUNDS.maxJobViewBytes;
-  // Evaluations go before the result they judge: the oldest verification first, then the older
-  // acceptances. The latest operator acceptance is never cut.
-  while (overBound() && trim.verifications < verificationSlots) {
-    trim.verifications++;
-    view = build(trim);
+
+  const fitsAt = (trim: ViewTrim): boolean => viewBytes(build(trim)) <= DELEGATION_BOUNDS.maxJobViewBytes;
+  type CountedCut = Exclude<keyof ViewTrim, 'prose'>;
+  /** The list cuts in the order they apply; each is tried only as far as the bound needs. */
+  const steps: readonly { readonly available: (trim: ViewTrim) => number; readonly key: CountedCut }[] = [
+    { available: () => job.executedScope?.files.length ?? 0, key: 'scopeFiles' },
+    { available: () => job.request.criteria.length, key: 'criteria' },
+    { available: () => job.request.constraints.length, key: 'constraints' },
+    { available: () => excludedRouteSlots, key: 'excludedRoutes' },
+    {
+      available: () => (job.selection?.kind === 'choice' ? (job.selection.rationale?.length ?? 0) : 0),
+      key: 'rationale',
+    },
+    { available: () => verificationSlots, key: 'verifications' },
+    { available: () => otherAcceptanceSlots, key: 'acceptances' },
+    { available: () => automatedSlots, key: 'automatedChecks' },
+    { available: () => review?.findings.length ?? 0, key: 'findings' },
+    { available: keptEvidenceCount, key: 'evidence' },
+    { available: () => review?.coverage.notReviewed.length ?? 0, key: 'notReviewed' },
+    { available: () => review?.checks.length ?? 0, key: 'resultChecks' },
+    { available: () => review?.limits.length ?? 0, key: 'resultLimits' },
+    { available: () => job.guarantee?.controls.length ?? 0, key: 'guaranteeControls' },
+    { available: () => job.guarantee?.limits.length ?? 0, key: 'guaranteeLimits' },
+    { available: listedChecksCount, key: 'evaluationChecks' },
+  ];
+  let applied = NO_TRIM;
+  let view = build(applied);
+  for (const step of steps) {
+    if (viewBytes(view) <= DELEGATION_BOUNDS.maxJobViewBytes) {
+      return view;
+    }
+    const cut = smallestFittingCut(step.available(applied), (candidate) =>
+      fitsAt({ ...applied, [step.key]: candidate }),
+    );
+    applied = { ...applied, [step.key]: cut };
+    view = build(applied);
   }
-  while (overBound() && trim.acceptances < otherAcceptanceSlots) {
-    trim.acceptances++;
-    view = build(trim);
-  }
-  if (review === null) {
+  if (viewBytes(view) <= DELEGATION_BOUNDS.maxJobViewBytes) {
     return view;
   }
-  while (overBound() && trim.findings < review.findings.length) {
-    trim.findings++;
-    view = build(trim);
-  }
-  // A dropped finding took its evidence with it; only the evidence of the kept findings is left to cut.
-  const keptEvidence = review.findings
-    .slice(0, review.findings.length - trim.findings)
-    .reduce((count, finding) => count + finding.evidence.length, 0);
-  while (overBound() && trim.evidence < keptEvidence) {
-    trim.evidence++;
-    view = build(trim);
-  }
-  while (overBound() && trim.notReviewed < review.coverage.notReviewed.length) {
-    trim.notReviewed++;
-    view = build(trim);
+  // Last resort: one character cap for every free text, the largest that fits, never below one.
+  const longestProse = Math.max(
+    1,
+    job.request.objective.length,
+    job.failureReason?.length ?? 0,
+    job.result?.excerpt?.length ?? 0,
+    review?.summary.length ?? 0,
+    review?.coverage.reviewed.length ?? 0,
+    job.selection?.kind === 'abstain' ? (job.selection.note?.length ?? 0) : 0,
+    ...keptFindings(applied).map((finding) => finding.detail.length),
+    ...evaluations.map((evaluation) => evaluation.note?.length ?? 0),
+  );
+  const proseCut = smallestFittingCut(longestProse - 1, (candidate) =>
+    fitsAt({ ...applied, prose: longestProse - candidate }),
+  );
+  applied = { ...applied, prose: longestProse - proseCut };
+  view = build(applied);
+  const bytes = viewBytes(view);
+  if (bytes > DELEGATION_BOUNDS.maxJobViewBytes) {
+    throw new DelegationJobViewBoundError(job.jobId, bytes);
   }
   return view;
 };
@@ -1251,10 +1537,10 @@ export const DELEGATION_JOB_SUMMARY_BOUNDS = {
 
 /**
  * One job as a list carries it (MCP `delegation.list`, bounded Web lists): the identifiers, the
- * state, the route, the requested scope with object ids shortened, the three status facts, the
- * result kind with the whole result's finding count and a short summary, the refusal reason or a
- * short failure. Everything else (findings, evidence, evaluations, scope files, guarantee, notes)
- * is the job view's, read one job at a time.
+ * state, the route, the requested scope with object ids shortened, the frozen scope as recorded
+ * (object ids whole), the three status facts, the result kind with the whole result's finding count
+ * and a short summary, the refusal reason or a short failure. Everything else (findings, evidence,
+ * evaluations, scope files, guarantee, notes) is the job view's, read one job at a time.
  */
 export interface DelegationJobSummary {
   readonly checkoutPath: string;
@@ -1263,6 +1549,8 @@ export interface DelegationJobSummary {
   readonly failure: string | null;
   /** Findings of the whole stored result, the ones the view trimmed included; `null` without a review. */
   readonly findingCount: number | null;
+  /** The scope the engine froze for this job, as recorded and whole; `null` when none was (see the view). */
+  readonly frozenScope: FrozenDelegationScope | null;
   readonly jobId: string;
   readonly live: boolean;
   readonly refusalReason: DelegationRefusalReason | null;
@@ -1306,6 +1594,7 @@ export const summarizeDelegationJobView = (view: DelegationJobView): DelegationJ
   endedAt: view.endedAt,
   failure: summaryText(view.failure),
   findingCount: view.result?.kind === 'review' ? view.result.findings.length + view.truncation.findings : null,
+  frozenScope: view.frozenScope === null ? null : { ...view.frozenScope },
   jobId: view.jobId,
   live: view.live,
   refusalReason: view.refusal?.reason ?? null,

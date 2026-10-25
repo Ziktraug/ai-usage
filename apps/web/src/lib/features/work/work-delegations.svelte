@@ -31,6 +31,7 @@
     evidenceText,
     executedLabel,
     executedScopeText,
+    frozenScopeText,
     guaranteeText,
     isEndedDelegationState,
     refusalOrFailureText,
@@ -166,6 +167,7 @@
         {@const ended = isEndedDelegationState(job.state)}
         {@const problem = refusalOrFailureText(job)}
         {@const action = actions[job.jobId]}
+        {@const cut = truncationText(job.truncation)}
         <li class={workPanel} data-work-delegation={job.jobId} data-work-delegation-state={job.state}>
           <p class={workHeading}>
             {delegationStateLabel(job.state)}
@@ -176,6 +178,7 @@
             Checkout {job.request.checkoutPath} · {scopeLine(job.request.scope)} · attempt
             {job.attemptNumber}{job.retryOf ? ` (retries ${shortJobId(job.retryOf)})` : ''}.
           </p>
+          <p class={workMuted} data-work-delegation-frozen-scope>{frozenScopeText(job.frozenScope)}</p>
           <p class={workMuted}>Objective: {job.request.objective}</p>
           <p class={workMuted}>
             Requested {when(job.requestedAt)}{job.startedAt ? ` · started ${when(job.startedAt)}` : ''}{job.endedAt
@@ -271,15 +274,14 @@
                 {#if job.result.excerpt}
                   <pre class={workExcerpt} data-work-delegation-excerpt>{job.result.excerpt}</pre>
                 {/if}
-                {@const cut = truncationText(job.truncation)}
-                {#if cut}
-                  <p class={workMuted}>{cut}</p>
-                {/if}
               {:else}
                 <p class={workMuted}>No result recorded.</p>
               {/if}
               {#if job.executedScope}
                 <p class={workMuted}>{executedScopeText(job.executedScope)}</p>
+              {/if}
+              {#if cut}
+                <p class={workMuted} data-work-delegation-truncation>{cut}</p>
               {/if}
 
               <h3 class={workSubsectionTitle}>Guarantee</h3>

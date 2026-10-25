@@ -9,7 +9,8 @@ import {
   projectDelegationJobView,
   summarizeDelegationJobView,
 } from './delegation-job';
-import { DELEGATION_BOUNDS } from './delegation-vocabulary';
+import { DELEGATION_RESULT_BOUNDS } from './delegation-result';
+import { DELEGATION_BOUNDS, DELEGATION_ROUTE_BLOCKERS } from './delegation-vocabulary';
 
 const NOW = '2026-10-25T10:00:00.000Z';
 const LATER = '2026-10-25T10:05:00.000Z';
@@ -189,6 +190,29 @@ const job: DelegationJob = {
 
 const plain = <Value>(value: Value): Value => JSON.parse(JSON.stringify(value)) as Value;
 
+const bytesOf = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+/** A lone surrogate: what a cut inside a pair would leave behind. */
+const LONE_SURROGATE = /\p{Cs}/u;
+
+/** Every truncation counter at zero: the view carried the whole record. */
+const NO_CUT = {
+  automatedChecks: 0,
+  characters: 0,
+  constraints: 0,
+  criteria: 0,
+  evaluationChecks: 0,
+  evaluations: 0,
+  evidence: 0,
+  findings: 0,
+  guaranteeControls: 0,
+  guaranteeLimits: 0,
+  notReviewed: 0,
+  rationale: 0,
+  resultChecks: 0,
+  resultLimits: 0,
+  scopeFiles: 0,
+} as const;
+
 const evaluation = (overrides: Partial<DelegationEvaluation> = {}): DelegationEvaluation => ({
   author: 'calling-model',
   authorLabel: 'claude-code',
@@ -201,6 +225,156 @@ const evaluation = (overrides: Partial<DelegationEvaluation> = {}): DelegationEv
   verdict: 'confirmed',
   ...overrides,
 });
+
+const FILL = '語';
+const fill = (length: number, char = FILL): string => char.repeat(length);
+const RETRY_OF = '1e2d3c4b-5a69-4788-9a1b-2c3d4e5f6a7b';
+/** `mcpToolOutputBounds.maxOutputBytes` of the MCP adapter: what fifty list entries and their envelope must fit. */
+const MCP_TOOL_OUTPUT_BYTES = 192 * 1024;
+
+/** Every list and free text of a record at its bound, filled with `char` wherever the parsers admit text. */
+const maximalJob = (char = FILL): DelegationJob => {
+  const text = (length: number): string => fill(length, char);
+  const lines = (count: number, length: number): string[] =>
+    Array.from({ length: count }, (_, index) => `${index} ${text(length - 3)}`);
+  const excluded = job.qualification?.routes[1];
+  if (job.qualification === null || excluded === undefined) {
+    throw new Error('the fixture job needs a qualification with an excluded route');
+  }
+  const checkoutPath = `/${text(DELEGATION_BOUNDS.maxCheckoutPathCharacters - 1)}`;
+  return {
+    ...job,
+    accountScope: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    checkoutPath,
+    effort: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    executedScope: {
+      fileCount: DELEGATION_JOB_BOUNDS.maxScopeFiles,
+      files: Array.from({ length: DELEGATION_JOB_BOUNDS.maxScopeFiles }, (_, index) => ({
+        coverage: 'complete' as const,
+        path: `${index}/${text(DELEGATION_JOB_BOUNDS.maxScopePathCharacters - 4)}`,
+      })),
+      includedBytes: 1,
+      patchBytes: 2,
+      patchSha256: 'c'.repeat(64),
+      truncated: true,
+      workingTreeDirty: true,
+    },
+    failureReason: text(DELEGATION_JOB_BOUNDS.maxFailureReasonCharacters),
+    guarantee: {
+      cliVersion: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+      controls: lines(DELEGATION_JOB_BOUNDS.maxGuaranteeEntries, DELEGATION_JOB_BOUNDS.maxGuaranteeEntryCharacters),
+      effort: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+      harness: 'claude-code',
+      limits: lines(DELEGATION_JOB_BOUNDS.maxGuaranteeEntries, DELEGATION_JOB_BOUNDS.maxGuaranteeEntryCharacters),
+      model: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    },
+    harnessVersion: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    machineId: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    modelRequested: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    modelResolved: text(DELEGATION_JOB_BOUNDS.maxTextCharacters),
+    poolId: text(DELEGATION_JOB_BOUNDS.maxIdCharacters),
+    qualification: {
+      ...job.qualification,
+      admissibleRouteIds: [],
+      routes: Array.from({ length: 32 }, (_, index) => ({
+        ...excluded,
+        blockers: [...DELEGATION_ROUTE_BLOCKERS],
+        routeId: `${index} ${text(DELEGATION_JOB_BOUNDS.maxIdCharacters - 3)}`,
+      })),
+    },
+    request: {
+      ...job.request,
+      checkout: { path: checkoutPath },
+      constraints: lines(DELEGATION_BOUNDS.maxConstraints, DELEGATION_BOUNDS.maxConstraintCharacters),
+      criteria: lines(DELEGATION_BOUNDS.maxCriteria, DELEGATION_BOUNDS.maxCriterionCharacters),
+      objective: text(DELEGATION_BOUNDS.maxObjectiveCharacters),
+      scope: {
+        base: 'r'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+        head: 'h'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+        kind: 'range',
+      },
+    },
+    result: {
+      excerpt: text(DELEGATION_RESULT_BOUNDS.maxExcerptCharacters),
+      kind: 'review',
+      review: {
+        checks: lines(DELEGATION_RESULT_BOUNDS.maxChecks, DELEGATION_RESULT_BOUNDS.maxCheckCharacters),
+        coverage: {
+          notReviewed: lines(
+            DELEGATION_RESULT_BOUNDS.maxCoverageNotReviewed,
+            DELEGATION_RESULT_BOUNDS.maxCoverageNotReviewedCharacters,
+          ),
+          reviewed: text(DELEGATION_RESULT_BOUNDS.maxCoverageReviewedCharacters),
+        },
+        findings: Array.from({ length: DELEGATION_RESULT_BOUNDS.maxFindings }, (_, index) => ({
+          detail: text(DELEGATION_RESULT_BOUNDS.maxDetailCharacters),
+          evidence: Array.from({ length: DELEGATION_RESULT_BOUNDS.maxEvidencePerFinding }, (_entry, line) => ({
+            line: line + 1,
+            path: `${index}/${text(DELEGATION_RESULT_BOUNDS.maxPathCharacters - 4)}`,
+          })),
+          severity: 'major' as const,
+          title: `${index} ${text(DELEGATION_RESULT_BOUNDS.maxTitleCharacters - 3)}`,
+        })),
+        limits: lines(DELEGATION_RESULT_BOUNDS.maxLimits, DELEGATION_RESULT_BOUNDS.maxLimitCharacters),
+        summary: text(DELEGATION_RESULT_BOUNDS.maxSummaryCharacters),
+      },
+    },
+    retryOf: RETRY_OF,
+    routeId: text(DELEGATION_JOB_BOUNDS.maxIdCharacters),
+    scope: {
+      base: 'range-base',
+      baseRef: 'r'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+      baseSha: 'b'.repeat(64),
+      commitCount: Number.MAX_SAFE_INTEGER,
+      headRef: 'h'.repeat(DELEGATION_BOUNDS.maxRevisionCharacters),
+      headSha: 'a'.repeat(64),
+      kind: 'range',
+    },
+    selection: {
+      confidence: 1,
+      kind: 'choice',
+      qualificationId: QUALIFICATION_ID,
+      rationale: lines(DELEGATION_BOUNDS.maxSelectionRationale, DELEGATION_BOUNDS.maxSelectionRationaleCharacters),
+      routeId: text(256),
+      selectorVersion: text(DELEGATION_BOUNDS.maxSelectorVersionCharacters),
+    },
+    usage: {
+      cachedInputTokens: Number.MAX_SAFE_INTEGER,
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      outputTokens: Number.MAX_SAFE_INTEGER,
+      source: 'harness-reported',
+    },
+  };
+};
+
+/** An evaluation at every bound, with a stable id and a distinct instant per index. */
+const maximalEvaluation = (
+  index: number,
+  kind: DelegationEvaluation['kind'],
+  author: DelegationEvaluation['author'],
+  char = FILL,
+): DelegationEvaluation =>
+  evaluation({
+    author,
+    authorLabel: fill(DELEGATION_JOB_BOUNDS.maxTextCharacters, char),
+    checks: Array.from(
+      { length: DELEGATION_BOUNDS.maxEvaluationChecks },
+      (_, check) => `${check} ${fill(DELEGATION_BOUNDS.maxEvaluationCheckCharacters - 3, char)}`,
+    ),
+    evaluationId: `${kind}-${author}-${String(index).padStart(2, '0')}-${fill(DELEGATION_JOB_BOUNDS.maxIdCharacters - 40, char)}`,
+    kind,
+    note: fill(DELEGATION_BOUNDS.maxEvaluationNoteCharacters, char),
+    recordedAt: new Date(Date.parse(LATER) + index * 60_000).toISOString(),
+    verdict: kind === 'verification' ? 'confirmed' : 'taken-over',
+  });
+
+/** Sixty-one evaluations at every bound: the three lists full, plus the operator's acceptance. */
+const maximalCrowd = (char = FILL): DelegationEvaluation[] => [
+  ...Array.from({ length: 20 }, (_, index) => maximalEvaluation(index, 'verification', 'calling-model', char)),
+  ...Array.from({ length: 20 }, (_, index) => maximalEvaluation(index, 'acceptance', 'calling-model', char)),
+  ...Array.from({ length: 20 }, (_, index) => maximalEvaluation(index, 'verification', 'automated-check', char)),
+  maximalEvaluation(-1, 'acceptance', 'operator', char),
+];
 
 describe('parseDelegationJob', () => {
   test('re-validates a stored job and returns it with the request and selection copied', () => {
@@ -495,6 +669,56 @@ describe('projectDelegationJobView', () => {
     expect(plain(view)).toEqual(view);
   });
 
+  test('returns the frozen scope the engine recorded, apart from the requested one, and null when none was recorded', () => {
+    const view = projectDelegationJobView(job, [], { now: LATER });
+    // The request named a symbolic revision; the frozen scope is what was actually reviewed.
+    expect(view.request.scope).toEqual({ commit: 'HEAD', kind: 'commit' });
+    expect(view.frozenScope).toEqual({
+      base: 'first-parent',
+      baseRef: null,
+      baseSha: 'b'.repeat(40),
+      commitCount: 1,
+      headRef: 'HEAD',
+      headSha: 'a'.repeat(40),
+      kind: 'commit',
+    });
+    expect(view.frozenScope).not.toBe(job.scope);
+    const range = projectDelegationJobView(
+      {
+        ...job,
+        request: { ...job.request, scope: { base: 'main', head: 'feat/lock', kind: 'range' } },
+        scope: {
+          base: 'range-base',
+          baseRef: 'main',
+          baseSha: 'e'.repeat(40),
+          commitCount: 3,
+          headRef: 'feat/lock',
+          headSha: 'f'.repeat(40),
+          kind: 'range',
+        },
+      },
+      [],
+      { now: LATER },
+    );
+    expect(range.frozenScope).toEqual({
+      base: 'range-base',
+      baseRef: 'main',
+      baseSha: 'e'.repeat(40),
+      commitCount: 3,
+      headRef: 'feat/lock',
+      headSha: 'f'.repeat(40),
+      kind: 'range',
+    });
+    // A refused decision froze nothing, and an older record may carry no scope: the proof stays missing.
+    const refused = projectDelegationJobView(
+      { ...job, refusalReason: 'scope-unavailable', result: null, routeId: null, scope: null, state: 'refused' },
+      [],
+      { now: LATER },
+    );
+    expect(refused.frozenScope).toBeNull();
+    expect(refused.request.scope).toEqual({ commit: 'HEAD', kind: 'commit' });
+  });
+
   test('reads the latest verification and the operator acceptance; a calling model acceptance stays its statement', () => {
     const view = projectDelegationJobView(
       job,
@@ -634,8 +858,51 @@ describe('projectDelegationJobView', () => {
       },
     };
     const mediumView = projectDelegationJobView(medium, [], { now: LATER });
-    expect(mediumView.truncation).toEqual({ evaluations: 0, evidence: 0, findings: 0, notReviewed: 0 });
+    expect(mediumView.truncation).toEqual(NO_CUT);
     expect(mediumView.result?.findings).toHaveLength(12);
+  });
+
+  test('keeps a scope of many long paths under the bound by omitting scope files, never the findings', () => {
+    // 64 files with 943-character paths (components of at most 200 characters), as the engine admits
+    // them (`maxScopePathCharacters`, `maxScopeFiles`): about 60 KiB of scope before any result.
+    const component = (seed: string): string => `${seed}${'x'.repeat(200 - seed.length)}`;
+    const longPath = (index: number): string => {
+      const parts = [component(`dir${index}-a`), component('b'), component('c'), component('d')];
+      return `${parts.join('/')}/${`f${index}`.padEnd(943 - parts.join('/').length - 1, 'y')}`;
+    };
+    const coverages = ['complete', 'partial', 'omitted', 'binary'] as const;
+    const wide: DelegationJob = {
+      ...job,
+      request: {
+        ...job.request,
+        constraints: Array.from({ length: 12 }, (_, index) => `${index} ${'k'.repeat(200)}`),
+        criteria: Array.from({ length: 12 }, (_, index) => `${index} ${'c'.repeat(200)}`),
+      },
+      executedScope: {
+        fileCount: 64,
+        files: Array.from({ length: 64 }, (_, index) => ({
+          coverage: coverages[index % coverages.length] ?? 'complete',
+          path: longPath(index),
+        })),
+        includedBytes: 60_000,
+        patchBytes: 120_000,
+        patchSha256: 'c'.repeat(64),
+        truncated: true,
+        workingTreeDirty: false,
+      },
+    };
+    const view = projectDelegationJobView(wide, [], { now: LATER });
+    expect(new TextEncoder().encode(JSON.stringify(view)).byteLength).toBeLessThanOrEqual(
+      DELEGATION_BOUNDS.maxJobViewBytes,
+    );
+    expect(view.truncation.scopeFiles).toBeGreaterThan(0);
+    expect(view.executedScope?.files.length).toBe(64 - view.truncation.scopeFiles);
+    expect(view.executedScope?.fileCount).toBe(64);
+    // The deliverable is kept: the scope file list goes before the findings.
+    expect(view.truncation.findings).toBe(0);
+    expect(view.result?.findings).toHaveLength(1);
+    expect(view.notes.join(' ')).toContain('scope files');
+    expect(plain(view)).toEqual(view);
   });
 
   test('stays under the bound with large evaluations: the oldest verifications go first, then older acceptances, never the operator acceptance', () => {
@@ -672,7 +939,7 @@ describe('projectDelegationJobView', () => {
     expect(view.truncation).toMatchObject({ evidence: 0, findings: 0, notReviewed: 0 });
     expect(view.result?.findings).toHaveLength(1);
     expect(view.status.verified).toBe('confirmed');
-    expect(view.notes.join(' ')).toContain(`${view.truncation.evaluations} evaluation(s)`);
+    expect(view.notes.join(' ')).toContain(`${view.truncation.evaluations} evaluations`);
 
     // The operator's acceptance is the oldest of all and still listed; model acceptances go oldest first,
     // and only once every verification is gone.
@@ -697,6 +964,93 @@ describe('projectDelegationJobView', () => {
         (_, index) => `acceptance-calling-model-${String(10 - index).padStart(2, '0')}`,
       ),
     );
+  });
+
+  test('the maximal record fits: every list and text at its bound in three-byte characters, identifiers and the frozen scope whole, notes within 512 characters', () => {
+    const heavy = maximalJob();
+    const crowd = maximalCrowd();
+    const view = projectDelegationJobView(heavy, crowd, { now: LATER });
+    expect(bytesOf(view)).toBeLessThanOrEqual(DELEGATION_BOUNDS.maxJobViewBytes);
+    // Nothing that identifies the job, the route, the checkout or the reviewed revisions is cut.
+    expect(view).toMatchObject({
+      frozenScope: heavy.scope,
+      jobId: JOB_ID,
+      machineId: heavy.machineId,
+      request: { checkoutPath: heavy.request.checkout.path, scope: heavy.request.scope },
+      retryOf: RETRY_OF,
+      route: { poolId: heavy.poolId, routeId: heavy.routeId },
+      state: 'finished',
+      status: { accepted: 'taken-over', executed: 'succeeded', verified: 'confirmed' },
+    });
+    expect(view.evaluations.acceptance?.evaluationId).toBe(crowd.at(-1)?.evaluationId ?? '');
+    expect(view.evaluations.acceptances.map(({ evaluationId }) => evaluationId)).toEqual([
+      crowd.at(-1)?.evaluationId ?? '',
+    ]);
+    // Every list went before the free texts, which are cut to well-formed prefixes and counted.
+    expect(view.truncation).toMatchObject({
+      automatedChecks: 20,
+      constraints: 12,
+      criteria: 12,
+      evaluationChecks: 12,
+      evaluations: 40,
+      evidence: 0,
+      findings: 50,
+      guaranteeControls: 32,
+      guaranteeLimits: 32,
+      notReviewed: 50,
+      rationale: 4,
+      resultChecks: 20,
+      resultLimits: 20,
+      scopeFiles: 256,
+    });
+    expect(view.truncation.characters).toBeGreaterThan(0);
+    expect(view.qualification?.omittedExcludedRoutes).toBe(32);
+    expect(view.executedScope).toMatchObject({ fileCount: 256, files: [] });
+    for (const text of [
+      view.request.objective,
+      view.failure,
+      view.result?.summary,
+      view.result?.excerpt,
+      view.result?.coverage?.reviewed,
+      view.evaluations.acceptance?.note,
+    ]) {
+      expect(typeof text).toBe('string');
+      expect(text?.length ?? 0).toBeGreaterThanOrEqual(1);
+      expect(LONE_SURROGATE.test(text ?? '')).toBe(false);
+    }
+    expect(view.notes.every((note) => note.length <= 512)).toBe(true);
+    expect(view.notes.at(-1)).toContain('free-text characters');
+    expect(plain(view)).toEqual(view);
+  });
+
+  test('cuts multibyte free texts without splitting a surrogate pair, and bounds a job without a result', () => {
+    const emoji = '😀';
+    const base = maximalJob();
+    const wide: DelegationJob = {
+      ...base,
+      request: { ...base.request, objective: fill(DELEGATION_BOUNDS.maxObjectiveCharacters / 2, emoji) },
+      result:
+        base.result === null
+          ? null
+          : { ...base.result, excerpt: fill(DELEGATION_RESULT_BOUNDS.maxExcerptCharacters / 2, emoji) },
+    };
+    const view = projectDelegationJobView(wide, maximalCrowd(), { now: LATER });
+    expect(bytesOf(view)).toBeLessThanOrEqual(DELEGATION_BOUNDS.maxJobViewBytes);
+    expect(view.truncation.characters).toBeGreaterThan(0);
+    for (const text of [view.request.objective, view.result?.excerpt ?? '']) {
+      expect(text.length).toBeGreaterThanOrEqual(2);
+      expect(text.length % 2).toBe(0);
+      expect(LONE_SURROGATE.test(text)).toBe(false);
+      expect(wide.request.objective.startsWith(view.request.objective)).toBe(true);
+    }
+    expect(view.result?.findings).toEqual([]);
+    // No result at all: the early path is bounded too, by cutting the lists that are there.
+    const bare = projectDelegationJobView({ ...base, result: null }, [], { now: LATER });
+    expect(bytesOf(bare)).toBeLessThanOrEqual(DELEGATION_BOUNDS.maxJobViewBytes);
+    expect(bare.result).toBeNull();
+    expect(bare.truncation.scopeFiles).toBeGreaterThan(0);
+    expect(bare.executedScope?.fileCount).toBe(256);
+    expect(bare.frozenScope).toEqual(base.scope);
   });
 });
 
@@ -729,6 +1083,16 @@ describe('summarizeDelegationJobView', () => {
       failure: null,
       // The whole result's count, not the trimmed view's.
       findingCount: 50,
+      // The frozen scope travels whole: the list entry shortens only the requested revisions.
+      frozenScope: {
+        base: 'first-parent',
+        baseRef: null,
+        baseSha: 'b'.repeat(40),
+        commitCount: 1,
+        headRef: 'HEAD',
+        headSha: 'a'.repeat(40),
+        kind: 'commit',
+      },
       jobId: JOB_ID,
       live: false,
       refusalReason: null,
@@ -745,7 +1109,8 @@ describe('summarizeDelegationJobView', () => {
       status: { accepted: 'pending', executed: 'succeeded', verified: 'refuted' },
       summary: 's'.repeat(DELEGATION_JOB_SUMMARY_BOUNDS.maxTextCharacters),
     });
-    expect(new TextEncoder().encode(JSON.stringify(summary)).byteLength).toBeLessThan(1024);
+    // Fifty entries of this size, with their envelope, stay well under the MCP tool bound (192 KiB).
+    expect(bytesOf(summary)).toBeLessThan(2048);
     expect(plain(summary)).toEqual(summary);
 
     // A range given by refs keeps the refs; a refused decision has no route and no result; a failure is cut.
@@ -792,5 +1157,20 @@ describe('summarizeDelegationJobView', () => {
       resultKind: 'error',
       summary: null,
     });
+  });
+
+  test('fifty entries of a maximal ASCII record with a realistic checkout path stay under the MCP tool bound', () => {
+    const ascii = maximalJob('x');
+    const checkoutPath = `/${'p'.repeat(255)}`;
+    const realistic: DelegationJob = {
+      ...ascii,
+      checkoutPath,
+      request: { ...ascii.request, checkout: { path: checkoutPath } },
+    };
+    const summary = summarizeDelegationJobView(projectDelegationJobView(realistic, maximalCrowd('x'), { now: LATER }));
+    expect(summary.frozenScope).toEqual(realistic.scope);
+    expect(summary.scope).toEqual({ base: 'r'.repeat(256), head: 'h'.repeat(256), kind: 'range' });
+    // The list answer wraps the entries in its envelope (notice, counts); one KiB covers it.
+    expect(50 * bytesOf(summary) + 1024).toBeLessThanOrEqual(MCP_TOOL_OUTPUT_BYTES);
   });
 });

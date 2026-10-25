@@ -464,6 +464,8 @@ describe('delegation composition', () => {
       endedAt: END,
       failure: null,
       findingCount: 50,
+      // The scope as frozen for the job, object ids whole; the requested revision stays `HEAD`.
+      frozenScope: scope,
       jobId: jobIds[19],
       live: false,
       refusalReason: null,

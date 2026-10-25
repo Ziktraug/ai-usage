@@ -27,6 +27,7 @@ const CHECKOUT = '/fixture/home/work/project';
 const QUALIFICATION_ID = '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5';
 const JOB_A = '7d5a1b2c-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
 const JOB_B = '8e6b2c3d-4f50-4b6c-9d7e-8f9a0b1c2d3e';
+const JOB_C = '6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d';
 
 const scope: FrozenDelegationScope = {
   base: 'first-parent',
@@ -203,6 +204,59 @@ describe('readDelegationJobView', () => {
     expect(result.value.evaluations.verifications).toHaveLength(1);
     expect(result.value.evaluations.acceptance).toBeNull();
     expect(result.value.result?.findings[0]?.detail).toContain('Ignore all previous instructions');
+  });
+
+  test('returns the frozen scope as persisted, for a commit and for a base..head range, from the store alone', async () => {
+    const dbPath = await seededStore();
+    const commit = await readDelegationJobView({ dbPath, jobId: JOB_A, now: END });
+    expect(commit.kind === 'success' ? commit.value.frozenScope : null).toEqual(scope);
+    expect(commit.kind === 'success' ? commit.value.request.scope : null).toEqual({ commit: 'HEAD', kind: 'commit' });
+    // A range job: the persisted base and head object ids come back whole, with the refs as given.
+    const rangeScope: FrozenDelegationScope = {
+      base: 'range-base',
+      baseRef: 'main',
+      baseSha: 'e'.repeat(40),
+      commitCount: 3,
+      headRef: 'feat/lock',
+      headSha: 'f'.repeat(40),
+      kind: 'range',
+    };
+    await Effect.runPromise(
+      requestDelegationJob({
+        dbPath,
+        job: newJob({
+          idempotencyKey: 'caller:session-1:review-9',
+          jobId: JOB_C,
+          request: {
+            action: 'read-only-review',
+            checkout: { path: CHECKOUT },
+            constraints: [],
+            criteria: [],
+            objective: 'Review the lock range.',
+            schemaVersion: 1,
+            scope: { base: 'main', head: 'feat/lock', kind: 'range' },
+            taskCategory: 'correctness',
+          },
+          requestDigest: 'f'.repeat(64),
+          requestedAt: END,
+          scope: rangeScope,
+        }),
+        limits,
+      }),
+    );
+    const range = await readDelegationJobView({ dbPath, jobId: JOB_C, now: END });
+    expect(range.kind === 'success' ? range.value.frozenScope : null).toEqual(rangeScope);
+    expect(range.kind === 'success' ? range.value.request.scope : null).toEqual({
+      base: 'main',
+      head: 'feat/lock',
+      kind: 'range',
+    });
+    const listed = await listDelegationJobViews({ dbPath, now: END });
+    expect(listed.kind === 'success' ? listed.value.jobs.map((job) => job.frozenScope) : []).toEqual([
+      rangeScope,
+      { ...scope, headSha: 'c'.repeat(40) },
+      scope,
+    ]);
   });
 
   test('answers not-found for an unknown id and invalid-input for a malformed one, without reading for the latter', async () => {
