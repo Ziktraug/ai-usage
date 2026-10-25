@@ -222,8 +222,9 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
 
 const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'merge-conflict',
-  'changes-requested',
+  // A counted set of review threads is the concrete work behind a CHANGES_REQUESTED decision.
   'unresolved-review-threads',
+  'changes-requested',
   'failing-checks',
   'behind-base',
   'review-requested',

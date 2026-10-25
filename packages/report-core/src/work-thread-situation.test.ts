@@ -225,7 +225,10 @@ describe('Work thread situation', () => {
   test('conflicts, requested changes, unresolved threads and failed checks outrank lesser work', () => {
     const blocked = pr({ reviewDecision: 'CHANGES_REQUESTED', unresolvedReviewThreads: 3, checksRollup: 'failure' });
     expect(deriveWorkThreadSituation(withPr(blocked, { mergeable: 'conflicting' }), at).reason).toBe('merge-conflict');
-    expect(deriveWorkThreadSituation(withPr(blocked), at).reason).toBe('changes-requested');
+    expect(deriveWorkThreadSituation(withPr(blocked), at).reason).toBe('unresolved-review-threads');
+    expect(deriveWorkThreadSituation(withPr(pr({ ...blocked, unresolvedReviewThreads: null })), at).reason).toBe(
+      'changes-requested',
+    );
     expect(deriveWorkThreadSituation(withPr(pr({ ...blocked, reviewDecision: 'REVIEW_REQUIRED' })), at).reason).toBe(
       'unresolved-review-threads',
     );
