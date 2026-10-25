@@ -154,7 +154,7 @@ describe('readClaudeSessionAnalysis', () => {
     // for these unchanged files.
     await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 12)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(18);
+    expect((await Bun.file(cachePath).json()).version).toBe(19);
     expect(await run(collectClaude, home)).toEqual(freshRows);
   });
 
@@ -191,7 +191,7 @@ describe('readClaudeSessionAnalysis', () => {
     // these unchanged files.
     await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 13)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(18);
+    expect((await Bun.file(cachePath).json()).version).toBe(19);
   });
 
   test('surfaces a typed failure for a no-follow unsafe transcript', async () => {

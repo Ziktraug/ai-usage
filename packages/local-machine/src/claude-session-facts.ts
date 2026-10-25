@@ -940,6 +940,7 @@ const SHELL_ASSIGNMENT = /^[A-Za-z_][A-Za-z_\d]*=/u;
 const SHELL_SPACE = /[ \t]/u;
 const SHELL_IO_NUMBER = /^\d+$/u;
 const TIMEOUT_SECONDS = /^\d+(?:\.\d+)?$/u;
+const SHELL_STATUS_COMMANDS = new Set(['echo', 'printf', 'cat', 'grep', 'true', 'false']);
 const CODEX_VALUE_OPTIONS = new Set([
   '-c',
   '--config',
@@ -979,9 +980,15 @@ interface LiteralShellWord {
   value: string;
 }
 
+interface LiteralShellCommand {
+  separator: '&&' | ';' | null;
+  statusOnlyEcho: boolean;
+  words: LiteralShellWord[] | null;
+}
+
 /** Literal simple commands only; unsupported expansions invalidate their segment, never execute. */
-const shellCommands = (command: string): (LiteralShellWord[] | null)[] | null => {
-  const commands: (LiteralShellWord[] | null)[] = [];
+const shellCommands = (command: string): LiteralShellCommand[] | null => {
+  const commands: LiteralShellCommand[] = [];
   let words: LiteralShellWord[] = [];
   let word = '';
   let started = false;
@@ -1050,7 +1057,11 @@ const shellCommands = (command: string): (LiteralShellWord[] | null)[] | null =>
       if (words.length === 0) {
         return null;
       }
-      commands.push(valid ? words : null);
+      commands.push({
+        separator: character === ';' ? ';' : '&&',
+        statusOnlyEcho: isStatusOnlyEcho(words),
+        words: valid ? words : null,
+      });
       words = [];
       valid = true;
       commandRequired = character === '&';
@@ -1100,7 +1111,11 @@ const shellCommands = (command: string): (LiteralShellWord[] | null)[] | null =>
     return null;
   }
   if (words.length > 0) {
-    commands.push(valid ? words : null);
+    commands.push({
+      separator: null,
+      statusOnlyEcho: isStatusOnlyEcho(words),
+      words: valid ? words : null,
+    });
   }
   return commands;
 };
@@ -1125,6 +1140,12 @@ const withoutTrailingRedirects = (words: readonly LiteralShellWord[]): readonly 
     }
   }
   return words.slice(0, firstRedirect);
+};
+
+/** This exact status footer cannot emit a native thread header, even with its exit-code expansion. */
+const isStatusOnlyEcho = (words: readonly LiteralShellWord[]): boolean => {
+  const argumentsOnly = withoutTrailingRedirects(words);
+  return argumentsOnly?.length === 2 && argumentsOnly[0]?.value === 'echo' && argumentsOnly[1]?.value === 'exit=$?';
 };
 
 /** null is not an execution; an empty list is an execution without a literal resume id. */
@@ -1202,7 +1223,20 @@ const codexExecResumeIds = (commandWords: readonly LiteralShellWord[]): string[]
 
 interface ClaudeCodexCommand {
   resultAttestable: boolean;
-  resumedIds: string[];
+  resumeEvidenceAttestable: boolean;
+  resumes: ClaudeCodexResume[];
+}
+
+interface ClaudeCodexResume {
+  exitStatusApplies: boolean;
+  sourceSessionId: string;
+}
+
+interface ClaudePendingResumes {
+  call: ClaudeToolCall;
+  nativeEvidenceAttestable: boolean;
+  nativeSourceSessionId: string | null;
+  resumes: readonly ClaudeCodexResume[];
 }
 
 const isQuietShellSetup = (words: readonly LiteralShellWord[]): boolean => {
@@ -1216,6 +1250,22 @@ const isQuietShellSetup = (words: readonly LiteralShellWord[]): boolean => {
   return commandWords.length === 2 && commandWords[0]?.value === 'cd' && !commandWords[1]?.value.startsWith('-');
 };
 
+/** A closed simple-command grammar keeps shell control or unsupported wrappers from masking status. */
+const isExitStatusSafeCommand = ({ statusOnlyEcho, words }: LiteralShellCommand): boolean => {
+  if (statusOnlyEcho) {
+    return true;
+  }
+  if (words === null || withoutTrailingRedirects(words) === null) {
+    return false;
+  }
+  const executable = words.find((word) => !word.assignment)?.value;
+  return (
+    codexExecResumeIds(words) !== null ||
+    isQuietShellSetup(words) ||
+    (executable !== undefined && SHELL_STATUS_COMMANDS.has(executable))
+  );
+};
+
 const codexLaunchCommand = (input: Record<string, unknown>): ClaudeCodexCommand | null => {
   if (typeof input.command !== 'string') {
     return null;
@@ -1226,24 +1276,41 @@ const codexLaunchCommand = (input: Record<string, unknown>): ClaudeCodexCommand 
   }
   let executions = 0;
   let resultAttestable = true;
-  const resumed: string[] = [];
-  for (const words of commands) {
+  let resumeEvidenceAttestable = true;
+  const resumes: ClaudeCodexResume[] = [];
+  const finalChainStart = Math.max(
+    0,
+    commands.findLastIndex((_, index) => commands[index - 1]?.separator === ';'),
+  );
+  const exitStatusReliable = commands.every(isExitStatusSafeCommand);
+  for (const [index, { statusOnlyEcho, words }] of commands.entries()) {
     if (words === null) {
       resultAttestable = false;
+      resumeEvidenceAttestable &&= statusOnlyEcho;
       continue;
     }
     const ids = codexExecResumeIds(words);
     if (ids !== null) {
       executions += 1;
-      resumed.push(...ids);
+      resumes.push(
+        ...ids.map((sourceSessionId) => ({
+          exitStatusApplies: exitStatusReliable && index >= finalChainStart,
+          sourceSessionId,
+        })),
+      );
     } else if (!isQuietShellSetup(words)) {
       // A Bash result mixes the output of every chained command. A copied
       // log or echo cannot attest the Codex process sharing that result.
       resultAttestable = false;
+      resumeEvidenceAttestable &&= statusOnlyEcho;
     }
   }
   return executions > 0
-    ? { resultAttestable: resultAttestable && executions === 1 && resumed.length === 0, resumedIds: resumed }
+    ? {
+        resultAttestable: resultAttestable && executions === 1 && resumes.length === 0,
+        resumeEvidenceAttestable,
+        resumes,
+      }
     : null;
 };
 
@@ -1357,7 +1424,7 @@ const collectClaudeSpawnResults = (
   const agentIdsByToolUse = new Map<string, string>();
   const workflowRunsByToolUse = new Map<string, string>();
   const codexCalls = new Map<string, ClaudeToolCall>();
-  const codexResumes = new Map<string, { call: ClaudeToolCall; resumedIds: readonly string[] }>();
+  const codexResumes = new Map<string, ClaudePendingResumes>();
   const codexLaunches: ClaudeCodexLaunch[] = [];
   for (const call of calls) {
     const command = call.name === 'Bash' ? codexLaunchCommand(call.input) : null;
@@ -1367,8 +1434,13 @@ const collectClaudeSpawnResults = (
     if (command.resultAttestable) {
       codexCalls.set(call.toolUseId, call);
     }
-    if (command.resumedIds.length > 0) {
-      codexResumes.set(call.toolUseId, { call, resumedIds: command.resumedIds });
+    if (command.resumes.length > 0) {
+      codexResumes.set(call.toolUseId, {
+        call,
+        nativeSourceSessionId: null,
+        nativeEvidenceAttestable: command.resumeEvidenceAttestable,
+        resumes: command.resumes,
+      });
     }
   }
   for (const current of events) {
@@ -1388,11 +1460,33 @@ const collectClaudeSpawnResults = (
         continue;
       }
       const resume = codexResumes.get(block.tool_use_id);
-      if (resume && current.at >= resume.call.at && block.is_error !== true) {
-        for (const sourceSessionId of resume.resumedIds) {
-          codexLaunches.push({ at: iso(resume.call.at), evidence: 'resume-argument', sourceSessionId });
+      if (resume && current.at >= resume.call.at) {
+        if (resume.nativeEvidenceAttestable) {
+          resume.nativeSourceSessionId ??=
+            codexResultLaunch(block.content, current.at)?.sourceSessionId.toLowerCase() ?? null;
         }
-        codexResumes.delete(block.tool_use_id);
+        const pendingResumes: ClaudeCodexResume[] = [];
+        for (const resumed of resume.resumes) {
+          // The shell status describes the last semicolon-separated && chain.
+          // Earlier chains and failed calls need native evidence for this exact id.
+          if (
+            (resumed.exitStatusApplies && block.is_error !== true) ||
+            resumed.sourceSessionId.toLowerCase() === resume.nativeSourceSessionId
+          ) {
+            codexLaunches.push({
+              at: iso(resume.call.at),
+              evidence: 'resume-argument',
+              sourceSessionId: resumed.sourceSessionId,
+            });
+          } else {
+            pendingResumes.push(resumed);
+          }
+        }
+        if (pendingResumes.length === 0) {
+          codexResumes.delete(block.tool_use_id);
+        } else {
+          resume.resumes = pendingResumes;
+        }
       }
       const launch = codexCalls.get(block.tool_use_id);
       if (launch && current.at >= launch.at) {

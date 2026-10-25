@@ -35,6 +35,54 @@ const parse = (...records: unknown[]) => {
 };
 
 describe('Claude Bash attestation of Codex launches', () => {
+  test.each([
+    'exit 0',
+    'exec true',
+    'eval "exit 0"',
+    'source /tmp/synthetic-control.sh',
+    '. /tmp/synthetic-control.sh',
+    'builtin exit 0',
+    'command exit 0',
+    '> /tmp/synthetic.log exit 0',
+    'MODE=fixture > /tmp/synthetic.log exec true',
+    '! exit 0',
+    'time exit 0',
+    'set -n',
+    'synthetic-unknown-command',
+    'fc -s',
+    'enable -f /tmp/synthetic-builtin.so synthetic',
+    'if true; then exit 0; fi',
+    'exit "$SYNTHETIC_STATUS"',
+    '$SYNTHETIC_COMMAND',
+  ])('does not infer that the final chain ran after shell control: %s', (prefix) => {
+    expect(
+      parse(call(`${prefix}; codex exec resume ${THREAD}`), result('Synthetic shell exited successfully'))
+        .codexLaunches,
+    ).toEqual([]);
+  });
+
+  test.each([
+    `cd /removed && codex exec resume ${THREAD} > log 2>&1; echo "exit=$?" >> err`,
+    `false && codex exec resume ${THREAD}; echo done`,
+  ])(
+    'prefers correctness over supervisor coverage when a later semicolon chain masks the launch status: %s',
+    (command) => {
+      expect(parse(call(command), result('Synthetic final command succeeded')).codexLaunches).toEqual([]);
+    },
+  );
+
+  test.each([`{"type":"thread.started","thread_id":"${THREAD}"}`, `session id: ${THREAD}`])(
+    'attests a timed-out resume when its own native identity survived: %s',
+    (nativeEvidence) => {
+      expect(
+        parse(
+          call(`timeout 600 codex exec resume ${THREAD} --json -`),
+          result(`${nativeEvidence}\nSynthetic timeout: exit 124`, 'launch', 2, true),
+        ).codexLaunches,
+      ).toEqual([{ at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD }]);
+    },
+  );
+
   test.each(['User rejected tool use', 'hook error: synthetic PreToolUse blocked execution'])(
     'does not attest a rejected resume: %s',
     (message) => {
@@ -55,10 +103,75 @@ describe('Claude Bash attestation of Codex launches', () => {
     `codex exec resume ${THREAD} 'Synthetic prompt' 2>&1 > out.log `,
     `MODE=fixture timeout 600 codex exec --config 'model="example"' resume ${THREAD} --model gpt-6-astra --sandbox workspace-write --cd '/tmp/synthetic work' --profile synthetic --image synthetic.png --json - < 'prompt file.md' >'output file.jsonl' 2>'errors file.log'`,
     `echo 'Synthetic setup'; codex exec resume ${THREAD} -s workspace-write -C /tmp/synthetic-work -p synthetic --skip-git-repo-check --ephemeral -i synthetic.png -o out.md - < prompt.md`,
-  ])('attests a completed supervisor launch form: %s', (command) => {
-    expect(parse(call(command), result('Synthetic successful exit')).codexLaunches).toEqual([
+  ])('attests a supervisor launch form with matching native evidence: %s', (command) => {
+    expect(parse(call(command), result(`session id: ${THREAD}`)).codexLaunches).toEqual([
       { at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD },
     ]);
+  });
+
+  test('requires matching native evidence for the masked status-echo form despite reduced supervisor coverage', () => {
+    const command = `cd /tmp/synthetic-work && codex exec resume ${THREAD} > log 2>&1; echo "exit=$?" >> err`;
+    expect(parse(call(command), result(`{"type":"thread.started","thread_id":"${THREAD}"}`)).codexLaunches).toEqual([
+      { at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD },
+    ]);
+    expect(parse(call(command), result(`session id: ${OTHER_THREAD}`)).codexLaunches).toEqual([]);
+  });
+
+  test.each([
+    `false && codex exec resume ${THREAD}; echo 'session id: ${THREAD}'`,
+    `cd /removed && codex exec resume ${THREAD}; cat /tmp/old.log`,
+    `codex exec resume ${THREAD}; echo 'session id: ${THREAD}'`,
+    `codex exec resume ${THREAD}; cat /tmp/old.log`,
+  ])('never uses arbitrary mixed output as native corroboration for a masked resume: %s', (command) => {
+    expect(parse(call(command), result(`session id: ${THREAD}`)).codexLaunches).toEqual([]);
+    expect(parse(call(command), result(`session id: ${THREAD}`, 'launch', 2, true)).codexLaunches).toEqual([]);
+  });
+
+  test('keeps exit status scoped to the last semicolon chain and native evidence scoped to its exact id', () => {
+    const command = `codex exec resume ${THREAD}; codex exec resume ${OTHER_THREAD}`;
+    expect(parse(call(command), result('Synthetic successful exit')).codexLaunches).toEqual([
+      { at: at(1), evidence: 'resume-argument', sourceSessionId: OTHER_THREAD },
+    ]);
+    expect(parse(call(command), result(`session id: ${THREAD}`)).codexLaunches).toEqual([
+      { at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD },
+      { at: at(1), evidence: 'resume-argument', sourceSessionId: OTHER_THREAD },
+    ]);
+    expect(parse(call(command), result(`session id: ${THREAD}`, 'launch', 2, true)).codexLaunches).toEqual([
+      { at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD },
+    ]);
+  });
+
+  test('does not confuse a trailing or quoted semicolon with a later command chain', () => {
+    for (const command of [
+      `codex exec resume ${THREAD};`,
+      `codex exec resume ${THREAD} 'Synthetic ; prompt'`,
+      `echo 'Synthetic setup'; codex exec resume ${THREAD} && echo 'Synthetic finish'`,
+    ]) {
+      expect(parse(call(command), result('Synthetic successful exit')).codexLaunches).toEqual([
+        { at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD },
+      ]);
+    }
+  });
+
+  test('matches native resume identities case-insensitively and deduplicates result blocks', () => {
+    const facts = parse(
+      call(`timeout 600 codex exec resume ${OTHER_THREAD.toUpperCase()} --json -`),
+      result(`{"type":"thread.started","thread_id":"${OTHER_THREAD}"}`, 'launch', 2, true),
+      result(`session id: ${OTHER_THREAD}`, 'launch', 3, true),
+    );
+    expect(facts.codexLaunches).toEqual([{ at: at(1), evidence: 'resume-argument', sourceSessionId: OTHER_THREAD }]);
+  });
+
+  test('rejects mismatched native evidence on error and ignores later conflicting identities', () => {
+    const command = `timeout 600 codex exec resume ${THREAD} --json -`;
+    expect(parse(call(command), result(`session id: ${OTHER_THREAD}`, 'launch', 2, true)).codexLaunches).toEqual([]);
+    expect(
+      parse(
+        call(command),
+        result(`session id: ${OTHER_THREAD}\nsession id: ${THREAD}`, 'launch', 2, true),
+        result(`session id: ${THREAD}`, 'launch', 3, true),
+      ).codexLaunches,
+    ).toEqual([]);
   });
 
   test('accepts a correlated successful result without an is_error field', () => {
