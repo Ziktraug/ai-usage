@@ -26,6 +26,7 @@ import {
   quotaWindowText,
   repositoriesFactText,
   routeAnnotationDraftFor,
+  routeAnnotationDrafts,
   ruleDraftFrom,
 } from './delegation-model';
 import { SYNTHETIC_DELEGATION_CONFIG, SYNTHETIC_DELEGATION_SETTINGS, SYNTHETIC_NOW } from './delegation-synthetic';
@@ -198,16 +199,72 @@ describe('Delegation config drafts', () => {
     defaults: defaultsDraftFrom(settings.delegation.config.defaults),
     models: settings.models.map((model) => modelEntryDraftFrom(model.entry)),
     preferences: preferencesDraftFrom(settings.delegation.config.preferences),
-    routes: settings.executors.declarations.map((declaration) =>
-      routeAnnotationDraftFor(declaration, settings.delegation.config.routes),
-    ),
+    routes: routeAnnotationDrafts(settings.executors.declarations, settings.delegation.config.routes),
     rules: settings.delegation.config.rules.map(ruleDraftFrom),
   });
+  /** An annotation of a route no executor declaration resolves (a preconfigured or removed account). */
+  const teamAnnotation = {
+    accountScope: 'team',
+    context: 'professional' as const,
+    harness: 'codex' as const,
+    label: 'Team Codex',
+    machineId: 'other-machine',
+    maxConcurrent: 2,
+    reservePercent: 35,
+  };
+  const withTeam = [...settings.delegation.config.routes, teamAnnotation];
 
   test('round-trips the loaded configuration without changing a model declaration date', () => {
     const built = buildDelegationConfig(baseInput(), { machineId: settings.machineId, now: NOW });
     expect(built.issues).toEqual([]);
     expect(built.value).toEqual(SYNTHETIC_DELEGATION_CONFIG);
+  });
+
+  test('keeps an annotation no declaration resolves, with its context, reserve and limits, until it is removed', () => {
+    const drafts = routeAnnotationDrafts(settings.executors.declarations, withTeam);
+    expect(drafts.map((draft) => [draft.accountScope, draft.declared])).toEqual([
+      ['personal', true],
+      ['work', true],
+      ['team', false],
+    ]);
+    expect(drafts[2]).toMatchObject({
+      context: 'professional',
+      label: 'Team Codex',
+      machineId: 'other-machine',
+      maxConcurrent: '2',
+      reservePercent: '35',
+    });
+
+    // What the Models and Rules forms restate when they save the whole section.
+    const kept = buildDelegationConfig({ ...baseInput(), routes: drafts }, { machineId: settings.machineId, now: NOW });
+    expect(kept.issues).toEqual([]);
+    expect(kept.value?.routes).toEqual(withTeam);
+
+    // The per-declaration view alone is what dropped it.
+    const declaredOnly = settings.executors.declarations.map((declaration) =>
+      routeAnnotationDraftFor(declaration, withTeam),
+    );
+    const dropped = buildDelegationConfig(
+      { ...baseInput(), routes: declaredOnly },
+      { machineId: settings.machineId, now: NOW },
+    );
+    expect(dropped.value?.routes).toEqual(settings.delegation.config.routes);
+
+    // An explicit removal is the only way out.
+    const removed = buildDelegationConfig(
+      { ...baseInput(), routes: drafts.filter((draft) => draft.declared) },
+      { machineId: settings.machineId, now: NOW },
+    );
+    expect(removed.value?.routes).toEqual(settings.delegation.config.routes);
+  });
+
+  test('an annotation without a machine resolves to the declaration of any machine and is not duplicated', () => {
+    const unpinned = { accountScope: 'work', context: 'personal' as const, harness: 'codex' as const };
+    const drafts = routeAnnotationDrafts(settings.executors.declarations, [unpinned]);
+    expect(drafts.map((draft) => [draft.accountScope, draft.declared, draft.context])).toEqual([
+      ['personal', true, ''],
+      ['work', true, 'personal'],
+    ]);
   });
 
   test('mirrors the parser for rule ids, bounds and requirements', () => {

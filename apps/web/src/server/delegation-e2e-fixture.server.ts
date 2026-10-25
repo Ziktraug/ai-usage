@@ -108,6 +108,15 @@ const initialSections = (): RawSections => ({
     routes: [
       { accountScope: 'personal', context: 'personal', harness: 'claude-code', label: 'Claude · personal' },
       { accountScope: 'work', context: 'professional', harness: 'codex', label: 'Codex · work' },
+      // No declaration resolves to this route: a save that does not edit it must restate it as read.
+      {
+        accountScope: 'team',
+        context: 'professional',
+        harness: 'codex',
+        label: 'Codex · team',
+        maxConcurrent: 2,
+        reservePercent: 35,
+      },
     ],
     rules: [
       {

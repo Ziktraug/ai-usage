@@ -398,6 +398,8 @@ export const buildReviewTargets = (
 export interface RouteAnnotationDraft {
   readonly accountScope: string;
   context: '' | DelegationContext;
+  /** Whether an executor declaration resolves to this route; an unresolved annotation is kept until removed. */
+  readonly declared: boolean;
   readonly harness: DelegationExecutorHarness;
   readonly key: string;
   label: string;
@@ -426,6 +428,7 @@ export const routeAnnotationDraftFor = (
   return {
     accountScope: declaration.accountScope,
     context: annotation?.context ?? '',
+    declared: true,
     harness: declaration.harness,
     key: `${declaration.machineId}/${declaration.harness}/${declaration.accountScope}`,
     label: annotation?.label ?? '',
@@ -433,6 +436,41 @@ export const routeAnnotationDraftFor = (
     maxConcurrent: annotation?.maxConcurrent === undefined ? '' : String(annotation.maxConcurrent),
     reservePercent: annotation?.reservePercent === undefined ? '' : String(annotation.reservePercent),
   };
+};
+
+/** The draft of an annotation no declaration resolves: every field as read, so a save restates it exactly. */
+const unresolvedRouteAnnotationDraft = (annotation: DelegationRouteAnnotationView): RouteAnnotationDraft => ({
+  accountScope: annotation.accountScope,
+  context: annotation.context,
+  declared: false,
+  harness: annotation.harness,
+  key: `annotation/${annotation.machineId ?? ''}/${annotation.harness}/${annotation.accountScope}`,
+  label: annotation.label ?? '',
+  machineId: annotation.machineId ?? '',
+  maxConcurrent: annotation.maxConcurrent === undefined ? '' : String(annotation.maxConcurrent),
+  reservePercent: annotation.reservePercent === undefined ? '' : String(annotation.reservePercent),
+});
+
+/**
+ * The route annotations as one list of drafts: one per declared executor (carrying its annotation
+ * when one resolves to it) and then one per annotation no declaration resolves. Every annotation
+ * read from the configuration is in the list, so a form that writes the `delegation` section
+ * restates what it did not edit and only an explicit removal drops an entry.
+ */
+export const routeAnnotationDrafts = (
+  declarations: readonly ExecutorDeclarationView[],
+  annotations: readonly DelegationRouteAnnotationView[],
+): RouteAnnotationDraft[] => {
+  const resolved = new Set<DelegationRouteAnnotationView>();
+  const declared = declarations.map((declaration) => {
+    const annotation = annotationFor(declaration, annotations);
+    if (annotation !== undefined) {
+      resolved.add(annotation);
+    }
+    return routeAnnotationDraftFor(declaration, annotations);
+  });
+  const unresolved = annotations.filter((annotation) => !resolved.has(annotation)).map(unresolvedRouteAnnotationDraft);
+  return [...declared, ...unresolved];
 };
 
 /** A draft with nothing set declares nothing and produces no entry; one with anything set must name a context. */

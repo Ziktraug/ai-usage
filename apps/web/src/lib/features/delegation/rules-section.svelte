@@ -19,7 +19,7 @@
     preferencesDraftFrom,
     RULE_PRIORITY_TEXT,
     type RuleDraft,
-    routeAnnotationDraftFor,
+    routeAnnotationDrafts,
     ruleDraftFrom,
   } from './delegation-model';
   import {
@@ -101,9 +101,7 @@
         defaults: sync.draft.defaults,
         models: config.models.map(modelEntryDraftFrom),
         preferences: { ...sync.draft.preferences, harnesses: harnessesFromOrder(sync.draft.harnessOrder) },
-        routes: settings.executors.declarations.map((declaration) =>
-          routeAnnotationDraftFor(declaration, config.routes),
-        ),
+        routes: routeAnnotationDrafts(settings.executors.declarations, config.routes),
         rules: sync.draft.rules,
       },
       { machineId: settings.machineId, now: new Date().toISOString() },

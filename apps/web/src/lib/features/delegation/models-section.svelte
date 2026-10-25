@@ -14,7 +14,7 @@
     newModelEntryDraft,
     OBSERVED_MODELS_TEXT,
     preferencesDraftFrom,
-    routeAnnotationDraftFor,
+    routeAnnotationDrafts,
     ruleDraftFrom,
   } from './delegation-model';
   import {
@@ -76,9 +76,7 @@
         defaults: defaultsDraftFrom(config.defaults),
         models: sync.draft,
         preferences: preferencesDraftFrom(config.preferences),
-        routes: settings.executors.declarations.map((declaration) =>
-          routeAnnotationDraftFor(declaration, config.routes),
-        ),
+        routes: routeAnnotationDrafts(settings.executors.declarations, config.routes),
         rules: config.rules.map(ruleDraftFrom),
       },
       { machineId: settings.machineId, now: new Date().toISOString() },

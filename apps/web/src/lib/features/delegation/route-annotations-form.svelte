@@ -11,11 +11,12 @@
     modelEntryDraftFrom,
     preferencesDraftFrom,
     type RouteAnnotationDraft,
-    routeAnnotationDraftFor,
+    routeAnnotationDrafts,
     routeAnnotationPathFor,
     ruleDraftFrom,
   } from './delegation-model';
   import {
+    dangerButton,
     entryCard,
     entryHeader,
     entryList,
@@ -44,10 +45,7 @@
   } = $props();
 
   const sync = createDraftSync<RouteAnnotationDraft[]>({
-    from: () =>
-      settings.executors.declarations.map((declaration) =>
-        routeAnnotationDraftFor(declaration, settings.delegation.config.routes),
-      ),
+    from: () => routeAnnotationDrafts(settings.executors.declarations, settings.delegation.config.routes),
     revision: () => settings.revision,
   });
   const episode = createSaveEpisode({ client: () => client, onWritten: () => onReload() });
@@ -64,6 +62,11 @@
     { label: 'personal', value: 'personal' },
   ] as const;
 
+  /** The only way an annotation no declaration resolves leaves the configuration: an explicit removal, then a save. */
+  const remove = (index: number): void => {
+    sync.markDirty();
+    sync.draft.splice(index, 1);
+  };
   const discard = (): void => {
     localIssues = [];
     episode.clear();
@@ -113,10 +116,23 @@
   {/if}
   <div class={entryList}>
     {#each sync.draft as draft, index (draft.key)}
-      <div class={entryCard} data-delegation-route-annotation={draft.key}>
+      <div
+        class={entryCard}
+        data-delegation-route-annotation={draft.key}
+        data-delegation-route-declared={draft.declared}
+      >
         <div class={entryHeader}>
           <span class={entryTitle}>{harnessDisplayName(draft.harness)} · {draft.accountScope}</span>
+          {#if !draft.declared}
+            <button class={dangerButton} onclick={() => remove(index)} type="button">Remove annotation</button>
+          {/if}
         </div>
+        {#if !draft.declared}
+          <p class={workMuted} data-delegation-route-unresolved>
+            No executor declaration resolves to this route{draft.machineId ? ` on machine ${draft.machineId}` : ''}; the
+            annotation is kept as read until you remove it.
+          </p>
+        {/if}
         <div class={fieldGrid}>
           <SelectField
             id="route-{index}-context"
