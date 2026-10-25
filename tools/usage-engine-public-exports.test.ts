@@ -41,6 +41,7 @@ describe('usage engine public package exports', () => {
       '.': './src/contracts.ts',
       './client': './src/client.ts',
       './completion': './src/completion.ts',
+      './delegation-operations': './src/delegation-operations.ts',
       './handoff': './src/handoff.ts',
       './node': './src/rendezvous.ts',
       './testing': './src/testing.ts',

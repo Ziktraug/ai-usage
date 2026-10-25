@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./delegation-read": "./src/delegation-read.ts",
     "./portable-report": "./src/portable-report.ts",
     "./provider-quota-history": "./src/provider-quota-history.ts",
     "./served-revision-query": "./src/served-revision-query.ts",

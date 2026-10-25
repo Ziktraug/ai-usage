@@ -241,6 +241,138 @@ describe('CLI command parsing', () => {
     expect(failure(['work'])).toBe('Unknown work subcommand:');
   });
 
+  test('parses the delegation subcommands with their flags', () => {
+    const jobId = '7d5a1b2c-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
+    const qualificationId = '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5';
+    expect(Effect.runSync(parseCommand(['delegation', 'qualify', '--request', 'review.json']))).toEqual({
+      _tag: 'DelegationQualify',
+      args: { json: false, request: 'review.json', simulation: false },
+    });
+    expect(Effect.runSync(parseCommand(['delegation', 'qualify', '--request', '-', '--simulation', '--json']))).toEqual(
+      {
+        _tag: 'DelegationQualify',
+        args: { json: true, request: '-', simulation: true },
+      },
+    );
+    expect(
+      Effect.runSync(
+        parseCommand([
+          'delegation',
+          'start',
+          '--request',
+          'review.json',
+          '--qualification',
+          qualificationId,
+          '--route',
+          'route-a',
+          '--confidence',
+          '0.8',
+          '--key',
+          'cli:review-7',
+        ]),
+      ),
+    ).toEqual({
+      _tag: 'DelegationStart',
+      args: {
+        json: false,
+        key: 'cli:review-7',
+        qualification: qualificationId,
+        request: 'review.json',
+        selection: { confidence: 0.8, kind: 'route', routeId: 'route-a', selectorVersion: 'operator/ai-usage-cli' },
+      },
+    });
+    expect(
+      Effect.runSync(
+        parseCommand([
+          'delegation',
+          'start',
+          '--request',
+          '-',
+          '--qualification',
+          qualificationId,
+          '--abstain',
+          'keep-with-caller',
+          '--key',
+          'cli:review-8',
+          '--json',
+        ]),
+      ),
+    ).toEqual({
+      _tag: 'DelegationStart',
+      args: {
+        json: true,
+        key: 'cli:review-8',
+        qualification: qualificationId,
+        request: '-',
+        selection: { kind: 'abstain', reason: 'keep-with-caller' },
+      },
+    });
+    expect(Effect.runSync(parseCommand(['delegation', 'status', jobId]))).toEqual({
+      _tag: 'DelegationStatus',
+      args: { jobId, json: false },
+    });
+    expect(Effect.runSync(parseCommand(['delegation', 'cancel', jobId, '--json']))).toEqual({
+      _tag: 'DelegationCancel',
+      args: { jobId, json: true },
+    });
+    expect(Effect.runSync(parseCommand(['delegation', 'list']))).toEqual({
+      _tag: 'DelegationList',
+      args: { json: false, limit: null, live: false },
+    });
+    expect(Effect.runSync(parseCommand(['delegation', 'list', '--live', '--limit', '5', '--json']))).toEqual({
+      _tag: 'DelegationList',
+      args: { json: true, limit: 5, live: true },
+    });
+  });
+
+  test('rejects delegation arguments that the engine would refuse later, before any process runs', () => {
+    const qualificationId = '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5';
+    const failure = (argv: string[]) => Effect.runSync(Effect.flip(parseCommand(argv))).message;
+    expect(failure(['delegation'])).toBe('Unknown delegation subcommand:');
+    expect(failure(['delegation', 'evaluate'])).toBe('Unknown delegation subcommand: evaluate');
+    expect(failure(['delegation', 'qualify'])).toBe('delegation qualify expects --request <file|->');
+    expect(failure(['delegation', 'qualify', '--request', 'r.json', '--route', 'x'])).toBe(
+      'Unknown option for delegation qualify: --route',
+    );
+    expect(failure(['delegation', 'start', '--request', 'r.json', '--route', 'route-a'])).toBe(
+      'delegation start expects --request <file|->, --qualification <id> and --key <idempotency-key>',
+    );
+    const base = [
+      'delegation',
+      'start',
+      '--request',
+      'r.json',
+      '--qualification',
+      qualificationId,
+      '--key',
+      'cli:review-7',
+    ];
+    expect(failure(base)).toBe('delegation start expects exactly one of --route <id> or --abstain <reason>');
+    expect(failure([...base, '--route', 'a', '--abstain', 'keep-with-caller'])).toBe(
+      'delegation start expects exactly one of --route <id> or --abstain <reason>',
+    );
+    expect(failure([...base, '--abstain', 'because'])).toBe(
+      '--abstain expects one of: keep-with-caller, no-suitable-route, insufficient-confidence, task-unsuitable',
+    );
+    expect(failure([...base, '--abstain', 'task-unsuitable', '--confidence', '0.5'])).toBe(
+      '--selector-version and --confidence describe a route choice; they cannot accompany --abstain',
+    );
+    expect(failure([...base, '--route', 'a', '--confidence', '1.5'])).toBe('--confidence expects a number from 0 to 1');
+    expect(
+      failure(['delegation', 'start', '--request', 'r.json', '--qualification', 'Q-1', '--key', 'cli:review-7']),
+    ).toBe('--qualification expects the lowercase UUID of a qualification');
+    expect(
+      failure(['delegation', 'start', '--request', 'r.json', '--qualification', qualificationId, '--key', 'short']),
+    ).toBe('--key expects 8 to 128 characters of letters, digits, dots, underscores, colons or dashes');
+    expect(failure(['delegation', 'status'])).toBe('delegation status expects a job id');
+    expect(failure(['delegation', 'status', 'JOB-7'])).toBe('delegation status expects the lowercase UUID of a job');
+    expect(failure(['delegation', 'cancel', qualificationId, '--force'])).toBe(
+      'Unknown option for delegation cancel: --force',
+    );
+    expect(failure(['delegation', 'list', '--limit', '51'])).toBe('--limit expects an integer from 1 to 50');
+    expect(failure(['delegation', 'list', '--all'])).toBe('Unknown option for delegation list: --all');
+  });
+
   test('rejects the retired setup command and no longer documents it', () => {
     expect(Effect.runSync(Effect.flip(parseCommand(['setup', '--local']))).message).toBe('Unknown option: setup');
     expect(helpText).not.toContain('setup');
