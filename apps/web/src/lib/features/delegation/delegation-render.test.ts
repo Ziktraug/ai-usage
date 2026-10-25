@@ -170,6 +170,32 @@ describe('Delegation simulation result', () => {
     expect(body).toContain('deterministic tie-break, not a judgment');
     expect(body).toContain('policy policy00000000a1 · catalog catalog0000000001');
     expect(body).toContain('2026-10-25T10:10:00.000Z');
+    expect(body).toContain('data-delegation-repositories="observed"');
+    expect(body).toContain('none · observed (git remote -v)');
     expect(conflictingAtoms(body)).toEqual([]);
+  });
+
+  test('a partly identified remote list is labelled as such, never as an absence', () => {
+    const source = 'git remote -v (2 of 4 remote URLs not identified)';
+    const partial = render(simulationResult, {
+      props: {
+        qualification: {
+          ...SYNTHETIC_DELEGATION_QUALIFICATION,
+          checkoutFacts: {
+            ...SYNTHETIC_DELEGATION_QUALIFICATION.checkoutFacts,
+            githubAccount: {
+              provenance: 'unknown',
+              source: 'github.accounts (remotes not all identified)',
+              value: null,
+            },
+            githubOwners: { provenance: 'partial', source, value: ['acme'] },
+            repositories: { provenance: 'partial', source, value: ['acme/widgets'] },
+          },
+        },
+      },
+    }).body;
+    expect(partial).toContain('data-delegation-repositories="partial"');
+    expect(partial).toContain(`acme/widgets · partly identified (${source})`);
+    expect(partial).not.toContain('none · observed');
   });
 });

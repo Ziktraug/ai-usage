@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { GIT_EMPTY_TREE } from '@ai-usage/report-core/work-attempts';
 import {
+  classifyRemoteUrl,
   freezeDelegationScope,
   parseGitHubRemotes,
+  type RemoteUrlClassification,
   readDelegationCheckoutFacts,
   resolveDelegationCheckout,
 } from './delegation-checkout';
@@ -177,23 +179,174 @@ describe('readDelegationCheckoutFacts', () => {
     expect(facts.gitAuthorEmail).toMatchObject({ provenance: 'unknown', value: null });
   });
 
-  test('parses remote listings strictly: github.com only, valid owner and repository names only', () => {
+  test('a remote the engine cannot identify makes the lists partial, never an observed absence', async () => {
+    const { git, root } = await repository();
+    const env = await isolatedEnv();
+    await git('remote', 'add', 'origin', 'git@github-pro:acme/widgets.git');
+    await git('remote', 'add', 'upstream', 'https://github.com:443/acme/widgets.git');
+    const facts = await readDelegationCheckoutFacts(root, [{ ghUser: 'acme-bot', host: 'github.com', owner: 'acme' }], {
+      env,
+    });
+    // The alias contributes a fetch and a push line: 2 of the 4 listed URLs are not identified.
+    expect(facts.githubOwners).toEqual({
+      provenance: 'partial',
+      source: 'git remote -v (2 of 4 remote URLs not identified)',
+      value: ['acme'],
+    });
+    expect(facts.repositories).toEqual({
+      provenance: 'partial',
+      source: 'git remote -v (2 of 4 remote URLs not identified)',
+      value: ['acme/widgets'],
+    });
+    expect(facts.githubAccount).toEqual({
+      provenance: 'unknown',
+      source: 'github.accounts (remotes not all identified)',
+      value: null,
+    });
+    await git('remote', 'set-url', 'origin', 'ssh://git@github.com:22/acme/widgets.git');
+    const identified = await readDelegationCheckoutFacts(
+      root,
+      [{ ghUser: 'acme-bot', host: 'github.com', owner: 'acme' }],
+      {
+        env,
+      },
+    );
+    expect(identified.githubOwners).toEqual({ provenance: 'observed', source: 'git remote -v', value: ['acme'] });
+    expect(identified.githubAccount).toMatchObject({ provenance: 'declared', value: 'acme-bot' });
+  });
+
+  test('more remotes than the read limit leave the lists partial with the unread count named', async () => {
+    const { git, root } = await repository();
+    for (let index = 0; index < 33; index++) {
+      await git('remote', 'add', `r${index}`, `https://github.com/acme/w${index}.git`);
+    }
+    const facts = await readDelegationCheckoutFacts(root, [], { env: await isolatedEnv() });
+    expect(facts.githubOwners).toEqual({
+      provenance: 'partial',
+      source: 'git remote -v (2 remote URLs not read)',
+      value: ['acme'],
+    });
+    expect(facts.repositories.provenance).toBe('partial');
+    expect(facts.repositories.value).toHaveLength(32);
+    expect(facts.githubAccount).toMatchObject({
+      provenance: 'unknown',
+      source: 'github.accounts (remotes not all identified)',
+    });
+  });
+});
+
+describe('classifyRemoteUrl', () => {
+  const identified = (owner: string, name: string): RemoteUrlClassification => ({
+    kind: 'identified',
+    owner,
+    repository: name,
+  });
+  const notGitHub: RemoteUrlClassification = { kind: 'not-github' };
+  const unidentified: RemoteUrlClassification = { kind: 'unidentified' };
+
+  test.each([
+    ['git@github.com:acme/widgets.git', identified('acme', 'widgets')],
+    ['git@github.com:/acme/widgets.git', identified('acme', 'widgets')],
+    ['GIT@GitHub.COM:Acme/Widgets', identified('Acme', 'Widgets')],
+    ['org-123@github.com:acme/widgets.git', identified('acme', 'widgets')],
+    ['github.com:acme/widgets.git', identified('acme', 'widgets')],
+    ['ssh://git@github.com/acme/widgets.git', identified('acme', 'widgets')],
+    ['ssh://git@github.com:22/acme/widgets.git', identified('acme', 'widgets')],
+    ['ssh://git@ssh.github.com:443/acme/widgets.git', identified('acme', 'widgets')],
+    ['git+ssh://git@github.com/acme/widgets.git', identified('acme', 'widgets')],
+    ['ssh+git://git@github.com/acme/widgets.git', identified('acme', 'widgets')],
+    ['https://github.com/acme/widgets', identified('acme', 'widgets')],
+    ['https://github.com:443/acme/widgets.git', identified('acme', 'widgets')],
+    ['HTTPS://GITHUB.COM/acme/widgets.git/', identified('acme', 'widgets')],
+    ['http://github.com/acme/widgets.git', identified('acme', 'widgets')],
+    ['https://www.github.com/acme/widgets/', identified('acme', 'widgets')],
+    ['https://user:token@github.com/acme/widgets.git', identified('acme', 'widgets')],
+    ['git://github.com/acme/widgets.git', identified('acme', 'widgets')],
+  ])('%s is identified', (url, expected) => {
+    expect(classifyRemoteUrl(url)).toEqual(expected);
+  });
+
+  test.each([
+    'https://gitlab.example.com/acme/widgets.git',
+    'https://github.com.evil.example/acme/widgets',
+    'https://evilgithub.com/acme/widgets',
+    'https://gist.github.com/acme/widgets',
+    'https://github.company.com/acme/widgets',
+    'http://github.com.example.com/acme/widgets',
+    'git://git.example.com/acme/widgets.git',
+    'file:///srv/git/widgets.git',
+    '/srv/git/widgets.git',
+    '../widgets',
+    './weird:name',
+    '~/widgets',
+  ])('%s is known not to be GitHub', (url) => {
+    expect(classifyRemoteUrl(url)).toEqual(notGitHub);
+  });
+
+  test.each([
+    'git@github-pro:acme/widgets.git',
+    'git@github.com-work:acme/widgets.git',
+    'github:acme/widgets.git',
+    'ssh://git@git.example.com/acme/widgets.git',
+    'ssh://git@github.com.evil.example/acme/widgets.git',
+    'ssh://git@gist.github.com/acme/widgets.git',
+    'ssh://git@github.com:2x2/acme/widgets.git',
+    'ssh://git@github.com:0/acme/widgets.git',
+    'ssh://git@github.com:65536/acme/widgets.git',
+    'ssh://git@github.com:/acme/widgets.git',
+    'https://github.com/acme/widgets/extra',
+    'https://github.com/acme',
+    'https://github.com/-bad/name',
+    'https://github.com/acme/widgets?ref=main',
+    'https://github.com/',
+    'https://github.com',
+    'ftp://github.com/acme/widgets.git',
+    'https://a@b@github.com/acme/widgets.git',
+    'https://github.com/acme/wid gets',
+    'C:\\work\\widgets',
+    'foo bar:acme/widgets.git',
+    ':acme/widgets.git',
+    '',
+  ])('%s cannot be identified', (url) => {
+    expect(classifyRemoteUrl(url)).toEqual(unidentified);
+  });
+});
+
+describe('parseGitHubRemotes', () => {
+  test('counts every line of the listing as identified, known non-GitHub or unidentified', () => {
     const listing = [
       'origin\tgit@github.com:Acme/Widgets.git (fetch)',
       'origin\tgit@github.com:Acme/Widgets.git (push)',
-      'https\thttps://user@github.com/Acme/Widgets (fetch)',
-      'ssh\tssh://git@github.com/acme/deep.git/ (fetch)',
+      'mirror\thttps://user@github.com:443/Acme/Widgets (fetch)',
+      'mirror\tssh://git@github.com:22/acme/deep.git/ (push)',
+      'lab\thttps://gitlab.example.com/acme/widgets (fetch)',
       'evil\thttps://github.com.example.com/acme/widgets (fetch)',
+      'alias\tgit@github-pro:acme/widgets.git (fetch)',
       'bad\thttps://github.com/-bad/name (fetch)',
       'nested\thttps://github.com/acme/widgets/extra (fetch)',
       'not a remote line',
+      '',
     ].join('\n');
-    expect(parseGitHubRemotes(listing)).toEqual([
-      { owner: 'Acme', repository: 'Widgets' },
-      { owner: 'Acme', repository: 'Widgets' },
-      { owner: 'Acme', repository: 'Widgets' },
-      { owner: 'acme', repository: 'deep' },
-    ]);
+    expect(parseGitHubRemotes(listing)).toEqual({
+      identified: [
+        { owner: 'Acme', repository: 'Widgets' },
+        { owner: 'Acme', repository: 'Widgets' },
+        { owner: 'Acme', repository: 'Widgets' },
+        { owner: 'acme', repository: 'deep' },
+      ],
+      notGitHub: 2,
+      read: 10,
+      unidentified: 4,
+      unread: 0,
+    });
+    expect(parseGitHubRemotes('')).toEqual({ identified: [], notGitHub: 0, read: 0, unidentified: 0, unread: 0 });
+  });
+
+  test('reads at most the line limit and counts the rest as unread', () => {
+    const lines = Array.from({ length: 70 }, (_, index) => `r${index}\thttps://github.com/acme/w${index}.git (fetch)`);
+    const parsed = parseGitHubRemotes(`${lines.join('\n')}\n`);
+    expect(parsed.identified).toHaveLength(64);
+    expect(parsed).toMatchObject({ notGitHub: 0, read: 64, unidentified: 0, unread: 6 });
   });
 });
 

@@ -132,6 +132,39 @@ export const provenanceText = (
   return 'not observed';
 };
 
+/** A list fact of the qualified checkout: what was identified, and how completely. */
+export interface DelegationListFact {
+  readonly provenance: 'declared' | 'observed' | 'partial' | 'unknown';
+  readonly source: string;
+  readonly value: readonly string[] | null;
+}
+
+export const factProvenanceText = (provenance: DelegationListFact['provenance']): string => {
+  switch (provenance) {
+    case 'declared':
+      return 'declared';
+    case 'observed':
+      return 'observed';
+    case 'partial':
+      return 'partly identified';
+    default:
+      return 'unknown';
+  }
+};
+
+/** The identified GitHub repositories of the checkout with their provenance; `partial` never reads as an absence. */
+export const repositoriesFactText = (fact: DelegationListFact): string => {
+  let listed: string;
+  if (fact.value === null) {
+    listed = 'not read';
+  } else if (fact.value.length === 0) {
+    listed = fact.provenance === 'partial' ? 'none identified' : 'none';
+  } else {
+    listed = fact.value.join(', ');
+  }
+  return `${listed} · ${factProvenanceText(fact.provenance)} (${fact.source})`;
+};
+
 export const availabilityText = (availability: DelegationRouteStatus['availability']): string => {
   if (availability.provenance === 'unknown' && availability.observedAt === null && availability.version === null) {
     return 'not observed yet';

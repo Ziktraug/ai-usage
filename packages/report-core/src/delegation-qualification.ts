@@ -5,6 +5,7 @@ import type {
   DelegationCheckoutFacts,
   DelegationConfig,
   DelegationFact,
+  DelegationFactProvenance,
   DelegationModelEntry,
   DelegationQualification,
   DelegationQuotaWindowFact,
@@ -817,19 +818,22 @@ const isId = (value: unknown): value is string => typeof value === 'string' && i
 const SHA_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{16}$/u;
-const FACT_PROVENANCES = ['declared', 'observed', 'unknown'] as const;
+/** A scalar fact is declared, observed or unknown; only a list fact can be `partial` (identified part of a longer list). */
+const SCALAR_FACT_PROVENANCES = ['declared', 'observed', 'unknown'] as const;
+const LIST_FACT_PROVENANCES = ['declared', 'observed', 'partial', 'unknown'] as const;
 const SCOPE_BASES = ['empty-tree', 'first-parent', 'range-base'] as const;
 const WINDOW_SCOPES = ['account', 'model', 'unknown'] as const;
 
 const parseFact = <Value>(
   value: unknown,
   isValue: (member: unknown) => member is Value,
+  provenances: readonly DelegationFactProvenance[],
 ): DelegationFact<Value> | null => {
   if (!(isRecord(value) && hasExactly(value, ['provenance', 'source', 'value']))) {
     return null;
   }
   const { provenance, source, value: member } = value;
-  return isOneOf(FACT_PROVENANCES, provenance) && isText(source) && (member === null || isValue(member))
+  return isOneOf(provenances, provenance) && isText(source) && (member === null || isValue(member))
     ? { provenance, source, value: member }
     : null;
 };
@@ -840,10 +844,10 @@ const parseFacts = (value: unknown): DelegationCheckoutFacts | null => {
   if (!(isRecord(value) && hasExactly(value, ['gitAuthorEmail', 'githubAccount', 'githubOwners', 'repositories']))) {
     return null;
   }
-  const gitAuthorEmail = parseFact(value.gitAuthorEmail, isText);
-  const githubAccount = parseFact(value.githubAccount, isText);
-  const githubOwners = parseFact(value.githubOwners, isTextArray);
-  const repositories = parseFact(value.repositories, isTextArray);
+  const gitAuthorEmail = parseFact(value.gitAuthorEmail, isText, SCALAR_FACT_PROVENANCES);
+  const githubAccount = parseFact(value.githubAccount, isText, SCALAR_FACT_PROVENANCES);
+  const githubOwners = parseFact(value.githubOwners, isTextArray, LIST_FACT_PROVENANCES);
+  const repositories = parseFact(value.repositories, isTextArray, LIST_FACT_PROVENANCES);
   return gitAuthorEmail && githubAccount && githubOwners && repositories
     ? { gitAuthorEmail, githubAccount, githubOwners, repositories }
     : null;

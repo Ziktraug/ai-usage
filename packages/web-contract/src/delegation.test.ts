@@ -372,6 +372,29 @@ describe('delegation web contract', () => {
     expect(parseDelegationRecordAcceptanceOutput({ evaluationId: 'eval-1' })).toEqual({ evaluationId: 'eval-1' });
   });
 
+  test('a list fact may be partly identified; a scalar fact may not', () => {
+    const source = 'git remote -v (1 of 3 remote URLs not identified)';
+    const partial: DelegationQualificationWire = {
+      ...qualificationFixture,
+      checkoutFacts: {
+        gitAuthorEmail: { provenance: 'observed', source: 'git config user.email', value: 'operator@example.test' },
+        githubAccount: { provenance: 'unknown', source: 'github.accounts (remotes not all identified)', value: null },
+        githubOwners: { provenance: 'partial', source, value: ['acme'] },
+        repositories: { provenance: 'partial', source, value: ['acme/ai-usage'] },
+      },
+    };
+    expect(parseDelegationQualificationWire(partial)).toEqual(partial);
+    expect(() =>
+      parseDelegationQualificationWire({
+        ...partial,
+        checkoutFacts: {
+          ...partial.checkoutFacts,
+          gitAuthorEmail: { provenance: 'partial', source: 'git config user.email', value: 'operator@example.test' },
+        },
+      }),
+    ).toThrow();
+  });
+
   test('refuses unknown keys, oversize entries and values outside the vocabulary', () => {
     expect(() => parseDelegationJobView({ ...jobFixture, pid: 4242 })).toThrow();
     expect(() => parseDelegationJobView({ ...jobFixture, state: 'paused' })).toThrow();

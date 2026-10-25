@@ -330,6 +330,37 @@ describe('evaluateDelegationRules', () => {
       'Rule f (forbid) is assumed to apply because githubOwner (git remote -v) is unknown; a known fact that contradicts it would lift the rule.',
     ]);
   });
+
+  test('a partly identified list fact: a match applies the rule; no match fails closed and says why', () => {
+    const source = 'git remote -v (1 of 3 remote URLs not identified)';
+    const partialFacts = facts({
+      githubOwners: { provenance: 'partial', source, value: ['someone'] },
+      repositories: { provenance: 'partial', source, value: ['someone/platform', 'acme/platform'] },
+    });
+    const { applied, assumptions } = evaluateDelegationRules({
+      checkoutPath,
+      facts: partialFacts,
+      rules: [
+        forbid,
+        { effect: 'restrict', id: 'r', match: { repository: 'ACME/platform' } },
+        { effect: 'forbid', id: 'elsewhere', match: { checkoutPath: '/elsewhere', githubOwner: 'nobody' } },
+      ],
+    });
+    // `f` finds no `acme` among the identified owners, but an unidentified remote might be one: assumed.
+    // `r` matches an identified repository: it applies outright. `elsewhere` has a known false path.
+    expect(applied).toEqual([
+      {
+        applies: 'assumed',
+        effect: 'forbid',
+        id: 'f',
+        reason: `assumed to apply: githubOwner (${source}) partly identified`,
+      },
+      { applies: 'yes', effect: 'restrict', id: 'r', reason: 'matches repository ACME/platform' },
+    ]);
+    expect(assumptions).toEqual([
+      `Rule f (forbid) is assumed to apply because githubOwner (${source}) is only partly identified; a known fact that contradicts it would lift the rule.`,
+    ]);
+  });
 });
 
 describe('evaluateRoutePolicy', () => {

@@ -5,6 +5,7 @@ import type {
   DelegationConfig,
   DelegationConfigIssue,
   DelegationDefaults,
+  DelegationFact,
   DelegationModelEntry,
   DelegationPreferences,
   DelegationRequirements,
@@ -825,7 +826,8 @@ export interface EvaluatedDelegationRules {
   readonly assumptions: readonly string[];
 }
 
-type ConditionOutcome = 'no' | 'unknown' | 'yes';
+/** `partial`: the identified values do not match, but the fact lists only part of what exists. */
+type ConditionOutcome = 'no' | 'partial' | 'unknown' | 'yes';
 
 interface ConditionResult {
   readonly condition: string;
@@ -838,14 +840,23 @@ const sameText = (left: string, right: string): boolean => left.toLowerCase() ==
 const checkoutPathUnder = (checkoutPath: string, prefix: string): boolean =>
   checkoutPath === prefix || checkoutPath.startsWith(prefix === '/' ? '/' : `${prefix}/`);
 
+/**
+ * A match among the known values holds; no match is `no` only when the fact is complete. A `partial`
+ * fact that does not match stays open (an unidentified source might match) and an unreadable fact
+ * stays `unknown`: both fail closed in `evaluateDelegationRules`.
+ */
 const factCondition = <Value>(
   condition: string,
-  fact: { readonly source: string; readonly value: Value | null },
+  fact: DelegationFact<Value>,
   holds: (value: Value) => boolean,
 ): ConditionResult => {
   let outcome: ConditionOutcome = 'unknown';
   if (fact.value !== null) {
-    outcome = holds(fact.value) ? 'yes' : 'no';
+    if (holds(fact.value)) {
+      outcome = 'yes';
+    } else {
+      outcome = fact.provenance === 'partial' ? 'partial' : 'no';
+    }
   }
   return { condition, outcome, source: fact.source };
 };
@@ -904,7 +915,9 @@ export const evaluateDelegationRules = (input: EvaluateDelegationRulesInput): Ev
     if (conditions.some((condition) => condition.outcome === 'no')) {
       continue;
     }
-    const unknown = conditions.filter((condition) => condition.outcome === 'unknown');
+    const unknown = conditions.filter(
+      (condition) => condition.outcome === 'unknown' || condition.outcome === 'partial',
+    );
     if (conditions.length === 0) {
       applied.push({
         applies: 'yes',
@@ -923,17 +936,20 @@ export const evaluateDelegationRules = (input: EvaluateDelegationRulesInput): Ev
       });
       continue;
     }
-    const unknownFacts = unknown.map(
-      (condition) => `${condition.condition.split(' ')[0]} (${condition.source ?? 'no source'})`,
-    );
+    const named = unknown.map((condition) => ({
+      name: `${condition.condition.split(' ')[0]} (${condition.source ?? 'no source'})`,
+      partial: condition.outcome === 'partial',
+    }));
     applied.push({
       applies: 'assumed',
       effect: rule.effect,
       id: rule.id,
-      reason: `assumed to apply: ${unknownFacts.join(', ')} unknown`,
+      reason: `assumed to apply: ${named.map((fact) => `${fact.name} ${fact.partial ? 'partly identified' : 'unknown'}`).join(', ')}`,
     });
     assumptions.push(
-      `Rule ${rule.id} (${rule.effect}) is assumed to apply because ${unknownFacts.join(' and ')} is unknown; a known fact that contradicts it would lift the rule.`,
+      `Rule ${rule.id} (${rule.effect}) is assumed to apply because ${named
+        .map((fact) => `${fact.name} is ${fact.partial ? 'only partly identified' : 'unknown'}`)
+        .join(' and ')}; a known fact that contradicts it would lift the rule.`,
     );
   }
   return { applied, assumptions };

@@ -13,6 +13,7 @@ import {
   delegationSectionFor,
   delegationSectionHref,
   executorDraftFrom,
+  factProvenanceText,
   identityText,
   issuesFor,
   issuesUnder,
@@ -23,6 +24,7 @@ import {
   newSimulatorDraft,
   preferencesDraftFrom,
   quotaWindowText,
+  repositoriesFactText,
   routeAnnotationDraftFor,
   ruleDraftFrom,
 } from './delegation-model';
@@ -73,6 +75,33 @@ describe('Delegation route presentation', () => {
     expect(unobserved).not.toContain('observed aaaaaaaaaaaaaaaa');
     expect(identityText({ declared: null, observed: null, observedAt: null, state: 'not-observable' })).toContain(
       'not observable',
+    );
+  });
+
+  test('labels the provenance of a checkout list fact; a partial list never reads as an absence', () => {
+    expect(factProvenanceText('observed')).toBe('observed');
+    expect(factProvenanceText('partial')).toBe('partly identified');
+    expect(factProvenanceText('unknown')).toBe('unknown');
+    expect(factProvenanceText('declared')).toBe('declared');
+    expect(repositoriesFactText({ provenance: 'observed', source: 'git remote -v', value: [] })).toBe(
+      'none · observed (git remote -v)',
+    );
+    expect(
+      repositoriesFactText({
+        provenance: 'partial',
+        source: 'git remote -v (2 of 4 remote URLs not identified)',
+        value: ['acme/widgets'],
+      }),
+    ).toBe('acme/widgets · partly identified (git remote -v (2 of 4 remote URLs not identified))');
+    expect(
+      repositoriesFactText({
+        provenance: 'partial',
+        source: 'git remote -v (2 of 2 remote URLs not identified)',
+        value: [],
+      }),
+    ).toBe('none identified · partly identified (git remote -v (2 of 2 remote URLs not identified))');
+    expect(repositoriesFactText({ provenance: 'unknown', source: 'git remote -v (unavailable)', value: null })).toBe(
+      'not read · unknown (git remote -v (unavailable))',
     );
   });
 

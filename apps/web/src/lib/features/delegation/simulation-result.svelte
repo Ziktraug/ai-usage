@@ -8,7 +8,7 @@
     statusPillWarn,
   } from '@ai-usage/design-system/svelte';
   import type { DelegationQualification } from './delegation-contract';
-  import { contextText, harnessDisplayName, ORDER_HINT_TEXT } from './delegation-model';
+  import { contextText, harnessDisplayName, ORDER_HINT_TEXT, repositoriesFactText } from './delegation-model';
   import {
     compactList,
     entryTitle,
@@ -64,6 +64,14 @@
           {qualification.checkout.admittedBy === null
             ? 'not admitted by any review target'
             : `admitted by ${qualification.checkout.admittedBy}`}
+        </dd>
+      </div>
+    {/if}
+    {#if qualification.checkoutFacts}
+      <div>
+        <dt class={factTerm}>GitHub repositories</dt>
+        <dd class={factValue} data-delegation-repositories={qualification.checkoutFacts.repositories.provenance}>
+          {repositoriesFactText(qualification.checkoutFacts.repositories)}
         </dd>
       </div>
     {/if}

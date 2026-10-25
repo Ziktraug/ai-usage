@@ -686,6 +686,41 @@ describe('qualifyDelegation', () => {
     expect(parseDelegationQualification(JSON.parse(JSON.stringify(refused)))).toEqual(refused);
   });
 
+  test('a partly identified list fact parses and keeps the rule assumed; a partial scalar fact does not parse', () => {
+    const source = 'git remote -v (1 of 3 remote URLs not identified)';
+    const partialFacts: DelegationCheckoutFacts = {
+      ...FACTS,
+      githubAccount: { provenance: 'unknown', source: 'github.accounts (remotes not all identified)', value: null },
+      githubOwners: { provenance: 'partial', source, value: ['someone'] },
+      repositories: { provenance: 'partial', source, value: ['someone/alpha'] },
+    };
+    const qualification = qualify({
+      checkoutFacts: partialFacts,
+      config: { ...CONFIG, rules: [{ effect: 'forbid', id: 'no-acme', match: { githubOwner: 'acme' } }] },
+    });
+    expect(qualification.appliedRules).toEqual([
+      {
+        applies: 'assumed',
+        effect: 'forbid',
+        id: 'no-acme',
+        reason: `assumed to apply: githubOwner (${source}) partly identified`,
+      },
+    ]);
+    expect(qualification.assumptions[0]).toContain(`githubOwner (${source}) is only partly identified`);
+    expect(routeOf(qualification, OPUS_ID).blockers).toEqual(['forbidden-by-rule']);
+    const wire = JSON.parse(JSON.stringify(qualification)) as DelegationQualification;
+    expect(parseDelegationQualification(wire)).toEqual(qualification);
+    expect(
+      parseDelegationQualification({
+        ...wire,
+        checkoutFacts: {
+          ...partialFacts,
+          gitAuthorEmail: { provenance: 'partial', source: 'git config user.email', value: 'dev@example.test' },
+        },
+      }),
+    ).toBeNull();
+  });
+
   test.each([
     ['an extra key', (value: DelegationQualification) => ({ ...value, forged: true })],
     ['a forged admissible id', (value: DelegationQualification) => ({ ...value, admissibleRouteIds: ['forged'] })],

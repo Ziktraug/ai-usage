@@ -368,9 +368,16 @@ export const delegationSettingsViewSchema = strictObject({
 // Qualification (delegation.simulate)
 // ---------------------------------------------------------------------------------------------
 
-const factSchema = <Value extends BaseSchema<unknown, unknown, BaseIssue<unknown>>>(value: Value) =>
+/** A scalar fact is declared, observed or unknown; only a list fact can be `partial` (the identified part of a longer list). */
+const SCALAR_FACT_PROVENANCES = ['declared', 'observed', 'unknown'] as const;
+const LIST_FACT_PROVENANCES = ['declared', 'observed', 'partial', 'unknown'] as const;
+
+const factSchema = <Value extends BaseSchema<unknown, unknown, BaseIssue<unknown>>>(
+  value: Value,
+  provenances: typeof LIST_FACT_PROVENANCES | typeof SCALAR_FACT_PROVENANCES,
+) =>
   strictObject({
-    provenance: picklist(['declared', 'observed', 'unknown']),
+    provenance: picklist(provenances),
     source: qualificationTextSchema,
     value: nullable(value),
   });
@@ -449,10 +456,16 @@ export const delegationQualificationSchema = pipe(
     ),
     checkoutFacts: nullable(
       strictObject({
-        gitAuthorEmail: factSchema(textSchema),
-        githubAccount: factSchema(textSchema),
-        githubOwners: factSchema(pipe(array(textSchema), maxLength(DELEGATION_QUALIFICATION_BOUNDS.maxEntries))),
-        repositories: factSchema(pipe(array(textSchema), maxLength(DELEGATION_QUALIFICATION_BOUNDS.maxEntries))),
+        gitAuthorEmail: factSchema(textSchema, SCALAR_FACT_PROVENANCES),
+        githubAccount: factSchema(textSchema, SCALAR_FACT_PROVENANCES),
+        githubOwners: factSchema(
+          pipe(array(textSchema), maxLength(DELEGATION_QUALIFICATION_BOUNDS.maxEntries)),
+          LIST_FACT_PROVENANCES,
+        ),
+        repositories: factSchema(
+          pipe(array(textSchema), maxLength(DELEGATION_QUALIFICATION_BOUNDS.maxEntries)),
+          LIST_FACT_PROVENANCES,
+        ),
       }),
     ),
     omittedRoutes: countSchema,

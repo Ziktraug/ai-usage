@@ -88,11 +88,17 @@ export interface FrozenDelegationScope {
   readonly kind: DelegationScopeKind;
 }
 
-export type DelegationFactProvenance = 'declared' | 'observed' | 'unknown';
+/**
+ * `declared`: an operator declaration. `observed`: read in full from the machine. `unknown`: not
+ * readable (`value` is `null`). `partial`: observed, but at least one source could not be
+ * identified — `value` lists only what was identified, so an absent entry is not a known absence.
+ * Only list facts can be `partial`; a scalar fact is observed or unknown.
+ */
+export type DelegationFactProvenance = 'declared' | 'observed' | 'partial' | 'unknown';
 
 export interface DelegationFact<Value> {
   readonly provenance: DelegationFactProvenance;
-  /** Where the value came from, e.g. "git remote -v" or "github.accounts[owner=acme]". */
+  /** Where the value came from, e.g. "git remote -v" or "github.accounts[owner=acme]"; counts, never a URL. */
   readonly source: string;
   readonly value: Value | null;
 }
