@@ -1,8 +1,31 @@
 import AxeBuilder from '@axe-core/playwright';
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 
 const SAVE_SETTINGS_RPC_PATH = '/rpc/delegation/saveSettings';
+const SETTINGS_RPC_PATH = '/rpc/delegation/settings';
+/** The fixture machine every declaration without a machine is on; a declared route's card is keyed by it. */
+const FIXTURE_MACHINE_ID = 'fixture-machine';
+const PERSONAL_ROUTE_KEY = `${FIXTURE_MACHINE_ID}/claude-code/personal`;
+
+/** A `delegation.routes[]` entry as the settings read presents it. */
+interface RouteAnnotationRead {
+  readonly accountScope: string;
+  readonly context: string;
+  readonly harness: string;
+  readonly label?: string;
+  readonly maxConcurrent?: number;
+  readonly reservePercent?: number;
+}
+
+/** The parts of the settings read a scenario rewrites. */
+interface SettingsRead {
+  delegation: { config: { routes: RouteAnnotationRead[] } };
+  executors: { declarations: unknown[] };
+  routes: unknown[];
+}
+
+const stringOrEmpty = (value: number | undefined): string => (value === undefined ? '' : String(value));
 /** The browser failure gate forgives a ≥ 400 answer that carries this header; see browser-test.ts. */
 const EXPECTED_ERROR_HEADER = 'x-ai-usage-expected-error';
 const STALE_REVISION = 'stale00000000000';
@@ -396,6 +419,141 @@ test.describe('settings writes', () => {
     } finally {
       await other.close();
     }
+  });
+
+  test('an edit made while a save is pending is kept, said so, and carried by the next save', async ({ page }) => {
+    test.setTimeout(90_000);
+    const stamp = Date.now().toString(36);
+    await page.goto('/delegation');
+    await waitForDelegation(page);
+    const form = page.locator('[data-delegation-form="route-annotations"]');
+    const personal = form.locator(`[data-delegation-route-annotation="${PERSONAL_ROUTE_KEY}"]`);
+    const label = personal.getByRole('textbox', { name: 'Label' });
+    const reserve = personal.getByRole('textbox', { name: 'Reserve %' });
+    const save = form.getByRole('button', { name: 'Save route contexts' });
+    const status = form.getByRole('status');
+    await label.fill(`Claude personal ${stamp}`);
+
+    // The save's answer is held until the test releases it: the operator keeps editing meanwhile.
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === SAVE_SETTINGS_RPC_PATH,
+      async (route) => {
+        if (route.request().method() === 'POST') {
+          await released;
+        }
+        await route.continue();
+      },
+    );
+    const revisionBefore = await revisionOf(page);
+    await save.click();
+    await expect(status).toHaveText('Saving…');
+    await expect(save).toBeDisabled();
+    await reserve.fill('10');
+    await expect(reserve).toHaveValue('10');
+    release();
+
+    // The save lands and the page re-reads the settings: the later edit is neither replaced nor hidden.
+    await expect(status).toContainText('Saved. The configuration is now at revision');
+    await expect.poll(() => revisionOf(page)).not.toBe(revisionBefore);
+    await expect(reserve).toHaveValue('10');
+    await expect(label).toHaveValue(`Claude personal ${stamp}`);
+    await expect(status).toContainText('Edits made since are kept below and not saved yet.');
+    await expect(form.getByRole('button', { name: 'Discard edits' })).toBeEnabled();
+    await expect(save).toBeEnabled();
+
+    await save.click();
+    await expect(status).toContainText('Saved. The configuration is now at revision');
+    await expect(status).not.toContainText('Edits made since');
+    await expect(form.getByRole('button', { name: 'Discard edits' })).toBeDisabled();
+    await page.goto('/delegation');
+    await waitForDelegation(page);
+    await expect(label).toHaveValue(`Claude personal ${stamp}`);
+    await expect(reserve).toHaveValue('10');
+  });
+
+  test('removing the last annotation no declaration resolves can be saved; it is gone on re-read', async ({ page }) => {
+    test.setTimeout(90_000);
+    // The read presents no declaration and one annotation (the first one on disk); the save and the
+    // re-read are real. The annotations read are restored at the end, as the other tests read them.
+    let annotationsRead: RouteAnnotationRead[] = [];
+    const presentOneAnnotation = async (route: Route): Promise<void> => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { json?: SettingsRead };
+      if (!body.json) {
+        throw new Error('Expected an oRPC JSON envelope on the settings response.');
+      }
+      if (annotationsRead.length === 0) {
+        annotationsRead = body.json.delegation.config.routes;
+      }
+      body.json.executors.declarations = [];
+      body.json.routes = [];
+      body.json.delegation.config.routes = body.json.delegation.config.routes.slice(0, 1);
+      await route.fulfill({ headers: { 'content-type': 'application/json' }, json: body, status: response.status() });
+    };
+    const isSettingsRead = (url: URL): boolean => url.pathname === SETTINGS_RPC_PATH;
+    await page.route(isSettingsRead, presentOneAnnotation);
+    // A client-side entry reads the settings through the RPC the scenario answers.
+    await page.goto('/sources');
+    await waitForHydratedNavigation(page);
+    await page
+      .getByRole('complementary', { name: 'Application navigation' })
+      .getByRole('link', { name: 'Delegation', exact: true })
+      .click();
+    await waitForDelegation(page);
+
+    const form = page.locator('[data-delegation-form="route-annotations"]');
+    const cards = form.locator('[data-delegation-route-annotation]');
+    await expect(cards).toHaveCount(1);
+    await expect(cards).toHaveAttribute('data-delegation-route-declared', 'false');
+    await expect(page.locator('[data-delegation-form="executors"]')).toContainText('No executor declared yet.');
+    const save = form.getByRole('button', { name: 'Save route contexts' });
+    await cards.getByRole('button', { name: 'Remove annotation' }).click();
+    await expect(cards).toHaveCount(0);
+    await expect(form).toContainText('Declare an executor first; its context is set here.');
+    await expect(form.getByRole('button', { name: 'Discard edits' })).toBeEnabled();
+    await expect(save).toBeEnabled();
+    const savedScopes = recordSavedRouteScopes(page);
+    await save.click();
+    await expect(form.getByRole('status')).toContainText('Saved.');
+    expect(savedScopes).toEqual([[]]);
+    await page.unroute(isSettingsRead, presentOneAnnotation);
+
+    // Re-read from the fixture: no annotation is left; the declared routes have no context until set.
+    await page.goto('/delegation');
+    await waitForDelegation(page);
+    await expect(form.locator('[data-delegation-route-declared="false"]')).toHaveCount(0);
+    await expect(cards).toHaveCount(2);
+    for (const card of await cards.all()) {
+      await expect(card.getByRole('combobox', { name: 'Context' })).toHaveValue('');
+    }
+
+    // Restore what was read for the declared routes, so the other tests find their contexts.
+    for (const annotation of annotationsRead) {
+      const card = form.locator(
+        `[data-delegation-route-annotation="${FIXTURE_MACHINE_ID}/${annotation.harness}/${annotation.accountScope}"]`,
+      );
+      if ((await card.count()) === 0) {
+        continue;
+      }
+      await card.getByRole('combobox', { name: 'Context' }).selectOption(annotation.context);
+      await card.getByRole('textbox', { name: 'Label' }).fill(annotation.label ?? '');
+      await card.getByRole('textbox', { name: 'Reserve %' }).fill(stringOrEmpty(annotation.reservePercent));
+      await card.getByRole('textbox', { name: 'Max concurrent' }).fill(stringOrEmpty(annotation.maxConcurrent));
+    }
+    await save.click();
+    await expect(form.getByRole('status')).toContainText('Saved.');
+    await page.goto('/delegation');
+    await waitForDelegation(page);
+    await expect(form.locator('[data-delegation-route-declared="false"]')).toHaveCount(0);
+    await expect(
+      form
+        .locator(`[data-delegation-route-annotation="${PERSONAL_ROUTE_KEY}"]`)
+        .getByRole('combobox', { name: 'Context' }),
+    ).toHaveValue('personal');
   });
 });
 

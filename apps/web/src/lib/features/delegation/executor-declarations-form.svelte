@@ -50,10 +50,10 @@
     from: () => settings.executors.declarations.map(executorDraftFrom),
     revision: () => settings.revision,
   });
-  const episode = createSaveEpisode({
+  const episode = createSaveEpisode<ExecutorDraft[]>({
     client: () => client,
-    onWritten: async () => {
-      sync.settle();
+    onWritten: async ({ revision, saved }) => {
+      sync.settle(saved, revision);
       await onReload();
     },
   });
@@ -114,7 +114,7 @@
       return;
     }
     localIssues = [];
-    await episode.run(buildSaveInput({ executors: built.value }, sync.baseRevision));
+    await episode.run(buildSaveInput({ executors: built.value }, sync.baseRevision), sync.snapshot());
   };
 </script>
 
@@ -254,6 +254,7 @@
     </button>
   </div>
   <SaveNotice
+    dirty={sync.dirty}
     onDiscard={discardAndReload}
     onReapply={reapply}
     outcome={episode.outcome}

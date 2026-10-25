@@ -48,10 +48,10 @@
     from: () => routeAnnotationDrafts(settings.executors.declarations, settings.delegation.config.routes),
     revision: () => settings.revision,
   });
-  const episode = createSaveEpisode({
+  const episode = createSaveEpisode<RouteAnnotationDraft[]>({
     client: () => client,
-    onWritten: async () => {
-      sync.settle();
+    onWritten: async ({ revision, saved }) => {
+      sync.settle(saved, revision);
       await onReload();
     },
   });
@@ -109,7 +109,7 @@
       return;
     }
     localIssues = [];
-    await episode.run(buildSaveInput({ delegation: built.value }, sync.baseRevision));
+    await episode.run(buildSaveInput({ delegation: built.value }, sync.baseRevision), sync.snapshot());
   };
 </script>
 
@@ -184,7 +184,12 @@
     {/each}
   </div>
   <div class={formActions}>
-    <button class={primaryButton} disabled={episode.pending || sync.stale || sync.draft.length === 0} type="submit">
+    <!-- An emptied draft is the operator's removal of the last annotation and saves; an empty one as read has nothing to save. -->
+    <button
+      class={primaryButton}
+      disabled={episode.pending || sync.stale || (sync.draft.length === 0 && !sync.dirty)}
+      type="submit"
+    >
       Save route contexts
     </button>
     <button class={workButton} disabled={!sync.dirty || episode.pending} onclick={discard} type="button">
@@ -192,6 +197,7 @@
     </button>
   </div>
   <SaveNotice
+    dirty={sync.dirty}
     onDiscard={discardAndReload}
     onReapply={reapply}
     outcome={episode.outcome}

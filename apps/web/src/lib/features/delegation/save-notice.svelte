@@ -7,6 +7,7 @@
   import { compactList, formActions, noticeStack, workButton } from './delegation-styles';
 
   let {
+    dirty,
     onDiscard,
     onReapply,
     outcome,
@@ -15,6 +16,8 @@
     revision,
     stale,
   }: {
+    /** The form has edits its last save did not carry (made while it was pending, or since). */
+    dirty: boolean;
     /** Drops the operator's edits and loads the latest settings. */
     onDiscard: () => Promise<void>;
     /** Loads the latest settings and re-applies the operator's edits onto them. */
@@ -54,6 +57,9 @@
   {:else if outcome?.kind === 'written'}
     <p aria-live="polite" class={cx(banner, bannerOk)} role="status">
       Saved. The configuration is now at revision {outcome.revision}.
+      {#if dirty}
+        Edits made since are kept below and not saved yet.
+      {/if}
     </p>
   {:else if outcome?.kind === 'invalid'}
     <div class={cx(banner, bannerError)} role="alert">

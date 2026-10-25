@@ -15,8 +15,9 @@ export interface DraftSyncOptions<Draft> {
  * older draft. The draft follows the settings until the operator edits it. From then on a refetch
  * keeps it: when the new revision changed nothing this form writes, the draft is rebound to it
  * silently (nothing it would write moved); otherwise it goes stale — no save is possible until the
- * operator discards the edits or re-applies them onto the latest. Call from a component's script so
- * the effect belongs to it.
+ * operator discards the edits or re-applies them onto the latest. A save carries a `snapshot()`;
+ * once written, `settle` rebinds the draft to what was saved, so an edit made while the save was
+ * pending stays an edit. Call from a component's script so the effect belongs to it.
  */
 export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
   let draft = $state<Draft>(untrack(options.from));
@@ -102,26 +103,39 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
       resolution = null;
       adopt(untrack(options.revision));
     },
-    /** A save was written: the draft settles; the refetch that follows re-reads it (parsed, dated). */
-    settle(): void {
-      dirty = false;
+    /**
+     * A save of `saved` was written and produced `revision`: the draft is rebound to it (the refetch
+     * that follows re-reads it, parsed and dated). An edit made while the save was pending keeps the
+     * form dirty, relative to what was saved: the refetch keeps it, or names the draft stale when
+     * the settings moved in what this form writes — it is never replaced silently.
+     */
+    settle(saved: Draft, revision: string): void {
+      base = saved;
+      baseRevision = revision;
       stale = false;
       resolution = null;
-      const revision = untrack(options.revision);
-      if (revision !== baseRevision) {
-        adopt(revision);
-      }
+      dirty = !sameDraft($state.snapshot(draft), saved);
+    },
+    /** The draft as a plain copy: what a save carries, and what `settle` compares the live draft to. */
+    snapshot(): Draft {
+      return $state.snapshot(draft) as Draft;
     },
   };
 };
+
+/** A save that was written: what it carried is now the configuration at `revision`. */
+export interface WrittenSave<Saved> {
+  readonly revision: string;
+  readonly saved: Saved;
+}
 
 /**
  * One save at a time per form, with the outcome the notice renders. A written save asks the page
  * to refetch, so every form sees the new revision; the draft that was saved settles on it.
  */
-export const createSaveEpisode = (options: {
+export const createSaveEpisode = <Saved>(options: {
   readonly client: () => DelegationPageClient | null;
-  readonly onWritten: () => Promise<void>;
+  readonly onWritten: (written: WrittenSave<Saved>) => Promise<void>;
 }) => {
   let outcome = $state<DelegationSaveOutcome | null>(null);
   let pending = $state(false);
@@ -136,7 +150,8 @@ export const createSaveEpisode = (options: {
     get pending(): boolean {
       return pending;
     },
-    async run(input: DelegationSaveSettingsInput): Promise<DelegationSaveOutcome> {
+    /** Saves `input`, built from `saved` (the draft's snapshot at this moment). */
+    async run(input: DelegationSaveSettingsInput, saved: Saved): Promise<DelegationSaveOutcome> {
       const client = options.client();
       if (pending) {
         return { kind: 'unavailable', message: 'A save is already in progress.', tag: 'Busy' };
@@ -156,7 +171,7 @@ export const createSaveEpisode = (options: {
         const result = await client.saveSettings(input);
         outcome = result;
         if (result.kind === 'written') {
-          await options.onWritten();
+          await options.onWritten({ revision: result.revision, saved });
         }
         return result;
       } finally {

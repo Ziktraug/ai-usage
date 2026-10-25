@@ -49,10 +49,10 @@
     from: () => settings.models.map((model) => modelEntryDraftFrom(model.entry)),
     revision: () => settings.revision,
   });
-  const episode = createSaveEpisode({
+  const episode = createSaveEpisode<ModelEntryDraft[]>({
     client: () => client,
-    onWritten: async () => {
-      sync.settle();
+    onWritten: async ({ revision, saved }) => {
+      sync.settle(saved, revision);
       await onReload();
     },
   });
@@ -105,7 +105,7 @@
       return;
     }
     localIssues = [];
-    await episode.run(buildSaveInput({ delegation: built.value }, sync.baseRevision));
+    await episode.run(buildSaveInput({ delegation: built.value }, sync.baseRevision), sync.snapshot());
   };
 </script>
 
@@ -152,6 +152,7 @@
       </button>
     </div>
     <SaveNotice
+      dirty={sync.dirty}
       onDiscard={discardAndReload}
       onReapply={reapply}
       outcome={episode.outcome}
