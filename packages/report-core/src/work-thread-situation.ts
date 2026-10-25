@@ -18,13 +18,15 @@ export type WorkThreadRemainder = RemainderEvidence &
         readonly staged: number | null;
         readonly untracked: number | null;
       }
-    // TODO(W1): one line per new kind: `unresolved-review-threads` (GitHub's unresolved review threads).
+    // unresolved-review-threads: the count of review threads GitHub reports as unresolved, never ordinary comments.
     | { readonly kind: 'unpushed-commits' | 'running-session' | 'unresolved-review-threads'; readonly count: number }
     | { readonly kind: 'merge-conflict' | 'behind-base'; readonly baseRef: string | null }
     | { readonly kind: 'source-unavailable'; readonly outcome: string }
     | {
-        // TODO(W1): document `awaiting-review` (others' turn), `draft-pr`, `ready-to-merge` (the
-        // operator's move); `open-pr` stays the fallback when none of them can be established.
+        // awaiting-review: GitHub requires another review and has not requested the operator's review.
+        // draft-pr: the pull request is still a draft and needs the operator's preparation.
+        // ready-to-merge: observed review, checks and mergeability leave the merge as the operator's move.
+        // open-pr: the pull request is open but no more specific next step can be established.
         readonly kind:
           | 'open-pr'
           | 'awaiting-review'
@@ -121,7 +123,7 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
     if (fact.state !== 'OPEN') {
       continue;
     }
-    remainders.push({ ...evidence, kind: 'open-pr' });
+    const priorCount = remainders.length;
     if (fact.reviewDecision === 'CHANGES_REQUESTED') {
       remainders.push({ ...evidence, kind: 'changes-requested' });
     }
@@ -139,6 +141,27 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
     }
     if (marker.role === 'review-requested') {
       remainders.push({ ...evidence, kind: 'review-requested' });
+    }
+    const unresolved = fact.unresolvedReviewThreads;
+    if (typeof unresolved === 'number' && Number.isSafeInteger(unresolved) && unresolved > 0) {
+      remainders.push({ ...evidence, kind: 'unresolved-review-threads', count: unresolved });
+    }
+    if (fact.reviewDecision === 'REVIEW_REQUIRED' && marker.role !== 'review-requested') {
+      remainders.push({ ...evidence, kind: 'awaiting-review' });
+    }
+    if (fact.draft === true) {
+      remainders.push({ ...evidence, kind: 'draft-pr' });
+    }
+    if (
+      fact.draft === false &&
+      fact.checksRollup === 'success' &&
+      marker.mergeable === 'mergeable' &&
+      (fact.reviewDecision === 'APPROVED' || fact.reviewDecision === null)
+    ) {
+      remainders.push({ ...evidence, kind: 'ready-to-merge' });
+    }
+    if (remainders.length === priorCount) {
+      remainders.push({ ...evidence, kind: 'open-pr' });
     }
   }
 };
@@ -200,13 +223,17 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
 const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'merge-conflict',
   'changes-requested',
+  'unresolved-review-threads',
   'failing-checks',
   'behind-base',
   'review-requested',
   'local-files',
   'unpushed-commits',
   'jira-open',
+  'draft-pr',
   'pending-checks',
+  'ready-to-merge',
+  'awaiting-review',
   'open-pr',
   'source-unavailable',
   'source-stale',
@@ -251,7 +278,7 @@ export const deriveWorkThreadSituation = (
   const reason = PRIORITY.find((kind) => remainders.some((remainder) => remainder.kind === kind)) ?? 'source-unknown';
   const evidence = remainders.find((remainder) => remainder.kind === reason);
   let hint: WorkThreadSituation['hint'] = reason.startsWith('source-') ? 'undecided' : 'to-resume';
-  if (reason === 'pending-checks') {
+  if (reason === 'pending-checks' || reason === 'awaiting-review') {
     hint = 'waiting';
   }
   const actions = { github: 'open-pr', jira: 'open-jira', local: 'copy-context', sessions: 'copy-context' } as const;
