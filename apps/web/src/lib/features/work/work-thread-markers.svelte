@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { WorkThreadMarkers } from '@ai-usage/report-core/work-thread-view';
   import { observedWebUrl, threadDate, threadTime } from './work-thread-model';
-  import { threadStyles } from './work-thread-styles';
 
   let {
     markers,
@@ -21,31 +20,31 @@
 </script>
 
 {#if !(markers.local.length || markers.pullRequests.length || markers.jiraIssues.length)}
-  <p class={`wt-no-artifact ${threadStyles.noArtifact}`}>
+  <p class="wt-no-artifact">
     {analysisOnly
       ? 'Analysis only · no branch, PR or ticket needed'
       : 'No branch, PR or ticket linked. This does not establish that the task is complete.'}
   </p>
 {:else}
-  <div class={`wt-markers ${threadStyles.markers}`}>
+  <div class="wt-markers">
     {#if markers.local.length}
       {@const main =
         markers.local[0]?.latest?.outcome === 'observed'
           ? markers.local[0]?.latest
           : markers.local[0]?.latestSuccessful}
-      <details class={`wt-source ${threadStyles.source}`}>
+      <details class="wt-source">
         <summary>
-          <span class={`wt-source-label ${threadStyles.sourceLabel}`}>LOCAL <span aria-hidden="true">›</span></span
+          <span class="wt-source-label">LOCAL <span aria-hidden="true">›</span></span
           ><strong>{main?.branch ?? 'Branch unknown'}</strong
-          ><span class={`wt-meta ${threadStyles.meta}`}
+          ><span class="wt-meta"
             >{worktreeCaption(main?.dirty)}
             {markers.local.length > 1 ? ` · ${markers.local.length} checkouts` : ''}</span
           >
         </summary>
-        <div class={`wt-source-detail ${threadStyles.sourceDetail}`}>
+        <div class="wt-source-detail">
           {#each markers.local as marker (marker.key)}
             {@const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful}
-            <div class={`wt-source-fact ${threadStyles.sourceFact}`}>
+            <div class="wt-source-fact">
               {#if !marker.latest}
                 <p>Latest read: unknown</p>
               {:else if marker.latest.outcome !== 'observed'}
@@ -55,11 +54,11 @@
                 </p>
               {/if}
               {#if fact}
-                <p class={`wt-meta ${threadStyles.meta}`}>
+                <p class="wt-meta">
                   Observed {observed(fact.observedAt)}{stale(fact.observedAt) ? ' · Stale observation' : ''}
                 </p>
-                <code class={`wt-code ${threadStyles.code}`}>{fact.checkoutPath}</code>
-                <dl class={`wt-facts ${threadStyles.facts}`}>
+                <code class="wt-code">{fact.checkoutPath}</code>
+                <dl class="wt-facts">
                   <div>
                     <dt>Branch</dt>
                     <dd>{fact.branch ?? 'Unknown'}</dd>
@@ -90,11 +89,11 @@
         markers.pullRequests[0]?.latest?.outcome === 'observed'
           ? markers.pullRequests[0]?.latest
           : markers.pullRequests[0]?.latestSuccessful}
-      <details class={`wt-source ${threadStyles.source}`}>
+      <details class="wt-source">
         <summary>
-          <span class={`wt-source-label ${threadStyles.sourceLabel}`}>GITHUB <span aria-hidden="true">›</span></span
+          <span class="wt-source-label">GITHUB <span aria-hidden="true">›</span></span
           ><strong>PR #{main?.number ?? '?'} · {main?.state?.toLowerCase() ?? 'Unknown'}</strong
-          ><span class={`wt-meta ${threadStyles.meta}`}
+          ><span class="wt-meta"
             >{main
               ? (main.reviewDecision?.replaceAll('_', ' ').toLowerCase() ?? 'No review decision')
               : 'Review not observed'}
@@ -106,10 +105,10 @@
             · Checks {main?.checksRollup ?? 'unknown'}</span
           >
         </summary>
-        <div class={`wt-source-detail ${threadStyles.sourceDetail}`}>
+        <div class="wt-source-detail">
           {#each markers.pullRequests as marker (marker.key)}
             {@const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful}
-            <div class={`wt-source-fact ${threadStyles.sourceFact}`}>
+            <div class="wt-source-fact">
               {#if !marker.latest}
                 <p>Latest read: unknown</p>
               {:else if marker.latest.outcome !== 'observed'}
@@ -119,11 +118,11 @@
                 </p>
               {/if}
               {#if fact}
-                <p class={`wt-meta ${threadStyles.meta}`}>
+                <p class="wt-meta">
                   Observed {observed(fact.observedAt)}{stale(fact.observedAt) ? ' · Stale observation' : ''}
                 </p>
                 <p>PR #{fact.number} · {fact.title ?? fact.repository}</p>
-                <dl class={`wt-facts ${threadStyles.facts}`}>
+                <dl class="wt-facts">
                   <div>
                     <dt>Head → base</dt>
                     <dd>{fact.headRef ?? 'Unknown'} → {fact.baseRef ?? 'Unknown'}</dd>
@@ -167,23 +166,23 @@
                   <p>Review threads: not read{fact.outcomeMessage ? ` · ${fact.outcomeMessage}` : ''}</p>
                 {/if}
                 {#if fact.state === 'MERGED'}
-                  <p class={`wt-meta ${threadStyles.meta}`}>Merged does not establish deployment.</p>
+                  <p class="wt-meta">Merged does not establish deployment.</p>
                 {/if}
                 {@const url = observedWebUrl(fact.url)}
                 {#if url}
-                  <a class={`wt-link ${threadStyles.link}`} href={url} rel="noopener noreferrer" target="_blank"
+                  <a class="wt-link" href={url} rel="noopener noreferrer" target="_blank"
                     >Open PR #{fact.number}
                     on GitHub ↗</a
                   >
                 {:else}
-                  <p class={`wt-meta ${threadStyles.meta}`}>No verified web URL available.</p>
+                  <p class="wt-meta">No verified web URL available.</p>
                 {/if}
               {:else}
                 <p>No successful PR observation available.</p>
               {/if}
             </div>
           {/each}
-          <p class={`wt-meta ${threadStyles.meta}`}>An agent review is not a human approval.</p>
+          <p class="wt-meta">An agent review is not a human approval.</p>
         </div>
       </details>
     {/if}
@@ -192,16 +191,16 @@
         markers.jiraIssues[0]?.latest?.outcome === 'observed'
           ? markers.jiraIssues[0]?.latest
           : markers.jiraIssues[0]?.latestSuccessful}
-      <details class={`wt-source ${threadStyles.source}`}>
+      <details class="wt-source">
         <summary>
-          <span class={`wt-source-label ${threadStyles.sourceLabel}`}>JIRA <span aria-hidden="true">›</span></span
+          <span class="wt-source-label">JIRA <span aria-hidden="true">›</span></span
           ><strong>{main?.key ?? 'Ticket unknown'} · {main?.status ?? 'Unknown'}</strong
-          ><span class={`wt-meta ${threadStyles.meta}`}>The ticket keeps its own status</span>
+          ><span class="wt-meta">The ticket keeps its own status</span>
         </summary>
-        <div class={`wt-source-detail ${threadStyles.sourceDetail}`}>
+        <div class="wt-source-detail">
           {#each markers.jiraIssues as marker (marker.key)}
             {@const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful}
-            <div class={`wt-source-fact ${threadStyles.sourceFact}`}>
+            <div class="wt-source-fact">
               {#if !marker.latest}
                 <p>Latest read: unknown</p>
               {:else if marker.latest.outcome !== 'observed'}
@@ -211,11 +210,11 @@
                 </p>
               {/if}
               {#if fact}
-                <p class={`wt-meta ${threadStyles.meta}`}>
+                <p class="wt-meta">
                   Observed {observed(fact.observedAt)}{stale(fact.observedAt) ? ' · Stale observation' : ''}
                 </p>
                 <p>{fact.key} · {fact.summary ?? 'Summary not observed'}</p>
-                <dl class={`wt-facts ${threadStyles.facts}`}>
+                <dl class="wt-facts">
                   <div>
                     <dt>Status</dt>
                     <dd>{fact.status ?? 'Unknown'}</dd>

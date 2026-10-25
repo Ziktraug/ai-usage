@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { WorkThreadSourceStatus } from '@ai-usage/report-core/work-thread-view';
   import { sourceName, threadDate, threadSourceAvailability } from './work-thread-model';
-  import { threadStyles } from './work-thread-styles';
 
   let { sources, now, timeZone }: { sources: readonly WorkThreadSourceStatus[]; now: string; timeZone: string } =
     $props();
@@ -9,14 +8,14 @@
 </script>
 
 {#if availability.details.length}
-  <details aria-label="Source availability" class={`wt-availability ${threadStyles.availability}`}>
+  <details aria-label="Source availability" class="wt-availability">
     <summary title={availability.summary || 'Source details'}>
       <span>{availability.summary || 'Source details'}</span>
       {#if availability.summary}
-        <span class={`wt-link ${threadStyles.link}`}>details</span>
+        <span class="wt-link">details</span>
       {/if}
     </summary>
-    <div class={`wt-availability-detail ${threadStyles.availabilityDetail}`}>
+    <div class="wt-availability-detail">
       {#each availability.details as source (source.source)}
         <p>
           <strong>{sourceName(source.source)}: {source.label}</strong>

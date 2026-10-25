@@ -31,7 +31,8 @@
     threadPageCursors,
     threadUrl,
   } from './work-thread-model';
-  import { threadStyles } from './work-thread-styles';
+  import { threadSurface } from './work-thread-styles';
+  import './work-threads.css';
 
   let { data }: { data: ThreadPageData } = $props();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
@@ -218,7 +219,7 @@
 <svelte:head><title>{detail?.row.thread.title ?? 'My work'} · ai-usage</title></svelte:head>
 <div class={shell}>
   <main
-    class={`${threadStyles.surface} wt-surface`}
+    class={`${threadSurface} wt-surface`}
     data-route-shell="work"
     data-work-hydrated={hydrated}
     data-work-threads
@@ -227,7 +228,7 @@
   >
     {#if taskId}
       {#if data.mode !== 'live'}
-        <p class={`wt-meta ${threadStyles.meta}`}>Synthetic demo</p>
+        <p class="wt-meta">Synthetic demo</p>
       {/if}
       {#if detail}
         {#key detail.row.thread.threadId}
@@ -251,37 +252,35 @@
           />
         {/key}
       {:else if detailError}
-        <div class={`wt-empty ${threadStyles.empty}`} role="alert">
-          <h1 class={threadStyles.heading1}>Task unavailable</h1>
+        <div class="wt-empty" role="alert">
+          <h1>Task unavailable</h1>
           <p>{detailError}</p>
-          <a class={`wt-link ${threadStyles.link}`} href={threadUrl(currentUrl, null)}>← My work</a
-          ><button class={`wt-button ${threadStyles.button}`} onclick={() => detailQuery.refetch()} type="button">
-            Retry task
-          </button>
+          <a class="wt-link" href={threadUrl(currentUrl, null)}>← My work</a
+          ><button class="wt-button" onclick={() => detailQuery.refetch()} type="button">Retry task</button>
         </div>
       {:else}
-        <p class={`wt-empty ${threadStyles.empty}`} role="status">Reading this task…</p>
+        <p class="wt-empty" role="status">Reading this task…</p>
       {/if}
     {:else}
-      <header class={`wt-page-head ${threadStyles.pageHead}`}>
+      <header class="wt-page-head">
         <div>
-          <p class={`wt-eyebrow ${threadStyles.eyebrow}`}>My work</p>
-          <h1 class={threadStyles.pageHeading}>One thread per task.</h1>
-          <p class={`wt-subtitle ${threadStyles.subtitle}`}>Sessions pass. The follow-up stays, until you end it.</p>
+          <p class="wt-eyebrow">My work</p>
+          <h1>One thread per task.</h1>
+          <p class="wt-subtitle">Sessions pass. The follow-up stays, until you end it.</p>
         </div>
-        <div class={`wt-page-meta ${threadStyles.pageMeta}`}>
+        <div class="wt-page-meta">
           {#if data.mode !== 'live'}
             <span>Synthetic demo</span>
           {/if}
-          <a class={`wt-link ${threadStyles.link}`} href="/work/sessions">Session intake ↗</a>
+          <a class="wt-link" href="/work/sessions">Session intake ↗</a>
         </div>
       </header>
       {#if listError}
-        <div class={`wt-alert ${threadStyles.alert}`} role="alert">
+        <div class="wt-alert" role="alert">
           <strong>Tasks unavailable</strong>
           <p>{listError} This does not establish that there are no tasks.</p>
           <button
-            class={`wt-button ${threadStyles.button}`}
+            class="wt-button"
             onclick={() => {
               for (const result of listQueries) {
                 result.refetch();
@@ -312,7 +311,7 @@
           {timeZone}
         />
       {:else if !listError}
-        <p class={`wt-empty ${threadStyles.empty}`} role="status">Reading tasks…</p>
+        <p class="wt-empty" role="status">Reading tasks…</p>
       {/if}
     {/if}
   </main>

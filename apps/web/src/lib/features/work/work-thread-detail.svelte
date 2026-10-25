@@ -30,7 +30,6 @@
     threadTime,
   } from './work-thread-model';
   import WorkThreadSources from './work-thread-sources.svelte';
-  import { threadStyles } from './work-thread-styles';
 
   export interface SessionChoice {
     readonly caption: string;
@@ -272,51 +271,42 @@
   const followLabel = $derived({ done: 'Done', waiting: 'Waiting', following: 'Following' }[thread.followState]);
 </script>
 
-<nav aria-label="Task navigation" class={`wt-crumb ${threadStyles.crumb}`}>
-  <a class={`wt-link ${threadStyles.link}`} href={backHref} onclick={onBack}>← My work</a
-  ><span aria-hidden="true">/</span><span>{thread.projectLabel ?? 'No project'}</span>
-  <div class={`wt-neighbors ${threadStyles.neighbors}`}>
+<nav aria-label="Task navigation" class="wt-crumb">
+  <a class="wt-link" href={backHref} onclick={onBack}>← My work</a><span aria-hidden="true">/</span
+  ><span>{thread.projectLabel ?? 'No project'}</span>
+  <div class="wt-neighbors">
     <span>One task at a time</span>
     {#if previousHref}
-      <a aria-label="Previous task" class={`wt-button ${threadStyles.button}`} href={previousHref}>←</a>
+      <a aria-label="Previous task" class="wt-button" href={previousHref}>←</a>
     {:else}
-      <button aria-label="Previous task" class={`wt-button ${threadStyles.button}`} disabled type="button">←</button>
+      <button aria-label="Previous task" class="wt-button" disabled type="button">←</button>
     {/if}
     {#if nextHref}
-      <a aria-label="Next task" class={`wt-button ${threadStyles.button}`} href={nextHref}>→</a>
+      <a aria-label="Next task" class="wt-button" href={nextHref}>→</a>
     {:else}
-      <button aria-label="Next task" class={`wt-button ${threadStyles.button}`} disabled type="button">→</button>
+      <button aria-label="Next task" class="wt-button" disabled type="button">→</button>
     {/if}
   </div>
 </nav>
-<header class={`wt-task-head ${threadStyles.taskHead}`}>
+<header class="wt-task-head">
   <div>
-    <p class={`wt-id ${threadStyles.id}`}>
-      Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone)}
-    </p>
-    <h1 class={threadStyles.taskHeading} data-title-length={thread.title.length > 90 ? 'long' : 'normal'}>
+    <p class="wt-id">Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone)}</p>
+    <h1 data-title-length={thread.title.length > 90 ? 'long' : 'normal'}>
       {thread.title}
     </h1>
     {#if thread.objective}
-      <p class={`wt-subtitle ${threadStyles.subtitle}`}>{thread.objective}</p>
+      <p class="wt-subtitle">{thread.objective}</p>
     {/if}
   </div>
-  <div class={`wt-follow-controls ${threadStyles.followControls}`}>
-    <span class={`wt-follow-state ${threadStyles.followState}`} data-follow-state={thread.followState}
-      >{followLabel}</span
-    >
+  <div class="wt-follow-controls">
+    <span class="wt-follow-state" data-follow-state={thread.followState}>{followLabel}</span>
     {#if thread.followState === 'waiting'}
-      <button
-        class={`wt-button ${threadStyles.button}`}
-        disabled={busy}
-        onclick={() => setFollowState('following')}
-        type="button"
-      >
+      <button class="wt-button" disabled={busy} onclick={() => setFollowState('following')} type="button">
         Resume following
       </button>
     {/if}
     <button
-      class={`wt-button ${threadStyles.button}`}
+      class="wt-button"
       disabled={busy}
       onclick={() => (thread.followState === 'done' ? setFollowState('following') : end())}
       type="button"
@@ -328,7 +318,7 @@
 <WorkThreadSources now={data.generatedAt} sources={taskSourceStatuses(data)} {timeZone} />
 
 {#if thread.followState === 'done'}
-  <div class={`wt-done-banner ${threadStyles.doneBanner}`}>
+  <div class="wt-done-banner">
     <strong
       >You ended this follow-up on {threadDate(thread.doneAt ?? thread.updatedAt, timeZone)} · history and links stay
       available.</strong
@@ -339,35 +329,24 @@
     {/if}
   </div>
 {/if}
-<section aria-label="What's left" class={`wt-reason ${threadStyles.reason}`}>
-  <div class={`wt-reason-main ${threadStyles.reasonMain}`}>
+<section aria-label="What's left" class="wt-reason">
+  <div class="wt-reason-main">
     <div>
-      <p class={`wt-eyebrow ${threadStyles.eyebrow}`}>What's left</p>
-      <h2 class={threadStyles.heading2}>{situation.headline}</h2>
-      <p class={`wt-subtitle ${threadStyles.subtitle}`}>{situation.caption}</p>
+      <p class="wt-eyebrow">What's left</p>
+      <h2>{situation.headline}</h2>
+      <p class="wt-subtitle">{situation.caption}</p>
     </div>
-    <div class={`wt-actions ${threadStyles.actions}`}>
+    <div class="wt-actions">
       {#if situation.action === 'open-pr' && openPr}
-        <a
-          class={`wt-button wt-primary ${threadStyles.primaryButton}`}
-          href={openPr}
-          rel="noopener noreferrer"
-          target="_blank"
-          >Open PR on GitHub ↗</a
-        >
+        <a class="wt-button wt-primary" href={openPr} rel="noopener noreferrer" target="_blank">Open PR on GitHub ↗</a>
       {:else}
-        <button
-          class={`wt-button wt-primary ${threadStyles.primaryButton}`}
-          disabled={busy}
-          onclick={primary}
-          type="button"
-        >
+        <button class="wt-button wt-primary" disabled={busy} onclick={primary} type="button">
           {primaryLabel}
         </button>
       {/if}
       {#if thread.followState === 'following'}
         <button
-          class={`wt-link ${threadStyles.link}`}
+          class="wt-link"
           disabled={busy}
           onclick={() => (panel = panel === 'wait' ? null : 'wait')}
           type="button"
@@ -378,13 +357,11 @@
     </div>
   </div>
   {#if situation.action === 'resume-session' && resumeEpisode}
-    <p class={`wt-meta ${threadStyles.meta}`}>
-      Copies a verified resume command and context. Nothing is executed here.
-    </p>
+    <p class="wt-meta">Copies a verified resume command and context. Nothing is executed here.</p>
   {/if}
   {#if panel === 'end'}
-    <div class={`wt-inline-panel ${threadStyles.inlinePanel}`}>
-      <h3 class={threadStyles.heading3}>These remainders will stay</h3>
+    <div class="wt-inline-panel">
+      <h3>These remainders will stay</h3>
       <p>Ending the follow-up changes none of these sources.</p>
       <ul>
         {#each situation.remainders as remainder}
@@ -400,29 +377,18 @@
           </li>
         {/each}
       </ul>
-      <label class={`wt-field ${threadStyles.field}`}
-        >Reason (optional)<textarea
-          class={`wt-input ${threadStyles.input}`}
-          maxlength="512"
-          bind:value={reason}
-        ></textarea></label
+      <label class="wt-field"
+        >Reason (optional)<textarea class="wt-input" maxlength="512" bind:value={reason}></textarea></label
       >
-      <div class={`wt-actions ${threadStyles.actions}`}>
-        <button
-          class={`wt-button wt-primary ${threadStyles.primaryButton}`}
-          disabled={busy}
-          onclick={() => setFollowState('done')}
-          type="button"
-        >
+      <div class="wt-actions">
+        <button class="wt-button wt-primary" disabled={busy} onclick={() => setFollowState('done')} type="button">
           End anyway
-        </button><button class={`wt-button ${threadStyles.button}`} onclick={() => (panel = null)} type="button">
-          Keep following
-        </button>
+        </button><button class="wt-button" onclick={() => (panel = null)} type="button">Keep following</button>
       </div>
     </div>
   {:else if panel === 'wait'}
     <form
-      class={`wt-inline-panel ${threadStyles.inlinePanel}`}
+      class="wt-inline-panel"
       onsubmit={(event) => {
         event.preventDefault();
         if (waitingFor.trim()) {
@@ -430,9 +396,9 @@
         }
       }}
     >
-      <label class={`wt-field ${threadStyles.field}`}
+      <label class="wt-field"
         >Waiting for<input
-          class={`wt-input ${threadStyles.input}`}
+          class="wt-input"
           maxlength="256"
           placeholder="For example, PR review"
           required
@@ -440,8 +406,8 @@
         ></label
       >
       {#if reviewPrs.length}
-        <label class={`wt-field ${threadStyles.field}`}
-          >Linked PR review (optional)<select class={`wt-input ${threadStyles.input}`} bind:value={waitPrKey}>
+        <label class="wt-field"
+          >Linked PR review (optional)<select class="wt-input" bind:value={waitPrKey}>
             <option value="">No specific source</option>
             {#each reviewPrs as marker}
               <option value={marker.key}>{marker.key}</option>
@@ -449,27 +415,18 @@
           </select></label
         >
       {/if}
-      <div class={`wt-actions ${threadStyles.actions}`}>
-        <button
-          class={`wt-button wt-primary ${threadStyles.primaryButton}`}
-          disabled={busy || !waitingFor.trim()}
-          type="submit"
-        >
-          Wait
-        </button><button class={`wt-button ${threadStyles.button}`} onclick={() => (panel = null)} type="button">
-          Cancel
-        </button>
+      <div class="wt-actions">
+        <button class="wt-button wt-primary" disabled={busy || !waitingFor.trim()} type="submit">Wait</button
+        ><button class="wt-button" onclick={() => (panel = null)} type="button">Cancel</button>
       </div>
     </form>
   {/if}
 </section>
 {#if actionError}
-  <div class={`wt-alert ${threadStyles.alert}`} role="alert">
+  <div class="wt-alert" role="alert">
     {actionError}
     {#if retry}
-      <button class={`wt-button ${threadStyles.button}`} disabled={busy} onclick={retry} type="button">
-        Retry action
-      </button>
+      <button class="wt-button" disabled={busy} onclick={retry} type="button">Retry action</button>
     {/if}
   </div>
 {/if}
@@ -480,11 +437,11 @@
   {timeZone}
 />
 
-<section aria-labelledby="work-thread-history-title" class={`wt-history ${threadStyles.history}`}>
-  <div class={`wt-history-top ${threadStyles.historyTop}`}>
-    <h2 class={threadStyles.heading2} id="work-thread-history-title">The thread of this task</h2>
-    <div class={`wt-history-controls ${threadStyles.historyControls}`}>
-      <fieldset aria-label="History filter" class={`wt-mini-tabs ${threadStyles.miniTabs}`}>
+<section aria-labelledby="work-thread-history-title" class="wt-history">
+  <div class="wt-history-top">
+    <h2 id="work-thread-history-title">The thread of this task</h2>
+    <div class="wt-history-controls">
+      <fieldset aria-label="History filter" class="wt-mini-tabs">
         <button aria-pressed={sessionsOnly ? 'false' : 'true'} onclick={() => (sessionsOnly = false)} type="button">
           All
         </button><button
@@ -495,29 +452,22 @@
           Sessions
         </button>
       </fieldset>
-      <label class={`wt-switch ${threadStyles.switch}`}
+      <label class="wt-switch"
         ><input type="checkbox" bind:checked={showDelegations}>
         Show delegations</label
       >
     </div>
   </div>
-  <div class={`wt-journal ${threadStyles.journal}`}>
+  <div class="wt-journal">
     {#each history as day (day.key)}
-      <section
-        aria-label={day.key}
-        class={selectedDay === day.key ? threadStyles.selectedDay : undefined}
-        id={`work-day-${day.key}`}
-        class:wt-selected-day={selectedDay === day.key}
-      >
-        <h3 class={`wt-day-label ${threadStyles.dayLabel}`}>
+      <section aria-label={day.key} id={`work-day-${day.key}`} class:wt-selected-day={selectedDay === day.key}>
+        <h3 class="wt-day-label">
           {threadDate(day.entries[0]?.at ?? `${day.key}T12:00:00Z`, timeZone, true)}
         </h3>
         {#each day.entries as entry (entry.id)}
-          <div class={`wt-entry ${threadStyles.entry}`}>
-            <time class={`wt-entry-time ${threadStyles.entryTime}`} datetime={entry.at}
-              >{threadTime(entry.at, timeZone)}</time
-            >
-            <div class={`wt-entry-body ${threadStyles.entryBody}`}>
+          <div class="wt-entry">
+            <time class="wt-entry-time" datetime={entry.at}>{threadTime(entry.at, timeZone)}</time>
+            <div class="wt-entry-body">
               {#if entry.kind === 'session'}
                 <WorkThreadEpisode
                   {busy}
@@ -532,8 +482,8 @@
                 />
               {:else if entry.kind === 'fact-event'}
                 {@const factCopy = threadFactEventCopy(entry.event)}
-                <div class={`wt-event wt-fact-event ${threadStyles.event}`}>
-                  <span class={`wt-event-source ${threadStyles.eventSource}`}>GitHub</span>
+                <div class="wt-event wt-fact-event">
+                  <span class="wt-event-source">GitHub</span>
                   <div>
                     <strong>{factCopy.title}</strong>
                     {#if factCopy.detail}
@@ -543,8 +493,8 @@
                 </div>
               {:else}
                 {@const eventCopy = threadEventCopy(entry.event, data.episodes)}
-                <div class={`wt-event ${threadStyles.event}`}>
-                  <span class={`wt-event-source ${threadStyles.eventSource}`}>{threadEventActor(entry.event)}</span>
+                <div class="wt-event">
+                  <span class="wt-event-source">{threadEventActor(entry.event)}</span>
                   <div>
                     <strong>{eventCopy.title}</strong>
                     {#if eventCopy.detail}
@@ -568,20 +518,20 @@
         {/each}
       </section>
     {:else}
-      <p class={`wt-empty ${threadStyles.empty}`}>
+      <p class="wt-empty">
         {sessionsOnly ? 'No linked sessions. A task can exist without a local session.' : 'No history observed yet.'}
       </p>
     {/each}
   </div>
 </section>
-<div class={`wt-minor-ops ${threadStyles.minorOps}`}>
+<div class="wt-minor-ops">
   <span
     >{row.sessionCount}
     linked {row.sessionCount === 1 ? 'session' : 'sessions'}
     {row.delegatedSessionCount > 0 ? ` · ${row.delegatedSessionCount} delegated` : ''}
     · one task</span
   ><button
-    class={`wt-link ${threadStyles.link}`}
+    class="wt-link"
     onclick={() => {
       panel = panel === 'link' ? null : 'link';
       if (panel === 'link') {
@@ -594,21 +544,21 @@
   </button>
 </div>
 {#if panel === 'link'}
-  <section aria-label="Link an earlier session" class={`wt-inline-panel ${threadStyles.inlinePanel}`}>
-    <h3 class={threadStyles.heading3}>Recent sessions · {thread.projectLabel ?? 'No project'}</h3>
+  <section aria-label="Link an earlier session" class="wt-inline-panel">
+    <h3>Recent sessions · {thread.projectLabel ?? 'No project'}</h3>
     <p>Only served sessions from this project are shown. Linking adds them to this task.</p>
     {#if sessionsError}
       <p role="alert">{sessionsError}</p>
     {:else if sessionsLoading && !sessionChoices.length}
       <p role="status">Reading recent sessions…</p>
     {/if}
-    <div class={`wt-session-choices ${threadStyles.sessionChoices}`}>
+    <div class="wt-session-choices">
       {#each sessionChoices.filter((choice) => !linkedKeys.includes(choice.key)) as choice (choice.key)}
-        <div class={`wt-session-choice ${threadStyles.sessionChoice}`}>
+        <div class="wt-session-choice">
           <span><strong>{choice.title}</strong><small>{choice.caption}</small></span
           ><button
             aria-label={`Link ${choice.title}`}
-            class={`wt-button ${threadStyles.button}`}
+            class="wt-button"
             disabled={busy}
             onclick={() => linkSession(choice.key)}
             type="button"
@@ -622,40 +572,28 @@
         {/if}
       {/each}
     </div>
-    <div class={`wt-actions ${threadStyles.actions}`}>
+    <div class="wt-actions">
       {#if moreSessions}
-        <button
-          class={`wt-button ${threadStyles.button}`}
-          disabled={sessionsLoading}
-          onclick={onMoreSessions}
-          type="button"
-        >
+        <button class="wt-button" disabled={sessionsLoading} onclick={onMoreSessions} type="button">
           Load more sessions
         </button>
       {/if}
-      <button class={`wt-button ${threadStyles.button}`} onclick={() => (panel = null)} type="button">Cancel</button>
+      <button class="wt-button" onclick={() => (panel = null)} type="button">Cancel</button>
     </div>
   </section>
 {/if}
 {#if data.detachedLinks.some((link) => link.kind === 'session')}
-  <details class={`wt-detached ${threadStyles.detached}`}>
+  <details class="wt-detached">
     <summary>Detached sessions</summary>
     {#each data.detachedLinks.filter((link) => link.kind === 'session') as link}
-      <div class={`wt-session-choice ${threadStyles.sessionChoice}`}>
+      <div class="wt-session-choice">
         <span>{link.key}</span
-        ><button
-          class={`wt-link ${threadStyles.link}`}
-          disabled={busy}
-          onclick={() => linkSession(link.key)}
-          type="button"
-        >
-          Link again
-        </button>
+        ><button class="wt-link" disabled={busy} onclick={() => linkSession(link.key)} type="button">Link again</button>
       </div>
     {/each}
   </details>
 {/if}
-<details class={`wt-note ${threadStyles.note}`}>
+<details class="wt-note">
   <summary>Resume note, if needed</summary>
   <form
     onsubmit={(event) => {
@@ -666,18 +604,18 @@
       });
     }}
   >
-    <label class={`wt-field ${threadStyles.field}`}
+    <label class="wt-field"
       >Resume note<textarea
-        class={`wt-input ${threadStyles.input}`}
+        class="wt-input"
         maxlength="2000"
         oninput={(event) => (note = event.currentTarget.value)}
         value={note ?? thread.note ?? ''}
       ></textarea></label
-    ><button class={`wt-button ${threadStyles.button}`} disabled={busy} type="submit">Save note</button>
+    ><button class="wt-button" disabled={busy} type="submit">Save note</button>
   </form>
 </details>
 {#if toast}
-  <div class={`wt-toast ${threadStyles.toast}`} role="status">
+  <div class="wt-toast" role="status">
     <span>{toast}</span>
     {#if undo}
       <button disabled={busy} onclick={undo} type="button">Undo</button>

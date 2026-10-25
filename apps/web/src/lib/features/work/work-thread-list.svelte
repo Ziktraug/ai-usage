@@ -17,7 +17,6 @@
     threadWeek,
   } from './work-thread-model';
   import WorkThreadSources from './work-thread-sources.svelte';
-  import { threadStyles } from './work-thread-styles';
 
   let {
     dataset,
@@ -70,8 +69,8 @@
   };
 </script>
 
-<div class={`wt-toolbar ${threadStyles.toolbar}`}>
-  <div aria-label="Personal follow-up" class={`wt-tabs ${threadStyles.tabs}`} role="tablist">
+<div class="wt-toolbar">
+  <div aria-label="Personal follow-up" class="wt-tabs" role="tablist">
     {#each ['open', 'done'] as tab}
       <button
         aria-controls="work-task-panel"
@@ -85,16 +84,14 @@
         type="button"
       >
         {tab === 'done' ? 'Done' : 'Following'}
-        <span class={`wt-count ${threadStyles.count}`}
-          >{tab === 'done' ? dataset.counts.done : dataset.counts.open}</span
-        >
+        <span class="wt-count">{tab === 'done' ? dataset.counts.done : dataset.counts.open}</span>
       </button>
     {/each}
   </div>
-  <div class={`wt-filters ${threadStyles.filters}`}>
-    <label class={`wt-sr ${threadStyles.sr}`} for="work-task-search">Search tasks</label>
+  <div class="wt-filters">
+    <label class="wt-sr" for="work-task-search">Search tasks</label>
     <input
-      class={`wt-input ${threadStyles.input}`}
+      class="wt-input"
       id="work-task-search"
       maxlength="200"
       oninput={(event) => onFilter({ search: event.currentTarget.value || null })}
@@ -102,9 +99,9 @@
       type="search"
       value={query.search ?? ''}
     >
-    <label class={`wt-sr ${threadStyles.sr}`} for="work-task-project">Project</label>
+    <label class="wt-sr" for="work-task-project">Project</label>
     <select
-      class={`wt-input ${threadStyles.input}`}
+      class="wt-input"
       id="work-task-project"
       onchange={(event) => onFilter({ project: event.currentTarget.value || null })}
       value={query.project ?? ''}
@@ -119,10 +116,10 @@
 <WorkThreadSources now={dataset.generatedAt} sources={dataset.sources} {timeZone} />
 
 <div aria-labelledby={`work-tab-${query.tab}`} id="work-task-panel" role="tabpanel">
-  <div class={`wt-board ${threadStyles.board}`}>
-    <div aria-hidden="true" class={`wt-board-head ${threadStyles.boardHead}`}>
+  <div class="wt-board">
+    <div aria-hidden="true" class="wt-board-head">
       <span>Task</span>
-      <div class={`wt-week-scale ${threadStyles.weekScale}`}>
+      <div class="wt-week-scale">
         {#each week as day}
           <span class:wt-today={day.today}>{day.label}</span>
         {/each}
@@ -131,35 +128,32 @@
     </div>
     {#each groups as group (group.project)}
       <section aria-label={`${group.project} tasks`}>
-        <h2 class={`wt-project ${threadStyles.project}`}>
+        <h2 class="wt-project">
           {group.project} <span>{group.tasks.length} {group.tasks.length === 1 ? 'task' : 'tasks'}</span>
         </h2>
         {#each group.tasks as row (row.thread.threadId)}
           {@const situation = threadSituationCopy(row, dataset.generatedAt, dataset.sources, timeZone)}
           {@const buckets = bucketThreadMarks(row.marks, timeZone)}
           <article
-            class={`wt-task-row ${threadStyles.taskRow}`}
+            class="wt-task-row"
             data-work-thread={row.thread.threadId}
             class:wt-waiting={row.thread.followState === 'waiting'}
           >
             <a
               aria-label={row.thread.title}
-              class={`wt-task-title ${threadStyles.taskTitle}`}
+              class="wt-task-title"
               href={href(row.thread.threadId)}
               onclick={(event) => onOpen(event, row.thread.threadId)}
               title={row.thread.title}
             >
               <strong>{row.thread.title}</strong>
-              <span class={`wt-meta ${threadStyles.meta}`}>{threadRefs(row)}</span>
+              <span class="wt-meta">{threadRefs(row)}</span>
             </a>
-            <fieldset
-              aria-label={`This week's activity for ${row.thread.title}`}
-              class={`wt-week ${threadStyles.week}`}
-            >
+            <fieldset aria-label={`This week's activity for ${row.thread.title}`} class="wt-week">
               {#each week as day}
                 {@const marks = buckets.get(day.key) ?? []}
                 {@const sessions = marks.filter((mark) => mark.kind === 'session')}
-                <div class={`wt-day ${threadStyles.day}`} class:wt-today={day.today}>
+                <div class="wt-day" class:wt-today={day.today}>
                   {#if marks.length}
                     {@const selected = selectedMarks?.threadId === row.thread.threadId && selectedMarks.day === day.key}
                     {@const description = `${day.label}: ${sessions.length} sessions, ${marks.length - sessions.length} work events. Show activity.`}
@@ -167,7 +161,7 @@
                       aria-controls={selected ? `wt-marks-${row.thread.threadId}-${day.key}` : undefined}
                       aria-expanded={selected ? 'true' : 'false'}
                       aria-label={description}
-                      class={`wt-day-button ${threadStyles.dayButton}`}
+                      class="wt-day-button"
                       id={`wt-mark-${row.thread.threadId}-${day.key}`}
                       onclick={() =>
                         (selectedMarks = selected ? null : { threadId: row.thread.threadId, day: day.key })}
@@ -182,13 +176,13 @@
                       {#if sessions.length}
                         <span
                           aria-hidden="true"
-                          class={`wt-mark ${threadStyles.mark}`}
+                          class="wt-mark"
                           data-harness={sessions.length === 1 ? sessions[0]?.harness : ''}
                           >{sessions.length > 1 ? sessions.length : harnessGlyph(sessions[0]?.harness ?? null)}</span
                         >
                       {/if}
                       {#if marks.length > sessions.length}
-                        <span aria-hidden="true" class={`wt-mark wt-event-mark ${threadStyles.eventMark}`}></span>
+                        <span aria-hidden="true" class="wt-mark wt-event-mark"></span>
                       {/if}
                     </button>
                   {/if}
@@ -197,11 +191,11 @@
             </fieldset>
             <a
               aria-label={`What's left for ${row.thread.title}: ${situation.headline}`}
-              class={`wt-next ${threadStyles.next}`}
+              class="wt-next"
               href={href(row.thread.threadId)}
               onclick={(event) => onOpen(event, row.thread.threadId)}
             >
-              <span class={`wt-hint ${threadStyles.hint}`} data-hint={situation.hint}
+              <span class="wt-hint" data-hint={situation.hint}
                 ><span aria-hidden="true">●</span>
                 {situation.label}
                 {#if situation.remainders.some((remainder) => remainder.kind === 'source-stale')}
@@ -214,17 +208,12 @@
               {@const dayMarks = buckets.get(selectedMarks.day) ?? []}
               <section
                 aria-label={`Activity on ${selectedMarks.day}`}
-                class={`wt-day-marks ${threadStyles.dayMarks}`}
+                class="wt-day-marks"
                 id={`wt-marks-${row.thread.threadId}-${selectedMarks.day}`}
               >
                 <div>
                   <strong>{selectedMarks.day} · {row.thread.title}</strong
-                  ><button
-                    aria-label="Close day activity"
-                    class={`wt-button ${threadStyles.button}`}
-                    onclick={closeMarks}
-                    type="button"
-                  >
+                  ><button aria-label="Close day activity" class="wt-button" onclick={closeMarks} type="button">
                     ×
                   </button>
                 </div>
@@ -237,7 +226,7 @@
                   {/each}
                 </ul>
                 <a
-                  class={`wt-link ${threadStyles.link}`}
+                  class="wt-link"
                   href={href(row.thread.threadId, selectedMarks.day)}
                   onclick={(event) => onOpen(event, row.thread.threadId, selectedMarks?.day)}
                   >Open task for this day →</a
@@ -248,33 +237,29 @@
         {/each}
       </section>
     {:else}
-      <div class={`wt-empty ${threadStyles.empty}`}>
-        <h2 class={threadStyles.heading2}>
+      <div class="wt-empty">
+        <h2>
           {query.tab === 'done' ? 'No ended follow-ups here' : 'No tasks in this view'}
         </h2>
         <p>Try another project or search. Session intake remains available.</p>
         {#if query.project || query.search}
-          <button
-            class={`wt-button ${threadStyles.button}`}
-            onclick={() => onFilter({ project: null, search: null })}
-            type="button"
-          >
+          <button class="wt-button" onclick={() => onFilter({ project: null, search: null })} type="button">
             Clear filters
           </button>
         {/if}
-        <a class={`wt-link ${threadStyles.link}`} href="/work/sessions">Browse sessions</a>
+        <a class="wt-link" href="/work/sessions">Browse sessions</a>
       </div>
     {/each}
   </div>
   {#if dataset.nextCursor}
-    <div class={`wt-more ${threadStyles.more}`}>
+    <div class="wt-more">
       {#if continuation}
-        <p class={`wt-meta ${threadStyles.meta}`}>
+        <p class="wt-meta">
           {rows.length}
           tasks loaded. Continue in a new page; browser Back keeps this view.
         </p>
       {/if}
-      <button class={`wt-button ${threadStyles.button}`} disabled={loadingMore} onclick={onMore} type="button">
+      <button class="wt-button" disabled={loadingMore} onclick={onMore} type="button">
         {#if loadingMore}
           Loading…
         {:else if continuation}
@@ -286,14 +271,13 @@
     </div>
   {/if}
 </div>
-<div class={`wt-legend ${threadStyles.legend}`}>
+<div class="wt-legend">
   <div>
-    <span><span class={`wt-glyph ${threadStyles.glyph}`} data-harness="claude">Cl</span> Claude session</span
-    ><span><span class={`wt-glyph ${threadStyles.glyph}`} data-harness="codex">Cx</span> Codex session</span
-    ><span>○ Work event</span>
+    <span><span class="wt-glyph" data-harness="claude">Cl</span> Claude session</span
+    ><span><span class="wt-glyph" data-harness="codex">Cx</span> Codex session</span><span>○ Work event</span>
   </div>
   <span>Placed by day · open a mark for times and episode spans</span>
 </div>
-<p class={`wt-quiet ${threadStyles.quiet}`}>
+<p class="wt-quiet">
   “Done” means your follow-up has ended. A session ending, a PR merging and a ticket closing remain separate facts.
 </p>
