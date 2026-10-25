@@ -460,6 +460,62 @@ describe('qualifyDelegation', () => {
     expect(routeOf(after, OPUS_ID).blockers).toEqual([]);
   });
 
+  test('a persisted account-change barrier applies when the history no longer shows the change; the later of the two wins', () => {
+    // The retained history only carries the current account: pruning removed the previous one.
+    const pruned = [observation()];
+    expect(observedAccountChangeAt(pruned)).toBeNull();
+    const barrier = { changedAt: '2026-10-21T11:52:00.000Z', harness: 'claude-code' as const, machineId: MACHINE };
+    const blocked = qualify({
+      accountChanges: [barrier],
+      executorObservations: pruned,
+      providers: [quota({ generatedAt: '2026-10-21T11:48:00.000Z' })],
+    });
+    expect(routeOf(blocked, OPUS_ID).blockers).toEqual(['quota-before-account-change']);
+    expect(routeOf(blocked, OPUS_ID).exclusions.join(' ')).toContain(
+      'predates the account change observed 2026-10-21T11:52:00.000Z',
+    );
+    expect(routeOf(blocked, OPUS_ID).identity?.state).toBe('confirmed');
+    // A quota observed after the barrier is attributable again.
+    const after = qualify({
+      accountChanges: [barrier],
+      executorObservations: pruned,
+      providers: [quota({ generatedAt: '2026-10-21T11:55:00.000Z' })],
+    });
+    expect(routeOf(after, OPUS_ID).blockers).toEqual([]);
+    // History and barrier both known: the later one bounds the quota, whichever it is.
+    const history = [
+      observation({ accountFingerprint: OTHER_FINGERPRINT, observedAt: '2026-10-21T11:40:00.000Z' }),
+      observation({ observedAt: '2026-10-21T11:46:00.000Z' }),
+      observation(),
+    ];
+    const barrierLater = qualify({
+      accountChanges: [{ ...barrier, changedAt: '2026-10-21T11:49:00.000Z' }],
+      executorObservations: history,
+      providers: [quota({ generatedAt: '2026-10-21T11:47:00.000Z' })],
+    });
+    expect(routeOf(barrierLater, OPUS_ID).exclusions.join(' ')).toContain(
+      'predates the account change observed 2026-10-21T11:49:00.000Z',
+    );
+    const historyLater = qualify({
+      accountChanges: [{ ...barrier, changedAt: '2026-10-21T11:44:00.000Z' }],
+      executorObservations: history,
+      providers: [quota({ generatedAt: '2026-10-21T11:45:00.000Z' })],
+    });
+    expect(routeOf(historyLater, OPUS_ID).exclusions.join(' ')).toContain(
+      'predates the account change observed 2026-10-21T11:46:00.000Z',
+    );
+    // A barrier without a change, or another executor's barrier, moves nothing.
+    const none = qualify({
+      accountChanges: [
+        { ...barrier, changedAt: null },
+        { changedAt: '2026-10-21T11:52:00.000Z', harness: 'codex', machineId: MACHINE },
+      ],
+      executorObservations: pruned,
+      providers: [quota({ generatedAt: '2026-10-21T11:48:00.000Z' })],
+    });
+    expect(routeOf(none, OPUS_ID).blockers).toEqual([]);
+  });
+
   test('a contradicted identity is identity-changed; observed identity evidence blocks Codex and unpinned routes', () => {
     const contradicted = qualify({ executorObservations: [observation({ accountFingerprint: OTHER_FINGERPRINT })] });
     expect(routeOf(contradicted, OPUS_ID).blockers).toEqual(['identity-changed']);

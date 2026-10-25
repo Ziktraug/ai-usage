@@ -105,6 +105,7 @@ import {
   markDelegationJobsLost,
   type NewDelegationJob,
   queryDelegationJobs,
+  queryExecutorAccountChanges,
   queryExecutorObservationHistory,
   queryLatestProviderQuotaObservations,
   readDelegationQualification,
@@ -423,9 +424,11 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
     readonly signal?: AbortSignal | undefined;
   }): Promise<Assessment> => {
     const { machineId, request, signal } = input;
-    const [policy, history, quotas, reserving, chain] = await Promise.all([
+    const [policy, history, accountChanges, quotas, reserving, chain] = await Promise.all([
       readPolicy(),
       Effect.runPromise(queryExecutorObservationHistory({ dbPath: options.dbPath, machineId })),
+      // The persisted barrier: an account change the retained history may no longer show.
+      Effect.runPromise(queryExecutorAccountChanges({ dbPath: options.dbPath, machineId })),
       Effect.runPromise(queryLatestProviderQuotaObservations({ dbPath: options.dbPath, machineId })),
       Effect.runPromise(
         queryDelegationJobs({ dbPath: options.dbPath, limit: RESERVATION_READ_LIMIT, machineId, reserving: true }),
@@ -478,6 +481,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
       targetReservedBy,
     };
     const qualification = qualifyDelegation({
+      accountChanges: accountChanges.changes,
       checkout,
       checkoutFacts: facts,
       config: policy.delegation.config,

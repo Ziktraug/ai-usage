@@ -74,7 +74,7 @@ import {
 } from './claude-desktop-session-store';
 import { createDelegationStore, DELEGATION_TABLES, migrateDelegationSchema } from './delegation-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
-import { createExecutorObservationStore } from './executor-observation-store';
+import { createExecutorObservationStore, migrateExecutorAccountChangeSchema } from './executor-observation-store';
 import {
   inspectPrivateStoreForConfirmation,
   type PrivateStoreConfirmationIdentity,
@@ -1781,6 +1781,11 @@ const migrate = (db: SqliteDatabase): boolean => {
     if (!executorColumns.some((column) => column.name === 'account_fingerprint')) {
       schemaChanged = true;
       db.exec('ALTER TABLE executor_observations ADD COLUMN account_fingerprint TEXT');
+    }
+    // The account-change barrier table is created when absent, under the same user_version, and
+    // backfilled from the retained history; it needs the fingerprint column above.
+    if (migrateExecutorAccountChangeSchema(db)) {
+      schemaChanged = true;
     }
     // Review attempts gain the reservation, scope and guarantee columns and the reserving unique
     // index additively (ADR 0055); the helper reports whether it changed anything.
@@ -4416,13 +4421,17 @@ export const { importSkillObservations, querySkillObservations, retainSkillObser
   },
 );
 
-export const { importExecutorObservations, queryExecutorObservationHistory, queryLatestExecutorObservations } =
-  createExecutorObservationStore({
-    usageStoreError,
-    usageStoreReadError,
-    withUsageStoreReader,
-    withUsageStoreWriter,
-  });
+export const {
+  importExecutorObservations,
+  queryExecutorAccountChanges,
+  queryExecutorObservationHistory,
+  queryLatestExecutorObservations,
+} = createExecutorObservationStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
 export const {
   importCheckoutStatusObservations,
   importJiraIssueObservations,

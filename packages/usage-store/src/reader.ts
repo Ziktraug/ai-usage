@@ -28,6 +28,9 @@ export { DELEGATION_STORE_BOUNDS } from './delegation-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type {
+  ExecutorAccountBarrier,
+  QueryExecutorAccountChangesInput,
+  QueryExecutorAccountChangesResult,
   QueryLatestExecutorObservationsInput,
   QueryLatestExecutorObservationsResult,
 } from './executor-observation-store';
@@ -99,6 +102,7 @@ export {
   queryDelegationEvaluations,
   queryDelegationJobs,
   queryDistillationSessionMetadata,
+  queryExecutorAccountChanges,
   queryLatestCheckoutStatusObservations,
   queryLatestExecutorObservations,
   queryLatestJiraIssueObservations,

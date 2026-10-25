@@ -36,8 +36,11 @@ export { DELEGATION_STORE_BOUNDS } from './delegation-store';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 export type {
+  ExecutorAccountBarrier,
   ExecutorObservationImportResult,
   ImportExecutorObservationsInput,
+  QueryExecutorAccountChangesInput,
+  QueryExecutorAccountChangesResult,
 } from './executor-observation-store';
 export type {
   AcknowledgeUsageReplicationBatchInput,
@@ -150,6 +153,7 @@ export {
   queryDelegationEvaluations,
   queryDelegationJobs,
   queryEnrichableUsageRows,
+  queryExecutorAccountChanges,
   queryExecutorObservationHistory,
   queryLatestCheckoutStatusObservations,
   queryLatestExecutorObservations,

@@ -41,7 +41,7 @@ import {
 } from './delegation-vocabulary';
 import type { ProviderLimitWindow, ProviderStatus } from './provider-status';
 import { normalizeCheckoutPath } from './work-attempts';
-import type { ExecutorDeclaration, ExecutorObservation } from './work-executors';
+import type { ExecutorDeclaration, ExecutorHarness, ExecutorObservation } from './work-executors';
 import {
   type CheckoutRoutingTarget,
   DEFAULT_QUALIFICATION_FRESHNESS,
@@ -112,7 +112,26 @@ export interface DelegationReservations {
   readonly targetReservedBy: string | null;
 }
 
+/**
+ * When the signed-in account of one executor last changed, as the engine persisted it when the
+ * observations were imported (`executor_account_changes`). Independent of how many observations the
+ * store retains: the history may no longer show the previous account, the barrier still does.
+ */
+export interface ExecutorAccountChange {
+  /** `null` when every fingerprint the executor ever reported was the current one. */
+  readonly changedAt: string | null;
+  readonly harness: ExecutorHarness;
+  readonly machineId: string;
+}
+
 export interface QualifyDelegationInput {
+  /**
+   * The persisted account-change barriers, one per executor. A route's change time is the later of
+   * its barrier and the change its retained history shows, so pruning never weakens it. Absent for a
+   * caller that has no barrier table (a query-only reader of a store the engine has not migrated);
+   * only the history-derived change applies then.
+   */
+  readonly accountChanges?: readonly ExecutorAccountChange[];
   readonly checkout: DelegationCheckoutInput;
   readonly checkoutFacts: DelegationCheckoutFacts;
   readonly config: DelegationConfig;
@@ -234,6 +253,14 @@ export const observedAccountChangeAt = (observations: readonly ExecutorObservati
     .slice(0, runStart)
     .some((entry) => (entry.accountFingerprint ?? null) !== null && entry.accountFingerprint !== current);
   return changed ? (sorted[runStart]?.observedAt ?? null) : null;
+};
+
+/** The later of two canonical instants; the one known when the other is `null`. */
+const laterInstant = (left: string | null, right: string | null): string | null => {
+  if (left === null || right === null) {
+    return left ?? right;
+  }
+  return compareText(left, right) >= 0 ? left : right;
 };
 
 const catalogEntry = (
@@ -669,15 +696,25 @@ export const qualifyDelegation = (input: QualifyDelegationInput): DelegationQual
     rules: input.config.rules,
   });
   const observations = latestObservationsByExecutor(input.executorObservations);
+  const persistedChanges = new Map(
+    (input.accountChanges ?? []).map((change) => [
+      JSON.stringify([change.machineId, change.harness]),
+      change.changedAt,
+    ]),
+  );
   const poolSizes = new Map<string, number>();
   for (const candidate of candidates) {
     const poolId = candidate.resourceId ?? candidate.id;
     poolSizes.set(poolId, (poolSizes.get(poolId) ?? 0) + 1);
   }
   const drafts = candidates.map((candidate) => {
-    const executor = observations.get(JSON.stringify([candidate.machineId, candidate.harness]));
+    const executorKey = JSON.stringify([candidate.machineId, candidate.harness]);
+    const executor = observations.get(executorKey);
     const context: RouteContext = {
-      accountChangeAt: executor === undefined ? null : observedAccountChangeAt(executor.all),
+      accountChangeAt: laterInstant(
+        executor === undefined ? null : observedAccountChangeAt(executor.all),
+        persistedChanges.get(executorKey) ?? null,
+      ),
       annotation: annotationFor(input.config, candidate, input.machineId),
       applied: rules.applied,
       candidate,
