@@ -628,6 +628,20 @@ export interface PullRequestObservation {
   readonly url: string | null;
 }
 
+/** New GitHub dates accept UTC ISO strings only; older persisted instant fields keep their existing parser. */
+const optionalPullRequestLifecycleInstant = (value: unknown): CanonicalInstant | null | undefined => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = normalizeIsoTimestamp(value);
+  return normalized !== null && (normalized === value || normalized.replace('.000Z', 'Z') === value)
+    ? normalized
+    : undefined;
+};
+
 export const parsePullRequestObservation = (value: unknown): PullRequestObservation | null => {
   if (!isRecord(value)) {
     return null;
@@ -652,6 +666,9 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
   const state = value.state === null || value.state === undefined ? null : oneOf(PULL_REQUEST_STATES, value.state);
   const draft = optionalBoolean(value.draft);
   const reviewDecision = optionalText(value.reviewDecision, maxShortText);
+  const createdAt = optionalPullRequestLifecycleInstant(value.createdAt);
+  const closedAt = optionalPullRequestLifecycleInstant(value.closedAt);
+  const unresolvedReviewThreads = optionalCount(value.unresolvedReviewThreads);
   const mergedAt = optionalInstant(value.mergedAt);
   const updatedAt = optionalInstant(value.updatedAt);
   const title = optionalText(value.title, maxShortText);
@@ -679,6 +696,9 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     state === undefined ||
     draft === undefined ||
     reviewDecision === undefined ||
+    createdAt === undefined ||
+    closedAt === undefined ||
+    unresolvedReviewThreads === undefined ||
     mergedAt === undefined ||
     updatedAt === undefined ||
     title === undefined ||
@@ -693,6 +713,8 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     accountLabel,
     baseRef,
     checksRollup,
+    closedAt,
+    createdAt,
     discoveryRole,
     draft,
     headRef,
@@ -709,6 +731,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     reviewDecision,
     state,
     title,
+    unresolvedReviewThreads,
     updatedAt,
     url,
   };

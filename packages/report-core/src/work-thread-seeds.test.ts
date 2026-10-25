@@ -191,9 +191,12 @@ describe('work thread seeds', () => {
     const { discoveryRole: _role, mergeable: _mergeable, mergeStateStatus: _state, ...legacy } = pullRequest();
     expect(parsePullRequestObservation(legacy)).toEqual({
       ...legacy,
+      closedAt: null,
+      createdAt: null,
       discoveryRole: null,
       mergeable: null,
       mergeStateStatus: null,
+      unresolvedReviewThreads: null,
     });
     expect(parsePullRequestObservation(pullRequest())).toMatchObject({
       discoveryRole: 'author',

@@ -150,6 +150,63 @@ describe('parsePullRequestObservation', () => {
     expect(parsePullRequestObservation({ ...observed, number: 0 })).toBeNull();
     expect(parsePullRequestObservation({ ...observed, outcome: 'ok' })).toBeNull();
   });
+
+  test('normalizes opening and closing dates and preserves the complete unresolved thread count', () => {
+    expect(
+      parsePullRequestObservation({
+        ...observed,
+        createdAt: '2026-10-20T10:30:00.000Z',
+        closedAt: '2026-10-21T18:45:00Z',
+        unresolvedReviewThreads: 2,
+        futureField: 'ignored',
+      }),
+    ).toMatchObject({
+      createdAt: '2026-10-20T10:30:00.000Z',
+      closedAt: '2026-10-21T18:45:00.000Z',
+      unresolvedReviewThreads: 2,
+    });
+    expect(parsePullRequestObservation({ ...observed, unresolvedReviewThreads: 0 })?.unresolvedReviewThreads).toBe(0);
+    expect(
+      parsePullRequestObservation({ ...observed, unresolvedReviewThreads: Number.MAX_SAFE_INTEGER })
+        ?.unresolvedReviewThreads,
+    ).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  test('legacy observations and explicit null values keep the new facts unknown', () => {
+    for (const candidate of [
+      observed,
+      { ...observed, createdAt: null, closedAt: null, unresolvedReviewThreads: null },
+    ]) {
+      expect(parsePullRequestObservation(candidate)).toMatchObject({
+        createdAt: null,
+        closedAt: null,
+        unresolvedReviewThreads: null,
+      });
+    }
+  });
+
+  test('rejects malformed dates and counts without changing the existing observation vocabulary', () => {
+    for (const field of ['createdAt', 'closedAt']) {
+      for (const invalid of [
+        'not-a-date',
+        '',
+        {},
+        0,
+        1_760_000_000_000,
+        true,
+        false,
+        '2026-02-30T12:00:00.000Z',
+        '2026-10-21T24:00:00Z',
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+      ]) {
+        expect(parsePullRequestObservation({ ...observed, [field]: invalid })).toBeNull();
+      }
+    }
+    for (const invalid of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY, '2', true]) {
+      expect(parsePullRequestObservation({ ...observed, unresolvedReviewThreads: invalid })).toBeNull();
+    }
+  });
 });
 
 describe('parseJiraIssueObservation', () => {

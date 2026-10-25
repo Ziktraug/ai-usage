@@ -30,8 +30,21 @@ interface FakeGh {
   readonly run: BoundedProcessRunner;
 }
 
+interface FakeResponse {
+  readonly delayMs?: number;
+  readonly exitCode?: number;
+  readonly stdout?: string;
+}
+interface FakeScenario {
+  readonly api?: Readonly<Record<string, FakeResponse>>;
+  readonly authToken?: FakeResponse;
+  readonly pullRequests?: Readonly<Record<string, FakeResponse>>;
+}
+const reviewThreadsBody = (nodes: readonly unknown[], totalCount = nodes.length) =>
+  JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { totalCount, nodes } } } } });
+
 /** Installs the fake `gh` on a private PATH that also carries the Bun executable for its shebang. */
-const installFakeGh = (scenario: Readonly<Record<string, unknown>>): FakeGh => {
+const installFakeGh = (scenario: FakeScenario): FakeGh => {
   const binDirectory = mkdtempSync(path.join(tmpdir(), 'ai-usage-fake-gh-'));
   temporaryRoots.push(binDirectory);
   const ghPath = path.join(binDirectory, 'gh');
@@ -39,7 +52,11 @@ const installFakeGh = (scenario: Readonly<Record<string, unknown>>): FakeGh => {
   chmodSync(ghPath, 0o700);
   writeFileSync(
     path.join(binDirectory, 'scenario.json'),
-    JSON.stringify({ authToken: { stdout: `${TOKEN_SENTINEL}\n` }, ...scenario }),
+    JSON.stringify({
+      authToken: { stdout: `${TOKEN_SENTINEL}\n` },
+      ...scenario,
+      api: { graphql: { stdout: reviewThreadsBody([]) }, ...scenario.api },
+    }),
   );
   const searchPath = [binDirectory, path.dirname(process.execPath)].join(path.delimiter);
   return {
@@ -167,6 +184,8 @@ describe('observePullRequests through a fake gh on PATH', () => {
       accountLabel: null,
       baseRef: 'main',
       checksRollup: 'success',
+      createdAt: null,
+      closedAt: null,
       discoveryRole: null,
       draft: false,
       headRef: 'feat/work-view',
@@ -183,6 +202,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
       reviewDecision: 'REVIEW_REQUIRED',
       state: 'OPEN',
       title: 'Add the Work view',
+      unresolvedReviewThreads: 0,
       updatedAt: parseCanonicalInstant('2026-10-21T18:30:00.000Z'),
       url: 'https://github.com/fixture/project/pull/66',
     });
@@ -203,17 +223,17 @@ describe('observePullRequests through a fake gh on PATH', () => {
     });
     const calls = fake.calls();
     expect(calls[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
-    expect(calls.slice(1).map(({ args }) => args.slice(0, 5))).toEqual([
+    expect(calls.filter(({ args }) => args[0] === 'pr').map(({ args }) => args.slice(0, 5))).toEqual([
       ['pr', 'view', '66', '--repo', 'fixture/project'],
       ['pr', 'view', '67', '--repo', 'fixture/project'],
       ['pr', 'view', '68', '--repo', 'fixture/project'],
     ]);
     expect(calls[1]?.args.slice(5)).toEqual([
       '--json',
-      'state,isDraft,reviewDecision,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
+      'state,isDraft,reviewDecision,createdAt,closedAt,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
     ]);
     expect(calls[0]?.token).toBeNull();
-    expect(calls.slice(1).map(({ token }) => token)).toEqual([TOKEN_SENTINEL, TOKEN_SENTINEL, TOKEN_SENTINEL]);
+    expect(calls.slice(1).map(({ token }) => token)).toEqual(Array.from({ length: 5 }, () => TOKEN_SENTINEL));
     for (const call of calls) {
       expect(call.environment).toContain('GH_PROMPT_DISABLED');
       expect(call.environment).toContain('GH_NO_UPDATE_NOTIFIER');
@@ -295,7 +315,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
     expect(rejected.observations.map(({ outcome }) => outcome)).toEqual(['unauthenticated', 'unauthenticated']);
     expect(rejected.observations[0]?.outcomeMessage).toBe('GitHub rejected the credentials (HTTP 401)');
 
-    const apiCalls = fake.calls().filter(({ args }) => args[0] === 'api');
+    const apiCalls = fake.calls().filter(({ args }) => args[0] === 'api' && args[1] !== 'graphql');
     expect(apiCalls.map(({ args }) => args[1])).toEqual([
       'repos/fixture/project/pulls/404',
       'repos/fixture/project/pulls/500',
@@ -359,6 +379,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
     expect(calls.map(({ args }) => args.slice(0, 2))).toEqual([
       ['auth', 'token'],
       ['pr', 'view'],
+      ['api', 'graphql'],
     ]);
     expect(calls[0]?.args).toEqual(['auth', 'token', '--user', 'alice', '--hostname', 'github.com']);
     expect(calls[0]?.token).toBeNull();
@@ -447,7 +468,9 @@ test('resolves the active account token before observing when automatic credenti
     expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
       ['auth', 'token'],
       ['pr', 'view'],
+      ['api', 'graphql'],
       ['pr', 'view'],
+      ['api', 'graphql'],
     ]);
     expect(fake.calls()[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
     expect(fake.calls()[0]?.token).toBeNull();
@@ -456,7 +479,7 @@ test('resolves the active account token before observing when automatic credenti
         .calls()
         .slice(1)
         .map(({ token }) => token),
-    ).toEqual([TOKEN_SENTINEL, TOKEN_SENTINEL]);
+    ).toEqual(Array.from({ length: 4 }, () => TOKEN_SENTINEL));
     expect(JSON.stringify(fake.calls().map(({ args }) => args))).not.toContain(TOKEN_SENTINEL);
     expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
     expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
@@ -495,4 +518,199 @@ test('halts after a bounded active-account token read timeout without observing 
   ]);
   expect(fake.calls().map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
   expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+});
+
+describe('pull request dates and unresolved review threads', () => {
+  test('parses optional opening/closing dates strictly while preserving old view shapes', () => {
+    expect(parsePullRequestView(view(), link(66))).toMatchObject({ createdAt: null, closedAt: null });
+    expect(
+      parsePullRequestView(view({ createdAt: '2026-10-19T09:00:00Z', closedAt: '2026-10-20T10:00:00Z' }), link(66)),
+    ).toMatchObject({ createdAt: '2026-10-19T09:00:00.000Z', closedAt: '2026-10-20T10:00:00.000Z' });
+    for (const field of ['createdAt', 'closedAt']) {
+      for (const value of ['', 'yesterday', 0, {}, '2026-99-12T00:00:00Z', '2026-02-30T00:00:00Z', '0']) {
+        expect(parsePullRequestView(view({ [field]: value }), link(66))).toBeNull();
+      }
+    }
+  });
+
+  test('counts only unresolved threads in one complete bounded connection with the batch token', async () => {
+    const fake = installFakeGh({
+      api: {
+        graphql: { stdout: reviewThreadsBody([{ isResolved: false }, { isResolved: true }, { isResolved: false }]) },
+      },
+      pullRequests: { 'fixture/project#66': { stdout: view({ createdAt: '2026-10-19T09:00:00Z' }) } },
+    });
+    const batch = await observe(fake);
+    expect(batch.observations[0]).toMatchObject({
+      outcome: 'observed',
+      outcomeMessage: null,
+      unresolvedReviewThreads: 2,
+      createdAt: '2026-10-19T09:00:00.000Z',
+      closedAt: null,
+    });
+    const graphCalls = fake.calls().filter(({ args }) => args[1] === 'graphql');
+    expect(graphCalls).toHaveLength(1);
+    expect(graphCalls[0]?.args).toEqual([
+      'api',
+      'graphql',
+      '-f',
+      expect.stringContaining('query=query($owner: String!, $name: String!, $number: Int!)'),
+      '-f',
+      'owner=fixture',
+      '-f',
+      'name=project',
+      '-F',
+      'number=66',
+    ]);
+    expect(graphCalls[0]?.args[3]).toContain('reviewThreads(first: 100) { totalCount nodes { isResolved } }');
+    expect(graphCalls[0]?.token).toBe(TOKEN_SENTINEL);
+    expect(JSON.stringify(graphCalls.map(({ args }) => args))).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
+  });
+
+  test.each([{ nodes: [] }, { nodes: [{ isResolved: true }] }])(
+    'records a complete zero count for %j',
+    async ({ nodes }) => {
+      const fake = installFakeGh({
+        api: { graphql: { stdout: reviewThreadsBody(nodes) } },
+        pullRequests: { 'fixture/project#66': { stdout: view() } },
+      });
+      expect((await observe(fake)).observations[0]).toMatchObject({
+        outcome: 'observed',
+        unresolvedReviewThreads: 0,
+        outcomeMessage: null,
+      });
+    },
+  );
+
+  test.each([
+    {
+      name: 'more than 100 threads',
+      stdout: reviewThreadsBody(
+        Array.from({ length: 100 }, () => ({ isResolved: false })),
+        150,
+      ),
+    },
+    { name: 'incomplete nodes', stdout: reviewThreadsBody([{ isResolved: false }], 2) },
+    { name: 'extra nodes', stdout: reviewThreadsBody([{ isResolved: false }], 0) },
+    { name: 'nonboolean node', stdout: reviewThreadsBody([{ isResolved: 'false' }]) },
+    { name: 'null node', stdout: reviewThreadsBody([null]) },
+    { name: 'negative count', stdout: reviewThreadsBody([], -1) },
+    { name: 'fractional count', stdout: reviewThreadsBody([], 1.5) },
+    { name: 'unsafe count', stdout: reviewThreadsBody([], Number.MAX_SAFE_INTEGER + 1) },
+    { name: 'missing data', stdout: '{}' },
+    { name: 'malformed JSON', stdout: 'not-json' },
+    { name: 'null repository', stdout: '{"data":{"repository":null}}' },
+    {
+      name: 'partial GraphQL errors',
+      stdout: JSON.stringify({
+        ...JSON.parse(reviewThreadsBody([{ isResolved: false }])),
+        errors: [{ message: 'PRIVATE_GRAPHQL_DIAGNOSTIC' }],
+      }),
+    },
+    { name: 'mistyped GraphQL errors', stdout: JSON.stringify({ ...JSON.parse(reviewThreadsBody([])), errors: {} }) },
+  ])('keeps $name visible as unknown without discarding the successful PR view', async ({ stdout }) => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout } },
+      pullRequests: { 'fixture/project#66': { stdout: view() } },
+    });
+    const batch = await observe(fake);
+    expect(batch.observations[0]).toMatchObject({
+      outcome: 'observed',
+      unresolvedReviewThreads: null,
+      outcomeMessage: expect.stringContaining('Review threads unavailable:'),
+    });
+    expect(JSON.stringify(batch)).not.toContain('PRIVATE_GRAPHQL_DIAGNOSTIC');
+    expect(fake.calls().filter(({ args }) => args[1] === 'graphql')).toHaveLength(1);
+  });
+
+  test.each([{ exitCode: 1, stdout: 'PRIVATE_GRAPHQL_DIAGNOSTIC' }, { exitCode: 4 }, { delayMs: 1000 }])(
+    'failed review-thread read does not halt the next PR: %j',
+    async (response) => {
+      const fake = installFakeGh({
+        api: { graphql: response },
+        pullRequests: {
+          'fixture/project#66': { stdout: view() },
+          'fixture/project#67': {
+            stdout: view({ state: 'CLOSED', url: 'https://github.com/fixture/project/pull/67' }),
+          },
+        },
+      });
+      const batch = await observe(fake, { links: [link(66), link(67)], timeoutMs: 200 });
+      expect(batch.observations.map(({ outcome }) => outcome)).toEqual(['observed', 'observed']);
+      expect(batch.observations[0]).toMatchObject({
+        unresolvedReviewThreads: null,
+        outcomeMessage: expect.stringContaining('Review threads unavailable:'),
+      });
+      expect(batch.observations[1]).toMatchObject({ unresolvedReviewThreads: null, outcomeMessage: null });
+      expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+        ['auth', 'token'],
+        ['pr', 'view'],
+        ['api', 'graphql'],
+        ['pr', 'view'],
+      ]);
+      expect(JSON.stringify(batch)).not.toContain('PRIVATE_GRAPHQL_DIAGNOSTIC');
+    },
+  );
+
+  test.each(['CLOSED', 'MERGED'])('keeps dates without an extra GraphQL call for %s', async (state) => {
+    const closedAt = '2026-10-20T10:00:00Z';
+    const fake = installFakeGh({
+      pullRequests: {
+        'fixture/project#66': {
+          stdout: view({
+            state,
+            createdAt: '2026-10-19T09:00:00Z',
+            closedAt,
+            mergedAt: state === 'MERGED' ? closedAt : null,
+          }),
+        },
+      },
+    });
+    expect((await observe(fake)).observations[0]).toMatchObject({
+      state,
+      createdAt: '2026-10-19T09:00:00.000Z',
+      closedAt: '2026-10-20T10:00:00.000Z',
+      mergedAt: state === 'MERGED' ? '2026-10-20T10:00:00.000Z' : null,
+      unresolvedReviewThreads: null,
+      outcomeMessage: null,
+    });
+    expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+    ]);
+  });
+});
+
+test('review-thread output obeys the same process ceiling and remains a visible partial observation', async () => {
+  const fake = installFakeGh({
+    api: { graphql: { stdout: 'x'.repeat(2048) } },
+    pullRequests: { 'fixture/project#66': { stdout: view() } },
+  });
+  const controller = new AbortController();
+  let graphReads = 0;
+  const boundedRun: BoundedProcessRunner = (options) => {
+    if (options.args[1] === 'graphql') {
+      graphReads += 1;
+      expect(options.command).toBe('gh');
+      expect(options.maximumOutputBytes).toBe(1024);
+      expect(options.timeoutMs).toBe(1000);
+      expect(options.signal).toBe(controller.signal);
+      expect(options.env?.GH_TOKEN).toBe(TOKEN_SENTINEL);
+    }
+    return fake.run(options);
+  };
+  const batch = await observe(fake, {
+    maxOutputBytes: 1024,
+    timeoutMs: 1000,
+    run: boundedRun,
+    signal: controller.signal,
+  });
+  expect(graphReads).toBe(1);
+  expect(batch.observations[0]).toMatchObject({
+    outcome: 'observed',
+    unresolvedReviewThreads: null,
+    outcomeMessage: 'Review threads unavailable: gh output-limit',
+  });
 });

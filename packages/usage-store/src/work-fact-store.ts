@@ -98,7 +98,10 @@ export const workFactSchemaSql = `
     checks_rollup TEXT,
     discovery_role TEXT,
     mergeable TEXT,
-    merge_state_status TEXT
+    merge_state_status TEXT,
+    created_at TEXT,
+    closed_at TEXT,
+    unresolved_review_threads INTEGER
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_pull_request_observations_identity
     ON pull_request_observations(machine_id, host, repository, number, observed_at DESC);
@@ -183,14 +186,18 @@ interface SqliteDatabase {
 export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {
   let changed = false;
   for (const [table, additions] of [
-    ['pull_request_observations', ['discovery_role', 'mergeable', 'merge_state_status']],
+    [
+      'pull_request_observations',
+      ['discovery_role', 'mergeable', 'merge_state_status', 'created_at', 'closed_at', 'unresolved_review_threads'],
+    ],
     ['checkout_status_observations', ['counts_changed_at']],
     ['work_fact_run_state', ['outcome_code']],
   ] as const) {
     const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
     for (const name of additions) {
       if (!columns.some((column) => column.name === name)) {
-        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} TEXT`);
+        const type = name === 'unresolved_review_threads' ? 'INTEGER' : 'TEXT';
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
         changed = true;
       }
     }
@@ -220,6 +227,8 @@ interface PullRequestRecord {
   account_label: string | null;
   base_ref: string | null;
   checks_rollup: string | null;
+  closed_at?: string | null;
+  created_at?: string | null;
   discovery_role?: string | null;
   draft: number | null;
   head_ref: string | null;
@@ -238,6 +247,7 @@ interface PullRequestRecord {
   review_decision: string | null;
   state: string | null;
   title: string | null;
+  unresolved_review_threads?: number | null;
   updated_at: string | null;
   url: string | null;
 }
@@ -310,6 +320,8 @@ const pullRequestValue = (record: PullRequestRecord): unknown => ({
   accountLabel: record.account_label,
   baseRef: record.base_ref,
   checksRollup: record.checks_rollup,
+  closedAt: record.closed_at,
+  createdAt: record.created_at,
   discoveryRole: record.discovery_role,
   draft: booleanFromColumn(record.draft),
   headRef: record.head_ref,
@@ -326,6 +338,7 @@ const pullRequestValue = (record: PullRequestRecord): unknown => ({
   reviewDecision: record.review_decision,
   state: record.state,
   title: record.title,
+  unresolvedReviewThreads: record.unresolved_review_threads,
   updatedAt: record.updated_at,
   url: record.url,
 });
@@ -594,8 +607,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               INSERT OR IGNORE INTO pull_request_observations (
                 machine_id, host, repository, number, observed_at, outcome, outcome_message, account_label,
                 state, draft, review_decision, merged_at, updated_at, title, url, head_ref, base_ref, checks_rollup,
-                discovery_role, mergeable, merge_state_status
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                discovery_role, mergeable, merge_state_status, created_at, closed_at, unresolved_review_threads
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             for (const candidate of input.observations) {
               const observation = parsePullRequestObservation(candidate);
@@ -625,6 +638,9 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 observation.discoveryRole ?? null,
                 observation.mergeable ?? null,
                 observation.mergeStateStatus ?? null,
+                observation.createdAt ?? null,
+                observation.closedAt ?? null,
+                observation.unresolvedReviewThreads ?? null,
               );
               if (changes(db) === 1) {
                 result.inserted += 1;

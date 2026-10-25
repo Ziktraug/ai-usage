@@ -49,6 +49,8 @@ const pullRequest = (overrides: Partial<PullRequestObservation> = {}): PullReque
     accountLabel: null,
     baseRef: 'main',
     checksRollup: 'success',
+    closedAt: null,
+    createdAt: null,
     discoveryRole: null,
     draft: false,
     headRef: 'feat/work-view',
@@ -65,6 +67,7 @@ const pullRequest = (overrides: Partial<PullRequestObservation> = {}): PullReque
     reviewDecision: 'REVIEW_REQUIRED',
     state: 'OPEN',
     title: 'Add the Work view',
+    unresolvedReviewThreads: null,
     updatedAt: parseCanonicalInstant('2026-10-21T18:30:00.000Z'),
     url: 'https://github.com/fixture/project/pull/66',
     ...overrides,
@@ -142,6 +145,108 @@ const failureReason = async (effect: Effect.Effect<unknown, UsageStoreError>): P
 };
 
 describe('work fact store: pull request observations', () => {
+  test('upgrades the previous PR table additively, keeps every old row and reads absent facts without writing', async () => {
+    const dbPath = await createStore('previous-pr-schema');
+    const previous = new Database(dbPath);
+    // The complete table definition from the pre-R2 schema, independent of the current schema helper.
+    previous.exec(`
+      DROP TABLE pull_request_observations;
+      CREATE TABLE pull_request_observations (
+        id INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL, host TEXT NOT NULL, repository TEXT NOT NULL,
+        number INTEGER NOT NULL CHECK (number > 0), observed_at TEXT NOT NULL, outcome TEXT NOT NULL,
+        outcome_message TEXT, account_label TEXT, state TEXT, draft INTEGER CHECK (draft IN (0, 1)),
+        review_decision TEXT, merged_at TEXT, updated_at TEXT, title TEXT, url TEXT,
+        head_ref TEXT, base_ref TEXT, checks_rollup TEXT, discovery_role TEXT, mergeable TEXT, merge_state_status TEXT
+      );
+      CREATE UNIQUE INDEX idx_pull_request_observations_identity
+        ON pull_request_observations(machine_id, host, repository, number, observed_at DESC);
+    `);
+    for (const number of [11, 12]) {
+      previous
+        .query(`INSERT INTO pull_request_observations
+        (id, machine_id, host, repository, number, observed_at, outcome, title, state, discovery_role)
+        VALUES (?, 'machine-a', 'github.com', 'demo/migration', ?, ?, 'observed', ?, 'OPEN', 'author')`)
+        .run(number, number, at(0), `Historical PR ${number}`);
+    }
+    const oldRows = previous.query('SELECT * FROM pull_request_observations ORDER BY id').all() as Record<
+      string,
+      unknown
+    >[];
+    previous.close();
+
+    const legacyRead = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(legacyRead.items).toHaveLength(2);
+    expect(legacyRead.skipped).toBe(0);
+    for (const { latestObserved } of legacyRead.items) {
+      expect(latestObserved).toMatchObject({ closedAt: null, createdAt: null, unresolvedReviewThreads: null });
+    }
+    const beforeUpgrade = new Database(dbPath, { readonly: true });
+    expect(beforeUpgrade.query('PRAGMA table_info(pull_request_observations)').all()).toHaveLength(22);
+    beforeUpgrade.close();
+
+    // The engine's normal writer open owns the migration transaction.
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const upgraded = new Database(dbPath);
+    expect(upgraded.query('SELECT * FROM pull_request_observations ORDER BY id').all()).toEqual(
+      oldRows.map((row) => ({ ...row, closed_at: null, created_at: null, unresolved_review_threads: null })),
+    );
+    const columns = upgraded.query('PRAGMA table_info(pull_request_observations)').all() as {
+      name: string;
+      type: string;
+      notnull: number;
+    }[];
+    expect(
+      columns
+        .filter(({ name }) => ['created_at', 'closed_at', 'unresolved_review_threads'].includes(name))
+        .map(({ name, type, notnull }) => ({ name, type, notnull })),
+    ).toEqual([
+      { name: 'created_at', type: 'TEXT', notnull: 0 },
+      { name: 'closed_at', type: 'TEXT', notnull: 0 },
+      { name: 'unresolved_review_threads', type: 'INTEGER', notnull: 0 },
+    ]);
+    expect(migrateWorkFactSchema(upgraded as unknown as Parameters<typeof migrateWorkFactSchema>[0])).toBe(false);
+    expect(upgraded.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+    upgraded.close();
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    expect(rowCount(dbPath, 'pull_request_observations')).toBe(2);
+    expect(await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }))).toEqual(legacyRead);
+  });
+
+  test('round-trips opened and closed dates and unresolved thread counts including zero', async () => {
+    const dbPath = await createStore('pr-lifecycle');
+    const observations = [
+      pullRequest({ number: 31, createdAt: at(0), observedAt: at(1), unresolvedReviewThreads: 2 }),
+      pullRequest({ number: 32, createdAt: at(0), observedAt: at(1), unresolvedReviewThreads: 0 }),
+      pullRequest({
+        number: 33,
+        createdAt: at(0),
+        closedAt: at(1),
+        mergedAt: at(1),
+        observedAt: at(2),
+        state: 'MERGED',
+      }),
+    ];
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations }));
+    const actual = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(
+      actual.items
+        .map(({ latestObserved }) => latestObserved)
+        .sort((left, right) => (left?.number ?? 0) - (right?.number ?? 0)),
+    ).toEqual(observations);
+    const db = new Database(dbPath, { readonly: true });
+    expect(
+      db
+        .query('SELECT created_at, closed_at, unresolved_review_threads FROM pull_request_observations ORDER BY number')
+        .all(),
+    ).toEqual([
+      { created_at: at(0), closed_at: null, unresolved_review_threads: 2 },
+      { created_at: at(0), closed_at: null, unresolved_review_threads: 0 },
+      { created_at: at(0), closed_at: at(1), unresolved_review_threads: null },
+    ]);
+    db.close();
+  });
+
   test('reads legacy columns without migration and adds nullable columns on the next import', async () => {
     const dbPath = await createStore('legacy-discovery');
     await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [pullRequest()] }));
