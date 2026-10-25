@@ -1436,6 +1436,8 @@ const EVIDENCE_MEMBER_DETAILS = `
   json_extract(metadata.source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
   json_extract(metadata.source_row_json, '$.date') AS started_at,
   json_extract(metadata.source_row_json, '$.endDate') AS ended_at,
+  CASE WHEN json_type(metadata.source_row_json, '$.durationMs') IN ('integer', 'real')
+    THEN json_extract(metadata.source_row_json, '$.durationMs') END AS duration_ms,
   json_extract(metadata.source_row_json, '$.sessionLabel') AS title,
   json_extract(metadata.source_row_json, '$.titleSource') AS title_source`;
 
@@ -1767,6 +1769,10 @@ const readThreadSessionEvidence = (
         branch: evidenceOptionalText(row.branch),
         campaignRoot: row.campaign_root === 1,
         checkoutPath: evidenceOptionalText(row.checkout_path),
+        durationMs:
+          typeof row.duration_ms === 'number' && Number.isFinite(row.duration_ms) && row.duration_ms >= 0
+            ? row.duration_ms
+            : null,
         machineId,
         origin: evidenceOptionalText(row.origin, 64),
         parentSourceSessionId:
@@ -1803,6 +1809,7 @@ const readThreadSessionEvidence = (
             branch: evidenceOptionalText(native[0]?.branch),
             campaignRoot: false,
             checkoutPath: desktop.value.worktreePath ?? desktop.value.cwd,
+            durationMs: null,
             machineId: parsed.machineId,
             origin: null,
             parentSourceSessionId: null,

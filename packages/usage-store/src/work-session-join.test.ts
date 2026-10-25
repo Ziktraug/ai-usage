@@ -61,6 +61,38 @@ const fixture = (count: number) => {
 };
 
 describe('bounded served campaign members', () => {
+  test.each([
+    { raw: null, expected: null },
+    { raw: 'null', expected: null },
+    { raw: '0', expected: 0 },
+    { raw: '1234.5', expected: 1234.5 },
+    { raw: '-1', expected: null },
+    { raw: '1e999', expected: null },
+    { raw: 'true', expected: null },
+    { raw: '"1200"', expected: null },
+  ])('reads recorded active duration $raw without deriving it from dates', async ({ raw, expected }) => {
+    const { db, store } = fixture(2);
+    try {
+      db.exec('PRAGMA query_only = OFF');
+      if (raw !== null) {
+        db.query(
+          "UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.durationMs', json(?)) WHERE ordinal = 0",
+        ).run(raw);
+      }
+      db.query(
+        "UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.durationMs', 12.5) WHERE ordinal = 1",
+      ).run();
+      db.exec('PRAGMA query_only = ON');
+      const read = await Effect.runPromise(
+        store.queryRecentServedHarnessSessions({ activeSince: 0, dbPath: ':memory:', harnessKey: 'codex' }),
+      );
+      expect(read.families[0]?.members.map((member) => member.durationMs)).toEqual([expected, 12.5]);
+      expect(read.refusedRows).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test('keeps root, exact count and declared parents in a 20,000-member campaign', async () => {
     const { db, store } = fixture(20_000);
     try {

@@ -218,7 +218,324 @@ const pr = (hours: number, outcome: 'observed' | 'timeout' | 'unauthenticated' =
   return value;
 };
 
+// W2 owns persistence of these optional fields. Enrich the public query result while retaining
+// its real SQLite read, so these view regressions also work before that producer change lands.
+const withPullRequestDates = async (
+  patches: ReadonlyMap<number, Pick<PullRequestObservation, 'createdAt' | 'closedAt'>>,
+  use: () => Promise<void>,
+): Promise<void> => {
+  const reader = await import('@ai-usage/usage-store/reader');
+  const original = reader.queryLatestPullRequestObservations;
+  const enriched = (observation: PullRequestObservation): PullRequestObservation =>
+    observation.outcome === 'observed' ? { ...observation, ...patches.get(observation.number) } : observation;
+  const query = spyOn(reader, 'queryLatestPullRequestObservations').mockImplementation((input) =>
+    original(input).pipe(
+      Effect.map((result) => ({
+        ...result,
+        items: result.items.map((item) => ({
+          ...item,
+          latest: enriched(item.latest),
+          latestObserved: item.latestObserved === null ? null : enriched(item.latestObserved),
+        })),
+      })),
+    ),
+  );
+  try {
+    await use();
+  } finally {
+    query.mockRestore();
+  }
+};
+
 describe('work-thread reader', () => {
+  test('keeps recorded active time independent from a multi-day Desktop span', async () => {
+    const dbPath = await fixture();
+    const desktop = parseClaudeDesktopSessionObservation({
+      accountDirectory: 'account',
+      archived: false,
+      branch: null,
+      cliSessionId: 'long-session',
+      completedTurns: 2,
+      createdAt: at(-76.25),
+      cwd: '/fixture/project',
+      declaredPullRequests: [],
+      desktopSessionId: 'desktop-long-session',
+      effort: null,
+      fileModifiedAt: at(-1),
+      filePath: 'account/long-session.json',
+      format: 'claude-desktop-session-v1',
+      lastActivityAt: at(-1),
+      lastTurnReport: null,
+      machineId: MACHINE,
+      model: null,
+      observedAt: at(0),
+      openSuggestions: [],
+      organizationDirectory: 'org',
+      originCwd: null,
+      priorCliSessionIds: [],
+      resolvedSuggestions: {},
+      sideSessionNotes: [],
+      sourceBranch: null,
+      spawnedFrom: null,
+      title: 'Long-lived conversation',
+      titleSource: 'auto',
+      turnSummary: null,
+      unsupportedReason: null,
+      worktreePath: null,
+      wrapUpDescription: null,
+      writtenBranches: [],
+    });
+    if (desktop === null) {
+      throw new Error('Invalid long-lived Desktop fixture');
+    }
+    await run(
+      importClaudeDesktopSessions({
+        dbPath,
+        machineId: MACHINE,
+        collectedAt: NOW,
+        completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+        observations: [desktop],
+      }),
+    );
+    await publish(dbPath, [
+      session('long-session', {
+        durationMs: 93_000,
+        source: { ...session('long-session').source, harnessKey: 'claude', sourceSessionId: 'long-session' },
+      }),
+      session('no-duration', { durationMs: null }),
+      session('zero-duration', { durationMs: 0 }),
+    ]);
+    const legacyStore = new Database(dbPath);
+    try {
+      legacyStore
+        .query(`UPDATE served_report_rows SET source_row_json = json_remove(source_row_json, '$.durationMs')
+        WHERE json_extract(source_row_json, '$.source.sourceSessionId') = ?`)
+        .run('no-duration');
+    } finally {
+      legacyStore.close();
+    }
+    const threadId = await create(dbPath, [
+      sessionLink('long-session', 'claude'),
+      sessionLink('no-duration'),
+      sessionLink('zero-duration'),
+    ]);
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.episodes.find((episode) => episode.sourceSessionId === 'long-session')).toMatchObject({
+      activeMs: 93_000,
+      spanMs: 75.25 * 3_600_000,
+      startedAt: at(-76.25),
+      endedAt: at(-1),
+    });
+    expect(detail?.episodes.find((episode) => episode.sourceSessionId === 'no-duration')).toMatchObject({
+      activeMs: null,
+      spanMs: 3_600_000,
+    });
+    expect(detail?.episodes.find((episode) => episode.sourceSessionId === 'zero-duration')?.activeMs).toBe(0);
+    expect(detail?.row.firstActivityAt).toBe(at(-76.25));
+  });
+
+  test('marks one linked root rather than its twenty delegated children', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [
+      session('root', { name: 'Investigate the parser', sessionLabel: 'Investigate the parser' }),
+      ...Array.from({ length: 20 }, (_, index) =>
+        session(`delegate-${index}`, {
+          source: {
+            ...session(`delegate-${index}`).source,
+            harnessKey: 'codex',
+            sourceSessionId: `delegate-${index}`,
+            parentSourceSessionId: 'root',
+            rootSourceSessionId: 'root',
+          },
+        }),
+      ),
+    ]);
+    const threadId = await create(dbPath, [sessionLink('root')]);
+    await command(dbPath, { commandId: randomUUID(), op: 'rename', threadId, title: 'Updated task title' }, -1);
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(detail?.row.marks).toEqual([
+      { at: at(-2), harness: 'codex', kind: 'session', label: 'Investigate the parser' },
+    ]);
+    expect(list.rows[0]).toEqual(detail?.row);
+  });
+
+  test('places PR-only opening and merge facts in the thread and week without inventing dates', async () => {
+    const dbPath = await fixture();
+    const threadId = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }], 'PR work', -1);
+    await run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [{ ...pr(-2), state: 'MERGED', mergedAt: at(-3) }, pr(0, 'timeout')],
+      }),
+    );
+    await withPullRequestDates(new Map([[7, { createdAt: at(-72), closedAt: at(-3) }]]), async () => {
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+      expect(detail?.factEvents).toEqual([
+        {
+          at: at(-72),
+          key: 'github.com/fixture/repo#7',
+          kind: 'pull-request-opened',
+          label: 'PR #7',
+          title: 'Real linked PR',
+        },
+        {
+          at: at(-3),
+          key: 'github.com/fixture/repo#7',
+          kind: 'pull-request-merged',
+          label: 'PR #7',
+          title: 'Real linked PR',
+        },
+      ]);
+      expect(detail?.row.marks).toEqual([
+        { at: at(-72), harness: null, kind: 'event', label: 'PR #7 opened' },
+        { at: at(-3), harness: null, kind: 'event', label: 'PR #7 merged' },
+      ]);
+      expect(detail?.row.firstActivityAt).toBe(at(-72));
+      expect(list.rows[0]).toEqual(detail?.row);
+    });
+    const legacy = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(legacy?.factEvents.map((event) => event.kind)).toEqual(['pull-request-merged']);
+    expect(legacy?.row.firstActivityAt).toBe(at(-1));
+  });
+
+  test('dates the work from the earliest linked evidence and ignores detached evidence', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [
+      session('old', { date: at(-500), endDate: at(-400), activeDate: at(-400) }),
+      session('linked', { date: at(-100) }),
+    ]);
+    const threadId = await create(
+      dbPath,
+      [sessionLink('old'), sessionLink('linked'), { kind: 'pull-request', key: 'github.com/fixture/repo#7' }],
+      'Origins',
+      -24,
+    );
+    await run(importPullRequestObservations({ dbPath, observations: [pr(-1)] }));
+    const history = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    const oldest = history.find((link) => link.key === sessionLink('old').key);
+    if (!oldest) {
+      throw new Error('Missing oldest session link');
+    }
+    await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: oldest.linkId });
+    await withPullRequestDates(new Map([[7, { createdAt: at(-300) }]]), async () => {
+      const dated = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(dated?.row.firstActivityAt).toBe(at(-300));
+      expect(dated?.factEvents[0]?.at).toBe(at(-300));
+      expect(dated?.row.marks.every((mark) => mark.at !== at(-300))).toBe(true);
+      const linkedPr = history.find((link) => link.kind === 'pull-request');
+      if (!linkedPr) {
+        throw new Error('Missing pull request link');
+      }
+      await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: linkedPr.linkId });
+      const detached = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+      expect(detached?.row.firstActivityAt).toBe(at(-100));
+      expect(detached?.factEvents).toEqual([]);
+      expect(list.rows[0]).toEqual(detached?.row);
+    });
+  });
+
+  test('emits a closed fact only when not merged and deduplicates legacy qualified PR aliases', async () => {
+    const dbPath = await fixture();
+    const threadId = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }]);
+    await run(importPullRequestObservations({ dbPath, observations: [{ ...pr(-1), state: 'CLOSED' }] }));
+    const database = new Database(dbPath);
+    try {
+      database
+        .query(
+          'INSERT INTO work_thread_links (link_id, thread_id, kind, link_key, provenance, created_at, detached_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(randomUUID(), threadId, 'pull-request', 'GitHub.COM/Fixture/Repo#7', 'declared', at(-2), null);
+    } finally {
+      database.close();
+    }
+    await withPullRequestDates(new Map([[7, { createdAt: at(-12), closedAt: at(-3) }]]), async () => {
+      const closed = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(closed?.factEvents.map((event) => [event.kind, event.at])).toEqual([
+        ['pull-request-opened', at(-12)],
+        ['pull-request-closed', at(-3)],
+      ]);
+      await run(
+        importPullRequestObservations({ dbPath, observations: [{ ...pr(0), state: 'MERGED', mergedAt: null }] }),
+      );
+      const mergedWithoutDate = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(mergedWithoutDate?.factEvents.map((event) => event.kind)).toEqual(['pull-request-opened']);
+    });
+  });
+
+  test('keeps newest week marks and both kinds when follow-state changes crowd the lane', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [session('root', { date: at(-100) })]);
+    const threadId = await create(dbPath, [sessionLink('root')], 'Many changes', -150);
+    for (let index = 0; index < 70; index++) {
+      await command(
+        dbPath,
+        {
+          commandId: randomUUID(),
+          op: 'set-follow-state',
+          threadId,
+          expectedRevision: index + 1,
+          to: index % 2 === 0 ? 'waiting' : 'following',
+          waitingFor: index % 2 === 0 ? 'An answer' : null,
+          waitingOn: null,
+          reason: null,
+          acknowledgedRemainders: [],
+        },
+        -70 + index,
+      );
+    }
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
+    expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toEqual([
+      { at: at(-100), harness: 'codex', kind: 'session', label: 'root' },
+    ]);
+    expect(detail?.row.marks.filter((mark) => mark.kind === 'event').map((mark) => mark.at)).toEqual(
+      Array.from({ length: 63 }, (_, index) => at(-63 + index)),
+    );
+    expect(detail?.row.marks.at(-1)?.label).toBe('Following');
+    expect(list.rows[0]).toEqual(detail?.row);
+  });
+
+  test('preserves the newest event when session starts fill the week mark bound', async () => {
+    const dbPath = await fixture();
+    const rows = Array.from({ length: 64 }, (_, index) => session(`root-${index}`, { date: at(-64 + index) }));
+    await publish(dbPath, rows);
+    const threadId = await create(
+      dbPath,
+      rows.map((row) => sessionLink(row.source?.sourceSessionId ?? '')),
+      'Many sessions',
+      -150,
+    );
+    await command(
+      dbPath,
+      {
+        commandId: randomUUID(),
+        op: 'set-follow-state',
+        threadId,
+        expectedRevision: 1,
+        to: 'waiting',
+        waitingFor: 'Feedback',
+        waitingOn: null,
+        reason: null,
+        acknowledgedRemainders: [],
+      },
+      -90,
+    );
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
+    expect(detail?.row.marks.filter((mark) => mark.kind === 'event')).toEqual([
+      { at: at(-90), harness: null, kind: 'event', label: 'Waiting' },
+    ]);
+    expect(detail?.row.marks.filter((mark) => mark.kind === 'session').map((mark) => mark.at)).toEqual(
+      Array.from({ length: 63 }, (_, index) => at(-63 + index)),
+    );
+    expect(list.rows[0]).toEqual(detail?.row);
+  });
+
   test('counts linked episodes separately from distinct delegated children at every rendered depth', async () => {
     const dbPath = await fixture();
     const descendants = Array.from({ length: 20 }, (_, i) =>
@@ -951,7 +1268,23 @@ describe('work-thread reader', () => {
         links.push({ kind: 'pull-request', key: `github.com/fixture/repo#${number}` });
         observations.push({ ...pr(-1), number, title: `PR ${number}`, headRef: `branch-${index}` });
       }
-      ids.push(await create(dbPath, links, `Batch task ${index}`, -20 - index));
+      const batchThread = await create(dbPath, links, `Batch task ${index}`, -20 - index);
+      ids.push(batchThread);
+      await command(
+        dbPath,
+        {
+          commandId: randomUUID(),
+          op: 'set-follow-state',
+          threadId: batchThread,
+          expectedRevision: 1,
+          to: 'waiting',
+          waitingFor: 'A response',
+          waitingOn: null,
+          reason: null,
+          acknowledgedRemainders: [],
+        },
+        -20 - index,
+      );
       const jira = parseJiraIssueObservation({
         machineId: MACHINE,
         key: `TASK-${index + 1}`,
@@ -1071,7 +1404,8 @@ describe('work-thread reader', () => {
       launchedBy: { harness: 'codex', title: 'old' },
     });
     expect(detail?.row.sessionCount).toBe(2);
-    expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toHaveLength(1);
+    expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toHaveLength(0);
+    expect(detail?.row.firstActivityAt).toBe(at(-300));
     expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
   });
 
@@ -1610,7 +1944,7 @@ describe('work-thread reader', () => {
     ]);
   });
 
-  test('bounds children and marks and reports missing linked evidence', async () => {
+  test('bounds children, excludes incidental changes from marks, and reports missing linked evidence', async () => {
     const dbPath = await fixture();
     await publish(dbPath, [
       session('parent'),
@@ -1633,7 +1967,7 @@ describe('work-thread reader', () => {
     }
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     expect(detail?.episodes[0]?.children).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren);
-    expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
+    expect(detail?.row.marks).toEqual([{ at: at(-2), harness: 'codex', kind: 'session', label: 'parent' }]);
     expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
     const explicit = await create(dbPath, [
       sessionLink('parent'),

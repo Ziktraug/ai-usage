@@ -18,8 +18,10 @@ import {
   type WorkThreadDetailDataset,
   type WorkThreadEpisode,
   type WorkThreadFact,
+  type WorkThreadFactEvent,
   type WorkThreadListDataset,
   type WorkThreadListQuery,
+  type WorkThreadMark,
   type WorkThreadMarkers,
   type WorkThreadRow,
   type WorkThreadSourceStatus,
@@ -84,7 +86,7 @@ const episodeOf = (
   const endedAt =
     desktop?.lastActivityAt ??
     (member.activeAt === null ? null : normalizeIsoTimestamp(new Date(member.activeAt).toISOString()));
-  const durationMs =
+  const spanMs =
     endedAt !== null && Date.parse(endedAt) >= Date.parse(startedAt)
       ? Date.parse(endedAt) - Date.parse(startedAt)
       : null;
@@ -97,8 +99,10 @@ const episodeOf = (
     origin = 'automated-review';
   }
   return {
-    // Placeholder until the row's recorded turn time is carried (plan 123 round 2).
-    activeMs: null,
+    activeMs:
+      typeof member.durationMs === 'number' && Number.isFinite(member.durationMs) && member.durationMs >= 0
+        ? member.durationMs
+        : null,
     children: [],
     endedAt,
     firstPrompt: text(session.firstPrompt),
@@ -114,7 +118,7 @@ const episodeOf = (
     projectLabel: text(member.projectLabel),
     question: text(desktop?.turnSummary?.needsAction ?? desktop?.turnSummary?.detail),
     result: text(desktop?.lastTurnReport),
-    spanMs: durationMs,
+    spanMs,
     resume:
       harness === 'claude' || harness === 'codex'
         ? {
@@ -233,6 +237,7 @@ const factOf = <Value extends Observation>(
 interface RowRead {
   readonly episodes: readonly WorkThreadEpisode[];
   readonly evidence: WorkThreadSessionEvidence;
+  readonly factEvents: readonly WorkThreadFactEvent[];
   readonly row: WorkThreadRow;
   readonly truncated: ReadonlySet<WorkThreadSourceStatus['source']>;
 }
@@ -372,6 +377,97 @@ const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<R
 
 const MERGEABLE = { MERGEABLE: 'mergeable', CONFLICTING: 'conflicting', UNKNOWN: 'unknown' } as const;
 
+const factEventsOf = (pullRequests: WorkThreadMarkers['pullRequests']): WorkThreadFactEvent[] => {
+  const distinct = new Map<string, WorkThreadFactEvent>();
+  for (const marker of pullRequests) {
+    const successful = marker.latestSuccessful;
+    if (successful === null) {
+      continue;
+    }
+    const openedAt = normalizeIsoTimestamp(successful.createdAt);
+    const mergedAt = normalizeIsoTimestamp(successful.mergedAt);
+    const closedAt = normalizeIsoTimestamp(successful.closedAt);
+    const add = (kind: WorkThreadFactEvent['kind'], at: CanonicalInstant | null) => {
+      if (at === null) {
+        return;
+      }
+      const identity = JSON.stringify([pullRequestIdentity(successful), kind, at]);
+      if (!distinct.has(identity)) {
+        distinct.set(identity, {
+          at,
+          key: marker.key,
+          kind,
+          label: `PR #${successful.number}`,
+          title: text(successful.title),
+        });
+      }
+    };
+    add('pull-request-opened', openedAt);
+    add('pull-request-merged', mergedAt);
+    if (mergedAt === null && successful.state !== 'MERGED') {
+      add('pull-request-closed', closedAt);
+    }
+  }
+  return [...distinct.values()]
+    .sort(
+      (left, right) =>
+        left.at.localeCompare(right.at) || left.key.localeCompare(right.key) || left.kind.localeCompare(right.kind),
+    )
+    .slice(-WORK_THREAD_VIEW_BOUNDS.maxFactEvents);
+};
+
+const FOLLOW_STATE_LABELS = { following: 'Following', waiting: 'Waiting', done: 'Follow-up ended' } as const;
+const FACT_EVENT_LABELS = {
+  'pull-request-opened': 'opened',
+  'pull-request-merged': 'merged',
+  'pull-request-closed': 'closed',
+} as const;
+const compareMarks = (left: WorkThreadMark, right: WorkThreadMark): number =>
+  left.at.localeCompare(right.at) ||
+  left.kind.localeCompare(right.kind) ||
+  (left.label ?? '').localeCompare(right.label ?? '') ||
+  (left.harness ?? '').localeCompare(right.harness ?? '');
+
+const weekMarksOf = (
+  episodes: readonly WorkThreadEpisode[],
+  factEvents: readonly WorkThreadFactEvent[],
+  events: readonly WorkThreadEvent[],
+  now: CanonicalInstant,
+): WorkThreadMark[] => {
+  const start = Date.parse(now) - 8 * DAY_MS;
+  const candidates: WorkThreadMark[] = [
+    ...episodes.map((episode) => ({
+      at: episode.startedAt,
+      harness: episode.harness,
+      kind: 'session' as const,
+      label: episode.title ?? `Session ${episode.sourceSessionId}`,
+    })),
+    ...factEvents.map((event) => ({
+      at: event.at,
+      harness: null,
+      kind: 'event' as const,
+      label: `${event.label} ${FACT_EVENT_LABELS[event.kind]}`,
+    })),
+    ...events.flatMap((event) =>
+      event.kind === 'follow-state' && event.toState !== null
+        ? [{ at: event.at, harness: null, kind: 'event' as const, label: FOLLOW_STATE_LABELS[event.toState] }]
+        : [],
+    ),
+  ];
+  const recent = candidates
+    .filter(({ at }) => Date.parse(at) >= start && Date.parse(at) <= Date.parse(now))
+    .sort((left, right) => compareMarks(right, left));
+  const selected = recent.slice(0, WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
+  const newest = selected[0];
+  if (newest !== undefined && selected.every((mark) => mark.kind === newest.kind)) {
+    const otherKind = recent.find((mark) => mark.kind !== newest.kind);
+    if (otherKind !== undefined) {
+      selected[selected.length - 1] = otherKind;
+    }
+  }
+  return selected.sort(compareMarks);
+};
+
 const readRow = (
   { thread, links, evidence }: RowScope,
   events: readonly WorkThreadEvent[],
@@ -443,6 +539,19 @@ const readRow = (
       return key === null ? [] : [{ ...factOf(key, observation), via: checkout.via }];
     });
   const sessions = [...new Map(evidence.sessions.map((session) => [keyOf(session), session])).values()];
+  const linkedSessionKeys = new Set(active.filter((link) => link.kind === 'session').map((link) => link.key));
+  const firstActivityAt = [
+    thread.createdAt,
+    ...sessions.flatMap((session) => {
+      const startedAt = session.desktop?.createdAt ?? normalizeIsoTimestamp(session.member.startedAt);
+      return linkedSessionKeys.has(keyOf(session)) && startedAt !== null ? [startedAt] : [];
+    }),
+    ...pullRequests.flatMap((marker) => {
+      const createdAt = normalizeIsoTimestamp(marker.latestSuccessful?.createdAt);
+      return createdAt === null ? [] : [createdAt];
+    }),
+  ].reduce((earliest, candidate) => (Date.parse(candidate) < Date.parse(earliest) ? candidate : earliest));
+  const factEvents = factEventsOf(pullRequests);
   const facts = [...pullRequests, ...jiraIssues, ...local];
   const factDates = new Map<string, CanonicalInstant>();
   for (const marker of facts) {
@@ -459,7 +568,12 @@ const readRow = (
     } else if ('key' in observation) {
       instants = [observation.updatedAt];
     } else {
-      instants = [observation.updatedAt, observation.mergedAt];
+      instants = [
+        observation.updatedAt,
+        observation.mergedAt,
+        observation.createdAt ?? null,
+        observation.closedAt ?? null,
+      ];
     }
     const at = instants
       .filter((instant): instant is CanonicalInstant => instant !== null)
@@ -479,27 +593,17 @@ const readRow = (
   });
   const dates = [...factDates.values(), ...sessionDates];
   const after = thread.doneAt === null ? [] : dates.filter((at) => Date.parse(at) > Date.parse(thread.doneAt ?? at));
-  const start = Date.parse(now) - 8 * DAY_MS;
-  const marks = [
-    ...sessions.flatMap((session) => {
-      const at = session.desktop?.createdAt ?? normalizeIsoTimestamp(session.member.startedAt);
-      return at === null ? [] : [{ at, harness: session.harness, kind: 'session' as const, label: null }];
-    }),
-    ...events.map(({ at }) => ({ at, harness: null, kind: 'event' as const, label: null })),
-  ]
-    .filter(({ at }) => Date.parse(at) >= start && Date.parse(at) <= Date.parse(now))
-    .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow)
-    .reverse();
+  const marks = weekMarksOf(episodes, factEvents, events, now);
   const latest = (instants: readonly CanonicalInstant[]): CanonicalInstant =>
     instants.reduce((a, b) => (Date.parse(a) > Date.parse(b) ? a : b));
   return {
     episodes,
     evidence,
+    factEvents,
     truncated,
     row: {
       afterDone: after.length === 0 ? null : { count: after.length, latestAt: latest(after) },
-      firstActivityAt: thread.createdAt,
+      firstActivityAt,
       lastActivityAt: latest([storedActivity, ...dates]),
       links: active,
       markers: { pullRequests, jiraIssues, local },
@@ -721,8 +825,7 @@ export const queryWorkThreadDetail = (input: {
       detachedLinks: detachedLinks.slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread),
       episodes: read.episodes,
       events,
-      // Placeholder until pull request dates reach the thread (plan 123 round 2).
-      factEvents: [],
+      factEvents: read.factEvents,
       generatedAt,
       row: read.row,
       sources: sourcesOf(runStates.runs, [read], thread.machineId, runStates.skipped).map((source) =>

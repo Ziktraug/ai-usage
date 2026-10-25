@@ -534,6 +534,51 @@ describe('work thread store', () => {
     }
   });
 
+  test.each([
+    { raw: null, expected: null },
+    { raw: 'null', expected: null },
+    { raw: '0', expected: 0 },
+    { raw: '1234.5', expected: 1234.5 },
+    { raw: '-1', expected: null },
+    { raw: '1e999', expected: null },
+    { raw: 'true', expected: null },
+    { raw: '"1200"', expected: null },
+  ])('keeps recorded active duration $raw separate from session spans', async ({ raw, expected }) => {
+    const { db, dbPath, store, addSession, addDesktop } = await evidenceFixture();
+    try {
+      addSession('duration-root', 'Root');
+      addSession('duration-child', 'Child', { parent: 'duration-root' });
+      addDesktop('native-duration', 'Native-only Desktop');
+      if (raw !== null) {
+        db.query(
+          "UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.durationMs', json(?)) WHERE ordinal = 1",
+        ).run(raw);
+      }
+      db.query(
+        "UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.durationMs', 12.5) WHERE ordinal = 2",
+      ).run();
+      const threadId = randomUUID();
+      const read = await run(
+        store.queryWorkThreadSessionEvidence({
+          dbPath,
+          machineId: MACHINE,
+          links: [evidenceLink(threadId, 'duration-root'), evidenceLink(threadId, 'native-duration', 'claude')],
+        }),
+      );
+      expect(read.sessions.find((entry) => entry.member.sourceSessionId === 'duration-root')?.member.durationMs).toBe(
+        expected,
+      );
+      expect(read.sessions.find((entry) => entry.member.sourceSessionId === 'duration-child')?.member.durationMs).toBe(
+        12.5,
+      );
+      expect(
+        read.sessions.find((entry) => entry.member.sourceSessionId === 'native-duration')?.member.durationMs,
+      ).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test('batches more than 64 session links in one snapshot with independent per-thread and parent bounds', async () => {
     const fixture = await evidenceFixture();
     const { db, dbPath, store, addSession, addDesktop } = fixture;

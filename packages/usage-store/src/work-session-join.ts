@@ -100,6 +100,8 @@ export interface ServedHarnessSessionMember {
   readonly campaignRoot: boolean;
   /** `source.sourcePath`: the working directory the harness recorded. */
   readonly checkoutPath: string | null;
+  /** Recorded active turn duration from the served row; absent legacy values and null mean unknown. */
+  readonly durationMs?: number | null;
   readonly machineId: string;
   readonly origin: string | null;
   /** The parent the harness declared (`source.parentSourceSessionId`); on a root, that parent is not served. */
@@ -145,6 +147,7 @@ interface MemberRecord {
   campaign_key: unknown;
   campaign_root: unknown;
   checkout_path: unknown;
+  duration_ms: unknown;
   machine_id: unknown;
   member_count: unknown;
   origin: unknown;
@@ -202,6 +205,10 @@ const memberOf = (record: MemberRecord): ServedHarnessSessionMember | null => {
     branch,
     campaignRoot: record.campaign_root === 1,
     checkoutPath,
+    durationMs:
+      typeof record.duration_ms === 'number' && Number.isFinite(record.duration_ms) && record.duration_ms >= 0
+        ? record.duration_ms
+        : null,
     machineId,
     origin,
     parentSourceSessionId,
@@ -230,6 +237,8 @@ const MEMBERS_SQL = `
     json_extract(source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
     json_extract(source_row_json, '$.sessionLabel') AS title,
     json_extract(source_row_json, '$.date') AS started_at,
+    CASE WHEN json_type(source_row_json, '$.durationMs') IN ('integer', 'real')
+      THEN json_extract(source_row_json, '$.durationMs') END AS duration_ms,
     (SELECT campaign_total_count FROM served_report_rows
       WHERE revision = ? AND campaign_key = ? AND campaign_root = 1 LIMIT 1) AS member_count
   FROM (
