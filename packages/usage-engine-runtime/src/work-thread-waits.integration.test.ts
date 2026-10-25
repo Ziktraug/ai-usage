@@ -24,7 +24,12 @@ import {
 } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import { createScheduledSourceRegistry } from './source-adapters';
-import { isolatedSourceOptions } from './source-test-fixtures';
+import {
+  isolatedSourceOptions,
+  isReviewThreadsFixtureRead,
+  reviewThreadsFixtureArgs,
+  reviewThreadsFixtureResponse,
+} from './source-test-fixtures';
 
 const MACHINE = { id: 'wait-machine', label: 'Wait fixture' };
 const PR_KEY = 'github.com/fixture/project#7';
@@ -110,6 +115,7 @@ const fixture = async (
   let jiraStatus = 'To Do';
   let beforeView: (() => void | Promise<void>) | undefined;
   const calls: string[][] = [];
+  let openViews = 0;
   const runner: BoundedProcessRunner = (request) =>
     Effect.promise(async () => {
       calls.push([request.command, ...request.args]);
@@ -122,11 +128,21 @@ const fixture = async (
       ) {
         return { durationMs: 1, exitCode: 0, stdout: '[]' };
       }
+      if (request.command === 'gh' && isReviewThreadsFixtureRead(request.args)) {
+        return {
+          durationMs: 1,
+          exitCode: request.env?.GH_TOKEN === 'fixture-token' ? 0 : 4,
+          stdout: request.env?.GH_TOKEN === 'fixture-token' ? reviewThreadsFixtureResponse : '',
+        };
+      }
       if (request.command === 'gh' && request.args[0] === 'pr' && request.args[1] === 'view') {
         if (request.env?.GH_TOKEN !== 'fixture-token') {
           return { durationMs: 1, exitCode: 4, stdout: '' };
         }
         await beforeView?.();
+        if (mergedAt === null) {
+          openViews += 1;
+        }
         return {
           durationMs: 1,
           exitCode: 0,
@@ -192,7 +208,29 @@ const fixture = async (
     calls,
     read,
     follow,
-    poll: () => Effect.runPromise(source.run({ reportProgress: () => Effect.void })),
+    poll: async () => {
+      const firstCall = calls.length;
+      const priorOpenViews = openViews;
+      const result = await Effect.runPromise(source.run({ reportProgress: () => Effect.void }));
+      const graphqlCalls = calls.slice(firstCall).filter((args) => args[0] === 'gh' && args[1] === 'api');
+      const newOpenViews = openViews - priorOpenViews;
+      const expectedGraphqlCalls = Array.from({ length: newOpenViews }, () => [
+        'gh',
+        ...reviewThreadsFixtureArgs('fixture/project', 7),
+      ]);
+      // Check outside the runner: a contained runner defect must not silently weaken these fixtures.
+      if (JSON.stringify(graphqlCalls) !== JSON.stringify(expectedGraphqlCalls)) {
+        throw new Error('Expected exactly one bounded review-thread read for each open PR view');
+      }
+      if (newOpenViews > 0) {
+        const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+        const latest = stored.items[0]?.latest;
+        if (latest?.outcome !== 'observed' || latest.unresolvedReviewThreads !== 2 || latest.outcomeMessage !== null) {
+          throw new Error('Expected the complete review-thread fixture to be persisted without a diagnostic');
+        }
+      }
+      return result;
+    },
     events: async () =>
       (await Effect.runPromise(queryWorkThreadEvents({ dbPath, threadId }))).filter(
         (event) => event.kind === 'wait-satisfied',

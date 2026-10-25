@@ -44,7 +44,12 @@ import {
 import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
 import { createScheduledSourceRegistry, prepareSkillObservationImport, type SourceRunContext } from './source-adapters';
-import { isolatedSourceOptions } from './source-test-fixtures';
+import {
+  isolatedSourceOptions,
+  isReviewThreadsFixtureRead,
+  reviewThreadsFixtureArgs,
+  reviewThreadsFixtureResponse,
+} from './source-test-fixtures';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
 const SECRET_LIKE_VARIABLE = /TOKEN|SECRET/i;
@@ -847,7 +852,7 @@ const pullRequestView = (repository: string, number: number) =>
     url: `https://github.com/${repository}/pull/${String(number)}`,
   });
 
-/** A runner that answers git status/log and gh pr view without spawning anything. */
+/** Answers checkout and bounded pull request reads without spawning anything. */
 const fakeWorkFactRunner =
   (calls: BoundedProcessOptions[]): BoundedProcessRunner =>
   (options) => {
@@ -863,8 +868,13 @@ const fakeWorkFactRunner =
     if (options.command === 'gh' && options.args[0] === 'search') {
       return respond('[]');
     }
+    if (options.command === 'gh' && isReviewThreadsFixtureRead(options.args)) {
+      return options.env?.GH_TOKEN ? respond(reviewThreadsFixtureResponse) : respond('', 4);
+    }
     if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
-      return respond(pullRequestView(options.args[4] ?? '', Number(options.args[2])));
+      return options.env?.GH_TOKEN
+        ? respond(pullRequestView(options.args[4] ?? '', Number(options.args[2])))
+        : respond('', 4);
     }
     return respond('', 1);
   };
@@ -1077,14 +1087,21 @@ describe('work fact sources', () => {
         ['search', 'prs'],
         ['auth', 'token'],
         ['pr', 'view'],
+        ['api', 'graphql'],
       ]);
       expect(calls[3]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
       expect(calls[4]?.env?.GH_TOKEN).toBe('fixture-token');
+      expect(calls[5]?.env?.GH_TOKEN).toBe('fixture-token');
+      expect(calls[5]?.args).toEqual(reviewThreadsFixtureArgs('fixture/project', 66));
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => [latest.host, latest.number, latest.outcome, latest.state])).toEqual([
         ['github.com', 66, 'observed', 'OPEN'],
         ['gitlab.com', 3, 'disabled', null],
       ]);
+      expect(stored.items.find(({ latest }) => latest.host === 'github.com')?.latest).toMatchObject({
+        unresolvedReviewThreads: 2,
+        outcomeMessage: null,
+      });
       expect(JSON.stringify({ result, stored, args: calls.map(({ args }) => args) })).not.toContain('fixture-token');
       expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }))).runs).toEqual([
         {
@@ -1177,10 +1194,20 @@ describe('work fact sources', () => {
         ['search prs --review-requested=@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['auth token --user', null],
         ['pr view 66', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
+        ['api graphql -f', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['auth token --hostname', null],
         ['pr view 7', 'ACTIVE_ENGINE_TOKEN_SENTINEL'],
+        ['api graphql -f', 'ACTIVE_ENGINE_TOKEN_SENTINEL'],
       ]);
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+      expect(calls.filter(({ args }) => args[0] === 'api').map(({ args }) => args)).toEqual([
+        reviewThreadsFixtureArgs('fixture/project', 66),
+        reviewThreadsFixtureArgs('other/project', 7),
+      ]);
+      expect(stored.items.map(({ latest }) => [latest.unresolvedReviewThreads, latest.outcomeMessage])).toEqual([
+        [2, null],
+        [2, null],
+      ]);
       expect(stored.items.map(({ latest }) => [latest.number, latest.accountLabel])).toEqual([
         [66, 'alice'],
         [7, null],

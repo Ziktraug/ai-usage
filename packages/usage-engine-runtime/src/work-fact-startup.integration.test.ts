@@ -7,11 +7,17 @@ import type { BoundedProcessOptions, BoundedProcessRunner } from '@ai-usage/loca
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import type { CollectionSourceId, SourceControlView } from '@ai-usage/report-core/source-control';
 import { queryWorkFactRunStates, usageStorePath } from '@ai-usage/usage-store/testing';
+import { queryLatestPullRequestObservations } from '@ai-usage/usage-store/writer';
 import { Effect, Layer } from 'effect';
 import { TestClock } from 'effect/testing';
 import { createScheduledSourceRegistry } from './source-adapters';
 import { createSourceControl, type SourceControlService } from './source-control';
-import { isolatedSourceOptions } from './source-test-fixtures';
+import {
+  isolatedSourceOptions,
+  isReviewThreadsFixtureRead,
+  reviewThreadsFixtureArgs,
+  reviewThreadsFixtureResponse,
+} from './source-test-fixtures';
 
 /**
  * The engine's first collection cycle, end to end: the real scheduler over the real source
@@ -57,7 +63,7 @@ const pullRequestView = (repository: string, number: number): string =>
     url: `https://github.com/${repository}/pull/${String(number)}`,
   });
 
-/** Answers `git status`/`git log` and `gh pr view` without spawning anything, and records every call. */
+/** Answers checkout and bounded pull request reads without spawning anything, and records every call. */
 const fakeRunner =
   (calls: BoundedProcessOptions[]): BoundedProcessRunner =>
   (options) => {
@@ -72,6 +78,9 @@ const fakeRunner =
     }
     if (options.command === 'gh' && options.args[0] === 'search') {
       return respond('[]');
+    }
+    if (options.command === 'gh' && isReviewThreadsFixtureRead(options.args)) {
+      return options.env?.GH_TOKEN === 'fixture-token' ? respond(reviewThreadsFixtureResponse) : respond('', 4);
     }
     if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
       if (options.env?.GH_TOKEN !== 'fixture-token') {
@@ -240,7 +249,22 @@ describe('work fact producers on engine startup', () => {
       ['search', 'prs'],
       ['auth', 'token'],
       ['pr', 'view'],
+      ['api', 'graphql'],
       ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+
+    const graphqlCalls = calls.filter(({ command, args }) => command === 'gh' && args[0] === 'api');
+    expect(graphqlCalls.map(({ args }) => args)).toEqual(
+      calls
+        .filter(({ command, args }) => command === 'gh' && args[0] === 'pr')
+        .map(({ args }) => reviewThreadsFixtureArgs(args[4] ?? '', Number(args[2]))),
+    );
+    expect(graphqlCalls.map(({ env }) => env?.GH_TOKEN)).toEqual(['fixture-token', 'fixture-token']);
+    const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+    expect(stored.items.map(({ latest }) => [latest.unresolvedReviewThreads, latest.outcomeMessage])).toEqual([
+      [2, null],
+      [2, null],
     ]);
 
     const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
