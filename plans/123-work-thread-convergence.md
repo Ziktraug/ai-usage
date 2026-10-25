@@ -1,6 +1,7 @@
 # 123 — Work thread convergence (« Unité de travail v3 »)
 
-Status: IN PROGRESS. Starting head `b93a364b` on local branch
+Status: DELIVERED locally (rounds 1–6; latest head recorded in the 2026-10-25
+round below; not pushed). Starting head `b93a364b` on local branch
 `work-unit-convergence`: `work-continuity` at `7b133724` (plan 122, then numbered 119, which
 contains PR #67 at `6bf89308`) merged with `main` at `3fde5ae6`. Nothing is
 pushed or merged remotely.
@@ -138,3 +139,134 @@ cross-harness Claude to Codex delegation (not declared natively);
 to Panda tokens, to fold into Panda recipes; activation on the daily store
 (backup, then engine start per docs/local-store-upgrade.md) awaits the
 operator.
+
+### 2026-10-25 — round 2: rebased on PR #67's head and main, honest thread
+
+Starting head `9259684d`. The branch merged PR #67's head `de3c935c` (which contains
+`main` at `62e84b1a`: Effect 4, SvelteKit 3, Bun 1.4, TypeScript 6, Panda 2,
+Ultracite 8) at `ea8f48e9`; this plan and plan 122 were renumbered from 120 and
+119 (`71cc6428`). The supervisor extended the view contract once (`b9176351`).
+
+Gaps observed on the operator's real data (read-only copy, production build
+`9259684d`) that drove the round:
+
+- a Desktop conversation alive for three days showed "Episode span: 76 h";
+- the week lane counted delegated sessions ("20" on a day);
+- "Since" was the instant the product first saw a discovered pull request;
+- the thread showed five "Source linked" lines and no pull request event;
+- "What's left" read "The linked PR is still open" for most rows;
+- a four-line source diagnostic block sat above the tasks;
+- real pull request titles wrapped on four or five lines.
+
+Decisions (reversible):
+
+5. An episode shows its recorded turn time (`activeMs`, the union of turn
+   intervals the collectors already compute) and, apart, its first-to-last span
+   (`spanMs`). A span is never labelled as work time; an unknown duration stays
+   unknown.
+6. Dated source facts (pull request opened, merged, closed) are read from the
+   source's own dates into the thread (`factEvents`); they are not stored as
+   thread events and never use the observation instant.
+7. "What's left" on an open pull request distinguishes unresolved review threads
+   (GitHub `reviewThreads.isResolved`, counted only when complete), review
+   awaited from others, draft, ready to merge, conflicts, behind the base and
+   failing checks. A comment is not an unresolved thread.
+8. Automatic link events (declared, origin, launched) are not thread entries;
+   operator links, detaches, notes and follow-state changes are.
+9. A Claude → Codex delegation is attested only by the launching Bash tool use
+   of the Claude transcript (`codex exec … resume <id>` or that tool result's
+   `thread.started` / `session id:`), never by a uuid seen elsewhere.
+
+Workers (Codex CLI 0.164.0, `gpt-6-astra` verified in each rollout's
+`turn_context`): W1 `01a16e12-5d9f-7d02-9865-3ff67ee17631` (xhigh), W2
+`01a16e12-5ef0-7622-a5c8-b22374ed546a`, W3
+`01a16e12-6070-78a2-8cfa-98c124ec50da` (resumed threads, high), W4
+`01a173a3-f808-7eb2-be46-b2b88799f5ca` (new, high).
+
+Decisions added during the round (reversible):
+
+10. Work-only styles stay in a stylesheet the Work route imports (aliases set
+    from the semantic tokens by an extracted Panda style). Panda extracts one
+    stylesheet for every page, which put ~4.7 KB gzip of Work-only CSS on the
+    report page's first load and broke the operator's 305,000 B ceiling; the
+    ceiling was not raised.
+11. Adding a nullable column without default or backfill keeps the usage store
+    version when every writer names its columns and every reader maps named
+    columns (ADR 0075 amendment); version 5 stays reserved for plan 120 phase B.
+
+Rounds and integration (all on `work-unit-convergence`, local only):
+
+- Round 2: W1 recorded time, marks, origin date, PR facts, specific next steps
+  (`de3c5b9e`, `0f50ad31`); W2 PR lifecycle dates and unresolved review threads
+  (`2654f62d`, `d75fb2f8`); W3 quiet source line, density, week cells, copy,
+  episode wording, GitHub facts in the thread (`67da8d51`, `31c567ff`); W4
+  Claude → Codex attestation producer and durability (`723f2b2e`, `8a995d6c`).
+- Round 3: W1 nests attested Codex sessions under their Claude parent
+  (`917e378b`); W2 observes each pull request once whatever its casing
+  (`1b5e93e2`, a defect found on real data: the second GitHub cycle recorded
+  12 of 17 observations invalid); W3 Panda migration and mobile/title/source
+  fixes (`a51d09da`).
+- Round 4, after an independent adversarial review of `71cc6428..917e378b`
+  (7 findings confirmed, all fixed): resume attested only when the launch ran
+  and the supervisor's real launch forms accepted (`dec323ae`, Claude cache 18);
+  ready to merge only on `CLEAN` with zero known threads (`e2b888f1`); blank
+  titles (`273e46ef`); fractional durations on the wire (`8f0a62f8`); lenient
+  lifecycle dates (`db255d0b`); unread review threads disclosed (`667ba615`);
+  snapshot export keeps delegations (`4d8144c3`).
+- Round 5: report first load back under the ceiling — narrow project-group
+  command parser (`9527ce27`) and route-scoped Work styles (`aedb86b9`):
+  304,123 B gzip (recorded), pixel-identical at 1440–375 px, both schemes.
+- Round 5 (after a second adversarial review of `917e378b..aedb86b9`, 3 of 4
+  findings confirmed and fixed, the fourth rejected because `a51d09da`'s
+  message body names its behaviour changes): a resume is attested only from
+  the Codex command's own outcome or Codex's native id in the result, never
+  through a trailing `;` command (`bf01f1ae`, Claude cache 19); a failed
+  checkout read stays visible on a task (`813af865`); the engine tests serve
+  the review-thread read and a runner defect stays contained to its PR
+  (`91fee48f`, `c3f52929`).
+- Round 6, from an independent scenario review of the real-data captures
+  against the v3 references (Codex thread `01a17400-9116-7e73-a8a8-f48ea24f2376`,
+  no blocking defect): merge state on the GitHub marker, "linked sessions",
+  delegations bounded to five with a control, `+1d` on overnight ranges
+  (`b926aeac`).
+
+Real data, read-only, on fresh `VACUUM INTO` copies of the daily store with an
+isolated engine (claude/codex launchers disabled, gh with the operator's
+existing sign-in): 12 open authored pull requests became 12 tasks; the first
+GitHub cycle observed 17 pull requests; the second cycle recorded 12 of them
+invalid before `1b5e93e2` and none after (17 observed, 0 failed); unresolved review threads were read
+for 24 observations; declared sessions linked (PR #67: 4 sessions, 27
+delegated); a task created on the copy from this supervisor's session nested
+its attested Codex workers with recorded time apart from span (build
+`aedb86b9`, before the stricter round-5 rule). Jira stays unavailable (`acli`
+not installed). Claude active time is recorded only when the transcript has
+turn-duration records (79 of 400 sampled Claude rows); otherwise the episode
+says "Duration not recorded" and keeps its times.
+
+Remaining:
+
+- Jira through `acli` (not installed); fixture-tested only.
+- Running state of real sessions (no native lifecycle evidence stored).
+- Claude Desktop registry titles are absent from the isolated copies (their
+  home has no `.config/Claude`), so copy captures show `claude <id>` names.
+- Supervisor launches written `…; echo "exit=$?"` attest only with Codex's
+  native id in the tool result (round-5 rule, correctness over coverage).
+- Activation on the daily store awaits the operator: back up both stores per
+  `docs/local-store-upgrade.md` (Backup), then start the engine from this
+  branch. The first start adds the Work thread tables and the three nullable
+  pull request columns at usage version 4, and the Claude parse cache moves
+  to version 19, so every Claude transcript is read again once (the known cold
+  path). Rollback is the backup pair with the code revision that wrote it.
+
+Verification at `bf01f1ae` (verification worktree, Bun 1.4.3 from `nix develop`):
+`bun run verify` green (check, lint, typecheck 53/53, every package's tests:
+web 1814, report-core 652, local-collectors 413, usage-store 386, local-machine
+358, usage-engine-runtime 287, report-data 163, …), production build,
+`bun test bundle` 5/5 (report initial gzip closure 304,122 B, ceiling
+305,000 B), Playwright fixture `work-threads` + `work` + `work-e2e-fixture` +
+`accessibility` 115 passed, production `work-threads-production` 1 passed,
+`work-production` + `production-report` 19 passed. On a fresh real-store copy
+with this build, the only attested delegation of this supervisor's session is
+the one Codex resume whose result showed Codex's own thread id; the four
+worker launches written `…; echo "exit=$?"` and one launch Codex refused are
+not attested.
