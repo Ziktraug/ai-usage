@@ -24,6 +24,7 @@ import {
   newSimulatorDraft,
   preferencesDraftFrom,
   quotaWindowText,
+  reappliedText,
   repositoriesFactText,
   routeAnnotationDraftFor,
   routeAnnotationDrafts,
@@ -212,7 +213,7 @@ describe('Delegation config drafts', () => {
     maxConcurrent: 2,
     reservePercent: 35,
   };
-  const withTeam = [...settings.delegation.config.routes, teamAnnotation];
+  const withTeam = [...SYNTHETIC_DELEGATION_CONFIG.routes, teamAnnotation];
 
   test('round-trips the loaded configuration without changing a model declaration date', () => {
     const built = buildDelegationConfig(baseInput(), { machineId: settings.machineId, now: NOW });
@@ -248,14 +249,14 @@ describe('Delegation config drafts', () => {
       { ...baseInput(), routes: declaredOnly },
       { machineId: settings.machineId, now: NOW },
     );
-    expect(dropped.value?.routes).toEqual(settings.delegation.config.routes);
+    expect(dropped.value?.routes).toEqual(SYNTHETIC_DELEGATION_CONFIG.routes);
 
     // An explicit removal is the only way out.
     const removed = buildDelegationConfig(
       { ...baseInput(), routes: drafts.filter((draft) => draft.declared) },
       { machineId: settings.machineId, now: NOW },
     );
-    expect(removed.value?.routes).toEqual(settings.delegation.config.routes);
+    expect(removed.value?.routes).toEqual(SYNTHETIC_DELEGATION_CONFIG.routes);
   });
 
   test('an annotation without a machine resolves to the declaration of any machine and is not duplicated', () => {
@@ -393,12 +394,34 @@ describe('Save input', () => {
     ]);
   });
 
-  test('words a conflict with the revision now on disk and keeps the draft', () => {
+  test('words a conflict with the revision now on disk and the two ways forward', () => {
     expect(conflictText('abcd1234abcd1234')).toBe(
-      'The configuration changed elsewhere (revision abcd1234abcd1234). Reload to see it; your edits are kept below.',
+      'The configuration changed elsewhere (revision abcd1234abcd1234). Your edits are kept below and cannot be saved over it: discard them or re-apply them to the latest.',
     );
     expect(conflictText(null)).toBe(
-      'The configuration changed elsewhere. Reload to see it; your edits are kept below.',
+      'The configuration changed elsewhere. Your edits are kept below and cannot be saved over it: discard them or re-apply them to the latest.',
+    );
+  });
+
+  test('words a re-apply, naming how many fields kept the latest value', () => {
+    expect(reappliedText({ conflicts: [], revision: 'rev-2' })).toBe(
+      'Your edits were re-applied to revision rev-2. Review them and save.',
+    );
+    expect(
+      reappliedText({ conflicts: [{ mine: '"a"', path: 'model/x › alias', theirs: '"b"' }], revision: 'rev-2' }),
+    ).toBe(
+      'Your edits were re-applied to revision rev-2, except 1 field also changed elsewhere, which keeps the latest value until you enter yours again:',
+    );
+    expect(
+      reappliedText({
+        conflicts: [
+          { mine: '"a"', path: 'model/x › alias', theirs: '"b"' },
+          { mine: 'removed', path: 'model/y', theirs: 'changed' },
+        ],
+        revision: 'rev-3',
+      }),
+    ).toBe(
+      'Your edits were re-applied to revision rev-3, except 2 fields also changed elsewhere, which keep the latest value until you enter yours again:',
     );
   });
 

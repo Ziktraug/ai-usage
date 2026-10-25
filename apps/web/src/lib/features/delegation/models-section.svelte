@@ -49,7 +49,13 @@
     from: () => settings.models.map((model) => modelEntryDraftFrom(model.entry)),
     revision: () => settings.revision,
   });
-  const episode = createSaveEpisode({ client: () => client, onWritten: () => onReload() });
+  const episode = createSaveEpisode({
+    client: () => client,
+    onWritten: async () => {
+      sync.settle();
+      await onReload();
+    },
+  });
   let localIssues = $state<readonly DelegationConfigIssue[]>([]);
   const issues = $derived<readonly DelegationConfigIssue[]>(issuesToShow(localIssues, episode.outcome));
   const observedFor = (draft: ModelEntryDraft) =>
@@ -68,8 +74,21 @@
     episode.clear();
     sync.reset();
   };
+  const discardAndReload = async (): Promise<void> => {
+    discard();
+    await onReload();
+  };
+  const reapply = async (): Promise<void> => {
+    localIssues = [];
+    episode.clear();
+    await onReload();
+    sync.reapply();
+  };
   const submit = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault();
+    if (sync.stale) {
+      return;
+    }
     const { config } = settings.delegation;
     const built = buildDelegationConfig(
       {
@@ -86,10 +105,7 @@
       return;
     }
     localIssues = [];
-    const outcome = await episode.run(buildSaveInput({ delegation: built.value }, settings.revision));
-    if (outcome.kind === 'written') {
-      sync.settle();
-    }
+    await episode.run(buildSaveInput({ delegation: built.value }, sync.baseRevision));
   };
 </script>
 
@@ -130,12 +146,20 @@
     </div>
     <div class={formActions}>
       <button class={workButton} onclick={add} type="button">Add model</button>
-      <button class={primaryButton} disabled={episode.pending} type="submit">Save models</button>
+      <button class={primaryButton} disabled={episode.pending || sync.stale} type="submit">Save models</button>
       <button class={workButton} disabled={!sync.dirty || episode.pending} onclick={discard} type="button">
         Discard edits
       </button>
     </div>
-    <SaveNotice {onReload} outcome={episode.outcome} pending={episode.pending} />
+    <SaveNotice
+      onDiscard={discardAndReload}
+      onReapply={reapply}
+      outcome={episode.outcome}
+      pending={episode.pending}
+      resolution={sync.resolution}
+      revision={settings.revision}
+      stale={sync.stale}
+    />
   </form>
 
   <section aria-labelledby="delegation-observed-models-title" class={cx(workPanel, workStack)}>

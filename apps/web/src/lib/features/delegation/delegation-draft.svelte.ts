@@ -1,5 +1,6 @@
 import { untrack } from 'svelte';
 import type { DelegationPageClient, DelegationSaveOutcome, DelegationSaveSettingsInput } from './delegation-contract';
+import { type DraftResolution, rebaseDraft, sameDraft } from './delegation-rebase';
 
 export interface DraftSyncOptions<Draft> {
   /** The draft the current settings would produce. */
@@ -9,15 +10,31 @@ export interface DraftSyncOptions<Draft> {
 }
 
 /**
- * One form's draft beside the settings it came from. The draft follows the settings until the
- * operator edits it; from then on it is kept across refetches (a conflict says "your edits are kept
- * below"), until a save succeeds or the edits are discarded. Call from a component's script so the
- * effect belongs to it.
+ * One form's draft beside the settings it came from, bound to the revision it was read from (its
+ * base): a save carries `baseRevision`, so a newer revision never silently authorises writing an
+ * older draft. The draft follows the settings until the operator edits it. From then on a refetch
+ * keeps it: when the new revision changed nothing this form writes, the draft is rebound to it
+ * silently (nothing it would write moved); otherwise it goes stale — no save is possible until the
+ * operator discards the edits or re-applies them onto the latest. Call from a component's script so
+ * the effect belongs to it.
  */
 export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
   let draft = $state<Draft>(untrack(options.from));
-  let dirty = $state(false);
+  /** What the settings said at `baseRevision`: the merge base of a re-apply. Nothing renders it. */
+  let base: Draft = untrack(options.from);
+  let baseRevision = $state(untrack(options.revision));
   let seenRevision = untrack(options.revision);
+  let dirty = $state(false);
+  let stale = $state(false);
+  let resolution = $state<DraftResolution | null>(null);
+
+  const adopt = (revision: string): void => {
+    base = untrack(options.from);
+    draft = untrack(options.from);
+    baseRevision = revision;
+    seenRevision = revision;
+    stale = false;
+  };
 
   $effect(() => {
     const revision = options.revision();
@@ -26,11 +43,22 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
     }
     seenRevision = revision;
     if (!dirty) {
-      draft = options.from();
+      adopt(revision);
+      return;
+    }
+    if (sameDraft(untrack(options.from), base)) {
+      baseRevision = revision;
+      stale = false;
+    } else {
+      stale = true;
     }
   });
 
   return {
+    /** The revision the draft was read from; what a save sends as `expectedRevision`. */
+    get baseRevision(): string {
+      return baseRevision;
+    },
     get dirty(): boolean {
       return dirty;
     },
@@ -40,18 +68,49 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
     set draft(value: Draft) {
       draft = value;
     },
+    /** The last re-apply, until the edits are saved or discarded. */
+    get resolution(): DraftResolution | null {
+      return resolution;
+    },
+    /** The settings moved on in what this form writes while the draft was dirty: it cannot be saved as is. */
+    get stale(): boolean {
+      return stale;
+    },
     /** The operator typed or changed something: the draft now outlives refetches. */
     markDirty(): void {
       dirty = true;
     },
+    /**
+     * Re-applies the operator's edits (relative to the base) onto the latest settings and binds the
+     * draft to their revision. Fields both sides changed keep the latest value and are named.
+     */
+    reapply(): DraftResolution {
+      const revision = untrack(options.revision);
+      const rebased = rebaseDraft(base, $state.snapshot(draft) as Draft, untrack(options.from));
+      base = untrack(options.from);
+      draft = rebased.draft;
+      baseRevision = revision;
+      seenRevision = revision;
+      stale = false;
+      dirty = !sameDraft(rebased.draft, base);
+      resolution = { conflicts: rebased.conflicts, revision };
+      return resolution;
+    },
     /** Back to what the settings say. */
     reset(): void {
       dirty = false;
-      draft = options.from();
+      resolution = null;
+      adopt(untrack(options.revision));
     },
-    /** A save was written: the next refetched revision re-reads the draft (parsed, dated). */
+    /** A save was written: the draft settles; the refetch that follows re-reads it (parsed, dated). */
     settle(): void {
       dirty = false;
+      stale = false;
+      resolution = null;
+      const revision = untrack(options.revision);
+      if (revision !== baseRevision) {
+        adopt(revision);
+      }
     },
   };
 };

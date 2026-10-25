@@ -74,6 +74,38 @@ const recordSavedRouteScopes = (page: Page): string[][] => {
   return saved;
 };
 
+/**
+ * A refused save (a revision conflict) answers with a ≥ 400 status the browser failure gate would
+ * report; the tests below expect such answers, so each is marked for the gate (see browser-test.ts).
+ */
+const expectRefusedSaves = async (page: Page): Promise<void> => {
+  await page.route(
+    (url) => url.pathname === SAVE_SETTINGS_RPC_PATH,
+    async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        headers:
+          response.status() >= 400
+            ? { ...response.headers(), [EXPECTED_ERROR_HEADER]: 'shell-route' }
+            : response.headers(),
+        response,
+      });
+    },
+  );
+};
+
+const openModels = async (page: Page): Promise<Locator> => {
+  await page.goto('/delegation?section=models');
+  await waitForDelegation(page);
+  return page.locator('[data-delegation-form="models"]');
+};
+
+const aliasOf = (models: Locator, index: number): Locator =>
+  models.locator(`[data-delegation-model="${index}"]`).getByRole('textbox', { name: 'Alias' });
+
+const revisionOf = (page: Page): Promise<string | null> =>
+  page.locator('main[data-route-shell="delegation"]').getAttribute('data-delegation-revision');
+
 const expectTeamAnnotation = async (annotations: Locator): Promise<Locator> => {
   const team = annotations.locator('[data-delegation-route-annotation][data-delegation-route-declared="false"]');
   await expect(team).toHaveCount(1);
@@ -191,12 +223,179 @@ test.describe('settings writes', () => {
     const conflict = form.locator('[data-delegation-conflict]');
     await expect(conflict).toHaveAttribute('role', 'alert');
     await expect(conflict).toContainText('The configuration changed elsewhere (revision');
-    await expect(conflict).toContainText('Reload to see it; your edits are kept below.');
+    await expect(conflict).toContainText(
+      'Your edits are kept below and cannot be saved over it: discard them or re-apply them to the latest.',
+    );
     await expect(label).toHaveValue('Claude personal (conflicting edit)');
     expect(rewritten).toBe(true);
-    await conflict.getByRole('button', { name: 'Reload settings' }).click();
+    // The conflict was forged: nothing this form writes moved, so re-applying keeps the edit as it is.
+    await conflict.getByRole('button', { name: 'Re-apply my edits to the latest' }).click();
+    await expect(form.locator('[data-delegation-reapplied]')).toContainText('Your edits were re-applied to revision');
     await expect(label).toHaveValue('Claude personal (conflicting edit)');
     await expect(form.getByRole('button', { name: 'Discard edits' })).toBeEnabled();
+    await expect(form.getByRole('button', { name: 'Save route contexts' })).toBeEnabled();
+  });
+
+  // Two clients: the test's page (A) and a page in a second browser context (B). The fixture server
+  // is their shared configuration; nothing refetches A's settings behind its back.
+  test('a conflict offers to discard or re-apply; re-applying keeps my edit and the one made elsewhere', async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const stamp = Date.now().toString(36);
+    await expectRefusedSaves(page);
+    const models = await openModels(page);
+    const revisionA = await revisionOf(page);
+    await aliasOf(models, 0).fill(`mine-${stamp}`);
+
+    const other = await browser.newContext();
+    try {
+      const pageB = await other.newPage();
+      const modelsB = await openModels(pageB);
+      await aliasOf(modelsB, 1).fill(`theirs-${stamp}`);
+      await modelsB.getByRole('button', { name: 'Save models' }).click();
+      await expect(modelsB.getByRole('status')).toContainText('Saved.');
+      const revisionB = await revisionOf(pageB);
+      expect(revisionB).not.toBe(revisionA);
+
+      await models.getByRole('button', { name: 'Save models' }).click();
+      const conflict = models.locator('[data-delegation-conflict]');
+      await expect(conflict).toHaveAttribute('role', 'alert');
+      await expect(conflict).toContainText(
+        `The configuration changed elsewhere (revision ${revisionB}). Your edits are kept below and cannot be saved over it: discard them or re-apply them to the latest.`,
+      );
+      await expect(aliasOf(models, 0)).toHaveValue(`mine-${stamp}`);
+      await expect(aliasOf(models, 1)).not.toHaveValue(`theirs-${stamp}`);
+
+      await conflict.getByRole('button', { name: 'Re-apply my edits to the latest' }).click();
+      const reapplied = models.locator('[data-delegation-reapplied]');
+      await expect(reapplied).toHaveAttribute('role', 'status');
+      await expect(reapplied).toContainText(
+        `Your edits were re-applied to revision ${revisionB}. Review them and save.`,
+      );
+      await expect(aliasOf(models, 0)).toHaveValue(`mine-${stamp}`);
+      await expect(aliasOf(models, 1)).toHaveValue(`theirs-${stamp}`);
+      await expect.poll(() => revisionOf(page)).toBe(revisionB);
+      await expect(models.getByRole('button', { name: 'Discard edits' })).toBeEnabled();
+
+      await models.getByRole('button', { name: 'Save models' }).click();
+      await expect(models.getByRole('status')).toContainText('Saved.');
+      await expect.poll(() => revisionOf(page)).not.toBe(revisionB);
+
+      // The other client re-reads: both edits are in the configuration.
+      await pageB.goto('/delegation?section=models');
+      await waitForDelegation(pageB);
+      await expect(aliasOf(modelsB, 0)).toHaveValue(`mine-${stamp}`);
+      await expect(aliasOf(modelsB, 1)).toHaveValue(`theirs-${stamp}`);
+    } finally {
+      await other.close();
+    }
+  });
+
+  test('a field both clients changed is named on re-apply and keeps the latest value until I enter mine', async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const stamp = Date.now().toString(36);
+    await expectRefusedSaves(page);
+    const models = await openModels(page);
+    await aliasOf(models, 1).fill(`a-${stamp}`);
+
+    const other = await browser.newContext();
+    try {
+      const pageB = await other.newPage();
+      const modelsB = await openModels(pageB);
+      await aliasOf(modelsB, 1).fill(`b-${stamp}`);
+      await modelsB.getByRole('button', { name: 'Save models' }).click();
+      await expect(modelsB.getByRole('status')).toContainText('Saved.');
+      const revisionB = await revisionOf(pageB);
+
+      await models.getByRole('button', { name: 'Save models' }).click();
+      const conflict = models.locator('[data-delegation-conflict]');
+      await expect(conflict).toContainText(`(revision ${revisionB})`);
+      await conflict.getByRole('button', { name: 'Re-apply my edits to the latest' }).click();
+
+      // Both changed the same field: the notice names it with both values and the form keeps the latest.
+      const reapplied = models.locator('[data-delegation-reapplied]');
+      await expect(reapplied).toHaveAttribute('role', 'alert');
+      await expect(reapplied).toContainText(
+        `Your edits were re-applied to revision ${revisionB}, except 1 field also changed elsewhere, which keeps the latest value until you enter yours again:`,
+      );
+      await expect(reapplied.getByRole('listitem')).toHaveText(
+        `model/gpt-5-codex › alias: yours "a-${stamp}", latest "b-${stamp}"`,
+      );
+      await expect(aliasOf(models, 1)).toHaveValue(`b-${stamp}`);
+      await expect(models.getByRole('button', { name: 'Discard edits' })).toBeDisabled();
+
+      // Keeping mine is a deliberate act: enter it again, then save on the latest revision.
+      await aliasOf(models, 1).fill(`a-${stamp}`);
+      await models.getByRole('button', { name: 'Save models' }).click();
+      await expect(models.getByRole('status')).toContainText('Saved.');
+      await pageB.goto('/delegation?section=models');
+      await waitForDelegation(pageB);
+      await expect(aliasOf(modelsB, 1)).toHaveValue(`a-${stamp}`);
+    } finally {
+      await other.close();
+    }
+  });
+
+  test('a reload another form caused never promotes a draft the latest changed under; discarding drops it', async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const stamp = Date.now().toString(36);
+    await expectRefusedSaves(page);
+    const models = await openModels(page);
+    const originalAlias = await aliasOf(models, 0).inputValue();
+    await aliasOf(models, 0).fill(`mine-${stamp}`);
+
+    const other = await browser.newContext();
+    try {
+      const pageB = await other.newPage();
+      const modelsB = await openModels(pageB);
+      await aliasOf(modelsB, 1).fill(`theirs-${stamp}`);
+      await modelsB.getByRole('button', { name: 'Save models' }).click();
+      await expect(modelsB.getByRole('status')).toContainText('Saved.');
+      const revisionB = await revisionOf(pageB);
+
+      // The Rules form's save is refused; its own notice reloads the page's settings to the latest.
+      const tabs = page.getByRole('tablist', { name: SECTION_TABS });
+      await tabs.getByRole('tab', { name: 'Rules' }).click();
+      const rules = page.locator('[data-delegation-form="rules"]');
+      await rules.getByRole('button', { name: 'Save rules' }).click();
+      const rulesConflict = rules.locator('[data-delegation-conflict]');
+      await expect(rulesConflict).toContainText(`(revision ${revisionB})`);
+      await rulesConflict.getByRole('button', { name: 'Discard my edits and load the latest' }).click();
+      await expect(rulesConflict).toHaveCount(0);
+      await expect.poll(() => revisionOf(page)).toBe(revisionB);
+
+      // The Models draft was read at the old revision and the models changed elsewhere: it is stale,
+      // still shown, and no save can carry it.
+      await tabs.getByRole('tab', { name: 'Models' }).click();
+      const conflict = models.locator('[data-delegation-conflict]');
+      await expect(conflict).toHaveAttribute('role', 'alert');
+      await expect(conflict).toContainText(`(revision ${revisionB})`);
+      await expect(models.getByRole('button', { name: 'Save models' })).toBeDisabled();
+      await expect(aliasOf(models, 0)).toHaveValue(`mine-${stamp}`);
+      await expect(aliasOf(models, 1)).not.toHaveValue(`theirs-${stamp}`);
+
+      await conflict.getByRole('button', { name: 'Discard my edits and load the latest' }).click();
+      await expect(conflict).toHaveCount(0);
+      await expect(aliasOf(models, 0)).toHaveValue(originalAlias);
+      await expect(aliasOf(models, 1)).toHaveValue(`theirs-${stamp}`);
+      await expect(models.getByRole('button', { name: 'Discard edits' })).toBeDisabled();
+      await expect(models.getByRole('button', { name: 'Save models' })).toBeEnabled();
+
+      await pageB.goto('/delegation?section=models');
+      await waitForDelegation(pageB);
+      await expect(aliasOf(modelsB, 0)).toHaveValue(originalAlias);
+      await expect(aliasOf(modelsB, 1)).toHaveValue(`theirs-${stamp}`);
+    } finally {
+      await other.close();
+    }
   });
 });
 

@@ -35,6 +35,7 @@ import type {
   ReviewTargetDeclaration,
   ReviewTargetDeclarationView,
 } from './delegation-contract';
+import { type DraftResolution, stableJson } from './delegation-rebase';
 
 // ---------------------------------------------------------------------------------------------
 // Sections (one page, three needs; the active one lives in the URL)
@@ -238,20 +239,6 @@ const list = (value: string): string[] =>
 const numberOrAbsent = (value: string): number | undefined => {
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : Number(trimmed);
-};
-
-const stableJson = (value: unknown): string => {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(',')}]`;
-  }
-  if (typeof value === 'object' && value !== null) {
-    const entries = Object.entries(value)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => (left < right ? -1 : 1))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`);
-    return `{${entries.join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
 };
 
 const sameExceptDeclaredAt = (left: { readonly declaredAt: string }, right: { readonly declaredAt: string }): boolean =>
@@ -790,10 +777,20 @@ export const issuesToShow = (
   return outcome?.kind === 'invalid' ? outcome.issues : [];
 };
 
+/**
+ * A draft is bound to the revision it was read from; once the settings moved on in what the form
+ * writes, no save carries it. The notice offers the two explicit ways forward.
+ */
 export const conflictText = (revision: string | null): string =>
-  revision === null
-    ? 'The configuration changed elsewhere. Reload to see it; your edits are kept below.'
-    : `The configuration changed elsewhere (revision ${revision}). Reload to see it; your edits are kept below.`;
+  `The configuration changed elsewhere${revision === null ? '' : ` (revision ${revision})`}. Your edits are kept below and cannot be saved over it: discard them or re-apply them to the latest.`;
+
+export const reappliedText = (resolution: DraftResolution): string => {
+  const count = resolution.conflicts.length;
+  if (count === 0) {
+    return `Your edits were re-applied to revision ${resolution.revision}. Review them and save.`;
+  }
+  return `Your edits were re-applied to revision ${resolution.revision}, except ${count} field${count === 1 ? '' : 's'} also changed elsewhere, which keep${count === 1 ? 's' : ''} the latest value until you enter yours again:`;
+};
 
 export const issuesFor = (issues: readonly DelegationConfigIssue[], path: string): string[] =>
   issues.filter((issue) => issue.path === path).map((issue) => issue.reason);
