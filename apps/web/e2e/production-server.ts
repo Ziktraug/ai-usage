@@ -64,7 +64,7 @@ try {
       'import { appendFileSync } from "node:fs";',
       `process.stderr.write(${JSON.stringify(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL)});`,
       // The same fake answers the web resolver (pr list), the engine's pull request source
-      // (personal searches, pr view, then api on failure); unsupported commands still fail.
+      // (personal searches, pr view, review threads, then REST api on failure); unsupported commands still fail.
       // Record only argv, never environment or token output, inside this disposable HOME.
       'const args = process.argv.slice(2);',
       'appendFileSync(import.meta.dirname + "/../work-thread-gh-argv.jsonl", JSON.stringify(args) + "\\n", { mode: 0o600 });',
@@ -80,7 +80,16 @@ try {
       '  const repository = rest[rest.indexOf("--repo") + 1] ?? "fixture/ai-usage";',
       '  const number = Number(rest[0] ?? "42");',
       '  const discovered = repository === "fixture/discovered" && number === 77;',
-      '  process.stdout.write(JSON.stringify({ baseRefName: "main", headRefName: "fixture/topic", isDraft: false, mergedAt: null, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "REVIEW_REQUIRED", state: "OPEN", statusCheckRollup: discovered ? [{ status: "COMPLETED", conclusion: "SUCCESS" }] : [], title: discovered ? "Discovered fixture pull request" : "Fixture pull request", updatedAt: "2026-07-03T11:00:00Z", url: "https://github.com/" + repository + "/pull/" + String(number) }));',
+      '  process.stdout.write(JSON.stringify({ baseRefName: "main", headRefName: "fixture/topic", isDraft: false, createdAt: "2026-07-01T09:00:00Z", closedAt: null, mergedAt: null, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "REVIEW_REQUIRED", state: "OPEN", statusCheckRollup: discovered ? [{ status: "COMPLETED", conclusion: "SUCCESS" }] : [], title: discovered ? "Discovered fixture pull request" : "Fixture pull request", updatedAt: "2026-07-03T11:00:00Z", url: "https://github.com/" + repository + "/pull/" + String(number) }));',
+      '} else if (command === "api" && subcommand === "graphql") {',
+      '  const fields = Object.fromEntries(rest.filter((_, index) => index % 2 === 1).map((field) => { const separator = field.indexOf("="); return [field.slice(0, separator), field.slice(separator + 1)]; }));',
+      '  if (!fields.query?.trimStart().startsWith("query(") || !fields.query.includes("reviewThreads(first: 100)") || !fields.owner || !fields.name || !/^\\d+$/.test(fields.number ?? "")) {',
+      '    process.exitCode = 1;',
+      '  } else {',
+      '    const discovered = fields.owner === "fixture" && fields.name === "discovered" && fields.number === "77";',
+      '    const nodes = discovered ? [{ isResolved: false }, { isResolved: true }, { isResolved: false }] : [];',
+      '    process.stdout.write(JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { totalCount: nodes.length, nodes } } } } }));',
+      '  }',
       '} else if (command === "api") {',
       '  process.stdout.write(JSON.stringify({ message: "Not Found", status: "404" }));',
       '  process.exitCode = 1;',
