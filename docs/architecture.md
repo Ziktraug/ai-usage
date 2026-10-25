@@ -16,27 +16,20 @@ The current usage-report runtime keeps a strict split between two planes:
 usage database read-write. Web and CLI query durable revision-keyed projections
 through read-only, query-only SQLite connections. The control plane carries
 commands, status, and bounded SSE events only; it is not a report data API.
-The accepted platform topology adds separate Memory and shared authorities; it
-does not broaden either of these usage-runtime planes.
+The separate local Memory store does not broaden either of these usage-runtime
+planes.
 
-## Platform decision and delivery status
+## Delivery status
 
-ADRs 0023–0038 and plan 100 record accepted architecture. The platform
-runtime for plans 101–107 is integrated on `main` via PR #53:
-
-- plans 100–106 are `DONE`;
-- plan 107 is `IN PROGRESS`: the outbound replication runtime, protocol, and
-  PostgreSQL apply path are integrated; server-side bundle bootstrap and
-  blocked-stream repair criteria are still open;
-- plans 108–110 remain `TODO`.
-
-The platform-specific topology, package, command, and route sections below
-describe current runtime behavior, except where a sentence names an open plan
-107 criterion. Memory import/export, Observation/Proposal creation, and
-Device-side enrollment exist as application operations without an operator
-surface; [`future-work.md`](future-work.md) tracks them. Corpus and
-performance measurements remain the evidence recorded by their dated research
-snapshots. Moving the local SQLite stores across code versions follows
+The product is local-only. PR #53 integrated the plan 101–107 platform runtime;
+plan 120 removes its connected half. Phase A deleted `apps/server`, the
+PostgreSQL store, GitHub login, and the organization authorization model. Phase
+B removes the dormant outbound replication client and its outboxes, and
+accepted Memory. The sections below describe the code that remains. Memory
+import/export and Observation/Proposal creation exist as application
+operations without an operator surface. Corpus and performance measurements
+remain the evidence recorded by their dated research snapshots. Moving the
+local SQLite stores across code versions follows
 [`local-store-upgrade.md`](local-store-upgrade.md).
 
 ## Data flow
@@ -80,11 +73,9 @@ one additional read is capped by the shared history line limit and commits only
 that record. An unfinished tail waits for a file change without blocking later
 files. Observations and byte checkpoints still commit in the same transaction.
 
-## Accepted platform topology
+## Local topology
 
-Plans 100–110 extend the same monorepo and product with explicit local and
-connected compositions. These are accepted ownership boundaries; packages and
-runtime behavior land only through their dependent implementation plans.
+The product has one composition: the local, offline one below.
 
 ### Local/offline composition
 
@@ -129,76 +120,27 @@ portable export, usage snapshots or replication. Accepted knowledge, proposal
 review, native harness memory and native Session analysis remain. There is no
 replacement summary library; future automatic interpretation remains possible.
 
-### Connected/shared composition
+### Local guarantees
 
-```text
-Device ── outbound HTTPS ── apps/server
-                                authenticated external endpoints
-                                application-service composition root
-                                sole PostgreSQL write composition root
-                                  ├─ identity and authorization
-                                  ├─ shared Memory and search
-                                  ├─ replication projections
-                                  ├─ shared Work handoffs
-                                  └─ opt-in session archives
+The local composition provides Usage, Skills, a stable local Person/personal
+Space/Device, Project resolution, DB-native Agent Memory, FTS5 search, the
+`/projects` and `/memory` workflows, CLI search, and read-only MCP without an
+account, login, external network, or shared server.
 
-apps/web (connected mode)
-  reuses the product and contract-first browser boundary
-  never imports PostgreSQL or authorization adapters in browser code
-```
+## Data ownership
 
-`apps/server` also owns the GitHub-only shared-authentication HTTP boundary,
-domain Web-session projection, and Device enrollment/lifecycle routes.
-`@ai-usage/identity` wraps Better Auth and the Device application services;
-`@ai-usage/postgres-store` keeps library/database rows private. A login resolves
-to a Person but never bypasses the application `Authorizer`.
+Every logical resource has one mutation authority.
 
-The shared server never reads machine-local harness files. PostgreSQL is
-authoritative for connected product state and explicitly published/shared
-resources, not for unpublished local Memory or native harness history. Devices
-initiate every connection; the connected composition adds no inbound Device
-listener or LAN discovery.
-
-### Target mode guarantees
-
-The accepted local composition must provide Usage, Skills, a stable local
-Person/personal Space/Device, Project resolution, DB-native Agent Memory, FTS5
-search, the `/projects` and `/memory` workflows, CLI search, and read-only MCP
-without an account, login, external network, shared server, or PostgreSQL. Work
-handoffs remain a later plan. Tests inject a platform connection adapter that
-throws if called and assert zero calls while local operations pass.
-
-Connected mode adds personal and organization Spaces, authorized cross-device
-search, shared Work handoffs, replication, and opt-in normalized session
-archives. It never silently demotes local SQLite into a cache of PostgreSQL.
-The same domain and application-service contracts sit above local SQLite and
-shared PostgreSQL adapters.
-
-## Platform data ownership
-
-Every logical resource has one mutation authority at a time. Replication is an
-explicit publication transition: a local outbox owns an unacknowledged event;
-after durable apply, PostgreSQL owns the shared projection and receipt without
-becoming authority over the source harness file.
-
-| Concern | Target mutation authority | Target local role | Target connected role |
-| --- | --- | --- | --- |
-| Harness raw history | Native harness | Read locally | Never published by default |
-| Usage checkpoints and report revisions | `apps/usage-engine` + usage SQLite | Authoritative | Published projection only |
-| Local Agent Memory | Memory application service + Memory SQLite | Authoritative | Published by policy |
-| Shared Agent Memory | Memory application service + PostgreSQL | Import/export only | Authoritative |
-| Local Work Thread and Work handoff | Work application service + Memory SQLite | Authoritative | Published by policy |
-| Shared Work Thread and Work handoff | Work application service + PostgreSQL | Replicated projection | Authoritative |
-| Local Memory search | SQLite FTS5 projection | Available | Not queried remotely |
-| Shared Memory search | PostgreSQL FTS + `pg_trgm` projection | No direct database access | Available through services |
-| Replication event | Owning SQLite outbox until ACK; PostgreSQL receipt after apply | Durable outbound state | Durable receipt/projection |
-| Space, Person, organization membership | Identity application service + PostgreSQL in connected mode | Single-user identity kernel | Authoritative |
-| Device credential | Private local secret + server verifier metadata | Plaintext secret only | Verifier and lifecycle metadata |
-| SCM account | Person-scoped identity service + PostgreSQL | Optional metadata | Authoritative |
-| SCM installation | Space-scoped identity service + PostgreSQL | No local ownership inference | Authoritative |
-| SCM credential | Identity service encrypted secret/reference | Never inferred | Attached to account or installation |
-| Session archive metadata and ciphertext | Archive application service + PostgreSQL | Queued publication only | Opt-in authority |
-| Skills source and projections | Existing Skills filesystem domain | Authoritative | Future policy only |
+| Concern | Mutation authority |
+| --- | --- |
+| Harness raw history | Native harness; read locally, never published |
+| Usage checkpoints and report revisions | `apps/usage-engine` + usage SQLite |
+| Agent Memory | Memory application service + Memory SQLite |
+| Memory search | SQLite FTS5 projection |
+| Space, Person, Device identity | Single-user identity kernel in Memory SQLite |
+| Replication outbox event (dormant; plan 120 phase B) | Owning SQLite outbox |
+| Device credential (dormant; plan 120 phase B) | Private local secret file |
+| Skills source and projections | Existing Skills filesystem domain |
 
 Markdown and JSONL are accepted as Agent Memory import, export, and projection
 formats. The target import is an explicit bounded preview/confirm workflow with
@@ -214,14 +156,13 @@ second mutation authority.
 
 Web/oRPC, CLI, MCP, and jobs are edge adapters over explicit application
 services and ports. Route handlers and MCP tools neither implement permission
-logic nor instantiate write repositories. SQLite and PostgreSQL adapters share
-runtime-validated domain commands/results while their inferred storage rows
-remain private. Search and MCP contracts, measurements, registration, and
+logic nor instantiate write repositories. SQLite adapters validate domain
+commands/results at runtime while their inferred storage rows remain private. Search and MCP contracts, measurements, registration, and
 retrieved-content rules are documented in
 [Memory search and MCP](memory-search-and-mcp.md).
 
 The accepted capability IDs are `usage`, `sources`, `skills`, `replication`,
-`memory`, `work-handoff`, and `organization-governance`. Trusted capability
+`memory`, and `work-handoff`. Trusted capability
 modules may contribute routes, jobs, MCP tools, navigation, and permission
 requirements through normal composition. They share one reviewed migration
 sequence, run no arbitrary third-party code, and expose no public plugin SDK.
@@ -291,15 +232,15 @@ vocabulary and never affect engine readiness.
 
 When `AI_USAGE_PLATFORM_BASE_URL` is explicitly present, the same composition
 also starts an independent outbound replication supervisor after local
-startup.
+startup. The server it published to is removed (plan 120); this dormant path
+goes in phase B.
 It binds the offline identity kernel to the authenticated shared Device/Person/
 Space snapshot, recovers and scans each owning outbox through bounded writer
 ports, then performs HTTPS only after the SQLite transactions close. Missing
 credentials and platform failures never degrade local engine readiness. On
 shutdown, the outbound request is aborted and the supervisor closes before the
 Memory service, Memory kernel, and usage writer. The exact protocol, retry,
-privacy, and PostgreSQL apply contracts live in
-[Device replication](device-replication.md).
+and privacy contracts live in [Device replication](device-replication.md).
 
 ### Control plane
 
@@ -524,15 +465,20 @@ and quota contracts, session detail/VCS contracts, portable snapshots, merge
 bundles, and serialization. It reads no filesystem, SQLite database, browser
 global, or app runtime state.
 
-The platform-specific package sections from `@ai-usage/platform-core` through
-`@ai-usage/replication-client` describe packages present on `main` since the
-plan 101–107 integration.
+The package sections from `@ai-usage/platform-core` through
+`@ai-usage/replication-client` describe the identity, Memory, and replication
+packages integrated by PR #53; plan 120 phase B removes the replication
+packages and `@ai-usage/identity`.
 
 ### `@ai-usage/platform-core`
 
 Owns canonical branded UUID identity types, canonical instants, bounded identity
-text, and the shared Space, Person, Device, SCM, Repository, Project, Checkout,
-and Capture Context contracts. It is pure and exports no storage or transport
+text, and the shared Space, Person, Device, Repository, Project, and Checkout
+contracts. Of Capture contexts it keeps only ID types: `CaptureContextId`,
+which Memory observations and the replication snapshot reference, and the SCM
+account/installation IDs that snapshot carries. The snapshot contract itself
+lives in `@ai-usage/replication-protocol`; phase B removes both with
+replication and Memory. It is pure and exports no storage or transport
 implementation. Retained historical account/evidence contracts support existing
 Memory storage and validation; they are part of the
 [residual retirement lot](session-distillation.md#residual-deletion-lot), with no
@@ -548,32 +494,18 @@ without duplicating or structurally weakening the port.
 ### `@ai-usage/authorization`
 
 Re-exports the portable contract and owns the bounded `SingleUserAuthorizer`,
-opaque-scope construction/adapter binding, and the adapter-independent
-organization conformance model. The local adapter allows only the bootstrapped
-Person over compatible resources in the personal Space; it is not an allow-all
-substitute for organization authorization. The package owns no PostgreSQL
-client, transport, or browser integration.
+the explicit permission/resource map, and opaque-scope construction. The
+adapter allows only the bootstrapped Person over compatible resources in the
+personal Space. The package owns no database client, transport, or browser
+integration.
 
 ### `@ai-usage/identity`
 
-Owns the GitHub-only shared-authentication wrapper, explicit identity-linking
-policy, Web-session domain projection, redacted public-ID/HMAC Device tokens,
-Device enrollment/lifecycle application service, and the Node-only private
-local credential-file adapter. Better Auth `1.7.2` and its session/account rows
-remain behind adapter-private subpaths. The package imports domain contracts
-and `Authorizer`, but no PostgreSQL/SQLite adapter or HTTP router.
-
-Local composition does not instantiate shared authentication. Connected
-composition supplies PostgreSQL identity/Device ports and still calls
-`Authorizer` for every Space/Device operation. Login, SCM account/installation,
-provider credential, Device, and Device credential remain distinct.
-
-### `@ai-usage/project-application`
-
-Owns the authorization-aware Project-listing application service and its
-persistence catalog port. The service requests a complete `view_project`
-scope, passes it opaquely to the catalog, and never post-filters an unrestricted
-Project result. It imports only authorization and platform identity contracts.
+Owns the redacted public-ID/HMAC Device tokens, the Device credential metadata
+and resolution contracts, and the Node-only private local credential-file
+adapter. Only the dormant replication client and the engine's replication
+runtime import it; plan 120 phase B removes it. The package depends only on
+`@ai-usage/platform-core` and owns no database adapter or HTTP router.
 
 ### `@ai-usage/project-registry`
 
@@ -604,21 +536,21 @@ named protocol-v1 service contracts. It also owns the shared bounded search
 query/result contract, runtime parsers, exact-item and Project-context reads.
 Its numeric-loopback client and
 owner-only/no-follow rendezvous primitives reach the sole local writer. It
-imports no SQLite or PostgreSQL adapter and is distinct from
+imports no storage adapter and is distinct from
 `usage-engine-control`.
 
 ### `@ai-usage/memory-search`
 
 Owns deterministic chunking, portable lexical/trigram query helpers, the
 synthetic cross-adapter evaluation corpus, and metrics/vector-gate reporting.
-It imports no database adapter. SQLite and PostgreSQL consume these portable
-contracts while retaining ownership of their SQL projections and queries.
+It imports no database adapter. The SQLite adapter consumes these portable
+contracts while retaining ownership of its SQL projection and queries.
 
 ### `@ai-usage/mcp-adapter`
 
 Owns the harness-neutral MCP protocol edge, strict runtime input schemas,
 bounded serialization, read-only tool annotations, cancellation, stable error
-sanitization, retrieved-data labeling, local/connected application-service
+sanitization, retrieved-data labeling, local application-service
 composition, and safe registration helpers. It registers only real read tools
 and imports no storage adapter. Harness configuration reuses identity-checked
 Skills projection locking and refuses unmanaged same-name entries.
@@ -751,31 +683,6 @@ bounded warning projection, and store-error mapping. Engine-runtime owns file
 and command adaptation and must not duplicate these semantics. Only
 engine-runtime may import this writer-capable package.
 
-### `@ai-usage/postgres-store`
-
-Owns the connected PostgreSQL adapter behind explicit `./schema`,
-`./migrations`, `./reader`, `./writer`, `./identity`, `./authorization`,
-`./authentication`, `./devices`, `./memory`, and `./projects` subpaths.
-`./testing` and `./performance-testing` are restricted to test/benchmark source.
-There is no mixed root export. Storage rows and the `pg` pool remain private;
-readers return validated domain results and typed bounded failures.
-
-The migration registry uses explicit unique ordinals. One reserved client owns
-one advisory lock, validates an exact applied prefix, applies one transaction
-per migration, records its ledger row in that transaction, and always releases
-the lock. Plan 101's ordinal-1 foundation creates only `platform_migrations`
-and `platform_schema_metadata`; plan 102's ordinal-2 migration adds the identity
-kernel; plan 103's ordinal-3 migration adds concrete authorization relations,
-authorization scopes, audit events, and forced transaction-local Space RLS.
-The invalid-value fixture remains test-only.
-
-The package imports only authorization, platform identity, Project-application,
-and Project-registry contracts from the workspace; it imports no SQLite, HTTP,
-repository harness, or filesystem adapter. Only `apps/server` may import its
-writer/migration capabilities in production. Testing injection, raw fixture
-helpers, and authorization benchmark SQL are restricted to test/benchmark
-source. See [authorization](authorization.md).
-
 ### `@ai-usage/usage-engine-control`
 
 Owns strict protocol contracts, client, completion tracking, private rendezvous
@@ -824,7 +731,7 @@ the configured source repository.
 ### `apps/cli`
 
 Owns argument parsing, terminal/CSV/JSON/payload rendering, bounded portable
-files, the loopback setup UI, and CLI diagnostics. Stored reads use the SQLite
+files, and CLI diagnostics. Stored reads use the SQLite
 reader without an engine. Fresh or mutating operations use one engine client or
 one bounded foreground engine, then read the committed revision. The CLI never
 imports collectors, engine-runtime, or `usage-store/writer`. `memory search` uses the separately authenticated local
@@ -850,30 +757,6 @@ Owns the local stdio process and explicit registration command. It resolves the
 owner-only Memory rendezvous, adapts the bounded client to
 `@ai-usage/mcp-adapter`, and never opens a database. Failure to reach the local
 service is explicit; the process does not change modes or corpora.
-
-### `apps/server`
-
-Owns the connected process, typed redacted configuration, health HTTP edge,
-one shared PostgreSQL write composition root, migration/readiness startup, and
-bounded graceful/forced shutdown. Its only foundation routes are
-`GET /health/live` and `GET /health/ready`; not-ready responses are generic and
-contain no database URL, hostname, credentials, SQL, migration detail, or raw
-exception.
-
-The shared writer exposes the identity repository, organization Authorizer,
-authorization-aware Project catalog, Memory application, and replication apply
-port behind domain contracts. The connected HTTP surface adds GitHub login and
-Web-session routes, Device enrollment/rotation/revocation routes, and
-`POST /api/replication/batches`; permission logic stays confined to
-application services, never to handlers. Replicated facts are stored under a
-Space only with contribution authority (personal-Space owner, `admin`/`member`
-organization membership, or a `collaborator`+ Project grant); viewer grants and
-auditor memberships cannot publish.
-
-It does not import usage SQLite, collectors, local-machine readers, the usage
-engine, CLI, or Web. `bun run dev:platform` is the explicit disposable
-PostgreSQL connected-development composition; `bun run dev` remains local and
-PostgreSQL-free. See [platform server operations](platform-server-operations.md).
 
 ### `apps/web`
 
@@ -1032,7 +915,7 @@ admission, cadence, dependencies, or publication ordering here.
   absent. VCS changes semantic content hashes but not `sessionRowIdentity`.
   Provider resolution additionally requires strict GitHub URL validation and
   capped output; stderr and resolved URLs are never persisted or exported.
-- Production and setup listeners bind only to numeric loopback. Multi-machine
+- Production listeners bind only to numeric loopback. Multi-machine
   transfer remains explicit files copied out of band; there is no peer discovery
   or LAN transport.
 
@@ -1043,8 +926,8 @@ admission, cadence, dependencies, or publication ordering here.
 - Relative workspace imports and private `@ai-usage/*/src/**` imports are
   forbidden.
 - Boundary tooling checks direct imports and the production dependency closure
-  of Web and CLI. It rejects collector, writer, runtime, and PostgreSQL side
-  doors.
+  of Web and CLI. It rejects collector, writer, runtime, authorization, and
+  Memory-writer side doors.
 - Sole-writer searches must find `usage-store/writer` only behind
   `usage-engine-runtime` and its one app composition root.
 - `bun run lint` runs Biome restricted-import rules plus workspace-path,

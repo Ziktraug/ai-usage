@@ -16,7 +16,7 @@
     letterSpacing: '0.1em',
     textTransform: 'uppercase',
   });
-  const preset = css({
+  const preset = css.raw({
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -30,7 +30,7 @@
     _hover: { bg: 'surfaceMuted', color: 'ink' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const selectedPreset = css({ bg: 'accentTint', color: 'accent', fontWeight: 500 });
+  const selectedPreset = css.raw({ bg: 'accentTint', color: 'accent', fontWeight: 500 });
   const periodSummary = css({ color: 'muted', fontSize: '12px' });
   const customFields = css({
     display: 'flex',
@@ -59,7 +59,14 @@
     bg: 'surfaceMuted',
     color: 'ink',
     fontSize: '13px',
-    _focusVisible: { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)', outline: 'none' },
+    _focusVisible: {
+      borderColor: 'accent',
+      boxShadow: '0 0 0 3px token(colors.focusRing)',
+      outline: 'none',
+      // Forced colours drop the halo and repaint the border, so the focus draws a system-colour
+      // ring in the halo's footprint instead.
+      _highContrast: { outline: '2px solid Highlight', outlineOffset: '1px' },
+    },
   });
   const invalidInput = css({ borderColor: 'status.danger' });
   const validationMessage = css({ color: 'status.danger', fontSize: '12px' });
@@ -69,7 +76,6 @@
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
   import type { FocusedDateDomain } from '@ai-usage/report-core/focused-report-query';
-  import { tick } from 'svelte';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import { dateFromIndex } from '../../../../date-range';
   import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
@@ -139,19 +145,45 @@
     commitRange({ mode });
   };
 
-  // Entering custom mode keeps the currently effective window, so the report does not move —
-  // the two date fields appear inline, seeded and ready to edit.
-  const selectCustom = async (): Promise<void> => {
-    if (range.mode !== 'custom') {
-      validationError = null;
-      commitRange({ from: committedInput('start'), mode: 'custom', to: committedInput('end') });
+  // The range Custom committed, until it lands and its From field takes focus. The fields render
+  // only once the navigation lands, after the click handler has returned, so the request waits for
+  // that range; any other range landing first drops it.
+  let pendingFromFocusKey: string | null = null;
+
+  $effect(() => {
+    const key = reportRangeEditKey(range);
+    const element = fromInputElement;
+    if (pendingFromFocusKey === null) {
+      return;
     }
-    await tick();
-    fromInputElement?.focus();
+    if (key !== pendingFromFocusKey) {
+      pendingFromFocusKey = null;
+      return;
+    }
+    if (element) {
+      pendingFromFocusKey = null;
+      element.focus();
+    }
+  });
+
+  // Entering custom mode keeps the currently effective window, so the report does not move —
+  // the two date fields appear inline, seeded and ready to edit, and the From field takes focus.
+  // The navigation keeps focus: a reset would blur the field and leave focus on the document.
+  const selectCustom = (): void => {
+    if (range.mode === 'custom') {
+      fromInputElement?.focus();
+      return;
+    }
+    validationError = null;
+    const next: DashboardDateRangeSearch = { from: committedInput('start'), mode: 'custom', to: committedInput('end') };
+    pendingFromFocusKey = reportRangeEditKey(next);
+    commitRange(next, { keepFocus: true });
   };
 
   // Each completed field edit commits on its own, like the original range control: a valid pair
   // navigates immediately, an invalid one announces why and leaves the committed range alone.
+  // The navigation keeps focus, like the brush's edits: an edit completed by Tab has already moved
+  // focus to the next field, and a reset would blur it.
   const commitDraftEdit = (): void => {
     const validation = validateCustomRangeInputs(draftFrom, draftTo);
     if (validation.status === 'invalid') {
@@ -162,7 +194,7 @@
     if (reportRangeEditKey(validation.range) === reportRangeEditKey(range)) {
       return;
     }
-    commitRange(validation.range);
+    commitRange(validation.range, { keepFocus: true });
   };
 
   const restoreOnEscape = (event: KeyboardEvent): void => {
@@ -178,7 +210,7 @@
   {#each directPresetModes as mode (mode)}
     <button
       aria-pressed={range.mode === mode}
-      class={cx(preset, range.mode === mode ? selectedPreset : undefined)}
+      class={css(preset, range.mode === mode ? selectedPreset : undefined)}
       onclick={() => selectPreset(mode)}
       type="button"
     >
@@ -187,7 +219,7 @@
   {/each}
   <button
     aria-pressed={range.mode === 'today'}
-    class={cx(preset, range.mode === 'today' ? selectedPreset : undefined)}
+    class={css(preset, range.mode === 'today' ? selectedPreset : undefined)}
     onclick={() => selectPreset('today')}
     type="button"
   >
@@ -195,7 +227,7 @@
   </button>
   <button
     aria-pressed={range.mode === 'all'}
-    class={cx(preset, range.mode === 'all' ? selectedPreset : undefined)}
+    class={css(preset, range.mode === 'all' ? selectedPreset : undefined)}
     onclick={() => selectPreset('all')}
     type="button"
   >
@@ -204,7 +236,7 @@
   <button
     aria-label={range.mode === 'custom' ? 'Choose a custom report period, selected' : 'Choose a custom report period'}
     aria-pressed={range.mode === 'custom'}
-    class={cx(preset, range.mode === 'custom' ? selectedPreset : undefined)}
+    class={css(preset, range.mode === 'custom' ? selectedPreset : undefined)}
     onclick={selectCustom}
     type="button"
   >
@@ -222,9 +254,9 @@
           id="report-period-from"
           maxlength="10"
           onchange={(event) => {
-          draftFrom = event.currentTarget.value;
-          commitDraftEdit();
-        }}
+            draftFrom = event.currentTarget.value;
+            commitDraftEdit();
+          }}
           onkeydown={restoreOnEscape}
           placeholder="YYYY-MM-DD"
           spellcheck="false"
@@ -244,9 +276,9 @@
           id="report-period-to"
           maxlength="10"
           onchange={(event) => {
-          draftTo = event.currentTarget.value;
-          commitDraftEdit();
-        }}
+            draftTo = event.currentTarget.value;
+            commitDraftEdit();
+          }}
           onkeydown={restoreOnEscape}
           placeholder="YYYY-MM-DD"
           spellcheck="false"

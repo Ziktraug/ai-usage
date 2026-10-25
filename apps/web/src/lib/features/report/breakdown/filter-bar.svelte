@@ -84,7 +84,6 @@
   };
 </script>
 
-<!-- biome-ignore lint/a11y/noStaticElementInteractions: This route-scoped listener implements the documented global slash shortcut. -->
 <svelte:window onkeydown={focusSearch} />
 
 <div class={toolbar} data-dashboard-filter-stack>
@@ -107,7 +106,9 @@
     aria-controls="report-dimension-filters"
     aria-expanded={filtersOpen}
     class={mobileFilterToggle}
-    onclick={() => { filtersOpen = !filtersOpen; }}
+    onclick={() => {
+      filtersOpen = !filtersOpen;
+    }}
     type="button"
   >
     Filters{activeDimensions > 0 ? ` · ${activeDimensions}` : ''}
@@ -141,10 +142,12 @@
         {#if freshnessStatus}
           {#if freshnessUnavailable}
             <Tooltip content="No source freshness observation is available for this report revision.">
-              {#snippet trigger(_triggerProps)}
+              {#snippet trigger(
+                _triggerProps,
+              )}
                 <button
                   {..._triggerProps}
-                  aria-label="Collection source status"
+                  aria-label={`Collection source status: ${freshnessStatus}`}
                   aria-live="polite"
                   class={button}
                   type="button"

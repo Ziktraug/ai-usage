@@ -48,4 +48,19 @@ describe('project aliases', () => {
 
     expect(rows[0]?.project).toBe('exalibur-main');
   });
+
+  test('matches every character but the * wildcard literally', () => {
+    const aliased = (sourcePath: string, pattern: string) =>
+      applyProjectAliases([row('raw', sourcePath)], [{ name: 'aliased', match: [pattern] }])[0]?.project;
+
+    // `?`, `.`, `(`, `+` and `[` are path characters, not regular-expression syntax.
+    expect(aliased('/work/proj?', '*/proj?')).toBe('aliased');
+    expect(aliased('/work/pro', '*/proj?')).toBe('raw');
+    expect(aliased('/work/a.b', '*/a.b')).toBe('aliased');
+    expect(aliased('/work/aXb', '*/a.b')).toBe('raw');
+    expect(aliased('/work/c++ (v2) [x]', '*/c++ (v2) [x]')).toBe('aliased');
+    expect(aliased('/work/cc (v2) x', '*/c+ (v2) [x]')).toBe('raw');
+    // `*` still spans any run of characters.
+    expect(aliased('/work/deep/tree/name', '/work/*/name')).toBe('aliased');
+  });
 });

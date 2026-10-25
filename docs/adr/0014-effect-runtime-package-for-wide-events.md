@@ -9,6 +9,53 @@
 - **Superseded in part by**: [ADR 0008](0008-wide-event-presentation-provenance-and-delivery.md)
   (TTY presentation, producer resource context, delivery diagnostics,
   tagged-error policy ownership)
+- **Consolidates**: ADR 0008, the surface clause of ADR 0009 and the carrier
+  change of [ADR 0071](0071-effect-4.md) in the current statement below
+  (2026-10-24)
+
+## Current statement (consolidated 2026-10-24)
+
+This section is the one current rule for wide events. The sections after it
+keep this record's 2026-07-21 text, and ADR 0008 keeps its rationale.
+
+- **Package.** `@ai-usage/effect-runtime` is domain-free and imports no other
+  `@ai-usage/*` package. It owns the event model, boundary runner, hop
+  measurement, sanitization, the sink interface and the Node file and console
+  sinks, exposed separately from the runtime-neutral model.
+- **Boundaries.** One canonical event per real unit of work, emitted exactly
+  once per configured sink by a boundary-private controller; the public
+  `WideEventService` annotates and opens child hops but cannot emit. Every
+  execution owns fresh state (ADR 0001); the current-hop carrier is a
+  fiber-local `Context.Reference` (ADR 0071).
+- **Records.** Schema v2 with a required, sanitized process resource
+  (instance id, runtime mode, service name and version, surface). Source,
+  publication, enrichment, migration, retention and engine-command events use
+  surface `engine`; Web keeps HTTP, SSR and direct-read events; CLI keeps
+  command and render events (ADR 0009). Schema-v1 files are not rewritten.
+- **Presentation.** NDJSON and JSON console records are one compact object per
+  line; a TTY gets a projected multi-line summary from application-owned
+  projectors, with a generic total fallback for unknown boundaries; outcomes
+  pick the level and `LOG_LEVEL` filters only the console (ADR 0008).
+- **Errors.** Tagged errors are projected only through an application-owned
+  policy and expose text only through `publicMessage`, bounded and scrubbed of
+  credential-shaped values; there is no generic `.message` fallback, and
+  domain boundaries prefer stable reason and warning codes (ADR 0008).
+- **Delivery.** Engine and Web each own one process-scoped sink and drain it at
+  shutdown: the engine during its own shutdown, Web on the adapter's
+  `sveltekit:shutdown` event (`apps/web/src/hooks.server.ts`). The CLI composes
+  only the file sink and prints nothing. Files live in the workspace `logs/`
+  directory or `AI_USAGE_LOG_DIR` (no resolvable directory disables the file
+  sink without failing the product), `0700` directory and `0600` single-link
+  files, under one interprocess lock; `wide-events-YYYY-MM-DD[.N].ndjson`
+  rotates before 50 MiB and the 30 newest files are kept. Delivery is bounded
+  and best-effort: queue, lock, filesystem and serialization failures drop
+  records and never fail business work. An append timeout opens the circuit
+  while the stuck append and its lock settle on their own; retention sweeps run
+  on the first successful append and on rotation, not on steady-state appends.
+  File warnings use typed, bounded, rate-limited kinds on the console only, and
+  shutdown prints a loss summary (ADR 0008).
+- **Never**: raw causes, payloads, prompts or credentials in a record, OTLP, or
+  a remote exporter.
 
 ## Context
 
@@ -43,7 +90,8 @@ filesystem code.
 Under ADR 0009, `apps/usage-engine` owns the process-scoped sink/resource for
 source and publication work and drains it during engine shutdown. `apps/web`
 owns a separate process-scoped read-observability sink/resource for finite
-direct SQLite server adapters and drains it during Nitro shutdown. Engine/Web
+direct SQLite server adapters and drains it on the adapter's
+`sveltekit:shutdown` event (Nitro shutdown before ADR 0010). Engine/Web
 TTY logging uses compact context-rich projected output; non-TTY output, or
 `LOG_FORMAT=json`, uses one-line JSON.
 

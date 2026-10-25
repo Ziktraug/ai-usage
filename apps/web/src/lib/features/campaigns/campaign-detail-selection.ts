@@ -27,7 +27,9 @@ export const resolveCampaignDetailSelection = (input: {
     return { kind: 'loading' };
   }
   const known =
-    input.knownRevision === input.revision ? input.knownRows.find((row) => row.rowId === input.rowId) : undefined;
+    input.knownRevision === input.revision
+      ? input.knownRows.find((knownRow) => knownRow.rowId === input.rowId)
+      : undefined;
   const lookup =
     input.lookup?.revision === input.revision &&
     input.lookup.requestFingerprint === sessionLookupFingerprint({ revision: input.revision, rowId: input.rowId })

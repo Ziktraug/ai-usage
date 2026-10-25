@@ -9,7 +9,7 @@ export const pendingButton = css({
   },
 });
 
-export const commandButton = css({
+export const commandButtonStyle = css.raw({
   h: { base: '44px', md: '36px' },
   px: '16px',
   ml: 'auto',
@@ -39,8 +39,9 @@ export const commandButton = css({
     },
   },
 });
+export const commandButton = css(commandButtonStyle);
 
-export const ghostButton = css({
+export const ghostButtonStyle = css.raw({
   appearance: 'none',
   display: 'inline-flex',
   alignItems: 'center',
@@ -65,6 +66,8 @@ export const ghostButton = css({
     outlineOffset: '2px',
   },
 });
+
+export const ghostButton = css(ghostButtonStyle);
 
 export const themeToggleButton = css({
   display: 'inline-flex',

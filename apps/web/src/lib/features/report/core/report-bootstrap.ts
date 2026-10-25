@@ -74,7 +74,7 @@ export const acquireLiveReportQueryState = async (
     const reportClient = dependencies.createClient?.(runtime.rpc) ?? createReportClient(runtime.rpc);
     const sessionClient =
       dependencies.createSessionClient?.(runtime.rpc) ?? createSessionClientAdapter(runtime.rpc.session);
-    const result = await runtime.queryClient.fetchQuery(reportBootstrapQueryOptions(reportClient, { browser: false }));
+    const result = await runtime.queryClient.query(reportBootstrapQueryOptions(reportClient, { browser: false }));
     await prefetchInitialDestination(
       runtime,
       reportClient,
@@ -122,7 +122,7 @@ const prefetchInitialDestination = async (
     if (focused === null) {
       return;
     }
-    const commit = await runtime.queryClient.fetchQuery(
+    const commit = await runtime.queryClient.query(
       reportDestinationQueryOptions({ queryClient: runtime.queryClient, reportClient, sessionClient }, focused, {
         browser: false,
       }),
@@ -145,7 +145,7 @@ const prefetchInitialDestination = async (
     if (route.kind === 'session') {
       // Hydrate only the missing presentation row at the successfully acquired revision.
       // Native prompts and detail stay behind the browser's dependent detail query.
-      await runtime.queryClient.fetchQuery(
+      await runtime.queryClient.query(
         sessionLookupQueryOptions(
           sessionClient,
           { revision: commit.descriptor.revision, rowId: route.rowId },
@@ -160,7 +160,7 @@ const prefetchInitialDestination = async (
           cursor: null,
           revision: commit.descriptor.revision,
         });
-      await runtime.queryClient.fetchQuery(
+      await runtime.queryClient.query(
         sessionPageQueryOptions(
           sessionClient,
           { ...campaignSessionSelectionQuery(query, route.campaignKey), pageSize: 1 },
@@ -169,6 +169,6 @@ const prefetchInitialDestination = async (
       );
     }
   } catch {
-    return;
+    // Prefetching the initial destination is best effort; the page query reports its own failure.
   }
 };

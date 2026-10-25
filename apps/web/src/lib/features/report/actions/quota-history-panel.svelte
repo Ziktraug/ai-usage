@@ -7,7 +7,7 @@
     type ProviderQuotaHistoryRange,
     providerQuotaHistoryWindow,
   } from '../../../../provider-quota-history-model';
-  import { button, field, list, muted, stack } from '../breakdown/styles';
+  import { button, buttonStyle, field, list, muted, stack } from '../breakdown/styles';
   import QuotaHistorySeries from './quota-history-series.svelte';
 
   const rangeControls = css({
@@ -53,7 +53,7 @@
     lineHeight: 1.6,
   });
   const historyState = css({ color: 'muted', fontSize: '13px', lineHeight: 1.6, py: '24px' });
-  const selectedRange = css({ borderColor: 'accent', bg: 'accentTint', color: 'accent' });
+  const selectedRange = css.raw({ borderColor: 'accent', bg: 'accentTint', color: 'accent' });
   const historyControl = css({
     display: 'grid',
     gap: '6px',
@@ -179,7 +179,7 @@
         {#each historyRanges as item (item)}
           <button
             {...pressedAria(item)}
-            class={[button, range === item ? selectedRange : undefined]}
+            class={css(buttonStyle, range === item ? selectedRange : undefined)}
             onclick={() => changeRange(item)}
             type="button"
           >

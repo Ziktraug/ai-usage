@@ -1,9 +1,9 @@
 export interface SessionQueryExactRevisionCache<Totals, Projection> {
-  projection(identity: string): Projection | undefined;
-  rememberProjection(identity: string, projection: Projection): void;
-  rememberTotals(identity: string, totals: Totals): void;
-  reset(): void;
-  totals(identity: string): Totals | undefined;
+  projection: (identity: string) => Projection | undefined;
+  rememberProjection: (identity: string, projection: Projection) => void;
+  rememberTotals: (identity: string, totals: Totals) => void;
+  reset: () => void;
+  totals: (identity: string) => Totals | undefined;
 }
 
 interface SessionQueryExactRevisionCacheLimits {

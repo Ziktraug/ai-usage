@@ -20,49 +20,51 @@ export interface DistillationSourceGrant {
   selection: DistillationSelection;
 }
 export interface DistillationRepository extends DistillationCatalog {
-  advance(
+  advance: (
     input: DistillationStepSubmission & { nextPacket: DistillationEvidencePacket | null },
-  ): Promise<DistillationJobView>;
-  cancel(projectId: string, jobId: string): Promise<DistillationJobView>;
-  claim(projectId: string, jobId: string): Promise<DistillationLease>;
-  cleanup(projectId: string, before: string): Promise<{ removedPackets: number }>;
-  get(projectId: string, analysisId: string): Promise<SessionAnalysis>;
-  getEvidencePackets(
+  ) => Promise<DistillationJobView>;
+  cancel: (projectId: string, jobId: string) => Promise<DistillationJobView>;
+  claim: (projectId: string, jobId: string) => Promise<DistillationLease>;
+  cleanup: (projectId: string, before: string) => Promise<{ removedPackets: number }>;
+  get: (projectId: string, analysisId: string) => Promise<SessionAnalysis>;
+  getEvidencePackets: (
     projectId: string,
     analysisId: string,
     eventIds: string[],
-  ): Promise<{ packet: Pick<DistillationEvidencePacket, 'packetDigest' | 'source' | 'window'>; eventIds: string[] }[]>;
-  getGrant(projectId: string, analysisId: string): Promise<DistillationSourceGrant>;
-  getJobPacket(
+  ) => Promise<
+    { packet: Pick<DistillationEvidencePacket, 'packetDigest' | 'source' | 'window'>; eventIds: string[] }[]
+  >;
+  getGrant: (projectId: string, analysisId: string) => Promise<DistillationSourceGrant>;
+  getJobPacket: (
     projectId: string,
     jobId: string,
-  ): Promise<{ packet: DistillationEvidencePacket; grant: DistillationSourceGrant }>;
-  isProducerSession(machineId: string, nativeSessionId: string): Promise<boolean>;
-  prepare(input: {
+  ) => Promise<{ packet: DistillationEvidencePacket; grant: DistillationSourceGrant }>;
+  isProducerSession: (machineId: string, nativeSessionId: string) => Promise<boolean>;
+  prepare: (input: {
     packet: DistillationEvidencePacket;
     grant: DistillationSourceGrant;
     producerSessionId: string | null;
     revisionKey: string | null;
-  }): Promise<DistillationJobView>;
-  removalPreview(projectId: string, analysisId: string): Promise<DistillationRemovalPreview>;
-  remove(
+  }) => Promise<DistillationJobView>;
+  removalPreview: (projectId: string, analysisId: string) => Promise<DistillationRemovalPreview>;
+  remove: (
     projectId: string,
     analysisId: string,
     mode: 'withdraw' | 'purge',
-  ): Promise<
+  ) => Promise<
     DistillationRemovalPreview & { mode: 'withdraw' | 'purge'; removedAnalyses: number; nativeHistoryUntouched: true }
   >;
-  retry(projectId: string, jobId: string): Promise<DistillationJobView>;
-  segment(
+  retry: (projectId: string, jobId: string) => Promise<DistillationJobView>;
+  segment: (
     projectId: string,
     jobId: string,
     snapshotDigest: string,
     segmentIndex: number,
-  ): Promise<{ packet: DistillationEvidencePacket; checkpoint: SessionAnalysisContent | null; historical: true }>;
-  status(
+  ) => Promise<{ packet: DistillationEvidencePacket; checkpoint: SessionAnalysisContent | null; historical: true }>;
+  status: (
     grant: Pick<DistillationSourceGrant, 'projectId' | 'machineId' | 'nativeSessionId'>,
-  ): Promise<DistillationStatus>;
-  submit(input: {
+  ) => Promise<DistillationStatus>;
+  submit: (input: {
     projectId: string;
     jobId: string;
     leaseId: string;
@@ -71,7 +73,7 @@ export interface DistillationRepository extends DistillationCatalog {
     snapshotDigest?: string;
     segmentIndex?: number;
     extractorVersion?: DistillationExtractorVersion;
-  }): Promise<SessionAnalysis>;
+  }) => Promise<SessionAnalysis>;
 }
 
 export interface DistillationRemovalPreview {

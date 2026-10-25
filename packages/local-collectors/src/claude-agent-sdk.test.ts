@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { Effect, Exit } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
 import {
+  ClaudeQuotaCollectionError,
   type ClaudeUsageQuery,
+  type ClaudeUsageReadOptions,
   createClaudeAgentSdkBatchSource,
   createClaudeQuotaQueryOptions,
 } from './claude-agent-sdk';
@@ -60,11 +62,13 @@ const collect = async (result: unknown, onInterrupt?: () => void) =>
 
 describe('Claude Agent SDK quota source', () => {
   test('opens the production control session without ambient agent configuration', () => {
-    expect(createClaudeQuotaQueryOptions()).toEqual({
+    expect(createClaudeQuotaQueryOptions({ HOME: '/home/test', PATH: '/bin' })).toEqual({
       additionalDirectories: [],
       agents: {},
       allowedTools: [],
       cwd: tmpdir(),
+      // The inherited environment plus the switch that makes every startup refusal a typed result.
+      env: { CLAUDE_CODE_STARTUP_FAILURE_RESULTS: '1', HOME: '/home/test', PATH: '/bin' },
       hooks: {},
       mcpServers: {},
       permissionMode: 'dontAsk',
@@ -76,6 +80,23 @@ describe('Claude Agent SDK quota source', () => {
       strictMcpConfig: true,
       tools: [],
     });
+  });
+
+  test('reads plan limits without scanning local transcripts', async () => {
+    const reads: Array<ClaudeUsageReadOptions | undefined> = [];
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () =>
+        Promise.resolve({
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: (options?: ClaudeUsageReadOptions) => {
+            reads.push(options);
+            return Promise.resolve(livePayload());
+          },
+        } satisfies ClaudeUsageQuery),
+    });
+
+    await Effect.runPromise(source.collect(REQUEST));
+
+    expect(reads).toEqual([{ skipBehaviors: true }]);
   });
 
   test('maps the limits array into provider windows', async () => {
@@ -370,5 +391,158 @@ describe('Claude Agent SDK quota source', () => {
     expect(performance.now() - startedAt).toBeLessThan(250);
     expect(batch.observations).toHaveLength(1);
     expect(calls).toEqual(['interrupt', 'return']);
+  });
+});
+
+/** The zeroed result a CLI writes before exiting on a known startup failure (SDK 0.3.308). */
+const startupFailureResult = (reason: string) => ({
+  duration_api_ms: 0,
+  duration_ms: 0,
+  errors: [`Claude Code refused to start: ${reason}`],
+  is_error: true,
+  num_turns: 0,
+  startup_failure_reason: reason,
+  subtype: 'error_during_execution',
+  type: 'result',
+});
+
+/**
+ * A session whose CLI refuses to start: the usage read never answers, and the message stream yields
+ * `messages` and then ends (or never ends when `ends` is false).
+ */
+const refusingSession = (messages: readonly unknown[], calls: string[], ends = true): ClaudeUsageQuery => {
+  const pending = [...messages];
+  return {
+    interrupt: () => {
+      calls.push('interrupt');
+      return Promise.resolve(undefined);
+    },
+    next: () => {
+      const message = pending.shift();
+      if (message !== undefined) {
+        return Promise.resolve({ done: false, value: message });
+      }
+      return ends ? Promise.resolve({ done: true, value: undefined }) : new Promise<never>(() => undefined);
+    },
+    return: () => {
+      calls.push('return');
+      return Promise.resolve(undefined);
+    },
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => new Promise<never>(() => undefined),
+  };
+};
+
+const failureOf = (exit: Exit.Exit<unknown, unknown>): unknown =>
+  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
+
+describe('Claude Agent SDK startup failures and diagnostics', () => {
+  test('reports a typed startup refusal at once instead of waiting for the read timeout', async () => {
+    const calls: string[] = [];
+    const annotations: Record<string, string>[] = [];
+    const source = createClaudeAgentSdkBatchSource({
+      annotate: (fields) => Effect.sync(() => annotations.push({ ...fields })),
+      openQuery: () =>
+        Promise.resolve(
+          refusingSession(
+            [{ subtype: 'status', type: 'system' }, startupFailureResult('gateway_signin_required')],
+            calls,
+          ),
+        ),
+      timeoutMs: 5000,
+    });
+    const startedAt = performance.now();
+
+    const exit = await Effect.runPromiseExit(source.collect(REQUEST));
+
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    const failure = failureOf(exit);
+    expect(failure).toBeInstanceOf(ClaudeQuotaCollectionError);
+    expect(failure).toMatchObject({ reason: 'auth-required', startupFailureReason: 'gateway_signin_required' });
+    expect(annotations).toEqual([{ claudeStartupFailureReason: 'gateway_signin_required' }]);
+    expect(calls).toEqual(['interrupt', 'return']);
+  });
+
+  test('classifies each startup refusal by what fixes it', async () => {
+    const failureFor = async (startupFailureReason: string) => {
+      const source = createClaudeAgentSdkBatchSource({
+        openQuery: () => Promise.resolve(refusingSession([startupFailureResult(startupFailureReason)], [])),
+        timeoutMs: 5000,
+      });
+      return failureOf(await Effect.runPromiseExit(source.collect(REQUEST)));
+    };
+
+    // Signing in again, or an admin's change, is the fix.
+    expect(await failureFor('org_config_refused')).toMatchObject({ reason: 'auth-required' });
+    // An upgrade is the fix.
+    expect(await failureFor('cli_version_too_old')).toMatchObject({ reason: 'unsupported' });
+    // Anything else is a startup failure that still names its typed cause.
+    expect(await failureFor('temp_dir_unusable')).toMatchObject({
+      reason: 'startup-failure',
+      startupFailureReason: 'temp_dir_unusable',
+    });
+    // A reason this build does not know is still reported, as an untyped startup failure.
+    expect(await failureFor('a_reason_from_a_newer_cli')).toMatchObject({ reason: 'startup-failure' });
+    expect(await failureFor('a_reason_from_a_newer_cli')).not.toHaveProperty('startupFailureReason');
+  });
+
+  test('fails at once when the Claude process ends before it answers', async () => {
+    const calls: string[] = [];
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () => Promise.resolve(refusingSession([], calls)),
+      timeoutMs: 5000,
+    });
+    const startedAt = performance.now();
+
+    const exit = await Effect.runPromiseExit(source.collect(REQUEST));
+
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    const failure = failureOf(exit);
+    expect(failure).toMatchObject({ reason: 'startup-failure' });
+    expect(failure).not.toHaveProperty('startupFailureReason');
+    expect(calls).toEqual(['interrupt', 'return']);
+  });
+
+  test('still times out a session that neither answers nor ends', async () => {
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () => Promise.resolve(refusingSession([{ subtype: 'status', type: 'system' }], [], false)),
+      timeoutMs: 20,
+    });
+
+    expect(failureOf(await Effect.runPromiseExit(source.collect(REQUEST)))).toMatchObject({ reason: 'timeout' });
+  });
+
+  test('records the Claude Code version of a successful read', async () => {
+    const annotations: Record<string, string>[] = [];
+    const source = createClaudeAgentSdkBatchSource({
+      annotate: (fields) => Effect.sync(() => annotations.push({ ...fields })),
+      openQuery: () =>
+        Promise.resolve({
+          initializationResult: () => Promise.resolve({ claude_code_version: '2.1.999' }),
+          // The stream stays open while the session lives; a successful read is not a startup failure.
+          next: () => new Promise<never>(() => undefined),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise.resolve(livePayload()),
+        } satisfies ClaudeUsageQuery),
+    });
+
+    const batch = await Effect.runPromise(source.collect(REQUEST));
+
+    expect(batch.observations).toHaveLength(1);
+    expect(annotations).toEqual([{ claudeCodeVersion: '2.1.999' }]);
+  });
+
+  test('records no version for a CLI that predates the field', async () => {
+    const annotations: Record<string, string>[] = [];
+    const source = createClaudeAgentSdkBatchSource({
+      annotate: (fields) => Effect.sync(() => annotations.push({ ...fields })),
+      openQuery: () =>
+        Promise.resolve({
+          initializationResult: () => Promise.resolve({}),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise.resolve(livePayload()),
+        } satisfies ClaudeUsageQuery),
+    });
+
+    await Effect.runPromise(source.collect(REQUEST));
+
+    expect(annotations).toEqual([]);
   });
 });

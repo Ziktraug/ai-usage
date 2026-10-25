@@ -30,11 +30,24 @@
       "complexity": {
         "noExcessiveCognitiveComplexity": "off"
       },
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error",
+        "noSvelteAtDebugTags": "error",
+        "noSvelteAtHtmlTags": "error",
+        "noSvelteExportLet": "error",
+        "noSvelteUnnecessaryStateWrap": "error",
+        "useSvelteKitRuneImports": "error"
+      },
       "performance": {
+        "noAwaitInLoops": "off",
         "noBarrelFile": "off"
       },
       "style": {
+        "noIncrementDecrement": "off",
         "noNonNullAssertion": "off",
+        "useDestructuring": "off",
+        "useErrorCause": "off",
         "noRestrictedImports": {
           "level": "error",
           "options": {
@@ -55,6 +68,11 @@
             ]
           }
         }
+      },
+      "suspicious": {
+        "noEqualsToNull": "off",
+        "noReturnAssign": "off",
+        "noUnnecessaryConditions": "off"
       }
     }
   },

@@ -104,12 +104,12 @@
         {@const parentView = projectBreakdownRow(parent.group, parent.group.key, maxKnownCost)}
         <section class={hierarchyBlock} data-harness-total={parent.group.harness}>
           <BreakdownRow
-            {...(parent.expandable ? { controlsId: parent.controlsId } : {})}
+            {...parent.expandable ? { controlsId: parent.controlsId } : {}}
             expanded={parent.expanded}
             hierarchy
             onFilter={() => onHarnessFilter(parent.group.key)}
-            {...(parent.expandable && !view.searchActive ? { onToggle: () => toggleHarness(parent.group.key) } : {})}
-            {...(parent.soleProvider === null ? {} : { soleProvider: parent.soleProvider })}
+            {...parent.expandable && !view.searchActive ? { onToggle: () => toggleHarness(parent.group.key) } : {}}
+            {...parent.soleProvider === null ? {} : { soleProvider: parent.soleProvider }}
             view={parentView}
           />
           {#if parent.children.length > 0}

@@ -192,7 +192,10 @@
     <details>
       <summary class={workHeading}>Synthetic evidence examples</summary>
       <p class={workMuted}>Projection-boundary fixtures; these are not collected native outcomes.</p>
-      {#each projectWorkEvidence({ machineId: reviewTarget.machineId, harness: reviewTarget.harness, sessionId: reviewTarget.sourceSessionId }, demoWorkEvidence(reviewTarget)) as interpretation}
+      {#each projectWorkEvidence(
+        { machineId: reviewTarget.machineId, harness: reviewTarget.harness, sessionId: reviewTarget.sourceSessionId },
+        demoWorkEvidence(reviewTarget),
+      ) as interpretation}
         <div class={workPanel}>
           <h3 class={workHeading}>{interpretation.text}</h3>
           <p class={workMuted}>Interpretation: {interpretation.uncertainty}</p>

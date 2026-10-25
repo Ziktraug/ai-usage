@@ -14,23 +14,22 @@ import {
 } from './navigation';
 
 describe('Svelte application shell navigation', () => {
-  test.each([
-    'live',
-    'e2e',
-    'demo',
-  ] as const)('keeps five mobile slots and Campaigns in overflow in %s mode', (mode) => {
-    const navigation = mobileNavigationFor(new URL('http://localhost/work'), mode);
-    expect([...navigation.primary.map(({ label }) => label), 'Manage']).toEqual([
-      'Work',
-      'Overview',
-      'Sessions',
-      'Analysis',
-      'Manage',
-    ]);
-    expect(navigation.primary.filter(({ active }) => active).map(({ label }) => label)).toEqual(['Work']);
-    expect(navigation.overflow[0]?.label).toBe('Campaigns');
-    expect(navigation.manageActive).toBe(false);
-  });
+  test.each(['live', 'e2e', 'demo'] as const)(
+    'keeps five mobile slots and Campaigns in overflow in %s mode',
+    (mode) => {
+      const navigation = mobileNavigationFor(new URL('http://localhost/work'), mode);
+      expect([...navigation.primary.map(({ label }) => label), 'Manage']).toEqual([
+        'Work',
+        'Overview',
+        'Sessions',
+        'Analysis',
+        'Manage',
+      ]);
+      expect(navigation.primary.filter(({ active }) => active).map(({ label }) => label)).toEqual(['Work']);
+      expect(navigation.overflow[0]?.label).toBe('Campaigns');
+      expect(navigation.manageActive).toBe(false);
+    },
+  );
 
   test('hides business management destinations in demo while retaining Campaigns access', () => {
     const url = new URL('http://localhost/campaigns?range=all&machine=%5B%22demo%22%5D');

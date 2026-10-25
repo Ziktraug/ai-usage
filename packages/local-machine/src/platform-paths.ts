@@ -141,24 +141,24 @@ export const resolvePathCandidates = (storage: LocalHistoryStorage): HarnessPath
   const ordered = unique([platform(), 'macos', 'linux', 'windows'] satisfies Platform[]).map((os) => paths[os]);
   return {
     claude: {
-      projectsDir: unique(ordered.map((paths) => paths.claude.projectsDir)),
-      historyFile: unique(ordered.map((paths) => paths.claude.historyFile)),
-      configFile: unique(ordered.map((paths) => paths.claude.configFile)),
+      projectsDir: unique(ordered.map((platformPaths) => platformPaths.claude.projectsDir)),
+      historyFile: unique(ordered.map((platformPaths) => platformPaths.claude.historyFile)),
+      configFile: unique(ordered.map((platformPaths) => platformPaths.claude.configFile)),
     },
     codex: {
-      sessionsDir: unique(ordered.map((paths) => paths.codex.sessionsDir)),
-      sessionIndexFile: unique(ordered.map((paths) => paths.codex.sessionIndexFile)),
+      sessionsDir: unique(ordered.map((platformPaths) => platformPaths.codex.sessionsDir)),
+      sessionIndexFile: unique(ordered.map((platformPaths) => platformPaths.codex.sessionIndexFile)),
     },
     opencode: {
-      liveDb: unique(ordered.map((paths) => paths.opencode.liveDb)),
-      stableDb: unique(ordered.map((paths) => paths.opencode.stableDb)),
+      liveDb: unique(ordered.map((platformPaths) => platformPaths.opencode.liveDb)),
+      stableDb: unique(ordered.map((platformPaths) => platformPaths.opencode.stableDb)),
     },
     cursor: {
-      stateVscdb: unique(ordered.map((paths) => paths.cursor.stateVscdb)),
-      aiTrackingDb: unique(ordered.map((paths) => paths.cursor.aiTrackingDb)),
+      stateVscdb: unique(ordered.map((platformPaths) => platformPaths.cursor.stateVscdb)),
+      aiTrackingDb: unique(ordered.map((platformPaths) => platformPaths.cursor.aiTrackingDb)),
     },
     rtk: {
-      historyDb: unique(ordered.map((paths) => paths.rtk.historyDb)),
+      historyDb: unique(ordered.map((platformPaths) => platformPaths.rtk.historyDb)),
     },
   };
 };
@@ -169,7 +169,7 @@ export const firstExisting = (
 ): Effect.Effect<string | null, never, never> =>
   Effect.gen(function* () {
     for (const candidate of candidates) {
-      const exists = yield* storage.exists(candidate).pipe(Effect.catchAll(() => Effect.succeed(false)));
+      const exists = yield* storage.exists(candidate).pipe(Effect.catch(() => Effect.succeed(false)));
       if (exists) {
         return candidate;
       }

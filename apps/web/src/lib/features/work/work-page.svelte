@@ -10,7 +10,7 @@
     type QueryKey,
   } from '@tanstack/svelte-query';
   import { tick, untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { loadNextCampaignPage, retainedCampaignOptions } from '../../query/options/campaigns';
   import { quotaRailQueryOptions } from '../../query/options/quota';
   import { reportBootstrapQueryOptions } from '../../query/options/report';
@@ -114,7 +114,13 @@
       {/if}
       <WorkSources {generatedAt} mode={data.mode} support={bootstrap?.bootstrap ?? null} />
       <div
-        class={css({ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '12px', alignItems: 'center' })}
+        class={css({
+          display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'space-between',
+          gap: '12px',
+          alignItems: 'center',
+        })}
       >
         <h2 class={workHeading}>Observed sessions</h2>
         <p class={workMuted}>
@@ -137,20 +143,34 @@
           <p class={workMuted}>
             The stored revision could not be read. This does not establish that there is nothing to do.
           </p>
-          <button class={workButton} onclick={() => { bootstrapQuery.refetch(); sessions.refetch(); }} type="button">
+          <button
+            class={workButton}
+            onclick={() => {
+              bootstrapQuery.refetch();
+              sessions.refetch();
+            }}
+            type="button"
+          >
             Retry stored observations
           </button>
         </section>
       {:else if items.length === 0}
         <p class={workMuted} role="status">
-          {sessions.isPending ? 'Reading stored session observations…' : 'No session roots were observed in this revision. Source coverage and outstanding work remain unknown.'}
+          {sessions.isPending
+            ? 'Reading stored session observations…'
+            : 'No session roots were observed in this revision. Source coverage and outstanding work remain unknown.'}
         </p>
       {/if}
       {#each ordinary as item (item.row.rowId)}
         <WorkSession client={clients.session} {item} onSelect={select} revision={displayedRevision} />
       {/each}
       {#if reviews.length > 0}
-        <details class={workPanel} ontoggle={(event) => { reviewsOpen = event.currentTarget.open; }}>
+        <details
+          class={workPanel}
+          ontoggle={(event) => {
+            reviewsOpen = event.currentTarget.open;
+          }}
+        >
           <summary class={workHeading}>Standalone automated reviews ({reviews.length})</summary>
           {#if reviewsOpen}
             {#each reviews as item (item.row.rowId)}

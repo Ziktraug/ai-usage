@@ -140,7 +140,7 @@ export const loadPrivateDeviceCredential = async (
     if (errorHasCode(error, 'ENOENT')) {
       return null;
     }
-    throw new Error('The private Device credential file could not be opened.');
+    throw new Error('The private Device credential file could not be opened.', { cause: error });
   }
   try {
     const beforeStats = await handle.stat();
@@ -156,6 +156,7 @@ export const loadPrivateDeviceCredential = async (
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     return parseStoredCredential(JSON.parse(text) as unknown, filePath);
   } catch {
+    // No cause: redaction boundary, a JSON parse error quotes the private credential document.
     throw new Error('The private Device credential file is invalid or unsafe.');
   } finally {
     await handle.close().catch(() => undefined);

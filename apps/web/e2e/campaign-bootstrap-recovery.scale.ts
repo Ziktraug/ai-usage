@@ -2,9 +2,11 @@ import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/repor
 import type { Page } from '@playwright/test';
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 import { CONTINUITY_ROOT_TITLE } from './campaign-continuity-fixture';
-import { encodeRpcResponseBody } from './rpc-test-transport';
+import { campaignLabelsFailureFulfillment, encodeRpcResponseBody } from './rpc-test-transport';
 import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
+const CAMPAIGN_LABELS_GLOB = '**/rpc/campaign/labelOverrides**';
+const CAMPAIGN_LABELS_UNAVAILABLE = 'Saved campaign labels are unavailable. Showing derived titles.';
 const BOOTSTRAP_PATH = '/rpc/report/revisionBootstrap';
 const BOOTSTRAP_GLOB = '**/rpc/report/revisionBootstrap**';
 const PAGE_PATH = '/rpc/session/page';
@@ -202,4 +204,30 @@ test('does not restart campaign acquisition after leaving a delayed bootstrap re
   } finally {
     bootstrap.release();
   }
+});
+
+test('shows derived campaign titles with a notice when the saved labels cannot be read', async ({ page }) => {
+  // Saved labels are optional: when the server render cannot read them it hydrates none
+  // (campaigns-load.test.ts) and the page requests them itself. A route cannot reach the server
+  // render, so the page is entered by client navigation, where that browser request is the only one.
+  let labelReads = 0;
+  await page.route(CAMPAIGN_LABELS_GLOB, async (route) => {
+    labelReads += 1;
+    const failure = campaignLabelsFailureFulfillment();
+    await route.fulfill({
+      body: failure.body,
+      contentType: 'application/json',
+      headers: failure.headers,
+      status: failure.status,
+    });
+  });
+  await page.goto('/sources?range=all&q=Continuity');
+  await waitForHydratedNavigation(page);
+  await expect(page.locator('main[data-route-shell="sources"]')).toBeVisible();
+  await page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Campaigns', exact: true }).click();
+  await expect(page.locator('main[data-route-shell="campaigns"]')).toBeVisible();
+
+  await expect(page.getByRole('status').filter({ hasText: CAMPAIGN_LABELS_UNAVAILABLE })).toBeVisible();
+  await expect(page.locator('[data-campaign-card]').first()).toContainText(CONTINUITY_ROOT_TITLE);
+  expect(labelReads).toBeGreaterThan(0);
 });

@@ -1,4 +1,4 @@
-import { deferredProjectsPageData, loadProjectsPageData } from '$lib/features/projects/projects-load';
+import { deferredProjectsPageData, loadProjectsPageData } from '#lib/features/projects/projects-load.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, isDataRequest, url }) => {

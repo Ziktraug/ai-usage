@@ -79,7 +79,6 @@ const sessionSelectionInWindow = (window: DetailSelectionWindow, rowId: string):
       total: window.sessionCount,
     };
   }
-  return;
 };
 
 const campaignSelectionFor = (

@@ -583,7 +583,7 @@ describe('dashboard model', () => {
     expect(rows[0]?.sortDate).toBe(child.sortDate);
     expect(rows[0]?.costApprox).toBe(5);
     expect(rows[0]?.freshTokens).toBe(50);
-    expect(rows[0]?.children?.map((row) => row.sessionLabel)).toEqual(['child']);
+    expect(rows[0]?.children?.map((childRow) => childRow.sessionLabel)).toEqual(['child']);
   });
 
   test('projects a campaign date from matched rows rather than a later classifier rollup', () => {

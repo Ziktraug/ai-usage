@@ -142,9 +142,9 @@ describe('Campaign restoration boundaries', () => {
     const queryClient = createWebQueryClient();
     let listCalls = 0;
     const client = clientWith({
-      page: (request) => {
+      page: (pageRequest) => {
         listCalls += 1;
-        return Promise.resolve(page(request));
+        return Promise.resolve(page(pageRequest));
       },
     });
     const request = requestFor('r1');
@@ -196,13 +196,13 @@ describe('Campaign restoration boundaries', () => {
     let listCalls = 0;
     let memberCalls = 0;
     const client = clientWith({
-      page: (request) => {
+      page: (pageRequest) => {
         listCalls += 1;
-        return Promise.resolve(page(request, 100_000));
+        return Promise.resolve(page(pageRequest, 100_000));
       },
-      campaignChildren: (request) => {
+      campaignChildren: (childrenRequest) => {
         memberCalls += 1;
-        return Promise.resolve(members(request));
+        return Promise.resolve(members(childrenRequest));
       },
     });
     const request = requestFor('r1');

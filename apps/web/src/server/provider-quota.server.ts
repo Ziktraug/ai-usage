@@ -15,7 +15,7 @@ export const getProviderQuotaHistoryForServer = async (
   options.signal?.throwIfAborted();
   const read = () =>
     Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryProviderQuotaHistory({
           dbPath: options.dbPath ?? resolveUsageWebRuntimePaths().databasePath,
           from: parsed.from,
@@ -36,8 +36,8 @@ export const getProviderQuotaHistoryForServer = async (
     throw error;
   }
   options.signal?.throwIfAborted();
-  if (result._tag === 'Left') {
+  if (result._tag === 'Failure') {
     throw new Error('Provider quota history is unavailable.');
   }
-  return result.right;
+  return result.success;
 };

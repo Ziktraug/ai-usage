@@ -31,7 +31,7 @@ export interface ProviderQuotaBatch {
 }
 
 export interface ProviderQuotaBatchSource<Error = unknown> {
-  collect<CursorError = never>(
+  collect: <CursorError = never>(
     request: ProviderQuotaCollectRequest<CursorError>,
-  ): Effect.Effect<ProviderQuotaBatch, Error | CursorError>;
+  ) => Effect.Effect<ProviderQuotaBatch, Error | CursorError>;
 }

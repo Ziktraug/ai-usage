@@ -74,7 +74,11 @@ const processGroupIsAlive = (processGroupId: number): boolean => {
 };
 
 export const spawnUsageEngineDevChild = (engineDirectory: string): UsageEngineDevChild => {
-  const child = Bun.spawn([process.execPath, '--no-env-file', 'src/main.ts', 'serve'], {
+  // `--no-orphans`: the engine runs in its own process group, so when this
+  // supervisor dies without its graceful stop (turbo killing the task
+  // outright) nothing else reaches it; it exits with its parent instead of
+  // holding the writer lock. The next start recovers the stale lock.
+  const child = Bun.spawn([process.execPath, '--no-orphans', '--no-env-file', 'src/main.ts', 'serve'], {
     cwd: engineDirectory,
     detached: process.platform !== 'win32',
     env: process.env,
@@ -215,8 +219,8 @@ export const createUsageEngineDevWatchTargets = (engineDirectoryValue: string): 
 };
 
 export interface UsageEngineDevSignalEmitter {
-  off(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
-  on(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
+  off: (signal: 'SIGINT' | 'SIGTERM', listener: () => void) => void;
+  on: (signal: 'SIGINT' | 'SIGTERM', listener: () => void) => void;
 }
 
 export const createUsageEngineDevTermination = (

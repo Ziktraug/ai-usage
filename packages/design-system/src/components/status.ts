@@ -55,11 +55,9 @@ export const banner = css({
 });
 
 export const bannerError = css({
-  bg: 'status.dangerSoft',
   borderColor: 'status.danger',
 });
 
 export const bannerOk = css({
-  bg: 'status.okSoft',
   borderColor: 'status.ok',
 });

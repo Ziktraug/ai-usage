@@ -132,10 +132,10 @@ describe('control explicit browser adapter', () => {
     const encoder = new TextEncoder();
     let pulls = 0;
     const stream = new ReadableStream<Uint8Array>({
-      pull: (controller) => {
+      pull: (streamController) => {
         pulls += 1;
         if (pulls === 1) {
-          controller.enqueue(encoder.encode('{'));
+          streamController.enqueue(encoder.encode('{'));
           return;
         }
         secondReadStarted.resolve();
@@ -174,10 +174,10 @@ describe('control explicit browser adapter', () => {
           cancellationStarted.resolve();
           return new Promise<void>(() => undefined);
         },
-        pull: (controller) => {
+        pull: (streamController) => {
           pulls += 1;
           if (pulls === 1) {
-            controller.enqueue(new TextEncoder().encode('{'));
+            streamController.enqueue(new TextEncoder().encode('{'));
             return;
           }
           secondReadStarted.resolve();
@@ -212,10 +212,10 @@ describe('control explicit browser adapter', () => {
     const response = new Response(
       new ReadableStream<Uint8Array>({
         cancel: () => Promise.reject(new Error('command cleanup rejected')),
-        pull: (controller) => {
+        pull: (streamController) => {
           pulls += 1;
           if (pulls === 1) {
-            controller.enqueue(new TextEncoder().encode('{'));
+            streamController.enqueue(new TextEncoder().encode('{'));
             return;
           }
           secondReadStarted.resolve();

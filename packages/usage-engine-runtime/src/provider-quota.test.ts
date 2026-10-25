@@ -167,9 +167,10 @@ describe('provider quota orchestration', () => {
             ),
           ),
         );
-        const owner = yield* Effect.fork(refresh(refreshInput()));
+        const owner = yield* Effect.forkChild(refresh(refreshInput()));
         yield* Deferred.await(entered);
-        const ownerExit = yield* Fiber.interrupt(owner);
+        yield* Fiber.interrupt(owner);
+        const ownerExit = yield* Fiber.await(owner);
         yield* Deferred.succeed(release, undefined);
         return { committed: yield* Ref.get(committed), ownerExit };
       }),
@@ -177,7 +178,7 @@ describe('provider quota orchestration', () => {
 
     expect(Exit.isFailure(result.ownerExit)).toBe(true);
     if (Exit.isFailure(result.ownerExit)) {
-      expect(Cause.isInterruptedOnly(result.ownerExit.cause)).toBe(true);
+      expect(Cause.hasInterruptsOnly(result.ownerExit.cause)).toBe(true);
     }
     expect(result.committed).toBe(false);
   });
@@ -211,7 +212,7 @@ describe('provider quota orchestration', () => {
             }),
         };
         const refresh = createProviderQuotaRefresh(persistence);
-        const owner = yield* Effect.fork(
+        const owner = yield* Effect.forkChild(
           refresh(
             refreshInput({
               backfillSource: {
@@ -228,7 +229,8 @@ describe('provider quota orchestration', () => {
           ),
         );
         yield* Deferred.await(entered);
-        const ownerExit = yield* Fiber.interrupt(owner);
+        yield* Fiber.interrupt(owner);
+        const ownerExit = yield* Fiber.await(owner);
         yield* Deferred.succeed(release, undefined);
         return {
           checkpoint: yield* Ref.get(checkpoint),
@@ -262,11 +264,11 @@ describe('provider quota orchestration', () => {
             collect: () => Ref.update(collectCalls, (calls) => calls + 1).pipe(Effect.as(emptyBatch)),
           },
         });
-        const owner = yield* Effect.fork(refresh(input));
+        const owner = yield* Effect.forkChild(refresh(input));
         yield* Deferred.await(entered);
         const joinerController = new AbortController();
-        const joiner = yield* Effect.fork(refresh({ ...input, signal: joinerController.signal }));
-        yield* Effect.yieldNow();
+        const joiner = yield* Effect.forkChild(refresh({ ...input, signal: joinerController.signal }));
+        yield* Effect.yieldNow;
         joinerController.abort();
         const joinerExit = yield* Fiber.await(joiner);
         yield* Deferred.succeed(release, undefined);
@@ -302,10 +304,10 @@ describe('provider quota orchestration', () => {
         );
         const controller = new AbortController();
         const input = refreshInput({ signal: controller.signal });
-        const owner = yield* Effect.fork(refresh(input));
+        const owner = yield* Effect.forkChild(refresh(input));
         yield* Deferred.await(entered);
-        const joiner = yield* Effect.fork(refresh(refreshInput()));
-        yield* Effect.yieldNow();
+        const joiner = yield* Effect.forkChild(refresh(refreshInput()));
+        yield* Effect.yieldNow;
         controller.abort();
         const ownerExit = yield* Fiber.await(owner);
         const joinerExit = yield* Fiber.await(joiner);
@@ -336,7 +338,7 @@ describe('provider quota orchestration', () => {
       collect: (request) =>
         Effect.tryPromise({
           try: () =>
-            new Promise((resolve, reject) => {
+            new Promise<ProviderQuotaBatch>((resolve, reject) => {
               calls += 1;
               if (calls > 1) {
                 resolve({
@@ -373,7 +375,9 @@ describe('provider quota orchestration', () => {
     controller.abort();
     const abortedExit = await aborted;
     expect(Exit.isFailure(abortedExit)).toBe(true);
-    const failure = Exit.isFailure(abortedExit) ? Option.getOrUndefined(Cause.failureOption(abortedExit.cause)) : null;
+    const failure = Exit.isFailure(abortedExit)
+      ? Option.getOrUndefined(Cause.findErrorOption(abortedExit.cause))
+      : null;
     expect(failure).toMatchObject({
       _tag: 'ProviderQuotaRefreshAborted',
       message: 'Provider quota refresh was aborted',
@@ -457,10 +461,10 @@ describe('provider quota orchestration', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const owner = yield* Effect.fork(runBoundaryEffect({ boundary: 'test.owner' }, refresh(input)));
+        const owner = yield* Effect.forkChild(runBoundaryEffect({ boundary: 'test.owner' }, refresh(input)));
         yield* Deferred.await(entered);
-        const joiner = yield* Effect.fork(runBoundaryEffect({ boundary: 'test.joiner' }, refresh(input)));
-        yield* Effect.yieldNow();
+        const joiner = yield* Effect.forkChild(runBoundaryEffect({ boundary: 'test.joiner' }, refresh(input)));
+        yield* Effect.yieldNow;
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.await(owner);
         yield* Fiber.await(joiner);
@@ -495,7 +499,7 @@ describe('provider quota orchestration', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const owner = yield* Effect.fork(
+        const owner = yield* Effect.forkChild(
           runBoundaryEffect({ boundary: 'test.owner-interrupted' }, refresh(refreshInput())),
         );
         yield* Deferred.await(entered);
@@ -526,9 +530,11 @@ describe('provider quota orchestration', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const owner = yield* Effect.fork(runBoundaryEffect({ boundary: 'test.owner-shared' }, refresh(refreshInput())));
+        const owner = yield* Effect.forkChild(
+          runBoundaryEffect({ boundary: 'test.owner-shared' }, refresh(refreshInput())),
+        );
         yield* Deferred.await(entered);
-        const joiner = yield* Effect.fork(
+        const joiner = yield* Effect.forkChild(
           runBoundaryEffect(
             {
               boundary: 'test.joiner-interrupted',
@@ -658,9 +664,9 @@ describe('provider quota orchestration', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const codex = yield* Effect.fork(refresh(refreshInput({ liveSource: blockingSource('codex') })));
+        const codex = yield* Effect.forkChild(refresh(refreshInput({ liveSource: blockingSource('codex') })));
         yield* Deferred.await(entered);
-        const claude = yield* Effect.fork(
+        const claude = yield* Effect.forkChild(
           refresh(refreshInput({ identity: claudeIdentity, liveSource: blockingSource('claude') })),
         );
         yield* Effect.sleep('5 millis');

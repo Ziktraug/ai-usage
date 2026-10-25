@@ -1,7 +1,7 @@
-import { createAwaitedRouteQueryState } from '$lib/features/shell/query-load';
-import type { WebQueryHydrationState } from '$lib/query/client';
-import { prefetchQuotaRail } from '$lib/query/options/quota';
-import { createReportClient } from '$lib/rpc/report-client';
+import { createAwaitedRouteQueryState } from '#lib/features/shell/query-load.ts';
+import type { WebQueryHydrationState } from '#lib/query/client.ts';
+import { prefetchQuotaRail } from '#lib/query/options/quota.ts';
+import { createReportClient } from '#lib/rpc/report-client.ts';
 import type { LayoutServerLoad } from './$types';
 
 const emptyQueryState: WebQueryHydrationState = { dehydratedState: { mutations: [], queries: [] } };

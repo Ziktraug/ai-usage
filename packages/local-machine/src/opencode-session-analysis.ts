@@ -323,9 +323,8 @@ const turnsFromRows = (
     if (!(messageId && promptId && retainedPromptIds.has(promptId))) {
       continue;
     }
-    const current = promptIdsByMessage.get(messageId) ?? [];
+    const current = promptIdsByMessage.getOrInsertComputed(messageId, () => []);
     current.push(promptId);
-    promptIdsByMessage.set(messageId, current);
   }
 
   const turns: ParsedOpenCodeTurn[] = [];
@@ -407,9 +406,8 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
   const groups = new Map<string, ParsedOpenCodeTurn[]>();
   for (const message of messages) {
     const key = message.parentKind === 'unresolved' ? `message:${message.turn.index}` : `parent:${message.parentId}`;
-    const group = groups.get(key) ?? [];
+    const group = groups.getOrInsertComputed(key, () => []);
     group.push(message);
-    groups.set(key, group);
   }
   if (groups.size > MAX_TURNS) {
     throw detailError('readOpenCodeSessionAnalysis.turnLimit', dbPath, 'OpenCode session exceeds its turn limit');
@@ -739,16 +737,16 @@ export const readOpenCodeSessionAnalysis = (
     const paths = [...new Set([...candidates.liveDb, ...candidates.stableDb])];
     let firstError: LocalHistoryError | null = null;
     for (const dbPath of paths) {
-      const exists = yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false)));
+      const exists = yield* storage.exists(dbPath).pipe(Effect.catch(() => Effect.succeed(false)));
       if (!exists) {
         continue;
       }
-      const result = yield* detailFromDatabase(dbPath, sourceSessionId, storage).pipe(Effect.either);
-      if (result._tag === 'Right' && result.right) {
-        return result.right;
+      const result = yield* detailFromDatabase(dbPath, sourceSessionId, storage).pipe(Effect.result);
+      if (result._tag === 'Success' && result.success) {
+        return result.success;
       }
-      if (result._tag === 'Left') {
-        firstError = firstError ?? result.left;
+      if (result._tag === 'Failure') {
+        firstError = firstError ?? result.failure;
       }
     }
     if (firstError) {

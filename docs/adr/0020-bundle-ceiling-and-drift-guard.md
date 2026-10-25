@@ -2,7 +2,8 @@
 
 - **Status**: Accepted
 - **Date**: 2026-08-25 (records the decision merged as PR #41, commit
-  `fb5b0048`, 2026-08-23)
+  `fb5b0048`, 2026-08-23); amended 2026-10-24 (ceiling restated with a
+  headroom expectation)
 
 ## Context
 
@@ -18,8 +19,9 @@ arithmetic.
 
 Two numbers with distinct jobs guard the emitted client bundle:
 
-- a round **300 000 B ceiling** that states what the report should cost to
-  open;
+- a round **305 000 B ceiling** that states what the report should cost to
+  open (300 000 B when this record was written; raised on 2026-10-20 by
+  PR #63, `feff2229`; see the 2026-10-24 amendment);
 - a **2% drift guard** against the last recorded measurement, which catches
   the regression a ceiling cannot — a dynamic import turning eager lands in
   kilobytes and can happen with headroom to spare.
@@ -32,6 +34,30 @@ Bundle weight is reduced through configuration fixes or different primitives,
 never through per-component `import()` splitting of the design system: lazy
 imports trade a measured eager cost for waterfall latency and were measured to
 regress (+2.13 KiB gzip for the naive Ark split, plan 071).
+
+### 2026-10-24 amendment: the ceiling and its headroom
+
+The ceiling is a product statement, not a running total: opening the report
+costs at most 305,000 B of gzip-compressed client code and CSS (the SvelteKit
+client runtime, the app entry and the report route's layouts and page nodes,
+gzipped per asset and summed, as `apps/web/bundle/client-bundle.test.ts`
+measures it). It does not follow the last measurement upward.
+
+**Headroom expectation.** The recorded measurement should sit at least one
+drift tolerance below the ceiling, 2 % or about 6.1 KB at today's recording, so
+that an ordinary change meets the drift guard before it meets the ceiling.
+While headroom is below that, the next change that grows the closure first
+recovers headroom through configuration or different primitives, as above.
+Raising the ceiling is a product decision: it is recorded here as an
+amendment that names the measured cost and what the extra bytes buy. A
+dependency upgrade's growth counts like a feature's.
+
+**State on 2026-10-24.** The recorded closure is 304,465 B, 535 B under the
+ceiling and below the expectation. The ceiling was raised to 305,000 B on
+2026-10-20 with a 301,473 B recording; plan 119's framework upgrades then took
+most of the remaining room (over a 298,131 B build after the in-major bumps,
+SvelteKit 3 alone added 4,381 B and Panda 2 alone 1,664 B). The next change
+that grows the closure therefore starts by recovering headroom.
 
 ## Consequences
 

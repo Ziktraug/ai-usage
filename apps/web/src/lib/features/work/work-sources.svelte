@@ -58,7 +58,11 @@
         Stored report rows omitted: {support.support.omittedRows}. Additional warnings omitted:
         {support.truncation.warningsOmitted}. Additional provider observations omitted:
         {support.truncation.providerStatusesOmitted}. Other support entries omitted:
-        {support.truncation.filterProjectOmitted + support.truncation.filterSinceOmitted + support.truncation.harnessOptionsOmitted + support.truncation.machineOptionsOmitted + support.truncation.providerRowsOmitted}.
+        {support.truncation.filterProjectOmitted +
+          support.truncation.filterSinceOmitted +
+          support.truncation.harnessOptionsOmitted +
+          support.truncation.machineOptionsOmitted +
+          support.truncation.providerRowsOmitted}.
       </p>
     {/if}
     <p class={workMuted}>
@@ -85,7 +89,7 @@
                 Older than two collection intervals; freshness is not established.
               {/if}
               {#if source.warnings.length > 0}
-                Coverage warnings: {source.warnings.map(warning => warning.code).join(', ')}.
+                Coverage warnings: {source.warnings.map((warning) => warning.code).join(', ')}.
               {/if}
             </li>
           {/each}

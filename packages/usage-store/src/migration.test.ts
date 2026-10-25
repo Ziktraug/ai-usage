@@ -94,8 +94,8 @@ describe('usage-store forward migration', () => {
     `);
     legacy.close(true);
 
-    const outcome = await Effect.runPromise(Effect.either(initializeUsageStore({ dbPath })));
-    expect(outcome._tag).toBe('Left');
+    const outcome = await Effect.runPromise(Effect.result(initializeUsageStore({ dbPath })));
+    expect(outcome._tag).toBe('Failure');
 
     const preserved = new Database(dbPath, { create: false, readonly: true });
     const currentRevision = preserved.query('SELECT revision FROM served_report_current WHERE singleton = 1').get() as {
@@ -123,8 +123,8 @@ describe('usage-store forward migration', () => {
     legacy.close(true);
     await chmod(dbPath, 0o600);
 
-    const failed = await Effect.runPromise(Effect.either(initializeUsageStore({ dbPath })));
-    expect(failed._tag).toBe('Left');
+    const failed = await Effect.runPromise(Effect.result(initializeUsageStore({ dbPath })));
+    expect(failed._tag).toBe('Failure');
 
     const afterFailure = new Database(dbPath, { create: false, readwrite: true });
     const failedVersion = afterFailure.query('PRAGMA user_version').get() as { user_version: number };
@@ -249,8 +249,8 @@ describe('usage-store forward migration', () => {
     `);
     conflict.close(true);
 
-    const failed = await Effect.runPromise(Effect.either(initializeUsageStore({ dbPath })));
-    expect(failed._tag).toBe('Left');
+    const failed = await Effect.runPromise(Effect.result(initializeUsageStore({ dbPath })));
+    expect(failed._tag).toBe('Failure');
     const afterFailure = new Database(dbPath, { create: false, readwrite: true });
     expect((afterFailure.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
     const sql = afterFailure

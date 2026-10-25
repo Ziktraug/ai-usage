@@ -300,7 +300,7 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
     const paths: HarnessPaths = resolvePaths(storage);
     const settingsFile = paths.claude.settingsFile;
 
-    const exists = yield* storage.exists(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(false)));
+    const exists = yield* storage.exists(settingsFile).pipe(Effect.catch(() => Effect.succeed(false)));
     // Settings are user-managed config, so read them through the
     // symlink-following path: dotfiles managers commonly install
     // ~/.claude/settings.json as a symlink, which the hardened history read
@@ -308,7 +308,7 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
     const raw = exists
       ? yield* storage
           .readConfigText(settingsFile, SMALL_HISTORY_JSON_MAX_BYTES)
-          .pipe(Effect.catchAll(() => Effect.succeed(null)))
+          .pipe(Effect.catch(() => Effect.succeed(null)))
       : '{}';
     const parsed = raw === null ? null : safeJSON(raw);
     if (parsed === null) {
@@ -615,9 +615,9 @@ export const collectClaudeResult = Effect.gen(function* () {
 
   let provider: ClaudeProvider = 'Claude sub';
   const cfg = paths.claude.configFile;
-  if (yield* storage.exists(cfg).pipe(Effect.catchAll(() => Effect.succeed(false)))) {
+  if (yield* storage.exists(cfg).pipe(Effect.catch(() => Effect.succeed(false)))) {
     const json = safeJSON(
-      yield* storage.readConfigText(cfg, SMALL_HISTORY_JSON_MAX_BYTES).pipe(Effect.catchAll(() => Effect.succeed(''))),
+      yield* storage.readConfigText(cfg, SMALL_HISTORY_JSON_MAX_BYTES).pipe(Effect.catch(() => Effect.succeed(''))),
     );
     if (json?.hasApiKey) {
       provider = 'Claude API';

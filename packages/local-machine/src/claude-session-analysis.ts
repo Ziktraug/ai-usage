@@ -182,7 +182,7 @@ const readClaudeAgentMetas = (
         }
         const text = yield* storage
           .readText(path.join(target, entry.name), MAX_CLAUDE_AGENT_META_BYTES)
-          .pipe(Effect.catchAll(() => Effect.succeed(null)));
+          .pipe(Effect.catch(() => Effect.succeed(null)));
         const parsed = text === null ? null : safeJSON(text);
         if (!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))) {
           agentMetasUnreadable += 1;

@@ -8,7 +8,6 @@ export type CheckoutId = IdentityId<'checkout'>;
 export type DeviceId = IdentityId<'device'>;
 export type DeviceCredentialId = IdentityId<'device-credential'>;
 export type DeviceEnrollmentGrantId = IdentityId<'device-enrollment-grant'>;
-export type AuthenticationIdentityId = IdentityId<'authentication-identity'>;
 export type MemoryImportId = IdentityId<'memory-import'>;
 export type MemoryItemId = IdentityId<'memory-item'>;
 export type MemoryObservationId = IdentityId<'memory-observation'>;
@@ -20,12 +19,8 @@ export type ProjectId = IdentityId<'project'>;
 export type RepositoryAliasId = IdentityId<'repository-alias'>;
 export type RepositoryId = IdentityId<'repository'>;
 export type ScmAccountId = IdentityId<'scm-account'>;
-export type ScmCredentialId = IdentityId<'scm-credential'>;
 export type ScmInstallationId = IdentityId<'scm-installation'>;
 export type SpaceId = IdentityId<'space'>;
-export type TeamId = IdentityId<'team'>;
-export type ReplicationOutboxEventId = IdentityId<'replication-outbox-event'>;
-export type WebSessionId = IdentityId<'web-session'>;
 export type Instant = string & { readonly [instantBrand]: true };
 
 export type ScmProvider = 'generic' | 'github' | 'gitlab';
@@ -66,10 +61,6 @@ export const parseCheckoutId = (value: unknown): CheckoutId => parseIdentityId<'
 export const parseDeviceId = (value: unknown): DeviceId => parseIdentityId<'device'>(value, 'deviceId');
 export const parseDeviceCredentialId = (value: unknown): DeviceCredentialId =>
   parseIdentityId<'device-credential'>(value, 'deviceCredentialId');
-export const parseDeviceEnrollmentGrantId = (value: unknown): DeviceEnrollmentGrantId =>
-  parseIdentityId<'device-enrollment-grant'>(value, 'deviceEnrollmentGrantId');
-export const parseAuthenticationIdentityId = (value: unknown): AuthenticationIdentityId =>
-  parseIdentityId<'authentication-identity'>(value, 'authenticationIdentityId');
 export const parseMemoryImportId = (value: unknown): MemoryImportId =>
   parseIdentityId<'memory-import'>(value, 'memoryImportId');
 export const parseMemoryItemId = (value: unknown): MemoryItemId =>
@@ -89,16 +80,9 @@ export const parseRepositoryAliasId = (value: unknown): RepositoryAliasId =>
 export const parseRepositoryId = (value: unknown): RepositoryId => parseIdentityId<'repository'>(value, 'repositoryId');
 export const parseScmAccountId = (value: unknown): ScmAccountId =>
   parseIdentityId<'scm-account'>(value, 'scmAccountId');
-export const parseScmCredentialId = (value: unknown): ScmCredentialId =>
-  parseIdentityId<'scm-credential'>(value, 'scmCredentialId');
 export const parseScmInstallationId = (value: unknown): ScmInstallationId =>
   parseIdentityId<'scm-installation'>(value, 'scmInstallationId');
 export const parseSpaceId = (value: unknown): SpaceId => parseIdentityId<'space'>(value, 'spaceId');
-export const parseTeamId = (value: unknown): TeamId => parseIdentityId<'team'>(value, 'teamId');
-export const parseReplicationOutboxEventId = (value: unknown): ReplicationOutboxEventId =>
-  parseIdentityId<'replication-outbox-event'>(value, 'replicationOutboxEventId');
-export const parseWebSessionId = (value: unknown): WebSessionId =>
-  parseIdentityId<'web-session'>(value, 'webSessionId');
 
 export const createCaptureContextId = (): CaptureContextId => createIdentityId<'capture-context'>();
 export const createCheckoutId = (): CheckoutId => createIdentityId<'checkout'>();
@@ -106,8 +90,6 @@ export const createDeviceId = (): DeviceId => createIdentityId<'device'>();
 export const createDeviceCredentialId = (): DeviceCredentialId => createIdentityId<'device-credential'>();
 export const createDeviceEnrollmentGrantId = (): DeviceEnrollmentGrantId =>
   createIdentityId<'device-enrollment-grant'>();
-export const createAuthenticationIdentityId = (): AuthenticationIdentityId =>
-  createIdentityId<'authentication-identity'>();
 export const createMemoryImportId = (): MemoryImportId => createIdentityId<'memory-import'>();
 export const createMemoryItemId = (): MemoryItemId => createIdentityId<'memory-item'>();
 export const createMemoryObservationId = (): MemoryObservationId => createIdentityId<'memory-observation'>();
@@ -118,14 +100,7 @@ export const createPersonId = (): PersonId => createIdentityId<'person'>();
 export const createProjectId = (): ProjectId => createIdentityId<'project'>();
 export const createRepositoryAliasId = (): RepositoryAliasId => createIdentityId<'repository-alias'>();
 export const createRepositoryId = (): RepositoryId => createIdentityId<'repository'>();
-export const createScmAccountId = (): ScmAccountId => createIdentityId<'scm-account'>();
-export const createScmCredentialId = (): ScmCredentialId => createIdentityId<'scm-credential'>();
-export const createScmInstallationId = (): ScmInstallationId => createIdentityId<'scm-installation'>();
 export const createSpaceId = (): SpaceId => createIdentityId<'space'>();
-export const createTeamId = (): TeamId => createIdentityId<'team'>();
-export const createReplicationOutboxEventId = (): ReplicationOutboxEventId =>
-  createIdentityId<'replication-outbox-event'>();
-export const createWebSessionId = (): WebSessionId => createIdentityId<'web-session'>();
 
 export const parseInstant = (value: unknown, field = 'instant'): Instant => {
   if (typeof value !== 'string') {
@@ -176,33 +151,6 @@ export interface Device {
   readonly status: 'active' | 'local' | 'pending' | 'revoked';
 }
 
-export interface ScmAccount {
-  readonly handle: string | null;
-  readonly id: ScmAccountId;
-  readonly personId: PersonId;
-  readonly provider: ScmProvider;
-  readonly providerAccountId: string;
-}
-
-export interface ScmInstallation {
-  readonly id: ScmInstallationId;
-  readonly owningSpaceId: SpaceId;
-  readonly provider: ScmProvider;
-  readonly providerInstallationId: string;
-  readonly selectedRepositoryIds: readonly string[];
-  readonly status: 'active' | 'revoked' | 'suspended';
-}
-
-export interface ScmCredential {
-  readonly accountId: ScmAccountId | null;
-  readonly createdAt: Instant;
-  readonly encryptedSecretReference: string;
-  readonly id: ScmCredentialId;
-  readonly installationId: ScmInstallationId | null;
-  readonly revokedAt: Instant | null;
-  readonly rotatedAt: Instant | null;
-}
-
 export interface Repository {
   readonly canonicalHost: string;
   readonly canonicalName: string;
@@ -244,18 +192,3 @@ export interface Checkout {
   readonly repositoryId: RepositoryId | null;
   readonly status: 'available' | 'missing' | 'unknown';
 }
-
-export interface CaptureContext {
-  readonly deviceId: DeviceId;
-  readonly id: CaptureContextId;
-  readonly personId: PersonId;
-  readonly projectId: ProjectId | null;
-  readonly scmAccountId: ScmAccountId | null;
-  readonly scmInstallationId: ScmInstallationId | null;
-  readonly source: 'explicit' | 'personal-fallback' | 'project-rule' | 'unassigned';
-  readonly spaceId: SpaceId;
-}
-
-export const hasExactlyOneScmCredentialOwner = (
-  credential: Pick<ScmCredential, 'accountId' | 'installationId'>,
-): boolean => (credential.accountId === null) !== (credential.installationId === null);

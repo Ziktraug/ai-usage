@@ -28,7 +28,7 @@ import {
   MAX_SKILL_OBSERVATION_SKILLS as MAX_CONTRACT_COLLECTION_ITEMS,
   MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES,
 } from '@ai-usage/web-contract/skills';
-import { Effect, type Either } from 'effect';
+import { Effect, type Result } from 'effect';
 import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 export interface UsageReadModelBootstrap {
@@ -130,10 +130,10 @@ const runReadEffect = async <Value, Failure>(
   options: UsageReadModelCallOptions = {},
 ): Promise<Value> => {
   options.signal?.throwIfAborted();
-  let result: Either.Either<Value, Failure>;
+  let result: Result.Result<Value, Failure>;
   try {
     result = await Effect.runPromise(
-      Effect.either(effect),
+      Effect.result(effect),
       options.signal === undefined ? undefined : { signal: options.signal },
     );
   } catch (error) {
@@ -141,10 +141,10 @@ const runReadEffect = async <Value, Failure>(
     throw error;
   }
   options.signal?.throwIfAborted();
-  if (result._tag === 'Left') {
-    throw result.left;
+  if (result._tag === 'Failure') {
+    throw result.failure;
   }
-  return result.right;
+  return result.success;
 };
 
 export const createSqliteUsageReadModel = (options: SqliteUsageReadModelOptions): UsageReadModel => ({

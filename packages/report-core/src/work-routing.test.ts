@@ -155,20 +155,17 @@ describe('read-only review routing simulation', () => {
     ).toBe('claude-code');
   });
 
-  test.each([
-    'partial',
-    'unsupported',
-    'stale',
-    'error',
-    'auth-required',
-  ] as const)('excludes %s quota without manufacturing capacity', (state) => {
-    const result = simulate([
-      candidate('claude-code', { quota: quotaFixture('claude-code', { state }) }),
-      candidate('codex'),
-    ]);
-    expect(result.chosenCandidateId).toBe('codex');
-    expect(excluded(result, 'claude-code')).toContain(state);
-  });
+  test.each(['partial', 'unsupported', 'stale', 'error', 'auth-required'] as const)(
+    'excludes %s quota without manufacturing capacity',
+    (state) => {
+      const result = simulate([
+        candidate('claude-code', { quota: quotaFixture('claude-code', { state }) }),
+        candidate('codex'),
+      ]);
+      expect(result.chosenCandidateId).toBe('codex');
+      expect(excluded(result, 'claude-code')).toContain(state);
+    },
+  );
 
   test('prefers an eligible near-reset Codex window before the harness preference, without granting authorization', () => {
     const codex = candidate('codex', {
@@ -221,18 +218,17 @@ describe('read-only review routing simulation', () => {
     expect(result.evaluations.find((entry) => entry.candidateId === 'claude-code')?.eligible).toBe(false);
   });
 
-  test.each([
-    'invalid',
-    '2026-10-21T12:01:00.000Z',
-    '2026-02-30T12:00:00.000Z',
-  ])('rejects invalid or future timestamps: %s', (observedAt) => {
-    for (const override of [
-      { quota: quotaFixture('claude-code', { generatedAt: observedAt }) },
-      { evidence: { source: 'Fixture', observedAt } },
-    ]) {
-      expect(simulate([candidate('claude-code', override), candidate('codex')]).chosenCandidateId).toBe('codex');
-    }
-  });
+  test.each(['invalid', '2026-10-21T12:01:00.000Z', '2026-02-30T12:00:00.000Z'])(
+    'rejects invalid or future timestamps: %s',
+    (observedAt) => {
+      for (const override of [
+        { quota: quotaFixture('claude-code', { generatedAt: observedAt }) },
+        { evidence: { source: 'Fixture', observedAt } },
+      ]) {
+        expect(simulate([candidate('claude-code', override), candidate('codex')]).chosenCandidateId).toBe('codex');
+      }
+    },
+  );
 
   test.each(
     [

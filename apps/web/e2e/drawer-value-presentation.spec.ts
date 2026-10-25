@@ -35,8 +35,16 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
       throw new Error('Expected the hint glyph inside its label row');
     }
     const style = getComputedStyle(button);
+    // Painted alpha rather than the serialized colour: Panda 2 resolves the transparent token to
+    // oklch(0 0 0 / 0), Panda 1 to rgba(0, 0, 0, 0); both leave the hint without a fill.
+    const swatch = document.createElement('canvas').getContext('2d');
+    if (!swatch) {
+      throw new Error('Expected a 2D canvas context to resolve the hint background');
+    }
+    swatch.fillStyle = style.backgroundColor;
+    swatch.fillRect(0, 0, 1, 1);
     return {
-      background: style.backgroundColor,
+      backgroundAlpha: swatch.getImageData(0, 0, 1, 1).data[3],
       borderWidth: style.borderTopWidth,
       glyphWidth: Math.round(glyph.getBoundingClientRect().width),
       hitHeight: Math.round(button.getBoundingClientRect().height),
@@ -47,7 +55,7 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   expect(hintGeometry.hitWidth).toBeGreaterThanOrEqual(44);
   expect(hintGeometry.hitHeight).toBeGreaterThanOrEqual(44);
   expect(hintGeometry.borderWidth).toBe('0px');
-  expect(hintGeometry.background).toBe('rgba(0, 0, 0, 0)');
+  expect(hintGeometry.backgroundAlpha).toBe(0);
   expect(hintGeometry.glyphWidth).toBeLessThanOrEqual(16);
   expect(hintGeometry.rowHeight).toBeLessThanOrEqual(24);
   await subValueHelp.click();

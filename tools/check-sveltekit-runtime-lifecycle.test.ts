@@ -137,7 +137,7 @@ test(
     const result = await checkSvelteKitRuntimeLifecycle({
       artifactDirectory,
       command: () => [process.execPath, '--no-env-file', '--no-install', path.join(artifactDirectory, 'index.js')],
-      environment: { IDLE_TIMEOUT: '45' },
+      environment: { CONNECTION_IDLE_TIMEOUT: '45' },
       ssrMarker: 'data-runtime-fixture="sveltekit-bun"',
     });
     expect(result.heldForMs).toBeGreaterThanOrEqual(svelteKitRuntimeLifecycleBudget.minimumSseHoldMs);

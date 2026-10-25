@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -364,17 +364,98 @@ describe('production supervisor', () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  /**
+   * Both children run in their own process groups, so a supervisor killed
+   * without its graceful stop (SIGKILL, an OOM kill) reaches neither: each
+   * must exit with its parent rather than keep the writer lock or the port.
+   */
+  test('the engine and web commands exit when the supervisor is killed', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'production-supervisor-orphans-'));
+    const isAlive = (processId: number): boolean => {
+      try {
+        process.kill(processId, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const pids = new Map<'engine' | 'web', number>();
+    try {
+      // Stand-ins at the paths the production commands run: each publishes its PID and idles.
+      const stub = (role: 'engine' | 'web') =>
+        `await Bun.write(${JSON.stringify(path.join(root, `${role}.pid`))}, String(process.pid));\nsetInterval(() => undefined, 1000);\n`;
+      await mkdir(path.join(root, 'apps', 'usage-engine', 'src'), { recursive: true });
+      await mkdir(path.join(root, 'apps', 'web'), { recursive: true });
+      await writeFile(path.join(root, 'apps', 'usage-engine', 'src', 'main.ts'), stub('engine'));
+      await writeFile(path.join(root, 'apps', 'web', 'start.mjs'), stub('web'));
+      const supervisorPath = path.join(root, 'supervisor.ts');
+      await writeFile(
+        supervisorPath,
+        `import { createProductionSupervisorCommands, spawnProductionChild } from ${JSON.stringify(path.join(import.meta.dir, 'start-production.ts'))};
+const commands = createProductionSupervisorCommands(${JSON.stringify(root)}, {});
+const options = { cwd: ${JSON.stringify(root)}, env: { PATH: process.env.PATH ?? '' } };
+spawnProductionChild('engine', commands.engine, options);
+spawnProductionChild('web', commands.web, options);
+setInterval(() => undefined, 1000);
+`,
+      );
+      const supervisor = Bun.spawn([process.execPath, '--no-env-file', supervisorPath], {
+        stderr: 'inherit',
+        stdin: 'ignore',
+        stdout: 'ignore',
+      });
+      const publishDeadline = Date.now() + 10_000;
+      while (pids.size < 2 && Date.now() < publishDeadline) {
+        for (const role of ['engine', 'web'] as const) {
+          const pidFile = Bun.file(path.join(root, `${role}.pid`));
+          if (!pids.has(role) && (await pidFile.exists())) {
+            const text = await pidFile.text();
+            if (text !== '') {
+              pids.set(role, Number(text));
+            }
+          }
+        }
+        await Bun.sleep(10);
+      }
+      expect([...pids.keys()].sort()).toEqual(['engine', 'web']);
+      // Alive under a live supervisor: the parent-death watch does not fire early.
+      await Bun.sleep(200);
+      expect([...pids.values()].map(isAlive)).toEqual([true, true]);
+
+      supervisor.kill('SIGKILL');
+      await supervisor.exited;
+      const exitDeadline = Date.now() + 5000;
+      while ([...pids.values()].some(isAlive) && Date.now() < exitDeadline) {
+        await Bun.sleep(10);
+      }
+      expect([...pids.values()].map(isAlive)).toEqual([false, false]);
+    } finally {
+      for (const pid of pids.values()) {
+        if (isAlive(pid)) {
+          process.kill(pid, 'SIGKILL');
+        }
+      }
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 20_000);
 });
 
 describe('production environment', () => {
-  test('binds both children to one explicit target and numeric loopback', () => {
+  test('binds both children to one explicit target and leaves the web listener to start.mjs', () => {
     const rootDirectory = '/srv/ai-usage';
     const homeDirectory = '/var/lib/ai-usage-fixture';
+    const hostileAdapterNames = {
+      HOST: '0.0.0.0',
+      DEVELOPMENT: '1',
+      IPV6_ONLY: '1',
+      ORIGIN: 'https://attacker.example',
+      REUSE_PORT: '1',
+      SOCKET_PATH: '/tmp/attacker.sock',
+    };
     const environment = createProductionEnvironment(rootDirectory, {
       AI_USAGE_HOME: homeDirectory,
-      HOST: '0.0.0.0',
-      ORIGIN: 'https://attacker.example',
-      SOCKET_PATH: '/tmp/attacker.sock',
+      ...hostileAdapterNames,
       PATH: '/fixture/bin',
       TMPDIR: '/var/tmp/ai-usage-fixture',
     });
@@ -384,10 +465,7 @@ describe('production environment', () => {
       AI_USAGE_ENGINE_STATE_DIR: path.join(homeDirectory, '.config/ai-usage/engine'),
       AI_USAGE_HOME: homeDirectory,
       AI_USAGE_ROOT_DIR: rootDirectory,
-      BODY_SIZE_LIMIT: String(64 * 1024 * 1024),
       HOME: homeDirectory,
-      HOST: '127.0.0.1',
-      IDLE_TIMEOUT: '45',
       NODE_ENV: 'production',
       PATH: '/fixture/bin',
       TMPDIR: '/var/tmp/ai-usage-fixture',
@@ -397,8 +475,13 @@ describe('production environment', () => {
     expect(environment.AI_USAGE_ENGINE_INSTANCE_ID).toMatch(uuidV4Pattern);
     expect(environment.AI_USAGE_TEMP_ROOT).toBe('/var/tmp/ai-usage-fixture');
     expect(environment.AI_USAGE_LOG_DIR).toBe(path.join(rootDirectory, 'logs'));
-    expect(environment.ORIGIN).toBeUndefined();
-    expect(environment.SOCKET_PATH).toBeUndefined();
+    // The web adapter reads only its prefixed variables, which `apps/web/start.mjs` sets (bound to
+    // 127.0.0.1) after purging inherited ones, so the inherited unprefixed names pass through inert
+    // and the supervisor sets none of the adapter's configuration itself.
+    expect(environment).toMatchObject(hostileAdapterNames);
+    expect(Object.keys(environment).filter((key) => key.startsWith('AI_USAGE_WEB_ADAPTER_'))).toEqual([]);
+    expect(environment.BODY_SIZE_LIMIT).toBeUndefined();
+    expect(environment.CONNECTION_IDLE_TIMEOUT).toBeUndefined();
   });
 
   test('uses absolute system defaults without accepting relative runtime paths', () => {

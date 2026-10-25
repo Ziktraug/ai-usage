@@ -23,14 +23,14 @@ export type SkillsMutationResult =
   | { type: 'refresh'; knownProjectPaths: KnownProjectPathsResult; result: SkillSnapshotResult };
 
 export interface SkillsMutationPorts {
-  createTarget(input: { data: { targetId: string } }): Promise<unknown>;
-  knownProjectPaths(): Promise<unknown>;
-  previewReconcile(): Promise<unknown>;
-  reconcileAll(): Promise<unknown>;
-  reconcileOne(input: { data: string }): Promise<unknown>;
-  refresh(): Promise<unknown>;
-  saveConfig(input: { data: SkillManagementConfig }): Promise<unknown>;
-  toggle(input: { data: { enabled: boolean; skillName: string } }): Promise<unknown>;
+  createTarget: (input: { data: { targetId: string } }) => Promise<unknown>;
+  knownProjectPaths: () => Promise<unknown>;
+  previewReconcile: () => Promise<unknown>;
+  reconcileAll: () => Promise<unknown>;
+  reconcileOne: (input: { data: string }) => Promise<unknown>;
+  refresh: () => Promise<unknown>;
+  saveConfig: (input: { data: SkillManagementConfig }) => Promise<unknown>;
+  toggle: (input: { data: { enabled: boolean; skillName: string } }) => Promise<unknown>;
 }
 
 export const createSkillsMutationRunner =

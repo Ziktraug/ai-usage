@@ -455,11 +455,7 @@
         style:justify-content={layout.stackJustify}
       >
         {#each bars as bar (bar.bucket.date)}
-          {@const barValue = presentedAmount(
-            bar.total,
-            bar.total,
-            classifiedBucketPriceMeasurement(bar.bucket),
-          )}
+          {@const barValue = presentedAmount(bar.total, bar.total, classifiedBucketPriceMeasurement(bar.bucket))}
           <span
             aria-label={`${fmtDateOnly(bar.bucket.date)} · ${metricLabel}: ${accessibleAmount(barValue)}`}
             class={bucketClass}
@@ -513,7 +509,7 @@
       <button
         aria-label="Inspect activity timeline. Use arrow keys to inspect days."
         class={timelineHoverLayer}
-        onfocus={() => inspect(inspectedIndex ?? (bars[0]?.index ?? 0))}
+        onfocus={() => inspect(inspectedIndex ?? bars[0]?.index ?? 0)}
         onkeydown={onChartKeydown}
         onmouseleave={() => (inspectedIndex = null)}
         onmousemove={inspectFromPointer}
@@ -551,11 +547,7 @@
       <p class={percentage} data-machine-freshness-status>{machineFreshnessStatus}</p>
     {/if}
     {#if readoutData}
-      {@const readoutValue = presentedAmount(
-        readoutData.total,
-        readoutData.total,
-        readoutData.bucket.priceMeasurement,
-      )}
+      {@const readoutValue = presentedAmount(readoutData.total, readoutData.total, readoutData.bucket.priceMeasurement)}
       <div aria-live="polite" class={readout} data-timeline-readout role="status">
         <div class={readoutRow}>
           <strong>{fmtDateOnly(readoutData.bucket.date)}</strong>

@@ -19,10 +19,9 @@ export interface AiUsageWideEventResourceOptions {
   readonly testRuntime?: boolean;
 }
 
-export class WideEventResourceService extends Context.Tag('@ai-usage/effect-runtime/WideEventResourceService')<
-  WideEventResourceService,
-  WideEventResource
->() {}
+export class WideEventResourceService extends Context.Service<WideEventResourceService, WideEventResource>()(
+  '@ai-usage/effect-runtime/WideEventResourceService',
+) {}
 
 const resolveRuntimeMode = (
   nodeEnvironment: string | undefined,

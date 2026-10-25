@@ -264,8 +264,8 @@ const requiredText = (value: unknown, operation: string): string => {
 const parseJson = (value: unknown, operation: string): unknown => {
   try {
     return JSON.parse(requiredText(value, operation)) as unknown;
-  } catch {
-    throw new MemoryIdentityStoreError('migration-incompatible', operation);
+  } catch (error) {
+    throw new MemoryIdentityStoreError('migration-incompatible', operation, { cause: error });
   }
 };
 

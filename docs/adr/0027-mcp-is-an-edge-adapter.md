@@ -1,7 +1,16 @@
 # ADR 0027: MCP is an edge adapter
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by
+  [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
+- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
+
+> Amended 2026-10-24 (ADR 0074): the connected-MCP clause ("Connected MCP calls
+> the same domain services through an authenticated, authorized composition")
+> is removed from the Decision; there is only the local stdio server. The edge
+> rule stands independently of Memory: PR #67 adds the read-only `work.context`
+> tool (ADR 0058 on `feat/work-resume-cockpit`), and when plan 120 phase B
+> removes the `memory.*` tools, MCP stays for it.
 
 ## Context
 
@@ -19,10 +28,8 @@ permission policy, Memory acceptance, WorkHandoff generation, or harness
 parsing.
 
 Local MCP calls local application services and works without a shared server,
-account, network, or PostgreSQL. Connected MCP calls the same domain services
-through an authenticated, authorized composition. MCP tools never open
-write-capable SQLite/PostgreSQL connections and never become the internal
-service-to-service bus.
+account, network, or PostgreSQL. MCP tools never open write-capable SQLite
+connections and never become the internal service-to-service bus.
 
 Registration follows the existing identity-checked, cooperating-process Skills
 projection discipline and does not overwrite unmanaged runtime entries.

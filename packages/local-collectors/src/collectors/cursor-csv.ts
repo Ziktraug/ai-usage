@@ -77,7 +77,7 @@ const exportPathsFromDir = (
 ): Effect.Effect<string[], LocalHistoryError> =>
   Effect.gen(function* () {
     const resolvedDir = resolveExportPath(dirPath);
-    if (!(yield* storage.exists(resolvedDir).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
+    if (!(yield* storage.exists(resolvedDir).pipe(Effect.catch(() => Effect.succeed(false))))) {
       return [];
     }
     const entries = yield* storage.readDir(resolvedDir);
@@ -323,7 +323,7 @@ export const collectCursorCsvTurnsResult = (
     const configuredPaths = (options.usageExportPaths ?? []).map(resolveExportPath);
     const dirPaths = options.usageExportDir ? yield* exportPathsFromDir(storage, options.usageExportDir) : [];
     for (const filePath of [...configuredPaths, ...dirPaths]) {
-      if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
+      if (!(yield* storage.exists(filePath).pipe(Effect.catch(() => Effect.succeed(false))))) {
         continue;
       }
       yield* visitCsvRows(storage, filePath, (row) => {

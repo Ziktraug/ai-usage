@@ -1,7 +1,17 @@
 # ADR 0026: DB-native Agent Memory with file adapters
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by
+  [ADR 0074](0074-local-only-single-operator-product.md); retires with accepted
+  Memory in plan 120 phase B
 - **Date**: 2026-08-29
+- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
+
+> Amended 2026-10-24 (ADR 0074): Memory is database-authoritative in one mode
+> only, the local `memory.sqlite` store. The PostgreSQL adapter for
+> published/shared Memory, "in both modes", and replication as a requirement no
+> longer apply. The operator decided on 2026-10-24 to remove accepted Memory in
+> plan 120 phase B, after PR #67 lands; until then the local half of this
+> decision stands, and under ADR 0075 its tables are kept when it goes.
 
 ## Context
 
@@ -42,8 +52,9 @@ two competing mutation authorities.
 ## Reversal condition
 
 Reconsider database authority only if a portable file engine can prove the same
-atomic revision, authorization, relation, indexing, concurrent-writer, and
-replication guarantees through the full conformance suite in both modes.
+atomic revision, authorization, relation, indexing and concurrent-writer guarantees
+that the Memory store tests pin today (replication and the connected mode left with
+[ADR 0074](0074-local-only-single-operator-product.md)).
 
 ## Evidence
 

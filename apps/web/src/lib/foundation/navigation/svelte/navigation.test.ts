@@ -7,6 +7,7 @@ import {
   installScrollLifecycle,
   type ScrollLifecycleEvent,
   scrollDirectiveFor,
+  svelteGotoOptionsFor,
 } from './navigation';
 
 const scrollFixture = () => {
@@ -82,8 +83,22 @@ describe('navigation and scroll adapters', () => {
     port.traverse(-1);
     port.traverse(1);
     port.traverse(0);
-    expect(calls).toEqual([['/next', { keepFocus: true, noScroll: true, replaceState: true }]]);
+    expect(calls).toEqual([['/next', { replace: true, reset: false }]]);
     expect(deltas).toEqual([-1, 1]);
+  });
+
+  test('[url:history.replace-push-back-forward] maps SvelteKit 2 focus and scroll intents onto SvelteKit 3 goto', () => {
+    expect(svelteGotoOptionsFor({ keepFocus: true, resetScroll: false, url: '/next' })).toEqual({ reset: false });
+    expect(svelteGotoOptionsFor({ resetScroll: false, url: '/next' })).toEqual({ preserveScroll: true });
+    expect(svelteGotoOptionsFor({ keepFocus: false, replace: true, resetScroll: false, url: '/next' })).toEqual({
+      preserveScroll: true,
+      replace: true,
+    });
+    expect(svelteGotoOptionsFor({ url: '/next' })).toEqual({});
+    expect(svelteGotoOptionsFor({ resetScroll: true, url: '/next' })).toEqual({});
+    expect(() => svelteGotoOptionsFor({ keepFocus: true, url: '/next' })).toThrow(
+      'SvelteKit 3 resets focus whenever it resets scroll',
+    );
   });
 
   test('[url:history.replace-push-back-forward] in-memory history preserves push, replace, back and forward', async () => {

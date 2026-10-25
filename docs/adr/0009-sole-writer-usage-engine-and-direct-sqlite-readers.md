@@ -7,7 +7,16 @@
   (formerly the second record numbered 0002)
 - **Amended by**: [ADR 0024](0024-separate-usage-memory-and-shared-data-authorities.md),
   which keeps this decision authoritative for the existing usage SQLite data
-  plane and introduces separate Memory SQLite and shared PostgreSQL authorities
+  plane and introduces a separate Memory SQLite authority (its shared
+  PostgreSQL authority is withdrawn by
+  [ADR 0074](0074-local-only-single-operator-product.md))
+- **Extended by**: [ADR 0075](0075-local-store-schema-evolution.md) (store
+  schema evolution)
+
+> Amended 2026-10-24: the output-isolation clause named the pre-SvelteKit
+> Nitro host; it now names the SvelteKit/Vite outputs that replaced it
+> (ADR 0010, ADR 0072). The decision is unchanged. ADR 0074 makes the manual
+> file transfer preserved below the product's only cross-machine path.
 
 ## Context
 
@@ -16,7 +25,7 @@ previously composed by Web or CLI workflows. Served reads depended on copied
 per-revision SQLite files, temporary Session leases, and per-query Bun
 subprocesses. That made process ownership ambiguous, created avoidable I/O, and
 let Web HMR/build lifecycle affect background work. Development and production
-Nitro outputs also shared cleanup assumptions.
+Nitro outputs (the Web host before ADR 0010) also shared cleanup assumptions.
 
 The product is local and Bun-based. It needs exact-revision consistency and a
 single durable store, but it does not need a report data service or a remote
@@ -53,9 +62,9 @@ runtime and lock. A live protocol/target mismatch fails closed and never starts
 a competing writer. Pure portable and stored reads require no engine.
 
 Root development and production commands supervise engine and Web explicitly.
-Nitro/Vite development and production outputs are separate, and a narrow build
-lock prevents concurrent production builders without deleting active dev
-output.
+SvelteKit/Vite development and production outputs are separate (phase-isolated
+intermediate, adapter and Vite cache directories), and a narrow build lock
+prevents concurrent production builders without deleting active dev output.
 
 The supported file-level backup path is a clean engine stop followed by a
 database copy. Web/CLI do not migrate, checkpoint, repair, retain, or back up

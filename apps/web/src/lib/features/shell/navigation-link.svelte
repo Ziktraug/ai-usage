@@ -63,11 +63,9 @@
 {/snippet}
 
 {#if active}
-  <!-- biome-ignore lint/a11y/useValidAnchor: `href` is a required typed Svelte prop and is emitted on this anchor. -->
-  <a aria-current="page" class={className} data-sveltekit-noscroll={preserveScroll ? '' : undefined} {href}
+  <a aria-current="page" class={className} data-ai-usage-preserve-scroll={preserveScroll ? '' : undefined} {href}
     >{@render body()}</a
   >
 {:else}
-  <!-- biome-ignore lint/a11y/useValidAnchor: `href` is a required typed Svelte prop and is emitted on this anchor. -->
-  <a class={className} data-sveltekit-noscroll={preserveScroll ? '' : undefined} {href}>{@render body()}</a>
+  <a class={className} data-ai-usage-preserve-scroll={preserveScroll ? '' : undefined} {href}>{@render body()}</a>
 {/if}

@@ -27,7 +27,7 @@ import {
 } from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
-import { Effect, Either } from 'effect';
+import { Effect, Result } from 'effect';
 import {
   CODEX_AVAILABLE_SKILLS_HEADING,
   type CodexSkillCatalogueEntry,
@@ -229,12 +229,12 @@ export const listCodexRolloutFiles: Effect.Effect<CodexRolloutFileList, LocalHis
     const storage = yield* LocalHistoryStorage;
     const sessionsDir = codexSessionsDir(storage);
     const active = yield* walkFiles(storage, sessionsDir, isCodexRolloutFileName);
-    const archived = yield* Effect.either(
+    const archived = yield* Effect.result(
       walkFiles(storage, codexArchivedSessionsDir(storage), isCodexRolloutFileName),
     );
-    return Either.isRight(archived)
-      ? { files: resolveCodexRolloutFiles([...active, ...archived.right], sessionsDir), archivedWalkFailure: null }
-      : { files: resolveCodexRolloutFiles(active, sessionsDir), archivedWalkFailure: archived.left };
+    return Result.isSuccess(archived)
+      ? { files: resolveCodexRolloutFiles([...active, ...archived.success], sessionsDir), archivedWalkFailure: null }
+      : { files: resolveCodexRolloutFiles(active, sessionsDir), archivedWalkFailure: archived.failure };
   });
 
 /** The rollout list for readers without a warning channel: a failed archived walk fails it. */
@@ -277,23 +277,23 @@ export const readCodexRolloutWithFallback = <A>(
 ): Effect.Effect<{ readonly path: string; readonly value: A }, LocalHistoryError> =>
   Effect.gen(function* () {
     const fallbacks = codexRolloutFallbackPaths(filePath, codexArchivedSessionsDir(storage));
-    const first = yield* Effect.either(read(filePath));
-    if (Either.isRight(first)) {
-      return { path: filePath, value: first.right };
+    const first = yield* Effect.result(read(filePath));
+    if (Result.isSuccess(first)) {
+      return { path: filePath, value: first.success };
     }
-    if (!isMissingHistoryFileError(first.left)) {
-      return yield* Effect.fail(first.left);
+    if (!isMissingHistoryFileError(first.failure)) {
+      return yield* Effect.fail(first.failure);
     }
     for (const candidatePath of fallbacks) {
-      const attempt = yield* Effect.either(read(candidatePath));
-      if (Either.isRight(attempt)) {
-        return { path: candidatePath, value: attempt.right };
+      const attempt = yield* Effect.result(read(candidatePath));
+      if (Result.isSuccess(attempt)) {
+        return { path: candidatePath, value: attempt.success };
       }
-      if (!isMissingHistoryFileError(attempt.left)) {
-        return yield* Effect.fail(attempt.left);
+      if (!isMissingHistoryFileError(attempt.failure)) {
+        return yield* Effect.fail(attempt.failure);
       }
     }
-    return yield* Effect.fail(first.left);
+    return yield* Effect.fail(first.failure);
   });
 
 /**
@@ -402,9 +402,8 @@ export const codexParentsFromEdges = (edges: readonly CodexThreadSpawnEdgeRow[])
     if (!(child && parent)) {
       continue;
     }
-    const parents = candidates.get(child) ?? new Set<string>();
+    const parents = candidates.getOrInsertComputed(child, () => new Set<string>());
     parents.add(parent);
-    candidates.set(child, parents);
   }
 
   const parents = new Map<string, string>();
@@ -1010,9 +1009,8 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       return;
     }
     addDetailTokens(task.tokens, delta);
-    const bucket = task.modelTokens.get(currentModel) ?? emptyDetailTokens();
+    const bucket = task.modelTokens.getOrInsertComputed(currentModel, () => emptyDetailTokens());
     addDetailTokens(bucket, delta);
-    task.modelTokens.set(currentModel, bucket);
   };
 
   const finishUnanchoredTokens = (startedAt: Date | null, completedAt: Date | null): void => {

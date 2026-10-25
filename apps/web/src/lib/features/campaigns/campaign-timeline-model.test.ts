@@ -73,16 +73,15 @@ describe('project campaign timeline', () => {
     expect(result.groups[0]?.campaigns[0]?.bar).toMatchObject({ point: true });
   });
 
-  test.each([
-    { mode: 'all' },
-    { mode: 'custom', from: '2026-06-01' },
-    { mode: 'custom', to: '2026-06-30' },
-  ] as const)('keeps open presentation bounds for explicit fitting: %j', (range) => {
-    const search = { ...dashboardSearchDefaultsFor('date'), range };
-    expect(campaignTimelineRange(range, campaignMapFixtureGeneratedAt)).toEqual(
-      campaignsRequest(search, campaignMapFixtureGeneratedAt, 'revision').range,
-    );
-  });
+  test.each([{ mode: 'all' }, { mode: 'custom', from: '2026-06-01' }, { mode: 'custom', to: '2026-06-30' }] as const)(
+    'keeps open presentation bounds for explicit fitting: %j',
+    (range) => {
+      const search = { ...dashboardSearchDefaultsFor('date'), range };
+      expect(campaignTimelineRange(range, campaignMapFixtureGeneratedAt)).toEqual(
+        campaignsRequest(search, campaignMapFixtureGeneratedAt, 'revision').range,
+      );
+    },
+  );
   test('appends continuations without inserting campaigns into previously traversed project segments', async () => {
     const template = (await fixtureItems())[0]!;
     const items = Array.from(
@@ -173,12 +172,12 @@ describe('project campaign timeline', () => {
 
   test('keeps timing quality through project unions and leaves complete bands across real gaps', async () => {
     const template = (await fixtureItems())[0]!;
-    const item = (key: string, start: string, end: string, partial: boolean): SessionPageItem => ({
+    const item = (key: string, start: string, end: string, isPartial: boolean): SessionPageItem => ({
       ...template,
       campaignKey: key,
       chronology: buildCampaignChronology([
         { date: instant(start), endDate: instant(end) },
-        ...(partial ? [{ date: null, endDate: null }] : []),
+        ...(isPartial ? [{ date: null, endDate: null }] : []),
       ]),
     });
     const complete = item('complete', '08:00', '08:20', false);

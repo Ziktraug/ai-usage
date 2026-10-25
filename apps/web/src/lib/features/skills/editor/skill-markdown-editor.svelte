@@ -180,11 +180,9 @@
 </script>
 
 <section
-  {...(editorState.loading ||
-  editorState.saving ||
-  (editorState.document === undefined && editorState.error === null)
+  {...editorState.loading || editorState.saving || (editorState.document === undefined && editorState.error === null)
     ? { 'aria-busy': 'true' as const }
-    : {})}
+    : {}}
   class={editorSection}
   data-skill-markdown-editor
 >
@@ -212,7 +210,7 @@
   {/if}
   <div class={documentActions}>
     <button
-      {...(editorState.saving ? { 'aria-busy': 'true' as const } : {})}
+      {...editorState.saving ? { 'aria-busy': 'true' as const } : {}}
       class={commandButton}
       disabled={editorState.document === undefined ||
         !editorState.dirty ||

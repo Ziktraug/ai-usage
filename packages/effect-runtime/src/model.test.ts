@@ -33,7 +33,7 @@ describe('wide-event model and classifier', () => {
   });
 
   test('interruption-only cause becomes interrupted', () => {
-    expect(classifyExit(Exit.failCause(Cause.interrupt(1 as never)))).toEqual({
+    expect(classifyExit(Exit.failCause(Cause.interrupt(1)))).toEqual({
       outcome: 'interrupted',
       error: null,
     });

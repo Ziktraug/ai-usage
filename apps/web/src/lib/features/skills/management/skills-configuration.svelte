@@ -11,7 +11,17 @@
     sourceRepositoryDraftFrom,
     syncSourceRepositoryDraft,
   } from './model';
-  import { button, compactStack, errorNotice, heading, muted, notice, pathText, primaryButton } from './styles';
+  import {
+    button,
+    buttonStyle,
+    compactStack,
+    errorNotice,
+    heading,
+    muted,
+    notice,
+    pathText,
+    primaryButton,
+  } from './styles';
 
   let { context }: { context: SkillsShellSlotContext } = $props();
 
@@ -161,7 +171,7 @@
       </label>
       <button
         {...busyAttributes(pendingOperation === 'save-config')}
-        class={cx(button, primaryButton)}
+        class={css(buttonStyle, primaryButton)}
         disabled={pendingOperation !== null}
         onclick={saveSource}
         type="button"

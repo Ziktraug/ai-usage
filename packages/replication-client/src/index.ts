@@ -1,4 +1,4 @@
-import type { DeviceCredentialResolution } from '@ai-usage/identity/device-enrollment';
+import type { DeviceCredentialResolution } from '@ai-usage/identity';
 import { type DeviceCredentialToken, revealDeviceCredentialTokenForTransport } from '@ai-usage/identity/device-tokens';
 import {
   type Device,
@@ -25,8 +25,8 @@ const retryAfterPattern = /^\d+$/u;
 export class ReplicationClientError extends Error {
   readonly code: 'configuration-invalid' | 'response-invalid';
 
-  constructor(code: 'configuration-invalid' | 'response-invalid') {
-    super('The replication client operation failed.');
+  constructor(code: 'configuration-invalid' | 'response-invalid', options?: ErrorOptions) {
+    super('The replication client operation failed.', options);
     this.name = 'ReplicationClientError';
     this.code = code;
   }
@@ -115,6 +115,7 @@ const parseBaseUrl = (value: string, allowInsecureLoopback: boolean): URL => {
   try {
     url = new URL(value);
   } catch {
+    // No cause: redaction boundary, a URL parse error keeps the raw URL (credentials included) in `input`.
     throw new ReplicationClientError('configuration-invalid');
   }
   const loopback = url.hostname === '127.0.0.1' || url.hostname === '[::1]' || url.hostname === 'localhost';
@@ -166,8 +167,8 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
   }
   try {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
-  } catch {
-    throw new ReplicationClientError('response-invalid');
+  } catch (error) {
+    throw new ReplicationClientError('response-invalid', { cause: error });
   }
 };
 

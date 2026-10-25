@@ -26,6 +26,8 @@ const DEEP_SESSIONS = `${SESSIONS}&q=${encodeURIComponent(DETAIL_EXPLORATION_TIT
 const CAMPAIGN = '/campaigns?range=all&q=Continuity%20root';
 const FAR_CHILD = 'Continuity child 0359';
 const LINK_PARENT = 'Continuity child 0250';
+/** Agent Map nodes are named by their content: "Open session <title>" followed by the node's metadata. */
+const OPEN_LINK_PARENT_PATTERN = /^Open session Continuity child 0250(?:\s|$)/;
 const LINK_CHILD = 'Continuity child 0013';
 const ROUNDS = /^Rounds/;
 const OPEN_SESSION = /^Open session/;
@@ -39,6 +41,12 @@ const LOOKUP_PATH = '/rpc/session/lookup';
 const PAGE_PATH = '/rpc/session/page';
 const CHILDREN_PATH = '/rpc/session/campaignChildren';
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+/**
+ * The browser's own attempts at a failed lazy chunk: Vite's `<link rel=modulepreload>`, then the
+ * `import()`, which Chromium 156+ re-fetches after a failed preload while 155 and earlier reuse the
+ * failure. A further request before Reload means something beyond the browser's own load fetched the chunk.
+ */
+const BROWSER_CHUNK_LOAD_ATTEMPTS = 2;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -262,7 +270,9 @@ test('keeps a deeply acquired Sessions surface and anchor through Rounds, Back a
   const maximumIndex = () =>
     surface
       .locator('[data-session-index]')
-      .evaluateAll((rows) => Math.max(-1, ...rows.map((row) => Number(row.getAttribute('data-session-index')))));
+      .evaluateAll((rows) =>
+        Math.max(-1, ...rows.map((element) => Number(element.getAttribute('data-session-index')))),
+      );
   await expect
     .poll(
       async () => {
@@ -330,7 +340,7 @@ test('follows a linked child from Rounds and returns to the virtualized Agent Ma
   await waitForHydratedNavigation(page);
   const revision = await reportRevision(page);
   const map = page.locator('[data-campaign-scroll="map"]');
-  const parent = map.getByRole('button', { name: `Open session ${LINK_PARENT}`, exact: true });
+  const parent = map.getByRole('button', { name: OPEN_LINK_PARENT_PATTERN });
   for (let step = 0; step < 70 && !(await parent.isVisible()); step++) {
     await wheel(page, map, 600);
   }
@@ -478,11 +488,13 @@ test('recovers one failed Session details chunk only after an explicit reload at
     throw new Error('The built manifest must identify the lazy Session details chunk');
   }
   const pathname = `/${drawerChunk.file}`;
-  const verifyExpectedFailure = browserFailureGate.allowScriptResponseOnce({
+  const verifyExpectedFailures = browserFailureGate.allowScriptResponses({
     url: new URL(pathname, baseURL).href,
     status: 503,
+    maximum: BROWSER_CHUNK_LOAD_ATTEMPTS,
   });
-  let chunkRequests = 0;
+  const chunkRequests = { failed: 0, served: 0 };
+  let chunkAvailable = false;
   let documentRequests = 0;
   page.on('request', (request) => {
     if (request.resourceType() === 'document') {
@@ -490,12 +502,13 @@ test('recovers one failed Session details chunk only after an explicit reload at
     }
   });
   await page.route(`**${pathname}`, async (route) => {
-    chunkRequests++;
-    if (chunkRequests === 1) {
-      await route.fulfill({ status: 503, contentType: 'text/javascript', body: '' });
+    if (chunkAvailable) {
+      chunkRequests.served++;
+      await route.continue();
       return;
     }
-    await route.continue();
+    chunkRequests.failed++;
+    await route.fulfill({ status: 503, contentType: 'text/javascript', body: '' });
   });
   try {
     await openHydratedReport(page, DEEP_SESSIONS);
@@ -507,17 +520,19 @@ test('recovers one failed Session details chunk only after an explicit reload at
     await expect(reload).toBeVisible();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe('/');
     const selectedUrl = page.url();
-    expect(chunkRequests).toBe(1);
+    expect(chunkRequests.failed).toBeGreaterThanOrEqual(1);
+    expect(chunkRequests.failed).toBeLessThanOrEqual(BROWSER_CHUNK_LOAD_ATTEMPTS);
     expect(documentRequests).toBe(documentsBeforeOpen);
     expect(await main?.evaluate((element) => element.isConnected)).toBe(true);
+    chunkAvailable = true;
     await reload.click();
     await expectRounds(page, DETAIL_EXPLORATION_TITLE);
     await expect(page).toHaveURL(selectedUrl);
     expect(await reportRevision(page)).toBe(revision);
-    expect(chunkRequests).toBe(2);
+    expect(chunkRequests.served).toBeGreaterThanOrEqual(1);
     expect(documentRequests).toBe(documentsBeforeOpen + 1);
   } finally {
-    verifyExpectedFailure();
+    verifyExpectedFailures();
   }
 });
 

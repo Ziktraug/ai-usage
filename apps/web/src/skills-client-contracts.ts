@@ -288,14 +288,14 @@ const parseSourceState = (value: unknown): SkillSourceState => {
     state.skillOriginByName === undefined ? undefined : recordValue(state.skillOriginByName, 'skill source state');
   return {
     skillEnabledByName: Object.fromEntries(
-      Object.entries(enabled).map(([name, value]) => [name, booleanValue(value, 'skill source state')]),
+      Object.entries(enabled).map(([name, entryValue]) => [name, booleanValue(entryValue, 'skill source state')]),
     ),
     version: 1,
     ...(origins === undefined
       ? {}
       : {
           skillOriginByName: Object.fromEntries(
-            Object.entries(origins).map(([name, value]) => [name, stringValue(value, 'skill source state')]),
+            Object.entries(origins).map(([name, entryValue]) => [name, stringValue(entryValue, 'skill source state')]),
           ),
         }),
   };

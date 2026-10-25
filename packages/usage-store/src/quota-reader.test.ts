@@ -117,7 +117,7 @@ describe('bounded provider quota readers', () => {
   test('rejects caller-selected observation limits above the store budget', async () => {
     const dbPath = await createStore();
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryProviderQuotaObservations({
           dbPath,
           from: '2026-07-15T00:00:00.000Z',
@@ -127,8 +127,8 @@ describe('bounded provider quota readers', () => {
       ),
     );
 
-    expect(result._tag).toBe('Left');
-    expect((result as { left: UsageStoreError }).left.reason).toBe('invalid-input');
+    expect(result._tag).toBe('Failure');
+    expect((result as { failure: UsageStoreError }).failure.reason).toBe('invalid-input');
   });
 
   test('uses capped catalogs and indexed seeks instead of lifetime observation scans', async () => {
@@ -242,7 +242,7 @@ describe('bounded provider quota readers', () => {
     );
 
     const batchOverflow = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         importProviderQuotaBatch({
           checkpointUpdates: [{ cursor: { offset: 1000 }, cursorKey: 'overflow-batch', ...source }],
           dbPath,
@@ -251,7 +251,7 @@ describe('bounded provider quota readers', () => {
       ),
     );
     const attemptOverflow = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         recordProviderQuotaSourceAttempt({
           attemptedAt: new Date('2026-07-15T12:00:00.000Z'),
           cursorKey: 'overflow-attempt',
@@ -269,13 +269,13 @@ describe('bounded provider quota readers', () => {
       }),
     );
 
-    expect(batchOverflow._tag).toBe('Right');
-    expect(attemptOverflow._tag).toBe('Right');
+    expect(batchOverflow._tag).toBe('Success');
+    expect(attemptOverflow._tag).toBe('Success');
     expect(states).toHaveLength(3);
-    const all = await Effect.runPromise(Effect.either(queryProviderQuotaSourceStates({ dbPath, ...source })));
-    expect(all._tag).toBe('Left');
+    const all = await Effect.runPromise(Effect.result(queryProviderQuotaSourceStates({ dbPath, ...source })));
+    expect(all._tag).toBe('Failure');
     const oversized = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryProviderQuotaSourceStates({
           dbPath,
           ...source,
@@ -283,6 +283,6 @@ describe('bounded provider quota readers', () => {
         }),
       ),
     );
-    expect(oversized._tag).toBe('Left');
+    expect(oversized._tag).toBe('Failure');
   });
 });

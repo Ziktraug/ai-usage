@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { deferredMemoryPageData, loadMemoryPageData } from '$lib/features/memory/memory-load';
-import { memoryCanonicalRedirect } from '$lib/features/memory/memory-url';
+import { deferredMemoryPageData, loadMemoryPageData } from '#lib/features/memory/memory-load.ts';
+import { memoryCanonicalRedirect } from '#lib/features/memory/memory-url.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, isDataRequest, url }) => {

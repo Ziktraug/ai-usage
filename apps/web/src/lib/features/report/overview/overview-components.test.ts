@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import { heatCellToday } from '@ai-usage/design-system/report';
 import { projectFocusedBreakdown, projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
 import type { ProviderLimitWindow } from '@ai-usage/report-core/provider-status';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
@@ -9,7 +10,7 @@ import type { ProviderStatusView } from '../../../../provider-status-model';
 import { demoReportPayload } from '../../../../report-data';
 
 interface SvelteServerModule {
-  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+  render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
 const RECORD_DISCLOSURE_PATTERN = /aria-hidden="true" class="[^"]+">↗<\/span>/;
@@ -324,6 +325,8 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body.match(/aria-current="date"/g)).toHaveLength(1);
     expect(todayButton).toContain('tabindex="0"');
     expect(todayButton).toContain('aria-current="date"');
+    // Today's marker, whose forced-colours outline is the palette's CanvasText (design-system overview).
+    expect(todayButton).toContain(heatCellToday);
     expect(todayButton).toContain('1 session');
     expect(todayButton).not.toContain('1 sessions');
     expect(todayButton).toMatch(SINGLE_SESSION_FIRST_PATTERN);

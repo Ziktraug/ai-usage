@@ -102,7 +102,7 @@ const descriptorFor = async (
       refetchType: 'none',
     });
   }
-  return initialFocusedReportDescriptor(await dependencies.queryClient.fetchQuery(bootstrapOptions));
+  return initialFocusedReportDescriptor(await dependencies.queryClient.query(bootstrapOptions));
 };
 
 const loadDestination = async (
@@ -113,7 +113,7 @@ const loadDestination = async (
   sessionWindowIntent: SessionWindowIntent,
 ): Promise<ReportDestinationQueryData> => {
   const overviewRequest = overviewRequestFor(destination, descriptor.revision);
-  const overviewPromise = dependencies.queryClient.fetchQuery(
+  const overviewPromise = dependencies.queryClient.query(
     reportOverviewQueryOptions(dependencies.reportClient, overviewRequest, { browser: true }),
   );
   if (destination.kind === 'overview') {
@@ -146,7 +146,7 @@ const loadDestination = async (
   };
   const [overviewResult, breakdownResult] = await Promise.all([
     overviewPromise,
-    dependencies.queryClient.fetchQuery(
+    dependencies.queryClient.query(
       reportBreakdownQueryOptions(dependencies.reportClient, breakdownRequest, { browser: true }),
     ),
   ]);
@@ -194,7 +194,7 @@ export const reportDestinationQueryOptions = (
         try {
           const descriptor = preservedDescriptor ?? (await descriptorFor(dependencies, attempt > 0));
           signal.throwIfAborted();
-          const result = await dependencies.queryClient.fetchQuery(
+          const result = await dependencies.queryClient.query(
             exactDestinationQueryOptions(dependencies, destination, descriptor, sessionWindowIntent),
           );
           signal.throwIfAborted();
@@ -236,7 +236,7 @@ export const refreshReportDestination = async (
     queryKey: options.queryKey,
     refetchType: 'none',
   });
-  const acquisition = dependencies.queryClient.fetchQuery(options);
+  const acquisition = dependencies.queryClient.query(options);
   const [, , result] = await Promise.all([cancellation, invalidation, acquisition]);
   return result;
 };

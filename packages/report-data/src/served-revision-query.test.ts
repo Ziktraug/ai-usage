@@ -268,7 +268,7 @@ describe('durable served revision query dispatcher', () => {
     }
 
     const mismatchedRevision = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryServedRevisionData({
           dbPath,
           kind: 'sessions',
@@ -277,11 +277,11 @@ describe('durable served revision query dispatcher', () => {
         }),
       ),
     );
-    expect(mismatchedRevision._tag).toBe('Left');
-    expect((mismatchedRevision as { left: ServedRevisionQueryError }).left.reason).toBe('revision-mismatch');
+    expect(mismatchedRevision._tag).toBe('Failure');
+    expect((mismatchedRevision as { failure: ServedRevisionQueryError }).failure.reason).toBe('revision-mismatch');
 
     const mismatchedCursor = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         queryServedRevisionData({
           dbPath,
           kind: 'sessions',
@@ -290,8 +290,8 @@ describe('durable served revision query dispatcher', () => {
         }),
       ),
     );
-    expect(mismatchedCursor._tag).toBe('Left');
-    expect((mismatchedCursor as { left: ServedRevisionQueryError }).left.reason).toBe('invalid-request');
+    expect(mismatchedCursor._tag).toBe('Failure');
+    expect((mismatchedCursor as { failure: ServedRevisionQueryError }).failure.reason).toBe('invalid-request');
   });
 
   test('executes the fixed recursive campaign-cost sorts inside the closed catalog', async () => {

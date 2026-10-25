@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { createContext } from 'svelte';
 
 export interface SessionWindowAnchorOwner {
   readonly available: () => boolean;
@@ -9,11 +9,11 @@ export interface SessionWindowAnchorOwner {
 }
 
 interface SessionWindowAnchorPort {
-  readonly replace: (state: App.PageState) => void;
+  /** Receives a history write that SvelteKit rejected; the owner never drops one silently. */
+  readonly onFailure: (cause: unknown) => void;
+  readonly replace: (state: App.PageState) => Promise<void>;
   readonly state: () => App.PageState;
 }
-
-const sessionWindowAnchorContextKey = Symbol('ai-usage-session-window-anchor');
 
 export const createSessionWindowAnchorOwner = (port: SessionWindowAnchorPort): SessionWindowAnchorOwner => {
   let pendingPreservedEntry = false;
@@ -22,7 +22,7 @@ export const createSessionWindowAnchorOwner = (port: SessionWindowAnchorPort): S
     if (state.aiUsageSessionWindowAnchorConsumed === true) {
       return;
     }
-    port.replace({ ...state, aiUsageSessionWindowAnchorConsumed: true });
+    port.replace({ ...state, aiUsageSessionWindowAnchorConsumed: true }).catch(port.onFailure);
   };
   return {
     available: () => !pendingPreservedEntry && port.state().aiUsageSessionWindowAnchorConsumed !== true,
@@ -43,14 +43,4 @@ export const createSessionWindowAnchorOwner = (port: SessionWindowAnchorPort): S
   };
 };
 
-export const provideSessionWindowAnchorOwner = (owner: SessionWindowAnchorOwner): void => {
-  setContext(sessionWindowAnchorContextKey, owner);
-};
-
-export const useSessionWindowAnchorOwner = (): SessionWindowAnchorOwner => {
-  const owner = getContext<SessionWindowAnchorOwner | undefined>(sessionWindowAnchorContextKey);
-  if (!owner) {
-    throw new Error('Session window anchor context is unavailable');
-  }
-  return owner;
-};
+export const [useSessionWindowAnchorOwner, provideSessionWindowAnchorOwner] = createContext<SessionWindowAnchorOwner>();

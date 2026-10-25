@@ -192,6 +192,8 @@ dependency.
 | 115 | [Local session distillation](115-local-session-distillation.md) | P1 | L | - | DONE (synthetic active-harness workflow, durable local corpus, CLI and Session integration verified; real-history evaluation and real-store upgrade unperformed) |
 | 116 | [Session lineage view — campaign lanes, then project × time](116-session-lineage-view.md) | P1 | L | 114 (phases 1–3); PR #62 (merged) for the Codex part | TODO (promoted 2026-10-20 from the lineage exploration; nothing implemented) |
 | 117 | [Work view and read-only review routing simulation](117-work-view-routing-simulation.md) | P1 | L | Existing served Session readers and quota feed | PARTIAL (slice gate passed at `3e83e93d`; PR #66 Memory URL repair awaits runtime rerun; nonproduction restart and distillation residual lot remain) |
+| 119 | [Dependency upgrade — Bun 1.4, Effect 4, SvelteKit 3, Panda 2, Ultracite 8](119-dependency-upgrade-2026-10.md) | P1 | L | - | DONE locally (branch `chore/upgrade-dependencies`, committed, not pushed; CI pending; 117–118 are taken by the work-resume branches) |
+| 120 | [Local-only cleanup — remove the connected platform and dead features, take the upgrade's opportunities](120-local-only-cleanup.md) | P1 | L | 119; phase B waits for PR #67 | PHASE A DONE locally (stacked branches `refactor/remove-connected-platform`, `feat/upgrade-opportunities`, `docs/adr-consolidation`, `fix/plan-120-review`; not pushed); phase B TODO after PR #67 |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:

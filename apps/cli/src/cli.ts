@@ -36,12 +36,6 @@ export interface ProjectsListArgs {
   paths: boolean;
 }
 
-export interface SetupArgs {
-  files: string[];
-  local: boolean;
-  port: number;
-}
-
 export interface CursorImportArgs {
   file: string;
 }
@@ -89,7 +83,6 @@ export type CliCommand =
   | { _tag: 'MemorySearch'; args: MemorySearchArgs }
   | { _tag: 'ReplicationStatus'; args: ReplicationStatusArgs }
   | { _tag: 'ProjectsList'; args: ProjectsListArgs }
-  | { _tag: 'Setup'; args: SetupArgs }
   | { _tag: 'CursorImport'; args: CursorImportArgs };
 
 const cliArgumentError = (message: string) => new CliArgumentError({ message });
@@ -117,13 +110,6 @@ const parsePositiveInt = (value: string, name: string): Effect.Effect<number, Cl
   return !Number.isInteger(n) || n < 1 || String(n) !== value
     ? Effect.fail(cliArgumentError(`${name} expects a positive integer`))
     : Effect.succeed(n);
-};
-
-const parseTcpPort = (value: string, name: string): Effect.Effect<number, CliArgumentError> => {
-  const port = Number(value);
-  return !Number.isSafeInteger(port) || port < 0 || port > 65_535 || String(port) !== value
-    ? Effect.fail(cliArgumentError(`${name} expects an integer from 0 to 65535`))
-    : Effect.succeed(port);
 };
 
 const parseSort = (value: string): Effect.Effect<SortKey, CliArgumentError> => {
@@ -160,7 +146,6 @@ export const helpText =
   '  replication status     show outbound publication state\n' +
   '  projects list          summarize detected projects\n' +
   '  cursor import <csv>    copy a Cursor usage export into local ignored storage\n' +
-  '  setup                  launch project alias setup UI\n' +
   '  quota                  subscription quota per provider (Claude, Codex)\n\n' +
   'Options:\n' +
   '  --since <30d|12w|24h>  only sessions active since\n' +
@@ -203,9 +188,7 @@ export const helpText =
   '\nProjects:\n' +
   '  projects list --paths [files...] [--local]\n' +
   '\nCursor:\n' +
-  '  cursor import <csv>    import a cursor.com usage-events CSV export\n' +
-  '\nSetup:\n' +
-  '  setup [files...] [--local] [--port 3456]\n';
+  '  cursor import <csv>    import a cursor.com usage-events CSV export\n';
 
 export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError> =>
   Effect.gen(function* () {
@@ -537,28 +520,6 @@ const parseReplicationCommand = (argv: string[]): Effect.Effect<CliCommand, CliA
     return { _tag: 'ReplicationStatus', args: { json } };
   });
 
-const parseSetupArgs = (argv: string[]): Effect.Effect<SetupArgs, CliArgumentError> =>
-  Effect.gen(function* () {
-    const args: SetupArgs = { files: [], local: false, port: 3456 };
-    const rest = [...argv];
-    while (rest.length) {
-      const arg = rest.shift()!;
-      if (arg === '--local') {
-        args.local = true;
-      } else if (arg === '--port') {
-        args.port = yield* parseTcpPort(yield* parseRequiredValue(rest, '--port'), '--port');
-      } else if (arg.startsWith('--')) {
-        return yield* Effect.fail(cliArgumentError(`Unknown option for setup: ${arg}`));
-      } else {
-        args.files.push(arg);
-      }
-    }
-    if (!args.local && args.files.length === 0) {
-      return yield* Effect.fail(cliArgumentError('setup expects files or --local'));
-    }
-    return args;
-  });
-
 export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
   Effect.gen(function* () {
     const rest = [...argv];
@@ -597,10 +558,6 @@ export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgum
     if (command === 'cursor') {
       rest.shift();
       return yield* parseCursorCommand(rest);
-    }
-    if (command === 'setup') {
-      rest.shift();
-      return { _tag: 'Setup', args: yield* parseSetupArgs(rest) };
     }
     if (command === 'report') {
       rest.shift();

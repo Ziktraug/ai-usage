@@ -65,7 +65,7 @@ const viteServer = await createServer({
   configFile: false,
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [...svelte()],
-  resolve: { alias: { '$app/environment': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
+  resolve: { alias: { '$app/env': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
   root: repositoryDirectory,
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
@@ -179,15 +179,15 @@ describe('Memory proposal review surface', () => {
     );
     const data = { queryState: dehydrateWebQueryClient(client) };
     client.clear();
-    const proposal = render(fixture, { props: { data, address: '/memory?view=review' } }).body;
+    const renderedProposal = render(fixture, { props: { data, address: '/memory?view=review' } }).body;
     const accepted = render(fixture, { props: { data, address: '/memory' } }).body;
-    expect(proposal).toContain('analysis=saved');
-    expect(proposal).toContain('Accept proposal');
-    expect(proposal).toContain('Local only · remains local after acceptance');
+    expect(renderedProposal).toContain('analysis=saved');
+    expect(renderedProposal).toContain('Accept proposal');
+    expect(renderedProposal).toContain('Local only · remains local after acceptance');
     expect(accepted).toContain('Accepted local lesson');
     expect(accepted).toContain('Retained provenance');
     expect(accepted).toContain('analysis=saved');
-    for (const body of [proposal, accepted]) {
+    for (const body of [renderedProposal, accepted]) {
       expect(body).not.toMatch(retiredAnalysisLink);
       expect(body).not.toContain('Read source analysis and evidence');
     }

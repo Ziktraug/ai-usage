@@ -1,6 +1,9 @@
 # ADR 0008: Wide-event presentation, provenance, and delivery diagnostics
 
-- **Status**: Accepted
+- **Status**: Accepted; consolidated 2026-10-24 into the current statement of
+  [ADR 0014](0014-effect-runtime-package-for-wide-events.md), which restates
+  every decision below. This record keeps the schema-v2 context and the
+  reasons.
 - **Date**: 2026-07-22
 - **Supersedes**: selected clauses of
   [ADR 0014](0014-effect-runtime-package-for-wide-events.md) (formerly

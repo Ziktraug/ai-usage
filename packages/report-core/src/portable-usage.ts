@@ -59,7 +59,6 @@ const readJsonStringToken = (text: string, start: number): JsonStringToken | und
       decoded += escapedCharacter;
     }
   }
-  return;
 };
 
 const skipJsonWhitespace = (text: string, start: number): number => {

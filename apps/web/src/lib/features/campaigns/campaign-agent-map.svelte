@@ -133,6 +133,7 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
   const nodeTitle = css({ display: 'block', fontWeight: 550, fontSize: '12px', overflowWrap: 'anywhere' });
+  const visuallyHidden = css({ srOnly: true });
   const meta = css({ display: 'block', color: 'muted', fontSize: '10px', lineHeight: 1.6, overflowWrap: 'anywhere' });
   const track = css({
     position: 'relative',
@@ -142,7 +143,7 @@
     backgroundImage:
       'linear-gradient(to right, transparent 24.8%, token(colors.line) 25%, transparent 25.2%, transparent 49.8%, token(colors.line) 50%, transparent 50.2%, transparent 74.8%, token(colors.line) 75%, transparent 75.2%)',
   });
-  const bar = css({
+  const bar = css.raw({
     position: 'absolute',
     top: '7px',
     h: '14px',
@@ -151,8 +152,8 @@
     borderRadius: '3px',
     bg: 'chart.c2',
   });
-  const rootBar = css({ bg: 'accent' });
-  const reviewBar = css({ bg: 'chart.c4' });
+  const rootBar = css.raw({ bg: 'accent' });
+  const reviewBar = css.raw({ bg: 'chart.c4' });
   const axis = css({
     display: 'flex',
     justifyContent: 'space-between',
@@ -234,7 +235,10 @@
     bind:this={virtualList}
     bind:navigation
   >
-    {#snippet children(_entry, _index)}
+    {#snippet children(
+      _entry,
+      _index,
+    )}
       {@const node = _entry.node}
       {@const expanded = !collapsed.has(node.row.rowId)}
       <div
@@ -257,16 +261,15 @@
         {:else}
           <span></span>
         {/if}
-        <button
-          aria-describedby={`campaign-node-description-${_index}`}
-          aria-label={`Open session ${node.title}`}
-          class={nodeButton}
-          onclick={() => onOpen(node.row)}
-          type="button"
-        >
+        <!-- Named by its content so the visible text is part of the accessible name (WCAG 2.5.3):
+             a hidden "Open session" prefix carries the action, the glyph stays decorative. -->
+        <button class={nodeButton} onclick={() => onOpen(node.row)} type="button">
           <span style:padding-left={`${Math.min(node.depth, 8) * 12}px`}>
-            <span class={nodeTitle}>{nodePrefix(node)}{node.title}</span>
-            <span class={meta} id={`campaign-node-description-${_index}`}
+            <span class={nodeTitle}
+              ><span class={visuallyHidden}>Open session </span><span aria-hidden="true">{nodePrefix(node)}</span>
+              {node.title}</span
+            >
+            <span class={meta}
               >{relationshipLabel(node)}
               · {node.row.harness} · {node.row.modelLabel || 'Model not recorded'}</span
             >
@@ -286,7 +289,7 @@
           {#if node.startMs !== null || node.endMs !== null}
             <span aria-hidden="true" class={track}
               ><span
-                class={cx(bar, node.relationship === 'root' && rootBar, node.relationship === 'review' && reviewBar)}
+                class={css(bar, node.relationship === 'root' && rootBar, node.relationship === 'review' && reviewBar)}
                 data-campaign-bar
                 data-timing={node.timingStatus}
                 style:border-radius={node.startMs === null || node.endMs === null ? '50%' : undefined}
@@ -306,7 +309,7 @@
     activity.
   </p>
   {#if visibleNodes.length < map.nodes.length}
-    <button class={ghostButton} onclick={() => collapsed = new Set()} type="button">
+    <button class={ghostButton} onclick={() => (collapsed = new Set())} type="button">
       Show all {map.loadedCount} loaded sessions
     </button>
   {/if}

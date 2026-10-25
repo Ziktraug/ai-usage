@@ -126,7 +126,7 @@ export const fetchReportBreakdown = async (
   queryClient: QueryClient,
   client: ReportQueryClient,
   request: FocusedBreakdownRequest,
-) => await queryClient.fetchQuery(reportBreakdownQueryOptions(client, request, { browser: true }));
+) => await queryClient.query(reportBreakdownQueryOptions(client, request, { browser: true }));
 
 export const setCampaignLabelOverrideMutationOptions = (
   client: Pick<ReportMutationClient, 'setCampaignLabelOverride'>,

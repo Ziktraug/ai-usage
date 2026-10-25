@@ -110,8 +110,8 @@ const parseNonNegativeSafeInteger = (value: unknown, label: string): number => {
 const parseReportRevision = (value: unknown): string => {
   try {
     return parseServedRevision(value, 'report revision');
-  } catch {
-    throw new Error('Invalid report revision.');
+  } catch (error) {
+    throw new Error('Invalid report revision.', { cause: error });
   }
 };
 

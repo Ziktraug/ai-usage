@@ -462,8 +462,8 @@
     {activeSeriesKeys}
     {machineFreshnessStatus}
     {onDimensionFilter}
-    {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
-    {...(presentMachineSeries ? { presentMachineSeries } : {})}
+    {...presentCampaignSeries ? { presentCampaignSeries } : {}}
+    {...presentMachineSeries ? { presentMachineSeries } : {}}
     {timeline}
     {value}
     {visibleRange}

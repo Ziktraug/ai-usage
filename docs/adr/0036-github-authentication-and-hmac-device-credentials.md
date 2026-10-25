@@ -1,6 +1,7 @@
 # ADR 0036: GitHub authentication and HMAC Device credentials
 
-- **Status**: Accepted
+- **Status**: Superseded on 2026-10-24: the connected platform is deleted (plan 120)
+- **Superseded by**: [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
 
 ## Context
@@ -23,6 +24,22 @@ secure cookies, database-backed state, encrypted provider tokens, and explicit
 account linking. That evidence supports the accepted decision; the runtime is
 not available on `main` until plan 104 reaches `DONE`. Auth-library rows and
 APIs remain adapter-private.
+
+### Amended 2026-10-22
+
+Better Auth and `@better-auth/drizzle-adapter` are pinned to `1.7.12`. Better
+Auth `1.7.3` reverted the `1.7.0`–`1.7.2` account identity to
+`(providerId, accountId)`; migration ordinal 11 makes the `issuer` column
+nullable and replaces the `(issuer, account_id)` key with
+`(provider_id, account_id)`, refusing to apply while a provider key maps to
+more than one row (SQLSTATE `IA003`, reported in the server's start-failure
+diagnostic). Schema validation, enabled by default since `1.7.3`, stays on:
+the identity adapter wrappers carry the library's schema check so it is
+enforced before authentication requests rather than skipped, and an adapter
+with no check to carry fails the shared-authentication construction. Every
+`better-auth` and `@better-auth/*` import stays inside identity's
+adapter-private modules, except the Drizzle adapter, which stays private to the
+PostgreSQL authentication adapter. The rest of the decision is unchanged.
 
 GitHub is the only normal shared login. It requests exactly `read:user` and
 `user:email`, identifies an Authentication identity by the stable GitHub
@@ -85,6 +102,6 @@ contracts and migration path.
 
 ## Evidence
 
-- [Authentication and Device enrollment](../authentication-and-device-enrollment.md)
+- Authentication and Device enrollment guide: `docs/authentication-and-device-enrollment.md`, removed with the platform by plan 120 (git history keeps it)
 - [Identity separation](0033-separate-person-auth-scm-and-device-identities.md)
 - [Plan 104](../../plans/104-authentication-github-device-enrollment.md)

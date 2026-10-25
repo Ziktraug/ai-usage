@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
   columnVisibilityForSessionPreset,
-  defaultColumnVisibility,
   sessionColumnPresets,
+  sessionColumnSchema,
 } from '../../../../session-table-schema';
 import { USAGE_UNAVAILABLE_HINT } from '../../../foundation/presentation/report-value';
 import {
@@ -30,7 +30,7 @@ describe('Svelte session table schema adapter', () => {
     expect(sessionTableColumns).toHaveLength(25);
     expect(new Set(sessionTableColumns.map((column) => column.id)).size).toBe(25);
     expect(sessionTableColumns[1]?.id).toBe('session');
-    expect(sessionTableColumns[1]?.enableHiding).not.toBe(true);
+    expect(sessionColumnSchema.find((column) => column.id === 'session')?.hideable).toBe(false);
     expect(sessionColumnPresets.map(({ id }) => id)).toEqual(['work', 'tokens', 'reliability']);
     expect(visibleSessionTableColumns(columnVisibilityForSessionPreset('work')).map(({ id }) => id)).toEqual([
       'date',
@@ -68,16 +68,12 @@ describe('Svelte session table schema adapter', () => {
     const collapsed = createSessionTableModel({
       expanded: {},
       rows: [campaign],
-      sorting: [{ desc: true, id: 'date' }],
-      visibility: defaultColumnVisibility,
     });
     expect(collapsed.rows.map(({ id }) => id)).toEqual([campaign.rowId]);
 
     const expanded = createSessionTableModel({
       expanded: toggleSessionRowExpanded({}, campaign.rowId),
       rows: [campaign],
-      sorting: [{ desc: true, id: 'date' }],
-      visibility: defaultColumnVisibility,
     });
     expect(expanded.rows.map(({ id }) => id)).toEqual([campaign.rowId, child.rowId]);
     expect(expanded.rows[1]?.depth).toBe(1);
@@ -186,8 +182,6 @@ describe('Svelte session table schema adapter', () => {
         canLoadCampaignChildren: true,
         expanded: {},
         rows: [row],
-        sorting: [{ desc: true, id: 'date' }],
-        visibility: defaultColumnVisibility,
       });
 
     expect(modelFor(singleton).rows[0]?.getCanExpand()).toBe(false);

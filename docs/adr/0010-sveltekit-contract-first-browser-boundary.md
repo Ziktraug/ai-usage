@@ -1,8 +1,12 @@
 # ADR 0010: SvelteKit with a contract-first browser boundary
 
-- **Status**: Accepted. Re-accepted 2026-08-09 after the reported Activity
-  regression was repaired and the permanent presentation, browser, and export
-  gates replaced the retired migration ledger.
+- **Status**: Superseded 2026-10-24 by
+  [ADR 0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md), which
+  restates the surviving boundary decisions and corrects this record's Query
+  lifecycle text. Previously accepted, and re-accepted 2026-08-09 after the
+  reported Activity regression was repaired and the permanent presentation,
+  browser, and export gates replaced the retired migration ledger.
+- **Superseded by**: [ADR 0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md)
 - **Date**: 2026-08-02
 - **Amends**: the Web framework and browser transport only
 - **Preserves**: ADR 0007 and ADR 0009 (sole-writer usage engine and direct SQLite readers)

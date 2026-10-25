@@ -1,4 +1,4 @@
-import { Clock, Effect, type Exit, FiberRef, Option } from 'effect';
+import { Clock, Effect, type Exit, Option } from 'effect';
 import { safeClassifyHop } from './classifier';
 import { nanosToMillis } from './duration';
 import type { BoundaryOutcome } from './model';
@@ -11,7 +11,7 @@ export interface MeasuredOptions<A, E> {
 const openMeasuredHop = (name: string): Effect.Effect<OpenHopHandle, never, WideEventService> =>
   Effect.gen(function* () {
     const wideEvent = yield* WideEventService;
-    const parentId = yield* FiberRef.get(currentWideEventHop);
+    const parentId = yield* currentWideEventHop;
     const span = yield* Effect.currentSpan.pipe(Effect.option);
     return yield* wideEvent.openHop({
       name,
@@ -28,7 +28,7 @@ export const withMeasured =
       const wideEvent = yield* WideEventService;
       const handle = yield* openMeasuredHop(name);
       const startedAt = yield* Clock.currentTimeNanos;
-      return yield* Effect.locally(
+      return yield* Effect.provideService(
         effect.pipe(
           Effect.onExit((exit) =>
             Effect.gen(function* () {

@@ -11,17 +11,17 @@
     "./facets": "./src/facets.ts",
     "./rtk-enrichment": "./src/rtk-enrichment.ts"
   },
-  "dependencies": {
-    "@ai-usage/local-machine": "workspace:*",
-    "@ai-usage/report-core": "workspace:*",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.226",
-    "effect": "^3.21.4"
-  },
   "scripts": {
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
-    "test": "bun test",
+    "format": "biome format --write .",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "test": "bun test --parallel"
+  },
+  "dependencies": {
+    "@ai-usage/local-machine": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.308",
+    "effect": "^4.0.5"
   }
 }

@@ -15,6 +15,18 @@ Playwright remains the only browser test runner. A shared fixture fails on uncau
 
 Ordinary, demo, and production suites share failure semantics. Visual coverage stays reviewable and intentionally small.
 
+### 2026-10-24 amendment: the design-system component fixtures
+
+`packages/design-system` keeps one accepted exception. Its `test:browser`
+script mounts the Svelte controls and overlays fixtures in Chromium through the
+`playwright` library and a Vite fixture server
+(`src/svelte/controls/controls.browser.ts`, `src/svelte/overlays/overlays.browser.ts`)
+and fails on console, page and request errors. It is a component-fixture check
+for a library without an application, run on demand; it is not part of
+`verify` or CI and shares neither the app fixture nor its reporters. It stays
+limited to interaction assertions on design-system primitives: screenshots,
+axe runs and anything that needs the application belong in `apps/web/e2e`.
+
 ## Rejected alternative
 
 Storybook, a DOM emulator, and a second visual manifest/platform were rejected because they would duplicate the existing application-level stack.

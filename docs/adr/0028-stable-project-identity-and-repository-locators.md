@@ -1,18 +1,31 @@
 # ADR 0028: Stable Project identity and Repository locators
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by
+  [ADR 0074](0074-local-only-single-operator-product.md); retires with accepted
+  Memory and `/projects` in plan 120 phase B
 - **Date**: 2026-08-29
+- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
+
+> Amended 2026-10-24 (ADR 0074): the cross-device motivation is withdrawn. The
+> Project, Repository and Checkout binding is local: it serves accepted Memory
+> and the `/projects` resolution review on one operator's machines, and the
+> Space is the one personal Space the Memory store creates on first open, kept
+> in the schema without a migration. "Cross-device" and the Work handoff
+> consumer (ADR 0032, retired) are removed from the Context and the first
+> Decision sentence. Report Session grouping never used
+> this binding (ADR 0074). When phase B removes accepted Memory and
+> `/projects`, this record retires.
 
 ## Context
 
 Current report Project sources are machine-and-path identities and Project
-groups are local presentation configuration. Cross-device Memory and Work
-handoffs need a durable work identity, while repository URLs, slugs, paths, and
-remotes change and do not cover non-Git or monorepo-subpath work.
+groups are local presentation configuration. Memory needs a durable work
+identity, while repository URLs, slugs, paths, and remotes change and do not
+cover non-Git or monorepo-subpath work.
 
 ## Decision
 
-`ProjectId` is the stable cross-device identity. A Project belongs explicitly
+`ProjectId` is the stable identity. A Project belongs explicitly
 to a Space and may optionally reference a Repository and repository subpath.
 Non-Git Projects are valid.
 
