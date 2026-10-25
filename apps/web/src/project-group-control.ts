@@ -1,6 +1,6 @@
 import { type ProjectGroupConfig, projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
 import {
-  parseWebUsageEngineCommand,
+  parseProjectGroupsByReferenceCommand,
   type UsageEngineProjectSourceReference,
   type WebUsageEngineCommand,
 } from '@ai-usage/usage-engine-control';
@@ -29,7 +29,8 @@ export const buildProjectGroupReferenceCommand = async (
   projectGroups: readonly ProjectGroupConfig[],
   revision: string,
 ): Promise<ProjectGroupReferenceCommand> => {
-  const command = parseWebUsageEngineCommand({
+  // The narrow parser: the report's first load must not carry every engine command's validation.
+  return parseProjectGroupsByReferenceCommand({
     command: 'replace-project-groups-by-reference',
     projectGroups: await Promise.all(
       projectGroups.map(async (group) => ({
@@ -40,8 +41,4 @@ export const buildProjectGroupReferenceCommand = async (
     ),
     revision,
   });
-  if (command.command !== 'replace-project-groups-by-reference') {
-    throw new Error('Project group reference command parsing returned another command kind.');
-  }
-  return command;
 };

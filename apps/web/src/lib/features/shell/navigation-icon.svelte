@@ -49,6 +49,13 @@
     <path d="M21 3v5h-5"></path>
     <path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"></path>
     <path d="M3 21v-5h5"></path>
+  {:else if name === 'delegation'}
+    <!-- One caller handing a bounded task to one of several routes: a node fanning out to three. -->
+    <circle cx="5" cy="12" r="2.5"></circle>
+    <circle cx="19" cy="5" r="2.5"></circle>
+    <circle cx="19" cy="12" r="2.5"></circle>
+    <circle cx="19" cy="19" r="2.5"></circle>
+    <path d="M7.5 12h9M7.3 11 16.6 6M7.3 13l9.3 5"></path>
   {:else}
     <ellipse cx="12" cy="5.5" rx="8" ry="3"></ellipse>
     <path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"></path>

@@ -1,3 +1,5 @@
+import type { DelegationRpcDependencies } from './delegation';
+import { createDelegationRpcRouter } from './delegation';
 import type { MemoryRpcDependencies } from './memory';
 import { createMemoryRpcRouter } from './memory';
 import type { ProjectsRpcDependencies } from './projects';
@@ -20,6 +22,7 @@ import type { WorkRoutingRpcDependencies } from './work-routing';
 import { createWorkRoutingRpcRouter } from './work-routing';
 
 export interface WebRpcRouterDependencies {
+  readonly delegation: DelegationRpcDependencies;
   readonly memory: MemoryRpcDependencies;
   readonly projects: ProjectsRpcDependencies;
   readonly replication: ReplicationRpcDependencies;
@@ -37,6 +40,7 @@ export interface WebRpcRouterDependencies {
 
 export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
   ...createReportRpcRouter(dependencies.report),
+  delegation: createDelegationRpcRouter(dependencies.delegation),
   memory: createMemoryRpcRouter(dependencies.memory),
   projects: createProjectsRpcRouter(dependencies.projects),
   replication: createReplicationRpcRouter(dependencies.replication),

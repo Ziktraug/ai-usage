@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { webContract } from './contract';
+import { delegationContract } from './delegation';
 import { memoryContract } from './memory';
 import { projectsContract } from './projects';
 import { replicationContract } from './replication';
@@ -14,6 +15,7 @@ import { workRoutingContract } from './work-routing';
 test('composes every RPC leaf under one root contract', () => {
   expect(webContract).toEqual({
     ...reportContract,
+    delegation: delegationContract,
     memory: memoryContract,
     projects: projectsContract,
     replication: replicationContract,

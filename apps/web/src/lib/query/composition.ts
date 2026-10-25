@@ -35,6 +35,8 @@ export type PublicationQueryEffect = 'invalidate-collection-identity' | 'invalid
 
 export interface WebQueryOwnership {
   readonly family:
+    | 'delegation-jobs'
+    | 'delegation-settings'
     | 'memory'
     | 'projects'
     | 'quota'
@@ -144,6 +146,24 @@ export const webQueryOwnership = [
     // Review attempts are written by the engine when the operator launches one; the list polls
     // every five seconds exactly while an attempt is live (requested, starting, running), and stops.
     family: 'work-attempts',
+    policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
+  {
+    // The delegation policy is read from the home config and written only through the engine on
+    // the operator's save; the save invalidates exactly this identity. The Delegation page awaits it
+    // in its server load (`delegation-load.ts`).
+    family: 'delegation-settings',
+    policy: 'bounded-control-plane',
+    publication: 'none',
+    rendering: 'ssr-awaited',
+  },
+  {
+    // Delegation jobs are written by the engine when an MCP client or the CLI starts one, never by
+    // this page: the list polls every five seconds while a job is live and every thirty seconds
+    // otherwise, so work started elsewhere appears; a detail polls while its job is live and stops.
+    family: 'delegation-jobs',
     policy: 'finite-swr',
     publication: 'none',
     rendering: 'browser-only',

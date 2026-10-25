@@ -11,7 +11,7 @@ import {
 import { createServerStateNetworkTrace } from './server-state-network';
 
 const ANY_VALUE_PATTERN = /.+/;
-const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync/;
+const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync|Delegation/;
 
 const navigateAndWaitForRouteData = async (page: Page, link: Locator, pathname: string): Promise<void> => {
   const responsePromise = page.waitForResponse((candidate) => {

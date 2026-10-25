@@ -18,6 +18,7 @@ import { isReportPathname } from '../sessions/detail/session-route';
 export type ShellIconName =
   | 'breakdown'
   | 'campaigns'
+  | 'delegation'
   | 'memory'
   | 'overview'
   | 'projects'
@@ -47,6 +48,7 @@ export const shellManagementDestinations = [
   { href: '/skills', icon: 'skills', label: 'Skills' },
   { href: '/sync', icon: 'sync', label: 'Sync' },
   { href: '/sources', icon: 'sources', label: 'Sources' },
+  { href: '/delegation', icon: 'delegation', label: 'Delegation' },
 ] as const satisfies readonly ShellDestination[];
 
 export const dashboardSearchCodec: DashboardSearchCodec<DashboardSearch> = {

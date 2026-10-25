@@ -6,6 +6,7 @@ describe('Svelte shell demo route policy', () => {
     expect(demoRouteDecision('/skills/projects/project-a', 'demo')).toBe('redirect-report');
     expect(demoRouteDecision('/sources', 'demo')).toBe('redirect-report');
     expect(demoRouteDecision('/sync', 'demo')).toBe('redirect-report');
+    expect(demoRouteDecision('/delegation', 'demo')).toBe('redirect-report');
   });
 
   test('returns an empty not-found decision for protected transports', () => {

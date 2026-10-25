@@ -450,9 +450,50 @@ const createWorkRoutingDependencies = (request: Request): WebRpcRouterDependenci
     }),
 });
 
+// Delegation (ADR 0077): reads go to the config and the query-only store, writes to the engine; the
+// server module answers typed outcomes and selects the e2e fixture itself.
+const createDelegationDependencies = (request: Request): WebRpcRouterDependencies['delegation'] => ({
+  cancel: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/delegation.server');
+      return await server.cancelDelegationFromRequestForServer(request, input);
+    }),
+  readJob: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/delegation.server');
+      return await server.getDelegationJobForServer(input, abortOptions(signal));
+    }),
+  readJobs: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/delegation.server');
+      return await server.listDelegationJobsForServer(input, abortOptions(signal));
+    }),
+  readSettings: async (signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/delegation.server');
+      return await server.getDelegationSettingsForServer(abortOptions(signal));
+    }),
+  recordAcceptance: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/delegation.server');
+      return await server.recordDelegationAcceptanceFromRequestForServer(request, input);
+    }),
+  saveSettings: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/delegation.server');
+      return await server.saveDelegationSettingsFromRequestForServer(request, input);
+    }),
+  simulate: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/delegation.server');
+      return await server.simulateDelegationFromRequestForServer(request, input);
+    }),
+});
+
 export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpcRouterDependencies> => {
   const fixtureVariant = e2eSkillsFixtureVariantForHeaders(request.headers);
   return Promise.resolve({
+    delegation: createDelegationDependencies(request),
     memory: createMemoryDependencies(),
     projects: createProjectsDependencies(),
     report: createReportDependencies(request),

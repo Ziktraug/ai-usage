@@ -29,6 +29,7 @@ const NAVIGATION_DESTINATIONS = [
   'Skills',
   'Sync',
   'Sources',
+  'Delegation',
 ] as const;
 const routes = [
   { heading: 'Work', path: '/work' },
@@ -38,6 +39,7 @@ const routes = [
   { heading: 'Skills', path: '/skills' },
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },
+  { heading: 'Delegation', path: '/delegation' },
 ] as const;
 const REPORT_AXE_DESTINATIONS = [
   { label: 'Overview', path: '/' },
@@ -249,7 +251,7 @@ for (const route of routes) {
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });
     await manageButton.click();
     const manageNavigation = page.getByRole('navigation', { name: 'Manage destinations' });
-    for (const label of ['Campaigns', 'Memory', 'Projects', 'Skills', 'Sync', 'Sources']) {
+    for (const label of ['Campaigns', 'Memory', 'Projects', 'Skills', 'Sync', 'Sources', 'Delegation']) {
       await expect(manageNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     await page.keyboard.press('Escape');
@@ -1188,5 +1190,22 @@ test('Sync has no detectable accessibility violations', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Drop a merge file here or choose a file' })).toBeVisible();
 
+  await expectNoAxeViolations(page);
+});
+
+test('Delegation has no detectable accessibility violations in each section', async ({ page }) => {
+  await page.goto('/delegation');
+  await expect(page.locator('main[data-delegation-hydrated="true"]')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Delegation' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Routes and accounts' })).toBeVisible();
+  await expectNoAxeViolations(page);
+
+  const tabs = page.getByRole('tablist', { name: 'Delegation sections' });
+  await tabs.getByRole('tab', { name: 'Rules' }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Policy simulator' })).toBeVisible();
+  await expectNoAxeViolations(page);
+
+  await tabs.getByRole('tab', { name: 'Models' }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Model catalog' })).toBeVisible();
   await expectNoAxeViolations(page);
 });

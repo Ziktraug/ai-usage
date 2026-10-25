@@ -16,6 +16,13 @@ const MAX_SOURCE_CONTROL_COMMAND_BYTES = 4 * 1024;
 const textEncoder = new TextEncoder();
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
 export const rpcPathByOperation = {
+  getDelegationSettings: '/delegation/settings',
+  saveDelegationSettings: '/delegation/saveSettings',
+  simulateDelegation: '/delegation/simulate',
+  listDelegationJobs: '/delegation/jobs',
+  getDelegationJob: '/delegation/job',
+  cancelDelegation: '/delegation/cancel',
+  recordDelegationAcceptance: '/delegation/recordAcceptance',
   getMemoryKnowledge: '/memory/getKnowledge',
   listMemoryKnowledge: '/memory/knowledge',
   applyMemoryProposalReviewAction: '/memory/applyProposalReviewAction',

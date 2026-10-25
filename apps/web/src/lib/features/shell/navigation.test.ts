@@ -9,6 +9,7 @@ import {
   navigationTypeForScroll,
   reportDestinationHeading,
   reportDestinationUrl,
+  shellManagementDestinations,
   shouldPreserveReportScroll,
   workDestination,
 } from './navigation';
@@ -44,7 +45,20 @@ describe('Svelte application shell navigation', () => {
       'Skills',
       'Sync',
       'Sources',
+      'Delegation',
     ]);
+  });
+
+  test('publishes Delegation as a management destination that demo hides', () => {
+    expect(shellManagementDestinations.find(({ href }) => href === '/delegation')).toEqual({
+      href: '/delegation',
+      icon: 'delegation',
+      label: 'Delegation',
+    });
+    expect(isManagementPath('/delegation')).toBe(true);
+    expect(isManagementPath('/delegations')).toBe(false);
+    expect(mobileNavigationFor(new URL('http://localhost/delegation?section=rules'), 'live').manageActive).toBe(true);
+    expect(mobileNavigationFor(new URL('http://localhost/delegation'), 'demo').manageActive).toBe(false);
   });
 
   test('preserves report filters and identifies the active direct or overflow destination', () => {
