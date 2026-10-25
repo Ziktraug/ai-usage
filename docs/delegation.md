@@ -47,7 +47,10 @@ What this version does and does not do:
   edits but cannot save them over that change. Choose **Discard my edits and
   load the latest**, or **Re-apply my edits to the latest**. A field that was
   also changed elsewhere then keeps the latest value and is listed with both
-  values, so you re-enter yours on purpose.
+  values, so you re-enter yours on purpose. An edit you make while a save is
+  pending is kept, the notice says so, and the next save carries it. Your own
+  save never counts as a change made elsewhere, including on entries it just
+  added or dated.
 
 ## 2. Register the MCP server in your client
 
