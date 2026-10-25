@@ -14,9 +14,13 @@ const ids = {
   payments: '12000000-0000-4000-8000-000000000001',
   analysis: '12000000-0000-4000-8000-000000000004',
   review: '12000000-0000-4000-8000-000000000006',
+  longTitle: '12000000-0000-4000-8000-000000000009',
+  mergedPr: '12000000-0000-4000-8000-000000000010',
+  unknownDuration: '12000000-0000-4000-8000-000000000011',
 };
 const DONE_TAB = /^Done /;
 const FOLLOWING_TAB = /^Following /;
+const TIMED_SESSION_MARK = /^\d{2}:\d{2} · Claude · Compare retry approaches$/;
 const commandPath = '/rpc/workThreads/command';
 const detailPath = '/rpc/workThreads/detail';
 const prKey = 'github.example/synthetic/example-shop#1487';
@@ -85,7 +89,9 @@ test('analysis-only task ends, appears in Done, and reopens without changing sou
   await expect(page.getByRole('heading', { name: task.title, exact: true })).toBeVisible();
   await expect(page.getByText('Analysis only · no branch, PR or ticket needed', { exact: true })).toBeVisible();
   await endFollowUp(page);
-  await expect(page.getByText('Nothing in GitHub, Jira or any session was changed.', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('No GitHub, Jira or session state was changed by ending it.', { exact: true }),
+  ).toBeVisible();
   expect((await detail(request, task.threadId)).row.thread.followState).toBe('done');
   await page.getByRole('link', { name: '← My work', exact: true }).click();
   await page.getByRole('tab', { name: DONE_TAB }).click();
@@ -112,8 +118,7 @@ test('ending despite remainders records the decision and Undo restores follow-up
   await endFollowUp(page);
   const remaining = page.getByRole('region', { name: "What's left", exact: true });
   await expect(remaining.getByRole('heading', { name: 'These remainders will stay' })).toBeVisible();
-  await expect(remaining).toContainText('The linked PR is still open');
-  await expect(remaining).toContainText('Review changes to address');
+  await expect(remaining).toContainText('2 review threads to address');
   await remaining.getByLabel('Reason (optional)').fill('Another person owns the remaining review');
   await remaining.getByRole('button', { name: 'End anyway', exact: true }).click();
   const toast = page.getByRole('status').filter({ hasText: 'Follow-up ended' });
@@ -125,7 +130,7 @@ test('ending despite remainders records the decision and Undo restores follow-up
   });
   const event = ended.events.at(-1);
   expect(event?.kind).toBe('follow-state');
-  expect(event?.acknowledgedRemainders.some((value) => value.includes('still open'))).toBe(true);
+  expect(event?.acknowledgedRemainders.some((value) => value.includes('2 review threads to address'))).toBe(true);
   expect(ended.row.markers).toEqual(before.row.markers);
   expect(ended.episodes).toEqual(before.episodes);
   await toast.getByRole('button', { name: 'Undo', exact: true }).click();
@@ -249,6 +254,69 @@ test('a task exists for a PR with zero sessions and keeps a dated GitHub marker'
   await expect(
     page.getByText('No linked sessions. A task can exist without a local session.', { exact: true }),
   ).toBeVisible();
+});
+
+test('source availability stays on one quiet line until its details are opened with the keyboard', async ({ page }) => {
+  await open(page);
+  const availability = page.locator('details[aria-label="Source availability"]');
+  const summary = availability.locator('summary');
+  await expect(summary).toContainText('Jira disabled');
+  await expect(availability).not.toHaveAttribute('open');
+  const diagnostics = availability.getByText('Unavailable or older evidence does not establish that nothing is left.', {
+    exact: true,
+  });
+  await expect(diagnostics).not.toBeVisible();
+  const bounds = await summary.boundingBox();
+  expect(bounds?.height).toBeLessThanOrEqual(28);
+  const filterBounds = await page.getByRole('combobox', { name: 'Project', exact: true }).boundingBox();
+  expect(bounds?.y).toBeGreaterThan(filterBounds?.y ?? 0);
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  await expect(diagnostics).toBeVisible();
+  await expect(availability).toContainText('Jira collection is disabled');
+  await page.keyboard.press('Enter');
+  await expect(diagnostics).not.toBeVisible();
+});
+
+test('a mixed day shows both chips and lists dated marks before opening the task', async ({ page }) => {
+  await open(page);
+  const task = row(page, ids.payments);
+  const day = task.locator('.wt-day-button:has(.wt-event-mark):has([data-harness])').first();
+  await expect(day.locator('[data-harness="claude"]')).toHaveText('Cl');
+  await expect(day.locator('.wt-event-mark')).toBeVisible();
+  await day.focus();
+  await page.keyboard.press('Enter');
+  await expect(day).toHaveAttribute('aria-expanded', 'true');
+  const marks = task.getByRole('region', { name: 'Activity on 2026-10-19', exact: true });
+  await expect(marks.getByText(TIMED_SESSION_MARK)).toBeVisible();
+  await expect(marks).toContainText('PR #1487 opened');
+  await marks.getByRole('button', { name: 'Close day activity', exact: true }).click();
+  await expect(day).toBeFocused();
+  await day.click();
+  await marks.getByRole('link', { name: 'Open task for this day →', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Prevent duplicate payments', exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('day')).toBe('2026-10-19');
+});
+
+test('episode durations and PR fact events use their own evidence dates', async ({ page }) => {
+  await open(page, ids.payments);
+  const episode = page.locator('[data-session-key="session:fixture-machine/claude/payment-approaches"]');
+  await expect(episode.locator('.wt-duration')).toContainText('14 min');
+  await expect(episode).toContainText('over 3 days');
+  await episode.getByRole('button', { name: 'Compare retry approaches' }).click();
+  await expect(episode).toContainText("14 min recorded for this episode · not the task's lifetime");
+  await expect(episode).toContainText('first to last activity, pauses included');
+  await expect(page.locator('.wt-reason h2')).toHaveText('2 review threads to address');
+  await open(page, ids.unknownDuration);
+  await expect(page.locator('.wt-duration')).toHaveText('Duration not recorded: —');
+  await open(page, ids.mergedPr);
+  await expect(page.locator('.wt-id')).toContainText('Since Oct 20');
+  await expect(page.locator('.wt-fact-event strong')).toHaveText(['PR #1502 opened', 'PR #1502 merged']);
+  await expect(page.locator('.wt-fact-event .wt-event-source')).toHaveText(['GitHub', 'GitHub']);
+  await expect(page.getByText('Task created', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Source linked', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await expect(page.locator('.wt-fact-event')).toHaveCount(0);
 });
 
 test('links a recent served session of the project, detaches it, and can undo the detach', async ({
@@ -448,11 +516,18 @@ test('session intake creates a task through the inline form and opens its linked
 
 test('list and task layouts are accessible without overflow at desktop, tablet and mobile widths', async ({
   page,
+  request,
 }, testInfo) => {
+  const longTitle = (await detail(request, ids.longTitle)).row.thread.title;
   for (const width of [1440, 1024, 768, 375]) {
     await page.setViewportSize({ width, height: 1000 });
     await open(page);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const taskLink = row(page, ids.longTitle).getByRole('link', { name: longTitle, exact: true });
+    await expect(taskLink).toHaveAttribute('title', longTitle);
+    expect(await taskLink.locator('strong').evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe('2');
+    const taskBounds = await row(page, ids.longTitle).boundingBox();
+    expect(taskBounds?.height).toBeLessThanOrEqual(width > 780 ? 100 : 150);
     await assertAxe(page);
     await page.screenshot({ path: testInfo.outputPath(`work-list-${width}.png`), fullPage: true });
     await open(page, ids.payments);

@@ -105,7 +105,9 @@ const clickEnd = async (page: Page): Promise<void> =>
   page.getByRole('button', { name: 'End follow-up', exact: true }).first().click();
 const expectDone = async (page: Page): Promise<void> => {
   await expect(page.locator('[data-follow-state="done"]')).toBeVisible();
-  await expect(page.getByText('Nothing in GitHub, Jira or any session was changed.', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('No GitHub, Jira or session state was changed by ending it.', { exact: true }),
+  ).toBeVisible();
 };
 // The analysis has no PR and its session recorded no branch matching its checkout, so that checkout
 // is not a remainder of this task: the follow-up ends without an acknowledgement step.
@@ -362,9 +364,20 @@ test('production Work threads survive source refresh, follow-up transitions and 
     expect(before.row.markers.pullRequests[0]).toMatchObject({ mergeable: 'mergeable', mergeStateStatus: 'CLEAN' });
     await clickEnd(page);
     await expect(page.getByRole('heading', { name: 'These remainders will stay', exact: true })).toBeVisible();
-    await expect(page.getByRole('region', { name: "What's left", exact: true })).toContainText(
-      'The linked PR is still open',
-    );
+    const shownRemainders = await page
+      .getByRole('region', { name: "What's left", exact: true })
+      .locator('.wt-inline-panel li')
+      .evaluateAll((items) =>
+        items.map((item) =>
+          Array.from(item.childNodes)
+            .filter((node) => node.nodeType === Node.TEXT_NODE)
+            .map((node) => node.textContent)
+            .join('')
+            .trim(),
+        ),
+      );
+    expect(shownRemainders.length).toBeGreaterThan(0);
+    expect(shownRemainders.every(Boolean)).toBe(true);
     await page.getByRole('button', { name: 'End anyway', exact: true }).click();
     await expectDone(page);
     const ended = await readDetail(request, threadId);
@@ -373,7 +386,9 @@ test('production Work threads survive source refresh, follow-up transitions and 
       followRevision: before.row.thread.followRevision + 1,
     });
     expect(ended.events.at(-1)).toMatchObject({ kind: 'follow-state', fromState: 'following', toState: 'done' });
-    expect(ended.events.at(-1)?.acknowledgedRemainders.some((item) => item.includes('still open'))).toBe(true);
+    for (const label of shownRemainders) {
+      expect(ended.events.at(-1)?.acknowledgedRemainders.some((item) => item.startsWith(label))).toBe(true);
+    }
     expect(ended.row.markers.pullRequests[0]?.latest?.state).toBe('OPEN');
     await page.reload();
     await hydrated(page);
