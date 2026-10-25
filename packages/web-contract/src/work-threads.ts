@@ -28,6 +28,7 @@ import {
   array,
   boolean,
   custom,
+  finite,
   type InferOutput,
   literal,
   maxLength,
@@ -64,6 +65,8 @@ const instant = custom<CanonicalInstant>(isCanonicalInstant, 'Expected a canonic
 const id = custom<string>(isWorkThreadId, 'Expected a UUID.');
 const text = pipe(string(), minLength(1), maxLength(WORK_THREAD_BOUNDS.maxKey));
 const count = pipe(number(), safeInteger(), minValue(0));
+// Stored session durations may be fractional milliseconds; reads only widen (ADR 0075).
+const duration = pipe(number(), finite(), minValue(0));
 const revision = pipe(number(), safeInteger(), minValue(1));
 const thread = frozenSchema(parseWorkThread);
 const link = frozenSchema(parseWorkThreadLink);
@@ -148,7 +151,7 @@ export const workThreadsListDataSchema = strictObject({
 });
 const episodeText = nullable(pipe(string(), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText)));
 const episodeFields = {
-  activeMs: nullable(count),
+  activeMs: nullable(duration),
   endedAt: nullable(instant),
   firstPrompt: episodeText,
   harness: text,
@@ -170,7 +173,7 @@ const episodeFields = {
   ]),
   running: nullable(boolean()),
   sourceSessionId: text,
-  spanMs: nullable(count),
+  spanMs: nullable(duration),
   startedAt: instant,
   title: episodeText,
 } as const;

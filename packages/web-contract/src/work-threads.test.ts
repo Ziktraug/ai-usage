@@ -185,6 +185,9 @@ describe('Work thread wire contract', () => {
     expect(safeParse(workThreadEpisodeSchema, { ...episode, children: [{ ...episode, activeMs: -1 }] }).success).toBe(
       false,
     );
+    // Stored rows may carry fractional milliseconds; an infinite or negative duration is rejected.
+    expect(safeParse(workThreadEpisodeSchema, { ...episode, activeMs: 12.5, spanMs: 3_600_000.25 }).success).toBe(true);
+    expect(safeParse(workThreadEpisodeSchema, { ...episode, activeMs: Number.POSITIVE_INFINITY }).success).toBe(false);
     // A span is never accepted as a duration of work under the old name.
     expect(safeParse(workThreadEpisodeSchema, { ...episode, durationMs: 60_000 }).success).toBe(false);
     expect(
