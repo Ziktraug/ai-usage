@@ -6,9 +6,11 @@ import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-
 import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import { readLocalRoutingDeclarations } from '@ai-usage/local-machine/routing-config';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
+import { type UsageEngineCommandId, usageEngineControlBounds } from '@ai-usage/usage-engine-control';
 import { initializeUsageStore } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import { createDelegationService } from './delegation';
+import { successfulCommandCompletion } from './runtime-command-completion';
 
 /**
  * The persistence half of "a form must restate what it does not edit": the Delegation page's
@@ -184,5 +186,43 @@ describe('update-delegation-config with a section composed from the configuratio
     expect(afterRemoval.delegation.config.routes.map((route) => route.accountScope)).toEqual(['personal']);
     expect(afterRemoval.delegation.config.rules.map((entry) => entry.id)).toEqual(['acme-no-codex']);
     expect(await routesInFile(fixture.configPath)).toEqual([{ ...PERSONAL_ANNOTATION, machineId: machine.id }]);
+  });
+});
+
+describe('update-delegation-config answers through the control plane', () => {
+  test('an invalid section whose issue quotes long multibyte keys answers invalid within the byte bound', async () => {
+    const fixture = await createFixture();
+    const current = await readLocalRoutingDeclarations(fixture.home);
+    // Forty unknown keys of thirty CJK characters in one section: the parser quotes every one in a
+    // single reason, well past the 1 KiB message bound.
+    const unknownKeys = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`${'鍵'.repeat(30)}${index}`, true]),
+    );
+    const command = {
+      command: 'update-delegation-config' as const,
+      delegation: asJsonRecord({
+        ...current.delegation.config,
+        defaults: { ...current.delegation.config.defaults, ...unknownKeys },
+      }),
+      expectedRevision: current.revisions.policyRevision,
+    };
+    const answer = await fixture.engine.updateConfig(command);
+    expect(answer.result).toBe('invalid');
+    const reasons = answer.issues.map((issue) => issue.reason);
+    expect(reasons.some((reason) => reason.startsWith('unknown field(s): '))).toBe(true);
+    for (const issue of answer.issues) {
+      expect(Buffer.byteLength(issue.reason, 'utf8')).toBeLessThanOrEqual(
+        usageEngineControlBounds.maxReviewMessageBytes,
+      );
+      expect(Buffer.byteLength(issue.path, 'utf8')).toBeLessThanOrEqual(usageEngineControlBounds.maxReviewMessageBytes);
+    }
+    // The answer passes the completion parser the coordinator runs, instead of failing the command.
+    expect(() =>
+      successfulCommandCompletion({ command, commandId: 'command-1' as UsageEngineCommandId }, answer, NOW),
+    ).not.toThrow();
+    // Nothing was written.
+    expect((await readLocalRoutingDeclarations(fixture.home)).revisions.policyRevision).toBe(
+      current.revisions.policyRevision,
+    );
   });
 });

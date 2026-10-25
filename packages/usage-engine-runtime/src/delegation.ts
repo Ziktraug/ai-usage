@@ -1316,7 +1316,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
     ): UsageEngineDelegationEvaluationOutput => ({
       evaluationId: null,
       kind: 'delegation-evaluation',
-      refusal: { message: bounded(message, 1024), reason },
+      refusal: { message: boundUsageEngineReviewMessage(message), reason },
     });
     const parsed = parseDelegationEvaluationInput(command.evaluation, {
       author: command.author,
@@ -1408,7 +1408,10 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
             }
             if (issues.length > 0) {
               decided.answer = {
-                issues: issues.slice(0, 64).map((issue) => ({ path: issue.path, reason: bounded(issue.reason, 1024) })),
+                issues: issues.slice(0, 64).map((issue) => ({
+                  path: boundUsageEngineReviewMessage(issue.path),
+                  reason: boundUsageEngineReviewMessage(issue.reason),
+                })),
                 kind: 'delegation-config',
                 result: 'invalid',
                 revision: current,
