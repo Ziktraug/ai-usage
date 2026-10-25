@@ -215,6 +215,26 @@ describe('readDelegationCheckoutFacts', () => {
     expect(identified.githubAccount).toMatchObject({ provenance: 'declared', value: 'acme-bot' });
   });
 
+  test('more distinct repositories than a qualification keeps leave the list partial, the rest counted', async () => {
+    const { git, root } = await repository();
+    for (let index = 0; index < 13; index++) {
+      await git(
+        'remote',
+        'add',
+        `r${String(index).padStart(2, '0')}`,
+        `https://github.com/acme/w${String(index).padStart(2, '0')}.git`,
+      );
+    }
+    const facts = await readDelegationCheckoutFacts(root, [], { env: await isolatedEnv() });
+    // Every URL was identified, so the owners stay a complete observation.
+    expect(facts.githubOwners).toEqual({ provenance: 'observed', source: 'git remote -v', value: ['acme'] });
+    expect(facts.repositories).toEqual({
+      provenance: 'partial',
+      source: 'git remote -v (1 identified values beyond the 12 kept)',
+      value: Array.from({ length: 12 }, (_, index) => `acme/w${String(index).padStart(2, '0')}`),
+    });
+  });
+
   test('more remotes than the read limit leave the lists partial with the unread count named', async () => {
     const { git, root } = await repository();
     for (let index = 0; index < 33; index++) {
@@ -226,8 +246,11 @@ describe('readDelegationCheckoutFacts', () => {
       source: 'git remote -v (2 remote URLs not read)',
       value: ['acme'],
     });
-    expect(facts.repositories.provenance).toBe('partial');
-    expect(facts.repositories.value).toHaveLength(32);
+    expect(facts.repositories).toMatchObject({
+      provenance: 'partial',
+      source: 'git remote -v (2 remote URLs not read, 20 identified values beyond the 12 kept)',
+    });
+    expect(facts.repositories.value).toHaveLength(12);
     expect(facts.githubAccount).toMatchObject({
       provenance: 'unknown',
       source: 'github.accounts (remotes not all identified)',
@@ -260,6 +283,9 @@ describe('classifyRemoteUrl', () => {
     ['HTTPS://GITHUB.COM/acme/widgets.git/', identified('acme', 'widgets')],
     ['http://github.com/acme/widgets.git', identified('acme', 'widgets')],
     ['https://www.github.com/acme/widgets/', identified('acme', 'widgets')],
+    ['https://github.com./acme/widgets.git', identified('acme', 'widgets')],
+    ['git@github.com.:acme/widgets.git', identified('acme', 'widgets')],
+    ['git://www.github.com/acme/widgets', identified('acme', 'widgets')],
     ['https://user:token@github.com/acme/widgets.git', identified('acme', 'widgets')],
     ['git://github.com/acme/widgets.git', identified('acme', 'widgets')],
   ])('%s is identified', (url, expected) => {

@@ -7,6 +7,7 @@ import type {
   FrozenDelegationScope,
   ResolvedDelegationCheckout,
 } from '@ai-usage/report-core/delegation-contracts';
+import { DELEGATION_QUALIFICATION_BOUNDS } from '@ai-usage/report-core/delegation-qualification';
 import { DELEGATION_REVISION_PATTERN } from '@ai-usage/report-core/delegation-vocabulary';
 import { isPrintableSkillObservationText } from '@ai-usage/report-core/skill-observation';
 import {
@@ -58,6 +59,7 @@ const REMOTE_URL = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^/@\s]*@)?([A-Za-z0-9._-]+)
 const REMOTE_SCP = /^(?:[^/@\s]*@)?([A-Za-z0-9._-]+):(\S*)$/u;
 const LEADING_SLASH = /^\//u;
 const TRAILING_SLASH = /\/$/u;
+const TRAILING_DOT = /\.$/u;
 const GIT_SUFFIX = /\.git$/u;
 const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
 const GITHUB_REPOSITORY = /^[A-Za-z0-9._-]{1,100}$/u;
@@ -174,9 +176,13 @@ const SCHEME_FAMILIES: ReadonlyMap<string, RemoteFamily> = new Map<string, Remot
   ['ssh+git', 'ssh'],
 ]);
 
-/** Exact host names, compared case-insensitively; `ssh.github.com` is GitHub's documented SSH-over-443 host. */
+/**
+ * Exact host names, compared case-insensitively and without the one trailing dot of a fully
+ * qualified name (`github.com.` is the same DNS name); `ssh.github.com` is GitHub's documented
+ * SSH-over-443 host.
+ */
 const GITHUB_HOSTS: Readonly<Record<RemoteFamily, readonly string[]>> = {
-  git: ['github.com'],
+  git: ['github.com', 'www.github.com'],
   http: ['github.com', 'www.github.com'],
   ssh: ['github.com', 'ssh.github.com'],
 };
@@ -196,7 +202,7 @@ const githubPath = (rawPath: string): GitHubRemote | null => {
 };
 
 const classifyHostAndPath = (family: RemoteFamily, host: string, remotePath: string): RemoteUrlClassification => {
-  if (!GITHUB_HOSTS[family].includes(host.toLowerCase())) {
+  if (!GITHUB_HOSTS[family].includes(host.toLowerCase().replace(TRAILING_DOT, ''))) {
     return family === 'ssh' ? UNIDENTIFIED : NOT_GITHUB;
   }
   const remote = githubPath(remotePath);
@@ -287,8 +293,8 @@ export const parseGitHubRemotes = (remoteList: string): RemoteListing => {
   return { identified, notGitHub, read: read.length, unidentified, unread: lines.length - read.length };
 };
 
-/** `null` when every listed URL was identified or known not to be GitHub; else the counts, never a URL. */
-const remoteListingSource = (listing: RemoteListing): string | null => {
+/** What the listing left open, as counts (never a URL); empty when every URL was identified or known not to be GitHub. */
+const remoteListingGaps = (listing: RemoteListing): string[] => {
   const parts: string[] = [];
   if (listing.unidentified > 0) {
     parts.push(`${listing.unidentified} of ${listing.read} remote URLs not identified`);
@@ -296,7 +302,22 @@ const remoteListingSource = (listing: RemoteListing): string | null => {
   if (listing.unread > 0) {
     parts.push(`${listing.unread} remote URLs not read`);
   }
-  return parts.length === 0 ? null : `git remote -v (${parts.join(', ')})`;
+  return parts;
+};
+
+/**
+ * One list fact from the identified values. It is `observed` only when nothing was left open; it is
+ * `partial` when the listing was not settled, or when more distinct values were identified than a
+ * qualification keeps (`DELEGATION_QUALIFICATION_BOUNDS.maxEntries`): the first ones in sorted
+ * order are kept and the rest counted, so a rule naming a dropped value stays assumed, never lifted.
+ */
+const remoteListFact = (values: readonly string[], gaps: readonly string[]): DelegationFact<readonly string[]> => {
+  const kept = DELEGATION_QUALIFICATION_BOUNDS.maxEntries;
+  const open =
+    values.length > kept ? [...gaps, `${values.length - kept} identified values beyond the ${kept} kept`] : gaps;
+  return open.length === 0
+    ? observed('git remote -v', values)
+    : partial(`git remote -v (${open.join(', ')})`, values.slice(0, kept));
 };
 
 const authorEmailFact = (answer: GitAnswer | GitRunError): DelegationFact<string> => {
@@ -340,9 +361,9 @@ export const readDelegationCheckoutFacts = async (
     const listing = parseGitHubRemotes(remotesAnswer.stdout);
     const owners = distinctIgnoringCase(listing.identified.map((remote) => remote.owner));
     const names = distinctIgnoringCase(listing.identified.map((remote) => `${remote.owner}/${remote.repository}`));
-    const incomplete = remoteListingSource(listing);
-    githubOwners = incomplete === null ? observed('git remote -v', owners) : partial(incomplete, owners);
-    repositories = incomplete === null ? observed('git remote -v', names) : partial(incomplete, names);
+    const gaps = remoteListingGaps(listing);
+    githubOwners = remoteListFact(owners, gaps);
+    repositories = remoteListFact(names, gaps);
   } else {
     githubOwners = unknown(`git remote -v (exit ${remotesAnswer.exitCode})`);
     repositories = unknown(`git remote -v (exit ${remotesAnswer.exitCode})`);
