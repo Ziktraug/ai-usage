@@ -98,7 +98,11 @@
             >{main
               ? (main.reviewDecision?.replaceAll('_', ' ').toLowerCase() ?? 'No review decision')
               : 'Review not observed'}
-            {main?.unresolvedReviewThreads == null ? '' : ` · ${main.unresolvedReviewThreads} review threads open`}
+            {#if main?.unresolvedReviewThreads != null}
+              · {main.unresolvedReviewThreads} review threads open
+            {:else if main?.state === 'OPEN'}
+              · Review threads: not read
+            {/if}
             · Checks {main?.checksRollup ?? 'unknown'}</span
           >
         </summary>
@@ -159,6 +163,9 @@
                     </dd>
                   </div>
                 </dl>
+                {#if fact.state === 'OPEN' && fact.unresolvedReviewThreads == null}
+                  <p>Review threads: not read{fact.outcomeMessage ? ` · ${fact.outcomeMessage}` : ''}</p>
+                {/if}
                 {#if fact.state === 'MERGED'}
                   <p class={`wt-meta ${threadStyles.meta}`}>Merged does not establish deployment.</p>
                 {/if}

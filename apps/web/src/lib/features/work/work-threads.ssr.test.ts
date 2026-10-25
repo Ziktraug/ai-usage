@@ -204,6 +204,81 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain('2 review threads open');
     expect(body).not.toContain('Review unknown');
   });
+  test.each([null, 'Review threads unavailable: more than 100 threads; count is incomplete'])(
+    'open PRs disclose unread review threads and the observation note: %s',
+    (outcomeMessage) => {
+      const marker = payments.row.markers.pullRequests[0];
+      if (!marker?.latest) {
+        throw new Error('Expected PR marker');
+      }
+      const markers = {
+        local: [],
+        jiraIssues: [],
+        pullRequests: [
+          { ...marker, latest: { ...marker.latest, state: 'OPEN', unresolvedReviewThreads: null, outcomeMessage } },
+        ],
+      };
+      const body = html(Markers, { markers, timeZone: 'UTC', now: payments.generatedAt });
+      expect(body.match(SUMMARY_CONTENT)?.[1]).toContain('Review threads: not read');
+      expect(body).not.toContain('0 review threads open');
+      if (outcomeMessage) {
+        expect(body).toContain(outcomeMessage);
+      }
+    },
+  );
+  test('a known zero review-thread count stays distinct from unread threads', () => {
+    const marker = payments.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected PR marker');
+    }
+    const markers = {
+      ...payments.row.markers,
+      pullRequests: [{ ...marker, latest: { ...marker.latest, state: 'OPEN', unresolvedReviewThreads: 0 } }],
+    };
+    const body = html(Markers, { markers, timeZone: 'UTC', now: payments.generatedAt });
+    expect(body).toContain('0 review threads open');
+    expect(body).not.toContain('Review threads: not read');
+  });
+  test.each(['MERGED', 'CLOSED'] as const)('a %s PR does not claim its threads were unread', (state) => {
+    const marker = payments.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected PR marker');
+    }
+    const markers = {
+      ...payments.row.markers,
+      pullRequests: [{ ...marker, latest: { ...marker.latest, state, unresolvedReviewThreads: null } }],
+    };
+    expect(html(Markers, { markers, timeZone: 'UTC', now: payments.generatedAt })).not.toContain(
+      'Review threads: not read',
+    );
+  });
+  test('unread thread notes belong to the displayed last successful observation', () => {
+    const marker = payments.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected PR marker');
+    }
+    const markers = {
+      local: [],
+      jiraIssues: [],
+      pullRequests: [
+        {
+          ...marker,
+          latest: { ...marker.latest, outcome: 'network', outcomeMessage: 'Current GitHub request failed' },
+          latestSuccessful: {
+            ...marker.latest,
+            state: 'OPEN',
+            unresolvedReviewThreads: null,
+            outcomeMessage: 'Review threads unavailable: <GraphQL error>',
+          },
+        },
+      ],
+    };
+    const body = html(Markers, { markers, timeZone: 'UTC', now: payments.generatedAt });
+    expect(body).toContain('Review threads: not read');
+    expect(body).toContain('Current GitHub request failed');
+    expect(body).toContain('Review threads unavailable: &lt;GraphQL error>');
+    expect(body).not.toContain('<GraphQL error>');
+  });
   test('episode rows use recorded duration and disclose the longer first-to-last span separately', () => {
     const episode = payments.episodes[0];
     if (!episode) {
