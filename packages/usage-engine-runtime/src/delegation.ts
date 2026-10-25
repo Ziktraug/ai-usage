@@ -85,9 +85,11 @@ import {
   REVIEW_ATTEMPT_RUN_LIMITS,
   type ReviewAttemptScope,
 } from '@ai-usage/report-core/work-attempts';
+import type { ReviewLaunchRefusalReason } from '@ai-usage/report-core/work-attempts-vocabulary';
 import {
   type ExecutorDeclaration,
   executorAuthMethodIndicatesApiKey,
+  executorDeclarationKey,
   parseExecutorDeclarations,
 } from '@ai-usage/report-core/work-executors';
 import { declarationForReviewCandidate } from '@ai-usage/report-core/work-routing';
@@ -99,21 +101,27 @@ import type {
   UsageEngineDelegationStartOutput,
 } from '@ai-usage/usage-engine-control';
 import {
+  checkReviewReservations,
   countDelegationRetryChain,
+  countReviewReservationsByPool,
   DELEGATION_STORE_BOUNDS,
   type DelegationJobPatch,
+  describeReviewReservation,
   markDelegationJobsLost,
   type NewDelegationJob,
   queryDelegationJobs,
   queryExecutorAccountChanges,
   queryExecutorObservationHistory,
   queryLatestProviderQuotaObservations,
+  queryReviewReservations,
+  type ReviewReservationHolder,
   readDelegationQualification,
   recordDelegationEvaluation,
   recordDelegationQualification,
   releaseDelegationJobReservation,
   requestDelegationCancel,
   requestDelegationJob,
+  reviewTargetReservationHolder,
   transitionDelegationJob,
 } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
@@ -168,7 +176,50 @@ export interface DelegationServiceOptions {
   readonly storage: LocalHistoryStorageService;
 }
 
+export interface ReviewAdmissionInput {
+  /** The checkout the legacy review would run in (the session's); resolved canonically here. */
+  readonly checkoutPath: string;
+  /** The legacy candidate id, which is the delegation route id (`declared:<key>[:model:…]`). */
+  readonly routeId: string;
+  readonly signal?: AbortSignal | undefined;
+}
+
+export type ReviewAdmissionRefusalReason = Extract<
+  ReviewLaunchRefusalReason,
+  | 'executor-unavailable'
+  | 'identity-changed'
+  | 'policy-refused'
+  | 'pool-busy'
+  | 'scope-unavailable'
+  | 'target-not-allowed'
+  | 'target-reserved'
+>;
+
+/**
+ * The common review policy's answer for a launch that did not come in as a delegation request
+ * (the Work view's legacy `start-review-attempt`): the route is present in a fresh qualification
+ * and admissible, with the canonical checkout and the frozen revision the launch must use, or a
+ * typed refusal carrying the route's exclusions. Session-independent: the port takes a checkout
+ * path, never a session.
+ */
+export type ReviewAdmission =
+  | {
+      readonly checkout: ResolvedDelegationCheckout;
+      readonly kind: 'admitted';
+      readonly route: DelegationRoute;
+      readonly scope: FrozenDelegationScope;
+    }
+  | { readonly kind: 'refused'; readonly message: string; readonly reason: ReviewAdmissionRefusalReason };
+
+export type ReviewAdmissionPort = (input: ReviewAdmissionInput) => Promise<ReviewAdmission>;
+
 export interface DelegationService extends UsageEngineDelegationPort {
+  /**
+   * Runs the same assessment a `start-delegation` runs (canonical checkout admission, frozen
+   * scope, the home `delegation` rules, identity evidence, reserve, the reservations of both
+   * review families) for a review that enters through another command; records nothing.
+   */
+  readonly admitReview: ReviewAdmissionPort;
   /** Job ids whose process is still tracked by this engine. */
   readonly live: () => readonly string[];
   /**
@@ -197,6 +248,8 @@ interface Assessment {
   readonly checkout: ResolvedDelegationCheckout | null;
   readonly declarations: readonly ExecutorDeclaration[];
   readonly qualification: DelegationQualification;
+  /** The reserving rows of both families the qualification counted; a `pool-busy` refusal names them. */
+  readonly reservationHolders: readonly ReviewReservationHolder[];
   readonly scope: FrozenDelegationScope | null;
 }
 
@@ -225,6 +278,40 @@ class DelegationConfigRejected extends Error {
     this.name = 'DelegationConfigRejected';
   }
 }
+
+/** The objective recorded for a review adapted from the Work view's legacy command; it names its origin. */
+const ADAPTED_REVIEW_OBJECTIVE =
+  'Read-only review of the checkout HEAD commit, adapted from a Work review attempt (start-review-attempt); the common delegation policy decides its admission.';
+
+/** The legacy refusal reason a qualification-level refusal maps to. */
+const legacyReasonForQualificationRefusal = (reason: DelegationRefusalReason): ReviewAdmissionRefusalReason => {
+  switch (reason) {
+    case 'checkout-unavailable':
+    case 'checkout-not-admitted':
+      return 'target-not-allowed';
+    case 'scope-unavailable':
+    case 'scope-unsupported':
+      return 'scope-unavailable';
+    case 'target-reserved':
+      return 'target-reserved';
+    default:
+      return 'policy-refused';
+  }
+};
+
+/** The legacy refusal reason a route's blockers map to; the policy families stay `policy-refused`. */
+const legacyReasonForRouteBlockers = (route: DelegationRoute): ReviewAdmissionRefusalReason => {
+  if (route.blockers.includes('pool-busy')) {
+    return 'pool-busy';
+  }
+  if (route.blockers.includes('identity-changed')) {
+    return 'identity-changed';
+  }
+  if (route.blockers.includes('availability')) {
+    return 'executor-unavailable';
+  }
+  return 'policy-refused';
+};
 
 const SHUTDOWN_LOST_REASON =
   'engine stopped before this job had a tracked process; verify in the harness (the target stays reserved)';
@@ -430,9 +517,9 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
       // The persisted barrier: an account change the retained history may no longer show.
       Effect.runPromise(queryExecutorAccountChanges({ dbPath: options.dbPath, machineId })),
       Effect.runPromise(queryLatestProviderQuotaObservations({ dbPath: options.dbPath, machineId })),
-      Effect.runPromise(
-        queryDelegationJobs({ dbPath: options.dbPath, limit: RESERVATION_READ_LIMIT, machineId, reserving: true }),
-      ),
+      // Both review families: delegation jobs and the Work view's legacy attempts hold the same
+      // targets and pools (`review-reservations.ts`); the store's transaction is the authority.
+      Effect.runPromise(queryReviewReservations({ dbPath: options.dbPath, machineId })),
       // The chain is counted by the store with the rule its insert transaction applies.
       request.retryOf === undefined
         ? Promise.resolve(null)
@@ -457,28 +544,31 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
     }
     signal?.throwIfAborted();
     const frozen = 'failure' in scope ? null : scope;
-    const liveJobsByPool = new Map<string, number>();
-    let targetReservedBy: string | null = null;
-    for (const job of reserving.jobs) {
-      if (job.poolId !== null) {
-        liveJobsByPool.set(job.poolId, (liveJobsByPool.get(job.poolId) ?? 0) + 1);
-      }
-      if (
-        targetReservedBy === null &&
-        frozen !== null &&
-        !('failure' in checkout) &&
-        job.action === request.action &&
-        job.checkoutPath === checkout.path &&
-        job.scope?.baseSha === frozen.baseSha &&
-        job.scope?.headSha === frozen.headSha
-      ) {
-        targetReservedBy = job.jobId;
-      }
-    }
+    // The pools the policy knows on this machine; a holder whose pool cannot be read counts
+    // against every pool of its harness among them.
+    const pools = policy.declarations
+      .filter((declaration) => declaration.machineId === machineId)
+      .map((declaration) => ({
+        harness: declaration.harness,
+        poolId: `declared:${executorDeclarationKey(declaration)}`,
+      }));
+    const liveJobsByPool = countReviewReservationsByPool(reserving.holders, pools);
+    const reservedBy =
+      frozen === null || 'failure' in checkout
+        ? null
+        : reviewTargetReservationHolder(reserving.holders, {
+            action: request.action,
+            baseSha: frozen.baseSha,
+            checkoutPath: checkout.path,
+            headSha: frozen.headSha,
+          });
     const reservations: DelegationReservations = {
       attemptsInChain: chain?.attempts ?? 0,
       liveJobsByPool,
-      targetReservedBy,
+      targetReservedBy: reservedBy?.id ?? null,
+      ...(reservedBy === null
+        ? {}
+        : { targetReservation: { family: reservedBy.family, message: describeReviewReservation(reservedBy) } }),
     };
     const qualification = qualifyDelegation({
       accountChanges: accountChanges.changes,
@@ -503,8 +593,33 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
       checkout: 'failure' in checkout ? null : checkout,
       declarations: policy.declarations,
       qualification,
+      reservationHolders: reserving.holders,
       scope: frozen,
     };
+  };
+
+  /**
+   * The `pool-busy` sentence the store's transaction would give for this route, from the holders the
+   * assessment counted: it names each reserving job or attempt of either family and says when one
+   * counts against the pool only because its own pool could not be read. `null` when the holders no
+   * longer fill the pool (the qualification's own exclusion then stands).
+   */
+  const poolBusyDetail = (assessed: Assessment, route: DelegationRoute): string | null => {
+    if (assessed.scope === null || assessed.checkout === null) {
+      return null;
+    }
+    const check = checkReviewReservations({
+      holders: assessed.reservationHolders,
+      maxConcurrent: route.requirements.maxConcurrent,
+      pool: { harness: route.harness, poolId: route.poolId },
+      target: {
+        action: assessed.qualification.request.action,
+        baseSha: assessed.scope.baseSha,
+        checkoutPath: assessed.checkout.path,
+        headSha: assessed.scope.headSha,
+      },
+    });
+    return check.kind === 'pool-busy' ? check.message : null;
   };
 
   /** A refused qualification for a request the parser did not accept; nothing was read for it and nothing is stored. */
@@ -897,7 +1012,13 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
       return await recordDecision({ ...base, state: 'abstained' }, null);
     }
     if (decision.kind === 'refused') {
-      return await refuse(decision.reason, decision.message);
+      // A busy pool is named by its holders of both families, as the insert transaction would name them.
+      const freshRoute =
+        decision.reason === 'pool-busy' && selection.kind === 'choice'
+          ? assessed.qualification.routes.find((entry) => entry.routeId === selection.routeId)
+          : undefined;
+      const detail = freshRoute === undefined ? null : poolBusyDetail(assessed, freshRoute);
+      return await refuse(decision.reason, detail ?? decision.message);
     }
     const { route } = decision;
     if (assessed.checkout === null || assessed.scope === null) {
@@ -971,15 +1092,9 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
           `Idempotency key ${command.idempotencyKey} already names job ${requested.existing.jobId} for another request or selection.`,
         );
       case 'target-reserved':
-        return await refuse(
-          'target-reserved',
-          `Job ${requested.existing.jobId} (${requested.existing.state}) already reserves this review (same action, checkout and frozen scope); follow it instead of starting another.`,
-        );
       case 'pool-busy':
-        return await refuse(
-          'pool-busy',
-          `Pool ${route.poolId} runs ${requested.count} reserving job(s); the limit is ${route.requirements.maxConcurrent}.`,
-        );
+        // The store's sentence names the holder of either family and any uncertainty in its scope or pool.
+        return await refuse(requested.kind, requested.message);
       case 'attempts-exhausted':
         return await refuse(
           'attempts-exhausted',
@@ -1052,6 +1167,79 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
     } finally {
       starts.delete(pending);
     }
+  };
+
+  // -------------------------------------------------------------------------------------------
+  // Admission of a review that enters through another command (the Work view's legacy launch)
+  // -------------------------------------------------------------------------------------------
+
+  const admitReview: ReviewAdmissionPort = async (input) => {
+    input.signal?.throwIfAborted();
+    // The legacy launch reviews the checkout's HEAD against its first parent: that is the request
+    // it would have been, in the delegation contract's own terms, parsed by the same parser.
+    const parsed = parseDelegationRequest({
+      action: 'read-only-review',
+      checkout: { path: input.checkoutPath },
+      constraints: [],
+      criteria: [],
+      objective: ADAPTED_REVIEW_OBJECTIVE,
+      schemaVersion: 1,
+      scope: { commit: 'HEAD', kind: 'commit' },
+      taskCategory: 'general-review',
+    } satisfies DelegationRequest);
+    if (parsed.kind !== 'ok') {
+      throw new Error(
+        `the review adapted from the Work command does not satisfy the delegation request contract (${parsed.kind})`,
+      );
+    }
+    const { request } = parsed;
+    const requestDigest = await delegationRequestDigest(request);
+    const assessed = await assess({
+      machineId: options.machine().id,
+      now: now().toISOString(),
+      purpose: 'delegation',
+      qualificationId: newId(),
+      request,
+      requestDigest,
+      signal: input.signal,
+    });
+    const { qualification } = assessed;
+    if (qualification.refusal !== null) {
+      return {
+        kind: 'refused',
+        message: qualification.refusal.message,
+        reason: legacyReasonForQualificationRefusal(qualification.refusal.reason),
+      };
+    }
+    const route = qualification.routes.find((candidate) => candidate.routeId === input.routeId);
+    if (route === undefined) {
+      return {
+        kind: 'refused',
+        message: `Route ${input.routeId} is not a delegation route on this machine: only a declared Claude Code or Codex executor of routing.executors[] is one, and the delegation policy admits no other launch.`,
+        reason: 'policy-refused',
+      };
+    }
+    if (!route.admissible) {
+      const reason = legacyReasonForRouteBlockers(route);
+      const detail =
+        (reason === 'pool-busy' ? poolBusyDetail(assessed, route) : null) ??
+        (route.exclusions.length === 0 ? 'the route is not eligible' : route.exclusions.join(' '));
+      return {
+        kind: 'refused',
+        message: bounded(
+          `The delegation policy does not admit route ${route.routeId} for ${assessed.checkout?.path ?? input.checkoutPath}: ${detail}`,
+          1024,
+        ),
+        reason,
+      };
+    }
+    if (assessed.checkout === null || assessed.scope === null) {
+      throw new Error('an admissible delegation route without a resolved checkout and frozen scope');
+    }
+    report(
+      `usage-engine delegation=admitted-review route=${route.routeId} pool=${route.poolId} head=${assessed.scope.headSha}`,
+    );
+    return { checkout: assessed.checkout, kind: 'admitted', route, scope: assessed.scope };
   };
 
   // -------------------------------------------------------------------------------------------
@@ -1363,6 +1551,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
   };
 
   return {
+    admitReview,
     cancel,
     live: () => [...runs.keys()],
     qualify,

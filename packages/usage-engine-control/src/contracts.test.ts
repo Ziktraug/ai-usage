@@ -616,6 +616,36 @@ describe('usage engine control contracts', () => {
     ).toThrow();
   });
 
+  test('carries the common review policy refusals of a legacy review attempt (PR #73 F1)', () => {
+    const completion = {
+      command: 'start-review-attempt',
+      commandId: 'command-1',
+      completedAt: '2026-10-25T08:00:02.000Z',
+      output: {
+        attempt: { attemptId: 'attempt-refused', reused: false, state: 'refused' },
+        kind: 'review-attempt',
+        refusal: {
+          message: 'The delegation policy does not admit route r: Forbidden by rule no-acme',
+          reason: 'policy-refused',
+        },
+      },
+      state: 'succeeded',
+    };
+    for (const reason of ['policy-refused', 'scope-unavailable', 'target-reserved', 'pool-busy']) {
+      const refused = {
+        ...completion,
+        output: { ...completion.output, refusal: { ...completion.output.refusal, reason } },
+      };
+      expect(parseUsageEngineCommandCompletion(refused)).toEqual(refused as never);
+    }
+    expect(() =>
+      parseUsageEngineCommandCompletion({
+        ...completion,
+        output: { ...completion.output, refusal: { ...completion.output.refusal, reason: 'rule-said-no' } },
+      }),
+    ).toThrow();
+  });
+
   test('carries the operator release of a held review reservation and its bounded answer (ADR 0055)', () => {
     const command = { attemptId: 'attempt-lost', command: 'release-review-reservation' };
     expect(parseUsageEngineCommand(command)).toEqual(command as never);

@@ -107,9 +107,15 @@ export type DelegationScopeInput =
 export interface DelegationReservations {
   /** Jobs in the retry chain of `request.retryOf` (the earlier job and its retries). */
   readonly attemptsInChain: number;
-  /** Reserving jobs per pool id (live, or lost and unreleased). */
+  /** Reserving jobs and legacy review attempts per pool id (live, or lost and unreleased). */
   readonly liveJobsByPool: ReadonlyMap<string, number>;
-  /** The job that already reserves this action, checkout and frozen scope, when one does. */
+  /**
+   * What reserves this action, checkout and frozen scope, when something does: a delegation job
+   * or a legacy review attempt, with the store's sentence (which names an uncertain scope).
+   * Absent for a delegation job named by `targetReservedBy` alone.
+   */
+  readonly targetReservation?: { readonly family: 'delegation' | 'review-attempt'; readonly message: string };
+  /** The id of the job or attempt that already reserves this action, checkout and frozen scope, when one does. */
   readonly targetReservedBy: string | null;
 }
 
@@ -654,10 +660,13 @@ export const qualifyDelegation = (input: QualifyDelegationInput): DelegationQual
     return refusedQualification(input, input.scope.failure, input.scope.message, { checkout, scope: null });
   }
   if (input.reservations.targetReservedBy !== null) {
+    const reservation = input.reservations.targetReservation;
     return refusedQualification(
       input,
       'target-reserved',
-      `Job ${input.reservations.targetReservedBy} already reserves this review (same action, checkout and frozen scope); follow it with delegation status instead of starting another.`,
+      reservation === undefined
+        ? `Job ${input.reservations.targetReservedBy} already reserves this review (same action, checkout and frozen scope); follow it with delegation status instead of starting another.`
+        : `${reservation.message}; follow it${reservation.family === 'delegation' ? ' with delegation status' : ' in the Work view'} instead of starting another.`,
       { checkout, scope },
     );
   }

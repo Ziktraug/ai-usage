@@ -1045,9 +1045,22 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     setMachineLabel: async (label, signal) => await requireMutation().setMachineLabel(label, signal),
   };
 
-  // The review launcher writes short rows through the gate and runs the harness outside it; its
-  // startup recovery is called from the gated `recover` below, so that path writes ungated.
+  // Delegation (ADR 0077): gated short writes, workers run outside the gate, startup recovery inside
+  // the gated `recover`, with the adapters' private files under an engine-owned directory in the
+  // engine state directory. It also owns the common review policy every launch passes through.
+  const delegation = createDelegationService({
+    dbPath: options.dbPath,
+    machine: requireMachine,
+    now,
+    privateRoot: options.delegationPrivateRoot ?? join(dirname(options.inboxDirectory), 'delegation'),
+    ...(options.reportReviewAttempt === undefined ? {} : { report: options.reportReviewAttempt }),
+    runWithWriter: (operation, signal) => writerGate.run(operation, signal),
+    storage,
+  });
+  // The legacy review launcher (the Work view's command) follows the same discipline and submits
+  // every launch to the delegation service's admission before it records or spawns anything.
   const reviewAttempts = createReviewAttemptService({
+    admission: delegation.admitReview,
     dbPath: options.dbPath,
     machine: requireMachine,
     now,
@@ -1060,18 +1073,6 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     dbPath: options.dbPath,
     machine: requireMachine,
     now,
-    storage,
-  });
-  // Delegation (ADR 0077): the same discipline as review attempts (gated short writes, workers run
-  // outside the gate, startup recovery inside the gated `recover`), with the adapters' private files
-  // under an engine-owned directory in the engine state directory.
-  const delegation = createDelegationService({
-    dbPath: options.dbPath,
-    machine: requireMachine,
-    now,
-    privateRoot: options.delegationPrivateRoot ?? join(dirname(options.inboxDirectory), 'delegation'),
-    ...(options.reportReviewAttempt === undefined ? {} : { report: options.reportReviewAttempt }),
-    runWithWriter: (operation, signal) => writerGate.run(operation, signal),
     storage,
   });
 

@@ -42,6 +42,11 @@ import {
 } from '@ai-usage/report-core/delegation-vocabulary';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import {
+  checkReviewReservations,
+  type ReviewReservationHolder,
+  readReviewReservationHolders,
+} from './review-reservations';
 
 /**
  * Durable storage for delegation (design 2026-10-25): the jobs a caller handed to AI Usage, the
@@ -250,14 +255,23 @@ export interface RequestDelegationJobInput {
 
 export type RequestDelegationJobResult =
   | { readonly count: number; readonly kind: 'attempts-exhausted' }
-  | { readonly count: number; readonly kind: 'pool-busy' }
+  /** The pool has no slot left, delegation jobs and legacy review attempts counted together (`review-reservations.ts`). */
+  | {
+      readonly count: number;
+      readonly holders: readonly ReviewReservationHolder[];
+      readonly kind: 'pool-busy';
+      readonly message: string;
+    }
   | {
       readonly existing: { readonly jobId: string; readonly state: DelegationJobState };
       readonly kind: 'idempotency-conflict';
     }
+  /** A row of either family reserves the target; `existing` names it for callers that follow a job id. */
   | {
-      readonly existing: { readonly jobId: string; readonly state: DelegationJobState };
+      readonly existing: { readonly jobId: string; readonly state: string };
+      readonly holder: ReviewReservationHolder;
       readonly kind: 'target-reserved';
+      readonly message: string;
     }
   | { readonly job: DelegationJob; readonly kind: 'inserted' }
   | { readonly job: DelegationJob; readonly kind: 'reused' };
@@ -854,26 +868,25 @@ export const createDelegationStore = (dependencies: DelegationStoreDependencies)
               if (!chain.parentKnown) {
                 throw invalid('retryOf names a job this store does not hold');
               }
-              const reserved = db
-                .query(`
-                  SELECT job_id, state FROM delegation_jobs
-                  WHERE machine_id = ? AND action = ? AND checkout_path = ? AND base_sha = ? AND head_sha = ? AND ${RESERVING_SQL}
-                  LIMIT 1
-                `)
-                .get(job.machineId, job.action, job.checkoutPath, baseSha, headSha) as {
-                job_id: string;
-                state: DelegationJobState;
-              } | null;
-              if (reserved !== null) {
-                return { existing: { jobId: reserved.job_id, state: reserved.state }, kind: 'target-reserved' };
+              // The shared rule, under this transaction: the target must be free of both review
+              // families and the pool must have a slot, delegation jobs and legacy attempts counted
+              // together. The partial unique index still backs the delegation side below the code path.
+              const check = checkReviewReservations({
+                holders: readReviewReservationHolders(db, job.machineId),
+                maxConcurrent: limits.maxConcurrent,
+                pool: { harness: job.executorHarness ?? '', poolId: job.poolId },
+                target: { action: job.action, baseSha, checkoutPath: job.checkoutPath, headSha },
+              });
+              if (check.kind === 'target-reserved') {
+                return {
+                  existing: { jobId: check.holder.id, state: check.holder.state },
+                  holder: check.holder,
+                  kind: 'target-reserved',
+                  message: check.message,
+                };
               }
-              const pool = db
-                .query(
-                  `SELECT COUNT(*) AS count FROM delegation_jobs WHERE machine_id = ? AND pool_id = ? AND ${RESERVING_SQL}`,
-                )
-                .get(job.machineId, job.poolId) as { count: number };
-              if (pool.count >= limits.maxConcurrent) {
-                return { count: pool.count, kind: 'pool-busy' };
+              if (check.kind === 'pool-busy') {
+                return { count: check.count, holders: check.holders, kind: 'pool-busy', message: check.message };
               }
               if (job.retryOf !== null && chain.attempts >= limits.maxAttempts) {
                 return { count: chain.attempts, kind: 'attempts-exhausted' };

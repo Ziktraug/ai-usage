@@ -25,5 +25,12 @@ export const REVIEW_LAUNCH_REFUSAL_REASONS = [
   'attempt-already-live',
   'attempt-unresolved',
   'identity-changed',
+  // The common review policy (ADR 0077) applied before the legacy launch too: the delegation rules
+  // refused the route, the checkout has no reviewable revision, another review of either family
+  // reserves the target, or the route's quota pool has no slot left.
+  'policy-refused',
+  'scope-unavailable',
+  'target-reserved',
+  'pool-busy',
 ] as const;
 export type ReviewLaunchRefusalReason = (typeof REVIEW_LAUNCH_REFUSAL_REASONS)[number];

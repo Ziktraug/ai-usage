@@ -117,6 +117,7 @@ export {
   queryRecentServedHarnessSessions,
   queryReportRows,
   queryReviewAttempts,
+  queryReviewReservations,
   queryReviewTargetResolution,
   queryServedReportRevisionLocalSnapshot,
   queryServedReportRevisionPortableConfig,
@@ -143,9 +144,19 @@ export {
 export type {
   QueryReviewAttemptsInput,
   QueryReviewAttemptsResult,
+  QueryReviewReservationsInput,
+  QueryReviewReservationsResult,
   QueryReviewTargetResolutionInput,
   ReviewTargetResolutionFacts,
 } from './review-attempt-store';
+export type {
+  ReviewReservationFamily,
+  ReviewReservationHolder,
+  ReviewReservationPool,
+  ReviewReservationScope,
+  ReviewReservationTarget,
+} from './review-reservations';
+export { countReviewReservationsByPool, reviewTargetReservationHolder } from './review-reservations';
 export type { ServedRevisionQueryKind, ServedRevisionQueryResult } from './served-query-catalog';
 export type { ServedRevisionQueryTrace } from './served-revision';
 export type {

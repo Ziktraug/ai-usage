@@ -263,15 +263,23 @@ describe('requestDelegationJob', () => {
     const dbPath = await createStore();
     await request(dbPath, { jobId: 'job-1' });
     // Another key on the same frozen target is refused by the reservation.
-    expect(await request(dbPath, { idempotencyKey: 'caller:session-2:review-1', jobId: 'job-2' })).toEqual({
+    expect(await request(dbPath, { idempotencyKey: 'caller:session-2:review-1', jobId: 'job-2' })).toMatchObject({
       existing: { jobId: 'job-1', state: 'requested' },
+      holder: { family: 'delegation', id: 'job-1', poolId: POOL, scope: { kind: 'revision', provenance: 'frozen' } },
       kind: 'target-reserved',
+      message:
+        'delegation job job-1 (requested) already reserves this review (same action, checkout and frozen revision); follow it instead of starting another.',
     });
     // Another target in the same pool is refused by the concurrency limit.
     const otherScope = { ...scope, headSha: 'c'.repeat(40) };
     expect(
       await request(dbPath, { idempotencyKey: 'caller:session-2:review-2', jobId: 'job-3', scope: otherScope }),
-    ).toEqual({ count: 1, kind: 'pool-busy' });
+    ).toMatchObject({
+      count: 1,
+      holders: [{ family: 'delegation', id: 'job-1' }],
+      kind: 'pool-busy',
+      message: `Pool ${POOL} runs 1 reserving job(s) or attempt(s): delegation job job-1 (requested); the limit is 1.`,
+    });
     // A larger pool limit admits it.
     expect(
       await run(
@@ -604,7 +612,7 @@ describe('transitions, cancellation, loss and release', () => {
     });
     expect((await run(queryDelegationJobs({ dbPath, machineId: 'elsewhere' }))).jobs[0]?.state).toBe('requested');
     // Still reserving: the same target is refused, a heartbeat is ignored, a cancel is refused.
-    expect(await request(dbPath, { idempotencyKey: 'caller:b:review-1', jobId: 'job-2' })).toEqual({
+    expect(await request(dbPath, { idempotencyKey: 'caller:b:review-1', jobId: 'job-2' })).toMatchObject({
       existing: { jobId: 'job-1', state: 'lost' },
       kind: 'target-reserved',
     });

@@ -16,9 +16,10 @@ import { Effect } from 'effect';
  *   given, as the real CLI does. It exits non-zero unless the launch excluded every settings
  *   source, ran in safe mode with only Read, Grep and Glob, in plan mode; any other invocation
  *   fails. The Claude quota source is untouched: the Agent SDK runs its own bundled CLI, never PATH.
- * - the disposable home config: one `routing.executors[]` declaration for Claude Code and one
+ * - the disposable home config: one `routing.executors[]` declaration for Claude Code, one
  *   `routing.reviewTargets[]` entry naming the seeded fixture repository, so the blocked root's
- *   worktree (a descendant) is admitted;
+ *   worktree (a descendant) is admitted, and one `delegation.routes[]` annotation giving that
+ *   route a context, which the common review policy requires of every launch (ADR 0077);
  * - the worktree directory the blocked Desktop root declares as `cwd`, a git repository with two
  *   commits, so the harness starts there and the review's scope is the second commit;
  * - one stored Claude quota observation dated at the pinned clock, because a `real`
@@ -144,6 +145,11 @@ export const seedWorkAttemptFixture = async (input: SeedWorkAttemptFixtureInput)
     path.join(configDirectory, 'config.json'),
     `${JSON.stringify(
       {
+        // The common review policy every launch passes (ADR 0077, PR #73 F1) admits a route only
+        // with a declared context; nothing else is declared, so no rule applies to the launch.
+        delegation: {
+          routes: [{ accountScope: WORK_ATTEMPT_FIXTURE_ACCOUNT, context: 'personal', harness: 'claude-code' }],
+        },
         routing: {
           executors: [
             {

@@ -203,6 +203,15 @@ describe('Work attempts Web contract', () => {
         ok: false,
       }),
     ).toMatchObject({ error: { reason: 'target-not-allowed' }, ok: false });
+    // The common review policy's refusals (PR #73 F1) travel with their own typed reasons.
+    for (const reason of ['policy-refused', 'scope-unavailable', 'target-reserved', 'pool-busy'] as const) {
+      expect(
+        parseWorkAttemptsStartOutput({
+          error: { message: `the policy said ${reason}`, reason, tag: 'Refused' },
+          ok: false,
+        }),
+      ).toMatchObject({ error: { reason }, ok: false });
+    }
     expect(() =>
       parseWorkAttemptsStartOutput({ error: { message: 'x', reason: 'because', tag: 'Refused' }, ok: false }),
     ).toThrow();

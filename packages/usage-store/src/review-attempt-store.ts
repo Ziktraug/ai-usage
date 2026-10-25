@@ -20,6 +20,12 @@ import {
 } from '@ai-usage/report-core/work-executors';
 import { Effect } from 'effect';
 import type { UsageStoreError, UsageStoreErrorReason } from './errors';
+import {
+  checkReviewReservations,
+  type ReviewReservationCheck,
+  type ReviewReservationHolder,
+  readReviewReservationHolders,
+} from './review-reservations';
 
 /**
  * Durable storage for review attempts (ADR 0053, 0055): the executions the product launched
@@ -80,7 +86,9 @@ const reviewAttemptColumnsSql = `
     released_at TEXT,
     release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ${RELEASE_EVIDENCE_SQL}),
     scope_json TEXT,
-    guarantee_json TEXT
+    guarantee_json TEXT,
+    base_sha TEXT,
+    head_sha TEXT
 `;
 
 const TARGET_INDEX_SQL = `
@@ -103,6 +111,11 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ],
   ['scope_json', 'scope_json TEXT'],
   ['guarantee_json', 'guarantee_json TEXT'],
+  // The revision frozen at request time (PR #73 F1): what the attempt reserves across both review
+  // families, written before any spawn. Older rows keep NULL and reserve what their recorded scope
+  // names, else their whole checkout (`review-reservations.ts`).
+  ['base_sha', 'base_sha TEXT'],
+  ['head_sha', 'head_sha TEXT'],
 ];
 
 interface MigrationDatabase {
@@ -195,6 +208,18 @@ export interface NewReviewAttempt {
   readonly launchSessionId?: string | null;
   readonly machineId: string;
   readonly requestedAt: string;
+  /**
+   * What a `requested` attempt reserves, checked inside the insert transaction against both review
+   * families (`review-reservations.ts`): the frozen revision it will review and the quota pool it
+   * occupies, under the admitted route's concurrency limit. Absent, the row reserves what it can
+   * name (its checkout) and takes no pool check; the engine always passes it for a launch.
+   */
+  readonly reservation?: {
+    readonly baseSha: string;
+    readonly headSha: string;
+    readonly maxConcurrent: number;
+    readonly poolId: string;
+  };
   /** `requested` opens a live attempt; `refused` records a decision that launched nothing. */
   readonly state: 'refused' | 'requested';
   readonly target: ReviewAttemptTarget;
@@ -205,12 +230,20 @@ export interface RequestReviewAttemptInput {
   readonly dbPath: string;
 }
 
-export interface RequestReviewAttemptResult {
-  /** The inserted row, or the one already holding the identity's reservation (live, or lost and unreleased). */
-  readonly attempt: ReviewAttempt;
-  /** The identity was already reserved; nothing was inserted. */
-  readonly reused: boolean;
-}
+export type RequestReviewAttemptResult =
+  /** The inserted row. */
+  | { readonly attempt: ReviewAttempt; readonly kind: 'inserted'; readonly reused: false }
+  /** The row already holding the identity's reservation (live, or lost and unreleased); nothing was inserted. */
+  | { readonly attempt: ReviewAttempt; readonly kind: 'reused'; readonly reused: true }
+  /** Another row of either family reserves the target; nothing was inserted. */
+  | { readonly holder: ReviewReservationHolder; readonly kind: 'target-reserved'; readonly message: string }
+  /** The pool has no slot left under the limit, both families counted; nothing was inserted. */
+  | {
+      readonly count: number;
+      readonly holders: readonly ReviewReservationHolder[];
+      readonly kind: 'pool-busy';
+      readonly message: string;
+    };
 
 export interface ReviewAttemptPatch {
   readonly durationMs?: number | null;
@@ -287,6 +320,16 @@ export interface QueryReviewAttemptsResult {
   /** Persisted rows that no longer pass validation. Never silently omitted. */
   readonly skipped: number;
   readonly truncated: boolean;
+}
+
+export interface QueryReviewReservationsInput {
+  readonly dbPath: string;
+  readonly machineId: string;
+}
+
+export interface QueryReviewReservationsResult {
+  /** Every reserving row of both families on the machine, earliest request first. */
+  readonly holders: readonly ReviewReservationHolder[];
 }
 
 export interface QueryReviewTargetResolutionInput {
@@ -517,7 +560,7 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
   ): Effect.Effect<RequestReviewAttemptResult, UsageStoreError> =>
     withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
-        try: () => {
+        try: (): RequestReviewAttemptResult => {
           const { attempt } = input;
           db.exec('BEGIN IMMEDIATE');
           try {
@@ -533,7 +576,27 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
                 if (existing === null) {
                   throw new Error(`Reserving review attempt ${live.attempt_id} does not satisfy its own contract`);
                 }
-                return { attempt: existing, reused: true };
+                return { attempt: existing, kind: 'reused', reused: true };
+              }
+              // The shared rule, under this transaction: the frozen target must be free of both
+              // families and the pool must have a slot, legacy attempts and delegation jobs counted together.
+              if (attempt.reservation !== undefined) {
+                const { reservation } = attempt;
+                const check: ReviewReservationCheck = checkReviewReservations({
+                  holders: readReviewReservationHolders(db, attempt.machineId),
+                  maxConcurrent: reservation.maxConcurrent,
+                  pool: { harness: attempt.executorHarness, poolId: reservation.poolId },
+                  target: {
+                    action: REVIEW_ATTEMPT_ACTION,
+                    baseSha: reservation.baseSha,
+                    checkoutPath: attempt.target.checkoutPath ?? '',
+                    headSha: reservation.headSha,
+                  },
+                });
+                if (check.kind !== 'free') {
+                  db.exec('COMMIT');
+                  return check;
+                }
               }
             }
             const attemptId = attempt.attemptId ?? randomUUID();
@@ -546,8 +609,8 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
                 attempt_id, machine_id, idempotency_key, action, target_harness, source_session_id, desktop_session_id,
                 checkout_path, checkout_origin, project_label, session_title, candidate_id, executor_harness,
                 declaration_json, state, requested_at, updated_at, validations_json, acceptance, failure_reason,
-                launch_session_id
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 'pending', ?, ?)
+                launch_session_id, base_sha, head_sha
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 'pending', ?, ?, ?, ?)
             `).run(
               attemptId,
               attempt.machineId,
@@ -568,13 +631,15 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
               attempt.requestedAt,
               boundedOrNull(attempt.failureReason, REVIEW_ATTEMPT_BOUNDS.maxFailureReason),
               attempt.launchSessionId ?? null,
+              attempt.state === 'requested' ? (attempt.reservation?.baseSha ?? null) : null,
+              attempt.state === 'requested' ? (attempt.reservation?.headSha ?? null) : null,
             );
             const inserted = readAttempt(db, attemptId);
             db.exec('COMMIT');
             if (inserted === null) {
               throw new Error(`Review attempt ${attemptId} does not satisfy its own contract after insert`);
             }
-            return { attempt: inserted, reused: false };
+            return { attempt: inserted, kind: 'inserted', reused: false };
           } catch (error) {
             db.exec('ROLLBACK');
             throw error;
@@ -756,6 +821,20 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
     );
   };
 
+  /**
+   * The reservations both families hold on one machine, outside any transaction: what the
+   * delegation qualification shows before a launch decides. The insert transactions re-read them.
+   */
+  const queryReviewReservations = (
+    input: QueryReviewReservationsInput,
+  ): Effect.Effect<QueryReviewReservationsResult, UsageStoreError> =>
+    withUsageStoreReader(input.dbPath, (db) =>
+      Effect.try({
+        try: () => ({ holders: readReviewReservationHolders(db, input.machineId) }),
+        catch: (cause) => usageStoreReadError('queryReviewReservations', input.dbPath, cause),
+      }),
+    );
+
   const queryReviewTargetResolution = (
     input: QueryReviewTargetResolutionInput,
   ): Effect.Effect<ReviewTargetResolutionFacts, UsageStoreError> =>
@@ -840,6 +919,7 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
   return {
     markReviewAttemptsLost,
     queryReviewAttempts,
+    queryReviewReservations,
     queryReviewTargetResolution,
     releaseReviewAttemptReservation,
     requestReviewAttempt,

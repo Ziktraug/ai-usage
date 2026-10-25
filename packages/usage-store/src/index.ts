@@ -4463,6 +4463,7 @@ export const {
 export const {
   markReviewAttemptsLost,
   queryReviewAttempts,
+  queryReviewReservations,
   queryReviewTargetResolution,
   releaseReviewAttemptReservation,
   requestReviewAttempt,

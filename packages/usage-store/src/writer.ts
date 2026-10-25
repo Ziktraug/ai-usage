@@ -164,6 +164,7 @@ export {
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
   queryReviewAttempts,
+  queryReviewReservations,
   queryReviewTargetResolution,
   queryServedReportRevisionSupport,
   queryServedSessionPullRequestLinks,
@@ -202,6 +203,8 @@ export type {
   NewReviewAttempt,
   QueryReviewAttemptsInput,
   QueryReviewAttemptsResult,
+  QueryReviewReservationsInput,
+  QueryReviewReservationsResult,
   QueryReviewTargetResolutionInput,
   ReleaseReviewAttemptReservationInput,
   RequestReviewAttemptInput,
@@ -211,4 +214,18 @@ export type {
   TransitionReviewAttemptInput,
   TransitionReviewAttemptResult,
 } from './review-attempt-store';
+export type {
+  ReviewReservationCheck,
+  ReviewReservationFamily,
+  ReviewReservationHolder,
+  ReviewReservationPool,
+  ReviewReservationScope,
+  ReviewReservationTarget,
+} from './review-reservations';
+export {
+  checkReviewReservations,
+  countReviewReservationsByPool,
+  describeReviewReservation,
+  reviewTargetReservationHolder,
+} from './review-reservations';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
