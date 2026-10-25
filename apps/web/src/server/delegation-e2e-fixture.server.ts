@@ -298,6 +298,8 @@ const qualify = async (
   const declared = await readDeclared();
   const requestDigest = await delegationRequestDigest(request);
   return qualifyDelegation({
+    // The fixture keeps no observation store, so it has no persisted account-change barrier.
+    accountChanges: [],
     checkout: resolveCheckout(request.checkout.path),
     checkoutFacts: {
       gitAuthorEmail: { provenance: 'observed', source: 'git config user.email', value: 'fixture@example.test' },

@@ -127,11 +127,11 @@ export interface ExecutorAccountChange {
 export interface QualifyDelegationInput {
   /**
    * The persisted account-change barriers, one per executor. A route's change time is the later of
-   * its barrier and the change its retained history shows, so pruning never weakens it. Absent for a
-   * caller that has no barrier table (a query-only reader of a store the engine has not migrated);
-   * only the history-derived change applies then.
+   * its barrier and the change its retained history shows, so pruning never weakens it. Required:
+   * a caller with no barrier to give (a fixture, a store without the table) passes an empty list
+   * explicitly, and only the history-derived change applies then.
    */
-  readonly accountChanges?: readonly ExecutorAccountChange[];
+  readonly accountChanges: readonly ExecutorAccountChange[];
   readonly checkout: DelegationCheckoutInput;
   readonly checkoutFacts: DelegationCheckoutFacts;
   readonly config: DelegationConfig;
@@ -697,10 +697,7 @@ export const qualifyDelegation = (input: QualifyDelegationInput): DelegationQual
   });
   const observations = latestObservationsByExecutor(input.executorObservations);
   const persistedChanges = new Map(
-    (input.accountChanges ?? []).map((change) => [
-      JSON.stringify([change.machineId, change.harness]),
-      change.changedAt,
-    ]),
+    input.accountChanges.map((change) => [JSON.stringify([change.machineId, change.harness]), change.changedAt]),
   );
   const poolSizes = new Map<string, number>();
   for (const candidate of candidates) {

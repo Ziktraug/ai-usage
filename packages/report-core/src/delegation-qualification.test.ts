@@ -176,6 +176,7 @@ const CONTROLS: QualifyDelegationInput['harnessControls'] = {
 };
 
 const input = (overrides: Partial<QualifyDelegationInput> = {}): QualifyDelegationInput => ({
+  accountChanges: [],
   checkout: CHECKOUT,
   checkoutFacts: FACTS,
   config: CONFIG,
