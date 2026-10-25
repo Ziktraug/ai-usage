@@ -156,6 +156,8 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
       fact.draft === false &&
       fact.checksRollup === 'success' &&
       marker.mergeable === 'mergeable' &&
+      marker.mergeStateStatus === 'CLEAN' &&
+      unresolved === 0 &&
       (fact.reviewDecision === 'APPROVED' || fact.reviewDecision === null)
     ) {
       remainders.push({ ...evidence, kind: 'ready-to-merge' });

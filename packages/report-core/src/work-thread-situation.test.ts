@@ -154,7 +154,7 @@ describe('Work thread situation', () => {
     expect(kinds(requested)).toEqual(['review-requested']);
   });
   test('a draft remains an operator remainder instead of being ready to merge', () => {
-    const draft = withPr(pr({ draft: true, reviewDecision: 'APPROVED' }));
+    const draft = withPr(pr({ draft: true, reviewDecision: 'APPROVED', unresolvedReviewThreads: 0 }));
     expect(deriveWorkThreadSituation(draft, at)).toMatchObject({
       hint: 'to-resume',
       reason: 'draft-pr',
@@ -163,7 +163,7 @@ describe('Work thread situation', () => {
     expect(kinds(draft)).toEqual(['draft-pr']);
   });
   test.each(['APPROVED', null] as const)('green mergeable non-draft with review decision %s is ready', (decision) => {
-    const ready = withPr(pr({ reviewDecision: decision }));
+    const ready = withPr(pr({ reviewDecision: decision, unresolvedReviewThreads: 0 }));
     expect(deriveWorkThreadSituation(ready, at)).toMatchObject({
       hint: 'to-resume',
       reason: 'ready-to-merge',
@@ -171,13 +171,40 @@ describe('Work thread situation', () => {
     });
     expect(kinds(ready)).toEqual(['ready-to-merge']);
   });
+  test.each([
+    ['BLOCKED', 'open-pr'],
+    ['UNKNOWN', 'open-pr'],
+    ['BEHIND', 'behind-base'],
+    ['DIRTY', 'merge-conflict'],
+    ['HAS_HOOKS', 'open-pr'],
+    ['UNSTABLE', 'open-pr'],
+    [null, 'open-pr'],
+  ] as const)(
+    'merge state %s prevents readiness despite successful checks and approval',
+    (mergeStateStatus, expected) => {
+      const observed = withPr(pr({ reviewDecision: 'APPROVED', unresolvedReviewThreads: 0 }), { mergeStateStatus });
+      expect(kinds(observed)).toEqual([expected]);
+      expect(deriveWorkThreadSituation(observed, at).reason).toBe(expected);
+    },
+  );
+  test.each([
+    [undefined, 'open-pr'],
+    [null, 'open-pr'],
+    [2, 'unresolved-review-threads'],
+  ] as const)('review thread count %s prevents readiness despite a clean merge state', (count, expected) => {
+    const observed = withPr(
+      pr({ reviewDecision: 'APPROVED', ...(count === undefined ? {} : { unresolvedReviewThreads: count }) }),
+    );
+    expect(kinds(observed)).toEqual([expected]);
+    expect(deriveWorkThreadSituation(observed, at).reason).toBe(expected);
+  });
   test('unknown merge readiness keeps the generic open remainder', () => {
     for (const unknown of [
-      withPr(pr({ checksRollup: null })),
-      withPr(pr({ draft: null })),
-      withPr(pr({ reviewDecision: 'COMMENTED' })),
-      withPr(pr(), { mergeable: 'unknown' }),
-      withPr(pr(), { mergeable: null }),
+      withPr(pr({ checksRollup: null, unresolvedReviewThreads: 0 })),
+      withPr(pr({ draft: null, unresolvedReviewThreads: 0 })),
+      withPr(pr({ reviewDecision: 'COMMENTED', unresolvedReviewThreads: 0 })),
+      withPr(pr({ unresolvedReviewThreads: 0 }), { mergeable: 'unknown' }),
+      withPr(pr({ unresolvedReviewThreads: 0 }), { mergeable: null }),
     ]) {
       expect(kinds(unknown)).toEqual(['open-pr']);
       expect(deriveWorkThreadSituation(unknown, at).reason).toBe('open-pr');
@@ -252,7 +279,7 @@ describe('Work thread situation', () => {
       [null, 'ready-to-merge'],
       ['REVIEW_REQUIRED', 'awaiting-review'],
     ] as const) {
-      const specific = withPr(pr({ reviewDecision: decision }));
+      const specific = withPr(pr({ reviewDecision: decision, unresolvedReviewThreads: 0 }));
       const combined = {
         ...specific,
         markers: { ...specific.markers, pullRequests: [...generic, ...specific.markers.pullRequests] },
@@ -260,15 +287,9 @@ describe('Work thread situation', () => {
       expect(deriveWorkThreadSituation(combined, at).reason).toBe(expected);
       expect(kinds(combined)).toContain('open-pr');
     }
-    for (const [markerPatch, patch, expected] of [
-      [{ mergeStateStatus: 'DIRTY' }, {}, 'merge-conflict'],
-      [{ role: 'review-requested' }, {}, 'review-requested'],
-      [{}, { unresolvedReviewThreads: 2 }, 'unresolved-review-threads'],
-    ] as const) {
-      const coexist = withPr(pr(patch), markerPatch);
-      expect(kinds(coexist)).toContain('ready-to-merge');
-      expect(deriveWorkThreadSituation(coexist, at).reason).toBe(expected);
-    }
+    const requested = withPr(pr({ unresolvedReviewThreads: 0 }), { role: 'review-requested' });
+    expect(kinds(requested)).toEqual(['review-requested', 'ready-to-merge']);
+    expect(deriveWorkThreadSituation(requested, at).reason).toBe('review-requested');
   });
   test('no PR or completed session alone ends a change follow-up', () => {
     expect(deriveWorkThreadSituation(row({ sessionCount: 1 }), at).hint).toBe('undecided');
@@ -326,7 +347,7 @@ describe('Work thread situation', () => {
     });
   });
   test('behind uses the PR base and is distinct from conflict', () => {
-    const value = withPr(pr());
+    const value = withPr(pr({ unresolvedReviewThreads: 0 }));
     const marker = value.markers.pullRequests[0];
     if (!marker) {
       throw new Error('Missing fixture marker');
@@ -335,7 +356,7 @@ describe('Work thread situation', () => {
       ...value,
       markers: { ...value.markers, pullRequests: [{ ...marker, mergeStateStatus: 'BEHIND' }] },
     };
-    expect(kinds(observed)).toEqual(['behind-base', 'ready-to-merge']);
+    expect(kinds(observed)).toEqual(['behind-base']);
     expect(deriveWorkThreadSituation(observed, at).reason).toBe('behind-base');
     expect(deriveWorkThreadSituation(observed, at).remainders[0]).toMatchObject({
       baseRef: 'release/next',
@@ -343,11 +364,13 @@ describe('Work thread situation', () => {
     });
   });
   test('pending CI waits and an approved open PR still has a remainder', () => {
-    expect(deriveWorkThreadSituation(withPr(pr({ checksRollup: 'pending' })), at)).toMatchObject({
+    expect(
+      deriveWorkThreadSituation(withPr(pr({ checksRollup: 'pending', unresolvedReviewThreads: 0 })), at),
+    ).toMatchObject({
       hint: 'waiting',
       reason: 'pending-checks',
     });
-    expect(kinds(withPr(pr({ reviewDecision: 'APPROVED' })))).toEqual(['ready-to-merge']);
+    expect(kinds(withPr(pr({ reviewDecision: 'APPROVED', unresolvedReviewThreads: 0 })))).toEqual(['ready-to-merge']);
   });
   test('merged PR does not hide Jira work', () => {
     const value = withPr(pr({ state: 'MERGED' }));
