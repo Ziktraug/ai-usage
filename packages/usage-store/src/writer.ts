@@ -210,6 +210,7 @@ export type {
   RequestReviewAttemptInput,
   RequestReviewAttemptResult,
   ReviewAttemptPatch,
+  ReviewAttemptReservation,
   ReviewTargetResolutionFacts,
   TransitionReviewAttemptInput,
   TransitionReviewAttemptResult,

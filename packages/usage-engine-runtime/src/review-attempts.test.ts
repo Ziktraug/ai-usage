@@ -838,6 +838,7 @@ describe('engine review attempts', () => {
           launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
           machineId: machine.id,
           requestedAt: NOW.toISOString(),
+          reservation: { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40), maxConcurrent: 8, poolId: CANDIDATE_ID },
           state: 'requested',
           target: {
             checkoutOrigin: 'desktop-cwd',
@@ -891,6 +892,7 @@ describe('engine review attempts', () => {
           idempotencyKey: 'e'.repeat(64),
           machineId: machine.id,
           requestedAt: NOW.toISOString(),
+          reservation: { baseSha: 'b'.repeat(40), headSha: 'c'.repeat(40), maxConcurrent: 8, poolId: CANDIDATE_ID },
           state: 'requested',
           target: {
             checkoutOrigin: 'desktop-cwd',
@@ -954,6 +956,7 @@ describe('engine review attempts', () => {
           launchSessionId: marker,
           machineId: machine.id,
           requestedAt: NOW.toISOString(),
+          reservation: { baseSha: 'b'.repeat(40), headSha: 'd'.repeat(40), maxConcurrent: 8, poolId: CANDIDATE_ID },
           state: 'requested',
           target: {
             checkoutOrigin: 'desktop-cwd',

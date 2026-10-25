@@ -83,7 +83,9 @@ const scope: FrozenDelegationScope = {
   kind: 'commit',
 };
 
-const newAttempt = (overrides: Partial<NewReviewAttempt> = {}): NewReviewAttempt => ({
+type RequestedReviewAttempt = Extract<NewReviewAttempt, { readonly state: 'requested' }>;
+
+const newAttempt = (overrides: Partial<RequestedReviewAttempt> = {}): RequestedReviewAttempt => ({
   candidateId: POOL,
   declaration,
   executorHarness: 'claude-code',

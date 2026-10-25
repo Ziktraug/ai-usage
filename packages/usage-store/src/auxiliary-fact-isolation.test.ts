@@ -120,6 +120,12 @@ const reviewAttempt: NewReviewAttempt = {
   idempotencyKey: 'k'.repeat(64),
   machineId: MACHINE,
   requestedAt: '2026-10-21T20:00:00.000Z',
+  reservation: {
+    baseSha: 'b'.repeat(40),
+    headSha: 'a'.repeat(40),
+    maxConcurrent: 1,
+    poolId: `declared:${JSON.stringify([MACHINE, 'claude-code', 'personal'])}`,
+  },
   state: 'requested',
   target: {
     checkoutOrigin: 'desktop-cwd',

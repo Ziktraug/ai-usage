@@ -57,14 +57,41 @@ const target: ReviewAttemptTarget = {
   sessionTitle: 'Fixture: desktop session',
   sourceSessionId: 'cli-1',
 };
-const newAttempt = (overrides: Partial<NewReviewAttempt> = {}): NewReviewAttempt => ({
-  candidateId: 'declared:["machine-attempts","claude-code","personal"]',
+const POOL = 'declared:["machine-attempts","claude-code","personal"]';
+type RequestedReviewAttempt = Extract<NewReviewAttempt, { readonly state: 'requested' }>;
+type RefusedReviewAttempt = Extract<NewReviewAttempt, { readonly state: 'refused' }>;
+/** A wide pool: these tests are about identities and transitions, not the shared limit. */
+const RESERVATION: RequestedReviewAttempt['reservation'] = {
+  baseSha: 'b'.repeat(40),
+  headSha: 'a'.repeat(40),
+  maxConcurrent: 8,
+  poolId: POOL,
+};
+/** A reservation of another revision of the same checkout, so several rows can be live at once. */
+const reservationOf = (headDigit: string): RequestedReviewAttempt['reservation'] => ({
+  ...RESERVATION,
+  headSha: headDigit.repeat(40),
+});
+const newAttempt = (overrides: Partial<RequestedReviewAttempt> = {}): RequestedReviewAttempt => ({
+  candidateId: POOL,
   declaration,
   executorHarness: 'claude-code',
   idempotencyKey: 'k'.repeat(64),
   machineId: MACHINE,
   requestedAt: NOW,
+  reservation: RESERVATION,
   state: 'requested',
+  target,
+  ...overrides,
+});
+const newRefusal = (overrides: Partial<RefusedReviewAttempt> = {}): RefusedReviewAttempt => ({
+  candidateId: POOL,
+  declaration: null,
+  executorHarness: 'claude-code',
+  idempotencyKey: 'k'.repeat(64),
+  machineId: MACHINE,
+  requestedAt: NOW,
+  state: 'refused',
   target,
   ...overrides,
 });
@@ -424,10 +451,10 @@ describe('review attempt store', () => {
     // A refusal is recorded beside the live attempt and never blocks or reuses it.
     const refused = await run(
       requestReviewAttempt({
-        attempt: newAttempt({
+        attempt: newRefusal({
           attemptId: 'attempt-3',
+          declaration,
           failureReason: 'target-not-allowed: add routing.reviewTargets for /x',
-          state: 'refused',
         }),
         dbPath,
       }),
@@ -449,6 +476,46 @@ describe('review attempt store', () => {
     const listed = await run(queryReviewAttempts({ dbPath, target: { harness: 'claude', sourceSessionId: 'cli-1' } }));
     expect(listed.attempts.map(({ attemptId }) => attemptId)).toEqual(['attempt-4', 'attempt-3', 'attempt-1']);
     expect(listed).toMatchObject({ skipped: 0, truncated: false });
+  });
+
+  test('refuses a requested row without a valid reservation, typed, and inserts nothing', async () => {
+    const dbPath = await createStore();
+    // The type forbids these; the runtime check is what a caller outside the engine's admitted path meets.
+    const cases: readonly (readonly [label: string, reservation: unknown])[] = [
+      ['missing', undefined],
+      ['not an object', 'declared:pool'],
+      ['short head sha', { ...RESERVATION, headSha: 'abc' }],
+      ['uppercase base sha', { ...RESERVATION, baseSha: 'B'.repeat(40) }],
+      ['zero concurrency', { ...RESERVATION, maxConcurrent: 0 }],
+      ['fractional concurrency', { ...RESERVATION, maxConcurrent: 1.5 }],
+      ['empty pool', { ...RESERVATION, poolId: '' }],
+    ];
+    for (const [label, reservation] of cases) {
+      const attempt = { ...newAttempt({ attemptId: `invalid-${label}` }), reservation } as unknown as NewReviewAttempt;
+      const error = await Effect.runPromise(Effect.flip(requestReviewAttempt({ attempt, dbPath })));
+      expect([label, error]).toMatchObject([
+        label,
+        { _tag: 'UsageStoreError', operation: 'requestReviewAttempt', reason: 'invalid-input' },
+      ]);
+      expect(error.message).toContain('reservation');
+    }
+    // A requested row without the checkout its revision belongs to cannot reserve a revision either.
+    const noCheckout = newAttempt({ attemptId: 'invalid-checkout', target: { ...target, checkoutPath: null } });
+    const checkoutError = await Effect.runPromise(Effect.flip(requestReviewAttempt({ attempt: noCheckout, dbPath })));
+    expect(checkoutError).toMatchObject({ operation: 'requestReviewAttempt', reason: 'invalid-input' });
+    expect(checkoutError.message).toContain('checkout');
+    expect((await run(queryReviewAttempts({ dbPath }))).attempts).toEqual([]);
+
+    // A refusal reserves nothing and needs none; a valid reservation inserts.
+    const refused = await run(
+      requestReviewAttempt({
+        attempt: newRefusal({ attemptId: 'refused-1', failureReason: 'policy-refused: x' }),
+        dbPath,
+      }),
+    );
+    expect(refused).toMatchObject({ attempt: { attemptId: 'refused-1', state: 'refused' }, kind: 'inserted' });
+    const inserted = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'valid-1' }), dbPath }));
+    expect(inserted).toMatchObject({ attempt: { attemptId: 'valid-1', state: 'requested' }, kind: 'inserted' });
   });
 
   test('guards transitions by state and bounds the written text', async () => {
@@ -549,20 +616,35 @@ describe('review attempt store', () => {
 
   test('marks every live attempt of the machine lost with a bounded reason and leaves the rest alone', async () => {
     const dbPath = await createStore();
+    // Distinct identities on distinct revisions of the checkout: each row is live beside the others.
     await run(
       requestReviewAttempt({
-        attempt: newAttempt({ attemptId: 'requested-1', idempotencyKey: 'a'.repeat(64) }),
+        attempt: newAttempt({
+          attemptId: 'requested-1',
+          idempotencyKey: 'a'.repeat(64),
+          reservation: reservationOf('1'),
+        }),
         dbPath,
       }),
     );
     await run(
-      requestReviewAttempt({ attempt: newAttempt({ attemptId: 'running-1', idempotencyKey: 'b'.repeat(64) }), dbPath }),
+      requestReviewAttempt({
+        attempt: newAttempt({
+          attemptId: 'running-1',
+          idempotencyKey: 'b'.repeat(64),
+          reservation: reservationOf('2'),
+        }),
+        dbPath,
+      }),
     );
     await run(
       transitionReviewAttempt({ at: LATER, attemptId: 'running-1', dbPath, patch: { pid: 77, state: 'running' } }),
     );
     await run(
-      requestReviewAttempt({ attempt: newAttempt({ attemptId: 'done-1', idempotencyKey: 'c'.repeat(64) }), dbPath }),
+      requestReviewAttempt({
+        attempt: newAttempt({ attemptId: 'done-1', idempotencyKey: 'c'.repeat(64), reservation: reservationOf('3') }),
+        dbPath,
+      }),
     );
     await run(
       transitionReviewAttempt({ at: LATER, attemptId: 'done-1', dbPath, patch: { state: 'finished', endedAt: LATER } }),
@@ -767,6 +849,7 @@ describe('review attempt store', () => {
             attemptId: `attempt-${index}`,
             idempotencyKey: String(index).repeat(64),
             requestedAt: `2026-10-22T10:0${index}:00.000Z`,
+            reservation: reservationOf(String(index)),
           }),
           dbPath,
         }),
