@@ -9,6 +9,7 @@
     issuesToShow,
     type ReviewTargetDraft,
     reviewTargetDraftFrom,
+    reviewTargetIdentity,
   } from './delegation-model';
   import {
     dangerButton,
@@ -42,12 +43,13 @@
   const sync = createDraftSync<(ReviewTargetDraft & { readonly key: string })[]>({
     from: () =>
       settings.reviewTargets.targets.map((target) => ({ ...reviewTargetDraftFrom(target), key: target.checkoutPath })),
+    identity: reviewTargetIdentity,
     revision: () => settings.revision,
   });
   const episode = createSaveEpisode<(ReviewTargetDraft & { readonly key: string })[]>({
     client: () => client,
-    onWritten: async ({ revision, saved }) => {
-      sync.settle(saved, revision);
+    onWritten: async (written) => {
+      sync.settle(written);
       await onReload();
     },
   });

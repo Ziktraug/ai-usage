@@ -21,6 +21,7 @@
     type RuleDraft,
     routeAnnotationDrafts,
     ruleDraftFrom,
+    ruleIdentity,
   } from './delegation-model';
   import {
     entryList,
@@ -68,12 +69,13 @@
       preferences: preferencesDraftFrom(settings.delegation.config.preferences),
       rules: settings.delegation.config.rules.map(ruleDraftFrom),
     }),
+    identity: ruleIdentity,
     revision: () => settings.revision,
   });
   const episode = createSaveEpisode<RulesDraft>({
     client: () => client,
-    onWritten: async ({ revision, saved }) => {
-      sync.settle(saved, revision);
+    onWritten: async (written) => {
+      sync.settle(written);
       await onReload();
     },
   });

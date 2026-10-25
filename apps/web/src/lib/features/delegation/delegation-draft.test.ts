@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { plugin } from 'bun';
 import { compileModule } from 'svelte/compiler';
 import type { DelegationPageClient, DelegationSaveOutcome } from './delegation-contract';
+import type { WrittenSave } from './delegation-draft.svelte';
+import type { EntryIdentity } from './delegation-rebase';
 
 /** Only the two rune modules this file tests; nothing else in the test process is compiled or redirected. */
 const RUNE_MODULES = /\/delegation-draft(?:\.fixture)?\.svelte\.ts$/u;
@@ -45,6 +47,33 @@ interface Draft {
 
 const initial = (): Draft => ({ label: 'as read', note: '' });
 
+/** A save of `saved`, built on `expectedRevision`, that the settings wrote as `revision`. */
+const written = <Saved>(expectedRevision: string, revision: string, saved: Saved): WrittenSave<Saved> => ({
+  expectedRevision,
+  revision,
+  saved,
+});
+
+/** An entry as the keyed forms draft it: a counter key and no view until saved; the settings' key and view once read back. */
+interface Entry {
+  id: string;
+  key: string;
+  note: string;
+  original: { declaredAt: string } | null;
+}
+
+const entryIdentity: EntryIdentity = (entry) =>
+  'id' in entry && typeof entry.id === 'string' && entry.id.length > 0 ? `entry/${entry.id}` : entry.key;
+const DECLARED_AT = '2026-10-25T12:00:00.000Z';
+const added = (): Entry => ({ id: 'o3', key: 'new-1', note: '', original: null });
+/** The added entry as the settings read it back after its save: keyed by its id and dated. */
+const reread = (note = '', declaredAt = DECLARED_AT): Entry => ({
+  id: 'o3',
+  key: 'entry/o3',
+  note,
+  original: { declaredAt },
+});
+
 describe('createDraftSync around a save', () => {
   test('an edit made while the save is pending survives the settle and the refetch that follows', () => {
     const mounted = mountDraftSync<Draft>({ draft: initial(), revision: 'r1' });
@@ -55,7 +84,7 @@ describe('createDraftSync around a save', () => {
     // The save is in flight: the operator keeps editing.
     sync.draft.note = 'typed while pending';
 
-    sync.settle(saved, 'r2');
+    sync.settle(written('r1', 'r2', saved));
     expect(sync.dirty).toBe(true);
     expect(sync.stale).toBe(false);
     expect(sync.baseRevision).toBe('r2');
@@ -74,7 +103,7 @@ describe('createDraftSync around a save', () => {
     const { sync } = mounted;
     sync.markDirty();
     sync.draft.label = 'saved label';
-    sync.settle(sync.snapshot(), 'r2');
+    sync.settle(written('r1', 'r2', sync.snapshot()));
     expect(sync.dirty).toBe(false);
 
     mounted.publish({ draft: { label: 'saved label (as the server dates it)', note: '' }, revision: 'r2' });
@@ -91,7 +120,7 @@ describe('createDraftSync around a save', () => {
     sync.draft.label = 'saved label';
     const saved = sync.snapshot();
     sync.draft.note = 'typed while pending';
-    sync.settle(saved, 'r2');
+    sync.settle(written('r1', 'r2', saved));
 
     // The server normalised the saved field: the settings moved in what this form writes.
     mounted.publish({ draft: { label: 'Saved label', note: '' }, revision: 'r2' });
@@ -113,7 +142,7 @@ describe('createDraftSync around a save', () => {
     sync.draft.label = 'saved label';
     const saved = sync.snapshot();
     sync.draft.note = 'typed while pending';
-    sync.settle(saved, 'r2');
+    sync.settle(written('r1', 'r2', saved));
 
     // Another client saved a section this form does not write before the refetch.
     mounted.publish({ draft: { label: 'saved label', note: '' }, revision: 'r3' });
@@ -136,17 +165,160 @@ describe('createDraftSync around a save', () => {
   });
 });
 
+describe('createDraftSync around the save of an entry the operator added', () => {
+  test('an edit typed while the save was pending survives its own re-read, keyed and dated by the settings', () => {
+    const mounted = mountDraftSync<Entry[]>({ draft: [], revision: 'r1' }, entryIdentity);
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft.push(added());
+    const saved = sync.snapshot();
+    sync.draft[0]!.note = 'typed while pending';
+    sync.settle(written('r1', 'r2', saved));
+    expect(sync.dirty).toBe(true);
+
+    // The refetch reads the entry back under the settings' key, with the date they stamped on it.
+    mounted.publish({ draft: [reread()], revision: 'r2' });
+    expect(sync.stale).toBe(false);
+    expect(sync.dirty).toBe(true);
+    expect(sync.baseRevision).toBe('r2');
+    // The form keeps rendering the entry it added (its key), with its note and the settings' date.
+    expect(sync.draft).toEqual([
+      { id: 'o3', key: 'new-1', note: 'typed while pending', original: { declaredAt: DECLARED_AT } },
+    ]);
+    mounted.dispose();
+  });
+
+  test('a change made elsewhere to that entry during the save is named on re-apply, never overwritten', () => {
+    const mounted = mountDraftSync<Entry[]>({ draft: [], revision: 'r1' }, entryIdentity);
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft.push(added());
+    const saved = sync.snapshot();
+    sync.draft[0]!.note = 'typed while pending';
+    sync.settle(written('r1', 'r2', saved));
+
+    mounted.publish({ draft: [reread('their note', '2026-10-25T12:30:00.000Z')], revision: 'r3' });
+    expect(sync.stale).toBe(true);
+    expect(sync.draft[0]?.note).toBe('typed while pending');
+
+    const resolution = sync.reapply();
+    expect(resolution).toEqual({
+      conflicts: [{ mine: '"typed while pending"', path: 'entry/o3 › note', theirs: '"their note"' }],
+      revision: 'r3',
+    });
+    expect(sync.draft).toEqual([
+      { id: 'o3', key: 'new-1', note: 'their note', original: { declaredAt: '2026-10-25T12:30:00.000Z' } },
+    ]);
+    mounted.dispose();
+  });
+
+  test('its own revision seen before the save settles rebinds the dirty draft to the view the settings read back', () => {
+    const mounted = mountDraftSync<Entry[]>({ draft: [], revision: 'r1' }, entryIdentity);
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft.push(added());
+    const saved = sync.snapshot();
+    sync.draft[0]!.note = 'typed while pending';
+    // A refetch read the written settings before the save answered.
+    mounted.publish({ draft: [reread()], revision: 'r2' });
+    expect(sync.stale).toBe(true);
+
+    sync.settle(written('r1', 'r2', saved));
+    expect(sync.stale).toBe(false);
+    expect(sync.dirty).toBe(true);
+    expect(sync.baseRevision).toBe('r2');
+    expect(sync.draft).toEqual([
+      { id: 'o3', key: 'new-1', note: 'typed while pending', original: { declaredAt: DECLARED_AT } },
+    ]);
+
+    // The refetch the save asks for reads the same revision: nothing moves.
+    mounted.publish({ draft: [reread()], revision: 'r2' });
+    expect(sync.draft).toEqual([
+      { id: 'o3', key: 'new-1', note: 'typed while pending', original: { declaredAt: DECLARED_AT } },
+    ]);
+    expect(sync.stale).toBe(false);
+    mounted.dispose();
+  });
+});
+
+describe('createDraftSync when a refetch lands before the save settles', () => {
+  test('a later revision read while the save was pending is adopted by a draft with no edits since', () => {
+    const mounted = mountDraftSync<Draft>({ draft: initial(), revision: 'r1' });
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft.label = 'saved label';
+    const saved = sync.snapshot();
+    // Another client wrote on top of this save, and a refetch read that before the save answered.
+    mounted.publish({ draft: { label: 'saved label', note: 'written elsewhere' }, revision: 'r3' });
+    expect(sync.stale).toBe(true);
+
+    sync.settle(written('r1', 'r2', saved));
+    expect(sync.draft).toEqual({ label: 'saved label', note: 'written elsewhere' });
+    expect(sync.dirty).toBe(false);
+    expect(sync.stale).toBe(false);
+    expect(sync.baseRevision).toBe('r3');
+
+    // The refetch the save asks for reads the same revision: nothing moves.
+    mounted.publish({ draft: { label: 'saved label', note: 'written elsewhere' }, revision: 'r3' });
+    expect(sync.draft).toEqual({ label: 'saved label', note: 'written elsewhere' });
+    expect(sync.dirty).toBe(false);
+    expect(sync.baseRevision).toBe('r3');
+    mounted.dispose();
+  });
+
+  test('a later revision that moved what this form writes leaves a dirty draft stale, never clean over it', () => {
+    const mounted = mountDraftSync<Draft>({ draft: initial(), revision: 'r1' });
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft.label = 'saved label';
+    const saved = sync.snapshot();
+    sync.draft.note = 'typed while pending';
+    mounted.publish({ draft: { label: 'saved label', note: 'written elsewhere' }, revision: 'r3' });
+
+    sync.settle(written('r1', 'r2', saved));
+    expect(sync.dirty).toBe(true);
+    expect(sync.stale).toBe(true);
+    expect(sync.draft).toEqual({ label: 'saved label', note: 'typed while pending' });
+    mounted.publish({ draft: { label: 'saved label', note: 'written elsewhere' }, revision: 'r3' });
+    expect(sync.stale).toBe(true);
+
+    const resolution = sync.reapply();
+    expect(resolution).toEqual({
+      conflicts: [{ mine: '"typed while pending"', path: 'note', theirs: '"written elsewhere"' }],
+      revision: 'r3',
+    });
+    expect(sync.draft).toEqual({ label: 'saved label', note: 'written elsewhere' });
+    expect(sync.baseRevision).toBe('r3');
+    mounted.dispose();
+  });
+
+  test('a clean draft a refetch already adopted while the save was pending is left as it is', () => {
+    const mounted = mountDraftSync<Draft>({ draft: initial(), revision: 'r1' });
+    const { sync } = mounted;
+    const saved = sync.snapshot();
+    mounted.publish({ draft: { label: 'as read', note: 'written elsewhere' }, revision: 'r3' });
+    expect(sync.draft).toEqual({ label: 'as read', note: 'written elsewhere' });
+
+    sync.settle(written('r1', 'r2', saved));
+    expect(sync.draft).toEqual({ label: 'as read', note: 'written elsewhere' });
+    expect(sync.dirty).toBe(false);
+    expect(sync.stale).toBe(false);
+    expect(sync.baseRevision).toBe('r3');
+    mounted.dispose();
+  });
+});
+
 describe('createSaveEpisode', () => {
-  const written: DelegationSaveOutcome = { kind: 'written', revision: 'r2' };
+  const writtenOutcome: DelegationSaveOutcome = { kind: 'written', revision: 'r2' };
   const client = (outcome: DelegationSaveOutcome): DelegationPageClient => ({
     saveSettings: () => Promise.resolve(outcome),
     simulate: () => Promise.reject(new Error('not simulated here')),
   });
 
-  test('hands the saved draft and the written revision to onWritten, and only then ends the episode', async () => {
-    const seen: { pendingMeanwhile: boolean; revision: string; saved: Draft }[] = [];
+  test('hands the saved draft, the revision it was built on and the written one to onWritten, and only then ends the episode', async () => {
+    const seen: { expectedRevision: string; pendingMeanwhile: boolean; revision: string; saved: Draft }[] = [];
     const episode = createSaveEpisode<Draft>({
-      client: () => client(written),
+      client: () => client(writtenOutcome),
       onWritten: (event) => {
         seen.push({ ...event, pendingMeanwhile: episode.pending });
         return Promise.resolve();
@@ -155,10 +327,10 @@ describe('createSaveEpisode', () => {
     const saved: Draft = { label: 'saved label', note: '' };
 
     const outcome = await episode.run({ expectedRevision: 'r1' }, saved);
-    expect(outcome).toEqual(written);
-    expect(seen).toEqual([{ pendingMeanwhile: true, revision: 'r2', saved }]);
+    expect(outcome).toEqual(writtenOutcome);
+    expect(seen).toEqual([{ expectedRevision: 'r1', pendingMeanwhile: true, revision: 'r2', saved }]);
     expect(episode.pending).toBe(false);
-    expect(episode.outcome).toEqual(written);
+    expect(episode.outcome).toEqual(writtenOutcome);
   });
 
   test('a refused save does not settle anything', async () => {

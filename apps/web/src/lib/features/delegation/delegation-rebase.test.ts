@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { modelEntryDraftFrom, newModelEntryDraft, newRuleDraft, ruleDraftFrom } from './delegation-model';
-import { rebaseDraft, sameDraft } from './delegation-rebase';
+import {
+  modelEntryDraftFrom,
+  modelEntryIdentity,
+  newModelEntryDraft,
+  newRuleDraft,
+  ruleDraftFrom,
+  ruleIdentity,
+} from './delegation-model';
+import { rebaseDraft, sameDraft, sameWritten } from './delegation-rebase';
 import { SYNTHETIC_DELEGATION_SETTINGS } from './delegation-synthetic';
 
 const settings = SYNTHETIC_DELEGATION_SETTINGS;
@@ -113,5 +120,100 @@ describe('rebaseDraft on the rules form (records, lists and string lists togethe
       'mine-new',
     ]);
     expect(rebased.draft.rules[0]?.routes.contexts).toEqual([]);
+  });
+
+  test('a rule the operator added meets its saved view by id, inside the record', () => {
+    const sent = base();
+    sent.rules.push({ ...newRuleDraft('new-rule-1'), effect: 'forbid', id: 'no-weekends' });
+    const mine = structuredClone(sent);
+    mine.rules[2] = { ...mine.rules[2]!, description: 'typed while pending' };
+    const theirs = base();
+    theirs.rules.push(ruleDraftFrom({ effect: 'forbid', id: 'no-weekends', match: {} }));
+    expect(sameWritten(sent, theirs)).toBe(true);
+
+    const rebased = rebaseDraft(sent, mine, theirs, ruleIdentity);
+    expect(rebased.conflicts).toEqual([]);
+    expect(rebased.draft.rules.map((rule) => [rule.key, rule.id, rule.description])).toEqual([
+      ['rule/work-repos-professional', 'work-repos-professional', 'Work repositories only run on professional routes.'],
+      ['rule/observed-identity-everywhere', 'observed-identity-everywhere', ''],
+      ['new-rule-1', 'no-weekends', 'typed while pending'],
+    ]);
+  });
+});
+
+describe('rebaseDraft on an entry the operator added, once its own save is read back', () => {
+  const o3Entry = {
+    ...codexEntry,
+    declaredAt: '2026-10-25T13:00:00.000Z',
+    id: 'o3',
+    nativeId: 'o3',
+    recommendedFor: [],
+  };
+  /** The draft as the save carried it: the new entry under its counter key, with no view yet. */
+  const sent = () => [
+    modelEntryDraftFrom(opus.entry),
+    {
+      ...newModelEntryDraft('new-model-1'),
+      harnesses: ['codex' as const],
+      id: 'o3',
+      nativeId: 'o3',
+      provider: 'openai' as const,
+    },
+  ];
+  /** The settings after that save: the entry keyed by its id and dated. */
+  const reread = () => [modelEntryDraftFrom(opus.entry), modelEntryDraftFrom(o3Entry)];
+
+  test('what was sent and what was read back write the same thing', () => {
+    expect(sameDraft(sent(), reread())).toBe(false);
+    expect(sameWritten(sent(), reread())).toBe(true);
+    const reordered = [reread()[1]!, reread()[0]!];
+    expect(sameWritten(sent(), reordered)).toBe(false);
+    const changed = reread();
+    changed[1] = { ...changed[1]!, note: 'their note' };
+    expect(sameWritten(sent(), changed)).toBe(false);
+  });
+
+  test('a note typed while the save was pending survives: the entry keeps its key and takes the settings date', () => {
+    const mine = sent();
+    mine[1] = { ...mine[1]!, note: 'typed while pending' };
+
+    const rebased = rebaseDraft(sent(), mine, reread(), modelEntryIdentity);
+    expect(rebased.conflicts).toEqual([]);
+    expect(rebased.draft.map((entry) => [entry.key, entry.id, entry.note])).toEqual([
+      ['model/claude-opus-4-1', 'claude-opus-4-1', ''],
+      ['new-model-1', 'o3', 'typed while pending'],
+    ]);
+    expect(rebased.draft[1]?.original).toEqual(o3Entry);
+  });
+
+  test('a change made elsewhere to that entry during the save is named, never overwritten', () => {
+    const mine = sent();
+    mine[1] = { ...mine[1]!, note: 'typed while pending' };
+    const theirs = reread();
+    theirs[1] = { ...theirs[1]!, alias: 'elsewhere', note: 'their note' };
+
+    const rebased = rebaseDraft(sent(), mine, theirs, modelEntryIdentity);
+    expect(rebased.conflicts).toEqual([
+      { mine: '"typed while pending"', path: 'model/o3 › note', theirs: '"their note"' },
+    ]);
+    expect(rebased.draft[1]).toMatchObject({ alias: 'elsewhere', id: 'o3', key: 'new-model-1', note: 'their note' });
+  });
+
+  test('an id changed while the save was pending renames the saved entry instead of duplicating it', () => {
+    const mine = sent();
+    mine[1] = { ...mine[1]!, id: 'o3-mini' };
+
+    const rebased = rebaseDraft(sent(), mine, reread(), modelEntryIdentity);
+    expect(rebased.conflicts).toEqual([]);
+    expect(rebased.draft.map((entry) => entry.id)).toEqual(['claude-opus-4-1', 'o3-mini']);
+    expect(rebased.draft[1]?.original).toEqual(o3Entry);
+  });
+
+  test('an entry still without an id is the operator addition it was, and stays last', () => {
+    const mine = [...sent(), newModelEntryDraft('new-model-2')];
+
+    const rebased = rebaseDraft(sent(), mine, reread(), modelEntryIdentity);
+    expect(rebased.conflicts).toEqual([]);
+    expect(rebased.draft.map((entry) => entry.key)).toEqual(['model/claude-opus-4-1', 'new-model-1', 'new-model-2']);
   });
 });

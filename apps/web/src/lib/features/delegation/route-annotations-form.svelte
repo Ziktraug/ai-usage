@@ -50,8 +50,8 @@
   });
   const episode = createSaveEpisode<RouteAnnotationDraft[]>({
     client: () => client,
-    onWritten: async ({ revision, saved }) => {
-      sync.settle(saved, revision);
+    onWritten: async (written) => {
+      sync.settle(written);
       await onReload();
     },
   });

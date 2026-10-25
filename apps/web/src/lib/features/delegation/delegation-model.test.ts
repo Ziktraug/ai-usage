@@ -12,23 +12,31 @@ import {
   defaultsDraftFrom,
   delegationSectionFor,
   delegationSectionHref,
+  type ExecutorDraft,
   executorDraftFrom,
+  executorIdentity,
   factProvenanceText,
   identityText,
   issuesFor,
   issuesUnder,
+  type ModelEntryDraft,
   modelEntryDraftFrom,
+  modelEntryIdentity,
   newExecutorDraft,
   newModelEntryDraft,
   newRuleDraft,
   newSimulatorDraft,
   preferencesDraftFrom,
   quotaWindowText,
+  type ReviewTargetDraft,
+  type RuleDraft,
   reappliedText,
   repositoriesFactText,
+  reviewTargetIdentity,
   routeAnnotationDraftFor,
   routeAnnotationDrafts,
   ruleDraftFrom,
+  ruleIdentity,
 } from './delegation-model';
 import { SYNTHETIC_DELEGATION_CONFIG, SYNTHETIC_DELEGATION_SETTINGS, SYNTHETIC_NOW } from './delegation-synthetic';
 
@@ -192,6 +200,49 @@ describe('Review target drafts', () => {
     expect(built.issues.map((issue) => issue.path)).toEqual(['routing.reviewTargets[1].checkoutPath']);
     const valid = buildReviewTargets([{ checkoutPath: '/home/operator/src/ai-usage/', label: ' ai-usage ' }]);
     expect(valid.value).toEqual([{ checkoutPath: '/home/operator/src/ai-usage', label: 'ai-usage' }]);
+  });
+});
+
+describe('Draft entry identities', () => {
+  const [restrictRule] = settings.delegation.config.rules;
+  const [opus] = settings.models;
+  if (!(restrictRule && opus)) {
+    throw new Error('The synthetic settings must declare a rule and a model.');
+  }
+
+  test('an entry the operator added is keyed as the settings will key it once its identifying fields are set', () => {
+    const blankModel = newModelEntryDraft('new-model-1');
+    const namedModel: ModelEntryDraft = { ...blankModel, id: ' o3 ' };
+    expect(modelEntryIdentity(blankModel)).toBe('new-model-1');
+    expect(modelEntryIdentity(namedModel)).toBe('model/o3');
+    const blankRule = newRuleDraft('new-rule-1');
+    const namedRule: RuleDraft = { ...blankRule, id: 'no-weekends' };
+    expect(ruleIdentity(blankRule)).toBe('new-rule-1');
+    expect(ruleIdentity(namedRule)).toBe('rule/no-weekends');
+    const blankExecutor: ExecutorDraft = { ...newExecutorDraft('new-executor-1'), machineId: settings.machineId ?? '' };
+    const scopedExecutor: ExecutorDraft = { ...blankExecutor, accountScope: 'team', harness: 'codex' };
+    // An empty machine resolves to this machine, as the parser resolves it.
+    const unmachinedExecutor: ExecutorDraft = { ...blankExecutor, accountScope: 'team', machineId: '' };
+    expect(executorIdentity(blankExecutor, settings.machineId)).toBe('new-executor-1');
+    expect(executorIdentity(scopedExecutor, settings.machineId)).toBe(`${settings.machineId}/codex/team`);
+    expect(executorIdentity(unmachinedExecutor, settings.machineId)).toBe(`${settings.machineId}/claude-code/team`);
+    const target = (checkoutPath: string): ReviewTargetDraft & { readonly key: string } => ({
+      checkoutPath,
+      key: 'new-target-1',
+      label: '',
+    });
+    expect(reviewTargetIdentity(target(''))).toBe('new-target-1');
+    expect(reviewTargetIdentity(target('relative/path'))).toBe('new-target-1');
+    expect(reviewTargetIdentity(target('/home/operator/src/ai-usage/'))).toBe('/home/operator/src/ai-usage');
+  });
+
+  test('an entry read from the settings is identified by the key they gave it', () => {
+    const model = modelEntryDraftFrom(opus.entry);
+    expect(modelEntryIdentity(model)).toBe(model.key);
+    const rule = ruleDraftFrom(restrictRule);
+    expect(ruleIdentity(rule)).toBe(rule.key);
+    const executor = executorDraftFrom(claudeDeclaration);
+    expect(executorIdentity(executor, settings.machineId)).toBe(executor.key);
   });
 });
 

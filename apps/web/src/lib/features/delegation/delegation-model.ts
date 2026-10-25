@@ -11,7 +11,7 @@ import {
   type DelegationRuleEffect,
   type DelegationTaskCategory,
 } from '@ai-usage/report-core/delegation-vocabulary';
-import { parseReviewTargetDeclarations } from '@ai-usage/report-core/work-attempts';
+import { normalizeCheckoutPath, parseReviewTargetDeclarations } from '@ai-usage/report-core/work-attempts';
 import {
   type ExecutorAuthorization,
   type ExecutorHarness,
@@ -35,7 +35,7 @@ import type {
   ReviewTargetDeclaration,
   ReviewTargetDeclarationView,
 } from './delegation-contract';
-import { type DraftResolution, stableJson } from './delegation-rebase';
+import { type DraftEntry, type DraftResolution, type EntryIdentity, stableJson } from './delegation-rebase';
 
 // ---------------------------------------------------------------------------------------------
 // Sections (one page, three needs; the active one lives in the URL)
@@ -244,7 +244,25 @@ const numberOrAbsent = (value: string): number | undefined => {
 const sameExceptDeclaredAt = (left: { readonly declaredAt: string }, right: { readonly declaredAt: string }): boolean =>
   stableJson({ ...left, declaredAt: null }) === stableJson({ ...right, declaredAt: null });
 
+/** A draft field as text, trimmed; empty when it is not a string. */
+const trimmedText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
 // --- Executor declarations ---------------------------------------------------------------------
+
+/** How the settings key an executor declaration: its route. */
+export const executorKey = (machineId: string, harness: string, accountScope: string): string =>
+  `${machineId}/${harness}/${accountScope}`;
+
+/**
+ * The key an executor draft will be read back by once saved — an empty machine resolves to this
+ * machine, as the parser does — or its own key while its account scope is blank.
+ */
+export const executorIdentity = (entry: DraftEntry, defaultMachineId: string | null): string => {
+  const accountScope = 'accountScope' in entry ? trimmedText(entry.accountScope) : '';
+  const machineId = ('machineId' in entry ? trimmedText(entry.machineId) : '') || (defaultMachineId ?? '');
+  const harness = 'harness' in entry ? trimmedText(entry.harness) : '';
+  return accountScope.length === 0 ? entry.key : executorKey(machineId, harness, accountScope);
+};
 
 export interface ExecutorDraft {
   accountFingerprint: string;
@@ -272,7 +290,7 @@ export const executorDraftFrom = (declaration: ExecutorDeclarationView): Executo
   authorization: declaration.authorization,
   effort: declaration.effort ?? '',
   harness: declaration.harness,
-  key: `${declaration.machineId}/${declaration.harness}/${declaration.accountScope}`,
+  key: executorKey(declaration.machineId, declaration.harness, declaration.accountScope),
   machineId: declaration.machineId,
   model: declaration.model ?? '',
   original: declaration,
@@ -367,6 +385,13 @@ export const reviewTargetDraftFrom = (target: ReviewTargetDeclarationView): Revi
   checkoutPath: target.checkoutPath,
   label: target.label ?? '',
 });
+
+/**
+ * The key a review target draft will be read back by once saved: its checkout path as the parser
+ * normalises it; its own key while that is blank or not a path.
+ */
+export const reviewTargetIdentity: EntryIdentity = (entry) =>
+  ('checkoutPath' in entry ? normalizeCheckoutPath(trimmedText(entry.checkoutPath)) : null) ?? entry.key;
 
 export const buildReviewTargets = (
   drafts: readonly ReviewTargetDraft[],
@@ -521,6 +546,15 @@ export interface RuleDraft {
   };
 }
 
+/** How the settings key a rule: by its id. */
+export const ruleKey = (id: string): string => `rule/${id}`;
+
+/** The key a rule draft will be read back by once saved, or its own key while its id is blank. */
+export const ruleIdentity: EntryIdentity = (entry) => {
+  const id = 'id' in entry ? trimmedText(entry.id) : '';
+  return id.length === 0 ? entry.key : ruleKey(id);
+};
+
 export const newRuleDraft = (key: string): RuleDraft => ({
   description: '',
   effect: 'forbid',
@@ -535,7 +569,7 @@ export const ruleDraftFrom = (rule: DelegationRuleView): RuleDraft => ({
   description: rule.description ?? '',
   effect: rule.effect,
   id: rule.id,
-  key: `rule/${rule.id}`,
+  key: ruleKey(rule.id),
   match: {
     checkoutPath: rule.match.checkoutPath ?? '',
     gitAuthorEmail: rule.match.gitAuthorEmail ?? '',
@@ -661,12 +695,21 @@ export interface ModelEntryDraft {
   resolvedVersion: string;
 }
 
+/** How the settings key a model entry: by its catalog id. */
+export const modelEntryKey = (id: string): string => `model/${id}`;
+
+/** The key a model entry draft will be read back by once saved, or its own key while its id is blank. */
+export const modelEntryIdentity: EntryIdentity = (entry) => {
+  const id = 'id' in entry ? trimmedText(entry.id) : '';
+  return id.length === 0 ? entry.key : modelEntryKey(id);
+};
+
 export const modelEntryDraftFrom = (entry: DelegationModelEntryView): ModelEntryDraft => ({
   alias: entry.alias ?? '',
   discouragedFor: [...entry.discouragedFor],
   harnesses: [...entry.harnesses],
   id: entry.id,
-  key: `model/${entry.id}`,
+  key: modelEntryKey(entry.id),
   nativeId: entry.nativeId,
   note: entry.note ?? '',
   original: entry,

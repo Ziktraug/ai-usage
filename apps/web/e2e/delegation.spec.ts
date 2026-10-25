@@ -480,6 +480,62 @@ test.describe('settings writes', () => {
     await expect(reserve).toHaveValue('10');
   });
 
+  test('a note typed into a just-added model while its save is pending is kept through its own re-read', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const stamp = Date.now().toString(36);
+    const models = await openModels(page);
+    const declared = await models.locator('[data-delegation-model]').count();
+    await models.getByRole('button', { name: 'Add model' }).click();
+    const added = models.locator(`[data-delegation-model="${declared}"]`);
+    await added.getByRole('textbox', { name: 'Catalog id' }).fill(`added-${stamp}`);
+    await added.getByRole('textbox', { name: 'Native id' }).fill(`native-${stamp}`);
+    const note = added.getByRole('textbox', { name: 'Note' });
+    const save = models.getByRole('button', { name: 'Save models' });
+    const status = models.getByRole('status');
+
+    // The save's answer is held until the test releases it: the operator keeps typing meanwhile.
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === SAVE_SETTINGS_RPC_PATH,
+      async (route) => {
+        if (route.request().method() === 'POST') {
+          await released;
+        }
+        await route.continue();
+      },
+    );
+    const revisionBefore = await revisionOf(page);
+    await save.click();
+    await expect(status).toHaveText('Saving…');
+    await note.fill(`Typed while pending ${stamp}`);
+    release();
+
+    // The save lands and the settings read the entry back keyed by its id and dated: the note is
+    // neither lost nor read as a change made elsewhere, and the entry the operator is typing in stays.
+    await expect(status).toContainText('Saved. The configuration is now at revision');
+    await expect.poll(() => revisionOf(page)).not.toBe(revisionBefore);
+    await expect(status).toContainText('Edits made since are kept below and not saved yet.');
+    await expect(models.locator('[data-delegation-conflict]')).toHaveCount(0);
+    await expect(note).toHaveValue(`Typed while pending ${stamp}`);
+    await expect(note).toBeFocused();
+    await expect(added).not.toContainText('Dated when saved.');
+    await expect(save).toBeEnabled();
+
+    await save.click();
+    await expect(status).toContainText('Saved. The configuration is now at revision');
+    await expect(status).not.toContainText('Edits made since');
+    await expect(models.getByRole('button', { name: 'Discard edits' })).toBeDisabled();
+    await page.goto('/delegation?section=models');
+    await waitForDelegation(page);
+    await expect(added.getByRole('textbox', { name: 'Catalog id' })).toHaveValue(`added-${stamp}`);
+    await expect(note).toHaveValue(`Typed while pending ${stamp}`);
+  });
+
   test('removing the last annotation no declaration resolves can be saved; it is gone on re-read', async ({ page }) => {
     test.setTimeout(90_000);
     // The read presents no declaration and one annotation (the first one on disk); the save and the

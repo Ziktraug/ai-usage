@@ -11,6 +11,7 @@
     MODEL_DECLARATION_TEXT,
     type ModelEntryDraft,
     modelEntryDraftFrom,
+    modelEntryIdentity,
     newModelEntryDraft,
     OBSERVED_MODELS_TEXT,
     preferencesDraftFrom,
@@ -47,12 +48,13 @@
   let nextKey = 0;
   const sync = createDraftSync<ModelEntryDraft[]>({
     from: () => settings.models.map((model) => modelEntryDraftFrom(model.entry)),
+    identity: modelEntryIdentity,
     revision: () => settings.revision,
   });
   const episode = createSaveEpisode<ModelEntryDraft[]>({
     client: () => client,
-    onWritten: async ({ revision, saved }) => {
-      sync.settle(saved, revision);
+    onWritten: async (written) => {
+      sync.settle(written);
       await onReload();
     },
   });

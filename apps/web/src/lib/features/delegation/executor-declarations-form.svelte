@@ -7,6 +7,7 @@
     type ExecutorDraft,
     entryLevelIssues,
     executorDraftFrom,
+    executorIdentity,
     harnessDisplayName,
     issueReasonsUnder,
     issuesToShow,
@@ -48,12 +49,13 @@
   let nextKey = 0;
   const sync = createDraftSync<ExecutorDraft[]>({
     from: () => settings.executors.declarations.map(executorDraftFrom),
+    identity: (entry) => executorIdentity(entry, settings.machineId),
     revision: () => settings.revision,
   });
   const episode = createSaveEpisode<ExecutorDraft[]>({
     client: () => client,
-    onWritten: async ({ revision, saved }) => {
-      sync.settle(saved, revision);
+    onWritten: async (written) => {
+      sync.settle(written);
       await onReload();
     },
   });
