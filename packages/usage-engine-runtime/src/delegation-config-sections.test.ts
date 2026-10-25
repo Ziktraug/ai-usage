@@ -26,7 +26,7 @@ afterEach(async () => {
 const machine: UsageMachine = { id: 'engine-machine', label: 'Engine Machine' };
 const NOW = '2026-10-25T10:00:00.000Z';
 
-const PERSONAL_ANNOTATION = { accountScope: 'personal', context: 'personal', harness: 'claude-code' };
+const PERSONAL_ANNOTATION = { accountScope: 'personal', context: 'personal', harness: 'claude-code' } as const;
 /** No declaration resolves to this route; the forms never show it as a route. */
 const TEAM_ANNOTATION = {
   accountScope: 'team',
@@ -35,7 +35,7 @@ const TEAM_ANNOTATION = {
   label: 'Codex · team',
   maxConcurrent: 2,
   reservePercent: 35,
-};
+} as const;
 const MODEL = {
   alias: 'opus',
   declaredAt: '2026-10-20T08:00:00.000Z',
