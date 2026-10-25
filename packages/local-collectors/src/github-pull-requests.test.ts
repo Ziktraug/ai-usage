@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type BoundedProcessRunner, runBoundedProcess } from '@ai-usage/local-machine/bounded-process';
 import { canonicalInstantFromDate, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import { parsePullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
 import { observePullRequests, parsePullRequestView, rollupChecks } from './github-pull-requests';
 
@@ -633,17 +634,94 @@ test('halts after a bounded active-account token read timeout without observing 
 });
 
 describe('pull request dates and unresolved review threads', () => {
-  test('parses optional opening/closing dates strictly while preserving old view shapes', () => {
+  test('normalizes optional lifecycle dates with the same lenient instant contract as mergedAt', () => {
     expect(parsePullRequestView(view(), link(66))).toMatchObject({ createdAt: null, closedAt: null });
     expect(
-      parsePullRequestView(view({ createdAt: '2026-10-19T09:00:00Z', closedAt: '2026-10-20T10:00:00Z' }), link(66)),
-    ).toMatchObject({ createdAt: '2026-10-19T09:00:00.000Z', closedAt: '2026-10-20T10:00:00.000Z' });
-    for (const field of ['createdAt', 'closedAt']) {
-      for (const value of ['', 'yesterday', 0, {}, '2026-99-12T00:00:00Z', '2026-02-30T00:00:00Z', '0']) {
-        expect(parsePullRequestView(view({ [field]: value }), link(66))).toBeNull();
-      }
-    }
+      parsePullRequestView(
+        view({ createdAt: '2026-10-19T11:00:00.123456+02:00', closedAt: '2026-10-20T06:00:00-04:00' }),
+        link(66),
+      ),
+    ).toMatchObject({ createdAt: '2026-10-19T09:00:00.123Z', closedAt: '2026-10-20T10:00:00.000Z' });
+    expect(parsePullRequestView(view({ createdAt: 0, closedAt: '2026-02-30T00:00:00Z' }), link(66))).toMatchObject({
+      createdAt: '1970-01-01T00:00:00.000Z',
+      closedAt: '2026-03-02T00:00:00.000Z',
+    });
   });
+
+  test('observes offset lifecycle dates without a warning', async () => {
+    const fake = installFakeGh({
+      pullRequests: {
+        'fixture/project#66': {
+          stdout: view({ createdAt: '2026-10-19T11:00:00+02:00', closedAt: '2026-10-20T06:00:00.456-04:00' }),
+        },
+      },
+    });
+    const observation = (await observe(fake)).observations[0];
+    expect(observation).toMatchObject({
+      createdAt: '2026-10-19T09:00:00.000Z',
+      closedAt: '2026-10-20T10:00:00.456Z',
+      outcome: 'observed',
+      outcomeMessage: null,
+      unresolvedReviewThreads: 0,
+    });
+    expect(parsePullRequestObservation(observation)).toEqual(observation ?? null);
+  });
+
+  test.each(['createdAt', 'closedAt'] as const)('keeps a malformed %s visible without hiding the PR', async (field) => {
+    const fake = installFakeGh({
+      pullRequests: { 'fixture/project#66': { stdout: view({ [field]: 'PRIVATE_INVALID_DATE' }) } },
+    });
+    const batch = await observe(fake);
+    expect(batch.observations[0]).toMatchObject({
+      [field]: null,
+      outcome: 'observed',
+      outcomeMessage: `Invalid lifecycle dates: ${field}`,
+      title: 'Add the Work view',
+      checksRollup: 'success',
+      unresolvedReviewThreads: 0,
+    });
+    expect(JSON.stringify(batch)).not.toContain('PRIVATE_INVALID_DATE');
+    expect(parsePullRequestObservation(batch.observations[0])).toEqual(batch.observations[0] ?? null);
+    expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+  });
+
+  test('appends both malformed lifecycle dates to the review-thread note and continues', async () => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout: reviewThreadsBody([{ isResolved: false }], 2) } },
+      pullRequests: {
+        'fixture/project#66': { stdout: view({ createdAt: {}, closedAt: { toString: null } }) },
+        'fixture/project#67': { stdout: view({ state: 'CLOSED', url: 'https://github.com/fixture/project/pull/67' }) },
+      },
+    });
+    const batch = await observe(fake, { links: [link(66), link(67)] });
+    expect(batch.observations[0]).toMatchObject({
+      createdAt: null,
+      closedAt: null,
+      outcome: 'observed',
+      outcomeMessage:
+        'Review threads unavailable: incomplete review thread connection; Invalid lifecycle dates: createdAt, closedAt',
+      unresolvedReviewThreads: null,
+    });
+    expect(batch.observations[1]).toMatchObject({ outcome: 'observed', outcomeMessage: null });
+    expect(fake.calls().filter(({ args }) => args[1] === 'graphql')).toHaveLength(1);
+  });
+
+  test.each([{}, { createdAt: null, closedAt: null }, { createdAt: '', closedAt: '' }])(
+    'keeps absent optional lifecycle dates quiet: %j',
+    async (dates) => {
+      const fake = installFakeGh({ pullRequests: { 'fixture/project#66': { stdout: view(dates) } } });
+      expect((await observe(fake)).observations[0]).toMatchObject({
+        createdAt: null,
+        closedAt: null,
+        outcome: 'observed',
+        outcomeMessage: null,
+      });
+    },
+  );
 
   test('counts only unresolved threads in one complete bounded connection with the batch token', async () => {
     const fake = installFakeGh({

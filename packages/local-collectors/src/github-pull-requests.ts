@@ -206,6 +206,7 @@ interface ParsedPullRequest {
   readonly createdAt: CanonicalInstant | null;
   readonly draft: boolean;
   readonly headRef: string;
+  readonly lifecycleDateMessage: string | null;
   readonly mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
   readonly mergedAt: CanonicalInstant | null;
   readonly mergeStateStatus: string | null;
@@ -223,18 +224,14 @@ const optionalInstant = (value: unknown): CanonicalInstant | null | undefined =>
   return normalizeIsoTimestamp(value) ?? undefined;
 };
 
-/** GitHub emits UTC ISO instants, with seconds or canonical millisecond precision. */
-const strictOptionalInstant = (value: unknown): CanonicalInstant | null | undefined => {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value !== 'string') {
+/** Malformed optional lifecycle dates must not discard the rest of a successful PR read. */
+const lifecycleInstant = (value: unknown): CanonicalInstant | null | undefined => {
+  try {
+    return optionalInstant(value);
+  } catch {
+    // JSON objects can also fail the normalizer's string conversion.
     return undefined;
   }
-  const normalized = normalizeIsoTimestamp(value);
-  return normalized !== null && (normalized === value || normalized.replace('.000Z', 'Z') === value)
-    ? normalized
-    : undefined;
 };
 
 const boundedText = (value: unknown, maximum: number): string | undefined =>
@@ -269,8 +266,12 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     value.mergeStateStatus === undefined || value.mergeStateStatus === null
       ? null
       : boundedText(value.mergeStateStatus, maxShortText);
-  const createdAt = strictOptionalInstant(value.createdAt);
-  const closedAt = strictOptionalInstant(value.closedAt);
+  const createdAt = lifecycleInstant(value.createdAt);
+  const closedAt = lifecycleInstant(value.closedAt);
+  const invalidDates = [
+    createdAt === undefined ? 'createdAt' : null,
+    closedAt === undefined ? 'closedAt' : null,
+  ].filter((field) => field !== null);
   const mergedAt = optionalInstant(value.mergedAt);
   const updatedAt = normalizeIsoTimestamp(value.updatedAt);
   const title = boundedText(value.title, maxShortText);
@@ -299,8 +300,6 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     reviewDecision === undefined ||
     mergeable === undefined ||
     mergeStateStatus === undefined ||
-    createdAt === undefined ||
-    closedAt === undefined ||
     mergedAt === undefined ||
     updatedAt === null ||
     title === undefined ||
@@ -319,10 +318,11 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
   return {
     baseRef,
     checksRollup: rollupChecks(value.statusCheckRollup),
-    closedAt,
-    createdAt,
+    closedAt: closedAt ?? null,
+    createdAt: createdAt ?? null,
     draft,
     headRef,
+    lifecycleDateMessage: invalidDates.length > 0 ? `Invalid lifecycle dates: ${invalidDates.join(', ')}` : null,
     mergeable,
     mergedAt,
     mergeStateStatus,
@@ -566,7 +566,9 @@ const observeLink = (
           number: link.number,
           observedAt,
           outcome: 'observed',
-          outcomeMessage: reviewThreads.message,
+          outcomeMessage:
+            [reviewThreads.message, parsed.lifecycleDateMessage].filter((message) => message !== null).join('; ') ||
+            null,
           repository: link.repository,
           reviewDecision: parsed.reviewDecision,
           state: parsed.state,
