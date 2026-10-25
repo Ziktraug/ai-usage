@@ -100,6 +100,8 @@ export const usageEngineControlBounds = {
   maxProjectAliasMatches: 500,
   maxProjectGroups: 256,
   maxRendezvousBytes: 4 * kibibyte,
+  /** Refusal and status messages of the review-attempt and delegation answers (UTF-8 bytes). */
+  maxReviewMessageBytes,
   maxSnapshotEventBytes: sourceControlBounds.maxSnapshotBytes + 2 * kibibyte,
   maxStatusEventBytes: sourceControlBounds.maxSnapshotBytes + 34 * kibibyte,
   maxStatusBytes,
@@ -176,6 +178,42 @@ const parseBoundedString = (value: unknown, maximumBytes: number, label: string,
     return fail(`${label} is invalid or exceeds its byte limit.`);
   }
   return value;
+};
+
+const TRUNCATION_MARKER = '…';
+const utf8ByteLengthOfCodePoint = (codePoint: number): number => {
+  if (codePoint < 0x80) {
+    return 1;
+  }
+  if (codePoint < 0x8_00) {
+    return 2;
+  }
+  return codePoint < 0x1_00_00 ? 3 : 4;
+};
+
+/**
+ * The message a review-attempt or delegation answer carries, cut to `maxReviewMessageBytes` UTF-8
+ * bytes so the completion the engine publishes always parses: the cut falls on a code-point
+ * boundary (never inside a surrogate pair or a multi-byte sequence) and ends with a visible `…`
+ * counted inside the budget. A message within the bound is returned unchanged. The producer's
+ * stored row keeps its own, larger bound; only the control-plane answer is cut.
+ */
+export const boundUsageEngineReviewMessage = (message: string): string => {
+  if (encoder.encode(message).byteLength <= maxReviewMessageBytes) {
+    return message;
+  }
+  const budget = maxReviewMessageBytes - encoder.encode(TRUNCATION_MARKER).byteLength;
+  let bytes = 0;
+  let kept = '';
+  for (const character of message) {
+    const next = bytes + utf8ByteLengthOfCodePoint(character.codePointAt(0) ?? 0);
+    if (next > budget) {
+      break;
+    }
+    bytes = next;
+    kept += character;
+  }
+  return `${kept}${TRUNCATION_MARKER}`;
 };
 
 const parseOpaqueId = <Name extends string>(value: unknown, label: string): Branded<string, Name> => {

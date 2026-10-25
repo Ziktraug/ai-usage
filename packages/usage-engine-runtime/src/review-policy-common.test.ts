@@ -9,6 +9,7 @@ import type {
   ClaudeReviewLaunchSpec,
   ClaudeReviewOutcome,
 } from '@ai-usage/local-collectors/claude-review-launcher';
+import type { ClaudeAccountProbe } from '@ai-usage/local-collectors/executor-observations';
 import {
   DELEGATION_HARNESS_CONTROLS,
   type ReviewWorkerAdapter,
@@ -25,7 +26,11 @@ import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { ReviewAttempt, ReviewAttemptScope, ReviewHarnessGuarantee } from '@ai-usage/report-core/work-attempts';
 import { parseClaudeDesktopSessionObservation } from '@ai-usage/report-core/work-attention';
 import type { ExecutorObservation } from '@ai-usage/report-core/work-executors';
-import type { UsageEngineCommand } from '@ai-usage/usage-engine-control';
+import {
+  type UsageEngineCommand,
+  type UsageEngineCommandId,
+  usageEngineControlBounds,
+} from '@ai-usage/usage-engine-control';
 import {
   importClaudeDesktopSessions,
   importExecutorObservations,
@@ -43,6 +48,8 @@ import { createDelegationService, type DelegationService } from './delegation';
 import { createReviewAttemptService, type ReviewAttemptService, type ReviewLauncher } from './review-attempts';
 import type { FindReviewProcesses } from './review-attempts-process';
 import type { RoutingQualificationExecutorRun } from './runtime';
+import { successfulCommandCompletion } from './runtime-command-completion';
+import type { UsageEngineCommandOutput } from './runtime-command-executor';
 
 /**
  * One policy before any real review launch, whatever the entry (PR #73 defect F1). The legacy Work
@@ -402,8 +409,14 @@ interface Engines {
   readonly spawns: () => number;
 }
 
+interface EngineExtras {
+  readonly findProcesses?: FindReviewProcesses;
+  /** The legacy service's account probe, run between its admission and its insert transaction. */
+  readonly probeAccount?: () => Promise<ClaudeAccountProbe>;
+}
+
 /** Both engine services over one store and one home, the way `live.ts` composes them. */
-const engines = (fixture: Fixture, extra: { readonly findProcesses?: FindReviewProcesses } = {}): Engines => {
+const engines = (fixture: Fixture, extra: EngineExtras = {}): Engines => {
   const lines: string[] = [];
   const adapter = fakeAdapter();
   const launcher = fakeLauncher();
@@ -430,7 +443,8 @@ const engines = (fixture: Fixture, extra: { readonly findProcesses?: FindReviewP
     launcher: launcher.launcher,
     machine: () => machine,
     now: () => new Date(NOW),
-    probeAccount: () => Promise.resolve({ accountFingerprint: FINGERPRINT, evidence: 'fixture' }),
+    probeAccount:
+      extra.probeAccount ?? (() => Promise.resolve({ accountFingerprint: FINGERPRINT, evidence: 'fixture' })),
     report,
     runLimits: { heartbeatMs: 25 },
     storage: fixture.storage,
@@ -849,5 +863,98 @@ describe('one review policy before any launch (legacy Work command and delegatio
     });
     expect(row.scope).toMatchObject({ baseSha: parent, headSha: head, kind: 'commit' });
     expect(row.declaration?.accountScope).toBe('personal');
+  });
+
+  test('a pool-busy refusal naming many legacy holders still answers through the control plane', async () => {
+    const fixture = await createFixture();
+    const engine = engines(fixture);
+    const idle = await qualify(engine.delegation, fixture, 1);
+    expect(idle.admissibleRouteIds).toEqual([CLAUDE_ROUTE]);
+    // Eight pre-upgrade rows on other checkouts whose declarations do not parse: each counts against
+    // every Claude pool of the machine and is named in the pool-busy sentence (the store lists up to
+    // eight holders), with multibyte ids as a real store can carry. The sentence passes 1 KiB.
+    const holderIds = Array.from({ length: 8 }, (_, index) => `old-unknown-pool-日本語-${index + 1}`);
+    for (const attemptId of holderIds) {
+      insertPreUpgradeAttempt(fixture.dbPath, {
+        attemptId,
+        checkoutPath: `/elsewhere/${attemptId}`,
+        declarationJson: 'not json',
+      });
+    }
+    const encoder = new TextEncoder();
+    /** The completion the engine publishes for the answer: the real control-contract output parser. */
+    const completionOf = (issued: UsageEngineCommand, output: UsageEngineCommandOutput) =>
+      successfulCommandCompletion({ command: issued, commandId: 'command-1' as UsageEngineCommandId }, output, NOW);
+
+    const busyCommand = startCommand('caller:busy-pool', fixture, 1, idle);
+    const busy = await engine.delegation.start(busyCommand);
+    expect(busy).toMatchObject({ job: { reused: false, state: 'refused' }, refusal: { reason: 'pool-busy' } });
+    expect(() => completionOf(busyCommand, busy)).not.toThrow();
+    const busyMessage = busy.refusal?.message ?? '';
+    expect(encoder.encode(busyMessage).byteLength).toBeLessThanOrEqual(usageEngineControlBounds.maxReviewMessageBytes);
+    expect(busyMessage).toContain('review attempt old-unknown-pool-日本語-1');
+    expect(busyMessage.endsWith('…')).toBe(true);
+    // The refused row is recorded with the whole sentence, under the store's own larger bound.
+    const jobs = await Effect.runPromise(readDelegationJobs({ dbPath: fixture.dbPath, jobId: busy.job?.jobId ?? '' }));
+    const job = jobs.kind === 'ok' ? jobs.jobs[0] : undefined;
+    expect(job).toMatchObject({ refusalReason: 'pool-busy', state: 'refused' });
+    expect(job?.failureReason?.startsWith(busyMessage.slice(0, -1))).toBe(true);
+    expect(job?.failureReason?.length ?? 0).toBeGreaterThan(busyMessage.length);
+    expect(job?.failureReason).toContain('old-unknown-pool-日本語-8');
+
+    const legacy = legacyCommand();
+    const refused = await engine.legacy.start(legacy);
+    expect(refused).toMatchObject({ attempt: { reused: false, state: 'refused' }, refusal: { reason: 'pool-busy' } });
+    expect(() => completionOf(legacy, refused)).not.toThrow();
+    const refusedMessage = refused.refusal?.message ?? '';
+    expect(encoder.encode(refusedMessage).byteLength).toBeLessThanOrEqual(
+      usageEngineControlBounds.maxReviewMessageBytes,
+    );
+    expect(refusedMessage).toContain('old-unknown-pool-日本語-1');
+    expect(refusedMessage.endsWith('…')).toBe(true);
+    const row = await attemptById(fixture.dbPath, refused.attempt.attemptId);
+    expect(row.state).toBe('refused');
+    expect(row.failureReason?.startsWith('pool-busy: ')).toBe(true);
+    expect(engine.spawns()).toBe(0);
+  });
+
+  test('a pool filled between the legacy admission and its insert still answers through the control plane', async () => {
+    const fixture = await createFixture();
+    // The admission sees a free pool; the insert transaction, which re-reads the holders of both
+    // families, finds eight unknown-pool legacy rows that arrived in between (here, under the
+    // account probe the legacy start runs between the two). The store's own sentence names them all.
+    let filled = false;
+    const engine = engines(fixture, {
+      probeAccount: () => {
+        if (!filled) {
+          filled = true;
+          for (let index = 1; index <= 8; index += 1) {
+            insertPreUpgradeAttempt(fixture.dbPath, {
+              attemptId: `old-unknown-pool-${index}`,
+              checkoutPath: `/elsewhere/checkout-${index}`,
+              declarationJson: 'not json',
+            });
+          }
+        }
+        return Promise.resolve({ accountFingerprint: FINGERPRINT, evidence: 'fixture' });
+      },
+    });
+    const legacy = legacyCommand();
+    const refused = await engine.legacy.start(legacy);
+    expect(refused).toMatchObject({ attempt: { reused: false, state: 'refused' }, refusal: { reason: 'pool-busy' } });
+    expect(() =>
+      successfulCommandCompletion({ command: legacy, commandId: 'command-2' as UsageEngineCommandId }, refused, NOW),
+    ).not.toThrow();
+    const message = refused.refusal?.message ?? '';
+    expect(new TextEncoder().encode(message).byteLength).toBeLessThanOrEqual(
+      usageEngineControlBounds.maxReviewMessageBytes,
+    );
+    expect(message.startsWith('Pool declared:')).toBe(true);
+    expect(message).toContain('review attempt old-unknown-pool-1 (running) [pool unknown');
+    expect(message.endsWith('…')).toBe(true);
+    const row = await attemptById(fixture.dbPath, refused.attempt.attemptId);
+    expect(row.state).toBe('refused');
+    expect(row.failureReason?.startsWith('pool-busy: Pool declared:')).toBe(true);
+    expect(engine.spawns()).toBe(0);
   });
 });

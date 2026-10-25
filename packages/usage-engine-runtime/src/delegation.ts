@@ -93,12 +93,13 @@ import {
   parseExecutorDeclarations,
 } from '@ai-usage/report-core/work-executors';
 import { declarationForReviewCandidate } from '@ai-usage/report-core/work-routing';
-import type {
-  UsageEngineCommand,
-  UsageEngineDelegationCancelOutput,
-  UsageEngineDelegationConfigOutput,
-  UsageEngineDelegationEvaluationOutput,
-  UsageEngineDelegationStartOutput,
+import {
+  boundUsageEngineReviewMessage,
+  type UsageEngineCommand,
+  type UsageEngineDelegationCancelOutput,
+  type UsageEngineDelegationConfigOutput,
+  type UsageEngineDelegationEvaluationOutput,
+  type UsageEngineDelegationStartOutput,
 } from '@ai-usage/usage-engine-control';
 import {
   checkReviewReservations,
@@ -868,7 +869,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
   ): UsageEngineDelegationStartOutput => ({
     job,
     kind: 'delegation-start',
-    refusal: { message: bounded(message, 1024), reason },
+    refusal: { message: boundUsageEngineReviewMessage(message), reason },
   });
 
   const jobAnswer = (job: DelegationJob, reused: boolean): UsageEngineDelegationStartOutput => ({
@@ -876,7 +877,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
     kind: 'delegation-start',
     refusal:
       job.state === 'refused' && job.refusalReason !== null
-        ? { message: bounded(job.failureReason ?? job.refusalReason, 1024), reason: job.refusalReason }
+        ? { message: boundUsageEngineReviewMessage(job.failureReason ?? job.refusalReason), reason: job.refusalReason }
         : null,
   });
 
@@ -988,10 +989,14 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
           report(
             `usage-engine delegation=${row.state} job=${result.job.jobId}${refusal === null ? '' : ` reason=${refusal.reason}`}`,
           );
+          // The row keeps the whole reason under the store's bound; the answer is cut to the control plane's.
           return {
             job: { jobId: result.job.jobId, reused: false, state: result.job.state },
             kind: 'delegation-start',
-            refusal,
+            refusal:
+              refusal === null
+                ? null
+                : { message: boundUsageEngineReviewMessage(refusal.message), reason: refusal.reason },
           };
         case 'reused':
           return jobAnswer(result.job, true);
@@ -1226,9 +1231,8 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
         (route.exclusions.length === 0 ? 'the route is not eligible' : route.exclusions.join(' '));
       return {
         kind: 'refused',
-        message: bounded(
+        message: boundUsageEngineReviewMessage(
           `The delegation policy does not admit route ${route.routeId} for ${assessed.checkout?.path ?? input.checkoutPath}: ${detail}`,
-          1024,
         ),
         reason,
       };

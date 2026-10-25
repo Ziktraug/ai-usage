@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  boundUsageEngineReviewMessage,
   classifyUsageEngineRetry,
   parseProjectGroupsByReferenceCommand,
   parseUsageEngineCommand,
   parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandCompletion,
   parseUsageEngineCommandResult,
+  parseUsageEngineDelegationStartOutput,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
   parseUsageEngineForegroundOutcome,
@@ -13,6 +15,7 @@ import {
   parseUsageEngineProtocolVersion,
   parseUsageEngineReplayCursor,
   parseUsageEngineReplicationStatusOutput,
+  parseUsageEngineReviewAttemptOutput,
   parseUsageEngineStatus,
   parseWebUsageEngineCommand,
   USAGE_ENGINE_PROTOCOL_VERSION,
@@ -848,6 +851,63 @@ describe('usage engine control contracts', () => {
     expect(classifyUsageEngineRetry('merge-invalid-input', 'command')).toBe('never');
     expect(classifyUsageEngineRetry('merge-self-merge', 'command')).toBe('never');
     expect(classifyUsageEngineRetry('merge-store-failed', 'command')).toBe('never');
+  });
+
+  test('bounds a review or delegation message by UTF-8 bytes on a code-point boundary', () => {
+    const limit = usageEngineControlBounds.maxReviewMessageBytes;
+    const bytesOf = (value: string): number => new TextEncoder().encode(value).byteLength;
+    expect(limit).toBe(1024);
+
+    const ascii = 'a'.repeat(limit);
+    expect(boundUsageEngineReviewMessage(ascii)).toBe(ascii);
+    const asciiCut = boundUsageEngineReviewMessage(`${ascii}b`);
+    expect(asciiCut).toBe(`${'a'.repeat(limit - 3)}…`);
+    expect(bytesOf(asciiCut)).toBe(limit);
+
+    // CJK: three bytes per character, never cut inside one (341 characters fit, 342 do not).
+    const cjk = '日'.repeat(341);
+    expect(bytesOf(cjk)).toBe(limit - 1);
+    expect(boundUsageEngineReviewMessage(cjk)).toBe(cjk);
+    const cjkCut = boundUsageEngineReviewMessage(`${cjk}本`);
+    expect(cjkCut).toBe(`${'日'.repeat(340)}…`);
+    expect(bytesOf(cjkCut)).toBe(limit - 1);
+
+    // Emoji: four bytes and a surrogate pair in UTF-16, never split (256 fit exactly, 257 do not).
+    const emoji = '🧪'.repeat(limit / 4);
+    expect(bytesOf(emoji)).toBe(limit);
+    expect(boundUsageEngineReviewMessage(emoji)).toBe(emoji);
+    const emojiCut = boundUsageEngineReviewMessage(`${emoji}🧪`);
+    expect(emojiCut).toBe(`${'🧪'.repeat(limit / 4 - 1)}…`);
+    expect(bytesOf(emojiCut)).toBe(limit - 1);
+
+    // An ASCII run that ends where a four-byte character would overflow the budget: the marker takes its place.
+    const mixedCut = boundUsageEngineReviewMessage(`${'a'.repeat(limit - 4)}🧪🧪`);
+    expect(mixedCut).toBe(`${'a'.repeat(limit - 4)}…`);
+
+    // What the helper answers is exactly what the two start-output parsers accept.
+    for (const message of [asciiCut, cjkCut, emojiCut, mixedCut]) {
+      expect(
+        parseUsageEngineDelegationStartOutput({
+          job: null,
+          kind: 'delegation-start',
+          refusal: { message, reason: 'pool-busy' },
+        }).refusal?.message,
+      ).toBe(message);
+      expect(
+        parseUsageEngineReviewAttemptOutput({
+          attempt: { attemptId: 'attempt-1', reused: false, state: 'refused' },
+          kind: 'review-attempt',
+          refusal: { message, reason: 'pool-busy' },
+        }).refusal?.message,
+      ).toBe(message);
+    }
+    expect(() =>
+      parseUsageEngineDelegationStartOutput({
+        job: null,
+        kind: 'delegation-start',
+        refusal: { message: `${cjk}本`, reason: 'pool-busy' },
+      }),
+    ).toThrow('byte limit');
   });
 });
 

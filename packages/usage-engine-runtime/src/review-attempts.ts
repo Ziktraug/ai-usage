@@ -29,7 +29,11 @@ import {
   type UnresolvedReviewReservation,
 } from '@ai-usage/report-core/work-attempts';
 import type { ReviewTarget } from '@ai-usage/report-core/work-routing';
-import type { UsageEngineCommand, UsageEngineReviewReservationReleaseOutput } from '@ai-usage/usage-engine-control';
+import {
+  boundUsageEngineReviewMessage,
+  type UsageEngineCommand,
+  type UsageEngineReviewReservationReleaseOutput,
+} from '@ai-usage/usage-engine-control';
 import {
   markReviewAttemptsLost,
   queryLatestExecutorObservations,
@@ -470,10 +474,11 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
         throw new Error(`unexpected store answer ${refused.kind} for a refused review attempt row`);
       }
       report(`usage-engine review-attempt=refused attempt=${refused.attempt.attemptId} reason=${reason.reason}`);
+      // The row keeps the reason under the store's bound; the answer is cut to the control plane's.
       return {
         attempt: { attemptId: refused.attempt.attemptId, reused: false, state: 'refused' as const },
         kind: 'review-attempt' as const,
-        refusal: { message: reason.message, reason: reason.reason },
+        refusal: { message: boundUsageEngineReviewMessage(reason.message), reason: reason.reason },
       };
     };
     if (decision.kind === 'refused') {
