@@ -204,6 +204,52 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain('2 review threads open');
     expect(body).not.toContain('Review unknown');
   });
+  test.each([
+    ['CLEAN', 'Mergeable'],
+    ['BLOCKED', 'Blocked by branch rules'],
+    ['BEHIND', 'Behind develop'],
+    ['DIRTY', 'Conflicts'],
+    ['UNKNOWN', 'Merge state unknown'],
+    [null, 'Merge state unknown'],
+    ['UNSTABLE', 'Merge state UNSTABLE'],
+  ])('GitHub summary exposes its merge state: %s', (mergeStateStatus, expected) => {
+    const marker = payments.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected PR marker');
+    }
+    const markers = {
+      local: [],
+      jiraIssues: [],
+      pullRequests: [{ ...marker, mergeStateStatus, latest: { ...marker.latest, baseRef: 'develop' } }],
+    };
+    const body = html(Markers, { markers, timeZone: 'UTC', now: payments.generatedAt });
+    expect(body.match(SUMMARY_CONTENT)?.[1]).toContain(expected ?? 'Missing expected caption');
+  });
+  test('a failed PR read retains the displayed successful merge state and base', () => {
+    const marker = payments.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected PR marker');
+    }
+    const markers = {
+      local: [],
+      jiraIssues: [],
+      pullRequests: [
+        {
+          ...marker,
+          mergeStateStatus: 'BEHIND',
+          latest: { ...marker.latest, outcome: 'network', baseRef: null },
+          latestSuccessful: { ...marker.latest, baseRef: 'release' },
+        },
+      ],
+    };
+    const body = html(Markers, { markers, timeZone: 'UTC', now: payments.generatedAt });
+    expect(body.match(SUMMARY_CONTENT)?.[1]).toContain('Behind release');
+    expect(body).toContain('Latest read: network');
+    const missingBase = { ...markers, pullRequests: [{ ...markers.pullRequests[0], latestSuccessful: null }] };
+    expect(html(Markers, { markers: missingBase, timeZone: 'UTC', now: payments.generatedAt })).toContain(
+      'Behind unknown base',
+    );
+  });
   test.each([null, 'Review threads unavailable: more than 100 threads; count is incomplete'])(
     'open PRs disclose unread review threads and the observation note: %s',
     (outcomeMessage) => {
@@ -302,6 +348,25 @@ describe('work thread SSR presentation', () => {
       'Duration not recorded',
     );
   });
+  test('overnight episode ranges name the next day in the row and expanded panel', () => {
+    const episode = payments.episodes[0];
+    if (!episode) {
+      throw new Error('Expected episode');
+    }
+    const props = {
+      episode: { ...episode, startedAt: '2026-10-24T22:06:00.000Z', endedAt: '2026-10-25T02:19:00.000Z' },
+      taskTitle: 'Task',
+      timeZone: 'UTC',
+      showDelegations: false,
+      onCopy: noop,
+      onDetach: noop,
+      linkedKeys: [],
+    };
+    expect(html(Episode, props)).toContain('22:06–02:19 +1d');
+    const expanded = html(Episode, { ...props, initiallyOpen: true });
+    expect(expanded.split('22:06–02:19 +1d')).toHaveLength(3);
+    expect(expanded).toContain('Activity range');
+  });
   test('renders one linked row per task, proper tabs and a zero-session PR', () => {
     const body = html(List, {
       dataset: list,
@@ -340,7 +405,7 @@ describe('work thread SSR presentation', () => {
       onFilter: noop,
       onMore: noop,
     });
-    expect(listBody).toContain('1 session · 20 delegated');
+    expect(listBody).toContain('1 linked session · 20 delegated');
     expect(listBody.split('data-work-thread=').length - 1).toBe(1);
     expect(html(Detail, { ...baseDetailProps, data: { ...payments, row } })).toContain(
       '1 linked session · 20 delegated · one task',
@@ -492,6 +557,36 @@ describe('work thread SSR presentation', () => {
     expect(collapsed).toContain('delegated session');
     expect(collapsed).toContain('+ 1 delegated session');
     expect(expanded).toContain('− 1 delegated session');
+  });
+  test('expanding all delegations keeps each parent bounded to five children', () => {
+    const episode = payments.episodes[0];
+    if (!episode) {
+      throw new Error('Expected episode');
+    }
+    const children = Array.from({ length: 17 }, (_, index) => ({
+      ...episode,
+      linkKey: `${episode.linkKey}-${index}`,
+      title: `Delegated child ${index + 1}`,
+      children: [],
+    }));
+    const props = {
+      episode: { ...episode, children },
+      taskTitle: 'Task',
+      timeZone: 'UTC',
+      showDelegations: true,
+      onCopy: noop,
+      onDetach: noop,
+      linkedKeys: [],
+    };
+    const body = html(Episode, props);
+    expect(body.split('data-session-key=').length - 1).toBe(6);
+    expect(body).toContain('Delegated child 5');
+    expect(body).not.toContain('Delegated child 6');
+    expect(body).toContain('Show 12 more delegated sessions');
+    expect(html(Episode, { ...props, episode: { ...episode, children: children.slice(0, 5) } })).not.toContain(
+      'more delegated sessions',
+    );
+    expect(html(Detail, { ...baseDetailProps, data: payments })).toContain('Expand all delegations');
   });
   test('source read failures are visible even when some tasks are served', () => {
     const body = html(Sources, {

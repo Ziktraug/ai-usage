@@ -411,8 +411,29 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
         ],
       },
       [
-        makeEpisode('ownership-design', 'Compare delegated review ownership', 21),
-        makeEpisode('ownership-check', 'Check the review handoff', 22),
+        makeEpisode('ownership-design', 'Compare delegated review ownership', 21, {
+          children: Array.from({ length: 17 }, (_, index) =>
+            makeEpisode(`ownership-child-${index + 1}`, `Review ownership scenario ${index + 1}`, 21, {
+              origin: 'delegated',
+              launchedBy: { harness: 'claude', title: 'Compare delegated review ownership' },
+            }),
+          ),
+        }),
+        makeEpisode('ownership-check', 'Check the review handoff', 22, {
+          children: [
+            makeEpisode('ownership-handoff-child', 'Review handoff evidence', 22, {
+              startedAt: at(22, '22:30'),
+              endedAt: at(22, '22:48'),
+              activeMs: 18 * 60_000,
+              spanMs: 18 * 60_000,
+              origin: 'delegated',
+              launchedBy: { harness: 'claude', title: 'Check the review handoff' },
+            }),
+          ],
+          startedAt: at(22, '22:06'),
+          endedAt: at(23, '02:19'),
+          spanMs: (4 * 60 + 13) * 60_000,
+        }),
       ],
     ),
     record(

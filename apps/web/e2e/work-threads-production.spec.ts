@@ -367,7 +367,7 @@ test('production Work threads survive source refresh, follow-up transitions and 
   await test.step('A: discover a PR without sessions, end, reload Done and reopen', async () => {
     await page.goto(`/work?q=${encodeURIComponent(DISCOVERED_TITLE)}`);
     await hydrated(page);
-    await expect(taskRow(page, threadId)).toContainText('PR #77 · 0 sessions');
+    await expect(taskRow(page, threadId)).toContainText('PR #77 · 0 linked sessions');
     await taskRow(page, threadId).getByRole('link', { name: DISCOVERED_TITLE }).first().click();
     await expect(page.getByRole('heading', { name: DISCOVERED_TITLE, exact: true })).toBeVisible();
     await page.locator('summary').filter({ hasText: 'GITHUB' }).click();
@@ -436,7 +436,7 @@ test('production Work threads survive source refresh, follow-up transitions and 
     await page.goto(`/work?q=${encodeURIComponent(DISCOVERED_TITLE)}`);
     await hydrated(page);
     await expect(page.locator('[data-work-thread]')).toHaveCount(1);
-    await expect(taskRow(page, threadId)).toContainText('0 sessions');
+    await expect(taskRow(page, threadId)).toContainText('0 linked sessions');
   });
 
   await test.step('C: a collected session starts an analysis with no artifact links, then ends and reopens', async () => {

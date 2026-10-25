@@ -10,9 +10,9 @@
     episodeResumeText,
     episodeSpan,
     episodeSpanContext,
+    episodeTimeRange,
     harnessGlyph,
     harnessName,
-    threadTime,
   } from './work-thread-model';
 
   let {
@@ -38,6 +38,13 @@
   } = $props();
   let expanded = $state(untrack(() => initiallyOpen));
   let childrenOpen = $state(false);
+  let visibleChildCount = $state(5);
+  const delegationsExpanded = $derived(showDelegations || childrenOpen);
+  $effect(() => {
+    if (!delegationsExpanded) {
+      visibleChildCount = 5;
+    }
+  });
   const resume = $derived(episodeResumeText(episode, taskTitle));
   const spanContext = $derived(episodeSpanContext(episode));
   const who = $derived(
@@ -59,10 +66,9 @@
       ><strong>{episode.title ?? 'Untitled session'}</strong
       ><small
         >{harnessName(episode.harness)}
-        · {who} · {threadTime(episode.startedAt, timeZone)}
-        {episode.endedAt ? `–${threadTime(episode.endedAt, timeZone)}` : ''}{spanContext
-          ? ` · ${spanContext}`
-          : ''}{episode.running ? ' · Running' : ''}</small
+        · {who} · {episodeTimeRange(episode, timeZone)}{spanContext ? ` · ${spanContext}` : ''}{episode.running
+          ? ' · Running'
+          : ''}</small
       ></span
     >
     <span class="wt-duration" title={episodeDurationDetail(episode)}
@@ -78,6 +84,10 @@
   {#if expanded}
     <div class="wt-inspector">
       <dl class="wt-context">
+        <div>
+          <dt>Activity range</dt>
+          <dd>{episodeTimeRange(episode, timeZone)}</dd>
+        </div>
         <div>
           <dt>Initial request</dt>
           <dd>{episode.firstPrompt ?? 'Not observed'}</dd>
@@ -147,19 +157,34 @@
   {/if}
   {#if episode.children.length}
     <button
-      aria-expanded={showDelegations || childrenOpen ? 'true' : 'false'}
+      aria-expanded={delegationsExpanded ? 'true' : 'false'}
       class="wt-delegations"
       onclick={() => (childrenOpen = !childrenOpen)}
       type="button"
     >
-      {showDelegations || childrenOpen ? '−' : '+'} {episode.children.length} delegated
+      {delegationsExpanded ? '−' : '+'} {episode.children.length} delegated
       {episode.children.length === 1 ? 'session' : 'sessions'}
     </button>
-    {#if showDelegations || childrenOpen}
+    {#if delegationsExpanded}
       <div class="wt-children">
-        {#each episode.children as child (child.linkKey)}
+        {#each episode.children.slice(0, visibleChildCount) as child (child.linkKey)}
           <Episode {busy} episode={child} {linkedKeys} {onCopy} {onDetach} {showDelegations} {taskTitle} {timeZone} />
         {/each}
+        {#if episode.children.length > 5}
+          <button
+            aria-expanded={visibleChildCount > 5 ? 'true' : 'false'}
+            class="wt-delegations"
+            onclick={() => (visibleChildCount = visibleChildCount > 5 ? 5 : episode.children.length)}
+            type="button"
+          >
+            {#if visibleChildCount > 5}
+              Show fewer delegated sessions
+            {:else}
+              Show {episode.children.length - visibleChildCount} more delegated
+              {episode.children.length - visibleChildCount === 1 ? 'session' : 'sessions'}
+            {/if}
+          </button>
+        {/if}
       </div>
     {/if}
   {/if}

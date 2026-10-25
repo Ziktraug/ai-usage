@@ -20,6 +20,7 @@ import {
   episodeResumeText,
   episodeSpan,
   episodeSpanContext,
+  episodeTimeRange,
   groupThreadRows,
   observedWebUrl,
   primaryResumeEpisode,
@@ -61,18 +62,38 @@ if (!episode) {
 }
 
 describe('task presentation model', () => {
+  test.each([
+    ['same day', '2026-10-24T09:20:00.000Z', '2026-10-24T09:44:00.000Z', 'UTC', '09:20–09:44'],
+    ['overnight', '2026-10-24T22:06:00.000Z', '2026-10-25T02:19:00.000Z', 'UTC', '22:06–02:19 +1d'],
+    ['year boundary', '2026-12-31T23:30:00.000Z', '2027-01-02T00:15:00.000Z', 'UTC', '23:30–00:15 +2d'],
+    ['short DST day', '2026-03-28T23:30:00.000Z', '2026-03-29T22:30:00.000Z', 'Europe/Paris', '00:30–00:30 +1d'],
+    ['long DST day', '2026-10-24T22:30:00.000Z', '2026-10-25T22:30:00.000Z', 'Europe/Paris', '00:30–23:30'],
+    ['local same day', '2026-10-24T23:30:00.000Z', '2026-10-25T00:30:00.000Z', 'America/Los_Angeles', '16:30–17:30'],
+    ['UTC next day', '2026-10-24T23:30:00.000Z', '2026-10-25T00:30:00.000Z', 'UTC', '23:30–00:30 +1d'],
+  ])('episode time range names calendar offsets: %s', (_label, start, end, timeZone, expected) => {
+    expect(
+      episodeTimeRange({ startedAt: parseCanonicalInstant(start), endedAt: parseCanonicalInstant(end) }, timeZone),
+    ).toBe(expected);
+  });
+  test('a missing episode end does not invent an end time or day offset', () => {
+    expect(
+      episodeTimeRange({ startedAt: parseCanonicalInstant('2026-10-24T22:06:00.000Z'), endedAt: null }, 'UTC'),
+    ).toBe('22:06');
+  });
   test('groups each durable task once by project, including a PR without sessions', () => {
     const groups = groupThreadRows(list.rows);
     expect(groups.reduce((total, group) => total + group.tasks.length, 0)).toBe(list.rows.length);
     expect(groups.some((group) => group.project === 'ai-usage')).toBe(true);
-    expect(threadRefs(review.row)).toContain('0 sessions');
+    expect(threadRefs(review.row)).toContain('0 linked sessions');
     expect(threadRefs(review.row)).toContain('PR #');
   });
   test('task references count linked sessions separately from delegated sessions and omit zero delegations', () => {
     expect(threadRefs({ ...review.row, sessionCount: 1, delegatedSessionCount: 20 })).toBe(
-      'PR #1492 · 1 session · 20 delegated',
+      'PR #1492 · 1 linked session · 20 delegated',
     );
-    expect(threadRefs({ ...review.row, sessionCount: 2, delegatedSessionCount: 0 })).toBe('PR #1492 · 2 sessions');
+    expect(threadRefs({ ...review.row, sessionCount: 2, delegatedSessionCount: 0 })).toBe(
+      'PR #1492 · 2 linked sessions',
+    );
   });
   test('filters and scroll survive task links and the return URL', () => {
     const url = new URL('http://localhost/work?tab=done&project=Example+shop&q=1487&cursor=next&scroll=550');

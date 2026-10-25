@@ -454,7 +454,7 @@
       </fieldset>
       <label class="wt-switch"
         ><input type="checkbox" bind:checked={showDelegations}>
-        Show delegations</label
+        Expand all delegations</label
       >
     </div>
   </div>

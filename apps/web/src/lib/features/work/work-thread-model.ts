@@ -116,6 +116,23 @@ export const threadDate = (at: string, timeZone: string, long = false): string =
 export const threadTime = (at: string, timeZone: string): string =>
   new Date(at).toLocaleTimeString('en-GB', { timeZone, hour: '2-digit', minute: '2-digit' });
 
+/** Calendar-day offsets keep overnight ranges honest even across daylight-saving changes. */
+export const episodeTimeRange = (
+  episode: Pick<WorkThreadEpisode, 'startedAt' | 'endedAt'>,
+  timeZone: string,
+): string => {
+  const start = threadTime(episode.startedAt, timeZone);
+  if (episode.endedAt === null) {
+    return start;
+  }
+  const dayOffset = Math.round(
+    (Date.parse(`${threadDayKey(episode.endedAt, timeZone)}T00:00:00Z`) -
+      Date.parse(`${threadDayKey(episode.startedAt, timeZone)}T00:00:00Z`)) /
+      86_400_000,
+  );
+  return `${start}–${threadTime(episode.endedAt, timeZone)}${dayOffset > 0 ? ` +${dayOffset}d` : ''}`;
+};
+
 export const harnessName = (harness: string): string =>
   ({ claude: 'Claude', 'claude-code': 'Claude', codex: 'Codex', cursor: 'Cursor', opencode: 'OpenCode' })[harness] ??
   harness;
@@ -144,7 +161,7 @@ export const threadRefs = (row: WorkThreadRow): string => {
   if (!refs.length && row.markers.local.length) {
     refs.push('Local branch');
   }
-  refs.push(`${row.sessionCount} ${row.sessionCount === 1 ? 'session' : 'sessions'}`);
+  refs.push(`${row.sessionCount} linked ${row.sessionCount === 1 ? 'session' : 'sessions'}`);
   if (row.delegatedSessionCount > 0) {
     refs.push(`${row.delegatedSessionCount} delegated`);
   }

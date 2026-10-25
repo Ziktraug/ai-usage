@@ -11,6 +11,24 @@
   const observed = (at: string): string => `${threadDate(at, timeZone)} at ${threadTime(at, timeZone)}`;
   const stale = (at: string): boolean => Date.parse(now) - Date.parse(at) > 7 * 86_400_000;
   const count = (value: number | null): string => (value === null ? 'Unknown' : String(value));
+  const mergeStateCaption = (state: string | null | undefined, base: string | null | undefined): string => {
+    switch (state) {
+      case 'CLEAN':
+        return 'Mergeable';
+      case 'BLOCKED':
+        return 'Blocked by branch rules';
+      case 'BEHIND':
+        return `Behind ${base ?? 'unknown base'}`;
+      case 'DIRTY':
+        return 'Conflicts';
+      case 'UNKNOWN':
+      case null:
+      case undefined:
+        return 'Merge state unknown';
+      default:
+        return `Merge state ${state}`;
+    }
+  };
   const worktreeCaption = (dirty: boolean | null | undefined): string => {
     if (dirty === false) {
       return 'Worktree clean';
@@ -102,7 +120,8 @@
             {:else if main?.state === 'OPEN'}
               · Review threads: not read
             {/if}
-            · Checks {main?.checksRollup ?? 'unknown'}</span
+            · Checks {main?.checksRollup ?? 'unknown'}
+            · {mergeStateCaption(markers.pullRequests[0]?.mergeStateStatus, main?.baseRef)}</span
           >
         </summary>
         <div class="wt-source-detail">

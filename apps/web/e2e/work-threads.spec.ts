@@ -241,7 +241,7 @@ test('Undo of Reopen restores the original closure reason and acknowledgements a
 
 test('a task exists for a PR with zero sessions and keeps a dated GitHub marker', async ({ page }) => {
   await open(page);
-  await expect(row(page, ids.review)).toContainText('PR #1492 · 0 sessions');
+  await expect(row(page, ids.review)).toContainText('PR #1492 · 0 linked sessions');
   await row(page, ids.review).getByRole('link', { name: 'Check cart rounding' }).first().click();
   await expect(page.getByText('0 linked sessions · one task', { exact: true })).toBeVisible();
   await page.locator('summary').filter({ hasText: 'GITHUB' }).click();
@@ -364,6 +364,62 @@ test('episode durations and PR fact events use their own evidence dates', async 
   await expect(page.locator('.wt-fact-event')).toHaveCount(0);
 });
 
+test('delegation groups reveal five children at a time without losing keyboard focus', async ({ page }) => {
+  await open(page, ids.longTitle);
+  const parent = page.locator('[data-session-key="session:fixture-machine/claude/ownership-design"]');
+  const children = parent.locator(':scope > .wt-children > .wt-episode');
+  const toggle = parent.locator(':scope > .wt-delegations');
+  const all = page.getByRole('checkbox', { name: 'Expand all delegations', exact: true });
+  const handoff = page.locator('[data-session-key="session:fixture-machine/claude/ownership-check"]');
+  const handoffChildren = handoff.locator(':scope > .wt-children > .wt-episode');
+  await expect(all).not.toBeChecked();
+  await expect(children).toHaveCount(0);
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(children).toHaveCount(5);
+  await expect(children.last()).toContainText('Review ownership scenario 5');
+  const more = parent.getByRole('button', { name: 'Show 12 more delegated sessions', exact: true });
+  await more.focus();
+  await page.keyboard.press('Enter');
+  await expect(children).toHaveCount(17);
+  const fewer = parent.getByRole('button', { name: 'Show fewer delegated sessions', exact: true });
+  await expect(fewer).toBeFocused();
+  await expect(fewer).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Space');
+  await expect(children).toHaveCount(5);
+  await expect(more).toBeFocused();
+  await toggle.click();
+  await expect(children).toHaveCount(0);
+
+  await all.check();
+  await expect(children).toHaveCount(5);
+  await expect(handoffChildren).toHaveCount(1);
+  await expect(more).toBeVisible();
+  await all.uncheck();
+  await expect(children).toHaveCount(0);
+  await expect(handoffChildren).toHaveCount(0);
+});
+
+test('overnight episodes name the next day in both the row and the inspector', async ({ page }) => {
+  await open(page, ids.longTitle);
+  const episode = page.locator('[data-session-key="session:fixture-machine/claude/ownership-check"]');
+  await expect(episode.locator(':scope > .wt-session-button')).toContainText('22:06–02:19 +1d');
+  await episode.locator(':scope > .wt-session-button').click();
+  const range = episode.locator('.wt-inspector .wt-context > div').filter({ hasText: 'Activity range' });
+  await expect(range.locator('dd')).toHaveText('22:06–02:19 +1d');
+  await expect(episode).toContainText('first to last activity, pauses included');
+});
+
+test('ready-to-merge tasks show the merge-state evidence on the GitHub summary', async ({ page }) => {
+  await open(page, ids.longTitle);
+  await expect(page.locator('.wt-reason h2')).toHaveText('Ready to merge');
+  const github = page.locator('summary').filter({ hasText: 'GITHUB' });
+  await expect(github).toContainText('Mergeable');
+  await expect(github).toContainText('Checks success');
+  await expect(github).toContainText('0 review threads open');
+});
+
 test('links a recent served session of the project, detaches it, and can undo the detach', async ({
   page,
   request,
@@ -437,7 +493,7 @@ test('searches PR and session titles and preserves filters through task navigati
   await open(page);
   await page.getByRole('searchbox', { name: 'Search tasks' }).fill('1487');
   await expect(row(page, ids.payments)).toBeVisible();
-  await expect(row(page, ids.payments)).toContainText('4 sessions · 1 delegated');
+  await expect(row(page, ids.payments)).toContainText('4 linked sessions · 1 delegated');
   await page.getByRole('searchbox', { name: 'Search tasks' }).fill('Compare retry approaches');
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('Compare retry approaches');
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('Example shop');
