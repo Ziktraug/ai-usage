@@ -233,7 +233,10 @@ Durable Work threads (ADR 0063) add four tables without changing
 columns to the fact family: `discovery_role`, `mergeable` and
 `merge_state_status` on `pull_request_observations`, `counts_changed_at` on
 `checkout_status_observations` and `outcome_code` on `work_fact_run_state`,
-through `ALTER TABLE … ADD COLUMN`. Nothing is backfilled, the store generation
+through `ALTER TABLE … ADD COLUMN`. On 2026-10-25 (plan 123) the same rule added
+`created_at`, `closed_at` and `unresolved_review_threads` to
+`pull_request_observations` (ADR 0075 amendment): rows written before carry
+null, read as "not observed", never as zero unresolved threads. Nothing is backfilled, the store generation
 does not move, and the tables are outside the served revision, the export and
 the replication outbox. Table and column presence are the signals; a second
 open changes nothing. Collections and projection rebuilds never write the

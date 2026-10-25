@@ -35,6 +35,12 @@ const COLLECTION_TIMEOUT_MS = 60_000;
 const MAX_SERVED_PAGES = 12;
 const DONE_TAB = /^Done /;
 const API_PULL_REQUEST_READ = /^repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pulls\/\d+$/;
+// A query (never a mutation) reading only review-thread resolution of one pull request.
+const REVIEW_THREADS_READ =
+  /^query=query\(\$owner: String!, \$name: String!, \$number: Int!\) \{ repository\(owner: \$owner, name: \$name\) \{ pullRequest\(number: \$number\) \{ reviewThreads\(first: 100\) \{ totalCount nodes \{ isResolved \} \} \} \} \}$/;
+const OWNER_VARIABLE = /^owner=[\w.-]+$/;
+const NAME_VARIABLE = /^name=[\w.-]+$/;
+const NUMBER_VARIABLE = /^number=\d+$/;
 
 const listOutput = async (request: APIRequestContext, tab: 'open' | 'done' = 'open', cursor: string | null = null) => {
   const response = await request.post('/rpc/workThreads/list', {
@@ -320,6 +326,7 @@ const assertReadOnlyGhCalls = async (log: string): Promise<void> => {
       (args) => args[0] === 'pr' && args[1] === 'view' && args[2] === '77' && args.includes('fixture/discovered'),
     ).length,
   ).toBeGreaterThanOrEqual(2);
+  expect(calls.some((args) => args[0] === 'api' && args[1] === 'graphql')).toBe(true);
   for (const args of calls) {
     const [command, subcommand] = args;
     if (command === 'search') {
@@ -328,6 +335,14 @@ const assertReadOnlyGhCalls = async (log: string): Promise<void> => {
       expect(args).toContain('--state=open');
     } else if (command === 'pr') {
       expect(subcommand).toBe('view'); // Also excludes the legacy resolver's pr list in this journey.
+    } else if (command === 'api' && subcommand === 'graphql') {
+      // The open PR's review-thread read: one query document and its three variables, nothing else.
+      expect(args).toHaveLength(10);
+      expect([args[2], args[4], args[6], args[8]]).toEqual(['-f', '-f', '-f', '-F']);
+      expect(args[3]).toMatch(REVIEW_THREADS_READ);
+      expect(args[5]).toMatch(OWNER_VARIABLE);
+      expect(args[7]).toMatch(NAME_VARIABLE);
+      expect(args[9]).toMatch(NUMBER_VARIABLE);
     } else if (command === 'api') {
       expect(args).toHaveLength(2); // No --method/-X, body, fields or other mutating API options.
       expect(subcommand).toMatch(API_PULL_REQUEST_READ);

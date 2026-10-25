@@ -53,6 +53,14 @@ needs the opposite case: dropping the usage store's replication outbox tables
    schema change (its migration runs ordered `version < n` steps and returns
    early at the current version); that stricter form also satisfies this rule.
 
+   *Amendment 2026-10-25 (plan 123):* adding a nullable column with no
+   default and no backfill to an existing usage table counts as additive and
+   keeps `user_version` when every writer of that table names its columns and
+   every reader maps named columns, so an older binary at the same version still
+   reads and writes it and leaves the new column null. Its migration detects its
+   work by the column's absence (`PRAGMA table_info`). Any other alteration of an
+   existing table still advances the version.
+
 3. **Reads only widen.** Persisted facts are re-validated when read: usage rows
    must still parse as serialized merge rows, skill observations through
    `parseSkillObservation`, and a row that fails is counted in `skipped`, never
