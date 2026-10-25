@@ -516,6 +516,24 @@ const requireCommandRecord = (value: unknown): Record<string, unknown> => {
   return value;
 };
 
+/** Validate the report action without retaining parsers for unrelated engine commands. */
+export const parseUsageEngineProjectGroupReferenceCommand = (
+  value: unknown,
+): Extract<UsageEngineCommand, { readonly command: 'replace-project-groups-by-reference' }> => {
+  const command = requireCommandRecord(value);
+  if (command.command !== 'replace-project-groups-by-reference') {
+    return fail('Usage engine project group reference command kind is invalid.');
+  }
+  if (!hasExactKeys(command, ['command', 'projectGroups', 'revision'])) {
+    return fail('Usage engine replace-project-groups-by-reference command contains unknown fields.');
+  }
+  return {
+    command: 'replace-project-groups-by-reference',
+    projectGroups: parseProjectGroupReferences(command.projectGroups),
+    revision: parseUsageEnginePublicationRevision(command.revision),
+  };
+};
+
 export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
   const command = requireCommandRecord(value);
   switch (command.command) {
@@ -579,14 +597,7 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
       }
       return { command: 'replace-project-groups', projectGroups: parseProjectGroups(command.projectGroups) };
     case 'replace-project-groups-by-reference':
-      if (!hasExactKeys(command, ['command', 'projectGroups', 'revision'])) {
-        return fail('Usage engine replace-project-groups-by-reference command contains unknown fields.');
-      }
-      return {
-        command: 'replace-project-groups-by-reference',
-        projectGroups: parseProjectGroupReferences(command.projectGroups),
-        revision: parseUsageEnginePublicationRevision(command.revision),
-      };
+      return parseUsageEngineProjectGroupReferenceCommand(command);
     case 'replace-project-aliases':
       if (!hasExactKeys(command, ['command', 'projectAliases'])) {
         return fail('Usage engine replace-project-aliases command contains unknown fields.');

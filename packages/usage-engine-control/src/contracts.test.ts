@@ -12,6 +12,7 @@ import {
   parseUsageEngineEvent,
   parseUsageEngineForegroundOutcome,
   parseUsageEngineMergePreviewOutput,
+  parseUsageEngineProjectGroupReferenceCommand,
   parseUsageEngineProtocolVersion,
   parseUsageEngineReplayCursor,
   parseUsageEngineReplicationStatusOutput,
@@ -20,6 +21,7 @@ import {
   parseWebUsageEngineCommand,
   USAGE_ENGINE_PROTOCOL_VERSION,
   type UsageEngineCommandCompletion,
+  UsageEngineContractError,
   usageEngineControlBounds,
 } from './contracts';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
@@ -27,6 +29,86 @@ import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fix
 const WORK_THREAD_ID = '11111111-1111-4111-8111-111111111111';
 const WORK_THREAD_COMMAND_ID = '22222222-2222-4222-8222-222222222222';
 const WORK_THREAD_LINK_ID = '33333333-3333-4333-8333-333333333333';
+
+describe('narrow project group reference command parser', () => {
+  const reference = `project-source:${'a'.repeat(64)}`;
+  const group = { id: 'group-a', name: 'Group A', sources: [reference] };
+  const command = { command: 'replace-project-groups-by-reference', projectGroups: [group], revision: 'revision-a' };
+
+  test.each([
+    { ...command, projectGroups: [] },
+    command,
+    { ...command, projectGroups: [{ ...group, sources: [reference, `project-source:${'b'.repeat(64)}`] }] },
+    { ...command, projectGroups: [{ ...group, name: 'é'.repeat(usageEngineControlBounds.maxMessageBytes / 2) }] },
+  ])('accepts and preserves the same reference command as the general parsers: %j', (input) => {
+    expect(parseUsageEngineProjectGroupReferenceCommand(input) as unknown).toEqual(input);
+    expect(parseUsageEngineProjectGroupReferenceCommand(input) as unknown).toEqual(parseUsageEngineCommand(input));
+    expect(parseUsageEngineProjectGroupReferenceCommand(input) as unknown).toEqual(parseWebUsageEngineCommand(input));
+  });
+
+  test.each([
+    { ...command, extra: true },
+    { command: command.command, projectGroups: command.projectGroups },
+    { ...command, projectGroups: null },
+    { ...command, projectGroups: Array.from({ length: usageEngineControlBounds.maxProjectGroups + 1 }, () => group) },
+    { ...command, projectGroups: [group, group] },
+    { ...command, projectGroups: [{ ...group, extra: true }] },
+    { ...command, projectGroups: [{ id: group.id, name: group.name }] },
+    { ...command, projectGroups: [{ ...group, id: '' }] },
+    { ...command, projectGroups: [{ ...group, name: '' }] },
+    { ...command, projectGroups: [{ ...group, name: 'é'.repeat(usageEngineControlBounds.maxMessageBytes / 2 + 1) }] },
+    { ...command, projectGroups: [{ ...group, sources: [] }] },
+    { ...command, projectGroups: [{ ...group, sources: [reference, reference] }] },
+    { ...command, projectGroups: [{ ...group, sources: ['/private/worktree'] }] },
+    { ...command, projectGroups: [{ ...group, sources: [`project-source:${'A'.repeat(64)}`] }] },
+    { ...command, projectGroups: [{ ...group, sources: [`project-source:${'a'.repeat(63)}`] }] },
+    { ...command, revision: '' },
+    { ...command, revision: null },
+    { ...command, revision: 'revision with spaces' },
+    { ...command, revision: 'x'.repeat(usageEngineControlBounds.maxCommandBytes) },
+  ])('rejects malformed reference commands with the same typed failure: %j', (input) => {
+    expect(() => parseUsageEngineProjectGroupReferenceCommand(input)).toThrow(UsageEngineContractError);
+    let generalError: unknown;
+    try {
+      parseUsageEngineCommand(input);
+    } catch (error) {
+      generalError = error;
+    }
+    expect(generalError).toBeInstanceOf(UsageEngineContractError);
+    expect(() => parseUsageEngineProjectGroupReferenceCommand(input)).toThrow(
+      generalError instanceof Error ? generalError.message : 'Expected general parser rejection',
+    );
+    expect(() => parseWebUsageEngineCommand(input)).toThrow(UsageEngineContractError);
+  });
+
+  test.each([null, [], undefined, 7, 'publish', {}, { command: 7 }].map((input) => ({ input })))(
+    'rejects a non-command envelope: %j',
+    ({ input }) => {
+      expect(() => parseUsageEngineProjectGroupReferenceCommand(input)).toThrow(UsageEngineContractError);
+    },
+  );
+
+  test.each(['publish', 'detect-all', 'run-all-enabled', 'replication-status', 'collect-fresh-quota'])(
+    'rejects the otherwise valid unrelated %s command',
+    (kind) => {
+      const unrelated = { command: kind };
+      expect(parseUsageEngineCommand(unrelated)).toEqual(unrelated);
+      expect(() => parseUsageEngineProjectGroupReferenceCommand(unrelated)).toThrow('command kind is invalid');
+    },
+  );
+
+  test('rejects cyclic and oversized envelopes before reading their fields', () => {
+    const cyclic: Record<string, unknown> = { ...command };
+    cyclic.extra = cyclic;
+    expect(() => parseUsageEngineProjectGroupReferenceCommand(cyclic)).toThrow('not serializable');
+    expect(() =>
+      parseUsageEngineProjectGroupReferenceCommand({
+        ...command,
+        extra: 'x'.repeat(usageEngineControlBounds.maxCommandBytes),
+      }),
+    ).toThrow('exceeds its byte limit');
+  });
+});
 
 describe('work-thread control contracts', () => {
   const create: WorkThreadCommand = {
