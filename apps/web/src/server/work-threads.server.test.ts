@@ -144,9 +144,9 @@ describe('synthetic task dataset', () => {
   test('has explicit synthetic provenance and frozen-contract-valid rows, links and events', async () => {
     const ports = createSyntheticWorkThreadStore();
     const list = await ports.readList(query);
-    expect(list.counts).toEqual({ done: 1, open: 7 });
+    expect(list.counts).toEqual({ done: 1, open: 11 });
     expect(list.generatedAt).toBe(WORK_THREADS_SYNTHETIC_NOW);
-    expect(list.sources.every((source) => source.message === 'Synthetic demo')).toBe(true);
+    expect(list.sources.every((source) => source.message?.startsWith('Synthetic demo'))).toBe(true);
     expect(list.rows.find((row) => row.thread.threadId === WORK_THREADS_FIXTURE_IDS.review)?.sessionCount).toBe(0);
     for (const row of list.rows) {
       expect(parseWorkThread(row.thread)).toEqual(row.thread);
@@ -164,6 +164,162 @@ describe('synthetic task dataset', () => {
     expect(payment?.episodes).toHaveLength(4);
     expect(payment?.episodes.flatMap((episode) => episode.children)).toHaveLength(1);
     expect(payment?.episodes.every((episode) => episode.resume.kind === 'none')).toBe(true);
+  });
+
+  test('separates short recorded activity from a multi-day span and leaves unrecorded activity unknown', async () => {
+    const ports = createSyntheticWorkThreadStore();
+    const payment = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.payments);
+    const episode = payment?.episodes.find((item) => item.sourceSessionId === 'payment-approaches');
+    expect(episode).toMatchObject({
+      activeMs: 14 * 60_000,
+      spanMs: (76 * 60 + 13) * 60_000,
+      startedAt: parseCanonicalInstant('2026-10-19T09:20:00.000Z'),
+      endedAt: parseCanonicalInstant('2026-10-22T13:33:00.000Z'),
+    });
+    const unknown = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.unknownDuration);
+    expect(unknown?.episodes[0]).toMatchObject({ activeMs: null, spanMs: 38 * 60_000 });
+    expect(unknown?.row.thread.origin).toBe('session');
+    expect(unknown?.row.marks.some((mark) => mark.label === 'Task created')).toBe(true);
+    expect(unknown?.row.marks.some((mark) => mark.label === 'Source linked')).toBe(false);
+    expect(payment?.row.markers.pullRequests[0]?.latest?.unresolvedReviewThreads).toBe(2);
+    expect(payment?.row.marks.filter((mark) => mark.kind === 'session')).toHaveLength(4);
+    expect(payment?.row.marks.some((mark) => mark.label === 'Check the retry invariant')).toBe(false);
+    expect(payment?.row.marks.every((mark) => mark.label !== null && mark.label.length > 0)).toBe(true);
+  });
+
+  test('a PR-only task dates its work from source facts and labels opened and merged marks', async () => {
+    const ports = createSyntheticWorkThreadStore();
+    const detail = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.mergedPr);
+    expect(detail?.row).toMatchObject({
+      firstActivityAt: parseCanonicalInstant('2026-10-20T10:15:00.000Z'),
+      sessionCount: 0,
+      delegatedSessionCount: 0,
+      thread: { origin: 'pull-request', createdAt: WORK_THREADS_SYNTHETIC_NOW },
+    });
+    expect(detail?.factEvents).toEqual([
+      {
+        at: parseCanonicalInstant('2026-10-20T10:15:00.000Z'),
+        key: 'github.example/synthetic/example-shop#1502',
+        kind: 'pull-request-opened',
+        label: 'PR #1502',
+        title: 'Verify the receipt export',
+      },
+      {
+        at: parseCanonicalInstant('2026-10-23T14:49:00.000Z'),
+        key: 'github.example/synthetic/example-shop#1502',
+        kind: 'pull-request-merged',
+        label: 'PR #1502',
+        title: 'Verify the receipt export',
+      },
+    ]);
+    expect(detail?.row.marks.map((mark) => mark.label)).toEqual(['PR #1502 opened', 'PR #1502 merged']);
+    expect(detail?.events.map((event) => event.kind)).toEqual(['created', 'link-added']);
+    expect(detail?.row.links[0]?.provenance).toBe('origin');
+    expect(detail?.row.marks.every((mark) => mark.at !== WORK_THREADS_SYNTHETIC_NOW)).toBe(true);
+    expect(parseWorkThreadsDetailOutput({ ok: true, data: detail }).ok).toBe(true);
+  });
+
+  test('source fact events follow active PR links without duplicating or becoming stored operator events', async () => {
+    const ports = createSyntheticWorkThreadStore();
+    const key = 'github.example/synthetic/example-shop#1502';
+    const created = await ports.executeCommand({ ...create(), links: [{ key, kind: 'pull-request' }] });
+    if (!created.ok) {
+      throw new Error('Could not create the linked synthetic task.');
+    }
+    const before = await ports.readDetail(created.threadId);
+    const association = before?.row.links.find((link) => link.key === key);
+    if (!association) {
+      throw new Error('The linked pull request is missing.');
+    }
+    expect(before?.factEvents).toHaveLength(2);
+    expect(before?.row.firstActivityAt).toBe(parseCanonicalInstant('2026-10-20T10:15:00.000Z'));
+    expect(before?.events.map((event) => event.kind)).toEqual(['created', 'link-added']);
+    await ports.executeCommand({
+      commandId: crypto.randomUUID(),
+      op: 'detach-link',
+      threadId: created.threadId,
+      linkId: association.linkId,
+    });
+    const detached = await ports.readDetail(created.threadId);
+    expect(detached?.factEvents).toEqual([]);
+    expect(detached?.row.firstActivityAt).toBe(WORK_THREADS_SYNTHETIC_NOW);
+    expect(detached?.row.marks.some((mark) => mark.label?.startsWith('PR #1502'))).toBe(false);
+    const reattach = {
+      commandId: crypto.randomUUID(),
+      op: 'link' as const,
+      threadId: created.threadId,
+      key,
+      kind: 'pull-request' as const,
+    };
+    await ports.executeCommand(reattach);
+    await ports.executeCommand(reattach);
+    const restored = await ports.readDetail(created.threadId);
+    expect(restored?.factEvents).toEqual(before?.factEvents);
+    expect(restored?.row.marks.filter((mark) => mark.label?.startsWith('PR #1502'))).toHaveLength(2);
+    expect(restored?.events.map((event) => event.kind)).toEqual([
+      'created',
+      'link-added',
+      'link-detached',
+      'link-added',
+    ]);
+    expect(parseWorkThreadsDetailOutput({ ok: true, data: restored }).ok).toBe(true);
+  });
+
+  test('density scenarios include a long title, automatic session links, a draft and an honest disabled source', async () => {
+    const ports = createSyntheticWorkThreadStore();
+    const data = await ports.readList(query);
+    expect(data.counts.open + data.counts.done).toBeGreaterThanOrEqual(12);
+    const long = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.longTitle);
+    expect(long?.row.thread.title.length).toBeGreaterThan(120);
+    expect(long?.row.links.filter((link) => link.kind === 'session').map((link) => link.provenance)).toEqual([
+      'declared',
+      'declared',
+    ]);
+    expect(long?.events.filter((event) => event.kind === 'link-added')).toHaveLength(3);
+    expect((await ports.readDetail(WORK_THREADS_FIXTURE_IDS.draft))?.row.markers.pullRequests[0]?.latest?.draft).toBe(
+      true,
+    );
+    expect(data.sources.find((source) => source.source === 'jira')).toMatchObject({
+      state: 'disabled',
+      lastRunAt: parseCanonicalInstant('2026-10-23T09:00:00.000Z'),
+    });
+    expect(data.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
+    expect(parseWorkThreadsListOutput({ ok: true, data }).ok).toBe(true);
+  });
+
+  test('relinking an automatic source shows the new operator mark without reviving its automatic predecessor', async () => {
+    let clock = new Date(WORK_THREADS_SYNTHETIC_NOW);
+    const ports = createSyntheticWorkThreadStore({ now: () => clock });
+    const threadId = WORK_THREADS_FIXTURE_IDS.longTitle;
+    const before = await ports.readDetail(threadId);
+    const automaticLink = before?.row.links.find((link) => link.kind === 'session');
+    if (!automaticLink) {
+      throw new Error('Missing the automatically linked session.');
+    }
+    expect(before?.row.marks.filter((mark) => mark.label === 'Source linked')).toEqual([]);
+    clock = new Date('2026-10-25T12:00:00.000Z');
+    await ports.executeCommand({
+      commandId: crypto.randomUUID(),
+      op: 'detach-link',
+      threadId,
+      linkId: automaticLink.linkId,
+    });
+    clock = new Date('2026-10-25T13:00:00.000Z');
+    await ports.executeCommand({
+      commandId: crypto.randomUUID(),
+      op: 'link',
+      threadId,
+      key: automaticLink.key,
+      kind: 'session',
+    });
+    const after = await ports.readDetail(threadId);
+    expect(after?.row.marks.filter((mark) => mark.label === 'Source linked')).toEqual([
+      { at: parseCanonicalInstant('2026-10-25T13:00:00.000Z'), harness: null, kind: 'event', label: 'Source linked' },
+    ]);
+    expect(
+      after?.events.filter((event) => event.kind === 'link-added' && event.linkKey === automaticLink.key),
+    ).toHaveLength(2);
+    expect(after?.row.marks.some((mark) => mark.label === 'Source detached')).toBe(true);
   });
 
   test('counts recursive delegation once even when descendants also have explicit links', async () => {

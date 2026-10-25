@@ -23,10 +23,12 @@
     threadDisplayMarkers,
     threadEventActor,
     threadEventCopy,
+    threadFactEventCopy,
     threadHistory,
     threadSituationCopy,
     threadTime,
   } from './work-thread-model';
+  import WorkThreadSources from './work-thread-sources.svelte';
 
   export interface SessionChoice {
     readonly caption: string;
@@ -66,7 +68,7 @@
   } = $props();
   const row = $derived(data.row);
   const thread = $derived(row.thread);
-  const situation = $derived(threadSituationCopy(row, data.generatedAt, data.sources));
+  const situation = $derived(threadSituationCopy(row, data.generatedAt, data.sources, timeZone));
   const linkedKeys = $derived(
     row.links.filter((link) => link.kind === 'session' && link.detachedAt === null).map((link) => link.key),
   );
@@ -287,7 +289,7 @@
 </nav>
 <header class="wt-task-head">
   <div>
-    <p class="wt-id">Task {thread.threadId.slice(-4)} · Since {threadDate(thread.createdAt, timeZone)}</p>
+    <p class="wt-id">Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone)}</p>
     <h1>{thread.title}</h1>
     {#if thread.objective}
       <p class="wt-subtitle">{thread.objective}</p>
@@ -310,14 +312,15 @@
     </button>
   </div>
 </header>
+<WorkThreadSources now={data.generatedAt} sources={data.sources} {timeZone} />
 
 {#if thread.followState === 'done'}
   <div class="wt-done-banner">
     <strong
-      >You ended this follow-up on {threadDate(thread.doneAt ?? thread.updatedAt, timeZone)} · history and links
-      stay.</strong
+      >You ended this follow-up on {threadDate(thread.doneAt ?? thread.updatedAt, timeZone)} · history and links stay
+      available.</strong
     >
-    <p>Nothing in GitHub, Jira or any session was changed.</p>
+    <p>No GitHub, Jira or session state was changed by ending it.</p>
     {#if row.afterDone}
       <p>{row.afterDone.count} newer observations since you ended it. Your follow-up stays done.</p>
     {/if}
@@ -467,6 +470,17 @@
                   taskTitle={thread.title}
                   {timeZone}
                 />
+              {:else if entry.kind === 'fact-event'}
+                {@const factCopy = threadFactEventCopy(entry.event)}
+                <div class="wt-event wt-fact-event">
+                  <span class="wt-event-source">GitHub</span>
+                  <div>
+                    <strong>{factCopy.title}</strong>
+                    {#if factCopy.detail}
+                      <p title={entry.event.key}>{factCopy.detail}</p>
+                    {/if}
+                  </div>
+                </div>
               {:else}
                 {@const eventCopy = threadEventCopy(entry.event, data.episodes)}
                 <div class="wt-event">

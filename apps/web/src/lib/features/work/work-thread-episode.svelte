@@ -5,8 +5,11 @@
   import Episode from './work-thread-episode.svelte';
   import {
     episodeContext,
+    episodeDuration,
+    episodeDurationDetail,
     episodeResumeText,
     episodeSpan,
+    episodeSpanContext,
     harnessGlyph,
     harnessName,
     threadTime,
@@ -36,6 +39,7 @@
   let expanded = $state(untrack(() => initiallyOpen));
   let childrenOpen = $state(false);
   const resume = $derived(episodeResumeText(episode, taskTitle));
+  const spanContext = $derived(episodeSpanContext(episode));
   const who = $derived(
     episode.origin
       ? { human: 'You', delegated: 'Delegated', 'automated-review': 'Automated review' }[episode.origin]
@@ -56,11 +60,15 @@
       ><small
         >{harnessName(episode.harness)}
         · {who} · {threadTime(episode.startedAt, timeZone)}
-        {episode.endedAt ? `–${threadTime(episode.endedAt, timeZone)}` : ''}{episode.running ? ' · Running' : ''}</small
+        {episode.endedAt ? `–${threadTime(episode.endedAt, timeZone)}` : ''}{spanContext
+          ? ` · ${spanContext}`
+          : ''}{episode.running ? ' · Running' : ''}</small
       ></span
     >
-    <span class="wt-duration" title="Episode span: first to last observed activity; may include pauses"
-      ><span class="wt-sr">Episode span: </span>{episodeSpan(episode)}</span
+    <span class="wt-duration" title={episodeDurationDetail(episode)}
+      ><span class="wt-sr"
+        >{episode.activeMs === null ? 'Duration not recorded: ' : 'Recorded for this episode: '}</span
+      >{episodeDuration(episode)}</span
     >
     <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
   </button>
@@ -94,7 +102,11 @@
         {/if}
       </dl>
       <p class="wt-meta">
-        Episode span is first to last observed activity and may include pauses. It is not human working time.
+        {episodeDurationDetail(episode)}
+      </p>
+      <p class="wt-meta">
+        {episodeSpan(episode)}
+        · first to last activity, pauses included. It is not human working time.
       </p>
       {#if episode.resume.kind === 'cli-resume'}
         <code class="wt-code">{episode.resume.command}</code>

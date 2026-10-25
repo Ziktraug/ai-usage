@@ -26,6 +26,7 @@ import {
   WORK_THREAD_VIEW_BOUNDS,
   type WorkThreadDetailDataset,
   type WorkThreadEpisode,
+  type WorkThreadFactEvent,
   type WorkThreadListQuery,
   type WorkThreadMarkers,
   type WorkThreadRow,
@@ -36,6 +37,8 @@ import type { WorkThreadServerPorts } from './work-threads.server';
 export const WORK_THREADS_SYNTHETIC_LABEL = 'Synthetic demo';
 export const WORK_THREADS_SYNTHETIC_NOW = parseCanonicalInstant('2026-10-24T11:00:00.000Z');
 export const WORK_THREADS_SYNTHETIC_MACHINE = 'fixture-machine';
+export const WORK_THREADS_SYNTHETIC_LONG_TITLE =
+  'feat: delegate independent read-only reviews across coding harnesses while preserving task history, reviewer context and explicit follow-up ownership';
 const MAX_SYNTHETIC_THREADS = 200;
 /** Recorded answers kept for replay; the oldest go first, so refused retries cannot grow the process. */
 const MAX_SYNTHETIC_RECEIPTS = 2000;
@@ -48,6 +51,10 @@ export const WORK_THREADS_FIXTURE_IDS = {
   review: '12000000-0000-4000-8000-000000000006',
   sessions: '12000000-0000-4000-8000-000000000007',
   done: '12000000-0000-4000-8000-000000000008',
+  longTitle: '12000000-0000-4000-8000-000000000009',
+  mergedPr: '12000000-0000-4000-8000-000000000010',
+  unknownDuration: '12000000-0000-4000-8000-000000000011',
+  draft: '12000000-0000-4000-8000-000000000012',
 } as const;
 
 const at = (day: number, time = '09:00'): CanonicalInstant =>
@@ -56,7 +63,15 @@ const repository = 'synthetic/example-shop';
 const host = 'github.example';
 const machineId = WORK_THREADS_SYNTHETIC_MACHINE;
 const syntheticSources: readonly WorkThreadSourceStatus[] = (['checkouts', 'github', 'jira', 'sessions'] as const).map(
-  (source) => ({ lastRunAt: WORK_THREADS_SYNTHETIC_NOW, message: WORK_THREADS_SYNTHETIC_LABEL, source, state: 'ok' }),
+  (source) =>
+    source === 'jira'
+      ? {
+          lastRunAt: at(23),
+          message: 'Synthetic demo: Jira collection is disabled; the last recorded issues remain available.',
+          source,
+          state: 'disabled',
+        }
+      : { lastRunAt: WORK_THREADS_SYNTHETIC_NOW, message: WORK_THREADS_SYNTHETIC_LABEL, source, state: 'ok' },
 );
 
 interface FixtureRecord {
@@ -124,6 +139,8 @@ const prMarker = (
     accountLabel: 'Synthetic demo',
     baseRef: 'main',
     checksRollup: 'success',
+    closedAt: null,
+    createdAt: at(19, '08:00'),
     draft: false,
     headRef: `fix/SHOP-${number}/follow-up`,
     host,
@@ -138,6 +155,7 @@ const prMarker = (
     state: 'OPEN',
     title: `Synthetic pull request ${number}`,
     updatedAt: at(23),
+    unresolvedReviewThreads: 0,
     url: `https://${host}/${repository}/pull/${number}`,
     ...overrides,
   };
@@ -158,7 +176,7 @@ const jiraMarker = (key: string, done = false): WorkThreadMarkers['jiraIssues'][
     comments: [],
     key,
     machineId,
-    observedAt: WORK_THREADS_SYNTHETIC_NOW,
+    observedAt: at(23),
     outcome: 'observed',
     outcomeMessage: null,
     parentKey: null,
@@ -204,7 +222,11 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
     origin: 'delegated',
   });
   const paymentEpisodes = [
-    makeEpisode('payment-approaches', 'Compare retry approaches', 19),
+    makeEpisode('payment-approaches', 'Compare retry approaches', 19, {
+      activeMs: 14 * 60_000,
+      endedAt: at(22, '13:33'),
+      spanMs: (76 * 60 + 13) * 60_000,
+    }),
     makeEpisode('payment-logs', 'Confirm the cause in the logs', 20),
     makeEpisode('payment-guard', 'Add the duplicate payment guard', 22, { children: [child] }),
     makeEpisode('payment-review', 'Respond to the review', 24, {
@@ -230,28 +252,49 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
         episodes.push(episode);
       }
     }
-    return {
-      events: [
-        {
-          acknowledgedRemainders: [],
-          at: thread.createdAt,
-          eventId: crypto.randomUUID(),
-          fromState: null,
-          kind: 'created',
-          linkKey: null,
-          reason: 'Synthetic demo: task created.',
-          threadId: thread.threadId,
-          toState: thread.followState,
-        },
-      ],
-      links: inputs.map((input) => ({
+    const links: WorkThreadLink[] = inputs.map((input) => {
+      let provenance: WorkThreadLink['provenance'] = 'user';
+      if (thread.origin !== 'user') {
+        provenance = input.key === thread.originKey ? 'origin' : 'declared';
+      }
+      return {
         ...input,
         createdAt: thread.createdAt,
         detachedAt: null,
         linkId: crypto.randomUUID(),
-        provenance: 'user',
+        provenance,
         threadId: thread.threadId,
-      })),
+      };
+    });
+    const events: WorkThreadEvent[] = [
+      {
+        acknowledgedRemainders: [],
+        at: thread.createdAt,
+        eventId: crypto.randomUUID(),
+        fromState: null,
+        kind: 'created',
+        linkKey: null,
+        reason: 'Synthetic demo: task created.',
+        threadId: thread.threadId,
+        toState: thread.followState,
+      },
+      ...links
+        .filter((link) => link.provenance !== 'user')
+        .map((link) => ({
+          acknowledgedRemainders: [],
+          at: thread.createdAt,
+          eventId: crypto.randomUUID(),
+          fromState: null,
+          kind: 'link-added' as const,
+          linkKey: link.key,
+          reason: 'Synthetic demo: declared source association.',
+          threadId: thread.threadId,
+          toState: null,
+        })),
+    ];
+    return {
+      events,
+      links,
       markers,
       thread,
     };
@@ -264,7 +307,7 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       {
         jiraIssues: [jiraMarker('SHOP-2085')],
         local: [localMarker('fix/SHOP-2085/payment-retry')],
-        pullRequests: [prMarker(1487, { reviewDecision: 'CHANGES_REQUESTED' })],
+        pullRequests: [prMarker(1487, { reviewDecision: 'CHANGES_REQUESTED', unresolvedReviewThreads: 2 })],
       },
       [...paymentEpisodes, child],
     ),
@@ -350,6 +393,85 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       emptyMarkers(),
       [makeEpisode('receipt-review', 'Review receipt copy', 21)],
     ),
+    record(
+      makeThread(WORK_THREADS_FIXTURE_IDS.longTitle, WORK_THREADS_SYNTHETIC_LONG_TITLE, {
+        createdAt: WORK_THREADS_SYNTHETIC_NOW,
+        origin: 'pull-request',
+        originKey: pullRequestLinkKey({ host, repository, number: 1501 }),
+      }),
+      {
+        jiraIssues: [],
+        local: [],
+        pullRequests: [
+          prMarker(1501, {
+            createdAt: at(21, '10:15'),
+            reviewDecision: 'APPROVED',
+            title: WORK_THREADS_SYNTHETIC_LONG_TITLE,
+          }),
+        ],
+      },
+      [
+        makeEpisode('ownership-design', 'Compare delegated review ownership', 21),
+        makeEpisode('ownership-check', 'Check the review handoff', 22),
+      ],
+    ),
+    record(
+      makeThread(WORK_THREADS_FIXTURE_IDS.mergedPr, 'Verify the receipt export', {
+        createdAt: WORK_THREADS_SYNTHETIC_NOW,
+        origin: 'pull-request',
+        originKey: pullRequestLinkKey({ host, repository, number: 1502 }),
+      }),
+      {
+        jiraIssues: [],
+        local: [],
+        pullRequests: [
+          prMarker(1502, {
+            createdAt: at(20, '10:15'),
+            mergedAt: at(23, '14:49'),
+            reviewDecision: null,
+            state: 'MERGED',
+            title: 'Verify the receipt export',
+            updatedAt: at(23, '14:49'),
+          }),
+        ],
+      },
+    ),
+    record(
+      makeThread(WORK_THREADS_FIXTURE_IDS.unknownDuration, 'Explain the inventory warning', {
+        createdAt: at(23, '09:58'),
+        intent: 'analysis',
+        origin: 'session',
+        originKey: sessionLinkKey({ harness: 'claude', machineId, sessionId: 'inventory-explanation' }),
+      }),
+      emptyMarkers(),
+      [
+        makeEpisode('inventory-explanation', 'Explain the inventory warning', 23, {
+          activeMs: null,
+          endedAt: at(23, '09:58'),
+          spanMs: 38 * 60_000,
+          result: 'Synthetic analysis complete. This harness recorded no turn durations.',
+        }),
+      ],
+    ),
+    record(
+      makeThread(WORK_THREADS_FIXTURE_IDS.draft, 'Draft the notification preferences', {
+        createdAt: WORK_THREADS_SYNTHETIC_NOW,
+        origin: 'pull-request',
+        originKey: pullRequestLinkKey({ host, repository, number: 1504 }),
+      }),
+      {
+        jiraIssues: [],
+        local: [],
+        pullRequests: [
+          prMarker(1504, {
+            createdAt: at(22, '15:10'),
+            draft: true,
+            reviewDecision: null,
+            title: 'Draft the notification preferences',
+          }),
+        ],
+      },
+    ),
   ];
   // These identities belong to the existing synthetic served-session client used by /work/sessions.
   // Keeping them here lets the real picker query link that existing session into the same task.
@@ -422,6 +544,72 @@ const result = (thread: WorkThread, applied = true): WorkThreadCommandResult => 
   ok: true,
   threadId: thread.threadId,
 });
+
+const pullRequestFactEvents = (markers: WorkThreadMarkers['pullRequests']): WorkThreadFactEvent[] =>
+  markers
+    .flatMap((marker) => {
+      const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful;
+      if (fact?.outcome !== 'observed') {
+        return [];
+      }
+      const evidence = { key: marker.key, label: `PR #${fact.number}`, title: fact.title };
+      const facts: WorkThreadFactEvent[] = [];
+      if (fact.createdAt) {
+        facts.push({ ...evidence, at: fact.createdAt, kind: 'pull-request-opened' });
+      }
+      if (fact.state === 'MERGED' && fact.mergedAt) {
+        facts.push({ ...evidence, at: fact.mergedAt, kind: 'pull-request-merged' });
+      } else if (fact.state === 'CLOSED' && fact.closedAt) {
+        facts.push({ ...evidence, at: fact.closedAt, kind: 'pull-request-closed' });
+      }
+      return facts;
+    })
+    .sort((left, right) => left.at.localeCompare(right.at) || left.key.localeCompare(right.key))
+    .slice(-WORK_THREAD_VIEW_BOUNDS.maxFactEvents);
+
+const visibleThreadEvent = (record: FixtureRecord, event: WorkThreadEvent): boolean => {
+  if (event.kind === 'created') {
+    return record.thread.origin !== 'pull-request' && record.thread.origin !== 'jira-issue';
+  }
+  if (event.kind !== 'link-added' || event.linkKey === null) {
+    return true;
+  }
+  const candidates = record.links.filter((link) => link.key === event.linkKey);
+  const exact = candidates.filter((link) => link.createdAt === event.at);
+  const linksAtEvent =
+    exact.length > 0
+      ? exact
+      : candidates.filter(
+          (link) => link.createdAt <= event.at && (link.detachedAt === null || link.detachedAt >= event.at),
+        );
+  // Missing provenance does not prove an automatic association; keep that event visible.
+  return linksAtEvent.length === 0 || linksAtEvent.some((link) => link.provenance === 'user');
+};
+
+const eventMarkLabel = (event: WorkThreadEvent): string => {
+  switch (event.kind) {
+    case 'created':
+      return 'Task created';
+    case 'follow-state':
+      return { done: 'Follow-up ended', following: 'Follow-up reopened', waiting: 'Marked as waiting' }[
+        event.toState ?? 'following'
+      ];
+    case 'link-added':
+      return 'Source linked';
+    case 'link-detached':
+      return 'Source detached';
+    case 'note':
+      return 'Resume note updated';
+    case 'renamed':
+      return 'Task renamed';
+    case 'wait-satisfied':
+      return 'Waiting source updated';
+    default: {
+      const unsupported: never = event.kind;
+      throw new TypeError(`Unsupported task event: ${unsupported}`);
+    }
+  }
+};
 
 /** Declared descendants stay under their linked parent unless explicitly detached. */
 export const projectSyntheticWorkThreadEpisodes = (
@@ -532,17 +720,6 @@ export const createSyntheticWorkThreadStore = (
       const episode = link.kind === 'session' ? episodes.get(link.key) : undefined;
       return episode ? [episode] : [];
     });
-    const marks = [
-      ...sessionEpisodes.map((episode) => ({
-        at: episode.startedAt,
-        harness: episode.harness,
-        kind: 'session' as const,
-        label: episode.title,
-      })),
-      ...record.events.map((event) => ({ at: event.at, harness: null, kind: 'event' as const, label: null })),
-    ]
-      .sort((left, right) => left.at.localeCompare(right.at))
-      .slice(-WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
     const markers: WorkThreadMarkers = {
       jiraIssues: links
         .filter((link) => link.kind === 'jira-issue')
@@ -579,6 +756,31 @@ export const createSyntheticWorkThreadStore = (
             },
         ),
     };
+    const factEvents = pullRequestFactEvents(markers.pullRequests);
+    const marks = [
+      ...projected.episodes.map((episode) => ({
+        at: episode.startedAt,
+        harness: episode.harness,
+        kind: 'session' as const,
+        label: episode.title,
+      })),
+      ...record.events
+        .filter((event) => visibleThreadEvent(record, event))
+        .map((event) => ({
+          at: event.at,
+          harness: null,
+          kind: 'event' as const,
+          label: eventMarkLabel(event),
+        })),
+      ...factEvents.map((fact) => ({
+        at: fact.at,
+        harness: null,
+        kind: 'event' as const,
+        label: `${fact.label} ${{ 'pull-request-opened': 'opened', 'pull-request-merged': 'merged', 'pull-request-closed': 'closed' }[fact.kind]}`,
+      })),
+    ]
+      .sort((left, right) => left.at.localeCompare(right.at))
+      .slice(-WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
     const doneAt = record.thread.doneAt;
     const newer =
       doneAt === null
@@ -595,8 +797,11 @@ export const createSyntheticWorkThreadStore = (
     return {
       afterDone: latestAt ? { count: newer.length, latestAt } : null,
       firstActivityAt:
-        [record.thread.createdAt, ...sessionEpisodes.map((episode) => episode.startedAt)].sort()[0] ??
-        record.thread.createdAt,
+        [
+          record.thread.createdAt,
+          ...sessionEpisodes.map((episode) => episode.startedAt),
+          ...factEvents.filter((fact) => fact.kind === 'pull-request-opened').map((fact) => fact.at),
+        ].sort()[0] ?? record.thread.createdAt,
       lastActivityAt: marks.at(-1)?.at ?? record.thread.updatedAt,
       links,
       markers,
@@ -798,7 +1003,7 @@ export const createSyntheticWorkThreadStore = (
               .slice(-WORK_THREAD_BOUNDS.maxLinksPerThread),
             episodes: linkedEpisodes(record).episodes.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodes),
             events: record.events.slice(-WORK_THREAD_BOUNDS.maxEventsPerThread),
-            factEvents: [],
+            factEvents: pullRequestFactEvents(toRow(record).markers.pullRequests),
             generatedAt: now(),
             row: toRow(record),
             sources: sourcesFor([record]),

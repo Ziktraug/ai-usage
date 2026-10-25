@@ -9,6 +9,8 @@ import {
 } from '../../../server/work-threads-e2e-fixture.server';
 import { threadListQuery } from './work-thread-model';
 
+const SUMMARY_CONTENT = /<summary[^>]*>(.*?)<\/summary>/;
+
 const server = await createServer({
   appType: 'custom',
   configFile: false,
@@ -74,6 +76,112 @@ const baseDetailProps = {
 };
 
 describe('work thread SSR presentation', () => {
+  test('availability is collapsed below the filters and keeps diagnostics out of its summary', () => {
+    const sources = [
+      { source: 'github', state: 'failed', message: 'Private diagnostic detail', lastRunAt: list.generatedAt },
+      {
+        source: 'sessions',
+        state: 'truncated',
+        message: 'Partial linked-session evidence',
+        lastRunAt: list.generatedAt,
+      },
+    ];
+    const body = html(List, {
+      dataset: { ...list, sources },
+      rows: list.rows,
+      query,
+      timeZone: 'UTC',
+      href: () => '/work',
+      onOpen: noop,
+      onFilter: noop,
+      onMore: noop,
+    });
+    expect(body).toContain('aria-label="Source availability"');
+    expect(body.indexOf('Source availability')).toBeGreaterThan(body.indexOf('work-task-search'));
+    const summary = body.match(SUMMARY_CONTENT)?.[1];
+    expect(summary).toContain('GitHub');
+    expect(summary).not.toContain('truncated');
+    expect(summary).not.toContain('Private diagnostic detail');
+    expect(body).not.toContain('<details open');
+    expect(body).toContain('Private diagnostic detail');
+    const healthy = [{ source: 'github', state: 'ok', lastRunAt: list.generatedAt, message: null }];
+    expect(html(Sources, { sources: healthy, now: list.generatedAt, timeZone: 'UTC' })).toBe('');
+    const partial = html(Sources, { sources: [sources[1]], now: list.generatedAt, timeZone: 'UTC' });
+    expect(partial.match(SUMMARY_CONTENT)?.[1]?.trim()).toBe('<span>Source details</span>');
+  });
+  test('week cells retain session and event chips with a fully named task link', () => {
+    const title =
+      'Improve the synthetic report with a sufficiently long task title that needs to wrap while remaining completely accessible';
+    const marks = [
+      { at: list.generatedAt, harness: 'claude', kind: 'session', label: 'Compare approaches' },
+      { at: list.generatedAt, harness: 'codex', kind: 'session', label: 'Review the approach' },
+      { at: list.generatedAt, harness: null, kind: 'event', label: 'PR #67 opened' },
+    ];
+    const body = html(List, {
+      dataset: list,
+      rows: [{ ...payments.row, thread: { ...payments.row.thread, title }, marks }],
+      query,
+      timeZone: 'UTC',
+      href: () => '/work',
+      onOpen: noop,
+      onFilter: noop,
+      onMore: noop,
+    });
+    expect(body).toContain(`aria-label="${title}"`);
+    expect(body).toContain(`title="${title}"`);
+    expect(body).toContain('2 sessions, 1 work events. Show activity.');
+    expect(body).toContain('wt-day-button');
+    expect(body).toContain('wt-event-mark');
+    expect(body).toContain('>2</span>');
+  });
+  test('discovered PR history uses source dates and hides automatic linking noise', async () => {
+    const merged = await detail(WORK_THREADS_FIXTURE_IDS.mergedPr);
+    const body = html(Detail, { ...baseDetailProps, timeZone: 'UTC', data: merged });
+    expect(body).toContain('Since Oct 20');
+    expect(body).toContain('PR #1502 opened');
+    expect(body).toContain('PR #1502 merged');
+    expect(body.indexOf('PR #1502 opened')).toBeLessThan(body.indexOf('PR #1502 merged'));
+    expect(body).toContain('wt-fact-event');
+    expect(body).not.toContain('Task created');
+    expect(body).not.toContain('Source linked');
+  });
+  test('GitHub explicitly distinguishes no review decision from an unavailable observation', () => {
+    const marker = payments.row.markers.pullRequests[0];
+    if (!marker?.latest) {
+      throw new Error('Expected PR marker');
+    }
+    const markers = {
+      ...payments.row.markers,
+      pullRequests: [{ ...marker, latest: { ...marker.latest, reviewDecision: null, unresolvedReviewThreads: 2 } }],
+    };
+    const body = html(Markers, { markers, timeZone: 'UTC', now: payments.generatedAt });
+    expect(body).toContain('No review decision');
+    expect(body).toContain('2 review threads open');
+    expect(body).not.toContain('Review unknown');
+  });
+  test('episode rows use recorded duration and disclose the longer first-to-last span separately', () => {
+    const episode = payments.episodes[0];
+    if (!episode) {
+      throw new Error('Expected episode');
+    }
+    const props = {
+      episode: { ...episode, activeMs: 840_000, spanMs: 259_200_000 },
+      taskTitle: 'Task',
+      timeZone: 'UTC',
+      showDelegations: false,
+      onCopy: noop,
+      onDetach: noop,
+      linkedKeys: [],
+      initiallyOpen: true,
+    };
+    const body = html(Episode, props);
+    expect(body).toContain('14 min recorded for this episode');
+    expect(body).toContain('over 3 days');
+    expect(body).toContain('first to last activity');
+    expect(html(Episode, { ...props, episode: { ...episode, activeMs: null, spanMs: 259_200_000 } })).toContain(
+      'Duration not recorded',
+    );
+  });
   test('renders one linked row per task, proper tabs and a zero-session PR', () => {
     const body = html(List, {
       dataset: list,
@@ -142,7 +250,7 @@ describe('work thread SSR presentation', () => {
       },
     ];
     expect(html(Detail, { ...baseDetailProps, data: { ...payments, row, sources } })).toContain(
-      '<h2>PR checks are failing</h2>',
+      '<h2>Checks failing</h2>',
     );
     expect(
       html(List, {
@@ -155,9 +263,9 @@ describe('work thread SSR presentation', () => {
         onFilter: noop,
         onMore: noop,
       }),
-    ).toContain('PR checks are failing');
+    ).toContain('Checks failing');
     const banner = html(Sources, { sources, now: payments.generatedAt, timeZone: 'UTC' });
-    expect(banner).toContain('Sessions: truncated');
+    expect(banner).toContain('Sessions: evidence incomplete');
     expect(banner).toContain('does not establish that nothing is left');
   });
   test('source events show escaped readable labels and reserve raw keys for title attributes', () => {
@@ -224,7 +332,7 @@ describe('work thread SSR presentation', () => {
       initiallyOpen: true,
     });
     expect(body).toContain('Origin not declared');
-    expect(body).toContain('Episode span:');
+    expect(body).toContain('Recorded for this episode:');
     expect(body).toContain('nothing is executed here');
     expect(body).toContain('Initial request');
     expect(body).toContain('Detach session');
@@ -268,7 +376,7 @@ describe('work thread SSR presentation', () => {
       now: list.generatedAt,
       timeZone: 'UTC',
     });
-    expect(body).toContain('GitHub: unauthenticated');
+    expect(body).toContain('GitHub: sign-in required');
     expect(body).toContain('does not establish that nothing is left');
   });
   test('marker decisions describe GitHub evidence without asserting human approval', () => {
@@ -281,7 +389,7 @@ describe('work thread SSR presentation', () => {
     const ended = await detail(WORK_THREADS_FIXTURE_IDS.done);
     const body = html(Detail, { ...baseDetailProps, data: ended });
     expect(body).toContain('You ended this follow-up on');
-    expect(body).toContain('Nothing in GitHub, Jira or any session was changed');
+    expect(body).toContain('No GitHub, Jira or session state was changed by ending it');
     expect(body).toContain('Reopen');
   });
   test('a waiting task offers Resume following while retaining End follow-up', async () => {

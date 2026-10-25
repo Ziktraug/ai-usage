@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
-import type { WorkThreadEpisode } from '@ai-usage/report-core/work-thread-view';
+import type { WorkThreadEvent, WorkThreadLink } from '@ai-usage/report-core/work-thread';
+import type { WorkThreadRemainder } from '@ai-usage/report-core/work-thread-situation';
+import type {
+  WorkThreadEpisode,
+  WorkThreadFactEvent,
+  WorkThreadSourceStatus,
+} from '@ai-usage/report-core/work-thread-view';
 import {
   createSyntheticWorkThreadStore,
   WORK_THREADS_FIXTURE_IDS,
@@ -9,21 +15,28 @@ import {
   acknowledgedRemainderCopy,
   bucketThreadMarks,
   episodeContext,
+  episodeDuration,
+  episodeDurationDetail,
   episodeResumeText,
   episodeSpan,
+  episodeSpanContext,
   groupThreadRows,
   observedWebUrl,
   primaryResumeEpisode,
+  remainderCopy,
+  remainderEvidenceCopy,
   threadDayKey,
   threadDisplayMarkers,
   threadEventActor,
   threadEventCopy,
+  threadFactEventCopy,
   threadHistory,
   threadListQuery,
   threadMoreUrl,
   threadPageCursors,
   threadRefs,
   threadSituationCopy,
+  threadSourceAvailability,
   threadUrl,
   threadWeek,
 } from './work-thread-model';
@@ -213,7 +226,8 @@ describe('task presentation model', () => {
     );
     expect(situation).toMatchObject({
       hint: 'to-resume',
-      headline: 'PR checks are failing',
+      headline: 'Checks failing',
+      caption: 'GitHub · Oct 24',
       reason: 'failing-checks',
       action: 'open-pr',
     });
@@ -222,7 +236,7 @@ describe('task presentation model', () => {
     );
     expect(situation.remainders).toContainEqual(expect.objectContaining({ source: 'github', kind: 'failing-checks' }));
     expect(
-      acknowledgedRemainderCopy(situation.remainders).some((item) => item.includes('Sessions latest read: truncated')),
+      acknowledgedRemainderCopy(situation.remainders).some((item) => item.includes('Sessions evidence incomplete')),
     ).toBe(true);
   });
   test('a long confirmation acknowledges the full shown set within the command bound', () => {
@@ -286,7 +300,8 @@ describe('task presentation model', () => {
     const only = threadHistory(payment, true, 'Europe/Paris').flatMap((day) => day.entries);
     expect(only).toHaveLength(payment.episodes.length);
     expect(only.every((entry) => entry.kind === 'session')).toBe(true);
-    expect(all.length).toBe(payment.episodes.length + payment.events.length);
+    expect(all.filter((entry) => entry.kind === 'session')).toHaveLength(payment.episodes.length);
+    expect(all.filter((entry) => entry.kind === 'fact-event')).toHaveLength(payment.factEvents.length);
   });
   test('event actor stays neutral when the frozen event has no actor provenance', () => {
     const event = payment.events[0];
@@ -330,5 +345,314 @@ describe('task presentation model', () => {
     ] as const) {
       expect(threadEventCopy({ ...event, kind: 'link-detached', linkKey, reason: null }, []).detail).toBe(label);
     }
+  });
+});
+
+describe('round 2 concise task evidence', () => {
+  const observedAt = parseCanonicalInstant('2026-10-25T00:30:00.000Z');
+  const evidence = { key: 'github.example/synthetic/shop#72', source: 'github' as const, observedAt };
+  const examples: Record<WorkThreadRemainder['kind'], { input: WorkThreadRemainder; copy: string }> = {
+    'local-files': {
+      input: { ...evidence, source: 'local', kind: 'local-files', modified: 2, staged: 1, untracked: 0 },
+      copy: 'Local: 2 modified · 1 staged · 0 untracked',
+    },
+    'unpushed-commits': {
+      input: { ...evidence, source: 'local', kind: 'unpushed-commits', count: 1 },
+      copy: '1 unpushed commit',
+    },
+    'running-session': {
+      input: { ...evidence, source: 'sessions', kind: 'running-session', count: 2 },
+      copy: '2 sessions still running',
+    },
+    'merge-conflict': {
+      input: { ...evidence, kind: 'merge-conflict', baseRef: 'release/2026' },
+      copy: 'Conflicts with release/2026',
+    },
+    'behind-base': {
+      input: { ...evidence, kind: 'behind-base', baseRef: 'release/2026' },
+      copy: 'Behind release/2026',
+    },
+    'changes-requested': { input: { ...evidence, kind: 'changes-requested' }, copy: 'Review changes to address' },
+    'failing-checks': { input: { ...evidence, kind: 'failing-checks' }, copy: 'Checks failing' },
+    'pending-checks': { input: { ...evidence, kind: 'pending-checks' }, copy: 'Checks pending' },
+    'review-requested': { input: { ...evidence, kind: 'review-requested' }, copy: 'A PR waits for your review' },
+    'unresolved-review-threads': {
+      input: { ...evidence, kind: 'unresolved-review-threads', count: 2 },
+      copy: '2 review threads to address',
+    },
+    'awaiting-review': {
+      input: { ...evidence, kind: 'awaiting-review' },
+      copy: 'Review requested · waiting on reviewers',
+    },
+    'draft-pr': { input: { ...evidence, kind: 'draft-pr' }, copy: 'Draft PR' },
+    'ready-to-merge': { input: { ...evidence, kind: 'ready-to-merge' }, copy: 'Ready to merge' },
+    'open-pr': { input: { ...evidence, kind: 'open-pr' }, copy: 'PR still open' },
+    'jira-open': { input: { ...evidence, source: 'jira', kind: 'jira-open' }, copy: 'Ticket not done' },
+    'source-unavailable': {
+      input: { ...evidence, kind: 'source-unavailable', outcome: 'unauthenticated' },
+      copy: 'GitHub read: unauthenticated',
+    },
+    'source-stale': { input: { ...evidence, kind: 'source-stale' }, copy: 'GitHub read is stale' },
+    'source-unknown': { input: { ...evidence, kind: 'source-unknown' }, copy: 'GitHub state is unknown' },
+  };
+  test('every remainder kind has short explicit copy and evidence dates use the viewer calendar', () => {
+    for (const example of Object.values(examples)) {
+      expect(remainderCopy(example.input)).toBe(example.copy);
+      expect(remainderCopy(example.input).includes('\n')).toBe(false);
+    }
+    expect(remainderEvidenceCopy(examples['behind-base'].input, 'America/Los_Angeles')).toBe('GitHub · Oct 24');
+    expect(remainderEvidenceCopy(examples['behind-base'].input, 'Europe/Paris')).toBe('GitHub · Oct 25');
+    expect(remainderEvidenceCopy({ ...evidence, observedAt: null, kind: 'source-unknown' }, 'UTC')).toBe(
+      'GitHub · date unknown',
+    );
+    expect(remainderCopy({ ...evidence, kind: 'unresolved-review-threads', count: 1 })).toBe(
+      '1 review thread to address',
+    );
+    expect(remainderCopy({ ...evidence, kind: 'behind-base', baseRef: null })).toBe('Behind the PR base (unknown)');
+    expect(
+      remainderCopy({
+        ...evidence,
+        source: 'local',
+        kind: 'local-files',
+        modified: null,
+        staged: null,
+        untracked: null,
+      }),
+    ).toBe('Local: unknown modified · unknown staged · unknown untracked');
+  });
+  test('availability is one quiet line, while session truncation and messages stay in the details', () => {
+    const statuses: readonly WorkThreadSourceStatus[] = [
+      { source: 'github', state: 'failed', lastRunAt: observedAt, message: 'The synthetic GitHub read failed.' },
+      { source: 'jira', state: 'never-run', lastRunAt: null, message: 'No Jira source has run.' },
+      {
+        source: 'sessions',
+        state: 'truncated',
+        lastRunAt: observedAt,
+        message: 'Some linked session evidence was unavailable.',
+      },
+      { source: 'checkouts', state: 'ok', lastRunAt: observedAt, message: null },
+    ];
+    const availability = threadSourceAvailability(statuses, observedAt, 'Europe/Paris');
+    expect(availability.summary).toBe('GitHub read failed Oct 25 · Jira not connected');
+    expect(availability.details).toHaveLength(3);
+    expect(availability.details.find((detail) => detail.source === 'sessions')).toMatchObject({
+      label: 'evidence incomplete',
+      message: 'Some linked session evidence was unavailable.',
+      stale: false,
+    });
+    expect(availability.summary).not.toContain('Sessions');
+    expect(availability.summary).not.toContain('synthetic');
+    expect(availability.summary).not.toContain('\n');
+  });
+  test('fresh sources disappear, while stale and unknown observation dates remain visible', () => {
+    const fresh: WorkThreadSourceStatus = { source: 'github', state: 'ok', lastRunAt: observedAt, message: null };
+    expect(threadSourceAvailability([fresh], observedAt, 'UTC')).toEqual({ summary: '', details: [] });
+    const stale = { ...fresh, lastRunAt: parseCanonicalInstant('2026-10-01T23:30:00.000Z') };
+    expect(threadSourceAvailability([stale], observedAt, 'Europe/Paris')).toMatchObject({
+      summary: 'GitHub read is stale Oct 2',
+      details: [{ stale: true }],
+    });
+    expect(threadSourceAvailability([{ ...fresh, lastRunAt: null }], observedAt, 'UTC').summary).toBe(
+      'GitHub read date unknown',
+    );
+    const partial: WorkThreadSourceStatus = { ...fresh, source: 'sessions', state: 'truncated' };
+    expect(threadSourceAvailability([partial], observedAt, 'UTC')).toMatchObject({
+      summary: '',
+      details: [{ source: 'sessions', label: 'evidence incomplete' }],
+    });
+  });
+  test('source states keep distinct availability copy without calling partial coverage a failure', () => {
+    const labels: Readonly<Record<WorkThreadSourceStatus['state'], string>> = {
+      ok: 'read date unknown',
+      'never-run': 'not connected',
+      disabled: 'disabled',
+      unavailable: 'unavailable',
+      unauthenticated: 'sign-in required',
+      failed: 'read failed',
+      truncated: 'evidence incomplete',
+    };
+    for (const [state, label] of Object.entries(labels)) {
+      const status = {
+        source: 'jira' as const,
+        state: state as WorkThreadSourceStatus['state'],
+        lastRunAt: null,
+        message: null,
+      };
+      expect(threadSourceAvailability([status], observedAt, 'UTC').summary).toBe(`Jira ${label}`);
+    }
+  });
+});
+
+describe('recorded episode time and elapsed span', () => {
+  test('a multi-day conversation shows recorded turn time without substituting its elapsed span', () => {
+    const multiDay = { ...episode, activeMs: 14 * 60_000, spanMs: (3 * 24 + 4) * 3_600_000 + 13 * 60_000 };
+    expect(episodeDuration(multiDay)).toBe('14 min');
+    expect(episodeSpan(multiDay)).toBe('76 h 13');
+    expect(episodeSpanContext(multiDay)).toBe('over 3 days');
+    expect(episodeDurationDetail(multiDay)).toBe("14 min recorded for this episode · not the task's lifetime");
+    expect(episodeDurationDetail(multiDay)).not.toContain('76');
+  });
+  test('missing turn time remains missing even when its span is known', () => {
+    const missing = { ...episode, activeMs: null, spanMs: 5 * 3_600_000 };
+    expect(episodeDuration(missing)).toBe('—');
+    expect(episodeDurationDetail(missing)).toBe('Duration not recorded for this episode');
+    expect(episodeSpan(missing)).toBe('5 h');
+    expect(episodeSpanContext(missing)).toBeNull();
+    expect(episodeSpan({ ...missing, spanMs: null })).toBe('Span unknown');
+  });
+  test('hours, zero and sub-minute recorded durations remain readable and distinct from missing', () => {
+    expect(episodeDuration({ ...episode, activeMs: 74 * 60_000 })).toBe('1 h 14');
+    expect(episodeDuration({ ...episode, activeMs: 60 * 60_000 })).toBe('1 h');
+    expect(episodeDuration({ ...episode, activeMs: 0 })).toBe('0 min');
+    expect(episodeDuration({ ...episode, activeMs: 20_000 })).toBe('<1 min');
+  });
+  test('spread context requires both more than twice the active time and more than one hour', () => {
+    expect(episodeSpanContext({ ...episode, activeMs: 30 * 60_000, spanMs: 3_600_000 })).toBeNull();
+    expect(episodeSpanContext({ ...episode, activeMs: 3 * 3_600_000, spanMs: 6 * 3_600_000 })).toBeNull();
+    expect(episodeSpanContext({ ...episode, activeMs: 2 * 3_600_000, spanMs: 5 * 3_600_000 })).toBe('over 5 h');
+    expect(episodeSpanContext({ ...episode, activeMs: 14 * 60_000, spanMs: 25 * 3_600_000 })).toBe('over 1 day');
+  });
+});
+
+describe('the shared task history', () => {
+  const openedAt = parseCanonicalInstant('2026-10-20T09:00:00.000Z');
+  const linkedAt = parseCanonicalInstant('2026-10-21T09:00:00.000Z');
+  const endedAt = parseCanonicalInstant('2026-10-22T09:00:00.000Z');
+  const baseEvent: WorkThreadEvent = {
+    acknowledgedRemainders: [],
+    at: linkedAt,
+    eventId: '10000000-0000-4000-8000-000000000001',
+    fromState: null,
+    kind: 'link-added',
+    linkKey: 'session:test/codex/one',
+    reason: null,
+    threadId: payment.row.thread.threadId,
+    toState: null,
+  };
+  const baseLink: WorkThreadLink = {
+    createdAt: linkedAt,
+    detachedAt: null,
+    key: 'session:test/codex/one',
+    kind: 'session',
+    linkId: '20000000-0000-4000-8000-000000000001',
+    provenance: 'declared',
+    threadId: payment.row.thread.threadId,
+  };
+  const fact: WorkThreadFactEvent = {
+    at: openedAt,
+    key: 'github.example/synthetic/shop#72',
+    kind: 'pull-request-opened',
+    label: 'PR #72',
+    title: 'Synthetic checkout change',
+  };
+  test('source events use their own dates, keep stable distinct identities and disappear in Sessions', () => {
+    const data = {
+      ...payment,
+      episodes: [{ ...episode, startedAt: linkedAt }],
+      events: [{ ...baseEvent, kind: 'follow-state' as const, at: endedAt, toState: 'done' as const }],
+      factEvents: [fact, { ...fact, at: endedAt, kind: 'pull-request-merged' as const }],
+    };
+    const all = threadHistory(data, false, 'UTC').flatMap((group) => group.entries);
+    expect(all.map((entry) => [entry.kind, entry.at])).toEqual([
+      ['fact-event', openedAt],
+      ['session', linkedAt],
+      ['event', endedAt],
+      ['fact-event', endedAt],
+    ]);
+    expect(new Set(all.map((entry) => entry.id)).size).toBe(4);
+    expect(
+      threadHistory(data, true, 'UTC')
+        .flatMap((group) => group.entries)
+        .map((entry) => entry.kind),
+    ).toEqual(['session']);
+    expect(threadFactEventCopy(fact)).toEqual({ title: 'PR #72 opened', detail: 'Synthetic checkout change' });
+    expect(threadFactEventCopy({ ...fact, kind: 'pull-request-merged' }).title).toBe('PR #72 merged');
+    expect(threadFactEventCopy({ ...fact, kind: 'pull-request-closed', title: null })).toEqual({
+      title: 'PR #72 closed',
+      detail: null,
+    });
+  });
+  test.each(['origin', 'declared', 'launched'] as const)(
+    'hides %s link-added events even after the link was detached',
+    (provenance) => {
+      const data = {
+        ...payment,
+        episodes: [],
+        events: [baseEvent],
+        factEvents: [],
+        row: { ...payment.row, links: [] },
+        detachedLinks: [{ ...baseLink, provenance, detachedAt: endedAt }],
+      };
+      expect(threadHistory(data, false, 'UTC')).toEqual([]);
+    },
+  );
+  test('preserves user links and operator actions; unknown provenance never hides an event', () => {
+    const kinds: readonly WorkThreadEvent['kind'][] = [
+      'follow-state',
+      'link-added',
+      'link-detached',
+      'note',
+      'renamed',
+      'wait-satisfied',
+    ];
+    const events = kinds.map((kind, index) => ({ ...baseEvent, kind, eventId: `event-${index}` }));
+    const data = {
+      ...payment,
+      episodes: [],
+      events,
+      factEvents: [],
+      row: { ...payment.row, links: [{ ...baseLink, provenance: 'user' as const }] },
+      detachedLinks: [],
+    };
+    expect(threadHistory(data, false, 'UTC').flatMap((group) => group.entries)).toHaveLength(kinds.length);
+    expect(
+      threadHistory({ ...data, row: { ...data.row, links: [] } }, false, 'UTC').flatMap((group) => group.entries),
+    ).toHaveLength(kinds.length);
+  });
+  test('an earlier automatic link does not hide a later explicit re-link', () => {
+    const automatic = { ...baseLink, detachedAt: linkedAt };
+    const userLink = { ...baseLink, createdAt: endedAt, provenance: 'user' as const };
+    const events = [baseEvent, { ...baseEvent, at: endedAt, eventId: 'later-link' }];
+    const data = {
+      ...payment,
+      episodes: [],
+      events,
+      factEvents: [],
+      row: { ...payment.row, links: [userLink] },
+      detachedLinks: [automatic],
+    };
+    const all = threadHistory(data, false, 'UTC').flatMap((group) => group.entries);
+    expect(all.map((entry) => entry.id)).toEqual(['later-link']);
+  });
+  test.each(['pull-request', 'jira-issue'] as const)(
+    'hides discovery-created events for %s tasks but retains meaningful facts',
+    (origin) => {
+      const data = {
+        ...payment,
+        episodes: [],
+        events: [{ ...baseEvent, kind: 'created' as const }],
+        factEvents: [fact],
+        row: { ...payment.row, thread: { ...payment.row.thread, origin } },
+      };
+      expect(
+        threadHistory(data, false, 'UTC')
+          .flatMap((group) => group.entries)
+          .map((entry) => entry.kind),
+      ).toEqual(['fact-event']);
+    },
+  );
+  test.each(['user', 'session'] as const)('keeps the creation of operator-chosen %s tasks', (origin) => {
+    const data = {
+      ...payment,
+      episodes: [],
+      events: [{ ...baseEvent, kind: 'created' as const }],
+      factEvents: [],
+      row: { ...payment.row, thread: { ...payment.row.thread, origin } },
+    };
+    expect(
+      threadHistory(data, false, 'UTC')
+        .flatMap((group) => group.entries)
+        .map((entry) => entry.kind),
+    ).toEqual(['event']);
   });
 });

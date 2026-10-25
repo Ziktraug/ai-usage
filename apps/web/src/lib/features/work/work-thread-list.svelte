@@ -10,11 +10,13 @@
     bucketThreadMarks,
     groupThreadRows,
     harnessGlyph,
+    harnessName,
     threadRefs,
     threadSituationCopy,
     threadTime,
     threadWeek,
   } from './work-thread-model';
+  import WorkThreadSources from './work-thread-sources.svelte';
 
   let {
     dataset,
@@ -41,6 +43,13 @@
   } = $props();
   const week = $derived(threadWeek(dataset.generatedAt, timeZone));
   const groups = $derived(groupThreadRows(rows));
+  let selectedMarks = $state<{ threadId: string; day: string } | null>(null);
+  const closeMarks = (): void => {
+    if (selectedMarks) {
+      document.getElementById(`wt-mark-${selectedMarks.threadId}-${selectedMarks.day}`)?.focus();
+    }
+    selectedMarks = null;
+  };
   // The selected tab keeps focus across the navigation that loads its list (APG tabs pattern).
   const keyTabs = async (event: KeyboardEvent): Promise<void> => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
@@ -104,6 +113,7 @@
     </select>
   </div>
 </div>
+<WorkThreadSources now={dataset.generatedAt} sources={dataset.sources} {timeZone} />
 
 <div aria-labelledby={`work-tab-${query.tab}`} id="work-task-panel" role="tabpanel">
   <div class="wt-board">
@@ -122,7 +132,7 @@
           {group.project} <span>{group.tasks.length} {group.tasks.length === 1 ? 'task' : 'tasks'}</span>
         </h2>
         {#each group.tasks as row (row.thread.threadId)}
-          {@const situation = threadSituationCopy(row, dataset.generatedAt, dataset.sources)}
+          {@const situation = threadSituationCopy(row, dataset.generatedAt, dataset.sources, timeZone)}
           {@const buckets = bucketThreadMarks(row.marks, timeZone)}
           <article
             class="wt-task-row"
@@ -130,9 +140,11 @@
             class:wt-waiting={row.thread.followState === 'waiting'}
           >
             <a
+              aria-label={row.thread.title}
               class="wt-task-title"
               href={href(row.thread.threadId)}
               onclick={(event) => onOpen(event, row.thread.threadId)}
+              title={row.thread.title}
             >
               <strong>{row.thread.title}</strong>
               <span class="wt-meta">{threadRefs(row)}</span>
@@ -143,20 +155,36 @@
                 {@const sessions = marks.filter((mark) => mark.kind === 'session')}
                 <div class="wt-day" class:wt-today={day.today}>
                   {#if marks.length}
-                    {@const singleGlyph = sessions.length === 1 ? harnessGlyph(sessions[0]?.harness ?? null) : ''}
-                    {@const glyph = sessions.length > 1 ? `${sessions.length}` : singleGlyph}
-                    {@const description = `${day.label}: ${sessions.length} sessions, ${marks.length - sessions.length} work events. ${marks.map((mark) => threadTime(mark.at, timeZone)).join(', ')}. Open for episode spans and context.`}
-                    <a
+                    {@const selected = selectedMarks?.threadId === row.thread.threadId && selectedMarks.day === day.key}
+                    {@const description = `${day.label}: ${sessions.length} sessions, ${marks.length - sessions.length} work events. Show activity.`}
+                    <button
+                      aria-controls={selected ? `wt-marks-${row.thread.threadId}-${day.key}` : undefined}
+                      aria-expanded={selected ? 'true' : 'false'}
                       aria-label={description}
-                      class="wt-mark"
-                      data-harness={sessions.length === 1 ? sessions[0]?.harness : ''}
-                      href={href(row.thread.threadId, day.key)}
-                      onclick={(event) => onOpen(event, row.thread.threadId, day.key)}
+                      class="wt-day-button"
+                      id={`wt-mark-${row.thread.threadId}-${day.key}`}
+                      onclick={() =>
+                        (selectedMarks = selected ? null : { threadId: row.thread.threadId, day: day.key })}
+                      onkeydown={(event) => {
+                        if (event.key === 'Escape') {
+                          closeMarks();
+                        }
+                      }}
                       title={description}
-                      class:wt-event-mark={!sessions.length}
-                      class:wt-multi={sessions.length > 1}
-                      >{glyph}</a
+                      type="button"
                     >
+                      {#if sessions.length}
+                        <span
+                          aria-hidden="true"
+                          class="wt-mark"
+                          data-harness={sessions.length === 1 ? sessions[0]?.harness : ''}
+                          >{sessions.length > 1 ? sessions.length : harnessGlyph(sessions[0]?.harness ?? null)}</span
+                        >
+                      {/if}
+                      {#if marks.length > sessions.length}
+                        <span aria-hidden="true" class="wt-mark wt-event-mark"></span>
+                      {/if}
+                    </button>
                   {/if}
                 </div>
               {/each}
@@ -167,9 +195,44 @@
               href={href(row.thread.threadId)}
               onclick={(event) => onOpen(event, row.thread.threadId)}
             >
-              <span class="wt-hint" data-hint={situation.hint}><span aria-hidden="true">●</span>{situation.label}</span>
+              <span class="wt-hint" data-hint={situation.hint}
+                ><span aria-hidden="true">●</span>
+                {situation.label}
+                {#if situation.remainders.some((remainder) => remainder.kind === 'source-stale')}
+                  <span class="wt-stale" title="Some source evidence is stale">Stale</span>
+                {/if}</span
+              >
               <strong>{situation.headline}</strong><small>{situation.caption}</small>
             </a>
+            {#if selectedMarks?.threadId === row.thread.threadId}
+              {@const dayMarks = buckets.get(selectedMarks.day) ?? []}
+              <section
+                aria-label={`Activity on ${selectedMarks.day}`}
+                class="wt-day-marks"
+                id={`wt-marks-${row.thread.threadId}-${selectedMarks.day}`}
+              >
+                <div>
+                  <strong>{selectedMarks.day} · {row.thread.title}</strong
+                  ><button aria-label="Close day activity" class="wt-button" onclick={closeMarks} type="button">
+                    ×
+                  </button>
+                </div>
+                <ul>
+                  {#each dayMarks as mark}
+                    <li>
+                      <time datetime={mark.at}>{threadTime(mark.at, timeZone)}</time>
+                      · {mark.kind === 'session' ? `${harnessName(mark.harness ?? 'Session')} · ` : ''}{mark.label}
+                    </li>
+                  {/each}
+                </ul>
+                <a
+                  class="wt-link"
+                  href={href(row.thread.threadId, selectedMarks.day)}
+                  onclick={(event) => onOpen(event, row.thread.threadId, selectedMarks?.day)}
+                  >Open task for this day →</a
+                >
+              </section>
+            {/if}
           </article>
         {/each}
       </section>

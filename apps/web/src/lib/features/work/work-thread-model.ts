@@ -1,8 +1,13 @@
 import { parseWorkThreadLinkKey, type WorkThreadEvent } from '@ai-usage/report-core/work-thread';
-import { deriveWorkThreadSituation, type WorkThreadRemainder } from '@ai-usage/report-core/work-thread-situation';
+import {
+  deriveWorkThreadSituation,
+  WORK_THREAD_STALE_AFTER_MS,
+  type WorkThreadRemainder,
+} from '@ai-usage/report-core/work-thread-situation';
 import type {
   WorkThreadDetailDataset,
   WorkThreadEpisode,
+  WorkThreadFactEvent,
   WorkThreadListQuery,
   WorkThreadMark,
   WorkThreadMarkers,
@@ -181,11 +186,11 @@ export const acknowledgedRemainderCopy = (remainders: readonly WorkThreadRemaind
 export const remainderCopy = (remainder: WorkThreadRemainder): string => {
   switch (remainder.kind) {
     case 'local-files':
-      return `Local files: ${remainder.modified ?? 'unknown'} modified, ${remainder.staged ?? 'unknown'} staged, ${remainder.untracked ?? 'unknown'} untracked`;
+      return `Local: ${remainder.modified ?? 'unknown'} modified · ${remainder.staged ?? 'unknown'} staged · ${remainder.untracked ?? 'unknown'} untracked`;
     case 'unpushed-commits':
       return `${remainder.count} unpushed ${remainder.count === 1 ? 'commit' : 'commits'}`;
     case 'running-session':
-      return `${remainder.count} linked ${remainder.count === 1 ? 'session is' : 'sessions are'} still running`;
+      return `${remainder.count} ${remainder.count === 1 ? 'session' : 'sessions'} still running`;
     case 'merge-conflict':
       return `Conflicts with ${remainder.baseRef ?? 'the PR base (unknown)'}`;
     case 'behind-base':
@@ -193,12 +198,11 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
     case 'changes-requested':
       return 'Review changes to address';
     case 'failing-checks':
-      return 'PR checks are failing';
+      return 'Checks failing';
     case 'pending-checks':
-      return 'PR checks are pending';
+      return 'Checks pending';
     case 'review-requested':
-      return 'A PR is waiting for your review';
-    // Provisional copy until the task view round lands (plan 123 round 2).
+      return 'A PR waits for your review';
     case 'unresolved-review-threads':
       return `${remainder.count} review ${remainder.count === 1 ? 'thread' : 'threads'} to address`;
     case 'awaiting-review':
@@ -208,13 +212,15 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
     case 'ready-to-merge':
       return 'Ready to merge';
     case 'open-pr':
-      return 'The linked PR is still open';
+      return 'PR still open';
     case 'jira-open':
-      return 'The linked ticket is not done';
+      return 'Ticket not done';
     case 'source-unavailable':
-      return `${sourceName(remainder.source)} latest read: ${remainder.outcome}`;
+      return remainder.outcome === 'truncated'
+        ? `${sourceName(remainder.source)} evidence incomplete`
+        : `${sourceName(remainder.source)} read: ${remainder.outcome}`;
     case 'source-stale':
-      return `${sourceName(remainder.source)} observation is stale`;
+      return `${sourceName(remainder.source)} read is stale`;
     case 'source-unknown':
       return `${sourceName(remainder.source)} state is unknown`;
     default: {
@@ -226,6 +232,52 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
 
 export const sourceName = (source: string): string =>
   ({ local: 'Local', checkouts: 'Local', github: 'GitHub', jira: 'Jira', sessions: 'Sessions' })[source] ?? source;
+
+export interface ThreadSourceAvailabilityDetail {
+  readonly label: string;
+  readonly lastRunAt: WorkThreadSourceStatus['lastRunAt'];
+  readonly message: string | null;
+  readonly source: WorkThreadSourceStatus['source'];
+  readonly stale: boolean;
+}
+
+/** The summary names unavailable sources; partial session coverage stays in on-demand details. */
+export const threadSourceAvailability = (
+  sources: readonly WorkThreadSourceStatus[],
+  now: string,
+  timeZone: string,
+): { readonly summary: string; readonly details: readonly ThreadSourceAvailabilityDetail[] } => {
+  const details: ThreadSourceAvailabilityDetail[] = [];
+  const summaries: string[] = [];
+  for (const status of sources) {
+    const stale =
+      status.lastRunAt !== null && Date.parse(now) - Date.parse(status.lastRunAt) > WORK_THREAD_STALE_AFTER_MS;
+    if (status.state === 'ok' && status.lastRunAt !== null && !stale) {
+      continue;
+    }
+    const labels: Record<WorkThreadSourceStatus['state'], string> = {
+      ok: stale ? 'read is stale' : 'read date unknown',
+      'never-run': 'not connected',
+      disabled: 'disabled',
+      unavailable: 'unavailable',
+      unauthenticated: 'sign-in required',
+      failed: 'read failed',
+      truncated: 'evidence incomplete',
+    };
+    const label = labels[status.state];
+    details.push({ source: status.source, label, message: status.message, lastRunAt: status.lastRunAt, stale });
+    if (status.source !== 'sessions' || status.state !== 'truncated') {
+      const date = status.lastRunAt === null ? '' : ` ${threadDate(status.lastRunAt, timeZone)}`;
+      summaries.push(`${sourceName(status.source)} ${label}${date}`);
+    }
+  }
+  return { summary: summaries.join(' · '), details };
+};
+
+export const remainderEvidenceCopy = (remainder: WorkThreadRemainder, timeZone: string): string =>
+  sourceName(remainder.source) +
+  ' · ' +
+  (remainder.observedAt === null ? 'date unknown' : threadDate(remainder.observedAt, timeZone));
 
 const sessionSourceRemainder = (
   row: WorkThreadRow,
@@ -247,10 +299,17 @@ const sessionSourceRemainder = (
   if (source.lastRunAt === null) {
     return { ...evidence, kind: 'source-unknown' };
   }
-  return Date.parse(now) - Date.parse(source.lastRunAt) > 7 * 86_400_000 ? { ...evidence, kind: 'source-stale' } : null;
+  return Date.parse(now) - Date.parse(source.lastRunAt) > WORK_THREAD_STALE_AFTER_MS
+    ? { ...evidence, kind: 'source-stale' }
+    : null;
 };
 
-export const threadSituationCopy = (row: WorkThreadRow, now: string, sources: readonly WorkThreadSourceStatus[]) => {
+export const threadSituationCopy = (
+  row: WorkThreadRow,
+  now: string,
+  sources: readonly WorkThreadSourceStatus[],
+  timeZone = 'UTC',
+) => {
   const sessionRemainder = sessionSourceRemainder(row, sources, now);
   const situation = deriveWorkThreadSituation(row, now, sessionRemainder ? [sessionRemainder] : []);
   const label = {
@@ -263,7 +322,7 @@ export const threadSituationCopy = (row: WorkThreadRow, now: string, sources: re
   }[situation.hint];
   const primary = situation.remainders.find((remainder) => remainder.kind === situation.reason);
   let headline = primary ? remainderCopy(primary) : 'Choose the next step';
-  let caption = 'The follow-up stays yours until you end it.';
+  let caption = primary ? remainderEvidenceCopy(primary, timeZone) : 'Follow-up stays yours to end';
   if (situation.reason === 'follow-up-ended') {
     headline = 'You ended this follow-up';
     caption = row.afterDone
@@ -280,9 +339,7 @@ export const threadSituationCopy = (row: WorkThreadRow, now: string, sources: re
     caption = 'PR merged · linked tickets done · no local remainder. Deployment is not established.';
   } else if (situation.reason === 'running-session') {
     headline = 'Work is in progress';
-    caption = 'A linked session is still active.';
-  } else if (primary?.observedAt) {
-    caption = `${sourceName(primary.source)} observation · ${new Date(primary.observedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}`;
+    caption = primary ? remainderEvidenceCopy(primary, timeZone) : 'Sessions · date unknown';
   }
   return { ...situation, label, headline, caption };
 };
@@ -300,12 +357,45 @@ export const observedWebUrl = (value: string | null): string | null => {
   }
 };
 
-export const episodeSpan = (episode: WorkThreadEpisode): string => {
-  if (episode.spanMs === null) {
-    return 'Span unknown';
+const formatEpisodeDuration = (milliseconds: number): string => {
+  if (milliseconds > 0 && milliseconds < 60_000) {
+    return '<1 min';
   }
-  const minutes = Math.round(episode.spanMs / 60_000);
-  return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
+  const minutes = Math.round(milliseconds / 60_000);
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `${hours} h${rest > 0 ? ` ${rest}` : ''}`;
+};
+
+/** Recorded turn time is never substituted with the first-to-last activity span. */
+export const episodeDuration = (entry: WorkThreadEpisode): string =>
+  entry.activeMs === null ? '—' : formatEpisodeDuration(entry.activeMs);
+
+export const episodeDurationDetail = (entry: WorkThreadEpisode): string =>
+  entry.activeMs === null
+    ? 'Duration not recorded for this episode'
+    : `${episodeDuration(entry)} recorded for this episode · not the task's lifetime`;
+
+export const episodeSpan = (entry: WorkThreadEpisode): string =>
+  entry.spanMs === null ? 'Span unknown' : formatEpisodeDuration(entry.spanMs);
+
+export const episodeSpanContext = (entry: WorkThreadEpisode): string | null => {
+  if (
+    entry.spanMs === null ||
+    entry.activeMs === null ||
+    entry.spanMs <= 2 * entry.activeMs ||
+    entry.spanMs <= 3_600_000
+  ) {
+    return null;
+  }
+  const days = Math.floor(entry.spanMs / 86_400_000);
+  if (days > 0) {
+    return `over ${days}${days === 1 ? ' day' : ' days'}`;
+  }
+  return `over ${Math.floor(entry.spanMs / 3_600_000)} h`;
 };
 
 export const episodeContext = (episode: WorkThreadEpisode, taskTitle: string): string =>
@@ -425,20 +515,58 @@ export const threadEventCopy = (
   return { title: titles[event.kind], detail };
 };
 
+export const threadFactEventCopy = (event: WorkThreadFactEvent): { title: string; detail: string | null } => ({
+  title:
+    event.label +
+    ' ' +
+    { 'pull-request-opened': 'opened', 'pull-request-merged': 'merged', 'pull-request-closed': 'closed' }[event.kind],
+  detail: event.title,
+});
+
 export type ThreadHistoryEntry =
   | { readonly kind: 'session'; readonly at: string; readonly id: string; readonly episode: WorkThreadEpisode }
-  | { readonly kind: 'event'; readonly at: string; readonly id: string; readonly event: WorkThreadEvent };
+  | { readonly kind: 'event'; readonly at: string; readonly id: string; readonly event: WorkThreadEvent }
+  | { readonly kind: 'fact-event'; readonly at: string; readonly id: string; readonly event: WorkThreadFactEvent };
+
+const visibleThreadEvent = (event: WorkThreadEvent, data: WorkThreadDetailDataset): boolean => {
+  if (event.kind === 'created') {
+    return data.row.thread.origin !== 'pull-request' && data.row.thread.origin !== 'jira-issue';
+  }
+  if (event.kind !== 'link-added' || event.linkKey === null) {
+    return true;
+  }
+  const candidates = [...data.row.links, ...data.detachedLinks].filter((link) => link.key === event.linkKey);
+  const exact = candidates.filter((link) => link.createdAt === event.at);
+  const linksAtEvent =
+    exact.length > 0
+      ? exact
+      : candidates.filter(
+          (link) => link.createdAt <= event.at && (link.detachedAt === null || link.detachedAt >= event.at),
+        );
+  // Missing provenance cannot establish that an event was automatic. Preserve that history.
+  return linksAtEvent.length === 0 || linksAtEvent.some((link) => link.provenance === 'user');
+};
 
 export const threadHistory = (data: WorkThreadDetailDataset, sessionsOnly: boolean, timeZone: string) => {
-  const entries: ThreadHistoryEntry[] = data.episodes.map((episode) => ({
+  const entries: ThreadHistoryEntry[] = data.episodes.map((entry) => ({
     kind: 'session',
-    at: episode.startedAt,
-    id: episode.linkKey,
-    episode,
+    at: entry.startedAt,
+    id: entry.linkKey,
+    episode: entry,
   }));
   if (!sessionsOnly) {
     entries.push(
-      ...data.events.map((event): ThreadHistoryEntry => ({ kind: 'event', at: event.at, id: event.eventId, event })),
+      ...data.events
+        .filter((event) => visibleThreadEvent(event, data))
+        .map((event): ThreadHistoryEntry => ({ kind: 'event', at: event.at, id: event.eventId, event })),
+      ...data.factEvents.map(
+        (event): ThreadHistoryEntry => ({
+          kind: 'fact-event',
+          at: event.at,
+          id: ['fact', event.key, event.kind, event.at].join(':'),
+          event,
+        }),
+      ),
     );
   }
   entries.sort((left, right) => left.at.localeCompare(right.at) || left.id.localeCompare(right.id));

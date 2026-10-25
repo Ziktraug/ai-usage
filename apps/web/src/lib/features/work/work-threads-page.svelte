@@ -31,7 +31,6 @@
     threadPageCursors,
     threadUrl,
   } from './work-thread-model';
-  import WorkThreadSources from './work-thread-sources.svelte';
   import { threadSurface } from './work-thread-styles';
   import './work-threads.css';
 
@@ -232,7 +231,6 @@
         <p class="wt-meta">Synthetic demo</p>
       {/if}
       {#if detail}
-        <WorkThreadSources now={detail.generatedAt} sources={detail.sources} {timeZone} />
         {#key detail.row.thread.threadId}
           <WorkThreadDetail
             backHref={threadUrl(currentUrl, null)}
@@ -277,9 +275,6 @@
           <a class="wt-link" href="/work/sessions">Session intake ↗</a>
         </div>
       </header>
-      {#if dataset}
-        <WorkThreadSources now={dataset.generatedAt} sources={dataset.sources} {timeZone} />
-      {/if}
       {#if listError}
         <div class="wt-alert" role="alert">
           <strong>Tasks unavailable</strong>

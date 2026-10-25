@@ -94,7 +94,10 @@
           <span class="wt-source-label">GITHUB <span aria-hidden="true">›</span></span
           ><strong>PR #{main?.number ?? '?'} · {main?.state?.toLowerCase() ?? 'Unknown'}</strong
           ><span class="wt-meta"
-            >{main?.reviewDecision?.replaceAll('_', ' ').toLowerCase() ?? 'Review unknown'}
+            >{main
+              ? (main.reviewDecision?.replaceAll('_', ' ').toLowerCase() ?? 'No review decision')
+              : 'Review not observed'}
+            {main?.unresolvedReviewThreads == null ? '' : ` · ${main.unresolvedReviewThreads} review threads open`}
             · Checks {main?.checksRollup ?? 'unknown'}</span
           >
         </summary>
@@ -130,8 +133,14 @@
                   </div>
                   <div>
                     <dt>GitHub review decision</dt>
-                    <dd>{fact.reviewDecision?.replaceAll('_', ' ') ?? 'Unknown'}</dd>
+                    <dd>{fact.reviewDecision?.replaceAll('_', ' ') ?? 'No review decision'}</dd>
                   </div>
+                  {#if fact.unresolvedReviewThreads != null}
+                    <div>
+                      <dt>Review threads open</dt>
+                      <dd>{fact.unresolvedReviewThreads}</dd>
+                    </div>
+                  {/if}
                   <div>
                     <dt>Mergeability</dt>
                     <dd>{marker.mergeable ?? 'Unknown'}</dd>
