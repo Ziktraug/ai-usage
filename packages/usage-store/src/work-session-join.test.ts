@@ -62,6 +62,54 @@ const fixture = (count: number) => {
 
 describe('bounded served campaign members', () => {
   test.each([
+    { raw: undefined, count: 0, truncated: false },
+    { raw: [], count: 0, truncated: false },
+    { raw: null, count: 0, truncated: false },
+    { raw: '[{"harness":"codex","sourceSessionId":"child"}]', count: 0, truncated: true },
+    {
+      raw: [
+        { harness: 'codex', sourceSessionId: 'child' },
+        { harness: 'codex', sourceSessionId: 'child' },
+      ],
+      count: 1,
+      truncated: false,
+    },
+    {
+      raw: [
+        { harness: 'claude', sourceSessionId: 'child' },
+        { harness: 'codex', sourceSessionId: ' ' },
+        { harness: 'codex', sourceSessionId: 'x'.repeat(513) },
+      ],
+      count: 0,
+      truncated: true,
+    },
+    { raw: { harness: 'codex', sourceSessionId: 'child' }, count: 0, truncated: true },
+    {
+      raw: Array.from({ length: 33 }, (_, index) => ({ harness: 'codex', sourceSessionId: `child-${index}` })),
+      count: 32,
+      truncated: true,
+    },
+  ])('carries bounded validated delegation metadata ($count / $truncated)', async ({ raw, count, truncated }) => {
+    const { db, store } = fixture(1);
+    try {
+      db.exec('PRAGMA query_only = OFF');
+      if (raw !== undefined) {
+        db.query(
+          "UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.source.delegatedSessions', json(?))",
+        ).run(JSON.stringify(raw));
+      }
+      db.exec('PRAGMA query_only = ON');
+      const read = await Effect.runPromise(
+        store.queryRecentServedHarnessSessions({ activeSince: 0, dbPath: ':memory:', harnessKey: 'codex' }),
+      );
+      expect(read.families[0]?.members[0]?.delegatedSessions).toHaveLength(count);
+      expect(read.families[0]?.members[0]?.delegatedSessionsTruncated).toBe(truncated);
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each([
     { raw: null, expected: null },
     { raw: 'null', expected: null },
     { raw: '0', expected: 0 },

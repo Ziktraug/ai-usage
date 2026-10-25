@@ -174,6 +174,23 @@ const sessionLink = (id: string, harness = 'codex') => ({
   kind: 'session' as const,
   key: sessionLinkKey({ machineId: MACHINE, harness, sessionId: id }),
 });
+const claudeDelegating = (id: string, children: readonly string[]): SerializedRow =>
+  session(id, {
+    harness: 'Claude Code',
+    date: at(-6),
+    endDate: at(-2),
+    activeDate: at(-2),
+    durationMs: 60_000,
+    name: 'Claude parent',
+    sessionLabel: 'Claude parent',
+    source: {
+      harnessKey: 'claude',
+      machineId: MACHINE,
+      rootSourceSessionId: id,
+      sourceSessionId: id,
+      delegatedSessions: children.map((sourceSessionId) => ({ harness: 'codex', sourceSessionId })),
+    },
+  });
 const withBranch = (row: SerializedRow, branch: string | null): SerializedRow => ({
   ...row,
   source: {
@@ -534,6 +551,192 @@ describe('work-thread reader', () => {
       Array.from({ length: 63 }, (_, index) => at(-63 + index)),
     );
     expect(list.rows[0]).toEqual(detail?.row);
+  });
+
+  test.each([false, true])(
+    'unfolds attested Codex sessions with independent time and no duplicate roots (direct link: %s)',
+    async (direct) => {
+      const dbPath = await fixture();
+      await publish(dbPath, [
+        claudeDelegating('claude-parent', ['codex-one', 'codex-two']),
+        session('codex-one', {
+          origin: 'human',
+          durationMs: 12_000,
+          date: at(-5),
+          endDate: at(-4),
+          activeDate: at(-4),
+        }),
+        session('codex-two', { durationMs: null, date: at(-4), endDate: at(-2), activeDate: at(-2) }),
+      ]);
+      const threadId = await create(dbPath, [
+        sessionLink('claude-parent', 'claude'),
+        ...(direct ? [sessionLink('codex-one')] : []),
+      ]);
+      const separate = await create(dbPath, [sessionLink('codex-one')], 'Independent follow-up');
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+      expect(detail?.episodes).toHaveLength(1);
+      expect(detail?.episodes[0]).toMatchObject({
+        sourceSessionId: 'claude-parent',
+        harness: 'claude',
+        activeMs: 60_000,
+        spanMs: 14_400_000,
+      });
+      const children = detail?.episodes[0]?.children ?? [];
+      expect(children).toHaveLength(2);
+      expect(children.find((child) => child.sourceSessionId === 'codex-one')).toMatchObject({
+        harness: 'codex',
+        origin: 'delegated',
+        launchedBy: { harness: 'claude', title: 'Claude parent' },
+        activeMs: 12_000,
+        spanMs: 3_600_000,
+      });
+      expect(children.find((child) => child.sourceSessionId === 'codex-two')).toMatchObject({
+        harness: 'codex',
+        origin: 'delegated',
+        launchedBy: { harness: 'claude', title: 'Claude parent' },
+        activeMs: null,
+        spanMs: 7_200_000,
+      });
+      expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 2 });
+      expect(detail?.row.marks).toEqual([{ at: at(-6), harness: 'claude', kind: 'session', label: 'Claude parent' }]);
+      expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
+      expect(list.rows.find((row) => row.thread.threadId === threadId)).toEqual(detail?.row);
+      const independent = await run(queryWorkThreadDetail({ dbPath, threadId: separate, now: NOW }));
+      expect(independent?.episodes).toHaveLength(1);
+      expect(independent?.episodes[0]).toMatchObject({
+        sourceSessionId: 'codex-one',
+        origin: 'human',
+        launchedBy: null,
+        activeMs: 12_000,
+      });
+      expect(independent?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 0 });
+    },
+  );
+
+  test.each([false, true])(
+    'reports unserved attested Codex identities as unavailable without an invented child (other machine: %s)',
+    async (otherMachine) => {
+      const dbPath = await fixture();
+      const remote = session('unavailable', {
+        source: {
+          harnessKey: 'codex',
+          machineId: 'other-machine',
+          sourceSessionId: 'unavailable',
+          rootSourceSessionId: 'unavailable',
+        },
+      });
+      await publish(dbPath, [claudeDelegating('claude-parent', ['unavailable']), ...(otherMachine ? [remote] : [])]);
+      const threadId = await create(dbPath, [sessionLink('claude-parent', 'claude')]);
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(detail?.episodes).toHaveLength(1);
+      expect(detail?.episodes[0]?.children).toEqual([]);
+      expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 0 });
+      expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
+      const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+      expect(list.rows[0]).toEqual(detail?.row);
+      expect(list.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
+    },
+  );
+
+  test('keeps native Codex parentage within an attested Claude delegation', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [
+      claudeDelegating('claude-parent', ['codex-parent', 'codex-child']),
+      session('codex-parent'),
+      session('codex-child', {
+        source: {
+          harnessKey: 'codex',
+          machineId: MACHINE,
+          sourceSessionId: 'codex-child',
+          parentSourceSessionId: 'codex-parent',
+          rootSourceSessionId: 'codex-parent',
+        },
+      }),
+    ]);
+    const threadId = await create(dbPath, [sessionLink('claude-parent', 'claude'), sessionLink('codex-child')]);
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.episodes).toHaveLength(1);
+    expect(detail?.episodes[0]?.children).toHaveLength(1);
+    expect(detail?.episodes[0]?.children[0]).toMatchObject({
+      sourceSessionId: 'codex-parent',
+      launchedBy: { harness: 'claude', title: 'Claude parent' },
+      children: [
+        {
+          sourceSessionId: 'codex-child',
+          origin: 'delegated',
+          launchedBy: { harness: 'codex', title: 'codex-parent' },
+        },
+      ],
+    });
+    expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 2 });
+    expect(detail?.row.marks).toHaveLength(1);
+    expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
+  });
+
+  test.each(['missing-parent', 'self-cycle', 'cycle'])(
+    'does not replace unresolved native Codex lineage with a Claude launch (%s)',
+    async (variant) => {
+      const dbPath = await fixture();
+      const child = session('codex-child', {
+        source: {
+          harnessKey: 'codex',
+          machineId: MACHINE,
+          sourceSessionId: 'codex-child',
+          rootSourceSessionId: 'codex-child',
+          parentSourceSessionId: {
+            'missing-parent': 'unserved-parent',
+            'self-cycle': 'codex-child',
+            cycle: 'codex-other',
+          }[variant],
+        },
+      });
+      const other = session('codex-other', {
+        source: {
+          harnessKey: 'codex',
+          machineId: MACHINE,
+          sourceSessionId: 'codex-other',
+          rootSourceSessionId: 'codex-other',
+          parentSourceSessionId: 'codex-child',
+        },
+      });
+      await publish(dbPath, [
+        claudeDelegating('claude-parent', variant === 'cycle' ? ['codex-child', 'codex-other'] : ['codex-child']),
+        child,
+        ...(variant === 'cycle' ? [other] : []),
+      ]);
+      const threadId = await create(dbPath, [sessionLink('claude-parent', 'claude'), sessionLink('codex-child')]);
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      expect(detail?.episodes.map((episode) => episode.sourceSessionId)).toEqual(['claude-parent']);
+      expect(detail?.episodes[0]?.children).toEqual([]);
+      expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 0 });
+      expect(detail?.row.marks).toEqual([{ at: at(-6), harness: 'claude', kind: 'session', label: 'Claude parent' }]);
+      expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
+    },
+  );
+
+  test('honors thread-local detachment of attested Codex children and their Claude parent', async () => {
+    const dbPath = await fixture();
+    await publish(dbPath, [claudeDelegating('claude-parent', ['codex-one']), session('codex-one')]);
+    const threadId = await create(dbPath, [sessionLink('claude-parent', 'claude'), sessionLink('codex-one')]);
+    const other = await create(dbPath, [sessionLink('claude-parent', 'claude')]);
+    const links = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    const child = links.find((link) => link.key === sessionLink('codex-one').key);
+    const parent = links.find((link) => link.key === sessionLink('claude-parent', 'claude').key);
+    if (!(child && parent)) {
+      throw new Error('Missing delegation fixture links');
+    }
+    await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: child.linkId });
+    const detached = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detached?.episodes[0]?.children).toEqual([]);
+    expect(detached?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 0 });
+    const sibling = await run(queryWorkThreadDetail({ dbPath, threadId: other, now: NOW }));
+    expect(sibling?.episodes[0]?.children.map((episode) => episode.sourceSessionId)).toEqual(['codex-one']);
+    await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: parent.linkId });
+    const empty = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(empty?.episodes).toEqual([]);
+    expect(empty?.row).toMatchObject({ sessionCount: 0, delegatedSessionCount: 0 });
+    expect(empty?.row.marks).toEqual([]);
   });
 
   test('counts linked episodes separately from distinct delegated children at every rendered depth', async () => {

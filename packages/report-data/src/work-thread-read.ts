@@ -77,6 +77,7 @@ const parentKeyOf = (session: WorkThreadSessionEvidence['sessions'][number]): st
 const episodeOf = (
   session: WorkThreadSessionEvidence['sessions'][number],
   parent: WorkThreadSessionEvidence['sessions'][number] | undefined,
+  attestedDelegation = false,
 ): WorkThreadEpisode | null => {
   const { member, desktop, harness } = session;
   const startedAt = desktop?.createdAt ?? normalizeIsoTimestamp(member.startedAt);
@@ -91,7 +92,9 @@ const episodeOf = (
       ? Date.parse(endedAt) - Date.parse(startedAt)
       : null;
   let origin: WorkThreadEpisode['origin'] = null;
-  if (member.origin === 'human') {
+  if (attestedDelegation) {
+    origin = 'delegated';
+  } else if (member.origin === 'human') {
     origin = 'human';
   } else if (member.origin === 'subagent' || member.origin === 'delegated') {
     origin = 'delegated';
@@ -138,14 +141,46 @@ const episodeOf = (
 const episodesOf = (
   evidence: WorkThreadSessionEvidence,
   links: readonly WorkThreadLink[],
-): { episodes: WorkThreadEpisode[]; omitted: boolean } => {
+): { episodes: WorkThreadEpisode[]; omitted: boolean; delegatedKeys: ReadonlySet<string> } => {
   const linked = new Set(links.filter((link) => link.kind === 'session').map((link) => link.key));
   const sessions = new Map(evidence.sessions.map((session) => [keyOf(session), session]));
+  const delegationParents = new Map<string, string>();
+  for (const session of sessions.values()) {
+    const parentKey = keyOf(session);
+    if (session.harness !== 'claude' || !linked.has(parentKey)) {
+      continue;
+    }
+    for (const delegated of session.member.delegatedSessions ?? []) {
+      const childKey = sessionLinkKey({
+        harness: delegated.harness,
+        machineId: session.member.machineId,
+        sessionId: delegated.sourceSessionId,
+      });
+      if (!delegationParents.has(childKey)) {
+        delegationParents.set(childKey, parentKey);
+      }
+    }
+  }
+  const parents = new Map<string, string>();
+  for (const session of sessions.values()) {
+    const key = keyOf(session);
+    const nativeParent = parentKeyOf(session);
+    // Native lineage keeps its harness namespace; an attestation supplies only the cross-harness edge.
+    const parentKey = nativeParent ?? delegationParents.get(key) ?? null;
+    if (parentKey !== null) {
+      parents.set(key, parentKey);
+    }
+  }
   const episodes = new Map<string, WorkThreadEpisode>();
   let omitted = false;
   for (const session of sessions.values()) {
-    const parentKey = parentKeyOf(session);
-    const episode = episodeOf(session, parentKey === null ? undefined : sessions.get(parentKey));
+    const key = keyOf(session);
+    const parentKey = parents.get(key);
+    const episode = episodeOf(
+      session,
+      parentKey === undefined ? undefined : sessions.get(parentKey),
+      delegationParents.has(key),
+    );
     if (episode === null) {
       omitted = true;
     } else {
@@ -154,9 +189,8 @@ const episodesOf = (
   }
   const children = new Map<string, WorkThreadEpisode[]>();
   for (const [key, episode] of episodes) {
-    const session = sessions.get(key);
-    const parentKey = session === undefined ? null : parentKeyOf(session);
-    if (parentKey !== null && parentKey !== key && linked.has(parentKey) && episodes.has(parentKey)) {
+    const parentKey = parents.get(key);
+    if (parentKey !== undefined && parentKey !== key && episodes.has(parentKey)) {
       const siblings = children.get(parentKey) ?? [];
       if (siblings.length < WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren) {
         siblings.push(episode);
@@ -167,12 +201,11 @@ const episodesOf = (
     }
   }
   const roots = [...episodes.values()].filter((episode) => {
-    if (!linked.has(episode.linkKey)) {
+    if (!linked.has(episode.linkKey) || delegationParents.has(episode.linkKey)) {
       return false;
     }
-    const session = sessions.get(episode.linkKey);
-    const parentKey = session === undefined ? null : parentKeyOf(session);
-    return parentKey === null || parentKey === episode.linkKey || !linked.has(parentKey) || !episodes.has(parentKey);
+    const parentKey = parents.get(episode.linkKey);
+    return parentKey === undefined || parentKey === episode.linkKey || !episodes.has(parentKey);
   });
   const rendered = new Set<string>();
   const nest = (episode: WorkThreadEpisode, ancestors: ReadonlySet<string>): WorkThreadEpisode => {
@@ -191,14 +224,17 @@ const episodesOf = (
   };
   const nested = roots.map((episode) => nest(episode, new Set()));
   for (const episode of episodes.values()) {
+    if (delegationParents.has(episode.linkKey) && !rendered.has(episode.linkKey)) {
+      omitted = true;
+      continue;
+    }
     if (linked.has(episode.linkKey) && !rendered.has(episode.linkKey)) {
       omitted = true;
       const ancestors = new Set<string>();
       let candidate: string | null = episode.linkKey;
       while (candidate !== null && !ancestors.has(candidate)) {
         ancestors.add(candidate);
-        const session = sessions.get(candidate);
-        candidate = session === undefined ? null : parentKeyOf(session);
+        candidate = parents.get(candidate) ?? null;
       }
       // Only a cycle needs a visible root. A child omitted by its parent's bound stays a child.
       if (candidate !== null) {
@@ -210,6 +246,7 @@ const episodesOf = (
     (left, right) => right.startedAt.localeCompare(left.startedAt) || left.linkKey.localeCompare(right.linkKey),
   );
   return {
+    delegatedKeys: new Set(delegationParents.keys()),
     episodes: nested.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodes),
     omitted: omitted || nested.length > WORK_THREAD_VIEW_BOUNDS.maxEpisodes,
   };
@@ -290,7 +327,11 @@ const branchRef = (branch: string | null | undefined): string | null => {
   return ref == null || ref.length === 0 ? null : ref;
 };
 
-const sessionCountsOf = (episodes: readonly WorkThreadEpisode[], links: readonly WorkThreadLink[]) => {
+const sessionCountsOf = (
+  episodes: readonly WorkThreadEpisode[],
+  links: readonly WorkThreadLink[],
+  delegatedKeys: ReadonlySet<string>,
+) => {
   const linked = new Set(links.filter((link) => link.kind === 'session').map((link) => link.key));
   const resolved = new Set<string>();
   const pending = [...episodes];
@@ -302,7 +343,7 @@ const sessionCountsOf = (episodes: readonly WorkThreadEpisode[], links: readonly
     resolved.add(episode.linkKey);
     pending.push(...episode.children);
   }
-  const sessionCount = [...resolved].filter((key) => linked.has(key)).length;
+  const sessionCount = [...resolved].filter((key) => linked.has(key) && !delegatedKeys.has(key)).length;
   return { sessionCount, delegatedSessionCount: resolved.size - sessionCount };
 };
 
@@ -476,7 +517,7 @@ const readRow = (
   storedActivity = thread.updatedAt,
 ): RowRead => {
   const active = links.filter((link) => link.detachedAt === null);
-  const { episodes, omitted } = episodesOf(evidence, active);
+  const { episodes, omitted, delegatedKeys } = episodesOf(evidence, active);
   const truncated = new Set(factsRead.truncated);
   if (evidence.truncated || omitted) {
     truncated.add('sessions');
@@ -610,7 +651,7 @@ const readRow = (
       marks,
       // Neither stored session family carries native lifecycle evidence; recency is not a running state.
       runningSessions: 0,
-      ...sessionCountsOf(episodes, active),
+      ...sessionCountsOf(episodes, active, delegatedKeys),
       thread,
     },
   };

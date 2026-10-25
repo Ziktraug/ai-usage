@@ -29,6 +29,7 @@ import {
 import { WORK_THREAD_VIEW_BOUNDS, type WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import { MAX_WORK_DELEGATIONS_JSON, readWorkSessionDelegations } from './work-session-join';
 
 /** Operator-owned state, outside served revisions, collection generations and the outbox. */
 export const WORK_THREAD_TABLES = [
@@ -1432,6 +1433,11 @@ export interface WorkThreadSessionEvidenceBatchEntry {
 }
 
 const EVIDENCE_MEMBER_DETAILS = `
+  CASE WHEN json_type(metadata.source_row_json, '$.source.delegatedSessions') IS NULL
+      OR json_type(metadata.source_row_json, '$.source.delegatedSessions') = 'null' THEN NULL
+    WHEN json_type(metadata.source_row_json, '$.source.delegatedSessions') = 'array'
+      THEN substr(json_extract(metadata.source_row_json, '$.source.delegatedSessions'), 1, ${MAX_WORK_DELEGATIONS_JSON + 1})
+    ELSE 'null' END AS delegated_sessions,
   json_extract(metadata.source_row_json, '$.source.sourcePath') AS checkout_path,
   json_extract(metadata.source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
   json_extract(metadata.source_row_json, '$.date') AS started_at,
@@ -1632,6 +1638,11 @@ const readSessionEvidencePage = (
               ...request.slice(1),
               desktops.get(link.key)?.desktop_session_id ?? null,
               link.threadId,
+              JSON.stringify(
+                request[2] === 'claude'
+                  ? readWorkSessionDelegations(roots.get(link.key)?.[0]?.delegated_sessions).delegatedSessions
+                  : [],
+              ),
             ],
           ]
         : [];
@@ -1646,6 +1657,11 @@ const readSessionEvidencePage = (
         WHERE requested.desktop_id IS NOT NULL
       )`
     : '';
+  const delegatedChildFilter = `OR (machine_id, json_extract(source_row_json, '$.source.harnessKey'),
+      json_extract(source_row_json, '$.source.sourceSessionId')) IN (
+      SELECT requested.machine, 'codex', json_extract(delegation.value, '$.sourceSessionId')
+      FROM requested JOIN json_each(requested.delegated_sessions) delegation
+    )`;
   const children = groupEvidenceRecords(
     childRequests.length === 0
       ? []
@@ -1653,24 +1669,32 @@ const readSessionEvidencePage = (
           .query(`WITH requested AS MATERIALIZED (
       SELECT json_extract(value, '$[0]') AS request_key, json_extract(value, '$[1]') AS machine,
         json_extract(value, '$[2]') AS harness, json_extract(value, '$[3]') AS session_id,
-        json_extract(value, '$[4]') AS desktop_id, json_extract(value, '$[5]') AS thread_id FROM json_each(?)
-    ), ${memberCte(`${requestedIdentityFilter('parentSourceSessionId')} ${desktopChildFilter}`)}, candidates AS (
+        json_extract(value, '$[4]') AS desktop_id, json_extract(value, '$[5]') AS thread_id,
+        json_extract(value, '$[6]') AS delegated_sessions FROM json_each(?)
+    ), ${memberCte(`${requestedIdentityFilter('parentSourceSessionId')} ${desktopChildFilter} ${delegatedChildFilter}`)}, candidates AS (
       SELECT requested.request_key, requested.thread_id, members.*
       FROM requested JOIN members ON machine_id = machine AND harness_key = harness AND parent_session_id = session_id
-      UNION ALL
+      UNION
       SELECT DISTINCT requested.request_key, requested.thread_id, members.*
       FROM requested JOIN claude_desktop_sessions desktop
         ON desktop.machine_id = machine AND desktop.spawned_from_session_id = desktop_id
       JOIN members ON members.machine_id = machine AND harness_key = harness
         AND source_session_id = desktop.cli_session_id AND parent_session_id IS NULL
       WHERE desktop_id IS NOT NULL
+      UNION
+      SELECT requested.request_key, requested.thread_id, members.*
+      FROM requested JOIN json_each(requested.delegated_sessions) delegation
+      LEFT JOIN members ON members.machine_id = requested.machine AND members.harness_key = 'codex'
+        AND members.source_session_id = json_extract(delegation.value, '$.sourceSessionId')
+      WHERE ${nonDetachedSessionSql('requested.machine', "'codex'", "json_extract(delegation.value, '$.sourceSessionId')")}
     ), ranked AS (
       SELECT requested.*,
+        COUNT(*) OVER (PARTITION BY requested.request_key, machine_id, harness_key, source_session_id) AS identity_count,
         ROW_NUMBER() OVER (PARTITION BY requested.request_key ORDER BY active_time DESC, ordinal) AS rank
       FROM candidates requested
       WHERE ${nonDetachedSessionSql('requested.machine_id', 'requested.harness_key', 'requested.source_session_id')}
     ) SELECT ranked.*, ${EVIDENCE_MEMBER_DETAILS} FROM ranked
-      JOIN served_report_rows metadata ON metadata.revision = ? AND metadata.ordinal = ranked.ordinal
+      LEFT JOIN served_report_rows metadata ON metadata.revision = ? AND metadata.ordinal = ranked.ordinal
       WHERE rank <= ? ORDER BY request_key, rank`)
           .all(JSON.stringify(childRequests), revision, revision, WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1),
   );
@@ -1759,12 +1783,15 @@ const readThreadSessionEvidence = (
     // `active_time` falls back to the start date; an absent end is not a known span.
     const activeAt =
       row.ended_at === null ? null : Date.parse(validated(normalizeIsoTimestamp(row.ended_at), 'session end instant'));
+    const delegations = readWorkSessionDelegations(row.delegated_sessions);
+    truncated ||= delegations.delegatedSessionsTruncated;
     const entry = {
       harness,
       firstPrompt:
         row.title_source === 'first-prompt' ? validated(evidenceText(row.title), 'first prompt excerpt') : null,
       desktop: desktop?.value ?? null,
       member: {
+        ...delegations,
         activeAt,
         branch: evidenceOptionalText(row.branch),
         campaignRoot: row.campaign_root === 1,
@@ -1810,6 +1837,8 @@ const readThreadSessionEvidence = (
             campaignRoot: false,
             checkoutPath: desktop.value.worktreePath ?? desktop.value.cwd,
             durationMs: null,
+            delegatedSessions: [],
+            delegatedSessionsTruncated: false,
             machineId: parsed.machineId,
             origin: null,
             parentSourceSessionId: null,
@@ -1831,7 +1860,12 @@ const readThreadSessionEvidence = (
         truncated = true;
       }
       for (const child of children.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren)) {
-        add(child, parsed.harness, parsed.sessionId);
+        if (child.ordinal === null || child.identity_count !== 1) {
+          truncated = true;
+          continue;
+        }
+        const childHarness = validated(evidenceText(child.harness_key, 512), 'child harness');
+        add(child, childHarness, childHarness === parsed.harness ? parsed.sessionId : undefined);
       }
     } else if (parsed?.kind === 'branch') {
       const paths = page.branches.get(JSON.stringify([link.threadId, input.machineId, link.key])) ?? [];

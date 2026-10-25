@@ -359,6 +359,7 @@ const evidenceFixture = async () => {
       checkout?: string;
       branch?: string;
       repository?: string;
+      delegatedSessions?: unknown;
     } = {},
   ) => {
     ordinal++;
@@ -376,6 +377,7 @@ const evidenceFixture = async () => {
         endDate: LATER,
         sessionLabel: title,
         source: {
+          delegatedSessions: options.delegatedSessions,
           harnessKey: options.harness ?? 'codex',
           sourceSessionId: id,
           parentSourceSessionId: options.parent ?? null,
@@ -510,6 +512,195 @@ describe('work thread store', () => {
         }),
       );
       expect((await search('Rare served')).rows).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('reads attested Codex delegations once without changing native parent identity', async () => {
+    const { db, dbPath, store, addSession } = await evidenceFixture();
+    try {
+      const delegatedSessions = [
+        { harness: 'codex', sourceSessionId: 'codex-parent' },
+        { harness: 'codex', sourceSessionId: 'codex-child' },
+      ] as const;
+      addSession('claude-parent', 'Claude parent', { harness: 'claude', delegatedSessions });
+      addSession('codex-parent', 'Codex parent');
+      addSession('codex-child', 'Codex child', { parent: 'codex-parent' });
+      addSession('codex-parent', 'Wrong machine', { machine: 'elsewhere' });
+      addSession('codex-child', 'Unpublished', { revision: 'future' });
+      const threadId = randomUUID();
+      const links = [evidenceLink(threadId, 'claude-parent', 'claude'), evidenceLink(threadId, 'codex-parent')];
+      for (const ordered of [links, links.toReversed()]) {
+        const evidence = await run(
+          store.queryWorkThreadSessionEvidence({ dbPath, machineId: MACHINE, links: ordered }),
+        );
+        expect(evidence.truncated).toBe(false);
+        expect(evidence.sessions).toHaveLength(3);
+        expect(evidence.sessions.find((entry) => entry.harness === 'claude')?.member.delegatedSessions).toEqual(
+          delegatedSessions,
+        );
+        expect(
+          evidence.sessions.find((entry) => entry.member.sourceSessionId === 'codex-parent')?.member
+            .parentSourceSessionId,
+        ).toBeNull();
+        expect(
+          evidence.sessions.find((entry) => entry.member.sourceSessionId === 'codex-child')?.member
+            .parentSourceSessionId,
+        ).toBe('codex-parent');
+        expect(evidence.sessions.filter((entry) => entry.harness === 'codex')).toHaveLength(2);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  test('counts unavailable or ambiguous attested identities without inventing rows', async () => {
+    const { db, dbPath, store, addSession } = await evidenceFixture();
+    try {
+      addSession('claude-parent', 'Claude parent', {
+        harness: 'claude',
+        delegatedSessions: ['missing', 'remote', 'future', 'ambiguous'].map((sourceSessionId) => ({
+          harness: 'codex',
+          sourceSessionId,
+        })),
+      });
+      addSession('remote', 'Remote', { machine: 'elsewhere' });
+      addSession('future', 'Future', { revision: 'future' });
+      addSession('ambiguous', 'First');
+      addSession('ambiguous', 'Second');
+      const evidence = await run(
+        store.queryWorkThreadSessionEvidence({
+          dbPath,
+          machineId: MACHINE,
+          links: [evidenceLink(randomUUID(), 'claude-parent', 'claude')],
+        }),
+      );
+      expect(evidence.sessions.map((entry) => entry.member.sourceSessionId)).toEqual(['claude-parent']);
+      expect(evidence.truncated).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('keeps attested delegation queries constant across many linked Claude parents', async () => {
+    const fixture = await evidenceFixture();
+    const { db, dbPath, store, addSession } = fixture;
+    try {
+      const scopes = Array.from({ length: 3 }, (_, index) => {
+        const threadId = randomUUID();
+        return {
+          threadId,
+          machineId: MACHINE,
+          links: Array.from({ length: 24 }, (_entry, parentIndex) => {
+            const id = `claude-${index}-${parentIndex}`;
+            const delegatedSessions = [0, 1].map((child) => ({
+              harness: 'codex',
+              sourceSessionId: `${id}-child-${child}`,
+            }));
+            addSession(id, id, { harness: 'claude', delegatedSessions });
+            for (const child of delegatedSessions) {
+              addSession(child.sourceSessionId, child.sourceSessionId);
+            }
+            return evidenceLink(threadId, id, 'claude');
+          }),
+        };
+      });
+      const before = fixture.counts();
+      const one = await run(store.queryWorkThreadSessionEvidence({ dbPath, threads: scopes.slice(0, 1) }));
+      const singleQueries = fixture.counts().queries - before.queries;
+      const between = fixture.counts();
+      const many = await run(store.queryWorkThreadSessionEvidence({ dbPath, threads: scopes }));
+      expect(singleQueries).toBeLessThanOrEqual(7);
+      expect(fixture.counts().queries - between.queries).toBe(singleQueries);
+      expect(fixture.counts().connections - between.connections).toBe(1);
+      expect(one[0]?.evidence.sessions).toHaveLength(72);
+      expect(many.map((entry) => entry.evidence.sessions.length)).toEqual([72, 72, 72]);
+      expect(many.every((entry) => !entry.evidence.truncated)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('honors per-thread detached attested children without marking intentional exclusion unavailable', async () => {
+    const { db, dbPath, store, addSession, createThread } = await evidenceFixture();
+    try {
+      addSession('claude-parent', 'Claude parent', {
+        harness: 'claude',
+        delegatedSessions: [{ harness: 'codex', sourceSessionId: 'child' }],
+      });
+      addSession('child', 'Codex child');
+      const first = await createThread([
+        { kind: 'session', key: `session:${MACHINE}/claude/claude-parent` },
+        { kind: 'session', key: `session:${MACHINE}/codex/child` },
+      ]);
+      const second = await createThread([{ kind: 'session', key: `session:${MACHINE}/claude/claude-parent` }]);
+      db.query('UPDATE work_thread_links SET detached_at = ? WHERE thread_id = ? AND link_key = ?').run(
+        LATER,
+        first,
+        `session:${MACHINE}/codex/child`,
+      );
+      const threads = await Promise.all(
+        [first, second].map(async (threadId) => ({
+          threadId,
+          machineId: MACHINE,
+          links: (await run(store.queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).filter(
+            (link) => link.detachedAt === null,
+          ),
+        })),
+      );
+      const result = await run(store.queryWorkThreadSessionEvidence({ dbPath, threads }));
+      expect(result.map((entry) => entry.evidence.sessions.length)).toEqual([1, 2]);
+      expect(result.map((entry) => entry.evidence.truncated)).toEqual([false, false]);
+      db.query('UPDATE work_thread_links SET detached_at = ? WHERE thread_id = ?').run(LATER, second);
+      const detached = await run(
+        store.queryWorkThreadSessionEvidence({
+          dbPath,
+          machineId: MACHINE,
+          links: await run(store.queryWorkThreadLinks({ dbPath, threadIds: [second] })),
+        }),
+      );
+      expect(detached.sessions).toEqual([]);
+      expect(detached.truncated).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('bounds attested metadata and children while exposing malformed or excess evidence', async () => {
+    const { db, dbPath, store, addSession } = await evidenceFixture();
+    try {
+      const delegatedSessions = Array.from({ length: 33 }, (_, index) => ({
+        harness: 'codex',
+        sourceSessionId: `child-${index}`,
+      }));
+      addSession('claude-parent', 'Claude parent', { harness: 'claude', delegatedSessions });
+      for (const child of delegatedSessions) {
+        addSession(child.sourceSessionId, child.sourceSessionId);
+      }
+      const input = { dbPath, machineId: MACHINE, links: [evidenceLink(randomUUID(), 'claude-parent', 'claude')] };
+      const bounded = await run(store.queryWorkThreadSessionEvidence(input));
+      expect(bounded.sessions).toHaveLength(21);
+      expect(bounded.sessions.find((entry) => entry.harness === 'claude')?.member.delegatedSessions).toHaveLength(32);
+      expect(bounded.truncated).toBe(true);
+      db.query(
+        "UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.source.delegatedSessions', json(?)) WHERE ordinal = 1",
+      ).run(
+        JSON.stringify([
+          { harness: 'other', sourceSessionId: 'child-0' },
+          { harness: 'codex', sourceSessionId: ' ' },
+          { harness: 'codex', sourceSessionId: 'child-1' },
+        ]),
+      );
+      const malformed = await run(store.queryWorkThreadSessionEvidence(input));
+      expect(malformed.sessions.map((entry) => entry.member.sourceSessionId)).toEqual(['claude-parent', 'child-1']);
+      expect(malformed.truncated).toBe(true);
+      db.query(
+        "UPDATE served_report_rows SET source_row_json = json_set(source_row_json, '$.source.delegatedSessions', ?) WHERE ordinal = 1",
+      ).run(JSON.stringify([{ harness: 'codex', sourceSessionId: 'child-1' }]));
+      const encodedString = await run(store.queryWorkThreadSessionEvidence(input));
+      expect(encodedString.sessions).toHaveLength(1);
+      expect(encodedString.truncated).toBe(true);
     } finally {
       db.close();
     }

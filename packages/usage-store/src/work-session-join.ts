@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { Effect } from 'effect';
 import type { UsageStoreError, UsageStoreErrorReason } from './errors';
 import { validWorkSessionReadScope, type WorkSessionReadScope, workSessionScopeSql } from './work-session-scope';
@@ -26,6 +27,50 @@ export const MAX_WORK_HARNESS_SESSION_FAMILIES = 200;
 export const MAX_WORK_HARNESS_SESSION_MEMBERS = 5;
 const MAX_MEMBER_TEXT = 4096;
 const MAX_MEMBER_SHORT_TEXT = 64;
+const MAX_DELEGATED_SESSIONS = 32;
+/** Bound the JSON crossing the SQLite reader seam before parsing it. */
+export const MAX_WORK_DELEGATIONS_JSON = 20_000;
+
+export const readWorkSessionDelegations = (
+  raw: unknown,
+): {
+  delegatedSessions: { harness: 'codex'; sourceSessionId: string }[];
+  delegatedSessionsTruncated: boolean;
+} => {
+  if (raw === null || raw === undefined) {
+    return { delegatedSessions: [], delegatedSessionsTruncated: false };
+  }
+  let value: unknown;
+  try {
+    value = typeof raw === 'string' && raw.length <= MAX_WORK_DELEGATIONS_JSON ? JSON.parse(raw) : null;
+  } catch {
+    value = null;
+  }
+  if (!Array.isArray(value)) {
+    return { delegatedSessions: [], delegatedSessionsTruncated: true };
+  }
+  const delegatedSessions: { harness: 'codex'; sourceSessionId: string }[] = [];
+  const seen = new Set<string>();
+  let delegatedSessionsTruncated = value.length > MAX_DELEGATED_SESSIONS;
+  for (const entry of value.slice(0, MAX_DELEGATED_SESSIONS)) {
+    if (
+      !(
+        isRecord(entry) &&
+        entry.harness === 'codex' &&
+        typeof entry.sourceSessionId === 'string' &&
+        validIdentifier(entry.sourceSessionId)
+      )
+    ) {
+      delegatedSessionsTruncated = true;
+      continue;
+    }
+    if (!seen.has(entry.sourceSessionId)) {
+      seen.add(entry.sourceSessionId);
+      delegatedSessions.push({ harness: 'codex', sourceSessionId: entry.sourceSessionId });
+    }
+  }
+  return { delegatedSessions, delegatedSessionsTruncated };
+};
 
 interface SqliteStatement {
   all: (...params: unknown[]) => unknown[];
@@ -100,6 +145,9 @@ export interface ServedHarnessSessionMember {
   readonly campaignRoot: boolean;
   /** `source.sourcePath`: the working directory the harness recorded. */
   readonly checkoutPath: string | null;
+  /** Attested cross-harness launches, bounded independently of the rendered children. */
+  readonly delegatedSessions?: readonly { readonly harness: 'codex'; readonly sourceSessionId: string }[];
+  readonly delegatedSessionsTruncated?: boolean;
   /** Recorded active turn duration from the served row; absent legacy values and null mean unknown. */
   readonly durationMs?: number | null;
   readonly machineId: string;
@@ -147,6 +195,7 @@ interface MemberRecord {
   campaign_key: unknown;
   campaign_root: unknown;
   checkout_path: unknown;
+  delegated_sessions: unknown;
   duration_ms: unknown;
   machine_id: unknown;
   member_count: unknown;
@@ -201,6 +250,7 @@ const memberOf = (record: MemberRecord): ServedHarnessSessionMember | null => {
     return null;
   }
   return {
+    ...readWorkSessionDelegations(record.delegated_sessions),
     activeAt,
     branch,
     campaignRoot: record.campaign_root === 1,
@@ -233,6 +283,11 @@ const MEMBERS_SQL = `
   SELECT ordinal, row_id, campaign_key, campaign_root, project_label, machine_id, origin, active_time,
     json_extract(source_row_json, '$.source.sourceSessionId') AS source_session_id,
     json_extract(source_row_json, '$.source.parentSourceSessionId') AS parent_source_session_id,
+    CASE WHEN json_type(source_row_json, '$.source.delegatedSessions') IS NULL
+      OR json_type(source_row_json, '$.source.delegatedSessions') = 'null' THEN NULL
+    WHEN json_type(source_row_json, '$.source.delegatedSessions') = 'array'
+      THEN substr(json_extract(source_row_json, '$.source.delegatedSessions'), 1, ${MAX_WORK_DELEGATIONS_JSON + 1})
+    ELSE 'null' END AS delegated_sessions,
     json_extract(source_row_json, '$.source.sourcePath') AS checkout_path,
     json_extract(source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
     json_extract(source_row_json, '$.sessionLabel') AS title,
