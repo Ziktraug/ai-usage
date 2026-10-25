@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Cause, Effect, Exit } from 'effect';
 import {
+  BOUNDED_PROCESS_STDERR_CLASSIFICATION_BYTES,
   BoundedProcessError,
   boundedProcessEnvironment,
   executeBoundedProcess,
@@ -90,6 +91,31 @@ describe('bounded process runner', () => {
     });
     expect(error.kind).toBe('timed-out');
     expect(JSON.stringify(error)).not.toContain(STDERR_SENTINEL);
+  });
+
+  test('hands a bounded stderr once to a caller classifier and returns only its answer', async () => {
+    const seen: string[] = [];
+    const classified = await run({
+      ...script(`process.stderr.write(${JSON.stringify(`Logged in using ChatGPT ${STDERR_SENTINEL}`)})`),
+      classifyStderr: (stderr) => {
+        seen.push(stderr);
+        return stderr.includes('ChatGPT') ? 'chatgpt' : null;
+      },
+      maximumOutputBytes: 16,
+      timeoutMs: 5000,
+    });
+    expect(classified.stderrClass).toBe('chatgpt');
+    expect(seen).toHaveLength(1);
+    expect(JSON.stringify(classified)).not.toContain(STDERR_SENTINEL);
+    const oversized = await run({
+      ...script(`process.stderr.write('x'.repeat(${BOUNDED_PROCESS_STDERR_CLASSIFICATION_BYTES + 1}))`),
+      classifyStderr: () => 'never',
+      maximumOutputBytes: 16,
+      timeoutMs: 5000,
+    });
+    expect(oversized.stderrClass).toBeNull();
+    const unclassified = await run({ ...script("process.stderr.write('e')"), maximumOutputBytes: 16, timeoutMs: 5000 });
+    expect('stderrClass' in unclassified).toBe(false);
   });
 
   test('kills the process at the output ceiling', async () => {

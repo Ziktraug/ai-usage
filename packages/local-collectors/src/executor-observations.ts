@@ -14,6 +14,7 @@ import {
   parseExecutorObservation,
 } from '@ai-usage/report-core/work-executors';
 import { type ClaudeCommand, ClaudeCommandError, claudeCommandFor } from './claude-command';
+import { type CodexCommand, codexCommandFor } from './codex-review-worker';
 
 /**
  * Observes the review executors a machine could run: is the harness CLI on the PATH, which version,
@@ -30,6 +31,8 @@ import { type ClaudeCommand, ClaudeCommandError, claudeCommandFor } from './clau
  */
 export interface BoundedRunSpec {
   readonly args: readonly string[];
+  /** Forwarded to the shared runner: one closed-vocabulary read of stderr, the text dropped. */
+  readonly classifyStderr?: (stderr: string) => string | null;
   readonly command: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly maximumOutputBytes: number;
@@ -38,6 +41,8 @@ export interface BoundedRunSpec {
 
 export interface BoundedRunResult {
   readonly exitCode: number;
+  /** The `classifyStderr` answer, when one was asked for. */
+  readonly stderrClass?: string | null;
   readonly stdout: string;
 }
 
@@ -53,15 +58,23 @@ export const runBoundedProcess: BoundedRun = async (spec) => {
     command: spec.command,
     maximumOutputBytes: spec.maximumOutputBytes,
     timeoutMs: spec.timeoutMs,
+    ...(spec.classifyStderr === undefined ? {} : { classifyStderr: spec.classifyStderr }),
     ...(spec.env === undefined ? {} : { env: spec.env }),
   });
-  return { exitCode: result.exitCode, stdout: result.stdout };
+  return {
+    exitCode: result.exitCode,
+    ...(result.stderrClass === undefined ? {} : { stderrClass: result.stderrClass }),
+    stdout: result.stdout,
+  };
 };
 
 export interface ObserveExecutorsInput {
   /**
    * The environment the review launch uses (default `process.env`): its `CLAUDE_CONFIG_DIR` and
-   * `AI_USAGE_CLAUDE_EXECUTABLE` decide which CLI and which account the Claude probe reads.
+   * `AI_USAGE_CLAUDE_EXECUTABLE` decide which CLI and which account the Claude probe reads, its
+   * `CODEX_HOME` and `AI_USAGE_CODEX_EXECUTABLE` the same for Codex. Each probe resolves its command
+   * with the launcher's own resolver (`claudeCommandFor`, `codexCommandFor`), so what is observed is
+   * the profile a delegation would run with.
    */
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly harnesses?: readonly ExecutorHarness[];
@@ -77,14 +90,43 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const MAXIMUM_OUTPUT_BYTES = 64 * 1024;
 const VERSION_PATTERN = /\d+\.\d+(?:\.\d+)?/u;
 const CODEX_LOGGED_IN_PATTERN = /logged in/iu;
-const CODEX_API_KEY_PATTERN = /api key/iu;
-const CODEX_CHATGPT_PATTERN = /chatgpt/iu;
 const PRINTABLE_ASCII_PATTERN = /^[\x20-\x7e]+$/u;
 
-const EXECUTOR_COMMANDS: Readonly<Record<ExecutorHarness, string>> = {
-  'claude-code': 'claude',
-  codex: 'codex',
-};
+/**
+ * The sign-in methods `codex login status` can name ("Logged in using …"), as a closed vocabulary.
+ * Any "API key" wording (OpenAI or Amazon Bedrock) is `api-key`, so a declared subscription is
+ * contradicted for Codex exactly as for Claude (`executorAuthMethodIndicatesApiKey`). The
+ * patterns are tested in order: "personal access token" before "access token".
+ */
+export const CODEX_AUTH_METHODS = [
+  'chatgpt',
+  'api-key',
+  'access-token',
+  'personal-access-token',
+  'workload-identity',
+  'aws-access-keys',
+] as const;
+export type CodexAuthMethod = (typeof CODEX_AUTH_METHODS)[number];
+
+const CODEX_AUTH_METHOD_PATTERNS: readonly { readonly method: CodexAuthMethod; readonly pattern: RegExp }[] = [
+  { method: 'api-key', pattern: /api key/iu },
+  { method: 'personal-access-token', pattern: /personal access token/iu },
+  { method: 'access-token', pattern: /access token/iu },
+  { method: 'workload-identity', pattern: /workload identity/iu },
+  { method: 'aws-access-keys', pattern: /aws access keys/iu },
+  { method: 'chatgpt', pattern: /chatgpt/iu },
+];
+
+/** The method word for a `codex login status` output; `null` when it names none of the known ones. */
+export const classifyCodexAuthMethod = (stdout: string): CodexAuthMethod | null =>
+  CODEX_AUTH_METHOD_PATTERNS.find(({ pattern }) => pattern.test(stdout))?.method ?? null;
+
+const isCodexAuthMethod = (value: unknown): value is CodexAuthMethod =>
+  typeof value === 'string' && (CODEX_AUTH_METHODS as readonly string[]).includes(value);
+
+/** Narrows a runner classification back to the vocabulary; anything else is no method. */
+const codexAuthMethodFrom = (value: string | null | undefined): CodexAuthMethod | null =>
+  isCodexAuthMethod(value) ? value : null;
 
 interface AuthProbe {
   readonly accountFingerprint: string | null;
@@ -221,15 +263,19 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number, claude: Claud
 
 /**
  * `codex login status`: the exit code is the contract (0 signed in, non-zero not). The CLI writes
- * its "Logged in using …" line to stderr, which the bounded runner discards, so a stdout mention is
- * recorded as extra evidence (and as the sign-in method) when present but never required.
+ * its "Logged in using …" line to stderr (codex-cli 0.164), so the runner classifies that line into
+ * the closed sign-in vocabulary and drops the text; a stdout mention counts the same way. The
+ * method is evidence beside the exit code, never required. The command and its `CODEX_HOME` are the
+ * launcher's (`codexCommandFor`), so the sign-in read is the one a worker would run with.
  */
-const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthProbe> => {
+const codexAuthProbe = async (run: BoundedRun, timeoutMs: number, codex: CodexCommand): Promise<AuthProbe> => {
   let result: BoundedRunResult;
   try {
     result = await run({
       args: ['login', 'status'],
-      command: 'codex',
+      classifyStderr: classifyCodexAuthMethod,
+      command: codex.command,
+      env: codex.environment,
       maximumOutputBytes: MAXIMUM_OUTPUT_BYTES,
       timeoutMs,
     });
@@ -246,20 +292,13 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthP
     };
   }
   const mentionsLoggedIn = CODEX_LOGGED_IN_PATTERN.test(result.stdout);
-  let authMethod: string | null = null;
-  if (CODEX_API_KEY_PATTERN.test(result.stdout)) {
-    authMethod = 'api-key';
-  } else if (CODEX_CHATGPT_PATTERN.test(result.stdout)) {
-    authMethod = 'chatgpt';
-  }
+  const authMethod = classifyCodexAuthMethod(result.stdout) ?? codexAuthMethodFrom(result.stderrClass);
   // Codex names its account only inside its credential file, which is never read: no fingerprint.
   return {
     accountFingerprint: null,
     authMethod,
     authState: 'logged-in',
-    evidence: mentionsLoggedIn
-      ? 'codex login status exit 0 (output mentions "Logged in")'
-      : 'codex login status exit 0',
+    evidence: `${mentionsLoggedIn ? 'codex login status exit 0 (output mentions "Logged in")' : 'codex login status exit 0'}${authMethod === null ? '' : ` authMethod=${authMethod}`}`,
     outcome: 'observed',
   };
 };
@@ -277,25 +316,44 @@ const unavailableObservation = (base: ObservationBase, evidence: string): Execut
   version: null,
 });
 
+type LaunchCommand = Pick<CodexCommand, 'command' | 'environment'>;
+
+/**
+ * The harness's command and environment as its launcher resolves them (`claudeCommandFor`,
+ * `codexCommandFor`), or the reason it cannot be run: the observation is of the profile a
+ * delegation would run with, never of a bare name on the PATH.
+ */
+const resolveLaunchCommand = (
+  harness: ExecutorHarness,
+  env: Readonly<Record<string, string | undefined>>,
+): { readonly claude: ClaudeCommand | null; readonly launch: LaunchCommand } | { readonly unavailable: string } => {
+  if (harness === 'claude-code') {
+    try {
+      const claude = claudeCommandFor(env);
+      return { claude, launch: claude };
+    } catch (error) {
+      if (error instanceof ClaudeCommandError) {
+        return { unavailable: error.message };
+      }
+      throw error;
+    }
+  }
+  const codex = codexCommandFor(env);
+  return 'command' in codex ? { claude: null, launch: codex } : { unavailable: codex.message };
+};
+
 const observeExecutor = async (
   harness: ExecutorHarness,
   input: Required<Pick<ObserveExecutorsInput, 'env' | 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>>,
 ): Promise<ExecutorObservation> => {
   const observedAt = input.now().toISOString();
   const base: ObservationBase = { harness, machineId: input.machineId, observedAt };
-  let claude: ClaudeCommand | null = null;
-  if (harness === 'claude-code') {
-    try {
-      claude = claudeCommandFor(input.env);
-    } catch (error) {
-      if (error instanceof ClaudeCommandError) {
-        return unavailableObservation(base, error.message);
-      }
-      throw error;
-    }
+  const resolved = resolveLaunchCommand(harness, input.env);
+  if ('unavailable' in resolved) {
+    return unavailableObservation(base, resolved.unavailable);
   }
-  const command = claude?.command ?? EXECUTOR_COMMANDS[harness];
-  const environment = claude?.environment ?? {};
+  const { claude, launch } = resolved;
+  const { command, environment } = launch;
   const binaryPath = command.includes('/') ? command : input.which(command);
   if (binaryPath === null) {
     return unavailableObservation(base, `${command} binary not found on PATH`);
@@ -326,7 +384,7 @@ const observeExecutor = async (
   }
   const auth =
     claude === null
-      ? await codexAuthProbe(input.run, input.timeoutMs)
+      ? await codexAuthProbe(input.run, input.timeoutMs, launch)
       : await claudeAuthProbe(input.run, input.timeoutMs, claude);
   if (auth.outcome === 'unavailable') {
     return unavailableObservation(base, `${auth.evidence} to the bounded runner`);
@@ -372,6 +430,35 @@ export const probeClaudeAccount = async (input: {
   }
   const auth = await claudeAuthProbe(input.run ?? runBoundedProcess, input.timeoutMs ?? DEFAULT_TIMEOUT_MS, claude);
   return { accountFingerprint: auth.accountFingerprint, evidence: auth.evidence };
+};
+
+export interface CodexAuthProbe {
+  /** The sign-in method word (`CODEX_AUTH_METHODS`) when the CLI named one; `null` otherwise. */
+  readonly authMethod: string | null;
+  readonly authState: ExecutorAuthState;
+  readonly evidence: string;
+  /** `observed` when `codex login status` answered; `unavailable` when the command could not be run at all. */
+  readonly outcome: ExecutorObservationOutcome;
+}
+
+/**
+ * Reads the Codex sign-in now, with the launch's own command and `CODEX_HOME` (`codexCommandFor`):
+ * what a start re-checks just before launching a Codex worker, so the profile that bills the run is
+ * the one admitted (a subscription, never an API key). Codex names no account, so there is no
+ * fingerprint to compare; the state and the method word are the whole evidence.
+ */
+export const probeCodexAuth = async (input: {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly executable?: string;
+  readonly run?: BoundedRun;
+  readonly timeoutMs?: number;
+}): Promise<CodexAuthProbe> => {
+  const codex = codexCommandFor(input.env ?? process.env, input.executable);
+  if (!('command' in codex)) {
+    return { authMethod: null, authState: 'unknown', evidence: codex.message, outcome: 'unavailable' };
+  }
+  const auth = await codexAuthProbe(input.run ?? runBoundedProcess, input.timeoutMs ?? DEFAULT_TIMEOUT_MS, codex);
+  return { authMethod: auth.authMethod, authState: auth.authState, evidence: auth.evidence, outcome: auth.outcome };
 };
 
 export const observeExecutors = async (input: ObserveExecutorsInput): Promise<ExecutorObservation[]> => {

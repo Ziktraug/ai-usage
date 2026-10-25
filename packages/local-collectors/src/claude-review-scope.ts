@@ -1,9 +1,4 @@
 import { createHash } from 'node:crypto';
-import {
-  BoundedProcessError,
-  boundedProcessEnvironment,
-  executeBoundedProcess,
-} from '@ai-usage/local-machine/bounded-process';
 import { isPrintableSkillObservationText } from '@ai-usage/report-core/skill-observation';
 import {
   GIT_EMPTY_TREE,
@@ -13,14 +8,22 @@ import {
   type ReviewScopeFile,
   type ReviewScopeFileStatus,
 } from '@ai-usage/report-core/work-attempts';
+import {
+  GIT_SMALL_OUTPUT_BYTES,
+  type GitAnswer,
+  GitRunError,
+  gitScopeEnvironment,
+  runGit as runGitBounded,
+} from './git-runner';
 
 /**
  * The scope of a launched review (ADR 0055), prepared on the engine's side with git, never by the
- * reviewing agent: exactly one commit.
+ * reviewing agent: exactly one commit, or a range the engine froze beforehand (delegation).
  *
- * 1. `HEAD` is resolved to a SHA first; every later read names that SHA, never `HEAD`.
+ * 1. `HEAD` is resolved to a SHA first; every later read names that SHA, never `HEAD`. With a
+ *    frozen `revision` nothing is resolved: the given SHAs are the scope.
  * 2. The commit object gives its parents; the base is the first parent (a merge is compared with
- *    its first parent only), or the empty tree for a root commit.
+ *    its first parent only), or the empty tree for a root commit. A frozen range names its base.
  * 3. `git diff-tree -p` between base and SHA produces the patch, with external diff drivers and
  *    text conversion disabled, no colour, rename detection, fixed prefixes and context, and no
  *    pager. A patch over `maxPatchReadBytes`, or one that is not UTF-8 text, is refused.
@@ -28,6 +31,7 @@ import {
  *    whether the review received all of its patch, a prefix, nothing, or only a binary notice.
  * 5. A dirty working tree is stated (files the agent reads may differ from the commit), and `HEAD`
  *    is resolved again at the end: a moved `HEAD` refuses the scope rather than mixing revisions.
+ *    A frozen revision cannot move, so it is not rechecked.
  *
  * Every git call is a bounded process with the shared environment allow-list, no prompt
  * (`GIT_TERMINAL_PROMPT=0`) and no optional lock, so preparing a scope never writes the index.
@@ -64,45 +68,27 @@ export interface PreparedReviewScope {
   readonly scope: ReviewAttemptScope;
 }
 
+/** A scope the engine froze to object ids before the launch; `HEAD` plays no part in it. */
+export interface FrozenReviewRevision {
+  readonly baseSha: string;
+  readonly headSha: string;
+  readonly kind: 'commit' | 'range';
+}
+
 export interface PrepareReviewScopeOptions {
   /** Test seam: runs after the patch was read and before `HEAD` is resolved again. */
   readonly beforeHeadRecheck?: () => Promise<void>;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly limits?: Partial<ReviewPatchLimits>;
+  /**
+   * The frozen SHAs to diff (`baseSha..headSha`) instead of `HEAD` against its first parent. For a
+   * `commit` the base must be the commit's first parent (or the empty tree); for a `range` it is
+   * taken as given. `HEAD` is neither resolved nor rechecked.
+   */
+  readonly revision?: FrozenReviewRevision;
 }
 
-const GIT_TIMEOUT_MS = 10_000;
 const GIT_PATCH_TIMEOUT_MS = 30_000;
-const GIT_SMALL_OUTPUT_BYTES = 1024 * 1024;
-/**
- * Global options of every call: no pager, no optional lock, raw non-ASCII paths, no fsmonitor, no
- * colour, and no automatic maintenance or garbage collection started in the operator's repository.
- */
-const GIT_GLOBAL_OPTIONS = [
-  '--no-pager',
-  '--no-optional-locks',
-  '-c',
-  'core.quotePath=false',
-  '-c',
-  'core.fsmonitor=false',
-  '-c',
-  'color.ui=never',
-  '-c',
-  'maintenance.auto=false',
-  '-c',
-  'gc.auto=0',
-] as const;
-/**
- * Forced on every call: no prompt, no optional lock, and no lazy fetch. In a partial clone a
- * missing object would otherwise be fetched from the promisor remote (network, credential
- * helpers, a new pack in `.git/objects`); with `GIT_NO_LAZY_FETCH` the read fails instead and the
- * scope is refused as `blob-not-local`.
- */
-const GIT_SCOPE_ENVIRONMENT = {
-  GIT_NO_LAZY_FETCH: '1',
-  GIT_OPTIONAL_LOCKS: '0',
-  GIT_TERMINAL_PROMPT: '0',
-} as const;
 /** The patch options, explicit so no repository or user configuration changes what is reviewed. */
 export const REVIEW_DIFF_TREE_OPTIONS = [
   'diff-tree',
@@ -354,36 +340,25 @@ export const boundReviewPatch = (
   };
 };
 
-interface GitAnswer {
-  readonly exitCode: number;
-  readonly stdout: string;
-}
-
+/** The shared git runner, its failures spoken in the scope's vocabulary. */
 const runGit = async (
   checkoutPath: string,
   args: readonly string[],
   environment: Readonly<Record<string, string>>,
   maximumOutputBytes: number,
-  timeoutMs: number = GIT_TIMEOUT_MS,
+  timeoutMs?: number,
 ): Promise<GitAnswer> => {
   try {
-    return await executeBoundedProcess({
-      args: [...GIT_GLOBAL_OPTIONS, ...args],
-      command: 'git',
-      cwd: checkoutPath,
-      env: environment,
-      maximumOutputBytes,
-      timeoutMs,
-    });
+    return await runGitBounded(checkoutPath, args, environment, maximumOutputBytes, timeoutMs);
   } catch (error) {
-    if (error instanceof BoundedProcessError) {
+    if (error instanceof GitRunError) {
       if (error.kind === 'output-limit') {
         throw new ReviewScopeError('too-large', `git ${args[0]} answered more than ${maximumOutputBytes} bytes`);
       }
-      if (error.kind === 'failed' && error.failure === 'undecodable') {
+      if (error.kind === 'not-text') {
         throw new ReviewScopeError('not-text', `git ${args[0]} answered something that is not UTF-8 text`);
       }
-      if (error.kind === 'failed') {
+      if (error.kind === 'signalled') {
         throw new ReviewScopeError('git-failed', `git ${args[0]} ended without an exit code (killed by a signal)`);
       }
       throw new ReviewScopeError('git-failed', `git ${args[0]} ${error.kind}`);
@@ -496,11 +471,19 @@ export const prepareReviewScope = async (
     maxPatchPromptLines: options.limits?.maxPatchPromptLines ?? REVIEW_ATTEMPT_BOUNDS.maxPatchPromptLines,
     maxPatchReadBytes: options.limits?.maxPatchReadBytes ?? REVIEW_ATTEMPT_BOUNDS.maxPatchReadBytes,
   };
-  const environment = {
-    ...boundedProcessEnvironment({}, options.env ?? process.env),
-    ...GIT_SCOPE_ENVIRONMENT,
-  };
-  const headSha = await resolveHead(checkoutPath, environment);
+  const environment = gitScopeEnvironment(options.env ?? process.env);
+  const revision = options.revision ?? null;
+  if (
+    revision !== null &&
+    !(
+      OBJECT_ID.test(revision.headSha) &&
+      OBJECT_ID.test(revision.baseSha) &&
+      revision.baseSha.length === revision.headSha.length
+    )
+  ) {
+    throw new ReviewScopeError('git-failed', 'the frozen revision does not name two object ids of one format');
+  }
+  const headSha = revision === null ? await resolveHead(checkoutPath, environment) : revision.headSha;
   const prefix = await runGit(checkoutPath, ['rev-parse', '--show-prefix'], environment, 8192);
   if (prefix.exitCode !== 0) {
     throw new ReviewScopeError('git-failed', 'git rev-parse --show-prefix failed');
@@ -511,10 +494,27 @@ export const prepareReviewScope = async (
   }
   const { parents, subject } = readCommit(commit.stdout);
   const emptyTree = headSha.length === 40 ? GIT_EMPTY_TREE.sha1 : GIT_EMPTY_TREE.sha256;
-  const baseSha = parents[0] ?? emptyTree;
-  if (!OBJECT_ID.test(baseSha)) {
+  const firstParentBase = parents[0] ?? emptyTree;
+  if (!OBJECT_ID.test(firstParentBase)) {
     throw new ReviewScopeError('git-failed', `commit ${headSha} names an unreadable parent`);
   }
+  let baseSha: string;
+  let base: ReviewAttemptScope['base'];
+  if (revision === null || revision.kind === 'commit') {
+    if (revision !== null && revision.baseSha !== firstParentBase) {
+      throw new ReviewScopeError(
+        'git-failed',
+        `the frozen base ${revision.baseSha} is not the first parent of commit ${headSha}`,
+      );
+    }
+    baseSha = firstParentBase;
+    base = parents.length === 0 ? 'empty-tree' : 'first-parent';
+  } else {
+    baseSha = revision.baseSha;
+    base = 'range-base';
+  }
+  const kind: ReviewAttemptScope['kind'] = revision?.kind ?? 'commit';
+  const reviewed = kind === 'range' ? `range ${baseSha}..${headSha}` : `commit ${headSha}`;
   let patch: GitAnswer;
   try {
     patch = await runGit(
@@ -528,7 +528,7 @@ export const prepareReviewScope = async (
     if (error instanceof ReviewScopeError && error.kind === 'too-large') {
       throw new ReviewScopeError(
         'too-large',
-        `the patch of commit ${headSha} exceeds ${limits.maxPatchReadBytes} bytes; review a smaller commit`,
+        `the patch of ${reviewed} exceeds ${limits.maxPatchReadBytes} bytes; review a smaller ${kind}`,
       );
     }
     throw error;
@@ -538,7 +538,7 @@ export const prepareReviewScope = async (
     if (absent > 0) {
       throw new ReviewScopeError(
         'blob-not-local',
-        `blob-not-local: ${absent} blob${absent === 1 ? '' : 's'} of commit ${headSha} or its base ${absent === 1 ? 'is' : 'are'} not in the local object store (partial clone); the review never fetches: fetch them yourself (git fetch) or review another checkout`,
+        `blob-not-local: ${absent} blob${absent === 1 ? '' : 's'} of ${reviewed} or its base ${absent === 1 ? 'is' : 'are'} not in the local object store (partial clone); the review never fetches: fetch them yourself (git fetch) or review another checkout`,
       );
     }
     throw new ReviewScopeError('git-failed', `git diff-tree could not compare ${baseSha} and ${headSha}`);
@@ -548,15 +548,15 @@ export const prepareReviewScope = async (
   if (patch.stdout.includes('\0')) {
     throw new ReviewScopeError(
       'not-text',
-      `the patch of commit ${headSha} contains a NUL byte; it cannot be passed to the review as text`,
+      `the patch of ${reviewed} contains a NUL byte; it cannot be passed to the review as text`,
     );
   }
   const bounded = boundReviewPatch(patch.stdout, limits);
   if (bounded.files.length === 0) {
-    throw new ReviewScopeError('empty', `commit ${headSha} changes no file against its base; nothing to review`);
+    throw new ReviewScopeError('empty', `${reviewed} changes no file against its base; nothing to review`);
   }
   if (bounded.files.every((file) => file.binary)) {
-    throw new ReviewScopeError('binary-only', `commit ${headSha} changes only binary files; nothing textual to review`);
+    throw new ReviewScopeError('binary-only', `${reviewed} changes only binary files; nothing textual to review`);
   }
   let workingTreeDirty: boolean;
   try {
@@ -582,25 +582,27 @@ export const prepareReviewScope = async (
       throw error;
     }
   }
-  await options.beforeHeadRecheck?.();
-  const headAfter = await resolveHead(checkoutPath, environment);
-  if (headAfter !== headSha) {
-    throw new ReviewScopeError(
-      'moved',
-      `HEAD moved from ${headSha} to ${headAfter} while the review was prepared; start the review again`,
-    );
+  if (revision === null) {
+    await options.beforeHeadRecheck?.();
+    const headAfter = await resolveHead(checkoutPath, environment);
+    if (headAfter !== headSha) {
+      throw new ReviewScopeError(
+        'moved',
+        `HEAD moved from ${headSha} to ${headAfter} while the review was prepared; start the review again`,
+      );
+    }
   }
   const files = bounded.files.map(({ binary: _binary, ...file }) => file);
   const listed = files.filter(listable).slice(0, REVIEW_ATTEMPT_BOUNDS.maxScopeFiles);
   const scope = parseReviewAttemptScope({
-    base: parents.length === 0 ? 'empty-tree' : 'first-parent',
+    base,
     baseSha,
     fileCount: files.length,
     files: listed,
     headSha,
     includedBytes: bounded.includedBytes,
     includedLines: bounded.includedLines,
-    kind: 'commit',
+    kind,
     parentCount: parents.length,
     patchBytes: bounded.patchBytes,
     patchLines: bounded.patchLines,
@@ -611,7 +613,7 @@ export const prepareReviewScope = async (
     workingTreeDirty,
   } satisfies ReviewAttemptScope);
   if (scope === null) {
-    throw new ReviewScopeError('git-failed', `the scope of commit ${headSha} does not satisfy its own contract`);
+    throw new ReviewScopeError('git-failed', `the scope of ${reviewed} does not satisfy its own contract`);
   }
   return { patch: bounded.included, scope };
 };
