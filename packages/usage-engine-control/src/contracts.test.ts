@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  boundUsageEngineDelegationConfigIssues,
   boundUsageEngineReviewMessage,
   classifyUsageEngineRetry,
   parseProjectGroupsByReferenceCommand,
@@ -7,6 +8,7 @@ import {
   parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandCompletion,
   parseUsageEngineCommandResult,
+  parseUsageEngineDelegationConfigOutput,
   parseUsageEngineDelegationStartOutput,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
@@ -929,5 +931,56 @@ describe('narrow project-group command parser', () => {
         projectGroups: [{ id: 'group-1', name: 'Group 1', sources: ['/private/history'] }],
       }),
     ).toThrow('reference');
+  });
+});
+
+describe('the delegation config issues an invalid answer lists', () => {
+  const issuesBytes = (issues: readonly object[]): number => Buffer.byteLength(JSON.stringify(issues), 'utf8');
+  const answer = (issues: readonly { path: string; reason: string }[]) => ({
+    issues,
+    kind: 'delegation-config' as const,
+    result: 'invalid' as const,
+    revision: '0123456789abcdef',
+  });
+
+  test('keeps a short list whole and empty stays empty', () => {
+    expect(boundUsageEngineDelegationConfigIssues([])).toEqual([]);
+    const few = [
+      { path: 'delegation.rules[0].effect', reason: 'must be forbid, restrict or require' },
+      { path: 'delegation.defaults.reservePercent', reason: 'must be a number between 0 and 100' },
+    ];
+    expect(boundUsageEngineDelegationConfigIssues(few)).toEqual(few);
+  });
+
+  test('counts the issues beyond the count bound in a closing entry instead of dropping them', () => {
+    const many = Array.from({ length: 100 }, (_, index) => ({
+      path: `delegation.rules[${index}]`,
+      reason: 'unknown field(s): x',
+    }));
+    const listed = boundUsageEngineDelegationConfigIssues(many);
+    expect(listed).toHaveLength(64);
+    expect(listed.slice(0, 63)).toEqual(many.slice(0, 63));
+    expect(listed[63]?.reason).toStartWith('37 more issue(s) not listed');
+    expect(parseUsageEngineDelegationConfigOutput(answer(listed)).issues).toHaveLength(64);
+  });
+
+  test('keeps sixty-four issues of a kilobyte each under half the completion bound', () => {
+    // One unknown key of about a kilobyte in each of the 64 rules the policy admits.
+    const wide = Array.from({ length: 64 }, (_, index) => ({
+      path: `delegation.rules[${index}]`,
+      reason: `unknown field(s): ${'k'.repeat(1000)}${index}`,
+    }));
+    expect(issuesBytes(wide)).toBeGreaterThan(usageEngineControlBounds.maxCommandCompletionEventBytes);
+    const listed = boundUsageEngineDelegationConfigIssues(wide);
+    expect(issuesBytes(listed)).toBeLessThanOrEqual(usageEngineControlBounds.maxCommandCompletionEventBytes / 2);
+    expect(listed.length).toBeLessThan(wide.length);
+    const omitted = wide.length - (listed.length - 1);
+    expect(listed.at(-1)?.reason).toStartWith(`${omitted} more issue(s) not listed`);
+    expect(listed.slice(0, -1)).toEqual(
+      wide
+        .slice(0, listed.length - 1)
+        .map((issue) => ({ ...issue, reason: boundUsageEngineReviewMessage(issue.reason) })),
+    );
+    expect(parseUsageEngineDelegationConfigOutput(answer(listed)).issues).toEqual(listed);
   });
 });

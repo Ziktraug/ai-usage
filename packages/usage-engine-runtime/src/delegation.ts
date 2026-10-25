@@ -94,6 +94,7 @@ import {
 } from '@ai-usage/report-core/work-executors';
 import { declarationForReviewCandidate } from '@ai-usage/report-core/work-routing';
 import {
+  boundUsageEngineDelegationConfigIssues,
   boundUsageEngineReviewMessage,
   type UsageEngineCommand,
   type UsageEngineDelegationCancelOutput,
@@ -1408,10 +1409,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
             }
             if (issues.length > 0) {
               decided.answer = {
-                issues: issues.slice(0, 64).map((issue) => ({
-                  path: boundUsageEngineReviewMessage(issue.path),
-                  reason: boundUsageEngineReviewMessage(issue.reason),
-                })),
+                issues: boundUsageEngineDelegationConfigIssues(issues),
                 kind: 'delegation-config',
                 result: 'invalid',
                 revision: current,

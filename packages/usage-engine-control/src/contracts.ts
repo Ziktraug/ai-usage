@@ -216,6 +216,53 @@ export const boundUsageEngineReviewMessage = (message: string): string => {
   return `${kept}${TRUNCATION_MARKER}`;
 };
 
+/**
+ * Serialized UTF-8 bytes the issues of one invalid delegation config answer take at most: half the
+ * completion event bound, so the envelope (command, ids, timestamps, revision) always fits beside.
+ */
+const maxDelegationConfigIssuesBytes = maxCommandCompletionEventBytes / 2;
+
+interface DelegationConfigIssueText {
+  readonly path: string;
+  readonly reason: string;
+}
+
+/**
+ * The issues an invalid `update-delegation-config` answer lists: each path and reason cut by
+ * `boundUsageEngineReviewMessage`, in order, while both the count (`maxDelegationConfigIssues`) and
+ * the serialized size (`maxDelegationConfigIssuesBytes`) leave room for one closing entry; the
+ * issues left out are never dropped in silence, the closing entry counts them.
+ */
+export const boundUsageEngineDelegationConfigIssues = (
+  issues: readonly DelegationConfigIssueText[],
+): DelegationConfigIssueText[] => {
+  const closing = (omitted: number): DelegationConfigIssueText => ({
+    path: 'delegation',
+    reason: `${omitted} more issue(s) not listed to keep the answer bounded; correct the ones above and save again to see them.`,
+  });
+  // The closing entry with the widest count this answer could carry, reserved up front.
+  const reserved = encoder.encode(JSON.stringify(closing(issues.length))).byteLength + 1;
+  const listed: DelegationConfigIssueText[] = [];
+  let bytes = 2;
+  for (const issue of issues) {
+    const entry = {
+      path: boundUsageEngineReviewMessage(issue.path),
+      reason: boundUsageEngineReviewMessage(issue.reason),
+    };
+    const size = encoder.encode(JSON.stringify(entry)).byteLength + (listed.length === 0 ? 0 : 1);
+    // The last issue needs no room for a closing entry: listing it lists everything.
+    const isLast = listed.length === issues.length - 1;
+    const byteRoom = isLast ? maxDelegationConfigIssuesBytes : maxDelegationConfigIssuesBytes - reserved;
+    const countRoom = isLast ? maxDelegationConfigIssues : maxDelegationConfigIssues - 1;
+    if (listed.length >= countRoom || bytes + size > byteRoom) {
+      break;
+    }
+    listed.push(entry);
+    bytes += size;
+  }
+  return listed.length === issues.length ? listed : [...listed, closing(issues.length - listed.length)];
+};
+
 const parseOpaqueId = <Name extends string>(value: unknown, label: string): Branded<string, Name> => {
   if (!(isBoundedString(value, maxOpaqueIdBytes) && opaqueIdPattern.test(value))) {
     return fail(`${label} is invalid.`);

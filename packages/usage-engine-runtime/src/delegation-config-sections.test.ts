@@ -225,4 +225,29 @@ describe('update-delegation-config answers through the control plane', () => {
       current.revisions.policyRevision,
     );
   });
+
+  test('sixty-four rules each quoting a kilobyte key answer invalid within the completion bound', async () => {
+    const fixture = await createFixture();
+    const current = await readLocalRoutingDeclarations(fixture.home);
+    // One unknown key of about a kilobyte in each of the 64 rules the policy admits: 64 issues whose
+    // reasons together pass the 64 KiB completion bound unless the list itself is bounded.
+    const rules = Array.from({ length: 64 }, (_, index) => ({
+      effect: 'forbid',
+      id: `wide-rule-${index}`,
+      match: {},
+      routes: {},
+      [`${'k'.repeat(1000)}${index}`]: true,
+    }));
+    const command = {
+      command: 'update-delegation-config' as const,
+      delegation: asJsonRecord({ ...current.delegation.config, rules }),
+      expectedRevision: current.revisions.policyRevision,
+    };
+    const answer = await fixture.engine.updateConfig(command);
+    expect(answer.result).toBe('invalid');
+    expect(answer.issues.at(-1)?.reason).toContain('more issue(s) not listed');
+    expect(() =>
+      successfulCommandCompletion({ command, commandId: 'command-2' as UsageEngineCommandId }, answer, NOW),
+    ).not.toThrow();
+  });
 });
