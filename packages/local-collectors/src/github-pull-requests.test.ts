@@ -124,6 +124,26 @@ describe('rollupChecks', () => {
 });
 
 describe('parsePullRequestView', () => {
+  test('matches only owner and repository path segments case-insensitively', () => {
+    for (const repository of ['Fixture/project', 'fixture/Project', 'FIXTURE/PROJECT']) {
+      expect(parsePullRequestView(view({ url: `https://github.com/${repository}/pull/66` }), link(66))).toMatchObject({
+        state: 'OPEN',
+      });
+    }
+    for (const url of [
+      'http://github.com/Fixture/Project/pull/66',
+      'https://elsewhere.test/Fixture/Project/pull/66',
+      'https://github.com/other/Project/pull/66',
+      'https://github.com/Fixture/other/pull/66',
+      'https://github.com/Fixture/Project/PULL/66',
+      'https://github.com/Fixture/Project/pull/67',
+      'https://github.com/Fixture/Project/pull/066',
+      'https://github.com/Fixture/Project/pull/66/',
+    ]) {
+      expect(parsePullRequestView(view({ url }), link(66))).toBeNull();
+    }
+  });
+
   test('ignores unknown keys and rejects missing or mistyped expected ones', () => {
     expect(parsePullRequestView(view({ extra: 'ignored', reviewDecision: '' }), link(66))).toMatchObject({
       checksRollup: 'success',
@@ -143,6 +163,98 @@ describe('parsePullRequestView', () => {
 });
 
 describe('observePullRequests through a fake gh on PATH', () => {
+  test('observes discovered and stored repository spellings once with the first spelling and role', async () => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout: reviewThreadsBody([{ isResolved: false }]) } },
+      pullRequests: { 'Owner/Repo#1': { stdout: view({ url: 'https://github.com/Owner/Repo/pull/1' }) } },
+    });
+    const batch = await observe(fake, {
+      links: [
+        { ...link(1, 'Owner/Repo', 'GitHub.com'), discoveryRole: 'author' },
+        link(1, 'owner/repo'),
+        { ...link(1, 'OWNER/REPO'), discoveryRole: 'review-requested' },
+      ],
+    });
+    expect(batch.observations).toEqual([
+      expect.objectContaining({
+        discoveryRole: 'author',
+        host: 'github.com',
+        number: 1,
+        outcome: 'observed',
+        repository: 'Owner/Repo',
+        unresolvedReviewThreads: 1,
+      }),
+    ]);
+    expect(batch.truncated).toBe(false);
+    const calls = fake.calls();
+    expect(calls.map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+    expect(calls[1]?.args.slice(0, 5)).toEqual(['pr', 'view', '1', '--repo', 'Owner/Repo']);
+    expect(calls[2]?.args.slice(4)).toEqual(['-f', 'owner=Owner', '-f', 'name=Repo', '-F', 'number=1']);
+  });
+
+  test.each([undefined, null] as const)(
+    'merges a later role into a %s role without changing the first spelling',
+    async (discoveryRole) => {
+      const fake = installFakeGh({
+        pullRequests: { 'owner/repo#1': { stdout: view({ url: 'https://github.com/Owner/Repo/pull/1' }) } },
+      });
+      const batch = await observe(fake, {
+        links: [
+          { ...link(1, 'owner/repo'), ...(discoveryRole === undefined ? {} : { discoveryRole }) },
+          { ...link(1, 'Owner/Repo'), discoveryRole: 'review-requested' },
+          { ...link(1, 'OWNER/REPO'), discoveryRole: 'author' },
+        ],
+        maxLinks: 1,
+      });
+      expect(batch.truncated).toBe(false);
+      expect(batch.observations).toEqual([
+        expect.objectContaining({ discoveryRole: 'review-requested', outcome: 'observed', repository: 'owner/repo' }),
+      ]);
+      expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+        ['auth', 'token'],
+        ['pr', 'view'],
+        ['api', 'graphql'],
+      ]);
+    },
+  );
+
+  test('bounds distinct identities after merging case variants and still rejects mismatched URLs', async () => {
+    const fake = installFakeGh({
+      pullRequests: {
+        'Owner/Repo#1': { stdout: view({ url: 'https://github.com/owner/repo/pull/1' }) },
+        'Owner/Repo#2': { stdout: view({ url: 'https://github.com/owner/other/pull/2' }) },
+        'Owner/Repo#3': { stdout: view({ url: 'https://github.com/owner/repo/pull/4' }) },
+      },
+    });
+    const batch = await observe(fake, {
+      links: [
+        link(1, 'Owner/Repo'),
+        link(1, 'owner/repo'),
+        link(2, 'Owner/Repo'),
+        link(3, 'Owner/Repo'),
+        link(4, 'Owner/Repo'),
+      ],
+      maxLinks: 3,
+    });
+    expect(batch.observations.map(({ number, outcome }) => [number, outcome])).toEqual([
+      [1, 'observed'],
+      [2, 'invalid'],
+      [3, 'invalid'],
+    ]);
+    expect(batch.truncated).toBe(true);
+    expect(
+      fake
+        .calls()
+        .filter(({ args }) => args[0] === 'pr')
+        .map(({ args }) => args[2]),
+    ).toEqual(['1', '2', '3']);
+    expect(fake.calls().filter(({ args }) => args[0] === 'api')).toHaveLength(1);
+  });
+
   test('observes open, merged and draft pull requests, deduplicates links and bounds the batch', async () => {
     const fake = installFakeGh({
       pullRequests: {

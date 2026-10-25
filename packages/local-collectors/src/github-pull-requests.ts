@@ -110,7 +110,8 @@ const GH_ENVIRONMENT: Readonly<Record<string, string>> = {
 
 const { maxDetailText, maxPath, maxShortText } = WORK_ATTENTION_BOUNDS;
 
-const linkKey = (link: PullRequestLink): string => JSON.stringify([link.host, link.repository, link.number]);
+const linkKey = (link: PullRequestLink): string =>
+  JSON.stringify([link.host, link.repository.toLowerCase(), link.number]);
 
 const normalizeLink = (link: PullRequestLink): PullRequestLink | null => {
   const host = typeof link.host === 'string' ? link.host.trim().toLowerCase() : '';
@@ -280,10 +281,14 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
   if (url !== undefined) {
     try {
       const parsed = new URL(url);
+      const segments = parsed.pathname.split('/');
       urlMatchesLink =
         parsed.protocol === 'https:' &&
         parsed.hostname === link.host &&
-        parsed.pathname === `/${link.repository}/pull/${String(link.number)}`;
+        segments.length === 5 &&
+        `${segments[1]}/${segments[2]}`.toLowerCase() === link.repository.toLowerCase() &&
+        segments[3] === 'pull' &&
+        segments[4] === String(link.number);
     } catch {
       urlMatchesLink = false;
     }
@@ -633,8 +638,7 @@ const resolveAccountToken = (
 export const observePullRequests = (options: ObservePullRequestsOptions): Effect.Effect<PullRequestObservationBatch> =>
   Effect.gen(function* () {
     const maxLinks = options.maxLinks ?? GITHUB_PULL_REQUEST_DEFAULTS.maxLinks;
-    const unique: PullRequestLink[] = [];
-    const seen = new Set<string>();
+    const unique = new Map<string, PullRequestLink>();
     let rejected = 0;
     for (const candidate of options.links) {
       const link = normalizeLink(candidate);
@@ -643,13 +647,16 @@ export const observePullRequests = (options: ObservePullRequestsOptions): Effect
         continue;
       }
       const key = linkKey(link);
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(link);
+      const first = unique.get(key);
+      const discoveryRole = link.discoveryRole ?? null;
+      if (first === undefined) {
+        unique.set(key, link);
+      } else if (first.discoveryRole === null && discoveryRole !== null) {
+        unique.set(key, { ...first, discoveryRole });
       }
     }
-    const selected = unique.slice(0, maxLinks);
-    const truncated = unique.length > selected.length;
+    const selected = [...unique.values()].slice(0, maxLinks);
+    const truncated = unique.size > selected.length;
     const accountLabel = options.account?.ghUser ?? null;
     const baseContext: Omit<RunContext, 'environment'> = {
       accountLabel,
