@@ -21,6 +21,7 @@ import {
   type WorkThreadCommand,
   type WorkThreadLinkInput,
 } from '@ai-usage/report-core/work-thread';
+import { deriveWorkThreadSituation } from '@ai-usage/report-core/work-thread-situation';
 import { WORK_THREAD_VIEW_BOUNDS, type WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import {
   queryServedSessionPullRequestLinks,
@@ -961,10 +962,83 @@ describe('work-thread reader', () => {
             observations: [{ ...observation, observedAt: at(0), outcome: 'timeout', branch: null }],
           }),
         );
-        expect((await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.markers.local).toEqual([]);
+        expect((await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.markers.local).toMatchObject([
+          { latest: { outcome: 'timeout' }, latestSuccessful: observation, via: 'session-checkout' },
+        ]);
       }
     },
   );
+
+  test.each([
+    { outcome: 'timeout', stale: false },
+    { outcome: 'invalid', stale: false },
+    { outcome: 'timeout', stale: true },
+    { outcome: 'invalid', stale: true },
+  ] as const)('retains failed session checkout evidence ($outcome, stale: $stale)', async ({ outcome, stale }) => {
+    const dbPath = await fixture();
+    await publish(dbPath, [withBranch(session('local-session'), 'refs/heads/feat/x')]);
+    await run(importPullRequestObservations({ dbPath, observations: [{ ...pr(-3), headRef: 'feat/x' }] }));
+    const threadIds = [
+      await create(dbPath, [sessionLink('local-session')]),
+      await create(dbPath, [sessionLink('local-session'), { kind: 'pull-request', key: 'github.com/fixture/repo#7' }]),
+    ];
+    const successful = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/project',
+      observedAt: at(stale ? -200 : -2),
+      outcome: 'observed',
+      branch: 'feat/x',
+      dirty: false,
+      ahead: 0,
+    });
+    const failed = parseCheckoutStatusObservation({
+      machineId: MACHINE,
+      checkoutPath: '/fixture/project',
+      observedAt: at(-1),
+      outcome,
+    });
+    if (successful === null || failed === null) {
+      throw new Error('Invalid failed session checkout fixture');
+    }
+    await run(importCheckoutStatusObservations({ dbPath, observations: [successful, failed] }));
+    for (const threadId of threadIds) {
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+      expect(detail?.row.markers.local).toEqual([
+        {
+          key: sessionLink('local-session').key,
+          latest: failed,
+          latestSuccessful: successful,
+          via: 'session-checkout',
+        },
+      ]);
+      expect(list.rows.find((row) => row.thread.threadId === threadId)?.markers.local).toEqual(
+        detail?.row.markers.local,
+      );
+      if (detail === null) {
+        throw new Error('Missing checkout task');
+      }
+      const situation = deriveWorkThreadSituation(detail.row, at(0));
+      expect(situation.remainders).toContainEqual({
+        key: sessionLink('local-session').key,
+        source: 'local',
+        kind: 'source-unavailable',
+        observedAt: failed.observedAt,
+        outcome,
+      });
+      expect(situation.remainders.some((remainder) => remainder.kind === 'source-stale')).toBe(stale);
+      expect(situation.hint).not.toBe('ready-to-close');
+    }
+    for (const newer of [
+      { ...successful, observedAt: at(-0.5), branch: 'main' },
+      { ...failed, observedAt: at(0) },
+    ]) {
+      await run(importCheckoutStatusObservations({ dbPath, observations: [newer] }));
+      for (const threadId of threadIds) {
+        expect((await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW })))?.row.markers.local).toEqual([]);
+      }
+    }
+  });
 
   test('analysis checkouts require a matching recorded branch and retain the matching session identity', async () => {
     const dbPath = await fixture();

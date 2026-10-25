@@ -241,6 +241,13 @@ export interface ThreadSourceAvailabilityDetail {
   readonly stale: boolean;
 }
 
+const hasEpisodeCheckout = (episodes: readonly WorkThreadEpisode[]): boolean =>
+  episodes.some(
+    (episode) =>
+      (episode.resume.kind === 'cli-resume' && Boolean(episode.resume.cwd?.trim())) ||
+      hasEpisodeCheckout(episode.children),
+  );
+
 /** Task availability follows its active links and served evidence; the list keeps global status. */
 export const taskSourceStatuses = (
   data: Pick<WorkThreadDetailDataset, 'episodes' | 'row' | 'sources'>,
@@ -257,7 +264,7 @@ export const taskSourceStatuses = (
       relevant.add(sourceForLink[link.kind]);
     }
   }
-  if (data.row.markers.local.length > 0) {
+  if (data.row.markers.local.length > 0 || hasEpisodeCheckout(data.episodes)) {
     relevant.add('checkouts');
   }
   if (data.row.markers.pullRequests.length > 0) {

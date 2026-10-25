@@ -567,7 +567,8 @@ const readRow = (
       if (checkout.via === 'branch-link') {
         return [{ ...factOf(checkout.key, observation), via: checkout.via }];
       }
-      const branch = observation?.latest.outcome === 'observed' ? branchRef(observation.latest.branch) : null;
+      const successful = observation?.latest.outcome === 'observed' ? observation.latest : observation?.latestObserved;
+      const branch = branchRef(successful?.branch);
       if (branch === null) {
         return [];
       }

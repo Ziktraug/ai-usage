@@ -694,6 +694,73 @@ describe('source availability belongs to the current task', () => {
     ['branch', 'branch:github.example/synthetic/shop@topic', 'checkouts'],
     ['session', 'session:fixture-machine/codex/one', 'sessions'],
   ] as const;
+  test.each([false, true])(
+    'keeps failed checkout reads visible without Local markers (nested checkout: %s)',
+    (nestedCheckout) => {
+      const checkoutEpisode: WorkThreadEpisode = {
+        ...episode,
+        children: [],
+        resume: { kind: 'cli-resume', command: 'codex resume fixture', cwd: '/fixture/checkout' },
+      };
+      const root: WorkThreadEpisode = nestedCheckout
+        ? {
+            ...checkoutEpisode,
+            linkKey: `session:${episode.machineId}/${episode.harness}/root-without-checkout`,
+            sourceSessionId: 'root-without-checkout',
+            resume: { kind: 'none', reason: 'No root checkout recorded' },
+            children: [
+              {
+                ...checkoutEpisode,
+                linkKey: `session:${episode.machineId}/${episode.harness}/middle-without-checkout`,
+                sourceSessionId: 'middle-without-checkout',
+                children: [checkoutEpisode],
+                resume: { kind: 'none', reason: 'Unknown' },
+              },
+            ],
+          }
+        : checkoutEpisode;
+      const link: WorkThreadLink = {
+        createdAt: analysis.generatedAt,
+        detachedAt: null,
+        key: root.linkKey,
+        kind: 'session',
+        linkId: '20000000-0000-4000-8000-000000000002',
+        provenance: 'user',
+        threadId: analysis.row.thread.threadId,
+      };
+      const data = { ...unrelated, episodes: [root], row: { ...unrelated.row, links: [link] } };
+      const selected = taskSourceStatuses(data);
+      expect(selected.map((status) => status.source)).toEqual(['checkouts', 'sessions']);
+      expect(selected[0]).toBe(sources[2]);
+      expect(threadSourceAvailability(selected, analysis.generatedAt, 'UTC')).toMatchObject({
+        summary: 'Local read failed',
+        details: expect.arrayContaining([
+          { source: 'checkouts', label: 'read failed', message: 'Checkout read failed', lastRunAt: null, stale: false },
+        ]),
+      });
+      expect(
+        taskSourceStatuses({
+          ...data,
+          episodes: [],
+          row: { ...data.row, links: [{ ...link, detachedAt: analysis.generatedAt }] },
+        }),
+      ).toEqual([]);
+    },
+  );
+  test('sessions without a known checkout do not inherit unrelated checkout failures', () => {
+    const resumes: readonly WorkThreadEpisode['resume'][] = [
+      { kind: 'none', reason: 'Resume unavailable' },
+      { kind: 'cli-resume', command: 'codex resume fixture', cwd: null },
+      { kind: 'cli-resume', command: 'codex resume fixture', cwd: '' },
+      { kind: 'cli-resume', command: 'codex resume fixture', cwd: ' \t ' },
+    ];
+    for (const resume of resumes) {
+      const unknownCheckout = { ...episode, children: [], resume };
+      expect(taskSourceStatuses({ ...unrelated, episodes: [unknownCheckout] }).map((status) => status.source)).toEqual([
+        'sessions',
+      ]);
+    }
+  });
   test.each(linkedSources)(
     'an active %s keeps its source failure even before any marker was observed',
     (kind, key, source) => {
