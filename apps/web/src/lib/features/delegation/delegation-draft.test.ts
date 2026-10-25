@@ -4,31 +4,33 @@ import { plugin } from 'bun';
 import { compileModule } from 'svelte/compiler';
 import type { DelegationPageClient, DelegationSaveOutcome } from './delegation-contract';
 
-const REGEXP_SPECIALS = /[.*+?^${}()|[\]\\]/gu;
-const RUNE_MODULE = /\.svelte\.ts$/u;
-
-const escapeRegExp = (value: string): string => value.replace(REGEXP_SPECIALS, '\\$&');
+/** Only the two rune modules this file tests; nothing else in the test process is compiled or redirected. */
+const RUNE_MODULES = /\/delegation-draft(?:\.fixture)?\.svelte\.ts$/u;
+const SVELTE_IMPORT = /from\s*(['"])svelte\1/gu;
+const SERVER_ENTRY = /index-server\.js$/u;
 
 /** Bun resolves `svelte` to its server entry; the client one owns `flushSync` and `untrack` as a browser sees them. */
 const svelteServerEntry = fileURLToPath(import.meta.resolve('svelte'));
-if (!svelteServerEntry.endsWith('/index-server.js')) {
+if (!SERVER_ENTRY.test(svelteServerEntry)) {
   throw new Error(`Expected the svelte server entry, got ${svelteServerEntry}.`);
 }
+const svelteClientEntry = svelteServerEntry.replace(SERVER_ENTRY, 'index-client.js');
 
-// Rune modules (`*.svelte.ts`) are compiled for the client here, so `$state` and `$effect` behave
-// as they do in the browser: a refetch is a state change the effect answers after `flushSync`.
+// The two rune modules are compiled for the client, so `$state` and `$effect` behave as they do
+// in the browser: a refetch is a state change the effect answers after `flushSync`. Their own
+// `svelte` import is pointed at the client entry; the process-wide `svelte` entry stays the
+// server one, so the other test files of the same `bun test` run are unaffected.
 plugin({
-  name: 'svelte rune modules (client)',
+  name: 'delegation draft rune modules (client)',
   setup(build) {
-    build.onLoad({ filter: new RegExp(`^${escapeRegExp(svelteServerEntry)}$`, 'u') }, () => ({
-      contents: "export * from './index-client.js';",
-      loader: 'js',
-    }));
-    build.onLoad({ filter: RUNE_MODULE }, async ({ path }) => {
+    build.onLoad({ filter: RUNE_MODULES }, async ({ path }) => {
       const source = await Bun.file(path).text();
       const stripped = new Bun.Transpiler({ loader: 'ts' }).transformSync(source);
       const { js } = compileModule(stripped, { filename: path, generate: 'client' });
-      return { contents: js.code, loader: 'js' };
+      return {
+        contents: js.code.replace(SVELTE_IMPORT, `from ${JSON.stringify(svelteClientEntry)}`),
+        loader: 'js',
+      };
     });
   },
 });

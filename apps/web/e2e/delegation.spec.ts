@@ -2,6 +2,11 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page, Route } from '@playwright/test';
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 
+// The fixture server keeps the settings in memory for the whole run, and some tests below write
+// them (one briefly saves no route annotation at all). Every test of this file therefore runs in
+// order in one worker, so no read-only test observes another test's write in flight.
+test.describe.configure({ mode: 'serial' });
+
 const SAVE_SETTINGS_RPC_PATH = '/rpc/delegation/saveSettings';
 const SETTINGS_RPC_PATH = '/rpc/delegation/settings';
 /** The fixture machine every declaration without a machine is on; a declared route's card is keyed by it. */
