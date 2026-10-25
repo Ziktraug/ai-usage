@@ -38,7 +38,7 @@ export interface WrittenSave<Saved> {
 export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
   const identity = options.identity ?? keyIdentity;
   let draft = $state<Draft>(untrack(options.from));
-  /** What the settings said at `baseRevision`: the merge base of a re-apply. Nothing renders it. */
+  /** What the settings said at `baseRevision`, keyed as the draft is: the merge base of a re-apply. Nothing renders it. */
   let base: Draft = untrack(options.from);
   let baseRevision = $state(untrack(options.revision));
   /** The settings revision the draft was last bound beside; a stale draft keeps the one it was read at. */
@@ -58,7 +58,8 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
   /**
    * The settings at `revision` changed nothing this form writes: the draft keeps its edits and
    * takes what the settings own (an entry the operator added keeps its key, so the form keeps
-   * rendering it). Nothing is decided: with equal bases there is nothing to conflict on.
+   * rendering it). Nothing is decided: with equal bases there is nothing to conflict on. The base
+   * is the latest keyed as the draft is, so the next merge matches the operator's entries by key.
    */
   const rebind = (latest: Draft, revision: string): void => {
     const rebased = rebaseDraft(base, $state.snapshot(draft) as Draft, latest, identity);
@@ -67,7 +68,7 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
       return;
     }
     draft = rebased.draft;
-    base = latest;
+    base = rebased.base;
     baseRevision = revision;
     loadedRevision = revision;
     stale = false;
@@ -123,13 +124,15 @@ export const createDraftSync = <Draft>(options: DraftSyncOptions<Draft>) => {
     },
     /**
      * Re-applies the operator's edits (relative to the base) onto the latest settings and binds the
-     * draft to their revision. Fields both sides changed keep the latest value and are named.
+     * draft to their revision. Fields both sides changed keep the latest value and are named. The
+     * base is the latest keyed as the draft is, so the next merge matches the operator's entries
+     * by key.
      */
     reapply(): DraftResolution {
       const revision = untrack(options.revision);
       const latest = untrack(options.from);
       const rebased = rebaseDraft(base, $state.snapshot(draft) as Draft, latest, identity);
-      base = latest;
+      base = rebased.base;
       draft = rebased.draft;
       baseRevision = revision;
       loadedRevision = revision;

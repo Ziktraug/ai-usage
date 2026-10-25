@@ -11,6 +11,11 @@
  * (its id, its route, its checkout path) once saved and re-read: entries are matched across the
  * three sides by that identity, and the merged entry keeps the operator's key, so the form keeps
  * rendering the same entry.
+ *
+ * Two invariants hold after every merge, by construction: every key in the merged draft is unique
+ * (a settings entry whose key an operator entry still holds — one renamed, say — is given a key
+ * of its own), and the latest is returned keyed as the merged draft is (`base`), so that the next
+ * merge, based on it, matches the operator's entries by key again.
  */
 
 export interface DraftConflict {
@@ -23,6 +28,8 @@ export interface DraftConflict {
 }
 
 export interface DraftRebase<Draft> {
+  /** The latest, keyed as `draft` is: what the next merge is based on, so it matches by key. */
+  readonly base: Draft;
   readonly conflicts: readonly DraftConflict[];
   readonly draft: Draft;
 }
@@ -119,20 +126,33 @@ interface Merge {
   readonly identity: EntryIdentity;
 }
 
+/** What a merge produces at one level: the merged draft and the latest keyed as the draft is. */
+interface Merged {
+  readonly base: unknown;
+  readonly draft: unknown;
+}
+
 const mergeRecord = (
   base: Record<string, unknown>,
   mine: Record<string, unknown>,
   theirs: Record<string, unknown>,
   path: string,
   merge: Merge,
-): Record<string, unknown> => {
-  const merged: Record<string, unknown> = {};
+): Merged => {
+  const draft: Record<string, unknown> = {};
+  const aligned: Record<string, unknown> = { ...theirs };
   for (const field of new Set([...Object.keys(theirs), ...Object.keys(mine)])) {
-    merged[field] = SETTINGS_OWNED_FIELDS.has(field)
-      ? theirs[field]
-      : mergeValue(base[field], mine[field], theirs[field], join(path, field), merge);
+    if (SETTINGS_OWNED_FIELDS.has(field)) {
+      draft[field] = theirs[field];
+    } else {
+      const merged = mergeValue(base[field], mine[field], theirs[field], join(path, field), merge);
+      draft[field] = merged.draft;
+      if (field in theirs) {
+        aligned[field] = merged.base;
+      }
+    }
   }
-  return merged;
+  return { base: aligned, draft };
 };
 
 /** The merged entry under the operator's key, so the form keeps rendering the entry it has. */
@@ -145,12 +165,46 @@ const byIdentity = (entries: readonly Entry[], identity: EntryIdentity): Readonl
   new Map(entries.map((entry) => [identity(entry), entry]));
 
 /**
+ * One row of a merge of keyed lists: the entry the draft keeps (none when the operator removed
+ * it), the latest entry it is the merge of (none for an operator addition), and the key both
+ * render by — the operator's when the operator's form already renders the row.
+ */
+interface Row {
+  readonly draft: Entry | undefined;
+  readonly key: string;
+  readonly latest: Entry | undefined;
+  readonly retained: boolean;
+}
+
+/**
+ * The rows' keys, unique: a key the operator's form renders is kept as it is (the draft's keys
+ * are unique already) and never given to another row, not even once the merge dropped its entry;
+ * a key the settings gave a row is kept unless an operator row holds it — an entry renamed keeps
+ * the key of the entry it was, and the settings may key a new entry by that name — in which case
+ * the settings row is given a key of its own.
+ */
+const uniqueKeys = (rows: readonly Row[], mine: readonly Entry[]): string[] => {
+  const taken = new Set(mine.map((entry) => entry.key));
+  return rows.map((row) => {
+    if (row.retained) {
+      return row.key;
+    }
+    let key = row.key;
+    for (let suffix = 2; taken.has(key); suffix += 1) {
+      key = `${row.key}#${suffix}`;
+    }
+    taken.add(key);
+    return key;
+  });
+};
+
+/**
  * Entries in the latest order with the operator's additions last, each under the operator's key
- * when the operator has it. The base and the operator's draft share their keys (the draft grew
- * from the base), so they are matched by key first; the latest is matched by identity, which is
- * also how an entry whose identity the operator changed finds its base. An entry only one side
- * removed goes if the other side left it untouched; otherwise the removal is a conflict and the
- * latest wins (the entry stays, or stays removed).
+ * when the operator has it. The base is keyed as the operator's draft is (the draft grew from
+ * it, or it was aligned to the draft by the merge before), so they are matched by key first; the
+ * latest is matched by identity, which is also how an entry whose identity the operator changed
+ * finds its base. An entry only one side removed goes if the other side left it untouched;
+ * otherwise the removal is a conflict and the latest wins (the entry stays, or stays removed).
  */
 const mergeEntries = (
   base: readonly Entry[],
@@ -158,7 +212,7 @@ const mergeEntries = (
   theirs: readonly Entry[],
   path: string,
   merge: Merge,
-): unknown[] => {
+): Merged => {
   const { conflicts, identity } = merge;
   const baseByKey = byKey(base);
   const baseById = byIdentity(base, identity);
@@ -169,7 +223,7 @@ const mergeEntries = (
   const placed = new Set<Entry>();
   const unplaced = (entry: Entry | undefined): Entry | undefined =>
     entry === undefined || placed.has(entry) ? undefined : entry;
-  const merged: unknown[] = [];
+  const rows: Row[] = [];
   for (const entry of theirs) {
     const id = identity(entry);
     const entryPath = join(path, id);
@@ -183,12 +237,16 @@ const mergeEntries = (
     }
     if (edited !== undefined) {
       placed.add(edited);
-      merged.push(keyedAs(mergeValue(before, edited, entry, entryPath, merge), edited.key));
+      // The three sides are compared under one key, the operator's: a key alone never tells them apart.
+      const merged = mergeValue(keyedAs(before, edited.key), edited, keyedAs(entry, edited.key), entryPath, merge);
+      rows.push({ draft: merged.draft as Entry, key: edited.key, latest: merged.base as Entry, retained: true });
     } else if (before === undefined) {
-      merged.push(entry);
-    } else if (!sameWritten(before, entry)) {
+      rows.push({ draft: entry, key: entry.key, latest: entry, retained: false });
+    } else if (sameWritten(before, entry)) {
+      rows.push({ draft: undefined, key: before.key, latest: entry, retained: false });
+    } else {
       conflicts.push({ mine: 'removed', path: entryPath, theirs: 'changed' });
-      merged.push(entry);
+      rows.push({ draft: entry, key: entry.key, latest: entry, retained: false });
     }
   }
   for (const entry of mine) {
@@ -197,35 +255,46 @@ const mergeEntries = (
     }
     const before = baseByKey.get(entry.key) ?? baseById.get(identity(entry));
     if (before === undefined || accounted.has(before)) {
-      merged.push(entry);
+      rows.push({ draft: entry, key: entry.key, latest: undefined, retained: true });
     } else if (!sameWritten(before, entry)) {
       conflicts.push({ mine: 'changed', path: join(path, identity(entry)), theirs: 'removed' });
     }
   }
-  return merged;
+  const keys = uniqueKeys(rows, mine);
+  return {
+    base: rows.flatMap((row, index) => (row.latest === undefined ? [] : [keyedAs(row.latest, keys[index]!)])),
+    draft: rows.flatMap((row, index) => (row.draft === undefined ? [] : [keyedAs(row.draft, keys[index]!)])),
+  };
 };
 
-const mergeValue = (base: unknown, mine: unknown, theirs: unknown, path: string, merge: Merge): unknown => {
+/**
+ * Records and keyed lists are always walked (so the base comes out keyed as the draft is, and what
+ * the settings own is theirs); a value only the operator changed is decided at the leaves. `base`
+ * is absent where both sides added the value (an entry under the same identity): records and
+ * keyed lists are then merged against nothing, field by field, so only what differs is named.
+ */
+const mergeValue = (base: unknown, mine: unknown, theirs: unknown, path: string, merge: Merge): Merged => {
   if (sameDraft(mine, theirs) || sameDraft(mine, base)) {
-    return theirs;
+    return { base: theirs, draft: theirs };
+  }
+  if (isEntryList(mine) && isEntryList(theirs) && (base === undefined || isEntryList(base))) {
+    return mergeEntries(base ?? [], mine, theirs, path, merge);
+  }
+  if (isRecord(mine) && isRecord(theirs) && (base === undefined || isRecord(base))) {
+    return mergeRecord(base ?? {}, mine, theirs, path, merge);
   }
   if (sameDraft(theirs, base)) {
-    return mine;
-  }
-  if (isEntryList(base) && isEntryList(mine) && isEntryList(theirs)) {
-    return mergeEntries(base, mine, theirs, path, merge);
-  }
-  if (isRecord(base) && isRecord(mine) && isRecord(theirs)) {
-    return mergeRecord(base, mine, theirs, path, merge);
+    return { base: theirs, draft: mine };
   }
   merge.conflicts.push({ mine: describe(mine), path, theirs: describe(theirs) });
-  return theirs;
+  return { base: theirs, draft: theirs };
 };
 
 /**
  * The operator's edits (`mine` relative to `base`) re-applied onto `theirs`, the draft the latest
  * settings produce; entries are matched by `identity`. The result is bound to the latest; its
  * conflicts name every field both sides changed differently, where the latest value was kept.
+ * `base` is the latest keyed as the merged draft is: the base of the next merge.
  */
 export const rebaseDraft = <Draft>(
   base: Draft,
@@ -234,6 +303,6 @@ export const rebaseDraft = <Draft>(
   identity: EntryIdentity = keyIdentity,
 ): DraftRebase<Draft> => {
   const conflicts: DraftConflict[] = [];
-  const draft = mergeValue(base, mine, theirs, '', { conflicts, identity }) as Draft;
-  return { conflicts, draft };
+  const merged = mergeValue(base, mine, theirs, '', { conflicts, identity });
+  return { base: merged.base as Draft, conflicts, draft: merged.draft as Draft };
 };

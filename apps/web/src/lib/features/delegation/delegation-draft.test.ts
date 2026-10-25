@@ -241,6 +241,87 @@ describe('createDraftSync around the save of an entry the operator added', () =>
   });
 });
 
+describe('createDraftSync keeps every key unique and the merge base keyed like the draft', () => {
+  /** An entry as the settings read it: keyed by its id and dated. */
+  const read = (id: string, note = ''): Entry => ({
+    id,
+    key: `entry/${id}`,
+    note,
+    original: { declaredAt: DECLARED_AT },
+  });
+  const keysOf = (entries: readonly Entry[]): string[] => entries.map((entry) => entry.key);
+
+  test('an entry added elsewhere under the id of an entry the operator renamed renders under a key of its own', () => {
+    const mounted = mountDraftSync<Entry[]>({ draft: [read('o3')], revision: 'r1' }, entryIdentity);
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft[0]!.id = 'o3-mini';
+    const saved = sync.snapshot();
+    sync.draft[0]!.note = 'typed while pending';
+    sync.settle(written('r1', 'r2', saved));
+    // The own re-read keys the renamed entry by its new id; the form keeps rendering it under its key.
+    mounted.publish({ draft: [read('o3-mini')], revision: 'r2' });
+    expect(sync.stale).toBe(false);
+    expect(sync.draft.map((entry) => [entry.key, entry.id])).toEqual([['entry/o3', 'o3-mini']]);
+
+    // Another client adds a new entry under the id the operator's entry had.
+    mounted.publish({ draft: [read('o3-mini'), read('o3')], revision: 'r3' });
+    expect(sync.stale).toBe(true);
+    expect(sync.reapply().conflicts).toEqual([]);
+    expect(new Set(keysOf(sync.draft)).size).toBe(sync.draft.length);
+    expect(sync.draft.map((entry) => [entry.key, entry.id, entry.note])).toEqual([
+      ['entry/o3', 'o3-mini', 'typed while pending'],
+      ['entry/o3#2', 'o3', ''],
+    ]);
+    mounted.dispose();
+  });
+
+  test('an entry renamed while its own save was pending, then edited elsewhere, stays one entry with both changes', () => {
+    const mounted = mountDraftSync<Entry[]>({ draft: [], revision: 'r1' }, entryIdentity);
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft.push(added());
+    const saved = sync.snapshot();
+    sync.draft[0]!.id = 'o3-mini';
+    sync.settle(written('r1', 'r2', saved));
+    mounted.publish({ draft: [read('o3')], revision: 'r2' });
+    expect(sync.stale).toBe(false);
+    expect(sync.draft.map((entry) => [entry.key, entry.id])).toEqual([['new-1', 'o3-mini']]);
+
+    mounted.publish({ draft: [read('o3', 'their note')], revision: 'r3' });
+    expect(sync.stale).toBe(true);
+    expect(sync.reapply().conflicts).toEqual([]);
+    expect(sync.draft).toEqual([
+      { id: 'o3-mini', key: 'new-1', note: 'their note', original: { declaredAt: DECLARED_AT } },
+    ]);
+    expect(sync.dirty).toBe(true);
+    mounted.dispose();
+  });
+
+  test('the same rename made on both sides, then the operator renames again while the note changes elsewhere', () => {
+    const mounted = mountDraftSync<Entry[]>({ draft: [read('o3')], revision: 'r1' }, entryIdentity);
+    const { sync } = mounted;
+    sync.markDirty();
+    sync.draft[0]!.id = 'o3-mini';
+    mounted.publish({ draft: [read('o3-mini')], revision: 'r2' });
+    expect(sync.stale).toBe(true);
+    // Both sides added `o3-mini` as far as the base knows: merged field by field, nothing differs.
+    expect(sync.reapply().conflicts).toEqual([]);
+    expect(sync.draft.map((entry) => [entry.key, entry.id])).toEqual([['entry/o3', 'o3-mini']]);
+    expect(sync.dirty).toBe(false);
+
+    sync.markDirty();
+    sync.draft[0]!.id = 'o3-max';
+    mounted.publish({ draft: [read('o3-mini', 'their note')], revision: 'r3' });
+    expect(sync.stale).toBe(true);
+    expect(sync.reapply().conflicts).toEqual([]);
+    expect(sync.draft).toEqual([
+      { id: 'o3-max', key: 'entry/o3', note: 'their note', original: { declaredAt: DECLARED_AT } },
+    ]);
+    mounted.dispose();
+  });
+});
+
 describe('createDraftSync when a refetch lands before the save settles', () => {
   test('a later revision read while the save was pending is adopted by a draft with no edits since', () => {
     const mounted = mountDraftSync<Draft>({ draft: initial(), revision: 'r1' });
