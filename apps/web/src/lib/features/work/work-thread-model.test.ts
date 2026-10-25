@@ -25,6 +25,7 @@ import {
   primaryResumeEpisode,
   remainderCopy,
   remainderEvidenceCopy,
+  taskSourceStatuses,
   threadDayKey,
   threadDisplayMarkers,
   threadEventActor,
@@ -664,5 +665,116 @@ describe('the shared task history', () => {
         .flatMap((group) => group.entries)
         .map((entry) => entry.kind),
     ).toEqual(['event']);
+  });
+});
+
+describe('source availability belongs to the current task', () => {
+  const sources: readonly WorkThreadSourceStatus[] = [
+    { source: 'github', state: 'unauthenticated', lastRunAt: null, message: 'GitHub authentication unavailable' },
+    { source: 'jira', state: 'disabled', lastRunAt: null, message: 'Jira is disabled' },
+    { source: 'checkouts', state: 'failed', lastRunAt: null, message: 'Checkout read failed' },
+    { source: 'sessions', state: 'truncated', lastRunAt: null, message: 'Linked session evidence incomplete' },
+  ];
+  const unrelated = {
+    ...analysis,
+    episodes: [],
+    sources,
+    row: {
+      ...analysis.row,
+      links: [],
+      markers: { local: [], pullRequests: [], jiraIssues: [] },
+      sessionCount: 0,
+      delegatedSessionCount: 0,
+      runningSessions: 0,
+    },
+  };
+  const linkedSources = [
+    ['pull-request', 'github.example/synthetic/shop#72', 'github'],
+    ['jira-issue', 'jira:synthetic/SHOP-72', 'jira'],
+    ['branch', 'branch:github.example/synthetic/shop@topic', 'checkouts'],
+    ['session', 'session:fixture-machine/codex/one', 'sessions'],
+  ] as const;
+  test.each(linkedSources)(
+    'an active %s keeps its source failure even before any marker was observed',
+    (kind, key, source) => {
+      const link: WorkThreadLink = {
+        createdAt: analysis.generatedAt,
+        detachedAt: null,
+        key,
+        kind,
+        linkId: '20000000-0000-4000-8000-000000000001',
+        provenance: 'user',
+        threadId: analysis.row.thread.threadId,
+      };
+      const data = { ...unrelated, row: { ...unrelated.row, links: [link] } };
+      expect(taskSourceStatuses(data)).toEqual(sources.filter((status) => status.source === source));
+      expect(taskSourceStatuses(data)[0]?.message).not.toBeNull();
+      expect(
+        taskSourceStatuses({ ...data, row: { ...data.row, links: [{ ...link, detachedAt: analysis.generatedAt }] } }),
+      ).toEqual([]);
+      if (kind === 'pull-request') {
+        expect(threadDisplayMarkers(data.row).pullRequests[0]).toMatchObject({
+          key,
+          latest: null,
+          latestSuccessful: null,
+        });
+      }
+      if (kind === 'jira-issue') {
+        expect(threadDisplayMarkers(data.row).jiraIssues[0]).toMatchObject({
+          key,
+          latest: null,
+          latestSuccessful: null,
+        });
+      }
+    },
+  );
+  test('observed or unknown task markers also keep their source without requiring a branch link', () => {
+    const prMarker = payment.row.markers.pullRequests[0];
+    const jiraMarker = payment.row.markers.jiraIssues[0];
+    if (!(prMarker && jiraMarker)) {
+      throw new Error('Expected artifact fixtures');
+    }
+    const row = {
+      ...unrelated.row,
+      markers: {
+        local: [{ key: 'session-checkout', via: 'session-checkout' as const, latest: null, latestSuccessful: null }],
+        pullRequests: [{ ...prMarker, latest: null, latestSuccessful: null }],
+        jiraIssues: [{ ...jiraMarker, latest: null, latestSuccessful: null }],
+      },
+    };
+    expect(taskSourceStatuses({ ...unrelated, row }).map((status) => status.source)).toEqual([
+      'github',
+      'jira',
+      'checkouts',
+    ]);
+    expect(row.markers.local[0]?.latest).toBeNull();
+  });
+  test('linked and delegated counts or nested episode evidence retain partial Sessions status', () => {
+    for (const counts of [{ sessionCount: 1 }, { delegatedSessionCount: 1 }, { runningSessions: 1 }]) {
+      expect(
+        taskSourceStatuses({ ...unrelated, row: { ...unrelated.row, ...counts } }).map((status) => status.source),
+      ).toEqual(['sessions']);
+    }
+    const nested = { ...episode, children: [{ ...episode, children: [] }] };
+    expect(taskSourceStatuses({ ...unrelated, episodes: [nested] })).toEqual(
+      sources.filter((status) => status.source === 'sessions'),
+    );
+  });
+  test('a PR-only task omits Jira and an analysis only shows its linked Sessions status', () => {
+    expect(taskSourceStatuses({ ...review, sources }).map((status) => status.source)).toEqual(['github']);
+    expect(taskSourceStatuses({ ...analysis, sources }).map((status) => status.source)).toEqual(['sessions']);
+    expect(taskSourceStatuses(unrelated)).toEqual([]);
+    expect(taskSourceStatuses({ ...analysis, sources: [] })).toEqual([]);
+  });
+  test('task filtering preserves source objects while the list keeps the global failures', () => {
+    const selected = taskSourceStatuses({ ...review, sources });
+    expect(selected[0]).toBe(sources[0]);
+    expect(sources).toHaveLength(4);
+    const global = threadSourceAvailability(sources, analysis.generatedAt, 'UTC');
+    expect(global.summary).toContain('Jira disabled');
+    expect(global.details).toHaveLength(4);
+    const task = threadSourceAvailability(selected, analysis.generatedAt, 'UTC');
+    expect(task.summary).toBe('GitHub sign-in required');
+    expect(task.details).toHaveLength(1);
   });
 });

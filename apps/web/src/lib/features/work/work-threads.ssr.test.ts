@@ -10,6 +10,7 @@ import {
 import { threadListQuery } from './work-thread-model';
 
 const SUMMARY_CONTENT = /<summary[^>]*>(.*?)<\/summary>/;
+const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Checks failing<\/h2>/;
 
 const server = await createServer({
   appType: 'custom',
@@ -108,6 +109,50 @@ describe('work thread SSR presentation', () => {
     expect(html(Sources, { sources: healthy, now: list.generatedAt, timeZone: 'UTC' })).toBe('');
     const partial = html(Sources, { sources: [sources[1]], now: list.generatedAt, timeZone: 'UTC' });
     expect(partial.match(SUMMARY_CONTENT)?.[1]?.trim()).toBe('<span>Source details</span>');
+  });
+  test('the task source line keeps relevant unread evidence while the list retains global source failures', async () => {
+    const sources = [
+      { source: 'github', state: 'unauthenticated', message: 'Relevant GitHub diagnostic', lastRunAt: null },
+      { source: 'jira', state: 'disabled', message: 'Unrelated Jira diagnostic', lastRunAt: null },
+      { source: 'checkouts', state: 'failed', message: 'Unrelated checkout diagnostic', lastRunAt: null },
+      { source: 'sessions', state: 'truncated', message: 'Partial session diagnostic', lastRunAt: null },
+    ];
+    const prOnly = await detail(WORK_THREADS_FIXTURE_IDS.review);
+    const row = { ...prOnly.row, markers: { local: [], jiraIssues: [], pullRequests: [] } };
+    const prBody = html(Detail, { ...baseDetailProps, data: { ...prOnly, row, sources } });
+    expect(prBody.match(SUMMARY_CONTENT)?.[1]).toContain('GitHub sign-in required');
+    expect(prBody).toContain('Relevant GitHub diagnostic');
+    expect(prBody).toContain('No successful PR observation available.');
+    expect(prBody).not.toContain('Unrelated Jira diagnostic');
+    expect(prBody).not.toContain('Unrelated checkout diagnostic');
+    expect(prBody).not.toContain('Partial session diagnostic');
+    const analysisBody = html(Detail, { ...baseDetailProps, data: { ...analysis, sources } });
+    expect(analysisBody.match(SUMMARY_CONTENT)?.[1]).toContain('Source details');
+    expect(analysisBody).toContain('Partial session diagnostic');
+    expect(analysisBody).not.toContain('Relevant GitHub diagnostic');
+    expect(analysisBody).not.toContain('Unrelated Jira diagnostic');
+    expect(analysisBody).not.toContain('Unrelated checkout diagnostic');
+    const listBody = html(List, {
+      dataset: { ...list, sources },
+      rows: list.rows,
+      query,
+      timeZone: 'UTC',
+      href: () => '/work',
+      onOpen: noop,
+      onFilter: noop,
+      onMore: noop,
+    });
+    expect(listBody.match(SUMMARY_CONTENT)?.[1]).toContain('Jira disabled');
+    expect(listBody).toContain('Unrelated Jira diagnostic');
+    expect(listBody).toContain('Unrelated checkout diagnostic');
+  });
+  test('task heading density adapts to long titles while retaining the complete task identity', async () => {
+    const long = await detail(WORK_THREADS_FIXTURE_IDS.longTitle);
+    expect(long.row.thread.title.length).toBeGreaterThan(90);
+    const body = html(Detail, { ...baseDetailProps, data: long });
+    expect(body).toContain('data-title-length="long"');
+    expect(body).toContain(long.row.thread.title);
+    expect(html(Detail, { ...baseDetailProps, data: analysis })).toContain('data-title-length="normal"');
   });
   test('week cells retain session and event chips with a fully named task link', () => {
     const title =
@@ -254,9 +299,7 @@ describe('work thread SSR presentation', () => {
         message: 'Session read limit reached',
       },
     ];
-    expect(html(Detail, { ...baseDetailProps, data: { ...payments, row, sources } })).toContain(
-      '<h2>Checks failing</h2>',
-    );
+    expect(html(Detail, { ...baseDetailProps, data: { ...payments, row, sources } })).toMatch(FAILING_CHECKS_HEADING);
     expect(
       html(List, {
         dataset: { ...list, sources },

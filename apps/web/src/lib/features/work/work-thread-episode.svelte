@@ -14,6 +14,7 @@
     harnessName,
     threadTime,
   } from './work-thread-model';
+  import { threadStyles } from './work-thread-styles';
 
   let {
     episode,
@@ -50,12 +51,12 @@
 <div class="wt-episode" data-session-key={episode.linkKey}>
   <button
     aria-expanded={expanded ? 'true' : 'false'}
-    class="wt-session-button"
+    class={`wt-session-button ${threadStyles.sessionButton}`}
     onclick={() => (expanded = !expanded)}
     type="button"
   >
-    <span class="wt-glyph" data-harness={episode.harness}>{harnessGlyph(episode.harness)}</span>
-    <span class="wt-session-label"
+    <span class={`wt-glyph ${threadStyles.glyph}`} data-harness={episode.harness}>{harnessGlyph(episode.harness)}</span>
+    <span class={`wt-session-label ${threadStyles.sessionLabel}`}
       ><strong>{episode.title ?? 'Untitled session'}</strong
       ><small
         >{harnessName(episode.harness)}
@@ -65,19 +66,19 @@
           : ''}{episode.running ? ' · Running' : ''}</small
       ></span
     >
-    <span class="wt-duration" title={episodeDurationDetail(episode)}
-      ><span class="wt-sr"
+    <span class={`wt-duration ${threadStyles.duration}`} title={episodeDurationDetail(episode)}
+      ><span class={`wt-sr ${threadStyles.sr}`}
         >{episode.activeMs === null ? 'Duration not recorded: ' : 'Recorded for this episode: '}</span
       >{episodeDuration(episode)}</span
     >
     <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
   </button>
   {#if episode.result}
-    <p class="wt-session-result">{episode.result}</p>
+    <p class={`wt-session-result ${threadStyles.sessionResult}`}>{episode.result}</p>
   {/if}
   {#if expanded}
-    <div class="wt-inspector">
-      <dl class="wt-context">
+    <div class={`wt-inspector ${threadStyles.inspector}`}>
+      <dl class={`wt-context ${threadStyles.context}`}>
         <div>
           <dt>Initial request</dt>
           <dd>{episode.firstPrompt ?? 'Not observed'}</dd>
@@ -101,29 +102,29 @@
           </div>
         {/if}
       </dl>
-      <p class="wt-meta">
+      <p class={`wt-meta ${threadStyles.meta}`}>
         {episodeDurationDetail(episode)}
       </p>
-      <p class="wt-meta">
+      <p class={`wt-meta ${threadStyles.meta}`}>
         {episodeSpan(episode)}
         · first to last activity, pauses included. It is not human working time.
       </p>
       {#if episode.resume.kind === 'cli-resume'}
-        <code class="wt-code">{episode.resume.command}</code>
+        <code class={`wt-code ${threadStyles.code}`}>{episode.resume.command}</code>
         {#if episode.resume.cwd}
-          <p class="wt-meta">Working directory: {episode.resume.cwd}</p>
+          <p class={`wt-meta ${threadStyles.meta}`}>Working directory: {episode.resume.cwd}</p>
         {/if}
-        <p class="wt-meta">
+        <p class={`wt-meta ${threadStyles.meta}`}>
           Resume this session copies the verified command and context. Run the command in your terminal; nothing is
           executed here.
         </p>
       {:else}
-        <p class="wt-meta">Resume unavailable: {episode.resume.reason}</p>
+        <p class={`wt-meta ${threadStyles.meta}`}>Resume unavailable: {episode.resume.reason}</p>
       {/if}
-      <div class="wt-actions">
+      <div class={`wt-actions ${threadStyles.actions}`}>
         {#if resume}
           <button
-            class="wt-button wt-primary"
+            class={`wt-button wt-primary ${threadStyles.primaryButton}`}
             onclick={() => onCopy(resume, 'Resume command and context copied — nothing was executed')}
             type="button"
           >
@@ -131,14 +132,19 @@
           </button>
         {/if}
         <button
-          class="wt-button"
+          class={`wt-button ${threadStyles.button}`}
           onclick={() => onCopy(episodeContext(episode, taskTitle), 'Session context copied')}
           type="button"
         >
           Copy context
         </button>
         {#if linkedKeys.includes(episode.linkKey)}
-          <button class="wt-link" disabled={busy} onclick={() => onDetach(episode.linkKey)} type="button">
+          <button
+            class={`wt-link ${threadStyles.link}`}
+            disabled={busy}
+            onclick={() => onDetach(episode.linkKey)}
+            type="button"
+          >
             Detach session
           </button>
         {/if}
@@ -148,7 +154,7 @@
   {#if episode.children.length}
     <button
       aria-expanded={showDelegations || childrenOpen ? 'true' : 'false'}
-      class="wt-delegations"
+      class={`wt-delegations ${threadStyles.delegations}`}
       onclick={() => (childrenOpen = !childrenOpen)}
       type="button"
     >
@@ -156,7 +162,7 @@
       {episode.children.length === 1 ? 'session' : 'sessions'}
     </button>
     {#if showDelegations || childrenOpen}
-      <div class="wt-children">
+      <div class={`wt-children ${threadStyles.children}`}>
         {#each episode.children as child (child.linkKey)}
           <Episode {busy} episode={child} {linkedKeys} {onCopy} {onDetach} {showDelegations} {taskTitle} {timeZone} />
         {/each}

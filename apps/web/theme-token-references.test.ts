@@ -40,25 +40,6 @@ const APP_LOCAL_CUSTOM_PROPERTIES: ReadonlySet<string> = new Set([
   // Set by Ark UI's positioner on the popover it places.
   '--available-width',
   '--reference-width',
-  // Work thread aliases, each set from a theme token by the extracted `threadSurface` style
-  // (work-thread-styles.ts) so Panda keeps the token; they go when work-threads.css moves to Panda.
-  '--wt-accent',
-  '--wt-claude',
-  '--wt-claude-bg',
-  '--wt-codex',
-  '--wt-codex-bg',
-  '--wt-contrast',
-  '--wt-ink',
-  '--wt-line',
-  '--wt-line-strong',
-  '--wt-muted',
-  '--wt-ok',
-  '--wt-ok-soft',
-  '--wt-paper',
-  '--wt-soft',
-  '--wt-tint',
-  '--wt-warn',
-  '--wt-warn-soft',
 ]);
 
 const UPPERCASE_PATTERN = /[A-Z]/g;

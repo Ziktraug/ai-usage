@@ -241,6 +241,42 @@ export interface ThreadSourceAvailabilityDetail {
   readonly stale: boolean;
 }
 
+/** Task availability follows its active links and served evidence; the list keeps global status. */
+export const taskSourceStatuses = (
+  data: Pick<WorkThreadDetailDataset, 'episodes' | 'row' | 'sources'>,
+): readonly WorkThreadSourceStatus[] => {
+  const relevant = new Set<WorkThreadSourceStatus['source']>();
+  const sourceForLink = {
+    branch: 'checkouts',
+    'jira-issue': 'jira',
+    'pull-request': 'github',
+    session: 'sessions',
+  } as const;
+  for (const link of data.row.links) {
+    if (link.detachedAt === null) {
+      relevant.add(sourceForLink[link.kind]);
+    }
+  }
+  if (data.row.markers.local.length > 0) {
+    relevant.add('checkouts');
+  }
+  if (data.row.markers.pullRequests.length > 0) {
+    relevant.add('github');
+  }
+  if (data.row.markers.jiraIssues.length > 0) {
+    relevant.add('jira');
+  }
+  if (
+    data.episodes.length > 0 ||
+    data.row.sessionCount > 0 ||
+    data.row.delegatedSessionCount > 0 ||
+    data.row.runningSessions > 0
+  ) {
+    relevant.add('sessions');
+  }
+  return data.sources.filter((status) => relevant.has(status.source));
+};
+
 /** The summary names unavailable sources; partial session coverage stays in on-demand details. */
 export const threadSourceAvailability = (
   sources: readonly WorkThreadSourceStatus[],

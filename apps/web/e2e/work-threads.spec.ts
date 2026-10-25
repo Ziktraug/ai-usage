@@ -278,6 +278,51 @@ test('source availability stays on one quiet line until its details are opened w
   await expect(diagnostics).not.toBeVisible();
 });
 
+test('task availability only names linked sources while My work retains global availability', async ({ page }) => {
+  await open(page, ids.review);
+  await expect(page.getByRole('heading', { name: 'Check cart rounding', exact: true })).toBeVisible();
+  await expect(page.locator('details[aria-label="Source availability"]')).toHaveCount(0);
+  await page.getByRole('link', { name: '← My work', exact: true }).click();
+  await expect(page.locator('details[aria-label="Source availability"] summary')).toContainText('Jira disabled');
+  await row(page, ids.payments).getByRole('link', { name: 'Prevent duplicate payments', exact: true }).click();
+  const availability = page.locator('details[aria-label="Source availability"]');
+  await expect(availability.locator('summary')).toContainText('Jira disabled');
+  await availability.locator('summary').click();
+  await expect(availability).toContainText('Jira collection is disabled');
+  await open(page, ids.analysis);
+  await expect(page.locator('details[aria-label="Source availability"]')).toHaveCount(0);
+});
+
+test('a long desktop task heading keeps its full title in about two lines at a smaller display size', async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await open(page, ids.payments);
+  const normalSize = await page
+    .locator('.wt-task-head h1')
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  const longTitle = (await detail(request, ids.longTitle)).row.thread.title;
+  await open(page, ids.longTitle);
+  const heading = page.getByRole('heading', { level: 1, name: longTitle, exact: true });
+  await expect(heading).toBeVisible();
+  await expect(heading).toHaveAttribute('data-title-length', 'long');
+  const layout = await heading.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      fontSize: Number.parseFloat(style.fontSize),
+      lines: element.getBoundingClientRect().height / Number.parseFloat(style.lineHeight),
+      fits: element.scrollHeight <= element.clientHeight + 1,
+      clamp: style.webkitLineClamp,
+    };
+  });
+  expect(layout.fontSize).toBeLessThan(normalSize);
+  expect(layout.lines).toBeLessThanOrEqual(2.2);
+  expect(layout.fits).toBe(true);
+  expect(['none', ''].includes(layout.clamp)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test('a mixed day shows both chips and lists dated marks before opening the task', async ({ page }) => {
   await open(page);
   const task = row(page, ids.payments);
@@ -528,6 +573,18 @@ test('list and task layouts are accessible without overflow at desktop, tablet a
     expect(await taskLink.locator('strong').evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe('2');
     const taskBounds = await row(page, ids.longTitle).boundingBox();
     expect(taskBounds?.height).toBeLessThanOrEqual(width > 780 ? 100 : 150);
+    if (width === 375) {
+      const titleBounds = await taskLink.boundingBox();
+      const weekControl = row(page, ids.longTitle).locator('.wt-day-button').first();
+      const weekBounds = await weekControl.boundingBox();
+      if (!(taskBounds && titleBounds && weekBounds)) {
+        throw new Error('The mobile task title and week activity must remain visible.');
+      }
+      expect(titleBounds.width / taskBounds.width).toBeGreaterThanOrEqual(0.48);
+      expect(titleBounds.width / taskBounds.width).toBeLessThanOrEqual(0.6);
+      expect(weekBounds.width).toBeGreaterThanOrEqual(20);
+      await expect(weekControl).toBeVisible();
+    }
     await assertAxe(page);
     await page.screenshot({ path: testInfo.outputPath(`work-list-${width}.png`), fullPage: true });
     await open(page, ids.payments);
