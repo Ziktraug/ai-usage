@@ -74,6 +74,19 @@ const delegatedLaunches = (count: number) => {
   };
 };
 
+const delegatedResults = (count: number) => ({
+  type: 'user',
+  timestamp: '2026-04-25T08:00:01.000Z',
+  message: {
+    content: Array.from({ length: count }, (_, index) => ({
+      type: 'tool_result',
+      tool_use_id: `synthetic-launch-${index}`,
+      is_error: false,
+      content: 'Synthetic command completed',
+    })),
+  },
+});
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -130,8 +143,8 @@ describe('Claude per-file collector cache', () => {
     'reads a delegation-bearing transcript once across cold and warm scans: %i launches',
     async (count) => {
       const { alpha, beta, reads, run } = await fixture();
-      const transcript = delegatedLaunches(count);
-      await writeFile(alpha, jsonl(transcript));
+      const transcript = [delegatedLaunches(count), delegatedResults(count)];
+      await writeFile(alpha, jsonl(...transcript));
       const cold = await run();
       const parent = cold.rows.find((entry) => entry.source?.sourceSessionId === 'alpha');
       expect(parent?.source?.delegatedSessions).toEqual(
@@ -140,7 +153,7 @@ describe('Claude per-file collector cache', () => {
           sourceSessionId: delegatedId(index),
         })),
       );
-      const facts = parseClaudeSessionFacts({ records: [transcript], repository: null, sourceSessionId: 'alpha' });
+      const facts = parseClaudeSessionFacts({ records: transcript, repository: null, sourceSessionId: 'alpha' });
       expect(facts?.codexLaunchesTruncated).toBe(count > 32);
       if (count > 32) {
         expect(parent?.partial).toBe(true);
@@ -149,9 +162,9 @@ describe('Claude per-file collector cache', () => {
           reasons: ['child-budget'],
           status: 'partial',
         });
-        expect(cold.warnings).toContainEqual(
+        expect(cold.warnings).toEqual([
           expect.objectContaining({ operation: 'claude.lineage-partial', affectedSessions: 1 }),
-        );
+        ]);
       } else {
         expect(cold.warnings).toEqual([]);
       }
@@ -172,37 +185,44 @@ describe('Claude per-file collector cache', () => {
     },
   );
 
-  test('invalidates version 16 once to recover delegation facts, then serves warm hits', async () => {
-    const { alpha, beta, cachePath, reads, run } = await fixture();
-    await writeFile(alpha, jsonl(delegatedLaunches(1)));
-    const cold = await run();
-    const cache = await readCache(cachePath);
-    expect(cache.version).toBe(17);
-    cache.version = 16;
-    const cachedRows = record(cache.files[alpha]).rows;
-    if (!Array.isArray(cachedRows)) {
-      throw new Error('Expected cached synthetic rows');
-    }
-    for (const cachedRow of cachedRows) {
-      record(record(cachedRow).source).delegatedSessions = undefined;
-    }
-    await writeFile(cachePath, JSON.stringify(cache));
-    expect(await run()).toEqual(cold);
-    expect(reads).toEqual(
-      new Map([
-        [alpha, 2],
-        [beta, 2],
-      ]),
-    );
-    expect((await readCache(cachePath)).version).toBe(17);
-    expect(await run()).toEqual(cold);
-    expect(reads).toEqual(
-      new Map([
-        [alpha, 2],
-        [beta, 2],
-      ]),
-    );
-  });
+  test.each([16, 17])(
+    'invalidates version %i once to recover delegation facts, then serves warm hits',
+    async (version) => {
+      const { alpha, beta, cachePath, reads, run } = await fixture();
+      await writeFile(alpha, jsonl(delegatedLaunches(1), delegatedResults(1)));
+      const cold = await run();
+      expect(cold.rows.find((entry) => entry.source?.sourceSessionId === 'alpha')?.source?.delegatedSessions).toEqual([
+        { harness: 'codex', sourceSessionId: delegatedId(0) },
+      ]);
+      const cache = await readCache(cachePath);
+      expect(cache.version).toBe(18);
+      cache.version = version;
+      const cachedRows = record(cache.files[alpha]).rows;
+      if (!Array.isArray(cachedRows)) {
+        throw new Error('Expected cached synthetic rows');
+      }
+      for (const cachedRow of cachedRows) {
+        record(record(cachedRow).source).delegatedSessions = undefined;
+      }
+      await writeFile(cachePath, JSON.stringify(cache));
+      expect(await run()).toEqual(cold);
+      expect(reads).toEqual(
+        new Map([
+          [alpha, 2],
+          [beta, 2],
+        ]),
+      );
+      expect((await readCache(cachePath)).version).toBe(18);
+      expect(await run()).toEqual(cold);
+      expect(await run()).toEqual(cold);
+      expect(reads).toEqual(
+        new Map([
+          [alpha, 2],
+          [beta, 2],
+        ]),
+      );
+    },
+  );
 
   test.each(['Agent', 'Task'])(
     'links an explicit %s launch on cold and warm scans without caching derived parents',
@@ -263,7 +283,7 @@ describe('Claude per-file collector cache', () => {
     reads.clear();
     expect(await run()).toEqual(cold);
     expect([...reads.keys()].sort()).toEqual([alpha, beta, child].sort());
-    expect((await readCache(cachePath)).version).toBe(17);
+    expect((await readCache(cachePath)).version).toBe(18);
   });
 
   test('keeps competing declarations unresolved on cold and warm scans, then rechecks the remaining evidence', async () => {
@@ -401,7 +421,7 @@ describe('Claude per-file collector cache', () => {
     );
     expect(result.rows).toHaveLength(2);
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(17);
+    expect(cache.version).toBe(18);
     expect(cache.provider).toBe('Claude sub');
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
     expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(
@@ -522,7 +542,7 @@ describe('Claude per-file collector cache', () => {
     expect(Object.keys((await readCache(cachePath)).files)).toEqual([beta]);
   });
 
-  test('ignores version 14 caches and rewrites them as version 17 after a full parse', async () => {
+  test('ignores version 14 caches and rewrites them as version 18 after a full parse', async () => {
     const { alpha, beta, cachePath, reads, run } = await fixture();
     const cold = await run();
     await writeFile(
@@ -538,7 +558,7 @@ describe('Claude per-file collector cache', () => {
       ]),
     );
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(17);
+    expect(cache.version).toBe(18);
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
   });
 

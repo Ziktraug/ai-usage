@@ -35,6 +35,52 @@ const parse = (...records: unknown[]) => {
 };
 
 describe('Claude Bash attestation of Codex launches', () => {
+  test.each(['User rejected tool use', 'hook error: synthetic PreToolUse blocked execution'])(
+    'does not attest a rejected resume: %s',
+    (message) => {
+      expect(parse(call(`codex exec resume ${THREAD}`), result(message, 'launch', 2, true)).codexLaunches).toEqual([]);
+    },
+  );
+
+  test('does not attest an interrupted resume with no result or an unrelated successful result', () => {
+    expect(parse(call(`codex exec resume ${THREAD}`)).codexLaunches).toEqual([]);
+    expect(parse(call(`codex exec resume ${THREAD}`), result('Synthetic success', 'other')).codexLaunches).toEqual([]);
+  });
+
+  test.each([
+    `cd /tmp/synthetic-work && codex exec resume ${THREAD} -m gpt-6-astra -c sandbox_mode='"workspace-write"' -c model_reasoning_effort='"high"' --json -o out.md "Synthetic prompt" > log.jsonl 2> log.err; echo "exit=$?" >> log.err`,
+    `timeout 600 codex exec resume ${THREAD} -m gpt-6-astra --json - < prompt.md`,
+    `codex exec resume ${THREAD} 'Synthetic prompt' >> '/tmp/synthetic output.log' 2>&1`,
+    `codex exec resume ${THREAD} 'Synthetic prompt' > out.log 2>&1; echo "exit=$?" >> err.log`,
+    `codex exec resume ${THREAD} 'Synthetic prompt' 2>&1 > out.log `,
+    `MODE=fixture timeout 600 codex exec --config 'model="example"' resume ${THREAD} --model gpt-6-astra --sandbox workspace-write --cd '/tmp/synthetic work' --profile synthetic --image synthetic.png --json - < 'prompt file.md' >'output file.jsonl' 2>'errors file.log'`,
+    `echo 'Synthetic setup'; codex exec resume ${THREAD} -s workspace-write -C /tmp/synthetic-work -p synthetic --skip-git-repo-check --ephemeral -i synthetic.png -o out.md - < prompt.md`,
+  ])('attests a completed supervisor launch form: %s', (command) => {
+    expect(parse(call(command), result('Synthetic successful exit')).codexLaunches).toEqual([
+      { at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD },
+    ]);
+  });
+
+  test('accepts a correlated successful result without an is_error field', () => {
+    const successfulResult = {
+      type: 'user',
+      timestamp: at(2),
+      message: { content: [{ type: 'tool_result', tool_use_id: 'launch', content: 'Synthetic successful exit' }] },
+    };
+    expect(parse(call(`codex exec resume ${THREAD}`), successfulResult).codexLaunches).toEqual([
+      { at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD },
+    ]);
+  });
+
+  test('keeps result-id evidence for an execution that later fails', () => {
+    expect(
+      parse(
+        call('timeout 600 codex exec --json - < prompt.md'),
+        result(`{"type":"thread.started","thread_id":"${THREAD}"}`, 'launch', 2, true),
+      ).codexLaunches,
+    ).toEqual([{ at: at(2), evidence: 'thread-started', sourceSessionId: THREAD }]);
+  });
+
   test.each([
     `codex exec resume ${THREAD}`,
     `codex exec -c 'model="example"' resume '${THREAD}' 'Synthetic prompt'`,
@@ -49,7 +95,7 @@ describe('Claude Bash attestation of Codex launches', () => {
     `"codex" 'exec' resume '${THREAD}'`,
     `codex exec resume -- ${THREAD}`,
   ])('attests the literal resume argument: %s', (command) => {
-    const facts = parse(call(command));
+    const facts = parse(call(command), result('Synthetic successful exit'));
     expect(facts.codexLaunches).toEqual([{ at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD }]);
     expect(facts.codexLaunchesTruncated).toBe(false);
     expect(facts.source.delegatedSessions).toEqual([{ harness: 'codex', sourceSessionId: THREAD }]);
@@ -93,6 +139,20 @@ describe('Claude Bash attestation of Codex launches', () => {
     'codex exec resume $THREAD',
     `echo "$(codex exec resume ${THREAD})"`,
     `# codex exec resume ${THREAD}`,
+    `cat prompt.md | codex exec resume ${THREAD}`,
+    `codex exec resume ${THREAD} | cat`,
+    `echo $(false; codex exec resume ${THREAD})`,
+    `echo \`false; codex exec resume ${THREAD}\``,
+    `echo text # comment; codex exec resume ${THREAD}`,
+    `echo "Synthetic text; codex exec resume ${THREAD}"`,
+    `codex exec resume ${THREAD} >`,
+    `codex exec resume ${THREAD} > out.log --unknown-option`,
+    `codex exec resume ${THREAD} --unknown-option > out.log`,
+    `codex exec resume ${THREAD} << prompt.md`,
+    `codex exec resume ${THREAD} > $(echo out.log)`,
+    `codex exec resume ${THREAD} 2>&1suffix`,
+    `timeout --signal=KILL 600 codex exec resume ${THREAD}`,
+    `timeout not-a-number codex exec resume ${THREAD}`,
   ])('rejects commands that do not establish a literal launch: %s', (command) => {
     const facts = parse(call(command), result(`session id: ${THREAD}`));
     expect(facts.codexLaunches).toEqual([]);
@@ -106,7 +166,22 @@ describe('Claude Bash attestation of Codex launches', () => {
     `codex exec -c 'resume=${THREAD}' 'Synthetic prompt'`,
     'codex exec resume not-a-uuid',
   ])('does not mistake a prompt or option value for a resume id: %s', (command) => {
-    expect(parse(call(command)).codexLaunches).toEqual([]);
+    expect(parse(call(command), result('Synthetic successful exit')).codexLaunches).toEqual([]);
+  });
+
+  test.each([
+    `codex exec resume > ${THREAD}`,
+    `codex exec > resume < ${THREAD}`,
+    `echo Synthetic > codex; echo exec resume ${THREAD}`,
+    `codex exec 'resume ${THREAD}; Synthetic text' > out.log`,
+  ])('never reads redirect filenames or quoted text as resume arguments: %s', (command) => {
+    expect(parse(call(command), result('Synthetic successful exit')).codexLaunches).toEqual([]);
+  });
+
+  test('keeps a quoted redirect operator as the literal prompt', () => {
+    expect(
+      parse(call(`codex exec resume ${THREAD} '>' > out.log`), result('Synthetic successful exit')).codexLaunches,
+    ).toEqual([{ at: at(1), evidence: 'resume-argument', sourceSessionId: THREAD }]);
   });
 
   test('ignores an id from a later unrelated log-read result or a pasted note', () => {
@@ -124,6 +199,9 @@ describe('Claude Bash attestation of Codex launches', () => {
     'cat /tmp/synthetic.log && codex exec "Synthetic task"',
     'codex exec "Synthetic task" && cat /tmp/synthetic.log',
     'echo "Synthetic log" && codex exec "Synthetic task"',
+    'cat /tmp/synthetic.log; codex exec "Synthetic task"',
+    'codex exec "Synthetic task"; cat /tmp/synthetic.log',
+    'codex exec "Synthetic task"; echo "exit=$?" >> log.err',
   ])('does not attribute mixed command output to the launching process: %s', (command) => {
     expect(parse(call(command), result(`session id: ${THREAD}`)).codexLaunches).toEqual([]);
   });
@@ -216,6 +294,8 @@ describe('Claude Bash attestation of Codex launches', () => {
       call('codex exec --json "Synthetic task"', 'new', 1),
       result(`{"type":"thread.started","thread_id":"${OTHER_THREAD}"}`, 'new', 2),
       call(`codex exec resume ${OTHER_THREAD}`, 'resume-other', 4),
+      result('Synthetic successful exit', 'resume-other', 5),
+      result('Synthetic successful exit', 'resume', 6),
     );
     expect(facts.codexLaunches).toEqual([
       { at: at(2), evidence: 'thread-started', sourceSessionId: OTHER_THREAD },
@@ -231,7 +311,10 @@ describe('Claude Bash attestation of Codex launches', () => {
         index + 1,
       ),
     );
-    const facts = parse(...records, records[34]);
+    const results = Array.from({ length: 35 }, (_, index) =>
+      result('Synthetic successful exit', `launch-${index}`, index + 36),
+    );
+    const facts = parse(...records, records[34], ...results);
     expect(facts.codexLaunches).toHaveLength(32);
     expect(facts.source.delegatedSessions).toHaveLength(32);
     expect(facts.codexLaunches[31]?.at).toBe(at(32));

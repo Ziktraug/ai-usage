@@ -84,7 +84,9 @@ interface ClaudeCache {
 // by the entire cache.
 // Bumped to 16 to retain explicit launch identities for cross-transcript lineage.
 // Bumped to 17 so unchanged transcripts gain attested Claude-to-Codex delegations.
-const CLAUDE_CACHE_VERSION = 17;
+// Bumped to 18 because resume arguments now require a non-error correlated result,
+// and supported launch wrappers and redirects recover previously omitted attestations.
+const CLAUDE_CACHE_VERSION = 18;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 

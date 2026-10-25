@@ -938,6 +938,8 @@ const stringInput = (input: Record<string, unknown>, key: string): string | null
 const CODEX_THREAD_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
 const SHELL_ASSIGNMENT = /^[A-Za-z_][A-Za-z_\d]*=/u;
 const SHELL_SPACE = /[ \t]/u;
+const SHELL_IO_NUMBER = /^\d+$/u;
+const TIMEOUT_SECONDS = /^\d+(?:\.\d+)?$/u;
 const CODEX_VALUE_OPTIONS = new Set([
   '-c',
   '--config',
@@ -973,16 +975,19 @@ const CODEX_FLAG_OPTIONS = new Set([
 
 interface LiteralShellWord {
   assignment: boolean;
+  redirection?: boolean;
   value: string;
 }
 
-/** A literal shell subset: quoted words, assignments and && chains. Never evaluate expansions. */
-const shellCommands = (command: string): LiteralShellWord[][] | null => {
-  const commands: LiteralShellWord[][] = [];
+/** Literal simple commands only; unsupported expansions invalidate their segment, never execute. */
+const shellCommands = (command: string): (LiteralShellWord[] | null)[] | null => {
+  const commands: (LiteralShellWord[] | null)[] = [];
   let words: LiteralShellWord[] = [];
   let word = '';
   let started = false;
   let assignment = true;
+  let valid = true;
+  let commandRequired = false;
   let quote: 'single' | 'double' | null = null;
   const flushWord = (): void => {
     if (started) {
@@ -1020,8 +1025,11 @@ const shellCommands = (command: string): LiteralShellWord[][] | null => {
       index += 1;
       continue;
     }
-    if (character === '$' || character === '`') {
+    if (character === '`' || (character === '$' && command[index + 1] === '(')) {
       return null;
+    }
+    if (character === '$') {
+      valid = false;
     }
     if (quote === 'double') {
       if (character === '"') {
@@ -1037,16 +1045,46 @@ const shellCommands = (command: string): LiteralShellWord[][] | null => {
       }
       quote = character === '"' ? 'double' : 'single';
       started = true;
-    } else if (character === '&' && command[index + 1] === '&') {
+    } else if (character === ';' || (character === '&' && command[index + 1] === '&')) {
       flushWord();
       if (words.length === 0) {
         return null;
       }
-      commands.push(words);
+      commands.push(valid ? words : null);
       words = [];
-      index += 1;
-    } else if (character && '|;&()<>*?[]{}#\n\r'.includes(character)) {
+      valid = true;
+      commandRequired = character === '&';
+      if (commandRequired) {
+        index += 1;
+      }
+    } else if (character === '>' || character === '<') {
+      let descriptor = '';
+      if (started && assignment && SHELL_IO_NUMBER.test(word)) {
+        if (word !== '2' || character !== '>') {
+          return null;
+        }
+        descriptor = word;
+        word = '';
+        started = false;
+      }
+      flushWord();
+      let operator = `${descriptor}${character}`;
+      if (character === '>' && command[index + 1] === '>') {
+        operator += '>';
+        index += 1;
+      } else if (descriptor === '2' && command.slice(index, index + 3) === '>&1') {
+        operator = '2>&1';
+        index += 2;
+      } else if (character === '<' && command[index + 1] === '<') {
+        return null;
+      }
+      words.push({ assignment: false, redirection: true, value: operator });
+    } else if (character && '|&(){}#\n\r'.includes(character)) {
       return null;
+    } else if (character && '*?[]'.includes(character)) {
+      valid = false;
+      word += character;
+      started = true;
     } else if (character && SHELL_SPACE.test(character)) {
       flushWord();
     } else {
@@ -1058,15 +1096,43 @@ const shellCommands = (command: string): LiteralShellWord[][] | null => {
     return null;
   }
   flushWord();
-  if (words.length === 0) {
+  if (words.length === 0 && (commandRequired || commands.length === 0)) {
     return null;
   }
-  commands.push(words);
+  if (words.length > 0) {
+    commands.push(valid ? words : null);
+  }
   return commands;
 };
 
+/** Redirect targets are file operands, never executable names, options or positional arguments. */
+const withoutTrailingRedirects = (words: readonly LiteralShellWord[]): readonly LiteralShellWord[] | null => {
+  const firstRedirect = words.findIndex((word) => word.redirection);
+  if (firstRedirect === -1) {
+    return words;
+  }
+  for (let index = firstRedirect; index < words.length; index += 1) {
+    const operator = words[index];
+    if (!operator?.redirection) {
+      return null;
+    }
+    if (operator.value !== '2>&1') {
+      const target = words[index + 1];
+      if (!target || target.redirection || target.value.length === 0) {
+        return null;
+      }
+      index += 1;
+    }
+  }
+  return words.slice(0, firstRedirect);
+};
+
 /** null is not an execution; an empty list is an execution without a literal resume id. */
-const codexExecResumeIds = (shellWords: readonly LiteralShellWord[]): string[] | null => {
+const codexExecResumeIds = (commandWords: readonly LiteralShellWord[]): string[] | null => {
+  const shellWords = withoutTrailingRedirects(commandWords);
+  if (shellWords === null) {
+    return null;
+  }
   const words = shellWords.map(({ value }) => value);
   let index = 0;
   while (shellWords[index]?.assignment) {
@@ -1080,6 +1146,12 @@ const codexExecResumeIds = (shellWords: readonly LiteralShellWord[]): string[] |
     while (SHELL_ASSIGNMENT.test(words[index] ?? '')) {
       index += 1;
     }
+  }
+  if (words[index] === 'timeout') {
+    if (!TIMEOUT_SECONDS.test(words[index + 1] ?? '')) {
+      return null;
+    }
+    index += 2;
   }
   const executable = words[index];
   if (!(executable === 'codex' || executable?.endsWith('/codex')) || words[index + 1] !== 'exec') {
@@ -1111,7 +1183,7 @@ const codexExecResumeIds = (shellWords: readonly LiteralShellWord[]): string[] |
       }
     } else if (CODEX_FLAG_OPTIONS.has(argument)) {
       // This flag consumes no argument.
-    } else if (argument.startsWith('-')) {
+    } else if (argument.startsWith('-') && argument !== '-') {
       // Includes help/version and unknown options: no positive launch evidence.
       return null;
     } else if (!resume && positional.length === 0 && argument === 'resume') {
@@ -1156,6 +1228,10 @@ const codexLaunchCommand = (input: Record<string, unknown>): ClaudeCodexCommand 
   let resultAttestable = true;
   const resumed: string[] = [];
   for (const words of commands) {
+    if (words === null) {
+      resultAttestable = false;
+      continue;
+    }
     const ids = codexExecResumeIds(words);
     if (ids !== null) {
       executions += 1;
@@ -1281,6 +1357,7 @@ const collectClaudeSpawnResults = (
   const agentIdsByToolUse = new Map<string, string>();
   const workflowRunsByToolUse = new Map<string, string>();
   const codexCalls = new Map<string, ClaudeToolCall>();
+  const codexResumes = new Map<string, { call: ClaudeToolCall; resumedIds: readonly string[] }>();
   const codexLaunches: ClaudeCodexLaunch[] = [];
   for (const call of calls) {
     const command = call.name === 'Bash' ? codexLaunchCommand(call.input) : null;
@@ -1290,8 +1367,8 @@ const collectClaudeSpawnResults = (
     if (command.resultAttestable) {
       codexCalls.set(call.toolUseId, call);
     }
-    for (const sourceSessionId of command.resumedIds) {
-      codexLaunches.push({ at: iso(call.at), evidence: 'resume-argument', sourceSessionId });
+    if (command.resumedIds.length > 0) {
+      codexResumes.set(call.toolUseId, { call, resumedIds: command.resumedIds });
     }
   }
   for (const current of events) {
@@ -1309,6 +1386,13 @@ const collectClaudeSpawnResults = (
     for (const block of content) {
       if (!(isRecord(block) && block.type === 'tool_result' && typeof block.tool_use_id === 'string')) {
         continue;
+      }
+      const resume = codexResumes.get(block.tool_use_id);
+      if (resume && current.at >= resume.call.at && block.is_error !== true) {
+        for (const sourceSessionId of resume.resumedIds) {
+          codexLaunches.push({ at: iso(resume.call.at), evidence: 'resume-argument', sourceSessionId });
+        }
+        codexResumes.delete(block.tool_use_id);
       }
       const launch = codexCalls.get(block.tool_use_id);
       if (launch && current.at >= launch.at) {
