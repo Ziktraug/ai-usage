@@ -109,6 +109,22 @@ describe('usage snapshots', () => {
     expect(deserializeSnapshotRow(legacyClassifier).origin).toBeUndefined();
   });
 
+  test('carries attested delegated sessions through a snapshot', () => {
+    const delegatedSessions = [{ harness: 'codex' as const, sourceSessionId: '01a00000-0000-7000-8000-000000000001' }];
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [
+        row('parent', 'parent-1', { source: { delegatedSessions, harnessKey: 'claude', sourceSessionId: 'parent-1' } }),
+      ],
+    });
+    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+
+    expect(parsed.rows[0]?.source.delegatedSessions).toEqual(delegatedSessions);
+    expect(deserializeSnapshotRow(parsed.rows[0] ?? snapshot.rows[0]).source?.delegatedSessions).toEqual(
+      delegatedSessions,
+    );
+  });
+
   test('preserves absent-origin provenance through a serialized snapshot merge', () => {
     const snapshot = createUsageSnapshot({
       machine,
