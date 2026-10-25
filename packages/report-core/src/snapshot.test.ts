@@ -117,12 +117,13 @@ describe('usage snapshots', () => {
         row('parent', 'parent-1', { source: { delegatedSessions, harnessKey: 'claude', sourceSessionId: 'parent-1' } }),
       ],
     });
-    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+    const parent = parseUsageSnapshot(JSON.stringify(snapshot)).rows[0];
+    if (!parent) {
+      throw new Error('Expected the parent snapshot row');
+    }
 
-    expect(parsed.rows[0]?.source.delegatedSessions).toEqual(delegatedSessions);
-    expect(deserializeSnapshotRow(parsed.rows[0] ?? snapshot.rows[0]).source?.delegatedSessions).toEqual(
-      delegatedSessions,
-    );
+    expect(parent.source.delegatedSessions).toEqual(delegatedSessions);
+    expect(deserializeSnapshotRow(parent).source?.delegatedSessions).toEqual(delegatedSessions);
   });
 
   test('preserves absent-origin provenance through a serialized snapshot merge', () => {
