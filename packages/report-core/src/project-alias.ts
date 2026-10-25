@@ -47,6 +47,8 @@ export interface AiUsageConfig {
     maxSessionSpanMs?: number;
     user?: string;
   };
+  /** Home-only delegation policy (ADR 0077); the section is shape-gated here and parsed by `parseDelegationConfig`. */
+  delegation?: unknown;
   github?: AiUsageGitHubConfig;
   jira?: AiUsageJiraConfig;
   projectAliases?: ProjectAliasEntry[];

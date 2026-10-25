@@ -6,7 +6,9 @@ import {
   assessReviewRecommendation,
   buildRoutingQualification,
   type CandidateProvenanceMap,
+  type CheckoutRoutingTarget,
   declarationForReviewCandidate,
+  evaluateReviewCandidates,
   MAX_REVIEW_ROUTING_CANDIDATES,
   observedReviewCandidates,
   parseRoutingQualification,
@@ -18,8 +20,10 @@ import {
   type ReviewRoutingPolicy,
   type ReviewTarget,
   ROUTING_QUALIFICATION_BOUNDS,
+  type RoutingTarget,
   recommendationKind,
   simulateWorkReviewRouting,
+  unsettledReviewFacts,
 } from './work-routing';
 
 const NOW = '2026-10-21T12:00:00.000Z';
@@ -1276,5 +1280,134 @@ describe('engine qualification (ADR 0057)', () => {
         candidates: [{ ...first, identity: { ...first?.identity, observed: 'operator@example.test' } }],
       }),
     ).toBeNull();
+  });
+});
+
+describe('checkout routing targets (delegation)', () => {
+  const MACHINE = TARGET.machineId;
+  const CHECKOUT: CheckoutRoutingTarget = {
+    kind: 'checkout',
+    machineId: MACHINE,
+    checkoutPath: '/home/operator/projects/alpha',
+    projectLabel: 'alpha',
+  };
+  const declaration = (overrides: Partial<ExecutorDeclaration> = {}): ExecutorDeclaration => ({
+    accountScope: 'personal',
+    authorization: 'allowed',
+    capabilities: ['read-only-review'],
+    declaredAt: '2026-10-20T08:00:00.000Z',
+    effort: null,
+    harness: 'claude-code',
+    machineId: MACHINE,
+    model: null,
+    quality: 'review-capable',
+    subscription: 'verified',
+    targets: [{ kind: 'any-local-session' }],
+    ...overrides,
+  });
+  const observation: ExecutorObservation = {
+    authEvidence: 'claude auth status exit 0 loggedIn=true',
+    authMethod: null,
+    authState: 'logged-in',
+    binaryPath: '/usr/bin/claude',
+    harness: 'claude-code',
+    machineId: MACHINE,
+    observedAt: '2026-10-21T11:50:00.000Z',
+    outcome: 'observed',
+    version: '2.1.303 (Claude Code)',
+  };
+  const quota = quotaFixture('claude-code', { key: 'claude', plan: 'max' });
+  const qualify = (overrides: Partial<QualifyReviewCandidatesInput> = {}) =>
+    qualifyReviewCandidates({
+      declarations: [declaration()],
+      executorObservations: [observation],
+      now: NOW,
+      providers: [quota],
+      target: CHECKOUT,
+      ...overrides,
+    });
+  const routingInput = (
+    candidates: readonly ReviewCandidate[],
+    target: RoutingTarget = CHECKOUT,
+  ): ReviewRoutingInput => ({
+    candidates,
+    policy: POLICY,
+    referenceTime: NOW,
+    request: {
+      action: 'read-only-review',
+      minimumQuality: 'review-capable',
+      requiredCapabilities: ['read-only-review'],
+      target,
+    },
+  });
+
+  test('a declared any-local-session target admits a checkout, a project target admits it by label only', () => {
+    const [admitted] = qualify();
+    expect(admitted?.authorizedTarget).toEqual(CHECKOUT);
+    const [byProject] = qualify({
+      declarations: [declaration({ targets: [{ kind: 'project', projectLabel: 'alpha' }] })],
+    });
+    expect(byProject?.authorizedTarget).toEqual(CHECKOUT);
+    const [refused] = qualify({
+      declarations: [declaration({ targets: [{ kind: 'project', projectLabel: 'beta' }] })],
+    });
+    expect(refused?.authorizedTarget).toBeNull();
+    expect(refused?.qualificationActions).toEqual([
+      "Declared targets do not admit this checkout (project 'alpha'): add {kind:'project', projectLabel:'alpha'} or {kind:'any-local-session'} to routing.executors[] for claude:personal",
+    ]);
+  });
+
+  test('a checkout request is evaluated like a session request and a different checkout is another target', () => {
+    const candidates = qualify();
+    const result = simulateWorkReviewRouting(routingInput(candidates));
+    expect(result.chosenCandidateId).toBe(candidates[0]?.id ?? null);
+    expect(assessReviewRecommendation(result, candidates).kind).toBe('real');
+    const elsewhere = simulateWorkReviewRouting(
+      routingInput(candidates, { ...CHECKOUT, checkoutPath: '/home/operator/projects/beta' }),
+    );
+    expect(elsewhere.chosenCandidateId).toBeNull();
+    expect(elsewhere.evaluations[0]?.exclusionReasons).toContain('Authorization belongs to a different target.');
+    // A session authorization never admits a checkout and the reverse: the kinds differ.
+    const sessionBound = simulateWorkReviewRouting(
+      routingInput(candidates.map((entry) => ({ ...entry, authorizedTarget: TARGET }))),
+    );
+    expect(sessionBound.evaluations[0]?.exclusionReasons).toContain('Authorization belongs to a different target.');
+  });
+
+  test.each(['relative/path', '/trailing/', '/double//slash', '/with/../parent', ''])(
+    'refuses a checkout target whose path is not absolute and normalized: %j',
+    (checkoutPath) => {
+      const result = simulateWorkReviewRouting(routingInput(qualify(), { ...CHECKOUT, checkoutPath }));
+      expect(result.chosenCandidateId).toBeNull();
+      expect(result.evaluations).toEqual([]);
+      expect(result.reasons.join(' ')).toContain('exact session or checkout');
+    },
+  );
+
+  test('evaluateReviewCandidates yields exactly the simulation evaluations and refuses an invalid input', () => {
+    const candidates = [
+      ...qualify(),
+      ...qualify({ declarations: [declaration({ harness: 'codex', accountScope: 'work' })] }),
+    ];
+    const input = routingInput(candidates);
+    expect(evaluateReviewCandidates(input)).toEqual(simulateWorkReviewRouting(input).evaluations);
+    expect(() => evaluateReviewCandidates(routingInput(candidates, { ...CHECKOUT, checkoutPath: 'relative' }))).toThrow(
+      RangeError,
+    );
+  });
+
+  test('unsettledReviewFacts names what the recommendation would call missing, and nothing for a settled route', () => {
+    const [settled] = qualify();
+    expect(settled && unsettledReviewFacts(settled)).toEqual([]);
+    const [staleQuota] = qualify({ providers: [{ ...quota, generatedAt: '2026-10-21T11:40:00.000Z' }] });
+    expect(staleQuota && unsettledReviewFacts(staleQuota)).toEqual(['quota observation']);
+    const staleResult = simulateWorkReviewRouting(routingInput(staleQuota ? [staleQuota] : []));
+    expect(assessReviewRecommendation(staleResult, staleQuota ? [staleQuota] : []).missing).toBe('quota observation');
+    const [unpinned] = qualify({ executorObservations: [{ ...observation, accountFingerprint: '0123456789abcdef' }] });
+    expect(unpinned && unsettledReviewFacts(unpinned)).toEqual([
+      'account identity pin (routing.executors[].accountFingerprint)',
+    ]);
+    const [unobserved] = qualify({ executorObservations: [] });
+    expect(unobserved && unsettledReviewFacts(unobserved)).toEqual(['executor availability observation']);
   });
 });

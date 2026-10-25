@@ -6,6 +6,7 @@ import {
   parseProviderStatusDataset,
   providerStatusWithFeedFreshness,
 } from './provider-status';
+import { isPrintableSkillObservationText } from './skill-observation';
 import {
   EXECUTOR_CAPABILITIES_CADENCE_MS,
   type ExecutorDeclaration,
@@ -52,11 +53,26 @@ export interface ReviewTarget {
   readonly sourceSessionId: string;
 }
 
+/**
+ * A checkout a delegated review runs in: the canonical path the engine resolved on one machine.
+ * Declared targets admit it as they admit a session (`any-local-session`, or `project` by label).
+ */
+export interface CheckoutRoutingTarget {
+  /** Absolute, normalized path (no `.`/`..`, duplicate or trailing slashes); part of the identity. */
+  readonly checkoutPath: string;
+  readonly kind: 'checkout';
+  readonly machineId: string;
+  /** The checkout's project label (its directory name); lets a declared `project` target admit it. */
+  readonly projectLabel?: string | null;
+}
+
+export type RoutingTarget = ReviewTarget | CheckoutRoutingTarget;
+
 export interface ReviewRequest {
   readonly action: 'read-only-review';
   readonly minimumQuality: 'review-capable';
   readonly requiredCapabilities: readonly 'read-only-review'[];
-  readonly target: ReviewTarget;
+  readonly target: RoutingTarget;
 }
 
 /** Where each qualification field came from. A declaration is dated; an observation is fresh or stale. */
@@ -89,7 +105,7 @@ export interface CandidateIdentity {
 export interface ReviewCandidate {
   readonly accountScope: string | null;
   readonly authorization: 'allowed' | 'forbidden' | 'unknown';
-  readonly authorizedTarget: ReviewTarget | null;
+  readonly authorizedTarget: RoutingTarget | null;
   readonly availability: 'available' | 'unavailable' | 'unknown';
   readonly capabilities: readonly 'read-only-review'[];
   readonly effort: string | null;
@@ -163,8 +179,8 @@ export interface QualifyReviewCandidatesInput {
   readonly freshness?: Partial<QualificationFreshness>;
   readonly now: string;
   readonly providers: readonly ProviderStatus[];
-  /** The session under review; `null` when none is selected, which leaves every authorization unbound. */
-  readonly target: ReviewTarget | null;
+  /** The session or checkout under review; `null` when none is selected, which leaves every authorization unbound. */
+  readonly target: RoutingTarget | null;
 }
 
 export const MAX_REVIEW_ROUTING_CANDIDATES = 128;
@@ -184,11 +200,35 @@ const compareText = (left: string, right: string): number => {
 const validId = isRoutingId;
 const timestamp = (value: string | null): number | null => (isCanonicalInstant(value) ? Date.parse(value) : null);
 
-const sameTarget = (left: ReviewTarget, right: ReviewTarget): boolean =>
-  left.kind === right.kind &&
-  left.machineId === right.machineId &&
-  left.harness === right.harness &&
-  left.sourceSessionId === right.sourceSessionId;
+const sameTarget = (left: RoutingTarget, right: RoutingTarget): boolean => {
+  if (left.machineId !== right.machineId) {
+    return false;
+  }
+  if (left.kind === 'session') {
+    return right.kind === 'session' && left.harness === right.harness && left.sourceSessionId === right.sourceSessionId;
+  }
+  return right.kind === 'checkout' && left.checkoutPath === right.checkoutPath;
+};
+
+/** The textual rule of `normalizeCheckoutPath` (work-attempts), restated here because that module imports this one. */
+const MAX_CHECKOUT_PATH_LENGTH = 4096;
+const isNormalizedCheckoutPath = (value: string): boolean => {
+  if (!(value.startsWith('/') && value.length <= MAX_CHECKOUT_PATH_LENGTH && isPrintableSkillObservationText(value))) {
+    return false;
+  }
+  const segments = value.split('/').filter((segment) => segment.length > 0);
+  return !segments.some((segment) => segment === '.' || segment === '..') && `/${segments.join('/')}` === value;
+};
+
+const validTarget = (target: RoutingTarget): boolean => {
+  if (!validId(target.machineId)) {
+    return false;
+  }
+  if (target.kind === 'session') {
+    return validId(target.harness) && validId(target.sourceSessionId);
+  }
+  return target.kind === 'checkout' && isNormalizedCheckoutPath(target.checkoutPath);
+};
 
 const providerScope = (provider: ProviderStatus) => {
   const colon = provider.key.indexOf(':');
@@ -374,7 +414,7 @@ const assessAvailability = (
   };
 };
 
-const targetAdmitted = (targets: readonly ExecutorDeclaredTarget[], target: ReviewTarget): boolean =>
+const targetAdmitted = (targets: readonly ExecutorDeclaredTarget[], target: RoutingTarget): boolean =>
   targets.some(
     (declared) =>
       declared.kind === 'any-local-session' ||
@@ -616,7 +656,7 @@ const declaredCandidates = (
     actions.push('Select a session with a machine and native identity to bind the authorization to a target');
   } else if (!admitted) {
     actions.push(
-      `Declared targets do not admit this session (project '${target.projectLabel ?? 'unknown'}'): add {kind:'project', projectLabel:'${target.projectLabel ?? '<project>'}'} or {kind:'any-local-session'} to routing.executors[] for ${scope}`,
+      `Declared targets do not admit this ${target.kind} (project '${target.projectLabel ?? 'unknown'}'): add {kind:'project', projectLabel:'${target.projectLabel ?? '<project>'}'} or {kind:'any-local-session'} to routing.executors[] for ${scope}`,
     );
   }
   if (declaration.subscription === 'api') {
@@ -846,14 +886,11 @@ const inputErrors = ({ candidates, policy, referenceTime, request }: ReviewRouti
   if (
     request.action !== 'read-only-review' ||
     request.minimumQuality !== 'review-capable' ||
-    request.target.kind !== 'session' ||
-    !validId(request.target.machineId) ||
-    !validId(request.target.harness) ||
-    !validId(request.target.sourceSessionId) ||
+    !validTarget(request.target) ||
     request.requiredCapabilities.length !== 1 ||
     request.requiredCapabilities[0] !== 'read-only-review'
   ) {
-    errors.push('The request must name one exact session and require a review-capable read-only review.');
+    errors.push('The request must name one exact session or checkout and require a review-capable read-only review.');
   }
   if (
     !Number.isFinite(policy.nearResetMinutes) ||
@@ -1102,9 +1139,15 @@ const quotasSharedAcrossResources = (candidates: readonly ReviewCandidate[]): Se
   return new Set([...resources].filter(([, owners]) => owners.size > 1).map(([key]) => key));
 };
 
-/** Whether a window bounds this candidate's model: account-wide windows always, model windows only for their model. */
+/**
+ * Whether a window bounds a route running `model`: account-wide windows always, model windows only
+ * when they name the model. An undeclared model (`null`) is bound by account-wide windows alone.
+ */
+export const quotaWindowAppliesToModel = (window: ProviderLimitWindow, model: string | null): boolean =>
+  window.scope !== 'model' || (model !== null && windowNamesModel(window, model));
+
 const windowAppliesTo = (window: ProviderLimitWindow, candidate: ReviewCandidate): boolean =>
-  window.scope !== 'model' || (candidate.model !== null && windowNamesModel(window, candidate.model));
+  quotaWindowAppliesToModel(window, candidate.model);
 
 const repeatedValues = (values: readonly string[]): Set<string> => {
   const seen = new Set<string>();
@@ -1131,16 +1174,39 @@ const preferredReset = (candidate: ReviewCandidate, input: ReviewRoutingInput): 
   return Math.min(...resets);
 };
 
+/** The per-candidate constraint evaluations of an input already known to be valid, in stable id order. */
+const evaluateAll = (
+  input: ReviewRoutingInput,
+): { readonly candidates: ReviewCandidate[]; readonly evaluations: ReviewCandidateEvaluation[] } => {
+  const candidates = [...input.candidates].sort((left, right) => compareText(left.id, right.id));
+  const duplicateIds = repeatedValues(candidates.map((candidate) => candidate.id));
+  const duplicateQuotas = quotasSharedAcrossResources(candidates);
+  return {
+    candidates,
+    evaluations: candidates.map((candidate) => evaluateCandidate(candidate, input, duplicateIds, duplicateQuotas)),
+  };
+};
+
+/**
+ * Exactly the constraint evaluations `simulateWorkReviewRouting` computes, with no choice made: the
+ * delegation qualification adds its own constraints on top. An invalid input is an error here, not
+ * an empty list, because a caller building the request itself has nothing to show the operator.
+ */
+export const evaluateReviewCandidates = (input: ReviewRoutingInput): readonly ReviewCandidateEvaluation[] => {
+  const errors = inputErrors(input);
+  if (errors.length > 0) {
+    throw new RangeError(errors.join(' '));
+  }
+  return evaluateAll(input).evaluations;
+};
+
 /** Pure simulation. Constraints run first; preferences cannot grant permission or capacity. */
 export const simulateWorkReviewRouting = (input: ReviewRoutingInput): ReviewRoutingResult => {
   const errors = inputErrors(input);
   if (errors.length > 0) {
     return { chosenCandidateId: null, evaluations: [], reasons: errors, referenceTime: input.referenceTime };
   }
-  const candidates = [...input.candidates].sort((left, right) => compareText(left.id, right.id));
-  const duplicateIds = repeatedValues(candidates.map((candidate) => candidate.id));
-  const duplicateQuotas = quotasSharedAcrossResources(candidates);
-  const evaluations = candidates.map((candidate) => evaluateCandidate(candidate, input, duplicateIds, duplicateQuotas));
+  const { candidates, evaluations } = evaluateAll(input);
   const reasons = ['Simulation only: no harness is started and no permission is granted.'];
   const eligible = candidates.filter((_, index) => evaluations[index]?.eligible);
   const forced = input.policy.forcedCandidateId;
@@ -1264,6 +1330,14 @@ const missingLabel = (candidate: ReviewCandidate, field: RequiredFact): string =
     : MISSING_OBSERVATION_LABELS[field];
 
 /**
+ * The facts of a candidate that are missing or stale, named as `assessReviewRecommendation` names
+ * them; empty when every required fact is declared or currently observed. The delegation
+ * qualification admits a route only when this is empty.
+ */
+export const unsettledReviewFacts = (candidate: ReviewCandidate): readonly string[] =>
+  unsettledFields(candidate).map((field) => missingLabel(candidate, field));
+
+/**
  * `real` when the chosen candidate rests on declared and currently observed facts only;
  * `conditional` when no candidate is eligible but one would be with exactly one named observation
  * that is missing or stale (a conditional simulation never permits a launch); otherwise `none`.
@@ -1275,16 +1349,11 @@ export const assessReviewRecommendation = (
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate] as const));
   if (result.chosenCandidateId !== null) {
     const chosen = byId.get(result.chosenCandidateId);
-    const unsettled = chosen ? unsettledFields(chosen) : [];
+    const unsettled = chosen ? unsettledReviewFacts(chosen) : [];
     if (chosen && unsettled.length === 0) {
       return { candidateId: chosen.id, kind: 'real', missing: null };
     }
-    const first = unsettled[0];
-    return {
-      candidateId: result.chosenCandidateId,
-      kind: 'conditional',
-      missing: first === undefined || !chosen ? 'candidate detail' : missingLabel(chosen, first),
-    };
+    return { candidateId: result.chosenCandidateId, kind: 'conditional', missing: unsettled[0] ?? 'candidate detail' };
   }
   const evaluations = [...result.evaluations].sort((left, right) => compareText(left.candidateId, right.candidateId));
   for (const evaluation of evaluations) {
