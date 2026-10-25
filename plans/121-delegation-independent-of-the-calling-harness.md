@@ -49,3 +49,26 @@ retried the same idempotency key (`reused: true`, no second worker) and recorded
 Workers that write code, commit or publish; OpenCode and Cursor executors; a specialised external
 selector; collection of announced resets and promotions; learning from evaluations; a Codex account
 fingerprint (needs `codex app-server` `account/read`).
+
+## Follow-up, 2026-10-25 morning (after the Codex weekly reset)
+
+Both gaps above are closed; same isolated runtime, real sign-ins untouched, `codex-cli 0.164.0`,
+`Claude Code 2.1.310`, Bun 1.4.3 from the Nix store for the production smoke.
+
+- Requalification: both routes admissible (the Codex weekly window had reset).
+- Claude Code client → Codex worker: qualified, chose the Codex route, started it; the real
+  `codex exec` worker (read-only sandbox, no MCP, no web search) returned a structured review in
+  20 s naming both seeded defects with line evidence (`retry.ts:11`, `retry.ts:16`), usage reported
+  by the harness, resolved model `unknown` (exec does not report it), checkout left clean.
+- Codex client → Claude Code worker: `codex exec` qualified through MCP, then `delegation.start`
+  was refused by Codex itself ("MCP tool call requires approval, but approval policy is never")
+  because the tool is annotated open-world. With
+  `mcp_servers.<name>.tools."delegation.start".approval_mode = "approve"` (inline-table form for
+  `-c`; a dotted `-c` path does not keep the dot of the tool name) the client started the Claude
+  Code worker, which returned a structured review in 10 s. The annotation stays honest; the
+  approval is documented in `docs/delegation.md`.
+- Cross-harness follow-up: a Codex client read the job a Claude Code client had started, checked
+  the findings against the file in its own read-only sandbox, and recorded a `calling-model`
+  verification.
+- `bun run test:web-production` with Bun 1.4.3: pass (routes healthy, trusted-local only, IPv4
+  loopback, port collisions fail cleanly).

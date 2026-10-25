@@ -51,13 +51,30 @@ Claude Code lists the tools with their dots turned into underscores
 (`mcp__ai-usage__delegation_qualify`, `mcp__ai-usage__delegation_start`, …); use
 those names in `--allowedTools` or in permission rules.
 
-**Codex** (`~/.codex/config.toml`), or `bun run mcp:register:codex`:
+**Codex** (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.ai-usage]
 command = "bun"
 args = ["--no-env-file", "/path/to/ai-usage/apps/mcp/src/main.ts"]
+
+# Codex asks before calling a tool annotated open-world or destructive, and
+# `codex exec` (approval policy "never") refuses it instead. delegation.start is
+# open-world (its worker contacts a provider) and delegation.cancel destructive;
+# approve them for this server if your agent should start or cancel on its own.
+[mcp_servers.ai-usage.tools."delegation.start"]
+approval_mode = "approve"
+
+[mcp_servers.ai-usage.tools."delegation.cancel"]
+approval_mode = "approve"
 ```
+
+`bun run mcp:register:codex` registers the same server under the name
+`ai-usage-memory`; use that name in the `tools` tables then. For a one-off
+`codex exec`, pass the table inline (a dotted `-c` path does not keep the dot
+inside the tool name):
+`-c 'mcp_servers.ai-usage.tools={"delegation.start"={approval_mode="approve"}}'`.
+Qualify, status, list and evaluate need no approval.
 
 **Any stdio MCP client** (generic `mcpServers` JSON):
 
