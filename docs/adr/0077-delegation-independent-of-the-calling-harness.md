@@ -243,7 +243,11 @@ field both sides changed keeps the latest value and is listed.
   identified, and its GitHub rules are assumed to apply (fail closed); writing
   the remote with GitHub's own host lifts the assumption.
 - The Work view's review button now needs a declared route context like any
-  delegation; without one it is refused with the missing context named.
+  delegation; without one it is refused with the missing context named. It is
+  also admitted on the canonical checkout like a delegation: a
+  `routing.reviewTargets[]` entry naming a symlink or a repository
+  subdirectory, which admitted the session path before, now admits nothing
+  (the refusal names the canonical path to declare).
 
 ## Rejected alternatives
 

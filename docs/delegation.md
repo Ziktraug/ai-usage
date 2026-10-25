@@ -31,7 +31,10 @@ What this version does and does not do:
   - `routing.executors[]` — which harness, account and models may run a
     read-only review (README section 7);
   - `routing.reviewTargets[]` — which checkouts a worker may read (README
-    section 9);
+    section 9). An entry must name the repository's canonical top level (its
+    real path, symlinks resolved) or an ancestor of it: an entry naming a
+    symlink or a subdirectory admits nothing, and the refusal names the path
+    to add. This holds for the Work view's review button too;
   - `delegation.routes[]` — the context (`professional` or `personal`) of each
     route. A route without a context is never admissible, whatever starts it:
     the review button of the Work view passes the same policy (section 5).
