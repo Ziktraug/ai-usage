@@ -194,7 +194,9 @@ _Avoid_: router, policy, judge
 The durable record of one delegation decision and its execution: request,
 cited and launch qualifications, selection, route, frozen scope, process
 facts, bounded result and evaluations. It belongs to AI Usage, not to the
-caller's connection; it is not a Round or a Session.
+caller's connection; it is not a Round or a Session. Jobs and the Work view's
+review attempts pass one admission policy and share one target and pool
+reservation rule.
 _Avoid_: attempt (the session review of ADR 0053), task, thread
 
 **Delegation evaluation**:

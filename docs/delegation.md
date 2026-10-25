@@ -33,7 +33,18 @@ What this version does and does not do:
   - `routing.reviewTargets[]` — which checkouts a worker may read (README
     section 9);
   - `delegation.routes[]` — the context (`professional` or `personal`) of each
-    route. A route without a context is never admissible.
+    route. A route without a context is never admissible, whatever starts it:
+    the review button of the Work view passes the same policy (section 5).
+
+  Each form of Manage › Delegation saves against the revision it was read
+  from and restates the parts of the configuration it does not edit as they
+  were read, including a route annotation that no executor declaration
+  resolves (remove one in **Routes**, where it is listed). When the
+  configuration changed elsewhere in what a form writes, the form keeps your
+  edits but cannot save them over that change. Choose **Discard my edits and
+  load the latest**, or **Re-apply my edits to the latest**. A field that was
+  also changed elsewhere then keeps the latest value and is listed with both
+  values, so you re-enter yours on purpose.
 
 ## 2. Register the MCP server in your client
 
@@ -135,8 +146,8 @@ line and keep the task.
 | --- | --- | --- |
 | `delegation.qualify` `{ request }` | `ai-usage delegation qualify --request <file\|-> [--simulation] [--json]` | Engine re-reads rules and observations, refreshes executor observations, records a dated qualification. Starts nothing. |
 | `delegation.start` `{ idempotencyKey, request, selection }` | `ai-usage delegation start --request <file\|-> --qualification <id> --key <key> (--route <id> [--selector-version <v>] [--confidence <0..1>] \| --abstain <reason>) [--json]` | Revalidates and starts the chosen route, or records an abstention. Returns a job id at once; the same key answers the same job. |
-| `delegation.status` `{ jobId }` | `ai-usage delegation status <jobId> [--json]` | Reads the job, its result and evaluations from the store (read-only); answers while the engine is down. |
-| `delegation.list` `{ limit?, liveOnly? }` | `ai-usage delegation list [--live] [--limit <n>] [--json]` | Recent jobs, newest first (1–50, default 20), as compact summaries (state, route, scope, executed/verified/accepted, one-line result); `delegation.status` gives the detail. |
+| `delegation.status` `{ jobId }` | `ai-usage delegation status <jobId> [--json]` | Reads the job, its frozen scope, result and evaluations from the store (read-only); answers while the engine is down. |
+| `delegation.list` `{ limit?, liveOnly? }` | `ai-usage delegation list [--live] [--limit <n>] [--json]` | Recent jobs, newest first (1–50, default 20), as compact summaries (state, route, requested and frozen scope, executed/verified/accepted, one-line result); jobs beyond the MCP response bound are counted in `omitted`; `delegation.status` gives the detail. |
 | `delegation.cancel` `{ jobId }` | `ai-usage delegation cancel <jobId> [--json]` | Stops a job this engine runs. Disconnecting a client cancels nothing. |
 | `delegation.evaluate` `{ jobId, evaluation }` | — | Records the calling model's verification (`kind: "verification"`) of a finished job, labelled with the client's declared name. An acceptance cannot be recorded here. |
 
@@ -167,7 +178,13 @@ A request looks like this:
 
 The engine resolves `base` and `head` to SHAs once; a later start whose refs
 moved is refused (`scope-changed`). A `commit` scope reviews that revision
-against its first parent, never the whole branch.
+against its first parent, never the whole branch. The job keeps that frozen
+scope: `delegation.status`, `delegation.list`, `ai-usage delegation status` and
+the Work view return it as `frozenScope` (kind, base and head SHAs, the refs
+as given, the commit count) beside the requested scope. A client that reads the
+result after `HEAD` moved still knows which revision was reviewed. Nothing is
+resolved again at read time; a job recorded before the field existed answers
+`frozenScope: null`.
 
 ## 5. Rules, in priority order
 
@@ -181,11 +198,59 @@ against its first parent, never the whole branch.
    admissible routes; they never admit one.
 
 A rule matches a checkout path prefix, a GitHub repository or owner (from the
-checkout's github.com remotes), the GitHub login you declared for that owner
+checkout's GitHub remotes), the GitHub login you declared for that owner
 under `github.accounts[]`, or the checkout's local Git author email. These are
 three different identities: the GitHub account, the Git author and the AI
 provider account of the route. When a fact a rule needs is unknown, the rule is
 assumed to apply and the simulator says so.
+
+GitHub repositories and owners are read from `git remote -v` by exact host:
+`github.com` over HTTPS, SSH or `git://`, `www.github.com` over HTTPS or
+`git://`, `ssh.github.com` over SSH, with or without a port
+(`ssh://git@github.com:22/…`, `https://github.com:443/…`), and the fully
+qualified `github.com.`. Some remotes leave the list **partly identified**:
+
+- an SSH host other than GitHub's (an `~/.ssh/config` alias such as
+  `git@github-work:` may point to GitHub, and AI Usage does not read SSH
+  configuration);
+- a GitHub URL whose path is not `owner/repo`;
+- a malformed URL;
+- remote lines beyond the first 64;
+- more than 12 distinct repositories.
+
+On a partly identified list, a rule matching an identified value applies, and
+a rule matching none is assumed to apply. The simulator gives the count of
+remotes that left it open, never a URL. A checkout has a known absence of
+GitHub remotes only when every remote is identified or known not to be GitHub
+(another host over HTTPS or `git://`, a local path). Write remotes with
+GitHub's own host if you want rules to read them.
+
+A quota observed before the latest observed change of the Claude Code account
+is not attributed to the current account. The engine records the time of that
+change per executor when it imports the observations; the record outlives the
+pruning of the observation history and engine restarts. The route waits for a
+quota observation made after the change.
+
+**One policy for every launch.** The review button of the Work view (the
+session review of ADR 0053, engine command `start-review-attempt`) passes the
+same qualification before anything runs. The session leads to its canonical
+checkout, `HEAD` is frozen to a commit, and the candidate's route must be
+admissible under these rules; a forced candidate is judged as its route. A
+refusal names the route's exclusions (for example `Forbidden by rule …` or the
+missing context). Work review attempts and delegation jobs share their
+reservations, checked in one transaction: one review per action, checkout and
+frozen revision, and one concurrency count per quota pool, across both.
+
+Some attempts recorded before frozen revisions existed lack what a reservation
+needs:
+
+- An attempt with no reviewed revision reserves its whole checkout.
+- An attempt with no checkout reserves every review on the machine.
+- An attempt whose recorded declaration does not parse counts against every
+  pool of its harness.
+
+Each case lasts until the attempt is released with evidence, and the refusal
+says so.
 
 The **simulator** in Manage › Delegation runs the same qualification as a
 start, for a checkout and a scope you enter.
@@ -204,6 +269,19 @@ A job records three different things:
 A `lost` job means the engine lost contact (restart, shutdown). It is never
 relaunched; it keeps its reservation until the engine shows that the process
 it started is gone.
+
+A job view stays under 64 KiB once serialized, whatever the job holds. When it
+would not, it drops material in this order, each only as far as needed:
+
+1. reference lists: scope files, criteria, constraints, excluded routes, the
+   selector's rationale;
+2. older evaluations (never the operator's latest acceptance);
+3. findings and their evidence, then the remaining lists;
+4. as a last resort, long free texts, shortened.
+
+Every cut is counted in `truncation` and named in the view's notes. The store
+keeps the whole job. Identifiers, object ids, the frozen scope, the state, the
+route and the refusal reason are never cut.
 
 ## 7. Limits
 

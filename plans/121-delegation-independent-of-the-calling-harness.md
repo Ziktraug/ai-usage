@@ -78,3 +78,21 @@ Both gaps above are closed; same isolated runtime, real sign-ins untouched, `cod
   projects. Three controlled `codex exec` runs (worker vector with a command, client vector,
   invalid-model start) wrote nothing. No code change; the guide records the limit. The two test
   entries were removed from the operator's config (backup kept in the session scratchpad).
+
+## Follow-up, 2026-10-25 afternoon (review of PR #73, defects F1–F7)
+
+A review of the head `cad21475` reported seven defects; each was reproduced by a regression test
+on that head before its fix, in isolated worktrees (one slice per defect family), then integrated
+on this branch. Disposable stores, home configs and checkouts only; no real store, no provider call.
+
+| Defect | Fix |
+| --- | --- |
+| F1 legacy launch bypassed the rules and reservations | The Work view's `start-review-attempt` passes the delegation admission (same assessment as `start-delegation`); one reservation rule over `review_attempts` and `delegation_jobs` inside both insert transactions; `review_attempts.base_sha`/`head_sha`; pre-upgrade rows reserve what they recorded, conservatively and explicitly |
+| F2 remotes with ports or aliases read as "no GitHub remote" | exact-host classification (identified, known not GitHub, unidentified); `partial` list facts; rules assumed on a partial list; identified lists bounded to the qualification's 12 entries |
+| F3 account change forgotten after history pruning | persisted barrier `executor_account_changes`, advanced in the import transaction, backfilled at creation; required qualification input |
+| F4 unrelated saves dropped route annotations | forms restate what they do not edit as read; unresolved annotations listed and removable in Routes |
+| F5 reload after a conflict promoted a stale draft | drafts bound to their base revision; stale until an explicit discard or re-apply (three-way, conflicts listed) |
+| F6 frozen SHAs missing from results | `frozenScope` in job views and list entries, from the persisted scope only |
+| F7 job view bound not guaranteed | byte budget enforced after serialization on every path with counted omissions; MCP list bounded with `omitted` |
+
+Evidence: see the PR description (commands, counts, CI of the pushed head).

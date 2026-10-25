@@ -202,7 +202,8 @@ identity/label, project groups, Cursor imports, merge preview/confirmation,
 collection, enrichment, and publication. It is also the only process that runs
 work on the operator's behalf: session review attempts (ADR 0053) and
 delegation jobs (ADR 0077), whose workers it spawns, tracks, cancels and marks
-lost after a restart, and whose routing and delegation configuration it writes
+lost after a restart, which pass one admission policy and share one target
+and pool reservation rule, and whose routing and delegation configuration it writes
 section by section on an expected revision. The unrelated Skills control plane
 remains web-owned and may update only the `skills` field through a field-scoped
 config store that preserves unrelated configuration.
