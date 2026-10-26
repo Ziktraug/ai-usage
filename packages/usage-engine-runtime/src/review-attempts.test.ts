@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ClaudeReviewLaunch, ClaudeReviewOutcome } from '@ai-usage/local-collectors/claude-review-launcher';
+import type { CodexReviewOutcome, launchCodexReview } from '@ai-usage/local-collectors/codex-review-launcher';
 import { claudeAccountFingerprint } from '@ai-usage/local-collectors/executor-observations';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
@@ -223,7 +224,7 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
     authMethod: null,
     authState: 'logged-in',
     binaryPath: path.join(bin, 'claude'),
-    harness: 'claude-code',
+    harness: options.declaration?.harness === 'codex' ? 'codex' : 'claude-code',
     machineId: machine.id,
     observedAt: '2026-10-22T09:58:00.000Z',
     outcome: 'observed',
@@ -238,7 +239,7 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
       observedAt: '2026-10-22T09:57:00.000Z',
       plan: 'max',
       providerGeneratedAt: null,
-      providerKey: 'claude',
+      providerKey: options.declaration?.harness === 'codex' ? 'codex' : 'claude',
       providerLabel: 'Claude',
       source: { confidence: 'authoritative', key: 'fixture-quota', mode: 'poll' },
       state: options.quotaWindows?.state ?? 'ok',
@@ -880,7 +881,7 @@ describe('engine review attempts', () => {
     await engine.recoverLost();
     const refused = await engine.start(command());
     expect(refused.refusal?.reason).toBe('attempt-unresolved');
-    expect(refused.refusal?.message).toContain('recorded before launch markers existed');
+    expect(refused.refusal?.message).toContain('no independently verifiable process marker');
     expect(refused.refusal?.message).toContain('“Declare the review ended”');
 
     const released = await engine.releaseReservation({
@@ -947,5 +948,146 @@ describe('engine review attempts', () => {
     });
     expect(answer).toMatchObject({ evidence: null, pids: [4242], releasedAt: null, result: 'process-found' });
     expect((await attemptById(fixture.dbPath, 'attempt-running-elsewhere')).releasedAt).toBeNull();
+  });
+});
+
+describe('owned Codex review attempts', () => {
+  const pin = 'a'.repeat(16);
+  const codexCandidate = `declared:${JSON.stringify([machine.id, 'codex', 'personal'])}`;
+  const codexFixture = () =>
+    createFixture({
+      declaration: { harness: 'codex', accountFingerprint: pin, model: 'gpt-6-astra', effort: 'xhigh' },
+      observedFingerprint: pin,
+    });
+  const controlledCodex = () => {
+    let launches = 0;
+    let stops = 0;
+    let settle!: (outcome: CodexReviewOutcome) => void;
+    const outcome = new Promise<CodexReviewOutcome>((resolve) => {
+      settle = resolve;
+    });
+    const launcher: typeof launchCodexReview = async (spec, events = {}) => {
+      launches++;
+      await events.onInit?.('native-codex-1');
+      await events.onTurn?.('turn-codex-1');
+      return {
+        args: ['app-server', '--stdio'],
+        pid: 999_998,
+        prompt: 'bounded patch',
+        scope: FAKE_SCOPE,
+        guarantee: {
+          kind: 'codex-app-server',
+          cliVersion: '0.163.0',
+          model: spec.model ?? '',
+          effort: spec.effort,
+          sandbox: 'read-only',
+          approvalPolicy: 'never',
+          networkAccess: false,
+          accountFingerprint: spec.accountFingerprint,
+          externalTools: 'disabled',
+          managedPolicy: 'inherited',
+        },
+        outcome,
+        terminate: () => {
+          stops++;
+        },
+      };
+    };
+    return { launcher, settle, launches: () => launches, stops: () => stops };
+  };
+  const codexFinished: CodexReviewOutcome = {
+    ...FINISHED,
+    nativeSessionId: 'native-codex-1',
+    nativeTurnId: 'turn-codex-1',
+    stopConfirmed: false,
+  };
+  test('concurrent starts reserve once and preserve selected executor, session and native turn', async () => {
+    const f = await codexFixture();
+    const run = controlledCodex();
+    const attemptService = createReviewAttemptService({
+      dbPath: f.dbPath,
+      storage: f.storage,
+      machine: () => machine,
+      now: () => NOW,
+      codexLauncher: run.launcher,
+    });
+    const launchCommand = command({ candidateId: codexCandidate });
+    const results = await Promise.all([attemptService.start(launchCommand), attemptService.start(launchCommand)]);
+    expect(results[0].attempt.attemptId).toBe(results[1].attempt.attemptId);
+    expect(run.launches()).toBe(1);
+    run.settle(codexFinished);
+    await attemptService.settle();
+    const stored = await Effect.runPromise(queryReviewAttempts({ dbPath: f.dbPath, machineId: machine.id }));
+    expect(stored.attempts[0]).toMatchObject({
+      executorHarness: 'codex',
+      nativeSessionId: 'native-codex-1',
+      nativeTurnId: 'turn-codex-1',
+      state: 'finished',
+      guarantee: { model: 'gpt-6-astra', effort: 'xhigh' },
+    });
+  });
+  test('loss keeps reservation even when a Claude marker scan would say absent', async () => {
+    const f = await codexFixture();
+    const run = controlledCodex();
+    let scans = 0;
+    const attemptService = createReviewAttemptService({
+      dbPath: f.dbPath,
+      storage: f.storage,
+      machine: () => machine,
+      now: () => NOW,
+      codexLauncher: run.launcher,
+      findProcesses: () => {
+        scans++;
+        return Promise.resolve({ kind: 'absent' });
+      },
+    });
+    await attemptService.start(command({ candidateId: codexCandidate }));
+    run.settle({ ...codexFinished, kind: 'lost', failureReason: 'lost acknowledgement', resultExcerpt: 'partial' });
+    await attemptService.settle();
+    const again = await attemptService.start(command({ candidateId: codexCandidate }));
+    expect(again.refusal?.reason).toBe('attempt-unresolved');
+    expect(run.launches()).toBe(1);
+    expect(scans).toBe(0);
+    const rows = await Effect.runPromise(
+      queryReviewAttempts({ dbPath: f.dbPath, machineId: machine.id, reserving: true }),
+    );
+    expect(rows.attempts[0]).toMatchObject({ state: 'lost', releasedAt: null, resultExcerpt: 'partial' });
+    expect(
+      await attemptService.stop({ command: 'stop-review-attempt', attemptId: rows.attempts[0]?.attemptId ?? '' }),
+    ).toMatchObject({ result: 'not-owned' });
+  });
+  test('records stop requested before confirmation and retains interruption partial result', async () => {
+    const f = await codexFixture();
+    const run = controlledCodex();
+    const attemptService = createReviewAttemptService({
+      dbPath: f.dbPath,
+      storage: f.storage,
+      machine: () => machine,
+      now: () => NOW,
+      codexLauncher: run.launcher,
+    });
+    const result = await attemptService.start(command({ candidateId: codexCandidate }));
+    expect(
+      await attemptService.stop({ command: 'stop-review-attempt', attemptId: result.attempt.attemptId }),
+    ).toMatchObject({
+      result: 'requested',
+    });
+    const before = await Effect.runPromise(queryReviewAttempts({ dbPath: f.dbPath, machineId: machine.id }));
+    expect(before.attempts[0]).toMatchObject({ stopRequestedAt: NOW.toISOString(), stopConfirmedAt: null });
+    run.settle({
+      ...codexFinished,
+      kind: 'failed',
+      stopConfirmed: true,
+      resultExcerpt: 'partial',
+      failureReason: 'native interrupted',
+    });
+    await attemptService.settle();
+    const after = await Effect.runPromise(queryReviewAttempts({ dbPath: f.dbPath, machineId: machine.id }));
+    expect(after.attempts[0]).toMatchObject({
+      state: 'failed',
+      stopConfirmedAt: NOW.toISOString(),
+      resultExcerpt: 'partial',
+    });
+    expect(run.stops()).toBe(1);
   });
 });

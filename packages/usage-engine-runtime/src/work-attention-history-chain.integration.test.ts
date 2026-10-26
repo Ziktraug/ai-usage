@@ -19,7 +19,7 @@ import { Effect } from 'effect';
  * ADR 0056 end to end over two sweeps: the registry files as Claude Desktop had written them
  * earlier, the real collector and store import, then the same files rewritten into their later
  * state, a second sweep, and the read the web procedure runs. A single sweep cannot see that a
- * question was replaced or answered; this chain is the one that fails when the declaration
+ * question was replaced or a later message arrived; this chain fails when the declaration
  * history is lost between the files and the dataset.
  */
 
@@ -48,7 +48,7 @@ const writeDocuments = async (registryDirectory: string, documents: readonly Cla
 };
 
 describe('work attention declaration history chain', () => {
-  test('two sweeps of the native registry carry an answered question, a reply and their dates to the dataset', async () => {
+  test('two native registry sweeps carry supersession and message dates without inventing answers', async () => {
     const home = await temporaryDirectory('adr0056-history-home-');
     const storeRoot = await temporaryDirectory('adr0056-history-store-');
     const dbPath = join(storeRoot, 'usage.sqlite');
@@ -104,7 +104,7 @@ describe('work attention declaration history chain', () => {
     const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: EPOCH }));
     const byId = new Map(dataset.roots.map((root) => [root.desktopSessionId, root]));
 
-    // Q1, a message, then Q2: Q1 is answered with its dates and evidence, Q2 is the request.
+    // Q1, a message, then Q2: Q1 was replaced, no answer is proven, and Q2 is current.
     const answered = byId.get(ids.answeredRoot ?? '');
     expect(answered?.attention).toBe('human-request');
     expect(answered?.reconsidered).toBe(false);
@@ -112,19 +112,19 @@ describe('work attention declaration history chain', () => {
       at: hoursBefore(3),
       needsAction: 'Delete the superseded layout branch now?',
     });
-    expect(answered?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'earlier-request-answered']);
+    expect(answered?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'earlier-request-superseded']);
     expect(answered?.interpretations[1]?.text).toBe(
-      `Answered in Claude Desktop: the question “Keep the compact layout or the airy one?” (asked ${hoursBefore(5)}); you wrote to the session at ${hoursBefore(4)} and it declared again at ${hoursBefore(3)}.`,
+      `Declaration replaced: the question “Keep the compact layout or the airy one?” (asked ${hoursBefore(5)}) was replaced by the session’s declaration at ${hoursBefore(3)}.`,
     );
     const answeredFacts = new Set(answered?.facts.map(({ id }) => id));
     expect(answered?.interpretations[1]?.evidence.every((id) => answeredFacts.has(id))).toBe(true);
 
-    // A message after the question while the session works on: answered, no confirmation asked.
+    // A later message alone does not establish which question was answered.
     const replied = byId.get(ids.repliedRoot ?? '');
-    expect(replied?.attention).toBe('none');
+    expect(replied?.attention).toBe('human-request');
     expect(replied?.declared?.at).toBe(hoursBefore(2.5));
-    expect(replied?.interpretations.map(({ kind }) => kind)).toEqual(['request-answered']);
-    expect(replied?.interpretations[0]?.text).toContain(`you wrote to the session at ${hoursBefore(2)}`);
+    expect(replied?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-message-observed']);
+    expect(replied?.interpretations[1]?.text).toContain(`Message observed in Claude Desktop at ${hoursBefore(2)}`);
 
     // An unrelated pull request resolves nothing; a child that predates the question proves nothing.
     const unrelated = byId.get(ids.unrelatedPullRequestRoot ?? '');
@@ -132,20 +132,16 @@ describe('work attention declaration history chain', () => {
     expect(unrelated?.reconsidered).toBe(false);
     expect(unrelated?.interpretations.map(({ kind }) => kind)).toEqual(['request-open']);
 
-    // The offer made before a later message and the expired one are no longer pending.
+    // A later message leaves offers open; native expiry still removes an offer.
     const offers = byId.get(ids.laterOfferRoot ?? '');
     expect(offers?.attention).toBe('optional-lead');
-    expect(offers?.interpretations.map(({ kind }) => kind)).toEqual([
-      'proposal-open',
-      'proposal-superseded',
-      'proposal-expired',
-    ]);
+    expect(offers?.interpretations.map(({ kind }) => kind)).toEqual(['proposal-open', 'proposal-expired']);
 
-    // Work done in a session started from the root after its question: handled, with provenance.
+    // A completed child records linked activity, not an answer to its parent's question.
     const handled = byId.get(ids.handledRoot ?? '');
-    expect(handled?.attention).toBe('none');
-    expect(handled?.interpretations.map(({ kind }) => kind)).toEqual(['request-handled-elsewhere']);
-    expect(handled?.interpretations[0]?.text).toContain('Handled in “Fixture: fix the flaky export test”');
+    expect(handled?.attention).toBe('human-request');
+    expect(handled?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-continued-elsewhere']);
+    expect(handled?.interpretations[1]?.text).toContain('“Fixture: fix the flaky export test”');
     // Work continued there without a completion: an older declaration to reconsider.
     const continued = byId.get(ids.continuedRoot ?? '');
     expect(continued?.attention).toBe('human-request');

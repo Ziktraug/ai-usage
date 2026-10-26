@@ -50,6 +50,7 @@ import {
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
+import { isolatedSourceOptions } from './source-test-fixtures';
 
 const FIXED_MACHINE = { id: 'machine-fixture-025', label: 'Fixture machine' } as const;
 const GENERATED_AT = new Date('2026-07-10T12:00:00.000Z');
@@ -277,9 +278,11 @@ describe('session report pipeline', () => {
     );
     const fixture = await seedHarnessHome(home);
     const registry = await Effect.runPromise(
-      createScheduledSourceRegistry({ codexLiveAvailable: () => false, machine: FIXED_MACHINE }).pipe(
-        Effect.provideService(LocalHistoryStorage, storage),
-      ),
+      createScheduledSourceRegistry({
+        ...isolatedSourceOptions,
+        codexLiveAvailable: () => false,
+        machine: FIXED_MACHINE,
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     for (const sourceId of ['claude.sessions', 'codex.sessions', 'opencode.sessions', 'cursor.sessions'] as const) {
       const source = registry.get(sourceId);
@@ -717,9 +720,11 @@ describe('session report pipeline', () => {
     );
     const fixture = await seedHarnessHome(home, { harnesses: ['codex'] });
     const registry = await Effect.runPromise(
-      createScheduledSourceRegistry({ codexLiveAvailable: () => false, machine: FIXED_MACHINE }).pipe(
-        Effect.provideService(LocalHistoryStorage, storage),
-      ),
+      createScheduledSourceRegistry({
+        ...isolatedSourceOptions,
+        codexLiveAvailable: () => false,
+        machine: FIXED_MACHINE,
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const codexSource = registry.get('codex.sessions');
     if (!codexSource) {
@@ -831,9 +836,11 @@ describe('session report pipeline', () => {
     );
     const fixture = await seedHarnessHome(home, { harnesses: ['claude'] });
     const registry = await Effect.runPromise(
-      createScheduledSourceRegistry({ codexLiveAvailable: () => false, machine: FIXED_MACHINE }).pipe(
-        Effect.provideService(LocalHistoryStorage, storage),
-      ),
+      createScheduledSourceRegistry({
+        ...isolatedSourceOptions,
+        codexLiveAvailable: () => false,
+        machine: FIXED_MACHINE,
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const claudeSource = registry.get('claude.sessions');
     if (!claudeSource) {

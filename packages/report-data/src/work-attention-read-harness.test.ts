@@ -35,12 +35,13 @@ import {
   queryWorkAttention,
   WORK_UNDECLARED_HARNESS,
 } from './work-attention-read';
+import { queryWorkContext } from './work-context-read';
 
 /**
  * Codex sessions on the Work read (ADR 0059): the served revision's recent `codex` campaigns
- * become roots of their own whose attention is `not-observable`. They carry the checkout, branch,
+ * become roots of their own whose attention without native request evidence is `not-observable`. They carry the checkout, branch,
  * activity and children Codex recorded, the checkout observation named by their exact path, and
- * never a request, a wait or a fold under a Desktop root, whatever they share with one.
+ * never a request inferred from checkout state or a fold under a Desktop root, whatever they share with one.
  */
 
 const temporaryRoots: string[] = [];
@@ -394,7 +395,7 @@ describe('Codex sessions on the Work read', () => {
     expect(codex.interpretations[0]).toMatchObject({
       evidence: [],
       kind: 'coverage-gap',
-      text: 'Codex records no turn status: whether this session waits on you is unknown — not declared by this harness.',
+      text: 'Codex records no general turn status: waits beyond the structured requests shown here are unknown — not declared by this harness.',
     });
     const local = codex.interpretations.find((entry) => entry.kind === 'local-changes-unvalidated');
     // Both Desktop roots and the Codex root worked in that checkout.
@@ -423,7 +424,7 @@ describe('Codex sessions on the Work read', () => {
     expect(dataset.coverage.window.excludedRoots).toBe(0);
   });
 
-  test('no Codex root ever carries a request or a wait, whatever its checkout shows', async () => {
+  test('checkout state alone never creates a Codex request or wait', async () => {
     const dbPath = await createStore([]);
     await publishCodexRows(dbPath, CODEX_ROWS);
     await observeCheckout(dbPath);
@@ -623,5 +624,89 @@ describe('assembleWorkAttention with harness sessions', () => {
     expect(root?.project.checkoutPath).toBeNull();
     expect(root?.age.lastObservedAt).toBe(hoursAgo(0.25));
     expect(dataset.coverage.sessions.revision).toBe('revision-x');
+  });
+});
+
+describe('Codex context scope before family bounds', () => {
+  test('retrieves an old project behind unrelated campaigns without increasing the default budget', async () => {
+    const dbPath = await createStore([]);
+    await publishCodexRows(dbPath, [
+      ...Array.from(
+        { length: WORK_ATTENTION_BOUNDS.maxCodexRoots + 10 },
+        (_, index): CodexRowSpec => ({
+          id: `other-${index}`,
+          name: `Other ${index}`,
+          cwd: OTHER_PROJECT,
+          activeHoursAgo: 1,
+          origin: 'human',
+        }),
+      ),
+      {
+        id: 'old-investigation',
+        name: 'Existing investigation with a result',
+        cwd: PROJECT,
+        activeHoursAgo: 120 * 24,
+        origin: 'human',
+      },
+    ]);
+    const scope = { checkoutPath: PROJECT, kind: 'checkout' as const };
+    const recent = await Effect.runPromise(queryWorkContext({ dbPath, now: NOW, scope }));
+    expect(recent.sessions).toEqual([]);
+    const context = await Effect.runPromise(queryWorkContext({ dbPath, now: NOW, scope, sinceDays: 180 }));
+    expect(context.sessions.map(({ root }) => root.key.sourceSessionId)).toEqual(['old-investigation']);
+    expect(context.sessions[0]?.session?.rowId).toBeString();
+    expect(context.coverage.harnesses.codex).toMatchObject({ campaignsInWindow: 1, campaignsRead: 1, inScope: 1 });
+    expect(context.truncation.dataset).toBe(false);
+  });
+
+  test('keeps the native root when an explicitly scoped child is older than the member preview', async () => {
+    const dbPath = await createStore([]);
+    const worktree = '/fixture/explicit-linked-worktree';
+    await publishCodexRows(dbPath, [
+      { id: 'native-root', name: 'Native investigation root', cwd: PROJECT, activeHoursAgo: 2, origin: 'human' },
+      ...Array.from(
+        { length: 8 },
+        (_, index): CodexRowSpec => ({
+          id: `native-child-${index}`,
+          name: `Child ${index}`,
+          cwd: OTHER_PROJECT,
+          activeHoursAgo: 1,
+          origin: 'subagent',
+          parent: 'native-root',
+        }),
+      ),
+      {
+        id: 'scoped-child',
+        name: 'Existing scoped analysis',
+        cwd: worktree,
+        activeHoursAgo: 3,
+        origin: 'subagent',
+        parent: 'native-root',
+      },
+      {
+        id: 'unrelated',
+        name: 'Unrelated sibling path',
+        cwd: `${worktree}-sibling`,
+        activeHoursAgo: 1,
+        origin: 'human',
+      },
+    ]);
+    const context = await Effect.runPromise(
+      queryWorkContext({ dbPath, now: NOW, scope: { kind: 'checkouts', checkoutPaths: [worktree] } }),
+    );
+    expect(context.sessions.map(({ root }) => root.key.sourceSessionId)).toEqual(['native-root']);
+    expect(context.sessions[0]?.root.project.checkoutPath).toBe(PROJECT);
+    expect(context.coverage.roots).toMatchObject({ inScope: 1, read: 1, total: 1 });
+    expect(context.truncated).toBe(false);
+    const scoped = await Effect.runPromise(
+      queryRecentServedHarnessSessions({
+        dbPath,
+        harnessKey: 'codex',
+        activeSince: NOW.getTime() - 86_400_000,
+        scope: { kind: 'checkouts', checkoutPaths: [worktree] },
+      }),
+    );
+    expect(scoped.families[0]?.memberCount).toBe(10);
+    expect(scoped.families[0]?.members.some((member) => member.sourceSessionId === 'scoped-child')).toBe(false);
   });
 });

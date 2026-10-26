@@ -15,7 +15,12 @@ import {
   type WorkRootProject,
   type WorkSessionKey,
 } from '@ai-usage/report-core/work-attention';
-import { UsageStoreError, usageStoreErrorReasonFrom } from '@ai-usage/usage-store/reader';
+import {
+  MAX_WORK_SCOPE_CHECKOUTS,
+  UsageStoreError,
+  usageStoreErrorReasonFrom,
+  type WorkSessionReadScope,
+} from '@ai-usage/usage-store/reader';
 import { Effect, Result } from 'effect';
 import { queryWorkAttention } from './work-attention-read';
 
@@ -36,6 +41,8 @@ export const WORK_CONTEXT_SCHEMA_VERSION = 1 as const;
 
 export const WORK_CONTEXT_BOUNDS = {
   maxCheckouts: 10,
+  maxScopeCheckouts: MAX_WORK_SCOPE_CHECKOUTS,
+  maxSessions: 20,
   maxDecisions: 20,
   maxEvidencePerReading: 8,
   maxJiraIssues: 10,
@@ -66,34 +73,38 @@ export const WORK_CONTEXT_COVERAGE_NOTES = [
   },
   {
     code: 'declarations-not-transcripts',
-    text: 'A declaration is what a session stated at its last turn end, as the Claude Desktop registry recorded it, dated by the session; no transcript is read.',
+    text: 'A declaration is what a session stated at its last turn end, as the Claude Desktop registry recorded it, dated by the session. Codex contributes bounded native structured input requests and exact response identities, not a general transcript or inferred turn status.',
   },
   {
     code: 'declared-links-only',
     text: 'Pull request, checkout and Jira facts appear only when a session of the family declared the pull request, wrote the Jira key in a branch name, or worked in the checkout.',
   },
   {
+    code: 'scope-before-budget',
+    text: 'scopeAppliedBeforeBounds names whether the store selected the explicit scope before its bounded pages; a projection of a supplied dataset only covers that page. Root counts describe that scoped read, not the entire corpus. Native parents are retained when a child matches; previews do not enumerate every family member. Absence from a bounded page is not absence from the corpus.',
+  },
+  {
     code: 'activity-window',
-    text: 'Roots with nothing pending and no activity within coverage.attention.window.sinceDays are left out; a request or an external wait is kept at any age.',
+    text: 'Desktop roots with nothing pending and no activity within coverage.attention.window.sinceDays are left out; their requests and external waits are kept at any age. Codex request evidence covers only the selected served campaigns and bounded members in that activity window; older or omitted requests may remain pending.',
   },
   {
     code: 'literal-paths',
-    text: 'Checkout paths are compared as written: symbolic links and git worktrees outside the checkout path are not resolved, and a recorded path that is not absolute is never compared (coverage.roots.unscopedPaths counts them).',
+    text: 'Checkout paths are compared literally with directory boundaries. Symbolic links are not resolved. Use checkoutPaths to include up to 10 explicitly known worktrees outside a checkout; names, branches and dates never link them. Non-absolute recorded paths are never matched to checkout scopes.',
   },
 ] as const;
 
 /**
  * Replaces the `claude-desktop-only` note when the read included Codex campaigns (ADR 0059): their
- * sessions are in the context, as sessions only.
+ * sessions may carry bounded native request evidence, without a general turn declaration.
  */
 export const WORK_CONTEXT_CODEX_NOTE = {
   code: 'desktop-waits-codex-sessions',
-  text: 'Claude Desktop sessions carry their declared waits. Codex sessions are included as sessions only: Codex declares no wait, so none is derived and none appears in waiting (coverage.harnesses.codex counts the recent campaigns read). Claude Code sessions started outside Claude Desktop, and OpenCode and Cursor sessions, are not represented.',
+  text: 'Claude Desktop sessions carry their declared waits. Codex sessions include supported native structured requests: acceptance is not a human answer, and only an exact linked response settles its questions. General turn status and runtime approvals remain unknown. Coverage is limited to the selected served campaign members; older or omitted requests may remain pending. Claude Code outside Desktop, OpenCode and Cursor are not represented.',
 } as const;
 
 export type WorkContextCoverageNote = (typeof WORK_CONTEXT_COVERAGE_NOTES)[number] | typeof WORK_CONTEXT_CODEX_NOTE;
 
-/** What each harness contributes to the context: declared waits, or sessions only. */
+/** What each harness contributes to the context: declared waits, or native structured requests. */
 export interface WorkContextHarnessCoverage {
   readonly claudeDesktop: { readonly inScope: number; readonly reads: 'declared-waits' };
   readonly codex: {
@@ -101,22 +112,23 @@ export interface WorkContextHarnessCoverage {
     readonly campaignsInWindow: number;
     readonly campaignsRead: number;
     /**
-     * Campaigns read that the page limit cut before the scope was applied (Desktop roots rank
-     * first): whether they are in scope is unknown, so `inScope` is a lower bound when this is > 0.
+     * Scoped campaigns read that the final page limit cut (Desktop roots rank first).
      */
     readonly cutByPage: number;
     readonly inScope: number;
-    readonly reads: 'sessions-only';
+    readonly reads: 'native-requests';
   };
 }
 
 export type WorkContextScope =
   | { readonly checkoutPath: string; readonly kind: 'checkout' }
+  | { readonly checkoutPaths: readonly string[]; readonly kind: 'checkouts' }
   | { readonly kind: 'project-label'; readonly projectLabel: string };
 
 /** The scope as applied: a checkout matches roots in that path or inside it, a label matches exactly. */
 export type WorkContextAppliedScope =
   | { readonly checkoutPath: string; readonly kind: 'checkout'; readonly match: 'same-or-inside' }
+  | { readonly checkoutPaths: readonly string[]; readonly kind: 'checkouts'; readonly match: 'same-or-inside' }
   | { readonly kind: 'project-label'; readonly match: 'exact'; readonly projectLabel: string };
 
 export interface WorkContextRootReference {
@@ -184,6 +196,7 @@ export interface WorkContextOmitted {
   readonly decisions: number;
   readonly jiraIssues: number;
   readonly pullRequests: number;
+  readonly sessions: number;
   readonly waits: number;
 }
 
@@ -205,9 +218,9 @@ export interface WorkContextCoverage {
   readonly roots: {
     /** Roots of the read that matched the scope. */
     readonly inScope: number;
-    /** Roots the read returned, before the scope. */
+    /** Roots the bounded read returned; queryWorkContext applies its scope before the read budgets. */
     readonly read: number;
-    /** Every root of the read, including those its window or page left out. */
+    /** Roots counted in the scoped read, including those its window or page left out; not the whole corpus. */
     readonly total: number;
     /**
      * Roots read whose recorded checkout path is not absolute (relative, or another platform's):
@@ -215,6 +228,16 @@ export interface WorkContextCoverage {
      */
     readonly unscopedPaths: number;
   };
+  /** False only for a projection of an already bounded dataset supplied by a caller. */
+  readonly scopeAppliedBeforeBounds: boolean;
+}
+
+/** Compact native root reference, including quiet explorations and sessions with unknown attention. */
+export interface WorkContextSession {
+  readonly age: WorkRootAge;
+  readonly attention: WorkRoot['attention'];
+  readonly root: WorkContextRootReference;
+  readonly session: WorkRoot['session'];
 }
 
 export interface WorkContextDataset {
@@ -224,6 +247,7 @@ export interface WorkContextDataset {
   readonly linked: WorkContextLinked;
   readonly schemaVersion: typeof WORK_CONTEXT_SCHEMA_VERSION;
   readonly scope: WorkContextAppliedScope;
+  readonly sessions: readonly WorkContextSession[];
   /** Any list was cut, for count or bytes, or the underlying read was a selection. */
   readonly truncated: boolean;
   readonly truncation: WorkContextTruncation;
@@ -257,6 +281,22 @@ const isWaitingAttention = (attention: WorkRoot['attention']): attention is Work
 
 /** Validates and normalizes a scope; returns the problem as a path-free sentence when it is not usable. */
 export const normalizeWorkContextScope = (scope: WorkContextScope): WorkContextAppliedScope | string => {
+  if (scope.kind === 'checkouts') {
+    if (scope.checkoutPaths.length === 0 || scope.checkoutPaths.length > WORK_CONTEXT_BOUNDS.maxScopeCheckouts) {
+      return `checkoutPaths must contain 1 to ${String(WORK_CONTEXT_BOUNDS.maxScopeCheckouts)} explicit paths`;
+    }
+    const paths: string[] = [];
+    for (const checkoutPath of scope.checkoutPaths) {
+      const normalized = normalizeWorkContextScope({ checkoutPath, kind: 'checkout' });
+      if (typeof normalized === 'string') {
+        return normalized;
+      }
+      if (normalized.kind === 'checkout') {
+        paths.push(normalized.checkoutPath);
+      }
+    }
+    return { checkoutPaths: [...new Set(paths)], kind: 'checkouts', match: 'same-or-inside' };
+  }
   if (scope.kind === 'checkout') {
     const { checkoutPath } = scope;
     if (checkoutPath.length === 0 || checkoutPath.length > WORK_ATTENTION_BOUNDS.maxPath) {
@@ -293,12 +333,16 @@ const rootInScope = (root: WorkRoot, scope: WorkContextAppliedScope): boolean =>
   if (scope.kind === 'project-label') {
     return root.project.label === scope.projectLabel;
   }
-  if (root.project.checkoutPath !== null && isSameOrInside(root.project.checkoutPath, scope.checkoutPath)) {
+  const paths = scope.kind === 'checkout' ? [scope.checkoutPath] : scope.checkoutPaths;
+  if (
+    root.project.checkoutPath !== null &&
+    paths.some((target) => isSameOrInside(root.project.checkoutPath ?? '', target))
+  ) {
     return true;
   }
   // A child of the family may have worked in another checkout; its observed status names it.
   return root.facts.some(
-    (fact) => fact.kind === 'checkout-status' && isSameOrInside(fact.checkoutPath, scope.checkoutPath),
+    (fact) => fact.kind === 'checkout-status' && paths.some((target) => isSameOrInside(fact.checkoutPath, target)),
   );
 };
 
@@ -313,6 +357,10 @@ const referenceOf = (root: WorkRoot): WorkContextRootReference => ({
 /** The date a fact carries for itself; provenance keeps when and where it was observed. */
 const factDate = (fact: WorkFact): CanonicalInstant | null => {
   switch (fact.kind) {
+    case 'codex-user-request':
+      return fact.request.askedAt;
+    case 'codex-session-context':
+      return fact.provenance.observedAt;
     case 'declared-turn':
       return fact.declaredAt;
     case 'declared-pull-request':
@@ -465,18 +513,24 @@ const jiraIssuesOf = (entries: readonly LinkedEntry[]): WorkContextLinkedFact<'j
 const encodedBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).byteLength;
 
 /** Lists cut first when the encoding is over its ceiling: the least urgent first, the waits last. */
-const BYTE_CUT_ORDER = ['jiraIssues', 'checkouts', 'pullRequests', 'decisions', 'waits'] as const;
+const BYTE_CUT_ORDER = ['sessions', 'jiraIssues', 'checkouts', 'pullRequests', 'decisions', 'waits'] as const;
 
 /**
  * The pure projection of a Work attention dataset onto one scope. `queryWorkContext` feeds it from
  * the store. Throws `RangeError` for a scope `normalizeWorkContextScope` refuses.
  */
-export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkContextScope): WorkContextDataset => {
+export const projectWorkContext = (
+  dataset: WorkAttentionDataset,
+  scope: WorkContextScope,
+  /** Store-scoped reads already selected families by any member, including members outside the preview. */
+  selection: 'project-dataset' | 'already-scoped' = 'project-dataset',
+): WorkContextDataset => {
   const applied = normalizeWorkContextScope(scope);
   if (typeof applied === 'string') {
     throw new RangeError(`projectWorkContext: ${applied}`);
   }
-  const roots = dataset.roots.filter((root) => rootInScope(root, applied));
+  const roots =
+    selection === 'already-scoped' ? dataset.roots : dataset.roots.filter((root) => rootInScope(root, applied));
   const waits: WorkContextWait[] = [];
   const decisions: (WorkContextDecision & { readonly sortAt: string })[] = [];
   for (const root of roots) {
@@ -500,6 +554,14 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
   decisions.sort((left, right) => right.sortAt.localeCompare(left.sortAt));
   const linked = collectLinked(roots);
   const lists = {
+    sessions: roots.map(
+      (root): WorkContextSession => ({
+        root: referenceOf(root),
+        age: root.age,
+        attention: root.attention,
+        session: root.session,
+      }),
+    ),
     checkouts: checkoutsOf(linked),
     decisions: decisions.map(({ sortAt: _sortAt, ...decision }): WorkContextDecision => decision),
     jiraIssues: jiraIssuesOf(linked),
@@ -507,6 +569,7 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     waits,
   };
   const limits = {
+    sessions: WORK_CONTEXT_BOUNDS.maxSessions,
     checkouts: WORK_CONTEXT_BOUNDS.maxCheckouts,
     decisions: WORK_CONTEXT_BOUNDS.maxDecisions,
     jiraIssues: WORK_CONTEXT_BOUNDS.maxJiraIssues,
@@ -514,6 +577,7 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     waits: WORK_CONTEXT_BOUNDS.maxWaits,
   };
   const omitted = {
+    sessions: Math.max(0, lists.sessions.length - limits.sessions),
     checkouts: Math.max(0, lists.checkouts.length - limits.checkouts),
     decisions: Math.max(0, lists.decisions.length - limits.decisions),
     jiraIssues: Math.max(0, lists.jiraIssues.length - limits.jiraIssues),
@@ -521,6 +585,7 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     waits: Math.max(0, lists.waits.length - limits.waits),
   };
   const kept = {
+    sessions: lists.sessions.slice(0, limits.sessions),
     checkouts: lists.checkouts.slice(0, limits.checkouts),
     decisions: lists.decisions.slice(0, limits.decisions),
     jiraIssues: lists.jiraIssues.slice(0, limits.jiraIssues),
@@ -528,12 +593,12 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     waits: lists.waits.slice(0, limits.waits),
   };
   const unscopedPaths =
-    applied.kind === 'checkout'
-      ? dataset.roots.filter(
+    applied.kind === 'project-label'
+      ? 0
+      : dataset.roots.filter(
           (root) => root.project.checkoutPath !== null && !path.isAbsolute(root.project.checkoutPath),
-        ).length
-      : 0;
-  const codexInScope = roots.filter((root) => root.attention === 'not-observable').length;
+        ).length;
+  const codexInScope = roots.filter((root) => root.key.harness === 'codex').length;
   const { codexSessions } = dataset.coverage;
   const harnesses: WorkContextHarnessCoverage = {
     claudeDesktop: { inScope: roots.length - codexInScope, reads: 'declared-waits' },
@@ -541,11 +606,11 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
       campaignsInWindow: codexSessions.campaignsInWindow,
       campaignsRead: codexSessions.campaignsRead,
       cutByPage: Math.max(
-        codexSessions.campaignsRead - dataset.roots.filter((root) => root.attention === 'not-observable').length,
+        codexSessions.campaignsRead - dataset.roots.filter((root) => root.key.harness === 'codex').length,
         0,
       ),
       inScope: codexInScope,
-      reads: 'sessions-only',
+      reads: 'native-requests',
     },
   };
   const notes: readonly WorkContextCoverageNote[] =
@@ -556,12 +621,14 @@ export const projectWorkContext = (dataset: WorkAttentionDataset, scope: WorkCon
     const truncation = { bytes, dataset: dataset.truncated, omitted: { ...omitted } };
     return {
       coverage: {
+        scopeAppliedBeforeBounds: selection === 'already-scoped',
         attention: dataset.coverage,
         harnesses,
         notes,
         roots: { inScope: roots.length, read: dataset.roots.length, total: dataset.totalRoots, unscopedPaths },
       },
       decisions: kept.decisions,
+      sessions: kept.sessions,
       generatedAt: dataset.generatedAt,
       linked: { checkouts: kept.checkouts, jiraIssues: kept.jiraIssues, pullRequests: kept.pullRequests },
       schemaVersion: WORK_CONTEXT_SCHEMA_VERSION,
@@ -597,11 +664,13 @@ export interface QueryWorkContextInput {
   readonly machineId?: string;
   readonly now?: Date;
   readonly scope: WorkContextScope;
+  /** Explicit exploration window (1–3650 days); defaults to the same 30 days as Work. */
+  readonly sinceDays?: number;
 }
 
 /**
- * One bounded read through the read-only store connection: the Work attention read at its widest
- * page (`WORK_ATTENTION_BOUNDS.maxRoots`), then the projection onto the scope.
+ * The scope is applied by the store before the bounded Work read. A matching family retains its
+ * native root even when another member provided the scope match; no lineage is inferred.
  */
 export const queryWorkContext = (input: QueryWorkContextInput): Effect.Effect<WorkContextDataset, UsageStoreError> =>
   Effect.gen(function* () {
@@ -609,13 +678,22 @@ export const queryWorkContext = (input: QueryWorkContextInput): Effect.Effect<Wo
     if (typeof applied === 'string') {
       return yield* Effect.fail(invalidInput(applied));
     }
+    const scope: WorkSessionReadScope =
+      applied.kind === 'project-label'
+        ? applied
+        : {
+            checkoutPaths: applied.kind === 'checkout' ? [applied.checkoutPath] : applied.checkoutPaths,
+            kind: 'checkouts',
+          };
     const dataset = yield* queryWorkAttention({
+      scope,
+      ...(input.sinceDays === undefined ? {} : { sinceDays: input.sinceDays }),
       dbPath: input.dbPath,
       limit: WORK_ATTENTION_BOUNDS.maxRoots,
       ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
       ...(input.now === undefined ? {} : { now: input.now }),
     });
-    return projectWorkContext(dataset, applied);
+    return projectWorkContext(dataset, applied, 'already-scoped');
   });
 
 const failure = (code: WorkContextFailureCode, message: string): WorkContextReadResult => ({
@@ -628,6 +706,9 @@ const INCOMPATIBLE_REASONS = new Set(['corrupt', 'schema-too-new']);
 /** Maps a store failure to its typed, path-free failure. */
 export const workContextFailureOf = (error: UsageStoreError): WorkContextFailure => {
   const reason = usageStoreErrorReasonFrom(error);
+  if (reason === 'invalid-input') {
+    return { code: 'invalid-input', message: 'The Work context query bounds are invalid.' };
+  }
   if (reason === 'store-missing') {
     return {
       code: 'store-missing',

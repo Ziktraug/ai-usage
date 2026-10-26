@@ -15,6 +15,7 @@
   import type { SessionClientAdapter } from '../../rpc/session-client';
   import { sessionRoutePathname } from '../sessions/detail/session-route';
   import { workButton, workHeading, workLink, workMuted, workPanel, workRow, workStack } from './work-styles';
+  import WorkThreadIntake from './work-thread-intake.svelte';
 
   let {
     item,
@@ -61,6 +62,9 @@
         ? 'Partial session coverage'
         : 'Recorded usage only; work outcomes unobserved'}
     </p>
+    {#key row.rowId}
+      <WorkThreadIntake {row} />
+    {/key}
     {#if row.originProvenance}
       <p class={workMuted}>{originProvenanceFor(row.originProvenance).description}</p>
     {/if}

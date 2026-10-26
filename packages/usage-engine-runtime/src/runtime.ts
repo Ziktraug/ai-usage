@@ -6,6 +6,7 @@ import {
   type SourceControlEntryView,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
+import type { WorkThreadCommand } from '@ai-usage/report-core/work-thread';
 import {
   parseUsageEngineInstanceId,
   parseUsageEnginePublicationRevision,
@@ -22,9 +23,11 @@ import {
   type UsageEngineMergePreviewOutput,
   type UsageEngineReplicationStatusOutput,
   type UsageEngineReviewAttemptOutput,
+  type UsageEngineReviewAttemptStopOutput,
   type UsageEngineReviewReservationReleaseOutput,
   type UsageEngineRoutingQualificationOutput,
   type UsageEngineStatus,
+  type UsageEngineWorkThreadOutput,
 } from '@ai-usage/usage-engine-control';
 import { createRuntimeCommandCoordinator, type RuntimeCommandCoordinator } from './runtime-command-coordinator';
 import { createRuntimeCommandExecutor } from './runtime-command-executor';
@@ -113,6 +116,7 @@ export interface UsageEngineMutationPort {
 type StartReviewAttemptCommand = Extract<UsageEngineCommand, { readonly command: 'start-review-attempt' }>;
 type QualifyReviewRoutingCommand = Extract<UsageEngineCommand, { readonly command: 'qualify-review-routing' }>;
 type ReleaseReviewReservationCommand = Extract<UsageEngineCommand, { readonly command: 'release-review-reservation' }>;
+type StopReviewAttemptCommand = Extract<UsageEngineCommand, { readonly command: 'stop-review-attempt' }>;
 
 /** The executor observation the engine ran for one qualification, as the source reported it. */
 export interface RoutingQualificationExecutorRun {
@@ -145,6 +149,15 @@ export interface UsageEngineReviewAttemptPort {
    * The signal bounds the decision and the spawn only: an abort never kills a started review.
    */
   readonly start: (command: StartReviewAttemptCommand, signal?: AbortSignal) => Promise<UsageEngineReviewAttemptOutput>;
+  /** Requests interruption only for an execution still owned by this engine. */
+  readonly stop: (
+    command: StopReviewAttemptCommand,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineReviewAttemptStopOutput>;
+}
+
+export interface UsageEngineWorkThreadPort {
+  readonly execute: (command: WorkThreadCommand, signal?: AbortSignal) => Promise<UsageEngineWorkThreadOutput>;
 }
 
 export interface UsageEngineRuntimeDependencies {
@@ -175,6 +188,7 @@ export interface UsageEngineRuntimeDependencies {
     ) => Promise<void>;
   };
   readonly validateConfig: () => Promise<void>;
+  readonly workThreads?: UsageEngineWorkThreadPort;
 }
 
 type RuntimeReadiness = UsageEngineStatus['readiness'];

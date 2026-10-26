@@ -32,6 +32,7 @@ import {
 } from '@ai-usage/local-machine/local-history';
 import { firstExisting } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON } from '@ai-usage/local-machine/text';
+import { type CodexWorkObservation, parseCodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import {
@@ -165,7 +166,8 @@ interface SqliteDatabase {
 // Bumped to 25 because child token ownership now uses the declared session birth
 // and native task evidence instead of retaining inherited cumulative snapshots.
 // An unchanged rollout must also recover lost generations and partial status.
-const CODEX_SESSION_CACHE_VERSION = 25;
+// Version 27 also records loss from recognized native requests/outputs with invalid timestamps.
+const CODEX_SESSION_CACHE_VERSION = 27;
 
 // The runtime's op-count yielding cannot split one long synchronous
 // decompress-and-parse, and a cold pass over thousands of rollouts chains many
@@ -234,6 +236,7 @@ const readCodexThreadMetadata: Effect.Effect<
 
 const cloneCodexSession = (session: CodexSession): CodexSession => ({
   ...session,
+  workObservation: session.workObservation === null ? null : parseCodexWorkObservation(session.workObservation),
   end: session.end ? new Date(session.end) : null,
   models: [...session.models],
   skillObservations: session.skillObservations.map((observation) => ({ ...observation })),
@@ -368,6 +371,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     // session that silently lost its observations.
     const skillObservations = reviveSkillObservationsResult(value.skillObservations);
     const skillObservationCompleteness = reviveSkillObservationCompleteness(value.skillObservationCompleteness);
+    const workObservation = value.workObservation === null ? null : parseCodexWorkObservation(value.workObservation);
     let vcs: SessionVcsContext | undefined;
     try {
       vcs = value.vcs === undefined ? undefined : parseSessionVcsContext(value.vcs);
@@ -393,7 +397,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       models.length !== rawModels?.length ||
       phases === null ||
       !skillObservations.valid ||
-      skillObservationCompleteness === null
+      skillObservationCompleteness === null ||
+      (value.workObservation !== null && workObservation === null)
     ) {
       return null;
     }
@@ -415,6 +420,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       return null;
     }
     return {
+      workObservation,
       activeDurationMs: activeDuration?.value ?? null,
       classifierParent: value.classifierParent,
       id: typeof value.id === 'string' ? value.id : null,
@@ -805,6 +811,8 @@ export interface CodexUsageSessionsResult {
   rejectedMetricRecords: number;
   rejectedSkillObservationRecords: number;
   sessions: CodexCollectedSession[];
+  /** Local-only auxiliary attention evidence from the same parser pass. */
+  workObservations: CodexWorkObservation[];
 }
 
 export const readCodexUsageSessionsResult: Effect.Effect<
@@ -930,6 +938,9 @@ export const readCodexUsageSessionsResult: Effect.Effect<
           .at(-1)
       : undefined;
     return {
+      workObservations: sessions.flatMap((session) =>
+        session.workObservation === null ? [] : [session.workObservation],
+      ),
       metricWarningContext: {
         affectedSessions: rejectedSessions.length,
         ...(lastObservedAt ? { lastObservedAt } : {}),

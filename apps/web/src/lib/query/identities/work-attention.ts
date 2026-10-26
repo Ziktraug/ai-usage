@@ -1,9 +1,12 @@
+import type { WorkAttentionInput } from '@ai-usage/web-contract/work';
 import type { WorkAttentionClientResult, WorkAttentionErrorTag } from '../../rpc/work-attention-client';
 import { type CollectionSwrQueryKey, collectionSwrKey } from '../keys';
 
 export interface WorkAttentionIdentity {
   readonly limit: number;
   readonly machineId: string | null;
+  readonly scope?: WorkAttentionInput['scope'];
+  readonly sinceDays?: number;
 }
 
 export class WorkAttentionQueryError extends Error {
@@ -29,5 +32,20 @@ export const unwrapWorkAttentionResult = (result: WorkAttentionClientResult) => 
  * collection cadence prefix. Query keys only carry scalar identity parts: the request's `limit`
  * and `machineId` are spelled out rather than nested in an object.
  */
-export const workAttentionKey = ({ limit, machineId }: WorkAttentionIdentity): CollectionSwrQueryKey =>
-  collectionSwrKey('work-attention', 'limit', limit, 'machine', machineId ?? 'all');
+export const workAttentionKey = ({
+  limit,
+  machineId,
+  scope,
+  sinceDays,
+}: WorkAttentionIdentity): CollectionSwrQueryKey =>
+  collectionSwrKey(
+    'work-attention',
+    'limit',
+    limit,
+    'machine',
+    machineId ?? 'all',
+    ...(scope
+      ? ['scope', scope.kind, ...(scope.kind === 'checkouts' ? [...scope.checkoutPaths].sort() : [scope.projectLabel])]
+      : []),
+    ...(sinceDays === undefined ? [] : ['since-days', sinceDays]),
+  );

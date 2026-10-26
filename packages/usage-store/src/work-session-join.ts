@@ -1,5 +1,7 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { Effect } from 'effect';
 import type { UsageStoreError, UsageStoreErrorReason } from './errors';
+import { validWorkSessionReadScope, type WorkSessionReadScope, workSessionScopeSql } from './work-session-scope';
 
 /**
  * The bounded join from a native session identity to the served Session row it corresponds to:
@@ -25,6 +27,50 @@ export const MAX_WORK_HARNESS_SESSION_FAMILIES = 200;
 export const MAX_WORK_HARNESS_SESSION_MEMBERS = 5;
 const MAX_MEMBER_TEXT = 4096;
 const MAX_MEMBER_SHORT_TEXT = 64;
+const MAX_DELEGATED_SESSIONS = 32;
+/** Bound the JSON crossing the SQLite reader seam before parsing it. */
+export const MAX_WORK_DELEGATIONS_JSON = 20_000;
+
+export const readWorkSessionDelegations = (
+  raw: unknown,
+): {
+  delegatedSessions: { harness: 'codex'; sourceSessionId: string }[];
+  delegatedSessionsTruncated: boolean;
+} => {
+  if (raw === null || raw === undefined) {
+    return { delegatedSessions: [], delegatedSessionsTruncated: false };
+  }
+  let value: unknown;
+  try {
+    value = typeof raw === 'string' && raw.length <= MAX_WORK_DELEGATIONS_JSON ? JSON.parse(raw) : null;
+  } catch {
+    value = null;
+  }
+  if (!Array.isArray(value)) {
+    return { delegatedSessions: [], delegatedSessionsTruncated: true };
+  }
+  const delegatedSessions: { harness: 'codex'; sourceSessionId: string }[] = [];
+  const seen = new Set<string>();
+  let delegatedSessionsTruncated = value.length > MAX_DELEGATED_SESSIONS;
+  for (const entry of value.slice(0, MAX_DELEGATED_SESSIONS)) {
+    if (
+      !(
+        isRecord(entry) &&
+        entry.harness === 'codex' &&
+        typeof entry.sourceSessionId === 'string' &&
+        validIdentifier(entry.sourceSessionId)
+      )
+    ) {
+      delegatedSessionsTruncated = true;
+      continue;
+    }
+    if (!seen.has(entry.sourceSessionId)) {
+      seen.add(entry.sourceSessionId);
+      delegatedSessions.push({ harness: 'codex', sourceSessionId: entry.sourceSessionId });
+    }
+  }
+  return { delegatedSessions, delegatedSessionsTruncated };
+};
 
 interface SqliteStatement {
   all: (...params: unknown[]) => unknown[];
@@ -87,6 +133,7 @@ export interface QueryRecentServedHarnessSessionsInput {
   /** Families read at most; defaults to and may not exceed `MAX_WORK_HARNESS_SESSION_FAMILIES`. */
   readonly limit?: number;
   readonly machineId?: string;
+  readonly scope?: WorkSessionReadScope;
 }
 
 /** One served Session of a family, as the Work read needs it; nothing else of the row is read. */
@@ -98,6 +145,11 @@ export interface ServedHarnessSessionMember {
   readonly campaignRoot: boolean;
   /** `source.sourcePath`: the working directory the harness recorded. */
   readonly checkoutPath: string | null;
+  /** Attested cross-harness launches, bounded independently of the rendered children. */
+  readonly delegatedSessions?: readonly { readonly harness: 'codex'; readonly sourceSessionId: string }[];
+  readonly delegatedSessionsTruncated?: boolean;
+  /** Recorded active turn duration from the served row; absent legacy values and null mean unknown. */
+  readonly durationMs?: number | null;
   readonly machineId: string;
   readonly origin: string | null;
   /** The parent the harness declared (`source.parentSourceSessionId`); on a root, that parent is not served. */
@@ -143,6 +195,8 @@ interface MemberRecord {
   campaign_key: unknown;
   campaign_root: unknown;
   checkout_path: unknown;
+  delegated_sessions: unknown;
+  duration_ms: unknown;
   machine_id: unknown;
   member_count: unknown;
   origin: unknown;
@@ -196,10 +250,15 @@ const memberOf = (record: MemberRecord): ServedHarnessSessionMember | null => {
     return null;
   }
   return {
+    ...readWorkSessionDelegations(record.delegated_sessions),
     activeAt,
     branch,
     campaignRoot: record.campaign_root === 1,
     checkoutPath,
+    durationMs:
+      typeof record.duration_ms === 'number' && Number.isFinite(record.duration_ms) && record.duration_ms >= 0
+        ? record.duration_ms
+        : null,
     machineId,
     origin,
     parentSourceSessionId,
@@ -219,29 +278,40 @@ const FAMILY_WINDOW_WHERE = (machineFiltered: boolean): string => `
     AND json_extract(source_row_json, '$.source.harnessKey') = ?
 `;
 
-const MEMBERS_SQL = (families: number): string => `
-  SELECT * FROM (
-    SELECT
-      row_id,
-      campaign_key,
-      campaign_root,
-      project_label,
-      machine_id,
-      origin,
-      active_time,
-      json_extract(source_row_json, '$.source.sourceSessionId') AS source_session_id,
-      json_extract(source_row_json, '$.source.parentSourceSessionId') AS parent_source_session_id,
-      json_extract(source_row_json, '$.source.sourcePath') AS checkout_path,
-      json_extract(source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
-      json_extract(source_row_json, '$.sessionLabel') AS title,
-      json_extract(source_row_json, '$.date') AS started_at,
-      ROW_NUMBER() OVER (PARTITION BY campaign_key ORDER BY campaign_root DESC, active_time DESC, ordinal) AS position,
-      COUNT(*) OVER (PARTITION BY campaign_key) AS member_count
-    FROM served_report_rows
-    WHERE revision = ? AND campaign_key IN (${Array.from({ length: families }, () => '?').join(', ')})
-  )
-  WHERE position <= ?
-  ORDER BY campaign_key, position
+/** Bound before JSON extraction; published root counts avoid a window over every member payload. */
+const MEMBERS_SQL = `
+  SELECT ordinal, row_id, campaign_key, campaign_root, project_label, machine_id, origin, active_time,
+    json_extract(source_row_json, '$.source.sourceSessionId') AS source_session_id,
+    json_extract(source_row_json, '$.source.parentSourceSessionId') AS parent_source_session_id,
+    CASE WHEN json_type(source_row_json, '$.source.delegatedSessions') IS NULL
+      OR json_type(source_row_json, '$.source.delegatedSessions') = 'null' THEN NULL
+    WHEN json_type(source_row_json, '$.source.delegatedSessions') = 'array'
+      THEN substr(json_extract(source_row_json, '$.source.delegatedSessions'), 1, ${MAX_WORK_DELEGATIONS_JSON + 1})
+    ELSE 'null' END AS delegated_sessions,
+    json_extract(source_row_json, '$.source.sourcePath') AS checkout_path,
+    json_extract(source_row_json, '$.source.vcs.branches[#-1].name') AS branch,
+    json_extract(source_row_json, '$.sessionLabel') AS title,
+    json_extract(source_row_json, '$.date') AS started_at,
+    CASE WHEN json_type(source_row_json, '$.durationMs') IN ('integer', 'real')
+      THEN json_extract(source_row_json, '$.durationMs') END AS duration_ms,
+    (SELECT campaign_total_count FROM served_report_rows
+      WHERE revision = ? AND campaign_key = ? AND campaign_root = 1 LIMIT 1) AS member_count
+  FROM (
+    SELECT ordinal FROM (
+      SELECT ordinal FROM served_report_rows
+      WHERE revision = ? AND campaign_key = ? AND campaign_root = 1
+      ORDER BY ordinal LIMIT 1
+    )
+    UNION ALL
+    SELECT ordinal FROM (
+      SELECT ordinal FROM served_report_rows
+      WHERE revision = ? AND campaign_key = ? AND campaign_root = 0
+      ORDER BY active_time DESC, ordinal LIMIT ?
+    )
+  ) AS picked
+  INNER JOIN served_report_rows USING (ordinal)
+  WHERE revision = ?
+  ORDER BY campaign_root DESC, active_time DESC, ordinal
 `;
 
 /** Groups member records per campaign, root first as the query orders them; out-of-shape rows are counted. */
@@ -364,7 +434,8 @@ export const createWorkSessionJoinStore = (dependencies: WorkSessionJoinDependen
         Number.isSafeInteger(limit) &&
         limit > 0 &&
         limit <= MAX_WORK_HARNESS_SESSION_FAMILIES &&
-        Number.isSafeInteger(input.activeSince)
+        Number.isSafeInteger(input.activeSince) &&
+        (input.scope === undefined || validWorkSessionReadScope(input.scope))
       )
     ) {
       return Effect.fail(
@@ -392,12 +463,27 @@ export const createWorkSessionJoinStore = (dependencies: WorkSessionJoinDependen
             if (current === null) {
               return { families: [], familiesInWindow: 0, generatedAt: null, refusedRows: 0, revision: null };
             }
-            const where = FAMILY_WINDOW_WHERE(input.machineId !== undefined);
+            const scoped =
+              input.scope === undefined
+                ? null
+                : workSessionScopeSql(input.scope, {
+                    checkout: "json_extract(source_row_json, '$.source.sourcePath')",
+                    project: "json_extract(source_row_json, '$.source.sourcePath')",
+                    fallbackLabel: 'project_label',
+                  });
+            const where =
+              FAMILY_WINDOW_WHERE(input.machineId !== undefined) +
+              (scoped === null
+                ? ''
+                : `
+              AND campaign_key IN (SELECT campaign_key FROM served_report_rows WHERE revision = ? AND ${scoped.sql})
+            `);
             const params = [
               current.revision,
               input.activeSince,
               ...(input.machineId === undefined ? [] : [input.machineId]),
               input.harnessKey,
+              ...(scoped === null ? [] : [current.revision, ...scoped.params]),
             ];
             const counted = db
               .query(`SELECT COUNT(DISTINCT campaign_key) AS families FROM served_report_rows ${where}`)
@@ -417,16 +503,21 @@ export const createWorkSessionJoinStore = (dependencies: WorkSessionJoinDependen
                 ? [{ campaignKey: record.campaign_key, lastActiveAt: record.last_active }]
                 : [],
             );
-            const records =
-              keys.length === 0
-                ? []
-                : (db
-                    .query(MEMBERS_SQL(keys.length))
-                    .all(
-                      current.revision,
-                      ...keys.map((key) => key.campaignKey),
-                      MAX_WORK_HARNESS_SESSION_MEMBERS + 1,
-                    ) as MemberRecord[]);
+            const records = keys.flatMap(
+              (key) =>
+                db
+                  .query(MEMBERS_SQL)
+                  .all(
+                    current.revision,
+                    key.campaignKey,
+                    current.revision,
+                    key.campaignKey,
+                    current.revision,
+                    key.campaignKey,
+                    MAX_WORK_HARNESS_SESSION_MEMBERS,
+                    current.revision,
+                  ) as MemberRecord[],
+            );
             const { families, refusedRows } = familiesOf(keys, records);
             return {
               families,

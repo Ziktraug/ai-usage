@@ -28,7 +28,7 @@ import {
   type SkillObservation,
   type SkillObservationExtraction,
 } from '@ai-usage/report-core/skill-observation';
-import type { UsageModelSegment } from '@ai-usage/report-core/types';
+import type { UsageModelSegment, UsageRowSource } from '@ai-usage/report-core/types';
 import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from './metric-validation';
 import { dominant, usablePrompt } from './text';
 
@@ -41,6 +41,7 @@ const MAX_CLAUDE_PROMPT_BYTES = 32 * 1024;
 const MAX_CLAUDE_PROMPT_TOTAL_BYTES = 1024 * 1024;
 const MAX_CLAUDE_TURNS = 1024;
 const MAX_CLAUDE_CHILDREN = 512;
+const MAX_CLAUDE_CODEX_LAUNCHES = 32;
 const MAX_CLAUDE_INTERACTIONS = 2048;
 const CLAUDE_SPAWN_TOOL_NAMES = new Set(['Agent', 'Task', 'Workflow']);
 const CLAUDE_MESSAGE_TOOL_NAME = 'SendMessage';
@@ -107,16 +108,25 @@ export interface ClaudeReportFacts {
 }
 
 export interface ClaudeSourceFacts {
+  delegatedSessions?: UsageRowSource['delegatedSessions'];
   parentSourceSessionId: string | null;
   sourcePath: string | null;
   vcs?: SessionVcsContext;
 }
 
 export interface ClaudeSessionFacts {
+  codexLaunches: readonly ClaudeCodexLaunch[];
+  codexLaunchesTruncated: boolean;
   detailFacts: SessionDetail;
   projection: SessionProjectionFacts;
   report: ClaudeReportFacts;
   source: ClaudeSourceFacts;
+}
+
+export interface ClaudeCodexLaunch {
+  at: string;
+  evidence: 'resume-argument' | 'thread-started' | 'session-id-header';
+  sourceSessionId: string;
 }
 
 interface ClaudeEvent {
@@ -193,6 +203,8 @@ interface ClaudeToolCall {
 
 interface ClaudeLinkFacts {
   children: SessionDetailChildLink[];
+  codexLaunches: ClaudeCodexLaunch[];
+  codexLaunchesTruncated: boolean;
   coverage: Pick<SessionDetailCoverage, 'childDiscovery' | 'interactionAttribution'>;
   interactions: SessionDetailInteraction[];
 }
@@ -923,6 +935,424 @@ const stringInput = (input: Record<string, unknown>, key: string): string | null
   return boundedLabel(typeof value === 'string' && value.trim().length > 0 ? value.trim() : null);
 };
 
+const CODEX_THREAD_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
+const SHELL_ASSIGNMENT = /^[A-Za-z_][A-Za-z_\d]*=/u;
+const SHELL_SPACE = /[ \t]/u;
+const SHELL_IO_NUMBER = /^\d+$/u;
+const TIMEOUT_SECONDS = /^\d+(?:\.\d+)?$/u;
+const SHELL_STATUS_COMMANDS = new Set(['echo', 'printf', 'cat', 'grep', 'true', 'false']);
+const CODEX_VALUE_OPTIONS = new Set([
+  '-c',
+  '--config',
+  '-m',
+  '--model',
+  '-s',
+  '--sandbox',
+  '-p',
+  '--profile',
+  '-C',
+  '--cd',
+  '-i',
+  '--image',
+  '-o',
+  '--output-last-message',
+  '--output-schema',
+  '--color',
+  '--add-dir',
+  '--enable',
+  '--disable',
+  '--local-provider',
+]);
+const CODEX_FLAG_OPTIONS = new Set([
+  '--json',
+  '--full-auto',
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--skip-git-repo-check',
+  '--ephemeral',
+  '--oss',
+  '--last',
+  '--all',
+]);
+
+interface LiteralShellWord {
+  assignment: boolean;
+  redirection?: boolean;
+  value: string;
+}
+
+interface LiteralShellCommand {
+  separator: '&&' | ';' | null;
+  statusOnlyEcho: boolean;
+  words: LiteralShellWord[] | null;
+}
+
+/** Literal simple commands only; unsupported expansions invalidate their segment, never execute. */
+const shellCommands = (command: string): LiteralShellCommand[] | null => {
+  const commands: LiteralShellCommand[] = [];
+  let words: LiteralShellWord[] = [];
+  let word = '';
+  let started = false;
+  let assignment = true;
+  let valid = true;
+  let commandRequired = false;
+  let quote: 'single' | 'double' | null = null;
+  const flushWord = (): void => {
+    if (started) {
+      words.push({ assignment: assignment && SHELL_ASSIGNMENT.test(word), value: word });
+      word = '';
+      started = false;
+      assignment = true;
+    }
+  };
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    if (quote === 'single') {
+      if (character === "'") {
+        quote = null;
+      } else {
+        word += character;
+      }
+      continue;
+    }
+    if (character === '\\') {
+      const next = command[index + 1];
+      if (next === undefined) {
+        return null;
+      }
+      if (next !== '\n') {
+        if (!word.includes('=')) {
+          assignment = false;
+        }
+        if (quote === 'double' && !['$', '`', '"', '\\'].includes(next)) {
+          word += '\\';
+        }
+        word += next;
+        started = true;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === '`' || (character === '$' && command[index + 1] === '(')) {
+      return null;
+    }
+    if (character === '$') {
+      valid = false;
+    }
+    if (quote === 'double') {
+      if (character === '"') {
+        quote = null;
+      } else {
+        word += character;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      if (!word.includes('=')) {
+        assignment = false;
+      }
+      quote = character === '"' ? 'double' : 'single';
+      started = true;
+    } else if (character === ';' || (character === '&' && command[index + 1] === '&')) {
+      flushWord();
+      if (words.length === 0) {
+        return null;
+      }
+      commands.push({
+        separator: character === ';' ? ';' : '&&',
+        statusOnlyEcho: isStatusOnlyEcho(words),
+        words: valid ? words : null,
+      });
+      words = [];
+      valid = true;
+      commandRequired = character === '&';
+      if (commandRequired) {
+        index += 1;
+      }
+    } else if (character === '>' || character === '<') {
+      let descriptor = '';
+      if (started && assignment && SHELL_IO_NUMBER.test(word)) {
+        if (word !== '2' || character !== '>') {
+          return null;
+        }
+        descriptor = word;
+        word = '';
+        started = false;
+      }
+      flushWord();
+      let operator = `${descriptor}${character}`;
+      if (character === '>' && command[index + 1] === '>') {
+        operator += '>';
+        index += 1;
+      } else if (descriptor === '2' && command.slice(index, index + 3) === '>&1') {
+        operator = '2>&1';
+        index += 2;
+      } else if (character === '<' && command[index + 1] === '<') {
+        return null;
+      }
+      words.push({ assignment: false, redirection: true, value: operator });
+    } else if (character && '|&(){}#\n\r'.includes(character)) {
+      return null;
+    } else if (character && '*?[]'.includes(character)) {
+      valid = false;
+      word += character;
+      started = true;
+    } else if (character && SHELL_SPACE.test(character)) {
+      flushWord();
+    } else {
+      word += character;
+      started = true;
+    }
+  }
+  if (quote !== null) {
+    return null;
+  }
+  flushWord();
+  if (words.length === 0 && (commandRequired || commands.length === 0)) {
+    return null;
+  }
+  if (words.length > 0) {
+    commands.push({
+      separator: null,
+      statusOnlyEcho: isStatusOnlyEcho(words),
+      words: valid ? words : null,
+    });
+  }
+  return commands;
+};
+
+/** Redirect targets are file operands, never executable names, options or positional arguments. */
+const withoutTrailingRedirects = (words: readonly LiteralShellWord[]): readonly LiteralShellWord[] | null => {
+  const firstRedirect = words.findIndex((word) => word.redirection);
+  if (firstRedirect === -1) {
+    return words;
+  }
+  for (let index = firstRedirect; index < words.length; index += 1) {
+    const operator = words[index];
+    if (!operator?.redirection) {
+      return null;
+    }
+    if (operator.value !== '2>&1') {
+      const target = words[index + 1];
+      if (!target || target.redirection || target.value.length === 0) {
+        return null;
+      }
+      index += 1;
+    }
+  }
+  return words.slice(0, firstRedirect);
+};
+
+/** This exact status footer cannot emit a native thread header, even with its exit-code expansion. */
+const isStatusOnlyEcho = (words: readonly LiteralShellWord[]): boolean => {
+  const argumentsOnly = withoutTrailingRedirects(words);
+  return argumentsOnly?.length === 2 && argumentsOnly[0]?.value === 'echo' && argumentsOnly[1]?.value === 'exit=$?';
+};
+
+/** null is not an execution; an empty list is an execution without a literal resume id. */
+const codexExecResumeIds = (commandWords: readonly LiteralShellWord[]): string[] | null => {
+  const shellWords = withoutTrailingRedirects(commandWords);
+  if (shellWords === null) {
+    return null;
+  }
+  const words = shellWords.map(({ value }) => value);
+  let index = 0;
+  while (shellWords[index]?.assignment) {
+    index += 1;
+  }
+  if (words[index] === 'env') {
+    index += 1;
+    if (words[index] === '-i' || words[index] === '--ignore-environment') {
+      index += 1;
+    }
+    while (SHELL_ASSIGNMENT.test(words[index] ?? '')) {
+      index += 1;
+    }
+  }
+  if (words[index] === 'timeout') {
+    if (!TIMEOUT_SECONDS.test(words[index + 1] ?? '')) {
+      return null;
+    }
+    index += 2;
+  }
+  const executable = words[index];
+  if (!(executable === 'codex' || executable?.endsWith('/codex')) || words[index + 1] !== 'exec') {
+    return null;
+  }
+  index += 2;
+  let resume = false;
+  let literalArguments = false;
+  const positional: string[] = [];
+  while (index < words.length) {
+    const argument = words[index] ?? '';
+    if (literalArguments) {
+      positional.push(argument);
+      index += 1;
+      continue;
+    }
+    if (argument === '--') {
+      literalArguments = true;
+      index += 1;
+      continue;
+    }
+    const [option] = argument.split('=', 1);
+    if (CODEX_VALUE_OPTIONS.has(option ?? '')) {
+      if (!argument.includes('=')) {
+        if (words[index + 1] === undefined) {
+          return null;
+        }
+        index += 1;
+      }
+    } else if (CODEX_FLAG_OPTIONS.has(argument)) {
+      // This flag consumes no argument.
+    } else if (argument.startsWith('-') && argument !== '-') {
+      // Includes help/version and unknown options: no positive launch evidence.
+      return null;
+    } else if (!resume && positional.length === 0 && argument === 'resume') {
+      resume = true;
+    } else {
+      positional.push(argument);
+    }
+    index += 1;
+  }
+  if (positional.length > (resume ? 2 : 1)) {
+    return null;
+  }
+  const sessionId = positional[0];
+  return resume && sessionId !== undefined && CODEX_THREAD_ID.test(sessionId) ? [sessionId] : [];
+};
+
+interface ClaudeCodexCommand {
+  resultAttestable: boolean;
+  resumeEvidenceAttestable: boolean;
+  resumes: ClaudeCodexResume[];
+}
+
+interface ClaudeCodexResume {
+  exitStatusApplies: boolean;
+  sourceSessionId: string;
+}
+
+interface ClaudePendingResumes {
+  call: ClaudeToolCall;
+  nativeEvidenceAttestable: boolean;
+  nativeSourceSessionId: string | null;
+  resumes: readonly ClaudeCodexResume[];
+}
+
+const isQuietShellSetup = (words: readonly LiteralShellWord[]): boolean => {
+  const commandIndex = words.findIndex((word) => !word.assignment);
+  if (commandIndex === -1) {
+    return true;
+  }
+  const commandWords = words.slice(commandIndex);
+  // cd has no ordinary output for a literal directory. `cd -` does print,
+  // and named options may enable behavior outside this literal subset.
+  return commandWords.length === 2 && commandWords[0]?.value === 'cd' && !commandWords[1]?.value.startsWith('-');
+};
+
+/** A closed simple-command grammar keeps shell control or unsupported wrappers from masking status. */
+const isExitStatusSafeCommand = ({ statusOnlyEcho, words }: LiteralShellCommand): boolean => {
+  if (statusOnlyEcho) {
+    return true;
+  }
+  if (words === null || withoutTrailingRedirects(words) === null) {
+    return false;
+  }
+  const executable = words.find((word) => !word.assignment)?.value;
+  return (
+    codexExecResumeIds(words) !== null ||
+    isQuietShellSetup(words) ||
+    (executable !== undefined && SHELL_STATUS_COMMANDS.has(executable))
+  );
+};
+
+const codexLaunchCommand = (input: Record<string, unknown>): ClaudeCodexCommand | null => {
+  if (typeof input.command !== 'string') {
+    return null;
+  }
+  const commands = shellCommands(input.command);
+  if (commands === null) {
+    return null;
+  }
+  let executions = 0;
+  let resultAttestable = true;
+  let resumeEvidenceAttestable = true;
+  const resumes: ClaudeCodexResume[] = [];
+  const finalChainStart = Math.max(
+    0,
+    commands.findLastIndex((_, index) => commands[index - 1]?.separator === ';'),
+  );
+  const exitStatusReliable = commands.every(isExitStatusSafeCommand);
+  for (const [index, { statusOnlyEcho, words }] of commands.entries()) {
+    if (words === null) {
+      resultAttestable = false;
+      resumeEvidenceAttestable &&= statusOnlyEcho;
+      continue;
+    }
+    const ids = codexExecResumeIds(words);
+    if (ids !== null) {
+      executions += 1;
+      resumes.push(
+        ...ids.map((sourceSessionId) => ({
+          exitStatusApplies: exitStatusReliable && index >= finalChainStart,
+          sourceSessionId,
+        })),
+      );
+    } else if (!isQuietShellSetup(words)) {
+      // A Bash result mixes the output of every chained command. A copied
+      // log or echo cannot attest the Codex process sharing that result.
+      resultAttestable = false;
+      resumeEvidenceAttestable &&= statusOnlyEcho;
+    }
+  }
+  return executions > 0
+    ? {
+        resultAttestable: resultAttestable && executions === 1 && resumes.length === 0,
+        resumeEvidenceAttestable,
+        resumes,
+      }
+    : null;
+};
+
+const codexResultLaunch = (content: unknown, at: Date): ClaudeCodexLaunch | null => {
+  let texts: string[] = [];
+  if (typeof content === 'string') {
+    texts = [content];
+  } else if (Array.isArray(content)) {
+    texts = content.flatMap((block) =>
+      isRecord(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [],
+    );
+  }
+  for (const text of texts) {
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('session id:')) {
+        const sourceSessionId = trimmed.slice('session id:'.length).trim();
+        if (CODEX_THREAD_ID.test(sourceSessionId)) {
+          return { at: iso(at), evidence: 'session-id-header', sourceSessionId };
+        }
+      } else if (trimmed.startsWith('{')) {
+        let event: unknown;
+        try {
+          event = JSON.parse(trimmed);
+        } catch {
+          // Output includes ordinary text and incomplete JSONL lines, neither is evidence.
+          continue;
+        }
+        if (
+          isRecord(event) &&
+          event.type === 'thread.started' &&
+          typeof event.thread_id === 'string' &&
+          CODEX_THREAD_ID.test(event.thread_id)
+        ) {
+          return { at: iso(at), evidence: 'thread-started', sourceSessionId: event.thread_id };
+        }
+      }
+    }
+  }
+  return null;
+};
+
 /**
  * Sub-agent launches (`Task`/`Agent`) and follow-up messages (`SendMessage`)
  * as the assistant issued them, each keyed to the turn of the assistant record
@@ -956,7 +1386,9 @@ const collectClaudeToolCalls = (
       if (!(isRecord(block) && block.type === 'tool_use' && typeof block.name === 'string')) {
         continue;
       }
-      if (!(CLAUDE_SPAWN_TOOL_NAMES.has(block.name) || block.name === CLAUDE_MESSAGE_TOOL_NAME)) {
+      if (
+        !(CLAUDE_SPAWN_TOOL_NAMES.has(block.name) || block.name === CLAUDE_MESSAGE_TOOL_NAME || block.name === 'Bash')
+      ) {
         continue;
       }
       const toolUseId = typeof block.id === 'string' && block.id.length > 0 ? block.id : null;
@@ -980,13 +1412,37 @@ const collectClaudeToolCalls = (
 interface ClaudeSpawnResults {
   /** `toolUseResult.agentId` of the tool result that answered a Task/Agent launch. */
   agentIdsByToolUse: ReadonlyMap<string, string>;
+  codexLaunches: ClaudeCodexLaunch[];
   /** `toolUseResult.runId` of the tool result that answered a Workflow launch. */
   workflowRunsByToolUse: ReadonlyMap<string, string>;
 }
 
-const collectClaudeSpawnResults = (events: readonly ClaudeEvent[]): ClaudeSpawnResults => {
+const collectClaudeSpawnResults = (
+  events: readonly ClaudeEvent[],
+  calls: readonly ClaudeToolCall[],
+): ClaudeSpawnResults => {
   const agentIdsByToolUse = new Map<string, string>();
   const workflowRunsByToolUse = new Map<string, string>();
+  const codexCalls = new Map<string, ClaudeToolCall>();
+  const codexResumes = new Map<string, ClaudePendingResumes>();
+  const codexLaunches: ClaudeCodexLaunch[] = [];
+  for (const call of calls) {
+    const command = call.name === 'Bash' ? codexLaunchCommand(call.input) : null;
+    if (command === null) {
+      continue;
+    }
+    if (command.resultAttestable) {
+      codexCalls.set(call.toolUseId, call);
+    }
+    if (command.resumes.length > 0) {
+      codexResumes.set(call.toolUseId, {
+        call,
+        nativeSourceSessionId: null,
+        nativeEvidenceAttestable: command.resumeEvidenceAttestable,
+        resumes: command.resumes,
+      });
+    }
+  }
   for (const current of events) {
     if (current.record.type !== 'user') {
       continue;
@@ -994,9 +1450,6 @@ const collectClaudeSpawnResults = (events: readonly ClaudeEvent[]): ClaudeSpawnR
     const toolUseResult = isRecord(current.record.toolUseResult) ? current.record.toolUseResult : null;
     const agentId = optionalRecordString(toolUseResult, 'agentId');
     const runId = optionalRecordString(toolUseResult, 'runId');
-    if (!(agentId || runId)) {
-      continue;
-    }
     const message = isRecord(current.record.message) ? current.record.message : null;
     const content = message?.content;
     if (!Array.isArray(content)) {
@@ -1006,6 +1459,45 @@ const collectClaudeSpawnResults = (events: readonly ClaudeEvent[]): ClaudeSpawnR
       if (!(isRecord(block) && block.type === 'tool_result' && typeof block.tool_use_id === 'string')) {
         continue;
       }
+      const resume = codexResumes.get(block.tool_use_id);
+      if (resume && current.at >= resume.call.at) {
+        if (resume.nativeEvidenceAttestable) {
+          resume.nativeSourceSessionId ??=
+            codexResultLaunch(block.content, current.at)?.sourceSessionId.toLowerCase() ?? null;
+        }
+        const pendingResumes: ClaudeCodexResume[] = [];
+        for (const resumed of resume.resumes) {
+          // The shell status describes the last semicolon-separated && chain.
+          // Earlier chains and failed calls need native evidence for this exact id.
+          if (
+            (resumed.exitStatusApplies && block.is_error !== true) ||
+            resumed.sourceSessionId.toLowerCase() === resume.nativeSourceSessionId
+          ) {
+            codexLaunches.push({
+              at: iso(resume.call.at),
+              evidence: 'resume-argument',
+              sourceSessionId: resumed.sourceSessionId,
+            });
+          } else {
+            pendingResumes.push(resumed);
+          }
+        }
+        if (pendingResumes.length === 0) {
+          codexResumes.delete(block.tool_use_id);
+        } else {
+          resume.resumes = pendingResumes;
+        }
+      }
+      const launch = codexCalls.get(block.tool_use_id);
+      if (launch && current.at >= launch.at) {
+        const resultLaunch = codexResultLaunch(block.content, current.at);
+        if (resultLaunch) {
+          codexLaunches.push(resultLaunch);
+          // One execution starts one native thread. Later output, including
+          // streamed/replayed results, cannot declare a second identity.
+          codexCalls.delete(block.tool_use_id);
+        }
+      }
       if (agentId) {
         agentIdsByToolUse.set(block.tool_use_id, agentId);
       }
@@ -1014,7 +1506,7 @@ const collectClaudeSpawnResults = (events: readonly ClaudeEvent[]): ClaudeSpawnR
       }
     }
   }
-  return { agentIdsByToolUse, workflowRunsByToolUse };
+  return { agentIdsByToolUse, codexLaunches, workflowRunsByToolUse };
 };
 
 const optionalRecordString = (record: Record<string, unknown> | null, key: string): string | null => {
@@ -1030,7 +1522,16 @@ const collectClaudeLinks = (
   input: ClaudeSessionInput,
 ): ClaudeLinkFacts => {
   const calls = collectClaudeToolCalls(events, graph, assistantFacts.assistantTurnKey, assistantFacts.resolveTurnKey);
-  const spawnResults = collectClaudeSpawnResults(events);
+  const spawnResults = collectClaudeSpawnResults(events, calls);
+  const uniqueCodexLaunches = new Map<string, ClaudeCodexLaunch>();
+  for (const launch of spawnResults.codexLaunches.sort((left, right) => left.at.localeCompare(right.at))) {
+    const sourceSessionId = launch.sourceSessionId.toLowerCase();
+    if (!uniqueCodexLaunches.has(sourceSessionId)) {
+      uniqueCodexLaunches.set(sourceSessionId, { ...launch, sourceSessionId });
+    }
+  }
+  const codexLaunches = [...uniqueCodexLaunches.values()].slice(0, MAX_CLAUDE_CODEX_LAUNCHES);
+  const codexLaunchesOmitted = uniqueCodexLaunches.size - codexLaunches.length;
   const metasByToolUse = new Map<string, ClaudeAgentMeta>();
   const metasByAgent = new Map<string, ClaudeAgentMeta>();
   const metasByWorkflowRun = new Map<string, ClaudeAgentMeta[]>();
@@ -1078,6 +1579,9 @@ const collectClaudeLinks = (
     });
   };
   for (const call of calls) {
+    if (call.name === 'Bash') {
+      continue;
+    }
     const turnIndex = call.turnKey === null ? null : (turnIndexByKey.get(call.turnKey) ?? null);
     const isSpawn = CLAUDE_SPAWN_TOOL_NAMES.has(call.name);
     const label = isSpawn ? stringInput(call.input, 'description') : stringInput(call.input, 'summary');
@@ -1155,14 +1659,18 @@ const collectClaudeLinks = (
   if (metasUnreadable > 0) {
     childReasons.push('child-metadata-unreadable');
   }
-  if (orderedChildren.length > retainedChildren.length) {
+  if (orderedChildren.length > retainedChildren.length || codexLaunchesOmitted > 0) {
     childReasons.push('child-budget');
   }
   const childDiscovery: SessionDetailCoverageFact =
     childReasons.length === 0
       ? completeCoverage()
       : {
-          omittedCount: resultsMissing + metasUnreadable + (orderedChildren.length - retainedChildren.length),
+          omittedCount:
+            resultsMissing +
+            metasUnreadable +
+            (orderedChildren.length - retainedChildren.length) +
+            codexLaunchesOmitted,
           reasons: childReasons,
           status: 'partial',
         };
@@ -1177,7 +1685,13 @@ const collectClaudeLinks = (
     interactionReasons.length === 0
       ? completeCoverage()
       : { omittedCount: interactionsOmitted, reasons: interactionReasons, status: 'partial' };
-  return { children: retainedChildren, coverage: { childDiscovery, interactionAttribution }, interactions };
+  return {
+    children: retainedChildren,
+    codexLaunches,
+    codexLaunchesTruncated: codexLaunchesOmitted > 0,
+    coverage: { childDiscovery, interactionAttribution },
+    interactions,
+  };
 };
 
 const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSessionInput): ClaudeMetadataFacts => {
@@ -1210,6 +1724,10 @@ const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSess
     if (record.type === 'pr-link') {
       if (typeof record.prUrl === 'string') {
         pullRequestCandidates.push({
+          ...(!(input.isAgentFile || sidechain) &&
+          (record.sessionId === undefined || record.sessionId === input.sourceSessionId)
+            ? { provenance: 'session-pr-link' as const }
+            : {}),
           number: Number.isSafeInteger(record.prNumber) && Number(record.prNumber) > 0 ? Number(record.prNumber) : null,
           observedAt: iso(current.at),
           repository: typeof record.prRepository === 'string' ? record.prRepository : null,
@@ -1520,7 +2038,7 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
         },
       }))
       .sort((left, right) => left.model.localeCompare(right.model)),
-    partial: turnsPartial || promptsTruncated,
+    partial: turnsPartial || promptsTruncated || links.codexLaunchesTruncated,
     tokens: totalTokens,
     tools,
     turns: prompts.length,
@@ -1603,6 +2121,8 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     turnsStatus: turnsPartial ? 'partial' : 'recorded',
   };
   return {
+    codexLaunches: links.codexLaunches,
+    codexLaunchesTruncated: links.codexLaunchesTruncated,
     detailFacts,
     projection,
     report: {
@@ -1626,6 +2146,14 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       turns: prompts.length,
     },
     source: {
+      ...(links.codexLaunches.length > 0
+        ? {
+            delegatedSessions: links.codexLaunches.map(({ sourceSessionId }) => ({
+              harness: 'codex' as const,
+              sourceSessionId,
+            })),
+          }
+        : {}),
       parentSourceSessionId: metadata.parentSourceSessionId,
       sourcePath: metadata.sourcePath,
       ...(metadata.vcs ? { vcs: metadata.vcs } : {}),

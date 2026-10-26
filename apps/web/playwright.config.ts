@@ -21,7 +21,10 @@ export default defineConfig({
     'demo-isolation.spec.ts',
     'production-report.spec.ts',
     'work-attempt-production.spec.ts',
+    'work-codex-production.spec.ts',
+    'work-codex-native.spec.ts',
     'work-production.spec.ts',
+    'work-threads-production.spec.ts',
   ],
   use: {
     baseURL: 'http://127.0.0.1:4174',

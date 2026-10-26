@@ -488,8 +488,8 @@
   </div>
   <nav aria-label="Work space" class={navigationGroup}>
     <NavigationLink
-      active={page.url.pathname === workDestination.href}
-      class={linkClass(page.url.pathname === workDestination.href)}
+      active={isActiveManagementDestination(page.url.pathname, workDestination.href)}
+      class={linkClass(isActiveManagementDestination(page.url.pathname, workDestination.href))}
       href={workDestination.href}
       icon={workDestination.icon}
       label={workDestination.label}

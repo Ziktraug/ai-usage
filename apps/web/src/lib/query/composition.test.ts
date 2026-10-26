@@ -171,6 +171,7 @@ describe('Web Query composition', () => {
       'skill-observations',
       'work-attention',
       'work-routing',
+      'work-threads',
       'work-attempts',
       'memory',
       'projects',

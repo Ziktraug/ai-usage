@@ -74,6 +74,72 @@ describe('usage merge bundles', () => {
     expect(deserializeMergeRow(legacySerialized).origin).toBeUndefined();
   });
 
+  test('round-trips attested delegated sessions through merge serialization without changing row identity', () => {
+    const source = { harnessKey: 'claude', sourceSessionId: 'synthetic-parent' };
+    const parent = { ...row, harness: 'Claude Code', source };
+    const legacy = toSerializedMergeRow(parent, machine);
+    const delegatedSessions = [
+      { harness: 'codex', sourceSessionId: '00000000-0000-4000-8000-000000000001' },
+      { harness: 'codex', sourceSessionId: '00000000-0000-4000-8000-000000000002' },
+    ] as const;
+    const delegated = { ...parent, source: { ...source, delegatedSessions } };
+    const serialized = toSerializedMergeRow(delegated, machine);
+
+    expect(serialized.source.delegatedSessions).toEqual(delegatedSessions);
+    expect(serialized.rowKey).toBe(legacy.rowKey);
+    expect(serialized.sourceFingerprint).toBe(legacy.sourceFingerprint);
+    expect(serialized.contentHash).not.toBe(legacy.contentHash);
+    expect(parseSerializedMergeRow(JSON.parse(JSON.stringify(serialized)))).toEqual(serialized);
+    expect(deserializeMergeRow(serialized).source.delegatedSessions).toEqual(delegatedSessions);
+    expect(toSerializedMergeRow(deserializeMergeRow(serialized), machine)).toEqual(serialized);
+
+    const bundle = createUsageMergeBundle({ machine, rows: [parent, delegated] });
+    const parsed = parseUsageMergeBundle(serializeUsageMergeBundle(bundle));
+    expect(parsed.rows[0]?.source).not.toHaveProperty('delegatedSessions');
+    expect(parsed.rows[1]?.source.delegatedSessions).toEqual(delegatedSessions);
+    expect(parseSerializedMergeRow(legacy)).toEqual(legacy);
+  });
+
+  test('includes delegated sessions in the stored content hash', () => {
+    const serialized = toSerializedMergeRow(
+      {
+        ...row,
+        source: {
+          harnessKey: 'claude',
+          sourceSessionId: 'synthetic-parent',
+          delegatedSessions: [{ harness: 'codex', sourceSessionId: 'synthetic-child' }],
+        },
+      },
+      machine,
+    );
+    const changed = {
+      ...serialized,
+      source: {
+        ...serialized.source,
+        delegatedSessions: [{ harness: 'codex', sourceSessionId: 'different-child' }] as const,
+      },
+    };
+    expect(() => parseSerializedMergeRow(changed)).toThrow('invalid row');
+    const { contentHash: _staleHash, ...content } = changed;
+    const rehashed = { ...content, contentHash: usageContentHash(content) };
+    expect(parseSerializedMergeRow(rehashed).source.delegatedSessions).toEqual(changed.source.delegatedSessions);
+  });
+
+  test.each([[{ harness: 'claude', sourceSessionId: 'synthetic-child' }], [{ harness: 'codex', sourceSessionId: 42 }]])(
+    'rejects malformed persisted delegation facts even with a matching content hash: %j',
+    (entry) => {
+      const serialized = toSerializedMergeRow(
+        { ...row, source: { harnessKey: 'claude', sourceSessionId: 'synthetic-parent' } },
+        machine,
+      );
+      const { contentHash: _previousHash, ...content } = serialized;
+      const changed = { ...content, source: { ...content.source, delegatedSessions: [entry] } };
+      expect(() => parseSerializedMergeRow({ ...changed, contentHash: usageContentHash(changed) })).toThrow(
+        'invalid row',
+      );
+    },
+  );
+
   test('preserves import artifact provenance separately from project paths', () => {
     const artifactPath = '/imports/cursor-usage.csv';
     const legacy = toSerializedMergeRow(

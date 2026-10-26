@@ -293,7 +293,7 @@ describe('Work routing qualification path (ADR 0057)', () => {
     expect(body).toContain('Account: this harness reports no account without its credential file');
     expect(body).toContain('Target: this session is authorized by the declared targets.');
     expect(body).toContain('Declared: nothing; quota and observations alone never authorize.');
-    expect(body).toContain('Execution: simulated only; this version launches no Codex review.');
+    expect(body).toContain('Execution: the engine rechecks the pinned ChatGPT account, model and credit policy');
     expect(body).toContain('Qualify now with the engine');
     // Nothing was asked of the engine during rendering.
     expect(body).not.toContain('Qualified by the engine');

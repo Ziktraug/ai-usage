@@ -228,7 +228,16 @@ describe('CLI command parsing', () => {
       _tag: 'WorkContext',
       args: { json: false, scope: { kind: 'project-label', projectLabel: 'ai-usage' } },
     });
+    expect(
+      Effect.runSync(parseCommand(['work', 'context', '--checkout', '/a', '--checkout', '/b', '--since-days', '180'])),
+    ).toEqual({
+      _tag: 'WorkContext',
+      args: { json: false, scope: { kind: 'checkouts', checkoutPaths: ['/a', '/b'] }, sinceDays: 180 },
+    });
     const failure = (argv: string[]) => Effect.runSync(Effect.flip(parseCommand(argv))).message;
+    expect(failure(['work', 'context', '--checkout', '/a', '--since-days', '3651'])).toBe(
+      '--since-days must be an integer from 1 to 3650',
+    );
     expect(failure(['work', 'context'])).toBe('work context expects exactly one of --checkout or --project-label');
     expect(failure(['work', 'context', '--checkout', '/a', '--project-label', 'b'])).toBe(
       'work context expects exactly one of --checkout or --project-label',

@@ -138,11 +138,12 @@ A reading computed on request that confronts a Session's declarations with the
 facts gathered around it and names its own uncertainty, such as "request open"
 or "possibly answered elsewhere". It is never persisted and never shown as a
 fact; a changed rule re-reads the same facts differently. An interpretation
-never closes a request by inference (ADR 0056); only a dated, explicit record
-of the harness does: a message the person wrote to the session after the
-question, the session archived, or a session started from it after the
-question that declared itself completed. A later pull request, or work
-continued in a linked session without a completion, makes the root an older
+never closes a request by inference. Only native evidence attributed to the
+exact request can establish its answer; a later message date or a completed
+child session cannot. Archiving removes current attention without claiming
+a decision or delivery. A replacing native declaration supersedes the earlier
+declaration without proving its answer. A later message, pull request, or work
+continued in a linked session, including a completion, makes the root an older
 declaration to reconsider, and the question stays the operator's. What may
 reconsider a request through a pull request is narrow: a pull request a child
 session listed from another checkout while active after the question, or a
@@ -155,9 +156,9 @@ _Avoid_: fact, inferred state, conclusion, task status
 **Proposal**:
 A suggestion a Session's harness offered for a follow-up, with its title and a
 short synopsis; the brief itself is never collected. "Started" and "dismissed"
-are observed states without a recorded reason. An offer past its expiry, or
-followed by a later message from the person, is no longer presented as
-pending. A proposal is not a task, has no owner and no deadline, and is never
+are observed states without a recorded reason. An offer past its native expiry
+is no longer presented as pending; a later message alone does not supersede,
+accept or reject it. A proposal is not a task, has no owner and no deadline, and is never
 ranked above a question a person was asked.
 _Avoid_: task, todo, backlog item, pending action
 
@@ -305,8 +306,17 @@ _Avoid_: in-place edit, file version, proposal
 **Work thread**:
 A durable continuity container across Sessions and harnesses, with an explicit
 intent and lifecycle and an optional Project. It is not a Session, Project,
-issue, branch, pull request, or campaign.
+issue, branch, pull request, or campaign. The Work view calls it a task; its
+sessions, branch, pull requests and Jira issues are links, and it carries the
+operator's follow state (ADR 0063).
 _Avoid_: session thread, campaign, task inferred from prompts
+
+**Follow state**:
+The operator's own standing on a Work thread: Following, Waiting or Done. Only
+explicit commands change it. Ending a follow-up closes the operator's
+responsibility, never a pull request, issue, session or agent; "to resume",
+"in progress" and "ready to close" are derived hints, not states.
+_Avoid_: task status, closed, resolved, archived
 
 **Work handoff**:
 An immutable, evidence-labelled `WorkHandoff` revision that transfers reviewed

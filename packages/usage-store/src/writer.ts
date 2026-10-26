@@ -3,6 +3,13 @@ export type {
   ImportClaudeDesktopSessionsInput,
 } from './claude-desktop-session-store';
 export { MAX_CLAUDE_DESKTOP_SESSION_BATCH, MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
+export type {
+  CodexWorkImportResult,
+  CodexWorkQueryResult,
+  ImportCodexWorkObservationsInput,
+  QueryCodexWorkObservationsInput,
+} from './codex-work-store';
+export { MAX_CODEX_WORK_BATCH } from './codex-work-store';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 export type {
@@ -89,6 +96,9 @@ export type {
 } from './index';
 export {
   acknowledgeUsageReplicationBatch,
+  applyWorkThreadCommand,
+  applyWorkThreadWaitObservations,
+  attachDeclaredWorkThreadSessions,
   backfillUsageReplicationOutbox,
   blockUsageReplicationBatch,
   checkpointUsageStore,
@@ -98,6 +108,7 @@ export {
   exportLocalMergeBundle,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importCodexWorkObservations,
   importExecutorObservations,
   importJiraIssueObservations,
   importLocalRows,
@@ -112,8 +123,10 @@ export {
   markReviewAttemptsLost,
   previewPeerMergeBundle,
   publishServedReportRevision,
+  queryActiveWorkThreadLinks,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
   queryLatestCheckoutStatusObservations,
@@ -133,6 +146,8 @@ export {
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
   queryWorkFactRunStates,
+  queryWorkThreadsPage,
+  queryWorkThreadWaitCandidates,
   quiesceUsageStoreForShutdown,
   recordProviderQuotaSourceAttempt,
   recordWorkFactRun,
@@ -143,6 +158,7 @@ export {
   retainServedReportRevisions,
   retainSkillObservations,
   retryUsageReplicationBatch,
+  seedWorkThreads,
   transitionReviewAttempt,
   updateUsageMachineLabel,
   upsertRtkSavingsContributions,
@@ -164,3 +180,16 @@ export type {
   TransitionReviewAttemptResult,
 } from './review-attempt-store';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
+export type {
+  ApplyWorkThreadWaitObservationsInput,
+  ApplyWorkThreadWaitObservationsResult,
+  AttachDeclaredWorkThreadSessionsInput,
+  AttachDeclaredWorkThreadSessionsResult,
+  DeclaredWorkThreadSession,
+  QueryActiveWorkThreadLinksInput,
+  QueryActiveWorkThreadLinksResult,
+  QueryWorkThreadWaitCandidatesInput,
+  QueryWorkThreadWaitCandidatesResult,
+  WorkThreadSeed,
+  WorkThreadWaitCandidate,
+} from './work-thread-store';

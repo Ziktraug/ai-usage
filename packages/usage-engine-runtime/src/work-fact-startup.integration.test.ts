@@ -7,10 +7,17 @@ import type { BoundedProcessOptions, BoundedProcessRunner } from '@ai-usage/loca
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import type { CollectionSourceId, SourceControlView } from '@ai-usage/report-core/source-control';
 import { queryWorkFactRunStates, usageStorePath } from '@ai-usage/usage-store/testing';
+import { queryLatestPullRequestObservations } from '@ai-usage/usage-store/writer';
 import { Effect, Layer } from 'effect';
 import { TestClock } from 'effect/testing';
 import { createScheduledSourceRegistry } from './source-adapters';
 import { createSourceControl, type SourceControlService } from './source-control';
+import {
+  isolatedSourceOptions,
+  isReviewThreadsFixtureRead,
+  reviewThreadsFixtureArgs,
+  reviewThreadsFixtureResponse,
+} from './source-test-fixtures';
 
 /**
  * The engine's first collection cycle, end to end: the real scheduler over the real source
@@ -56,7 +63,7 @@ const pullRequestView = (repository: string, number: number): string =>
     url: `https://github.com/${repository}/pull/${String(number)}`,
   });
 
-/** Answers `git status`/`git log` and `gh pr view` without spawning anything, and records every call. */
+/** Answers checkout and bounded pull request reads without spawning anything, and records every call. */
 const fakeRunner =
   (calls: BoundedProcessOptions[]): BoundedProcessRunner =>
   (options) => {
@@ -66,7 +73,19 @@ const fakeRunner =
       const subcommand = options.args[options.args.indexOf('-C') + 2];
       return subcommand === 'status' ? respond(cleanPorcelain) : respond('2026-10-20T10:00:00+00:00\n');
     }
+    if (options.command === 'gh' && options.args[0] === 'auth' && options.args[1] === 'token') {
+      return respond('fixture-token\n');
+    }
+    if (options.command === 'gh' && options.args[0] === 'search') {
+      return respond('[]');
+    }
+    if (options.command === 'gh' && isReviewThreadsFixtureRead(options.args)) {
+      return options.env?.GH_TOKEN === 'fixture-token' ? respond(reviewThreadsFixtureResponse) : respond('', 4);
+    }
     if (options.command === 'gh' && options.args[0] === 'pr' && options.args[1] === 'view') {
+      if (options.env?.GH_TOKEN !== 'fixture-token') {
+        return respond('', 4);
+      }
       return respond(pullRequestView(options.args[4] ?? '', Number(options.args[2])));
     }
     return respond('', 1);
@@ -177,6 +196,7 @@ describe('work fact producers on engine startup', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         const sources = yield* createScheduledSourceRegistry({
+          ...isolatedSourceOptions,
           claudeLiveAvailable: () => false,
           codexLiveAvailable: () => false,
           // No CLI is probed: the executor source stays undetected and spawns nothing.
@@ -219,10 +239,33 @@ describe('work fact producers on engine startup', () => {
     const gitPaths = calls.filter(({ command }) => command === 'git').map(({ args }) => args[args.indexOf('-C') + 1]);
     expect(new Set(gitPaths)).toEqual(new Set([checkoutPath, worktreePath]));
     const pullRequests = calls
-      .filter(({ command }) => command === 'gh')
+      .filter(({ command, args }) => command === 'gh' && args[0] === 'pr')
       .map(({ args }) => `${args[4]}#${args[2]}`)
       .sort();
     expect(pullRequests).toEqual(['fixture/project#66', 'fixture/project#67']);
+    expect(calls.filter(({ command }) => command === 'gh').map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['search', 'prs'],
+      ['search', 'prs'],
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+
+    const graphqlCalls = calls.filter(({ command, args }) => command === 'gh' && args[0] === 'api');
+    expect(graphqlCalls.map(({ args }) => args)).toEqual(
+      calls
+        .filter(({ command, args }) => command === 'gh' && args[0] === 'pr')
+        .map(({ args }) => reviewThreadsFixtureArgs(args[4] ?? '', Number(args[2]))),
+    );
+    expect(graphqlCalls.map(({ env }) => env?.GH_TOKEN)).toEqual(['fixture-token', 'fixture-token']);
+    const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+    expect(stored.items.map(({ latest }) => [latest.unresolvedReviewThreads, latest.outcomeMessage])).toEqual([
+      [2, null],
+      [2, null],
+    ]);
 
     const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
     expect(

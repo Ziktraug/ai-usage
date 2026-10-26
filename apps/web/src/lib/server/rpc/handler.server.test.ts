@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
+import { QueryClient } from '@tanstack/svelte-query';
+import {
+  invalidateWorkThreadQueries,
+  workThreadDetailKey,
+  workThreadDetailQueryOptions,
+  workThreadListKey,
+  workThreadListQueryOptions,
+} from '../../query/options/work-threads';
+import { webQueryPolicies } from '../../query/policies';
 import { createWebRpcClient } from '../../rpc/client';
+import { createWorkThreadCommandAction, createWorkThreadsClient } from '../../rpc/work-threads-client';
 import { createE2ESkillsCapability } from './context.server';
 import { E2E_SKILLS_FIXTURE_HEADER, e2eSkillsFixtureVariantForHeaders } from './e2e-fixture-profile';
 import { createWebRpcHttpHandler, enforceRpcResponseBound } from './handler.server';
@@ -38,6 +48,7 @@ const dependencies = (): WebRpcRouterDependencies => ({
   work: unavailableServices<WebRpcRouterDependencies['work']>(),
   workAttempts: unavailableServices<WebRpcRouterDependencies['workAttempts']>(),
   workRouting: unavailableServices<WebRpcRouterDependencies['workRouting']>(),
+  workThreads: unavailableServices<WebRpcRouterDependencies['workThreads']>(),
 });
 
 const trustedHandlerFetch = (handler: (request: Request) => Promise<Response>) => async (request: Request) => {
@@ -99,8 +110,15 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(46);
-    expect(dependencyAcquisitions).toBe(46);
+    expect(observed).toHaveLength(50);
+    expect(dependencyAcquisitions).toBe(50);
+    expect(rpcOperationPolicies.find(({ operation }) => operation === 'stopWorkAttempt')).toMatchObject({
+      method: 'POST',
+      target: 'workAttempts.stop',
+      transport: 'mutation',
+      requestSize: 'bounded-rpc-json',
+      responseSize: 'bounded-json',
+    });
   });
   test('serves opaque project identity through the real Skills RPC routes only in an injected extended context', async () => {
     const capability = await createE2ESkillsCapability('extended');
@@ -215,7 +233,7 @@ describe('Web RPC HTTP convergence', () => {
     expect(dependencyAcquisitions).toBe(0);
   });
 
-  test('rejects every demo RPC path uniformly before dependency acquisition', async () => {
+  test('rejects non-synthetic demo RPC paths uniformly before dependency acquisition', async () => {
     let dependencyAcquisitions = 0;
     const handler = createWebRpcHttpHandler({
       createDependencies: () => {
@@ -378,5 +396,157 @@ describe('Web RPC HTTP convergence', () => {
     const oversizedResult = await enforceRequestPolicy(oversizedUpload, uploadPolicy, 'live');
     expect(oversizedResult).toBeInstanceOf(Response);
     expect((oversizedResult as Response).status).toBe(413);
+  });
+});
+
+describe('synthetic Work thread RPC boundary', () => {
+  test('admits only synthetic thread procedures in demo and retains method, trust, and CSRF checks', async () => {
+    for (const path of ['list', 'detail', 'command']) {
+      const request = new Request(`http://127.0.0.1:3000/rpc/workThreads/${path}`, {
+        method: 'POST',
+        headers: { host: '127.0.0.1:3000', origin: 'http://127.0.0.1:3000' },
+      });
+      expect(await enforceRpcRequestPolicy(request, 'demo')).not.toBeInstanceOf(Response);
+    }
+    const command = 'http://127.0.0.1:3000/rpc/workThreads/command';
+    const wrongMethod = await enforceRpcRequestPolicy(
+      new Request(command, { headers: { host: '127.0.0.1:3000' } }),
+      'demo',
+    );
+    const crossOrigin = await enforceRpcRequestPolicy(
+      new Request(command, {
+        method: 'POST',
+        headers: { host: '127.0.0.1:3000', origin: 'https://untrusted.invalid' },
+      }),
+      'demo',
+    );
+    const missingOrigin = await enforceRpcRequestPolicy(
+      new Request(command, { method: 'POST', headers: { host: '127.0.0.1:3000' } }),
+      'demo',
+    );
+    expect(wrongMethod).toBeInstanceOf(Response);
+    expect(crossOrigin).toBeInstanceOf(Response);
+    expect(missingOrigin).toBeInstanceOf(Response);
+    if (!(wrongMethod instanceof Response && crossOrigin instanceof Response && missingOrigin instanceof Response)) {
+      throw new Error('Expected boundary rejection.');
+    }
+    expect(wrongMethod.status).toBe(405);
+    expect(crossOrigin.status).toBe(403);
+    expect(missingOrigin.status).toBe(403);
+  });
+});
+
+describe('Work thread command client and cache identity', () => {
+  const threadId = '10000000-0000-4000-8000-000000000001';
+  test('one user action retains its command ID through an uncertain response and retry', async () => {
+    const commandIds: string[] = [];
+    const command = createWorkThreadCommandAction({ op: 'set-note', threadId, note: 'A synthetic note' });
+    const handler = createWebRpcHttpHandler({
+      createDependencies: () =>
+        Promise.resolve({
+          ...dependencies(),
+          workThreads: {
+            list: unavailable,
+            detail: unavailable,
+            command: (input) => {
+              commandIds.push(input.commandId);
+              if (commandIds.length === 1) {
+                return unavailable();
+              }
+              return Promise.resolve({ ok: true, applied: false, threadId, followRevision: 1 });
+            },
+          },
+        }),
+    });
+    const rpc = createWebRpcClient({ fetch: trustedHandlerFetch(handler), url: 'http://127.0.0.1:3000/rpc' });
+    const client = createWorkThreadsClient(rpc.workThreads);
+    await expect(client.command(command)).rejects.toMatchObject({ tag: 'Unavailable' });
+    await expect(client.command(command)).resolves.toMatchObject({ ok: true, applied: false });
+    expect(commandIds).toEqual([command.commandId, command.commandId]);
+    expect(createWorkThreadCommandAction({ op: 'set-note', threadId, note: 'A second action' }).commandId).not.toBe(
+      command.commandId,
+    );
+  });
+  test('revision conflicts cross the transport unchanged and invalidation refreshes every list plus only that task', async () => {
+    const handler = createWebRpcHttpHandler({
+      createDependencies: () =>
+        Promise.resolve({
+          ...dependencies(),
+          workThreads: {
+            list: unavailable,
+            detail: unavailable,
+            command: () =>
+              Promise.resolve({
+                ok: false,
+                failure: 'revision-conflict',
+                currentRevision: 3,
+                message: 'This task changed.',
+              }),
+          },
+        }),
+    });
+    const rpc = createWebRpcClient({ fetch: trustedHandlerFetch(handler), url: 'http://127.0.0.1:3000/rpc' });
+    const client = createWorkThreadsClient(rpc.workThreads);
+    const result = await client.command(
+      createWorkThreadCommandAction({
+        acknowledgedRemainders: [],
+        expectedRevision: 1,
+        op: 'set-follow-state',
+        reason: null,
+        threadId,
+        to: 'done',
+        waitingFor: null,
+        waitingOn: null,
+      }),
+    );
+    expect(result).toMatchObject({ ok: false, failure: 'revision-conflict', currentRevision: 3 });
+    const cache = new QueryClient();
+    const following = workThreadListKey({ cursor: null, limit: 50, project: null, search: null, tab: 'open' });
+    const done = workThreadListKey({ cursor: 'next', limit: 10, project: 'Test', search: '42', tab: 'done' });
+    const detail = workThreadDetailKey(threadId);
+    const other = workThreadDetailKey('other');
+    expect(following.slice(0, 3)).toEqual(['web', 'collection-swr', 'work-threads']);
+    expect(detail).toEqual(['web', 'collection-swr', 'work-threads', 'detail', threadId]);
+    for (const key of [following, done, detail, other]) {
+      cache.setQueryData(key, { cached: true });
+    }
+    await invalidateWorkThreadQueries(cache, threadId);
+    for (const key of [following, done, detail]) {
+      expect(cache.getQueryState(key)?.isInvalidated).toBe(true);
+    }
+    expect(cache.getQueryState(other)?.isInvalidated).toBe(false);
+    cache.clear();
+  });
+  test('task list and detail revalidate collected facts on interval and focus without redundant fresh-mount reads', () => {
+    const client = { detail: unavailable, list: unavailable };
+    const input = { cursor: null, limit: 50, project: null, search: null, tab: 'open' as const };
+    const context = { browser: true, enabled: true };
+    for (const options of [
+      workThreadListQueryOptions(client, input, context),
+      workThreadDetailQueryOptions(client, threadId, context),
+    ]) {
+      expect(options.refetchInterval).toBe(webQueryPolicies.collectionFactsSwr.refetchInterval);
+      expect(options.refetchInterval).toBeGreaterThan(0);
+      expect(options.staleTime).toBe(webQueryPolicies.collectionFactsSwr.staleTime);
+      expect(options.refetchOnWindowFocus).toBe(true);
+      expect(options.refetchOnMount).toBe(true);
+      expect(options.retry).toBe(false);
+      expect(options.enabled).toBe(true);
+    }
+    expect(workThreadListQueryOptions(client, input, { browser: false, enabled: true }).enabled).toBe(false);
+    expect(workThreadDetailQueryOptions(client, threadId, { browser: true, enabled: false }).enabled).toBe(false);
+  });
+  test('cancellation stays cancellation and unavailable reads never become empty success', async () => {
+    const handler = createWebRpcHttpHandler({ createDependencies: () => Promise.resolve(dependencies()) });
+    const rpc = createWebRpcClient({ fetch: trustedHandlerFetch(handler), url: 'http://127.0.0.1:3000/rpc' });
+    const client = createWorkThreadsClient(rpc.workThreads);
+    await expect(
+      client.list({ cursor: null, limit: 50, project: null, search: null, tab: 'open' }),
+    ).resolves.toMatchObject({ ok: false, error: { tag: 'Unavailable' } });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(client.detail({ threadId }, { signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
   });
 });

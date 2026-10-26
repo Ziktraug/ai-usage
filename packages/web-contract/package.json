@@ -17,7 +17,8 @@
     "./sync": "./src/sync.ts",
     "./work": "./src/work.ts",
     "./work-attempts": "./src/work-attempts.ts",
-    "./work-routing": "./src/work-routing.ts"
+    "./work-routing": "./src/work-routing.ts",
+    "./work-threads": "./src/work-threads.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

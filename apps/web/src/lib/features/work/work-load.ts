@@ -1,6 +1,7 @@
 import type { RuntimeMode } from '../../../runtime-mode';
 import type { WebQueryHydrationState } from '../../query/client';
 import type { WebQueryRuntimeOptions } from '../../query/composition';
+import { workAttentionRequestFromSearch } from '../../query/options/work-attention';
 import {
   LIVE_WORK_SOURCES,
   prefetchWorkQueries,
@@ -43,7 +44,11 @@ export const workPrefetchSourcesFor = (mode: RuntimeMode): WorkPrefetchSources =
 export const loadWorkPageData = async (options: WebQueryRuntimeOptions, mode: RuntimeMode): Promise<WorkPageData> => {
   let failures: WorkPrefetchFailures = { attention: null, sessions: null };
   const queryState = await createAwaitedRouteQueryState(options, async (runtime) => {
-    failures = await prefetchWorkQueries(runtime, workPrefetchSourcesFor(mode));
+    failures = await prefetchWorkQueries(
+      runtime,
+      workPrefetchSourcesFor(mode),
+      workAttentionRequestFromSearch(options.url.searchParams),
+    );
   });
   return { attentionFailure: failures.attention, initialFailure: failures.sessions, mode, queryState };
 };

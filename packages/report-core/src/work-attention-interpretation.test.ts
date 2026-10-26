@@ -449,16 +449,78 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     title: `Fixture ${id}`,
   });
 
-  test('a message recorded after the question answers it: no confirmation, dated, with its evidence', () => {
-    const result = withHarness(question, { latestUserFrameAt: iso(4) });
-    expect(result.attention).toBe('none');
-    expect(result.reconsidered).toBe(false);
-    expect(kinds(result)).toEqual(['request-answered']);
-    expect(result.interpretations[0]?.evidence).toEqual(['local_root:declared-turn']);
-    expect(result.interpretations[0]?.text).toBe(
-      `Answered in Claude Desktop: you wrote to the session at ${iso(4)}, after the question “Which of the two 320px layouts do you prefer?” (asked ${iso(5)}); it has not declared since.`,
+  test('A01: a later dictated French deferral does not answer or authorize the request', () => {
+    // The registry records only the time of “Je reviens demain, ne change rien.”
+    // That metadata cannot distinguish it from an answer about the refund threshold.
+    const result = withHarness(blocked('Quel seuil de remboursement retenir ?', 2), {
+      latestUserFrameAt: iso(2 - 5 / 60),
+    });
+    expect(result.attention).toBe('human-request');
+    expect(kinds(result)).toContain('request-open');
+    expect(kinds(result)).not.toContain('request-answered');
+  });
+
+  test('A02: a completed independent child cannot resolve a production decision', () => {
+    const result = withHarness(blocked('Autoriser le changement de seuil en production ?', 5), {
+      linkedSessions: [linked('local_log_analysis', 'spawned-from', 4, 'completed', 3)],
+    });
+    expect(result.attention).toBe('human-request');
+    expect(kinds(result)).toEqual(['request-open', 'request-continued-elsewhere']);
+  });
+
+  test('A05: a later unrelated message leaves an optional proposal open in its context', () => {
+    const result = withHarness(
+      null,
+      {
+        latestUserFrameAt: iso(1),
+        openProposals: [{ createdAt: iso(2), expiresAt: null, factId: 'p-side', title: 'Analyse annexe' }],
+      },
+      [proposal('p-side', 'open')],
     );
-    expect(result.interpretations[0]?.uncertainty).toContain('authorization');
+    expect(result.attention).toBe('optional-lead');
+    expect(kinds(result)).toEqual(['proposal-open']);
+    expect(result.interpretations[0]?.evidence).toEqual(['p-side']);
+  });
+
+  test('a turn with two questions cannot be closed by a later message lacking question identities', () => {
+    const declaration = blocked('Quel seuil retenir ? Et faut-il publier maintenant ?', 2);
+    const result = withHarness(declaration, { latestUserFrameAt: iso(1) });
+    expect(result.attention).toBe('human-request');
+    expect(result.interpretations[0]?.text).toContain(declaration.needsAction ?? '');
+    expect(kinds(result)).toEqual(['request-open', 'request-message-observed']);
+  });
+
+  test('native completion replaces a prior request without keeping it blocked or claiming its answer', () => {
+    const result = withHarness(
+      { at: iso(1), detail: 'Finished its turn.', needsAction: null, status: 'completed' },
+      {
+        earlierDeclarations: [
+          {
+            declaredAt: iso(3),
+            factId: 'local_root:declared-turn:q1',
+            needsAction: 'Quel seuil retenir ?',
+            repliedAt: iso(2),
+            status: 'blocked',
+            supersededAt: iso(1),
+          },
+        ],
+      },
+    );
+    expect(result.attention).toBe('none');
+    expect(kinds(result)).toEqual(['earlier-request-superseded']);
+    expect(result.interpretations[0]?.uncertainty).toContain('does not establish a decision or delivery');
+  });
+
+  test('a message recorded after the question is dated evidence without answer attribution', () => {
+    const result = withHarness(question, { latestUserFrameAt: iso(4) });
+    expect(result.attention).toBe('human-request');
+    expect(result.reconsidered).toBe(true);
+    expect(kinds(result)).toEqual(['request-open', 'request-message-observed']);
+    expect(result.interpretations[1]?.evidence).toEqual(['local_root:declared-turn']);
+    expect(result.interpretations[1]?.text).toBe(
+      `Message observed in Claude Desktop at ${iso(4)}, after the question “Which of the two 320px layouts do you prefer?” (asked ${iso(5)}); no later declaration has been read.`,
+    );
+    expect(result.interpretations[1]?.uncertainty).toContain('authorization');
   });
 
   test('a message recorded before the question answers nothing', () => {
@@ -467,15 +529,19 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     expect(kinds(result)).toEqual(['request-open']);
   });
 
-  test('a review request answered in the harness and an archived session are no longer waiting', () => {
+  test('a later message leaves a review request open; archival does not claim delivery', () => {
     const review: WorkRootDeclaration = { at: iso(5), detail: 'Ready.', needsAction: null, status: 'review_ready' };
-    expect(kinds(withHarness(review, { latestUserFrameAt: iso(4) }))).toEqual(['request-answered']);
+    expect(kinds(withHarness(review, { latestUserFrameAt: iso(4) }))).toEqual([
+      'review-ready',
+      'request-message-observed',
+    ]);
     const archived = withHarness(question, { archived: true });
     expect(archived.attention).toBe('none');
     expect(kinds(archived)).toEqual(['request-archived']);
+    expect(archived.interpretations[0]?.uncertainty).toContain('does not establish an answer');
   });
 
-  test('Q1 answered, then Q2: Q1 is read as answered with its dates, Q2 stays the current request', () => {
+  test('Q1, then a message and Q2: Q1 was replaced, its answer is unknown, and Q2 stays current', () => {
     const current = blocked('Delete checkout 3 now?', 3);
     const result = withHarness(
       current,
@@ -496,11 +562,11 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     );
     expect(result.attention).toBe('human-request');
     expect(result.reconsidered).toBe(false);
-    expect(kinds(result)).toEqual(['request-open', 'earlier-request-answered']);
+    expect(kinds(result)).toEqual(['request-open', 'earlier-request-superseded']);
     expect(result.interpretations[0]?.text).toBe('The session stopped on a question: Delete checkout 3 now?');
     expect(result.interpretations[1]?.evidence).toEqual(['local_root:declared-turn:q1', 'local_root:declared-turn']);
     expect(result.interpretations[1]?.text).toBe(
-      `Answered in Claude Desktop: the question “Which of the two 320px layouts do you prefer?” (asked ${iso(6)}); you wrote to the session at ${iso(5)} and it declared again at ${iso(3)}.`,
+      `Declaration replaced: the question “Which of the two 320px layouts do you prefer?” (asked ${iso(6)}) was replaced by the session’s declaration at ${iso(3)}.`,
     );
   });
 
@@ -552,23 +618,22 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     );
   });
 
-  test('a session started from this one after the question and declared completed handles it, with provenance', () => {
+  test('a completed session started after the question remains linked activity with provenance', () => {
     const result = withHarness(
       question,
       { linkedSessions: [linked('local_child', 'spawned-from', 4, 'completed', 3)] },
       [declaredTurn(question), childTurn('local_child', 'completed', 3)],
     );
-    expect(result.attention).toBe('none');
-    expect(kinds(result)).toEqual(['request-handled-elsewhere']);
-    expect(result.interpretations[0]?.evidence).toEqual(['local_root:declared-turn', 'local_child:declared-turn']);
-    expect(result.interpretations[0]?.text).toBe(
-      `Handled in “Fixture local_child”: started from this session at ${iso(4)}, after the question “Which of the two 320px layouts do you prefer?” (asked ${iso(5)}), and declared completed at ${iso(3)}.`,
-    );
+    expect(result.attention).toBe('human-request');
+    expect(kinds(result)).toEqual(['request-open', 'request-continued-elsewhere']);
+    expect(result.interpretations[1]?.evidence).toEqual(['local_child:declared-turn']);
+    expect(result.interpretations[1]?.text).toContain(`declared completed at ${iso(3)}`);
+    expect(result.interpretations[1]?.uncertainty).toContain('nothing says it settles this request');
   });
 
   test('a report a session sent after the question, then its completion, keeps the question as one to reconsider (ADR 0056)', () => {
     // A report sent to the root is an unproven link: the person may have investigated beside the
-    // question without answering it. Only a session started from the root closes it.
+    // question without answering it. Neither kind of lineage establishes an answer.
     const result = withHarness(question, {
       linkedSessions: [linked('local_reporter', 'side-session-note', 4.5, 'completed', 4)],
     });
@@ -579,7 +644,7 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     expect(result.interpretations[1]?.text).toContain('declared completed at');
   });
 
-  test('beside a completed report, a completed session started from the root still handles the question', () => {
+  test('neither a completed report nor a completed child establishes a request outcome', () => {
     const result = withHarness(
       question,
       {
@@ -590,9 +655,9 @@ describe('interpretWorkRoot against what the harness recorded after the request 
       },
       [declaredTurn(question), childTurn('local_child', 'completed', 3)],
     );
-    expect(result.attention).toBe('none');
-    expect(kinds(result)).toEqual(['request-handled-elsewhere']);
-    expect(result.interpretations[0]?.text).toContain('started from this session at');
+    expect(result.attention).toBe('human-request');
+    expect(kinds(result)).toEqual(['request-open', 'request-continued-elsewhere']);
+    expect(result.interpretations[1]?.text).toContain('started from this session at');
   });
 
   test('a child started before the question that finished after it leaves a current confirmed block', () => {
@@ -624,7 +689,7 @@ describe('interpretWorkRoot against what the harness recorded after the request 
     ]);
   });
 
-  test('a message answers the request it followed and no other: the next proposal stays pending', () => {
+  test('a later message settles neither the request nor proposals; native expiry still applies', () => {
     const proposals: WorkFact[] = [proposal('p-old', 'open'), proposal('p-new', 'open'), proposal('p-gone', 'open')];
     const result = withHarness(
       question,
@@ -638,16 +703,15 @@ describe('interpretWorkRoot against what the harness recorded after the request 
       },
       [declaredTurn(question), ...proposals],
     );
-    expect(result.attention).toBe('optional-lead');
-    expect(kinds(result)).toEqual(['request-answered', 'proposal-open', 'proposal-superseded', 'proposal-expired']);
+    expect(result.attention).toBe('human-request');
+    expect(kinds(result)).toEqual(['request-open', 'request-message-observed', 'proposal-open', 'proposal-expired']);
     const byKind = new Map(result.interpretations.map((entry) => [entry.kind, entry]));
-    expect(byKind.get('proposal-open')?.evidence).toEqual(['p-new']);
-    expect(byKind.get('proposal-superseded')?.evidence).toEqual(['p-old']);
-    expect(byKind.get('proposal-superseded')?.text).toContain('“Old offer”');
+    expect(byKind.get('proposal-open')?.evidence).toEqual(['p-old', 'p-new']);
+    expect(byKind.has('proposal-superseded')).toBe(false);
     expect(byKind.get('proposal-expired')?.evidence).toEqual(['p-gone']);
   });
 
-  test('without a pending offer left, superseded and expired proposals are no lead', () => {
+  test('an unexpired offer stays a lead after an unrelated message', () => {
     const result = withHarness(
       null,
       {
@@ -656,8 +720,8 @@ describe('interpretWorkRoot against what the harness recorded after the request 
       },
       [proposal('p-old', 'open')],
     );
-    expect(result.attention).toBe('none');
-    expect(kinds(result)).toEqual(['proposal-superseded']);
+    expect(result.attention).toBe('optional-lead');
+    expect(kinds(result)).toEqual(['proposal-open']);
   });
 
   test('an unrelated pull request merged after a question resolves nothing (current prudence)', () => {
@@ -735,11 +799,16 @@ describe('a request nothing has touched for more than a week (ADR 0056, age tier
     expect(result.interpretations[1]?.text).toContain('the review request (asked');
   });
 
-  test('a message you wrote after the question answers it; one written before it changes nothing', () => {
+  test('a later message dates activity without answering, and old activity can still be dormant', () => {
     const declaration = askedDaysAgo(8);
     const answered = tiered(declaration, { latestUserFrameAt: iso(7.5 * DAY_HOURS) });
-    expect(answered.attention).toBe('none');
-    expect(kinds(answered)).toEqual(['request-answered', 'declared-status-stale']);
+    expect(answered.attention).toBe('human-request');
+    expect(kinds(answered)).toEqual([
+      'request-open',
+      'request-message-observed',
+      'request-dormant',
+      'declared-status-stale',
+    ]);
     const before = tiered(declaration, { latestUserFrameAt: iso(9 * DAY_HOURS) });
     expect(before.reconsidered).toBe(true);
     expect(kinds(before)).toContain('request-dormant');

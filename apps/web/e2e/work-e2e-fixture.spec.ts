@@ -34,12 +34,11 @@ const ROOTS_SHOWN = DESKTOP_ROOTS_SHOWN + CODEX_ROOTS;
 const HIDDEN_ROOTS = 1;
 const MINIMUM_ROOTS = 20;
 /**
- * Five current blocks and six older declarations to reconsider: three something later may have
- * answered, three untouched for more than a week (ADR 0056 age tier). The answered and handled
- * roots rest.
+ * Five current blocks and eight older declarations to reconsider: a dated message, two later
+ * pull requests, two linked continuations, and three dormant requests. None establishes an answer.
  */
-const NEEDS_YOU_ROOTS = 11;
-const RECONSIDER_ROOTS = 6;
+const NEEDS_YOU_ROOTS = 13;
+const RECONSIDER_ROOTS = 8;
 const WAITING_ROOTS = 1;
 const LEAD_ROOTS = 2;
 const RESTING_ROOTS = DESKTOP_ROOTS_SHOWN - NEEDS_YOU_ROOTS - WAITING_ROOTS - LEAD_ROOTS;
@@ -95,7 +94,7 @@ const expectAxeClean = async (page: Page): Promise<void> => {
 };
 const searchParam = (page: Page, name: string): string | null => new URL(page.url()).searchParams.get(name);
 const openWorkRoot = async (page: Page, rootId: string): Promise<Locator> => {
-  await page.goto(`/work?root=${rootId}`);
+  await page.goto(`/work/sessions?root=${rootId}`);
   await waitForHydratedWork(page);
   const aside = page.getByRole('main').locator('[data-work-aside]');
   await expect(aside.locator('[data-work-detail]')).toHaveAttribute('data-work-detail', rootId);
@@ -115,7 +114,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
       browserReads.push(sent.url());
     }
   });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const response = await request.post(WORK_ATTENTION_PATH, {
     data: encodeRpcResponseBody({ limit: 100, machineId: null }),
@@ -181,17 +180,31 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   await expect(main.locator('[data-work-reconsider-heading]')).toHaveText(
     `Older declarations to reconsider · ${RECONSIDER_ROOTS}`,
   );
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 4)).toContainText(CONTINUED_TITLE);
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 4)).toContainText('work continued in a linked session');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 6)).toContainText(SATISFIED_TITLE);
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 6)).toContainText('possibly answered · PR #117');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 6)).toContainText(
+  const reconsidered = main.locator('[data-work-reconsider] [data-work-root]');
+  for (const [index, title] of [
+    REPLIED_TITLE,
+    SATISFIED_TITLE,
+    MERGED_BEFORE_TITLE,
+    CONTINUED_TITLE,
+    LINKED_COMPLETION_TITLE,
+    'Fixture: routine session 5',
+    'Fixture: routine session 10',
+    STALE_TITLE,
+  ].entries()) {
+    await expect(reconsidered.nth(index)).toContainText(title);
+  }
+  await expect(rowNamed(page, REPLIED_TITLE)).toContainText(
+    'Message observed in Claude Desktop at 2026-10-20T10:00:00.000Z',
+  );
+  await expect(rowNamed(page, REPLIED_TITLE).locator('[data-work-decision]')).toHaveCount(0);
+  await expect(rowNamed(page, CONTINUED_TITLE)).toContainText('work continued in a linked session');
+  await expect(rowNamed(page, SATISFIED_TITLE)).toContainText('possibly answered · PR #117');
+  await expect(rowNamed(page, SATISFIED_TITLE)).toContainText(
     'PR #117 read failed (unauthenticated) · observed 30 min ago',
   );
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText(MERGED_BEFORE_TITLE);
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText('possibly answered · PR #90');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText('PR #90 merged · observed 1 h ago');
-  await expect(needsYou.nth(NEEDS_YOU_ROOTS - 5)).toContainText('Jira XLB-2101 · To Do · observed 1 h ago');
+  await expect(rowNamed(page, MERGED_BEFORE_TITLE)).toContainText('possibly answered · PR #90');
+  await expect(rowNamed(page, MERGED_BEFORE_TITLE)).toContainText('PR #90 merged · observed 1 h ago');
+  await expect(rowNamed(page, MERGED_BEFORE_TITLE)).toContainText('Jira XLB-2101 · To Do · observed 1 h ago');
   await expect(main.locator('[data-work-reconsider]').locator(rowNamed(page, STALE_TITLE))).toHaveCount(1);
   await expect(needsYou.last()).toContainText(STALE_TITLE);
   await expect(rowNamed(page, STALE_TITLE)).toContainText('blocked · 40 d ago, no activity since');
@@ -319,23 +332,23 @@ const capture = async (page: Page, name: string, fullPage = true): Promise<void>
   await page.screenshot({ fullPage, path: path.join(directory, name) });
 };
 
-const ANSWERED_ROOT_ID = 'local_fixture-answered-root';
-const ANSWERED_TITLE = 'Fixture: settle the layout';
-const ANSWERED_CURRENT_QUESTION = 'Delete the superseded layout branch now?';
-const ANSWERED_EARLIER_INTERPRETATION =
-  'Answered in Claude Desktop: the question “Keep the compact layout or the airy one?” (asked 2026-10-20T07:00:00.000Z); you wrote to the session at 2026-10-20T08:00:00.000Z and it declared again at 2026-10-20T09:00:00.000Z.';
+const REPLACED_ROOT_ID = 'local_fixture-answered-root';
+const REPLACED_TITLE = 'Fixture: settle the layout';
+const REPLACED_CURRENT_QUESTION = 'Delete the superseded layout branch now?';
+const REPLACED_EARLIER_INTERPRETATION =
+  'Declaration replaced: the question “Keep the compact layout or the airy one?” (asked 2026-10-20T07:00:00.000Z) was replaced by the session’s declaration at 2026-10-20T09:00:00.000Z.';
 const REPLIED_TITLE = 'Fixture: export column wording';
 const UNRELATED_TITLE = 'Fixture: settings panel naming';
 const OFFERS_TITLE = 'Fixture: follow-ups after the import';
-const HANDLED_ROOT_ID = 'local_fixture-handled-root';
-const HANDLED_TITLE = 'Fixture: release checklist';
+const LINKED_COMPLETION_ROOT_ID = 'local_fixture-handled-root';
+const LINKED_COMPLETION_TITLE = 'Fixture: release checklist';
 const OLD_SUBJECT_QUERY = 'routine session 11';
 
-test('reads what Claude Desktop recorded after a request: answered, handled, to reconsider, superseded offers', async ({
+test('keeps questions pending after dated messages, replacement declarations and linked completion', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   // Per harness, what was read: declared waits from the Desktop registry only (ADR 0059).
@@ -347,15 +360,14 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
     'Other harnesses: not read here',
   );
 
-  // Q1 was answered in the harness, then Q2 was asked: Q2 is the current request, Q1 the last decision.
-  const answered = rowNamed(page, ANSWERED_TITLE);
-  await expect(main.locator('[data-work-section="human-request"]').locator(answered)).toHaveCount(1);
-  await expect(answered).toHaveAttribute('data-work-standing', 'current');
-  await expect(answered).toContainText(ANSWERED_CURRENT_QUESTION);
-  await expect(answered.locator('[data-work-decision]')).toContainText(
-    'Earlier “Keep the compact layout or the airy one?” answered in Claude Desktop · asked 5 h ago',
-  );
-  await expect(answered.locator('[data-work-next]')).toHaveText('Next: Answer in Claude Desktop.');
+  // Q2 replaced Q1. The replacement is observed activity and establishes no answer or decision.
+  const replacement = rowNamed(page, REPLACED_TITLE);
+  await expect(main.locator('[data-work-section="human-request"]').locator(replacement)).toHaveCount(1);
+  await expect(replacement).toHaveAttribute('data-work-standing', 'current');
+  await expect(replacement).toContainText(REPLACED_CURRENT_QUESTION);
+  await expect(replacement.locator('[data-work-decision]')).toHaveCount(0);
+  await expect(replacement.locator('[data-work-observed-activity]')).toContainText(REPLACED_EARLIER_INTERPRETATION);
+  await expect(replacement.locator('[data-work-next]')).toHaveText('Next: Answer in Claude Desktop.');
 
   // An unrelated pull request merged after the question changes nothing: a current block.
   const unrelated = rowNamed(page, UNRELATED_TITLE);
@@ -363,54 +375,54 @@ test('reads what Claude Desktop recorded after a request: answered, handled, to 
   await expect(unrelated).toContainText('PR #131 merged · observed 1 h ago');
   await expect(main.locator('[data-work-reconsider]').locator(unrelated)).toHaveCount(0);
 
-  // A message after the question, and work handled in a session started from the root: no longer waiting.
-  await main.locator('[data-work-section="none"] button', { hasText: 'Show all' }).click();
+  // A dated message and a completed linked session do not establish an answer.
   const replied = rowNamed(page, REPLIED_TITLE);
-  await expect(main.locator('[data-work-section="none"]').locator(replied)).toHaveCount(1);
-  await expect(replied).toHaveAttribute('data-work-standing', 'answered');
-  await expect(replied.locator('[data-work-standing-marker]')).toHaveText('Answered in Claude Desktop');
-  await expect(replied.locator('[data-work-decision]')).toContainText('You answered in Claude Desktop · asked 2 h ago');
-  const handled = rowNamed(page, HANDLED_TITLE);
-  await expect(main.locator('[data-work-section="none"]').locator(handled)).toHaveCount(1);
-  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Handled in a linked session');
-  await expect(handled.locator('[data-work-decision]')).toContainText(
-    'Handled in a session started from it · completed 6 h ago',
-  );
+  await expect(main.locator('[data-work-section="human-request"]').locator(replied)).toHaveCount(1);
+  await expect(replied).toHaveAttribute('data-work-standing', 'reconsider');
+  await expect(main.locator('[data-work-reconsider]').locator(replied)).toHaveCount(1);
+  await expect(replied).toContainText('Rename the export column to “cost (approx.)”?');
+  await expect(replied).not.toContainText('Answered in Claude Desktop');
+  await expect(replied.locator('[data-work-decision]')).toHaveCount(0);
+  // The replay's frameHoursAgo=2 dates the message at 10:00, after its 09:30 question.
+  await expect(replied.locator('[data-work-observed-activity]')).toContainText('2026-10-20T10:00:00.000Z');
+  await expect(replied.locator('[data-work-observed-activity]')).toContainText('asked 2026-10-20T09:30:00.000Z');
+  const linkedCompletion = rowNamed(page, LINKED_COMPLETION_TITLE);
+  await expect(main.locator('[data-work-reconsider]').locator(linkedCompletion)).toHaveCount(1);
+  await expect(linkedCompletion.locator('[data-work-standing-marker]')).toHaveText('Older declaration to reconsider');
+  await expect(linkedCompletion.locator('[data-work-decision]')).toHaveCount(0);
 
-  // The offer made before a later message and the expired offer are not pending; the last one is.
+  // A later message does not resolve an offer; only the expired offer stops being pending.
   const offers = rowNamed(page, OFFERS_TITLE);
   await expect(main.locator('[data-work-section="optional-lead"]').locator(offers)).toHaveCount(1);
-  await expect(offers).toContainText('proposals 1 open / 0 resolved / 2 no longer pending');
+  await expect(offers).toContainText('proposals 2 open / 0 resolved / 1 no longer pending');
   await capture(page, 'work-e2e-1440-arrival.png');
   await expectAxeClean(page);
 
-  // The detail reads request, context, last decision and next action before the diagnostics.
-  const aside = await openWorkRoot(page, ANSWERED_ROOT_ID);
+  // The detail reads request, context, dated activity and next action before the diagnostics.
+  const aside = await openWorkRoot(page, REPLACED_ROOT_ID);
   await expect(aside.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'current');
-  await expect(aside.locator('[data-work-question]')).toHaveText(ANSWERED_CURRENT_QUESTION);
-  await expect(aside.locator('[data-work-decision]')).toContainText(
-    'Last decision: Earlier “Keep the compact layout or the airy one?” answered in Claude Desktop · asked Oct 20, 2026, 07:00 UTC',
-  );
-  await expect(aside).toContainText(ANSWERED_EARLIER_INTERPRETATION);
+  await expect(aside.locator('[data-work-question]')).toHaveText(REPLACED_CURRENT_QUESTION);
+  await expect(aside.locator('[data-work-decision]')).toHaveCount(0);
+  await expect(aside).toContainText(REPLACED_EARLIER_INTERPRETATION);
   await expect(aside).toContainText('Earlier declaration, blocked: Keep the compact layout or the airy one?');
   const order = await aside.evaluate((element) =>
     [
       '[data-work-question]',
       '[data-work-context]',
-      '[data-work-decision]',
+      '[data-work-observed-activity]',
       '[data-work-next]',
       '#work-detail-facts',
     ].map((selector) => element.querySelector(selector)?.getBoundingClientRect().top ?? Number.NaN),
   );
   expect(order.every((top) => Number.isFinite(top))).toBe(true);
   expect([...order].sort((left, right) => left - right)).toEqual(order);
-  await capture(page, 'work-e2e-1440-detail-answered.png');
-  const handledDetail = await openWorkRoot(page, HANDLED_ROOT_ID);
-  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'handled');
-  await expect(handledDetail).toContainText(
-    'Handled in “Fixture: fix the flaky export test”: started from this session at',
+  await capture(page, 'work-e2e-1440-detail-replaced.png');
+  const linkedDetail = await openWorkRoot(page, LINKED_COMPLETION_ROOT_ID);
+  await expect(linkedDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'reconsider');
+  await expect(linkedDetail).toContainText(
+    'Older declaration to reconsider: work continued after the question in “Fixture: fix the flaky export test”',
   );
-  await expect(handledDetail).toContainText('Linked session declared completed: Finished the requested change.');
+  await expect(linkedDetail).toContainText('Linked session declared completed: Finished the requested change.');
   await expectAxeClean(page);
 });
 
@@ -418,7 +430,7 @@ test('shows Codex sessions apart: wait unknown, never folded under a Desktop roo
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const section = main.locator('[data-work-section="not-observable"]');
@@ -484,7 +496,7 @@ test('a search covers the ranking and says what it did not search; earlier quest
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const status = main.locator('[data-work-search-coverage]');
@@ -501,10 +513,10 @@ test('a search covers the ranking and says what it did not search; earlier quest
   ).toBeVisible();
   await capture(page, 'work-e2e-1440-search-old-subject.png', false);
 
-  // A question answered in the harness is still found by its own words, and the address keeps it.
+  // An earlier replaced question remains searchable by its own words; replacement is not an answer.
   await page.getByRole('searchbox').fill('compact layout');
   await expect(status).toContainText(`1 of ${ROOTS_SHOWN} roots match,`);
-  await expect(rowNamed(page, ANSWERED_TITLE)).toHaveCount(1);
+  await expect(rowNamed(page, REPLACED_TITLE)).toHaveCount(1);
 
   // Keyboard: from the last current block, ArrowDown continues into the roots to reconsider.
   await page.getByRole('searchbox').fill('');

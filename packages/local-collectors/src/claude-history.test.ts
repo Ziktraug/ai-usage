@@ -31,7 +31,7 @@ const makeHome = async (): Promise<string> => {
 const run = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, home: string) =>
   Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
 
-// Rewrites a version 16 cache so each transcript entry carries the rows an older
+// Rewrites the current per-file cache so each transcript entry carries the rows an older
 // cache version would have held for that unchanged file.
 const withLegacyRows = (
   cache: { files: Record<string, { rows: unknown[] }> },
@@ -154,7 +154,7 @@ describe('readClaudeSessionAnalysis', () => {
     // for these unchanged files.
     await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 12)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(16);
+    expect((await Bun.file(cachePath).json()).version).toBe(20);
     expect(await run(collectClaude, home)).toEqual(freshRows);
   });
 
@@ -191,7 +191,7 @@ describe('readClaudeSessionAnalysis', () => {
     // these unchanged files.
     await Bun.write(cachePath, JSON.stringify(withLegacyRows(cache, legacyRows, 13)));
     expect(await run(collectClaude, home)).toEqual(freshRows);
-    expect((await Bun.file(cachePath).json()).version).toBe(16);
+    expect((await Bun.file(cachePath).json()).version).toBe(20);
   });
 
   test('surfaces a typed failure for a no-follow unsafe transcript', async () => {

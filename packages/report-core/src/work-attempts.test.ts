@@ -3,6 +3,7 @@ import type { ProviderStatus } from './provider-status';
 import {
   boundReviewExcerpt,
   buildReviewPrompt,
+  type CodexReviewHarnessGuarantee,
   decideReviewLaunch,
   describeUnresolvedReviewReservation,
   holdsReviewReservation,
@@ -165,6 +166,9 @@ const attempt: ReviewAttempt = {
   launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
   machineId: MACHINE,
   nativeSessionId: 'native-1',
+  nativeTurnId: null,
+  stopRequestedAt: null,
+  stopConfirmedAt: null,
   numTurns: 3,
   pid: 4242,
   releaseEvidence: null,
@@ -356,7 +360,7 @@ describe('launch decision', () => {
       lostAt: null,
       pids: [],
     });
-    expect(legacy).toContain('recorded before launch markers existed');
+    expect(legacy).toContain('no independently verifiable process marker');
     expect(legacy).toContain(`“${REVIEW_RESERVATION_RELEASE_ACTION}”`);
     expect(legacy).not.toContain('outcome is recorded');
     expect(message).not.toContain('outcome is recorded');
@@ -403,7 +407,7 @@ describe('launch decision', () => {
     ).toMatchObject({ kind: 'refused', reason: 'no-declaration' });
   });
 
-  test('refuses Codex as an executor for this version', () => {
+  test('refuses unpinned Codex rather than inventing an account or model', () => {
     const codex: ExecutorDeclaration = { ...declaration, harness: 'codex' };
     const decision = decideReviewLaunch({
       ...allowedInput,
@@ -412,7 +416,20 @@ describe('launch decision', () => {
       executorObservations: [{ ...observation, harness: 'codex' }],
       providers: [{ ...quota, key: 'codex', label: 'Codex' }],
     });
-    expect(decision).toMatchObject({ kind: 'refused', reason: 'harness-unsupported' });
+    expect(decision).toMatchObject({ kind: 'refused', reason: 'executor-unavailable' });
+  });
+
+  test('allows a pinned Codex subscription with an explicit model and qualified quota', () => {
+    const pin = 'a'.repeat(16);
+    expect(
+      decideReviewLaunch({
+        ...allowedInput,
+        candidateId: `declared:${JSON.stringify([MACHINE, 'codex', 'personal'])}`,
+        declarations: [{ ...declaration, harness: 'codex', accountFingerprint: pin, model: 'gpt-6-astra' }],
+        executorObservations: [{ ...observation, harness: 'codex', authMethod: 'chatgpt', accountFingerprint: pin }],
+        providers: [{ ...quota, key: 'codex:personal', label: 'Codex' }],
+      }),
+    ).toMatchObject({ kind: 'allowed', candidate: { harness: 'codex', model: 'gpt-6-astra' } });
   });
 
   test('refuses a target outside routing.reviewTargets and names the path to add', () => {
@@ -630,5 +647,25 @@ describe('attempt re-validation', () => {
     expect(parseReviewHarnessGuarantee({ ...guarantee, tools: ['Bash'] })).toBeNull();
     expect(parseReviewAttempt({ ...attempt, guarantee: { ...guarantee, safeMode: 'yes' } })).toBeNull();
     expect(parseReviewAttempt({ ...attempt, scope: { ...scope, kind: 'pull-request' } })).toBeNull();
+  });
+});
+
+describe('Codex review evidence', () => {
+  test('validates native policy separately from the unchanged Claude guarantee', () => {
+    const codex: CodexReviewHarnessGuarantee = {
+      kind: 'codex-app-server',
+      cliVersion: '0.163.0',
+      model: 'gpt-6-astra',
+      effort: 'xhigh',
+      sandbox: 'read-only',
+      approvalPolicy: 'never',
+      networkAccess: false,
+      accountFingerprint: 'a'.repeat(16),
+      externalTools: 'disabled',
+      managedPolicy: 'inherited',
+    };
+    expect(parseReviewHarnessGuarantee(codex)).toEqual(codex);
+    expect(parseReviewHarnessGuarantee({ ...codex, networkAccess: true })).toBeNull();
+    expect(parseReviewHarnessGuarantee({ ...codex, safeMode: true })).toBeNull();
   });
 });

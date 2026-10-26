@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ORPCError } from '@orpc/client';
 import { syntheticWorkAttentionDataset } from '../features/work/work-attention-synthetic';
+import { nativeQuestionRoot } from '../features/work/work-native.fixture';
 import {
   createWorkAttentionClient,
   parseWorkAttentionDataset,
@@ -183,4 +184,48 @@ describe('parseWorkAttentionDataset: Jira facts and coverage', () => {
     const { jira: _jira, ...coverage } = value.coverage;
     expect(parseWorkAttentionDataset({ ...value, coverage })).toBeUndefined();
   });
+});
+
+test('native Codex facts survive the browser narrowing with exact question status', () => {
+  const root = nativeQuestionRoot();
+  const value = { ...dataset, roots: [root] };
+  expect(parseWorkAttentionDataset(JSON.parse(JSON.stringify(value)))).toEqual(value);
+  const request = root.facts[0];
+  if (request?.kind !== 'codex-user-request') {
+    throw new Error('Native request fixture missing');
+  }
+  expect(
+    parseWorkAttentionDataset({
+      ...value,
+      roots: [
+        {
+          ...root,
+          facts: [
+            {
+              ...request,
+              request: {
+                ...request.request,
+                questions: [{ id: null, text: 'Question', textTruncated: false, answeredAt: request.request.askedAt }],
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  ).toBeUndefined();
+});
+
+test('project scope and exploration window reach the transport instead of being dropped', async () => {
+  const seen: unknown[] = [];
+  const client = createWorkAttentionClient({
+    work: {
+      attention: (received) => {
+        seen.push(received);
+        return Promise.resolve({ ok: true, data: dataset });
+      },
+    },
+  });
+  const input = { limit: 100, scope: { kind: 'project-label' as const, projectLabel: 'ai-usage' }, sinceDays: 180 };
+  expect((await client.attention(input)).ok).toBe(true);
+  expect(seen).toEqual([input]);
 });

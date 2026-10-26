@@ -56,6 +56,11 @@ describe('Memory MCP process composition', () => {
       code: 'invalid-input',
       kind: 'error',
     });
+    expect(
+      await work.readWorkContext({ kind: 'checkouts', checkoutPaths: ['/fixture/a', '/fixture/b'] }, signal, {
+        sinceDays: 3651,
+      }),
+    ).toEqual({ kind: 'error', code: 'invalid-input' });
     expect(await readdir(root)).toEqual([]);
   });
 

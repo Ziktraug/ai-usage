@@ -10,7 +10,8 @@
     "./served-revision-query": "./src/served-revision-query.ts",
     "./skill-observation-read": "./src/skill-observation-read.ts",
     "./work-attention-read": "./src/work-attention-read.ts",
-    "./work-context-read": "./src/work-context-read.ts"
+    "./work-context-read": "./src/work-context-read.ts",
+    "./work-thread-read": "./src/work-thread-read.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

@@ -6,6 +6,7 @@ import { createServer } from 'vite';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { EMPTY_WORK_ATTENTION_SEARCH, type WorkAttentionSearch, workRootId } from './work-attention-model';
 import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
+import { nativeQuestionRoot } from './work-native.fixture';
 import { WORK_DEMO_REVISION } from './work-synthetic';
 
 interface SvelteServerModule {
@@ -114,9 +115,9 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).not.toContain('Known waits');
     expect(body).not.toContain('Simulate review assignment');
     expect(occurrences(body, 'Declared by the session; current state unobserved.')).toBe(3);
-    expect(rowsIn(body, 'human-request')).toBe(8);
+    expect(rowsIn(body, 'human-request')).toBe(9);
     expect(rowsIn(body, 'none')).toBe(10);
-    expect(body).toContain('Show all 12 in Recent · no pending declaration read');
+    expect(body).toContain('Show all 11 in Recent · no pending declaration read');
     expect(body).toContain('possibly answered · PR #61');
     expect(body).toContain('Confirm whether the Codex quota window should be dated by its last confirmation');
     expect(body).toContain('blocked · <time datetime="2026-06-11T09:00:00.000Z"');
@@ -370,7 +371,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
       expect(body).toContain(source);
     }
     expect(body).toContain('Uncertainty:');
-    expect(body).toContain('Review assignment simulation');
+    expect(body).toContain('Review this work');
     expect(body).toContain('Transcript not collected yet');
     expect(body).not.toContain('Run simulation');
   });
@@ -391,14 +392,14 @@ describe('Work resume surface server rendering of request standings (ADR 0056)',
       body.indexOf('data-work-section="human-request"'),
       body.indexOf('data-work-section="external-wait"'),
     );
-    const heading = section.indexOf('Older declarations to reconsider · 3');
+    const heading = section.indexOf('Older declarations to reconsider · 4');
     expect(heading).toBeGreaterThan(0);
     // Every current block is rendered before the heading, every row to reconsider after it.
     expect(occurrences(section.slice(0, heading), 'data-work-standing="current"')).toBe(5);
     expect(occurrences(section.slice(0, heading), 'data-work-standing="reconsider"')).toBe(0);
-    expect(occurrences(section.slice(heading), 'data-work-standing="reconsider"')).toBe(3);
+    expect(occurrences(section.slice(heading), 'data-work-standing="reconsider"')).toBe(4);
     // The marker is words, not only a style.
-    expect(occurrences(section, '>Older declaration to reconsider<')).toBe(3);
+    expect(occurrences(section, '>Older declaration to reconsider<')).toBe(4);
     // A request untouched for over a week (ADR 0056 age tier) is dated, still asked, never hidden.
     const dormant = withoutMarkers(section.slice(section.indexOf('Session distillation worker redaction')));
     expect(dormant).toContain('The redaction fixed-point test needs a real sample');
@@ -409,8 +410,8 @@ describe('Work resume surface server rendering of request standings (ADR 0056)',
     );
     expect(dormant).toContain('checkout 28 staged · 1 untracked · 2 ahead');
     expect(section).toContain('or nothing happened in their session for over 7 days.');
-    expect(body).toContain('data-work-standing="handled"');
-    expect(body).toContain('Handled in a linked session');
+    expect(body).not.toContain('data-work-standing="handled"');
+    expect(body).not.toContain('Handled in a linked session');
     expect(body).toContain('Next: Answer in Claude Desktop.');
   });
   test('the detail reads request, context, last decision and next action before the diagnostics', () => {
@@ -421,7 +422,7 @@ describe('Work resume surface server rendering of request standings (ADR 0056)',
       'data-work-request="current"',
       'data-work-question',
       'data-work-context',
-      'Last decision: Earlier “Call the rail entry “Inputs” or “Collectors”?” answered in Claude Desktop',
+      'data-work-observed-activity',
       'Next: Answer in Claude Desktop.',
       'Declared by the session',
       'Interpretations',
@@ -432,5 +433,43 @@ describe('Work resume surface server rendering of request standings (ADR 0056)',
     expect(occurrences(body, 'data-work-question')).toBe(1);
     expect(body).toContain('Earlier declaration, blocked: Call the rail entry “Inputs” or “Collectors”?');
     expect(body).toContain('you wrote to the session at');
+    expect(body).not.toContain('data-work-decision');
   });
+});
+
+test('native Codex questions keep individual answers, pending text and native provenance', () => {
+  const root = nativeQuestionRoot();
+  const body = withoutMarkers(
+    render(fixture, {
+      props: {
+        board: {
+          dataset: { ...dataset, roots: [root] },
+          onFocusRow: noop,
+          onSearch: noop,
+          onSelect: noop,
+          search: EMPTY_WORK_ATTENTION_SEARCH,
+          selectedId: workRootId(root),
+        },
+        detail: {
+          loadedRows: [],
+          mode: 'demo',
+          onClose: noop,
+          providers: [],
+          quotaUnavailable: true,
+          reference: dataset.generatedAt,
+          revision: WORK_DEMO_REVISION,
+          root,
+          sessionClient,
+        },
+      },
+    }).body,
+  );
+  expect(body).toContain('Native request evidence and session declarations; general state unobserved.');
+  expect(body).toContain('Native Codex questions');
+  expect(body).toContain('Which review model should run?');
+  expect(body).toContain('Answer attributed to this question');
+  expect(body).toContain('No attributable answer observed; this question stays pending.');
+  expect(body).toContain('Codex native rollout');
+  expect(body).not.toContain('Answered in Claude Desktop');
+  expect(body).not.toContain('0 blocked · 0 review ready');
 });

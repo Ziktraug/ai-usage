@@ -13,8 +13,10 @@ import {
   type UsageEnginePublicationOutput,
   type UsageEngineReplicationStatusOutput,
   type UsageEngineReviewAttemptOutput,
+  type UsageEngineReviewAttemptStopOutput,
   type UsageEngineReviewReservationReleaseOutput,
   type UsageEngineRoutingQualificationOutput,
+  type UsageEngineWorkThreadOutput,
   usageEngineReportSourceIdsFor,
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineRuntimeDependencies } from './runtime';
@@ -29,7 +31,9 @@ export type UsageEngineCommandOutput =
   | UsageEngineReplicationStatusOutput
   | UsageEngineReviewAttemptOutput
   | UsageEngineReviewReservationReleaseOutput
+  | UsageEngineReviewAttemptStopOutput
   | UsageEngineRoutingQualificationOutput
+  | UsageEngineWorkThreadOutput
   | undefined;
 
 interface RuntimeCommandExecutorState {
@@ -81,6 +85,12 @@ export const createRuntimeCommandExecutor = (
     };
 
     switch (command.command) {
+      case 'work-thread': {
+        if (!dependencies.workThreads) {
+          throw new Error('Work threads are not available in this engine composition.');
+        }
+        return await dependencies.workThreads.execute(command.input, signal);
+      }
       case 'detect-all':
         await dependencies.sourceControl.detectAll(signal);
         return;
@@ -144,6 +154,12 @@ export const createRuntimeCommandExecutor = (
           throw new Error('Review attempts are not available in this engine composition.');
         }
         return await dependencies.reviewAttempts.releaseReservation(command, signal);
+      }
+      case 'stop-review-attempt': {
+        if (!dependencies.reviewAttempts) {
+          throw new Error('Review attempts are not available in this engine composition.');
+        }
+        return await dependencies.reviewAttempts.stop(command, signal);
       }
       case 'qualify-review-routing': {
         if (!dependencies.routingQualification) {

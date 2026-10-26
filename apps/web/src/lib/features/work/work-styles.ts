@@ -1,6 +1,12 @@
 import { css } from '@ai-usage/design-system/css';
 
 export const workStack = css({ display: 'grid', gap: '16px', minW: 0 });
+export const workRoutingForm = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr)',
+  gap: '16px',
+  minW: 0,
+});
 export const workPanel = css({
   p: { base: '16px', md: '20px' },
   border: '1px solid token(colors.line)',

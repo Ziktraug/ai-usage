@@ -5,7 +5,12 @@ import type { WebQueryRuntime } from './composition';
 import { reportBootstrapQueryOptions } from './options/report';
 import { SessionRevisionExpiredError } from './options/session-window';
 import { workSessionsOptions } from './options/work';
-import { WorkAttentionQueryError, workAttentionQueryOptions, workAttentionRequest } from './options/work-attention';
+import {
+  WorkAttentionQueryError,
+  type WorkContextSearchRead,
+  workAttentionQueryOptions,
+  workAttentionRequest,
+} from './options/work-attention';
 
 export interface WorkLoadFailure {
   readonly kind: 'attention-unavailable' | 'bootstrap-unavailable' | 'revision-expired' | 'session-unavailable';
@@ -60,9 +65,13 @@ const attentionFailureFor = (cause: unknown): WorkLoadFailure => {
 const prefetchAttention = async (
   runtime: WebQueryRuntime,
   client: WorkAttentionClient,
+  context: WorkContextSearchRead,
 ): Promise<WorkLoadFailure | null> => {
+  if (!context.ok) {
+    return { kind: 'attention-unavailable', message: context.error.message };
+  }
   try {
-    await runtime.queryClient.fetchQuery(workAttentionQueryOptions(client, workAttentionRequest(), serverContext));
+    await runtime.queryClient.fetchQuery(workAttentionQueryOptions(client, context.input, serverContext));
     return null;
   } catch (cause) {
     if (isAbort(cause)) {
@@ -122,8 +131,13 @@ const prefetchSessions = async (
 export const prefetchWorkQueries = async (
   runtime: WebQueryRuntime,
   sources: WorkPrefetchSources = LIVE_WORK_SOURCES,
+  context: WorkContextSearchRead = { ok: true, input: workAttentionRequest() },
 ): Promise<WorkPrefetchFailures> => {
-  const attention = await prefetchAttention(runtime, sources.attention ?? resolveWorkAttentionClient(runtime.rpc));
+  const attention = await prefetchAttention(
+    runtime,
+    sources.attention ?? resolveWorkAttentionClient(runtime.rpc),
+    context,
+  );
   const sessions = await prefetchSessions(runtime, sources.sessions);
   return { attention, sessions };
 };

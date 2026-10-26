@@ -14,6 +14,7 @@ import {
   parseExecutorObservation,
 } from '@ai-usage/report-core/work-executors';
 import { type ClaudeCommand, ClaudeCommandError, claudeCommandFor } from './claude-command';
+import { type CodexAccountObservation, codexProcessEnvironment, probeCodexAccount } from './codex-app-server-client';
 
 /**
  * Observes the review executors a machine could run: is the harness CLI on the PATH, which version,
@@ -59,6 +60,8 @@ export const runBoundedProcess: BoundedRun = async (spec) => {
 };
 
 export interface ObserveExecutorsInput {
+  /** Test seam for the account/rate-limit handshake; production always uses the app-server. */
+  readonly codexAccountProbe?: () => Promise<CodexAccountObservation | null>;
   /**
    * The environment the review launch uses (default `process.env`): its `CLAUDE_CONFIG_DIR` and
    * `AI_USAGE_CLAUDE_EXECUTABLE` decide which CLI and which account the Claude probe reads.
@@ -224,12 +227,18 @@ const claudeAuthProbe = async (run: BoundedRun, timeoutMs: number, claude: Claud
  * its "Logged in using …" line to stderr, which the bounded runner discards, so a stdout mention is
  * recorded as extra evidence (and as the sign-in method) when present but never required.
  */
-const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthProbe> => {
+const codexAuthProbe = async (
+  run: BoundedRun,
+  timeoutMs: number,
+  command = 'codex',
+  environment: Readonly<Record<string, string>> = {},
+): Promise<AuthProbe> => {
   let result: BoundedRunResult;
   try {
     result = await run({
       args: ['login', 'status'],
-      command: 'codex',
+      command,
+      env: environment,
       maximumOutputBytes: MAXIMUM_OUTPUT_BYTES,
       timeoutMs,
     });
@@ -252,7 +261,7 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number): Promise<AuthP
   } else if (CODEX_CHATGPT_PATTERN.test(result.stdout)) {
     authMethod = 'chatgpt';
   }
-  // Codex names its account only inside its credential file, which is never read: no fingerprint.
+  // Login status alone reports no identity; the app-server handshake supplies it afterwards.
   return {
     accountFingerprint: null,
     authMethod,
@@ -279,7 +288,9 @@ const unavailableObservation = (base: ObservationBase, evidence: string): Execut
 
 const observeExecutor = async (
   harness: ExecutorHarness,
-  input: Required<Pick<ObserveExecutorsInput, 'env' | 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>>,
+  input: Required<
+    Pick<ObserveExecutorsInput, 'codexAccountProbe' | 'env' | 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>
+  >,
 ): Promise<ExecutorObservation> => {
   const observedAt = input.now().toISOString();
   const base: ObservationBase = { harness, machineId: input.machineId, observedAt };
@@ -294,8 +305,8 @@ const observeExecutor = async (
       throw error;
     }
   }
-  const command = claude?.command ?? EXECUTOR_COMMANDS[harness];
-  const environment = claude?.environment ?? {};
+  const command = claude?.command ?? input.env.AI_USAGE_CODEX_EXECUTABLE ?? EXECUTOR_COMMANDS[harness];
+  const environment = claude?.environment ?? codexProcessEnvironment(input.env);
   const binaryPath = command.includes('/') ? command : input.which(command);
   if (binaryPath === null) {
     return unavailableObservation(base, `${command} binary not found on PATH`);
@@ -324,10 +335,26 @@ const observeExecutor = async (
     versionOutcome = outcomeOfFailure(kind);
     versionEvidence = `${command} --version ${kind}`;
   }
-  const auth =
+  let auth =
     claude === null
-      ? await codexAuthProbe(input.run, input.timeoutMs)
+      ? await codexAuthProbe(input.run, input.timeoutMs, command, environment)
       : await claudeAuthProbe(input.run, input.timeoutMs, claude);
+  if (claude === null && auth.authState === 'logged-in') {
+    try {
+      const account = await input.codexAccountProbe();
+      if (account !== null) {
+        auth = { ...account, outcome: 'observed' };
+      }
+    } catch {
+      auth = {
+        accountFingerprint: null,
+        authMethod: null,
+        authState: 'unknown',
+        evidence: 'Codex app-server account identity unavailable',
+        outcome: 'invalid',
+      };
+    }
+  }
   if (auth.outcome === 'unavailable') {
     return unavailableObservation(base, `${auth.evidence} to the bounded runner`);
   }
@@ -376,6 +403,9 @@ export const probeClaudeAccount = async (input: {
 
 export const observeExecutors = async (input: ObserveExecutorsInput): Promise<ExecutorObservation[]> => {
   const resolved = {
+    codexAccountProbe:
+      input.codexAccountProbe ??
+      (() => probeCodexAccount({ env: input.env ?? process.env, timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS })),
     env: input.env ?? process.env,
     machineId: input.machineId,
     now: input.now ?? (() => new Date()),

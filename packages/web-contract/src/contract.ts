@@ -9,6 +9,7 @@ import { syncContract } from './sync';
 import { workContract } from './work';
 import { workAttemptsContract } from './work-attempts';
 import { workRoutingContract } from './work-routing';
+import { workThreadsContract } from './work-threads';
 
 export const webContract = {
   ...reportContract,
@@ -21,6 +22,7 @@ export const webContract = {
   work: workContract,
   workAttempts: workAttemptsContract,
   workRouting: workRoutingContract,
+  workThreads: workThreadsContract,
 } as const;
 
 export type WebContract = typeof webContract;

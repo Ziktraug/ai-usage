@@ -4,6 +4,7 @@ import {
   localHistoryWarningFromError,
 } from '@ai-usage/local-machine/errors';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '@ai-usage/local-machine/local-history';
+import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import {
   HARNESS_METADATA,
   type HarnessKey,
@@ -38,6 +39,7 @@ interface HarnessAdapterCollection {
   observations?: SkillObservation[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
+  workObservations?: CodexWorkObservation[];
 }
 
 export interface HarnessAdapter {

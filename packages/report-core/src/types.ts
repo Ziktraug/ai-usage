@@ -23,6 +23,7 @@ export const isSessionOrigin = (value: unknown): value is SessionOrigin =>
 
 export interface UsageRowSource {
   artifactPath?: string | null;
+  delegatedSessions?: readonly { harness: 'codex'; sourceSessionId: string }[];
   harnessKey: string;
   machineId?: string;
   machineLabel?: string;

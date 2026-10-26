@@ -5,20 +5,22 @@ import path from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
+import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { createStoredReportCapture } from '@ai-usage/report-data';
 import { queryWorkAttention } from '@ai-usage/report-data/work-attention-read';
 import { publishServedReportRevision, updateUsageMachineLabel, usageStorePath } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
+import { isolatedSourceOptions } from './source-test-fixtures';
 
 /**
  * Codex on the Work view end to end (ADR 0059): native rollouts, the real `codex.sessions`
  * source, the store import, the served publication, and the same read the web procedure runs.
- * Codex declares no turn status, so the one Codex root must come out with the checkout and branch
- * the rollout recorded, its delegated child folded through the declared parent, and an attention
- * that is not observable. A question Codex posted through `request_user_input_async` is in the
- * rollout and is not read as a wait: the collector does not parse it (absent from the served row).
+ * Codex declares no general turn status. The one root retains its recorded checkout and branch,
+ * and its delegated child folds through the declared parent. The test adds a native structured
+ * request to the shared seed: its local auxiliary evidence requires attention without inventing
+ * an acknowledgement or human answer, and remains absent from the portable served row.
  */
 
 const temporaryDirectories: string[] = [];
@@ -36,6 +38,7 @@ const temporaryDirectory = async (prefix: string): Promise<string> => {
 const MACHINE = { id: 'machine-codex-work-chain', label: 'Codex chain machine' } as const;
 /** A week after the seeded rollouts (2026-07-02), inside the 30-day window. */
 const NOW = new Date('2026-07-10T12:00:00.000Z');
+const QUESTION_AT = canonicalInstantFromDate(new Date('2026-07-02T09:03:30.000Z'));
 const sourceContext: SourceRunContext = { reportProgress: () => Effect.void };
 const reportOptions = { limit: null, minTokens: 0, project: null, since: null, sort: 'date' as const };
 
@@ -52,17 +55,20 @@ const askedQuestion = (at: string) => ({
 });
 
 describe('Codex work attention chain', () => {
-  test('carries a native Codex rollout to a not-observable Work root', async () => {
+  test('carries an unanswered native Codex request to its Work root without declaring a general turn status', async () => {
     const home = await temporaryDirectory('lot-c-codex-work-chain-home-');
     const storage = createLocalHistoryStorage(home);
     await Effect.runPromise(writeMachineConfig(MACHINE).pipe(Effect.provideService(LocalHistoryStorage, storage)));
     const fixture = await seedHarnessHome(home, { harnesses: ['codex'] });
-    await appendFile(fixture.paths.codexRootRollout, `${JSON.stringify(askedQuestion('2026-07-02T09:03:30.000Z'))}\n`);
+    await appendFile(fixture.paths.codexRootRollout, `${JSON.stringify(askedQuestion(QUESTION_AT))}\n`);
 
     const registry = await Effect.runPromise(
-      createScheduledSourceRegistry({ codexLiveAvailable: () => false, machine: MACHINE }).pipe(
-        Effect.provideService(LocalHistoryStorage, storage),
-      ),
+      createScheduledSourceRegistry({
+        ...isolatedSourceOptions,
+        codexLiveAvailable: () => false,
+        machine: MACHINE,
+        now: () => NOW,
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const source = registry.get('codex.sessions');
     if (!source) {
@@ -83,6 +89,7 @@ describe('Codex work attention chain', () => {
       }),
     );
     const { rows, tableRows: _tableRows, ...support } = capture.payload;
+    expect(JSON.stringify(rows)).not.toContain('Fixture question?');
     await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine: MACHINE, updatedAt: NOW }));
     await Effect.runPromise(
       publishServedReportRevision({
@@ -104,9 +111,9 @@ describe('Codex work attention chain', () => {
 
     const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE.id, now: NOW }));
 
-    // No Desktop registry on this machine: the Codex root is the whole dataset, and it is unknown.
+    // No Desktop registry: the exact native request makes this Codex root require attention.
     expect(dataset.roots.map((entry) => [entry.key, entry.attention])).toEqual([
-      [{ harness: 'codex', machineId: MACHINE.id, sourceSessionId: fixture.ids.codexRoot }, 'not-observable'],
+      [{ harness: 'codex', machineId: MACHINE.id, sourceSessionId: fixture.ids.codexRoot }, 'human-request'],
     ]);
     const [root] = dataset.roots;
     expect(root?.desktopSessionId).toBeNull();
@@ -119,8 +126,28 @@ describe('Codex work attention chain', () => {
     // The delegated child declared its parent in its own rollout and folds under it.
     expect(root?.children.count).toBe(1);
     expect(root?.session?.rowId).toBeString();
-    expect(root?.interpretations[0]?.text).toBe(
-      'Codex records no turn status: whether this session waits on you is unknown — not declared by this harness.',
+    const requests = root?.facts.filter((fact) => fact.kind === 'codex-user-request') ?? [];
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      sourceSessionId: fixture.ids.codexRoot,
+      provenance: { source: 'codex-rollout', machineId: MACHINE.id, coverage: 'complete' },
+    });
+    expect(requests[0]?.request).toEqual({
+      callId: 'fixture-question-call',
+      tool: 'request_user_input_async',
+      askedAt: QUESTION_AT,
+      acknowledgedAt: null,
+      rejectedAt: null,
+      questions: [{ id: null, text: 'Fixture question?', textTruncated: false, answeredAt: null }],
+    });
+    expect(root?.interpretations[0]).toMatchObject({
+      kind: 'request-open',
+      evidence: [requests[0]?.id],
+      text: 'Codex asks: Fixture question?',
+    });
+    expect(root?.interpretations[0]?.uncertainty).toContain('presentation is not confirmed');
+    expect(root?.interpretations.find((entry) => entry.kind === 'coverage-gap')?.text).toBe(
+      'Codex records no general turn status: waits beyond the structured requests shown here are unknown — not declared by this harness.',
     );
     expect(dataset.coverage.sessions.revision).toBe('codex-work-chain-revision');
     expect(dataset.totalRoots).toBe(1);

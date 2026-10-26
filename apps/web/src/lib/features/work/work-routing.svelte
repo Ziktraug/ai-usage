@@ -24,7 +24,13 @@
   import { createWorkAttemptsClient } from '../../rpc/work-attempts-client';
   import { createWorkRoutingClient, createWorkRoutingQualifyClient } from '../../rpc/work-routing-client';
   import WorkAttempts from './work-attempts.svelte';
-  import { DEMO_EXECUTION_TEXT, launchGate, releaseOutcomeText, START_REVIEW_LABEL } from './work-attempts-model';
+  import {
+    DEMO_EXECUTION_TEXT,
+    launchGate,
+    releaseOutcomeText,
+    startReviewLabel,
+    stopOutcomeText,
+  } from './work-attempts-model';
   import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
   import { projectWorkEvidence } from './work-evidence';
   import {
@@ -33,7 +39,16 @@
     qualificationHeadline,
     routingSummary,
   } from './work-routing-model';
-  import { workButton, workHeading, workInput, workMuted, workPanel, workRow, workStack } from './work-styles';
+  import {
+    workButton,
+    workHeading,
+    workInput,
+    workMuted,
+    workPanel,
+    workRoutingForm,
+    workRow,
+    workStack,
+  } from './work-styles';
   import { WORK_DEMO_TIME } from './work-synthetic';
 
   let {
@@ -143,25 +158,41 @@
     output: null,
     pending: false,
   });
+  let qualificationGeneration = 0;
   const resolvedQualification = $derived(qualification === undefined ? engine.output : qualification);
   const engineDecision = $derived(resolvedQualification?.ok ? resolvedQualification.data : null);
   const qualifyNow = async (): Promise<void> => {
     if (!reviewTarget || engine.pending || mode !== 'live') {
       return;
     }
+    const generation = ++qualificationGeneration;
+    const targetRowId = target.rowId;
     engine = { output: engine.output, pending: true };
     const output = await qualifyClient.qualify({
       target: { desktopSessionId: null, harness: reviewTarget.harness, sourceSessionId: reviewTarget.sourceSessionId },
     });
+    // A returned-to session is a new selection; identity alone cannot protect A → B → A.
+    if (generation !== qualificationGeneration || targetRowId !== target.rowId) {
+      return;
+    }
     engine = { output, pending: false };
+    result = null;
     // The engine has just recorded a new executor observation: the summary above re-reads it.
     await queryClient.invalidateQueries({ queryKey: workRoutingContextKey() });
   };
   const resetEngine = (_target: string): void => {
+    qualificationGeneration += 1;
     engine = { output: null, pending: false };
+    launch = { message: null, pending: false };
   };
-  $effect(() => resetEngine(target.rowId));
+  $effect(() => {
+    resetEngine(target.rowId);
+    return () => {
+      qualificationGeneration += 1;
+    };
+  });
   let preferred = $state<ReviewRoutingPolicy['preferredHarness']>('claude-code');
+  let forcedCandidateId = $state<string | null>(null);
   let nearReset = $state(false);
   let result = $state<ReturnType<typeof simulateWorkReviewRouting> | null>(null);
   const chosen = $derived(candidates.find((candidate) => candidate.id === result?.chosenCandidateId));
@@ -192,19 +223,26 @@
       : null;
   });
   const attemptsPending = $derived(attempts === undefined && mode === 'live' && attemptsQuery.isPending);
-  // A fresh engine decision supersedes the browser simulation; the engine re-decides at launch anyway.
+  // A selected route must be simulated before it can replace an engine recommendation.
+  const launchCandidate = $derived(
+    result
+      ? chosen
+      : candidates.find(
+          (candidate) =>
+            candidate.id === engineDecision?.chosenCandidateId &&
+            (forcedCandidateId === null || candidate.id === forcedCandidateId),
+        ),
+  );
   const gate = $derived(
     launchGate({
       attempts: resolvedAttempts,
       attemptsPending,
-      chosen: engineDecision
-        ? candidates.find((candidate) => candidate.id === engineDecision.chosenCandidateId)
-        : chosen,
-      recommendation: engineDecision ? engineDecision.recommendation : recommendation,
+      chosen: launchCandidate,
+      recommendation: result ? recommendation : (engineDecision?.recommendation ?? null),
       reviewTargetsDeclared: resolvedContext?.reviewTargets?.length ?? 0,
     }),
   );
-  const launchCandidateId = $derived(engineDecision ? engineDecision.chosenCandidateId : (chosen?.id ?? null));
+  const launchCandidateId = $derived(launchCandidate?.id ?? null);
   let launch = $state<{ readonly message: string | null; readonly pending: boolean }>({
     message: null,
     pending: false,
@@ -213,20 +251,24 @@
     if (!(reviewTarget && launchCandidateId) || launch.pending || gate.kind !== 'open') {
       return;
     }
+    const targetKey = attemptsTarget;
+    const targetRowId = target.rowId;
     launch = { message: 'Starting the review…', pending: true };
     const output = await attemptsClient.start({
       action: 'read-only-review',
       candidateId: launchCandidateId,
       target: { desktopSessionId: null, harness: reviewTarget.harness, sourceSessionId: reviewTarget.sourceSessionId },
     });
-    launch = {
-      message: output.ok
-        ? `Review attempt ${output.data.attemptId.slice(0, 8)} ${output.data.reused ? 'was already live' : 'started'} (${output.data.state}); follow it below.`
-        : `Not started: ${output.error.message}`,
-      pending: false,
-    };
-    if (attemptsTarget) {
-      await queryClient.invalidateQueries({ queryKey: workAttemptsKey(attemptsTarget) });
+    if (targetRowId === target.rowId) {
+      launch = {
+        message: output.ok
+          ? `Review attempt ${output.data.attemptId.slice(0, 8)} ${output.data.reused ? 'was already live' : 'started'} (${output.data.state}); follow it below.`
+          : `Not started: ${output.error.message}`,
+        pending: false,
+      };
+    }
+    if (targetKey) {
+      await queryClient.invalidateQueries({ queryKey: workAttemptsKey(targetKey) });
     }
   };
   /** The operator's release of a held reservation (ADR 0055); the engine decides and stops nothing. */
@@ -237,13 +279,23 @@
     }
     return releaseOutcomeText(output);
   };
+  const stopReview = async (attemptId: string): Promise<string> => {
+    const targetKey = attemptsTarget;
+    const output = await attemptsClient.stop({ attemptId });
+    if (targetKey) {
+      await queryClient.invalidateQueries({ queryKey: workAttemptsKey(targetKey) });
+    }
+    return stopOutcomeText(output);
+  };
   const resetResult = (_input: unknown): void => {
     result = null;
     if (mode === 'live') {
       referenceTime = new Date().toISOString();
     }
   };
-  $effect(() => resetResult({ preferred, nearReset, target: target.rowId, resolvedContext, providers }));
+  $effect(() =>
+    resetResult({ preferred, nearReset, forcedCandidateId, target: target.rowId, resolvedContext, providers }),
+  );
   const simulate = (event: SubmitEvent): void => {
     event.preventDefault();
     if (!reviewTarget) {
@@ -256,7 +308,7 @@
       preferredHarness: preferred,
       preferNearReset: nearReset,
       nearResetMinutes: 60,
-      forcedCandidateId: null,
+      forcedCandidateId,
     };
     result = simulateWorkReviewRouting({
       request: {
@@ -388,8 +440,8 @@
     </p>
   {/if}
   {#if summary.length > 0}
-    <section aria-label="Routing qualification on this machine" class={workStack} data-work-qualification="summary">
-      <h3 class={workHeading}>Routing qualification on this machine</h3>
+    <details aria-label="Routing qualification on this machine" class={workStack} data-work-qualification="summary">
+      <summary class={workHeading}>Routing qualification on this machine</summary>
       <p class={workMuted}>
         Once per machine, not per card: what the engine detected, what you declared, whether this session is an
         authorized target, and what is missing. A permission exists only as a declaration in the home config.
@@ -418,7 +470,7 @@
           {/if}
         </div>
       {/each}
-    </section>
+    </details>
   {/if}
   {#if mode === 'live' && reviewTarget}
     <div class={workRow}>
@@ -495,10 +547,23 @@
       {/if}
     </section>
   {/if}
-  <form class={workStack} onsubmit={simulate}>
+  <form class={workRoutingForm} onsubmit={simulate}>
     {#if mode === 'live'}
       <p class={workMuted}>Local simulation from the read context, with optional preferences:</p>
     {/if}
+    <label class={workMuted}
+      >Review executor
+      <select class={workInput} bind:value={forcedCandidateId}>
+        <option value={null}>Use the recommendation</option>
+        {#each candidates as candidate (candidate.id)}
+          <option value={candidate.id}>
+            {harnessLabel(candidate.harness)}
+            · {candidate.model ?? 'model unknown'} · {candidate.effort ?? 'effort unknown'} ·
+            {candidate.accountScope ?? 'account unknown'}
+          </option>
+        {/each}
+      </select>
+    </label>
     <label class={workMuted}
       >Harness preference
       <select class={workInput} bind:value={preferred}>
@@ -585,13 +650,16 @@
         {#if gate.kind === 'open'}
           <div class={workRow}>
             <button class={workButton} disabled={launch.pending} onclick={startReview} type="button">
-              {START_REVIEW_LABEL}
+              {startReviewLabel(launchCandidate?.harness ?? 'claude-code')}
             </button>
           </div>
           <p class={workMuted}>
-            Runs `claude -p` in plan mode with read-only tools in {gate.checkoutPath}. The engine re-checks the
-            declaration, the target and the recommendation before starting anything; a second click returns the same
-            attempt.
+            {launchCandidate?.harness === 'codex'
+              ? 'Runs Codex through its native app-server in a read-only sandbox'
+              : 'Runs Claude Code in plan mode with read-only tools'}
+            in {gate.checkoutPath}. Model {launchCandidate?.model ?? 'CLI default'} · effort
+            {launchCandidate?.effort ?? 'CLI default'}. The engine rechecks the account, billing mode, declaration,
+            fixed revision and recommendation before starting; a second click returns the same attempt.
           </p>
         {:else}
           <p class={workMuted}>Launch is not possible: {gate.reason}</p>
@@ -604,7 +672,7 @@
     <WorkAttempts
       attempts={resolvedAttempts}
       pending={attemptsPending}
-      {...mode === 'live' ? { onRelease: releaseReservation } : {}}
+      {...mode === 'live' ? { onRelease: releaseReservation, onStop: stopReview } : {}}
     />
   {/if}
   <details>

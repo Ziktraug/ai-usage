@@ -16,6 +16,7 @@ import {
   array,
   boolean,
   custom,
+  exactOptional,
   type InferOutput,
   literal,
   maxLength,
@@ -32,6 +33,7 @@ import {
   safeInteger,
   strictObject,
   string,
+  union,
   variant,
 } from 'valibot';
 import { jsonWireValueSchema, publicMessageSchema } from './schema-conventions';
@@ -105,7 +107,7 @@ export const workAttemptScopeSchema = strictObject({
 });
 
 /** What the launched harness was configured with: the guarantee "read-only" rests on (ADR 0055). */
-export const workAttemptGuaranteeSchema = strictObject({
+const claudeWorkAttemptGuaranteeSchema = strictObject({
   cliVersion: shortTextSchema,
   effort: nullable(shortTextSchema),
   managedSettings: picklist(['absent', 'present']),
@@ -115,6 +117,21 @@ export const workAttemptGuaranteeSchema = strictObject({
   settingSources: pipe(array(picklist(REVIEW_SETTING_SOURCES)), maxLength(REVIEW_SETTING_SOURCES.length)),
   tools: pipe(array(picklist(REVIEW_READ_ONLY_TOOLS)), minLength(1), maxLength(REVIEW_READ_ONLY_TOOLS.length)),
 });
+
+const codexWorkAttemptGuaranteeSchema = strictObject({
+  kind: literal('codex-app-server'),
+  cliVersion: shortTextSchema,
+  model: shortTextSchema,
+  effort: nullable(shortTextSchema),
+  sandbox: literal('read-only'),
+  approvalPolicy: literal('never'),
+  networkAccess: literal(false),
+  accountFingerprint: pipe(string(), regex(/^[0-9a-f]{16}$/u, 'Expected an account fingerprint.')),
+  externalTools: literal('disabled'),
+  managedPolicy: literal('inherited'),
+});
+
+export const workAttemptGuaranteeSchema = union([claudeWorkAttemptGuaranteeSchema, codexWorkAttemptGuaranteeSchema]);
 
 export const workAttemptSchema = strictObject({
   /** Human acceptance, distinct from the result; always `pending` in this version (no mutation exists). */
@@ -138,6 +155,7 @@ export const workAttemptSchema = strictObject({
   guarantee: nullable(workAttemptGuaranteeSchema),
   machineId: shortTextSchema,
   nativeSessionId: nullable(idSchema),
+  nativeTurnId: exactOptional(nullable(idSchema)),
   /** The served Session row for the native session once the report collected it; the link target of "Open session detail". */
   nativeSessionRowId: nullable(idSchema),
   numTurns: nullable(countSchema),
@@ -156,6 +174,8 @@ export const workAttemptSchema = strictObject({
   /** The commit the review was given; `null` when no scope was prepared (refusal, failure before the launch). */
   scope: nullable(workAttemptScopeSchema),
   startedAt: nullable(timestampSchema),
+  stopRequestedAt: exactOptional(nullable(timestampSchema)),
+  stopConfirmedAt: exactOptional(nullable(timestampSchema)),
   state: picklist(REVIEW_ATTEMPT_STATES),
   target: workAttemptTargetSchema,
   updatedAt: timestampSchema,
@@ -241,6 +261,24 @@ export const workAttemptsReleaseInputSchema = strictObject({ attemptId: idSchema
 
 export const workAttemptsReleaseErrorTags = ['ForbiddenDemo', 'Unavailable'] as const;
 
+export const workAttemptsStopInputSchema = strictObject({ attemptId: idSchema });
+export const workAttemptsStopOutputSchema = pipe(
+  jsonWireValueSchema,
+  variant('ok', [
+    strictObject({
+      data: strictObject({
+        attemptId: idSchema,
+        result: picklist(['requested', 'not-owned', 'already-ended']),
+      }),
+      ok: literal(true),
+    }),
+    strictObject({
+      error: strictObject({ message: publicMessageSchema, tag: picklist(workAttemptsReleaseErrorTags) }),
+      ok: literal(false),
+    }),
+  ]),
+);
+
 /**
  * `released` with the evidence the engine recorded, `process-found` when a process still carries
  * the attempt's launch marker (nothing is released, stopped or adopted), or `not-held`.
@@ -278,6 +316,8 @@ export type WorkAttemptsStartOutput = InferOutput<typeof workAttemptsStartOutput
 export type WorkAttemptsStartErrorTag = (typeof workAttemptsStartErrorTags)[number];
 export type WorkAttemptsReleaseInput = InferOutput<typeof workAttemptsReleaseInputSchema>;
 export type WorkAttemptsReleaseOutput = InferOutput<typeof workAttemptsReleaseOutputSchema>;
+export type WorkAttemptsStopInput = InferOutput<typeof workAttemptsStopInputSchema>;
+export type WorkAttemptsStopOutput = InferOutput<typeof workAttemptsStopOutputSchema>;
 
 export const parseWorkAttemptsListOutput = (value: unknown): WorkAttemptsListOutput =>
   parse(workAttemptsListOutputSchema, value);
@@ -285,6 +325,8 @@ export const parseWorkAttemptsStartOutput = (value: unknown): WorkAttemptsStartO
   parse(workAttemptsStartOutputSchema, value);
 export const parseWorkAttemptsReleaseOutput = (value: unknown): WorkAttemptsReleaseOutput =>
   parse(workAttemptsReleaseOutputSchema, value);
+export const parseWorkAttemptsStopOutput = (value: unknown): WorkAttemptsStopOutput =>
+  parse(workAttemptsStopOutputSchema, value);
 
 export const workAttemptsContract = {
   list: oc
@@ -299,6 +341,10 @@ export const workAttemptsContract = {
     .route({ method: 'POST', path: '/work/attempts/release' })
     .input(workAttemptsReleaseInputSchema)
     .output(workAttemptsReleaseOutputSchema),
+  stop: oc
+    .route({ method: 'POST', path: '/work/attempts/stop' })
+    .input(workAttemptsStopInputSchema)
+    .output(workAttemptsStopOutputSchema),
 } as const;
 
 export type WorkAttemptsContractClient = ContractRouterClient<typeof workAttemptsContract>;

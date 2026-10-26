@@ -11,6 +11,7 @@ export {
   MAX_CLAUDE_DESKTOP_SESSION_ID_FILTER,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
 } from './claude-desktop-session-store';
+export type { CodexWorkQueryResult, QueryCodexWorkObservationsInput } from './codex-work-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type {
@@ -75,10 +76,12 @@ export type {
 } from './index';
 export {
   countClaudeDesktopSessions,
+  countWorkThreads,
   MAX_USAGE_MACHINE_FLEET_MACHINES,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
@@ -114,6 +117,12 @@ export {
   queryUsageStoreGenerations,
   queryUsageSyncFleet,
   queryWorkFactRunStates,
+  queryWorkThreadById,
+  queryWorkThreadEvents,
+  queryWorkThreadLinks,
+  queryWorkThreadProjects,
+  queryWorkThreadSessionEvidence,
+  queryWorkThreadsPage,
   USAGE_STORE_SCHEMA_VERSION,
   usageStorePath,
 } from './index';
@@ -138,6 +147,11 @@ export {
   buildSessionQuerySqlOrder,
   executeMaterializedSessionQuery,
 } from './session-query-sqlite';
+export type {
+  QueryCheckoutStatusObservationBatchInput,
+  QueryJiraIssueObservationBatchInput,
+  QueryPullRequestObservationBatchInput,
+} from './work-fact-store';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
 export type {
   QueryRecentServedHarnessSessionsInput,
@@ -153,3 +167,15 @@ export {
   MAX_WORK_HARNESS_SESSION_MEMBERS,
   MAX_WORK_SESSION_JOIN_IDS,
 } from './work-session-join';
+export { MAX_WORK_SCOPE_CHECKOUTS, type WorkSessionReadScope } from './work-session-scope';
+export type {
+  QueryWorkThreadByIdInput,
+  QueryWorkThreadLinksInput,
+  QueryWorkThreadSessionEvidenceBatchInput,
+  QueryWorkThreadSessionEvidenceInput,
+  QueryWorkThreadsPageInput,
+  QueryWorkThreadsPageResult,
+  WorkThreadPageRow,
+  WorkThreadSessionEvidence,
+  WorkThreadSessionEvidenceBatchEntry,
+} from './work-thread-store';

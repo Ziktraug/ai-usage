@@ -170,6 +170,7 @@ const isCollectorRowSource = (value: unknown): boolean =>
     Object.keys(value).every((key) =>
       [
         'artifactPath',
+        'delegatedSessions',
         'harnessKey',
         'machineId',
         'machineLabel',
@@ -181,6 +182,17 @@ const isCollectorRowSource = (value: unknown): boolean =>
       ].includes(key),
     ) &&
     typeof value.harnessKey === 'string' &&
+    // Match serialized source validation: the producer owns the list bound,
+    // while cached historical facts remain readable without new restrictions.
+    (value.delegatedSessions === undefined ||
+      (Array.isArray(value.delegatedSessions) &&
+        value.delegatedSessions.every(
+          (session) =>
+            isRecord(session) &&
+            Object.keys(session).every((key) => key === 'harness' || key === 'sourceSessionId') &&
+            session.harness === 'codex' &&
+            typeof session.sourceSessionId === 'string',
+        ))) &&
     (value.sourceSessionId === null || typeof value.sourceSessionId === 'string') &&
     (value.artifactPath === undefined || value.artifactPath === null || typeof value.artifactPath === 'string') &&
     (value.machineId === undefined || typeof value.machineId === 'string') &&

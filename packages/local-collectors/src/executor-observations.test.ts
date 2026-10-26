@@ -63,6 +63,7 @@ const observe = (
   harnesses?: ExecutorObservation['harness'][],
 ) =>
   observeExecutors({
+    codexAccountProbe: async () => null,
     ...(harnesses === undefined ? {} : { harnesses }),
     machineId: 'machine-a',
     now: () => NOW,
@@ -470,4 +471,28 @@ describe.skipIf(installed.length === 0)('observeExecutors against the installed 
       }
     }
   }, 30_000);
+});
+
+test('Codex app-server identity replaces ambiguous login-status stdout without retaining account or quota bodies', async () => {
+  const { run } = scripted({ 'codex --version': ok('codex-cli 0.163.0\n'), 'codex login status': ok('') });
+  const observations = await observeExecutors({
+    machineId: 'machine-a',
+    harnesses: ['codex'],
+    which: bothPresent,
+    run,
+    now: () => NOW,
+    codexAccountProbe: async () => ({
+      accountFingerprint: 'a'.repeat(16),
+      authMethod: 'chatgpt',
+      authState: 'logged-in',
+      evidence: 'Codex app-server account/read: ChatGPT',
+      quota: { private: 'must not persist' },
+    }),
+  });
+  expect(observations[0]).toMatchObject({
+    accountFingerprint: 'a'.repeat(16),
+    authMethod: 'chatgpt',
+    authState: 'logged-in',
+  });
+  expect(JSON.stringify(observations)).not.toContain('must not persist');
 });

@@ -121,6 +121,7 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
     ...serializeUsageRow(row),
     source: {
       ...(source?.artifactPath === undefined ? {} : { artifactPath: source.artifactPath }),
+      ...(source?.delegatedSessions === undefined ? {} : { delegatedSessions: source.delegatedSessions }),
       harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
       sourceSessionId: source?.sourceSessionId ?? null,
       ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),

@@ -3,6 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-10-22
 - **Amends**: 0053 (loss of contact, prompt and flags, the hooks limit)
+- **Amended by**: [0062](0062-owned-codex-review-through-app-server.md), for Codex execution identity and owned stop requests.
 
 ## Context
 

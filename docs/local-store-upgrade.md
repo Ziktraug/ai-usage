@@ -44,6 +44,33 @@ live replication and later backfill.
 
 ## Additive tables under usage version 4 (2026-10-21)
 
+2026-10-22 (Work continuation, plan 122): `review_attempts` gains nullable
+`native_turn_id`, `stop_requested_at` and `stop_confirmed_at` columns. Existing
+attempts keep their identity, reservation, result and Claude guarantee; unknown
+native/stop observations remain null. Query-only readers report a store not yet
+upgraded instead of adding columns. Only the engine applies the additive upgrade.
+The campaign validates this on disposable databases; it does not authorize or
+prove an upgrade of the operator's daily stores.
+
+The same continuation adds `codex_work_observations` for bounded native request
+and client-provenance evidence (ADR 0061). Only the engine creates it, under
+usage version 4. The table is excluded from usage rows, served revisions,
+merge bundles and replication; importing observations does not advance report
+generations. Readers of an older store report that it has not been upgraded.
+The Codex parser cache is versioned separately so a warm cache cannot silently
+omit the new evidence. Campaign verification uses disposable stores only.
+
+2026-10-26 (PR #74 corrective coverage): `codex_work_collection_coverage`
+records the current Codex collection identity and each successfully parsed
+session's membership, under the same usage version 4. Only the engine creates
+this additive table; no historical observation is rewritten or backfilled.
+A missing or interrupted pass, an omitted session, or an older store without
+coverage is read as incomplete while retaining previously observed requests.
+Query-only readers never create the table. Recollection restores coverage for
+the sessions actually read, independently of unchanged native timestamps.
+These auxiliary rows do not enter served revisions, exports or replication.
+Validation uses disposable stores; no daily-store upgrade is authorized here.
+
 The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
 and `claude_desktop_collection_state` to the usage store without changing
 `user_version`, following the `skill_observations` precedent: the engine
@@ -204,6 +231,35 @@ Until the engine has reopened an upgraded store, the query-only Web reads of
 a typed `schema-too-old`, shown on the Work view as "not upgraded for this
 version yet; the engine upgrades it when it next starts", never as a raw
 storage failure.
+
+### Additive tables and columns under usage version 4 (2026-10-24, Work threads)
+
+Durable Work threads (ADR 0063) add four tables without changing
+`user_version`: `work_threads` (identity, title, intent, origin and its unique
+`origin_key`, follow state and revision, waiting and done fields, note,
+`last_activity_at`), `work_thread_links` (qualified keys, provenance,
+`detached_at`; one active link per thread, kind and key), `work_thread_events`
+(every follow-state, link, note and rename change) and `work_thread_commands`
+(one recorded answer per client command id). The same open adds nullable
+columns to the fact family: `discovery_role`, `mergeable` and
+`merge_state_status` on `pull_request_observations`, `counts_changed_at` on
+`checkout_status_observations` and `outcome_code` on `work_fact_run_state`,
+through `ALTER TABLE … ADD COLUMN`. On 2026-10-25 (plan 123) the same rule added
+`created_at`, `closed_at` and `unresolved_review_threads` to
+`pull_request_observations` (ADR 0075 amendment): rows written before carry
+null, read as "not observed", never as zero unresolved threads. Nothing is backfilled, the store generation
+does not move, and the tables are outside the served revision, the export and
+the replication outbox. Table and column presence are the signals; a second
+open changes nothing. Collections and projection rebuilds never write the
+thread tables, so a thread's follow state, links and history survive them.
+
+The first engine run after the upgrade may create Following threads for the
+operator's open pull requests (author or review requested) and assigned Jira
+issues the CLIs return. An older binary opens the upgraded store and ignores
+the new tables and columns; threads created meanwhile are kept for the next
+upgrade, not deleted. Until the engine has reopened the store, the Work view's
+query-only read answers `schema-too-old` ("not upgraded for this version yet"),
+never an empty list.
 
 ## Backup
 

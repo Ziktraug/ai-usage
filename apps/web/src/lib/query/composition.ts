@@ -51,7 +51,8 @@ export interface WebQueryOwnership {
     | 'sync'
     | 'work-attempts'
     | 'work-attention'
-    | 'work-routing';
+    | 'work-routing'
+    | 'work-threads';
   readonly policy: WebQueryPolicyName;
   readonly publication: PublicationQueryEffect;
   readonly rendering: 'browser-only' | 'ssr-awaited';
@@ -139,6 +140,15 @@ export const webQueryOwnership = [
     policy: 'finite-swr',
     publication: 'none',
     rendering: 'browser-only',
+  },
+  {
+    // Work threads are written by operator commands through the engine and enriched by the
+    // collection sources' facts; a command invalidates its list and detail keys, interval and focus
+    // revalidation carry the facts. Server-rendered so the task list is the page's first paint.
+    family: 'work-threads',
+    policy: 'collection-facts-swr',
+    publication: 'none',
+    rendering: 'ssr-awaited',
   },
   {
     // Review attempts are written by the engine when the operator launches one; the list polls

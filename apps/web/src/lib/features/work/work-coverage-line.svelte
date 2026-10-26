@@ -14,7 +14,10 @@
     roots,
     synthetic,
   }: { coverage: WorkAttentionCoverage; reference: string; roots: readonly WorkRoot[]; synthetic: boolean } = $props();
-  // Per harness, what was read (ADR 0059): declared waits come from the Desktop registry only.
+  const hasNativeRequests = $derived(
+    roots.some((root) => root.facts.some((fact) => fact.kind === 'codex-user-request')),
+  );
+  // Native request observations and Desktop declarations retain their own provenance.
   const codex = $derived(workCodexCoverage({ coverage, roots }));
   const desktop = $derived(coverage.desktopSessions);
   const pulls = $derived(coverage.pullRequests);
@@ -55,7 +58,13 @@
       not observed
     {/if}
   </span>
-  <span data-work-harness-coverage="codex">Codex · sessions only, no declared waits: {codex}</span>
+  <span data-work-harness-coverage="codex"
+    >{#if hasNativeRequests}
+      {codex}
+    {:else}
+      Codex · sessions only, no declared waits: {codex}
+    {/if}</span
+  >
   <span data-work-harness-coverage="other">Other harnesses: not read here</span>
   <span>
     Pull requests:

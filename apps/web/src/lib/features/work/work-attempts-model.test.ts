@@ -6,6 +6,8 @@ import type {
   WorkAttemptWire,
 } from '@ai-usage/web-contract/work-attempts';
 import {
+  attemptProgressLabel,
+  canRequestStop,
   checkoutOriginLabel,
   formatDurationSeconds,
   guaranteeSummary,
@@ -16,6 +18,8 @@ import {
   reviewAttemptStateLabel,
   scopeSummary,
   shortAttemptId,
+  startReviewLabel,
+  stopOutcomeText,
 } from './work-attempts-model';
 
 const chosen = { harness: 'claude-code', id: 'declared:["m","claude-code","a"]' } as ReviewCandidate;
@@ -38,7 +42,47 @@ const admitted = {
 };
 
 describe('launch gate', () => {
-  test('opens only for a real Claude Code recommendation on an admitted checkout with no live attempt', () => {
+  test('offers the chosen qualified Codex model and keeps stop acknowledgement distinct from confirmation', () => {
+    const codex = {
+      ...chosen,
+      harness: 'codex',
+      model: 'gpt-5.3-codex',
+      identity: { state: 'confirmed' },
+    } as ReviewCandidate;
+    expect(
+      launchGate({
+        attempts: list([], admitted),
+        attemptsPending: false,
+        chosen: codex,
+        recommendation: real,
+        reviewTargetsDeclared: 1,
+      }).kind,
+    ).toBe('open');
+    expect(startReviewLabel('codex')).toBe('Start read-only review (Codex)');
+    const running = {
+      ...attempt('running'),
+      executorHarness: 'codex',
+      stopRequestedAt: null,
+      stopConfirmedAt: null,
+    } as WorkAttemptWire;
+    expect(canRequestStop(running)).toBe(true);
+    const requested = { ...running, stopRequestedAt: '2026-10-22T10:04:00.000Z' };
+    expect(canRequestStop(requested)).toBe(false);
+    expect(attemptProgressLabel(requested)).toContain('awaiting native confirmation');
+    expect(attemptProgressLabel({ ...requested, state: 'lost' })).toContain('contact lost');
+    expect(
+      attemptProgressLabel({ ...requested, state: 'finished', stopConfirmedAt: '2026-10-22T10:05:00.000Z' }),
+    ).toContain('native turn confirmed');
+    expect(canRequestStop({ ...running, state: 'lost' })).toBe(false);
+    expect(canRequestStop({ ...running, executorHarness: 'claude-code' })).toBe(false);
+    expect(stopOutcomeText({ data: { attemptId: 'a', result: 'requested' }, ok: true })).toContain(
+      'waiting for native confirmation',
+    );
+    expect(stopOutcomeText({ data: { attemptId: 'a', result: 'not-owned' }, ok: true })).toContain(
+      'no external session',
+    );
+  });
+  test('opens for a real recommendation on an admitted checkout with no live attempt', () => {
     expect(
       launchGate({
         attempts: list([attempt('finished')], admitted),
@@ -71,7 +115,7 @@ describe('launch gate', () => {
         recommendation: { ...real, candidateId: chosen.id },
       }),
     ).toMatchObject({
-      reason: expect.stringContaining('only Claude Code launches a review'),
+      reason: expect.stringContaining('confirmed account fingerprint'),
     });
     expect(launchGate({ ...base, attempts: list([attempt('running')], admitted) })).toMatchObject({
       reason: 'a review is already running (attempt attempt-running); wait for it to end.',
