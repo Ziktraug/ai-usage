@@ -356,6 +356,12 @@ sessions, branch, pull requests and Jira issues are links, and it carries the
 operator's follow state (ADR 0063).
 _Avoid_: session thread, campaign, task inferred from prompts
 
+**Jira intake**:
+Issues Jira assigns to the operator that no open Work thread follows yet, listed
+above the tasks until the operator follows, attaches or dismisses each one.
+Assignment alone never creates a Work thread (ADR 0079).
+_Avoid_: backlog task, inbox, auto-followed ticket
+
 **Follow state**:
 The operator's own standing on a Work thread: Following, Waiting or Done. Only
 explicit commands change it. Ending a follow-up closes the operator's

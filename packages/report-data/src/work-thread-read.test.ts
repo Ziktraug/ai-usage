@@ -18,8 +18,8 @@ import {
   branchLinkKey,
   pullRequestLinkKey,
   sessionLinkKey,
-  type WorkThreadCommand,
   type WorkThreadLinkInput,
+  type WorkThreadTaskCommand,
 } from '@ai-usage/report-core/work-thread';
 import { deriveWorkThreadSituation } from '@ai-usage/report-core/work-thread-situation';
 import { WORK_THREAD_VIEW_BOUNDS, type WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
@@ -60,7 +60,7 @@ const fixture = async () => {
   await run(updateUsageMachineLabel({ dbPath, machine: { id: MACHINE, label: 'Reader fixture' } }));
   return dbPath;
 };
-const command = async (dbPath: string, input: WorkThreadCommand, hours = -24) => {
+const command = async (dbPath: string, input: WorkThreadTaskCommand, hours = -24) => {
   const result = await run(applyWorkThreadCommand({ dbPath, machineId: MACHINE, command: input, now: at(hours) }));
   if (!result.ok) {
     throw new Error(result.failure);

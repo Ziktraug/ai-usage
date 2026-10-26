@@ -140,6 +140,21 @@ describe('Work thread wire contract', () => {
     expect(
       parse(workThreadsCommandOutputSchema, { ok: true, applied: false, followRevision: 2, threadId: id }),
     ).toMatchObject({ applied: false, followRevision: 2 });
+    expect(
+      parse(workThreadsCommandOutputSchema, { ok: true, applied: true, followRevision: 1, threadId: null }),
+    ).toMatchObject({ threadId: null });
+    expect(
+      parse(workThreadsCommandInputSchema, {
+        commandId: id,
+        dismissed: true,
+        key: 'jira:default/SHOP-1',
+        op: 'dismiss-intake',
+      }),
+    ).toMatchObject({ op: 'dismiss-intake', dismissed: true });
+    expect(
+      safeParse(workThreadsCommandInputSchema, { commandId: id, dismissed: true, key: 'SHOP-1', op: 'dismiss-intake' })
+        .success,
+    ).toBe(false);
     for (const failure of ['not-found', 'revision-conflict', 'invalid-transition', 'invalid-link']) {
       expect(
         parse(workThreadsCommandOutputSchema, { ok: false, currentRevision: 2, failure, message: 'The task changed.' }),
@@ -161,6 +176,7 @@ describe('Work thread wire contract', () => {
     const data = {
       counts: { done: 0, open: 0 },
       generatedAt: at,
+      jiraIntake: { items: [], truncated: false },
       machineId: 'test',
       nextCursor: null,
       projects: [],
@@ -179,6 +195,19 @@ describe('Work thread wire contract', () => {
     ).toBe(false);
     expect(
       safeParse(workThreadsListOutputSchema, { ok: true, data: { ...data, generatedAt: new Date(at) } }).success,
+    ).toBe(false);
+    const intakeItem = { firstSeenAt: at, issue: null, key: 'jira:default/SHOP-1' };
+    expect(
+      safeParse(workThreadsListOutputSchema, {
+        ok: true,
+        data: { ...data, jiraIntake: { items: [intakeItem], truncated: false } },
+      }).success,
+    ).toBe(true);
+    expect(
+      safeParse(workThreadsListOutputSchema, {
+        ok: true,
+        data: { ...data, jiraIntake: { items: [{ ...intakeItem, extra: true }], truncated: false } },
+      }).success,
     ).toBe(false);
   });
   test('nested delegation preserves descendants and rejects invalid or excessive nesting', () => {

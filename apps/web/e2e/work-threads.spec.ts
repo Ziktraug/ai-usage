@@ -63,6 +63,9 @@ const createTask = async (
   if (!created.ok) {
     throw new Error(created.message);
   }
+  if (created.threadId === null) {
+    throw new Error('Task creation answered without its task.');
+  }
   return { threadId: created.threadId, title: input.title };
 };
 const hydrated = async (page: Page): Promise<void> => {
@@ -625,8 +628,8 @@ test('session intake creates a task through the inline form and opens its linked
   const response = await createdResponse;
   expect(response.status()).toBe(200);
   const created = parseWorkThreadsCommandOutput(decodeRpcResponseBody(await response.text()));
-  if (!created.ok) {
-    throw new Error(created.message);
+  if (!created.ok || created.threadId === null) {
+    throw new Error(created.ok ? 'Task creation answered without its task.' : created.message);
   }
   await expect(session.getByRole('status')).toContainText('Task created.');
   await session.getByRole('link', { name: 'Open task', exact: true }).click();
@@ -715,4 +718,31 @@ test('work exposes artifact links and independent states, with a global recent v
   expect(newest! >= oldest!).toBe(true);
   await order.selectOption({ label: 'Oldest first' });
   await expect(times.first()).toHaveAttribute('datetime', oldest!);
+});
+
+test('assigned Jira tickets wait in a folded intake until followed or dismissed', async ({ page }) => {
+  await open(page);
+  const intake = page.locator('details.wt-intake');
+  // SHOP-2085 is assigned too, but a task already follows it.
+  await expect(intake.locator('summary')).toContainText('2 tickets not followed yet');
+  await intake.locator('summary').click();
+  const items = intake.locator('.wt-intake-item');
+  await expect(items).toHaveCount(2);
+  await expect(intake).not.toContainText('SHOP-2085');
+  await assertAxe(page);
+
+  const review = items.filter({ hasText: 'SHOP-3002' });
+  await review.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await expect(intake.getByRole('status')).toContainText('SHOP-3002 dismissed');
+  await expect(items).toHaveCount(1);
+  await intake.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(items).toHaveCount(2);
+
+  const todo = items.filter({ hasText: 'SHOP-3001' });
+  await todo.getByRole('button', { name: 'Follow', exact: true }).click();
+  await expect(items).toHaveCount(1);
+  const followed = page.locator('[data-work-thread]', {
+    hasText: 'Synthetic: show delivery dates on the cart summary',
+  });
+  await expect(followed).toContainText('SHOP-3001');
 });

@@ -15,18 +15,21 @@ import {
   pullRequestLinkKey,
   sessionLinkKey,
   WORK_THREAD_BOUNDS,
+  type WorkIntakeCommandResult,
   type WorkThread,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
   type WorkThreadEvent,
   type WorkThreadLink,
   type WorkThreadLinkInput,
+  type WorkThreadTaskCommand,
 } from '@ai-usage/report-core/work-thread';
 import {
   WORK_THREAD_VIEW_BOUNDS,
   type WorkThreadDetailDataset,
   type WorkThreadEpisode,
   type WorkThreadFactEvent,
+  type WorkThreadListDataset,
   type WorkThreadListQuery,
   type WorkThreadMarkers,
   type WorkThreadRow,
@@ -189,6 +192,28 @@ const jiraMarker = (key: string, done = false): WorkThreadMarkers['jiraIssues'][
     updatedAt: at(23),
   };
   return { key: jiraIssueLinkKey({ key, site: 'synthetic' }), latest: observation, latestSuccessful: observation };
+};
+
+/** Assigned issues no seeded task follows, plus one (SHOP-2085) that a task already follows. */
+const syntheticIntakeIssues = (): readonly WorkThreadMarkers['jiraIssues'][number][] => {
+  const todo = jiraMarker('SHOP-3001');
+  const todoIssue = todo.latestSuccessful && {
+    ...todo.latestSuccessful,
+    status: 'To Do',
+    statusCategory: 'todo' as const,
+    summary: 'Synthetic: show delivery dates on the cart summary',
+  };
+  const review = jiraMarker('SHOP-3002');
+  const reviewIssue = review.latestSuccessful && {
+    ...review.latestSuccessful,
+    status: 'To Review',
+    summary: 'Synthetic: localise the coupon error messages',
+  };
+  return [
+    { ...todo, latest: todoIssue, latestSuccessful: todoIssue },
+    { ...review, latest: reviewIssue, latestSuccessful: reviewIssue },
+    jiraMarker('SHOP-2085'),
+  ];
 };
 
 const localMarker = (branch: string, modifiedCount = 0): WorkThreadMarkers['local'][number] => {
@@ -720,7 +745,27 @@ export const createSyntheticWorkThreadStore = (
   const pullRequestFacts = new Map(
     initial.records.flatMap((record) => record.markers.pullRequests.map((marker) => [marker.key, marker] as const)),
   );
-  const commands = new Map<string, WorkThreadCommandResult>();
+  const commands = new Map<string, WorkThreadCommandResult | WorkIntakeCommandResult>();
+  const intakeIssues = options.seed === false ? [] : syntheticIntakeIssues();
+  for (const marker of intakeIssues) {
+    if (!jiraFacts.has(marker.key)) {
+      jiraFacts.set(marker.key, marker);
+    }
+  }
+  const dismissedIntake = new Set<string>();
+  const jiraIntake = (): WorkThreadListDataset['jiraIntake'] => {
+    const followed = new Set(
+      [...records.values()]
+        .filter((record) => record.thread.followState !== 'done')
+        .flatMap((record) => activeLinks(record).map((link) => link.key)),
+    );
+    return {
+      items: intakeIssues
+        .filter((marker) => !(followed.has(marker.key) || dismissedIntake.has(marker.key)))
+        .map((marker) => ({ firstSeenAt: at(21), issue: marker.latestSuccessful, key: marker.key })),
+      truncated: false,
+    };
+  };
   const now = (): CanonicalInstant => canonicalInstantFromDate(options.now?.() ?? new Date(WORK_THREADS_SYNTHETIC_NOW));
   const sources = options.sources ?? syntheticSources;
 
@@ -871,7 +916,16 @@ export const createSyntheticWorkThreadStore = (
     appendEvent(record, { kind: 'link-added', linkKey: input.key });
     return true;
   };
-  const apply = (command: WorkThreadCommand): WorkThreadCommandResult => {
+  const apply = (command: WorkThreadCommand): WorkThreadCommandResult | WorkIntakeCommandResult => {
+    if (command.op === 'dismiss-intake') {
+      const applied = dismissedIntake.has(command.key) !== command.dismissed;
+      if (command.dismissed) {
+        dismissedIntake.add(command.key);
+      } else {
+        dismissedIntake.delete(command.key);
+      }
+      return { applied, followRevision: 1, ok: true, threadId: null };
+    }
     if (command.op === 'create') {
       // Seeded and Done tasks count too. Receipt replay happens before applying a new command.
       if (records.size >= MAX_SYNTHETIC_THREADS) {
@@ -998,26 +1052,29 @@ export const createSyntheticWorkThreadStore = (
       .toLocaleLowerCase('en');
     return query.search === null || searchable.includes(query.search.trim().toLocaleLowerCase('en'));
   };
+  function executeCommand(input: WorkThreadTaskCommand): Promise<WorkThreadCommandResult>;
+  function executeCommand(input: WorkThreadCommand): Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
+  function executeCommand(input: WorkThreadCommand): Promise<WorkThreadCommandResult | WorkIntakeCommandResult> {
+    const command = parseWorkThreadCommand(input);
+    if (!command) {
+      return Promise.reject(new TypeError('The task command is invalid.'));
+    }
+    const previous = commands.get(command.commandId);
+    if (previous) {
+      return Promise.resolve(structuredClone(previous.ok ? { ...previous, applied: false } : previous));
+    }
+    const outcome = apply(command);
+    commands.set(command.commandId, structuredClone(outcome));
+    if (commands.size > MAX_SYNTHETIC_RECEIPTS) {
+      const oldest = commands.keys().next().value;
+      if (oldest !== undefined) {
+        commands.delete(oldest);
+      }
+    }
+    return Promise.resolve(structuredClone(outcome));
+  }
   return {
-    executeCommand: (input) => {
-      const command = parseWorkThreadCommand(input);
-      if (!command) {
-        return Promise.reject(new TypeError('The task command is invalid.'));
-      }
-      const previous = commands.get(command.commandId);
-      if (previous) {
-        return Promise.resolve(structuredClone(previous.ok ? { ...previous, applied: false } : previous));
-      }
-      const outcome = apply(command);
-      commands.set(command.commandId, structuredClone(outcome));
-      if (commands.size > MAX_SYNTHETIC_RECEIPTS) {
-        const oldest = commands.keys().next().value;
-        if (oldest !== undefined) {
-          commands.delete(oldest);
-        }
-      }
-      return Promise.resolve(structuredClone(outcome));
-    },
+    executeCommand,
     readDetail: (threadId) => {
       const record = records.get(threadId);
       const data: WorkThreadDetailDataset | null = record
@@ -1067,6 +1124,7 @@ export const createSyntheticWorkThreadStore = (
         structuredClone({
           counts,
           generatedAt: now(),
+          jiraIntake: jiraIntake(),
           machineId,
           nextCursor: next < rows.length ? `${next}:${encodeURIComponent(fingerprint)}` : null,
           projects: [

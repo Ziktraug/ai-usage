@@ -12,6 +12,7 @@ import {
   type WorkThreadCommand,
   type WorkThreadCommandResult,
   type WorkThreadLink,
+  type WorkThreadTaskCommand,
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
@@ -19,6 +20,7 @@ import { UsageStoreError } from './errors';
 import { applyWorkThreadCommand, seedWorkThreads } from './index';
 import {
   countWorkThreads,
+  queryJiraIntake,
   queryUsageStoreGenerations,
   queryWorkThreadById,
   queryWorkThreadEvents,
@@ -37,6 +39,7 @@ import {
   initializeUsageStore,
   queryActiveWorkThreadLinks,
   queryWorkThreadWaitCandidates,
+  recordJiraIntake,
   recordWorkFactRun,
 } from './writer';
 
@@ -311,7 +314,7 @@ const createStore = async (): Promise<string> => {
   return dbPath;
 };
 
-const command = (dbPath: string, input: WorkThreadCommand, now: string = NOW): Promise<WorkThreadCommandResult> =>
+const command = (dbPath: string, input: WorkThreadTaskCommand, now: string = NOW): Promise<WorkThreadCommandResult> =>
   run(applyWorkThreadCommand({ command: input, dbPath, machineId: MACHINE, now }));
 
 const createCommand = (
@@ -1179,7 +1182,7 @@ describe('work thread store', () => {
       const before = counts();
       const events = await run(store.queryWorkThreadEvents({ dbPath, threadIds: [first, second] }));
       expect(counts().connections - before.connections).toBe(1);
-      expect(counts().queries - before.queries).toBe(5); // Four schema checks, one scoped event query.
+      expect(counts().queries - before.queries).toBe(6); // Five schema checks, one scoped event query.
       for (const threadId of [first, second]) {
         const scoped = events.filter((event) => event.threadId === threadId);
         expect(scoped).toHaveLength(WORK_THREAD_BOUNDS.maxEventsPerThread);
@@ -1538,7 +1541,7 @@ describe('work thread store', () => {
         expect(result.failure.reason).toBe('invalid-input');
       }
     }
-    const omitted: WorkThreadCommand = JSON.parse(JSON.stringify({ ...createCommand(), links: undefined }));
+    const omitted: WorkThreadTaskCommand = JSON.parse(JSON.stringify({ ...createCommand(), links: undefined }));
     expect(await command(dbPath, omitted)).toMatchObject({ ok: true });
     expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
   });
@@ -2513,4 +2516,165 @@ test('observation-only PRs enrich a proven task but never create an unsolicited 
   await run(seedWorkThreads({ ...input, declarations }));
   expect(threadSnapshot(dbPath)).toEqual(before);
   expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toHaveLength(2);
+});
+
+describe('ticket routing and the Jira intake', () => {
+  const authored = (number: number, ticket: string | null = 'SHOP-7'): WorkThreadSeed => ({
+    ...seed({ intent: 'change', originKey: `github.com/fixture/repo#${number}`, title: `PR ${number}` }),
+    routingJiraKey: ticket === null ? null : `jira:default/${ticket}`,
+  });
+  const observePullRequest = (dbPath: string, number: number, headRef: string) =>
+    run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          {
+            accountLabel: null,
+            baseRef: 'main',
+            checksRollup: 'success',
+            draft: false,
+            headRef,
+            host: 'github.com',
+            machineId: MACHINE,
+            mergedAt: null,
+            number,
+            observedAt: NOW,
+            outcome: 'observed',
+            outcomeMessage: null,
+            repository: 'fixture/repo',
+            reviewDecision: null,
+            state: 'OPEN',
+            title: `PR ${number}`,
+            updatedAt: NOW,
+            url: `https://github.com/fixture/repo/pull/${number}`,
+          },
+        ],
+      }),
+    );
+  const linksOf = async (dbPath: string) => {
+    const { rows } = await page(dbPath);
+    const links = await run(queryWorkThreadLinks({ dbPath, threadIds: rows.map((row) => row.thread.threadId) }));
+    return rows.map((row) =>
+      links
+        .filter((link) => link.threadId === row.thread.threadId && link.detachedAt === null)
+        .map((link) => link.key)
+        .toSorted(),
+    );
+  };
+  const intake = async (dbPath: string) =>
+    (await run(queryJiraIntake({ dbPath, machineId: MACHINE, limit: 50 }))).items.map((item) => item.key);
+
+  test('authored PRs naming one ticket share one task, which records the ticket and the evidence', async () => {
+    const dbPath = await createStore();
+    expect(
+      await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1), authored(2)] })),
+    ).toEqual({ created: 1, existing: 1, uncertain: 0 });
+    expect(await linksOf(dbPath)).toEqual([
+      ['github.com/fixture/repo#1', 'github.com/fixture/repo#2', 'jira:default/SHOP-7'],
+    ]);
+    const [row] = (await page(dbPath)).rows;
+    const events = await run(queryWorkThreadEvents({ dbPath, threadIds: [row?.thread.threadId ?? ''] }));
+    expect(events.filter((event) => event.kind === 'link-added').map((event) => event.reason)).toEqual([
+      'Head branch names SHOP-7',
+      'Head branch names SHOP-7',
+    ]);
+  });
+
+  test('a PR joins the task that follows its ticket by origin or through an earlier branch', async () => {
+    const dbPath = await createStore();
+    await run(
+      seedWorkThreads({
+        dbPath,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [seed({ intent: null, linkKind: 'jira-issue', origin: 'jira-issue', originKey: 'jira:default/SHOP-7' })],
+      }),
+    );
+    await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    expect(await linksOf(dbPath)).toEqual([['github.com/fixture/repo#1', 'jira:default/SHOP-7']]);
+
+    const branchOnly = await createStore();
+    await run(seedWorkThreads({ dbPath: branchOnly, machineId: MACHINE, now: NOW, seeds: [authored(1, null)] }));
+    await observePullRequest(branchOnly, 1, 'fix/SHOP-7/first');
+    await run(seedWorkThreads({ dbPath: branchOnly, machineId: MACHINE, now: NOW, seeds: [authored(2)] }));
+    expect(await linksOf(branchOnly)).toEqual([['github.com/fixture/repo#1', 'github.com/fixture/repo#2']]);
+  });
+
+  test('several open followers, a Done follower or a review keep the new PR separate', async () => {
+    const ambiguous = await createStore();
+    await run(
+      seedWorkThreads({
+        dbPath: ambiguous,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [authored(1, null), authored(2, null)],
+      }),
+    );
+    await observePullRequest(ambiguous, 1, 'fix/SHOP-7/first');
+    await observePullRequest(ambiguous, 2, 'fix/SHOP-7/second');
+    await run(seedWorkThreads({ dbPath: ambiguous, machineId: MACHINE, now: NOW, seeds: [authored(3)] }));
+    expect((await linksOf(ambiguous)).toSorted()).toEqual([
+      ['github.com/fixture/repo#1'],
+      ['github.com/fixture/repo#2'],
+      ['github.com/fixture/repo#3'],
+    ]);
+
+    const done = await createStore();
+    const doneId = await create(done, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-7' }] });
+    await command(done, follow(doneId, 1, 'done'));
+    await run(seedWorkThreads({ dbPath: done, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    expect(await linksOf(done)).toEqual([['github.com/fixture/repo#1']]);
+
+    const review = await createStore();
+    await create(review, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-7' }] });
+    await run(
+      seedWorkThreads({
+        dbPath: review,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [{ ...authored(1, null), intent: 'review' }],
+      }),
+    );
+    expect(await run(countWorkThreads({ dbPath: review }))).toEqual({ done: 0, open: 2 });
+  });
+
+  test('a detached ticket link vetoes routing to that task', async () => {
+    const dbPath = await createStore();
+    const threadId = await create(dbPath, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-7' }] });
+    const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: link?.linkId ?? '' });
+    await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 2 });
+  });
+
+  test('assigned issues wait in the intake until followed, attached, dismissed or unassigned', async () => {
+    const dbPath = await createStore();
+    const record = (keys: readonly string[], complete = true) =>
+      run(recordJiraIntake({ complete, dbPath, keys, machineId: MACHINE, now: NOW }));
+    expect(await record(['SHOP-1', 'SHOP-2', 'SHOP-3', 'SHOP-7'])).toBe(4);
+    await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    await create(dbPath, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-1' }] });
+    expect((await intake(dbPath)).toSorted()).toEqual(['jira:default/SHOP-2', 'jira:default/SHOP-3']);
+
+    const dismiss = {
+      commandId: randomUUID(),
+      dismissed: true,
+      key: 'jira:default/SHOP-2',
+      op: 'dismiss-intake',
+    } as const;
+    const decide = (input: WorkThreadCommand) =>
+      run(applyWorkThreadCommand({ command: input, dbPath, machineId: MACHINE, now: NOW }));
+    expect(await decide(dismiss)).toEqual({ applied: true, followRevision: 1, ok: true, threadId: null });
+    expect(await decide(dismiss)).toEqual({ applied: false, followRevision: 1, ok: true, threadId: null });
+    expect(await intake(dbPath)).toEqual(['jira:default/SHOP-3']);
+    await record(['SHOP-1', 'SHOP-2', 'SHOP-3', 'SHOP-7']);
+    expect(await intake(dbPath)).toEqual(['jira:default/SHOP-3']);
+    await decide({ ...dismiss, commandId: randomUUID(), dismissed: false });
+    expect((await intake(dbPath)).toSorted()).toEqual(['jira:default/SHOP-2', 'jira:default/SHOP-3']);
+
+    await record(['SHOP-2'], false);
+    expect((await intake(dbPath)).toSorted()).toEqual(['jira:default/SHOP-2', 'jira:default/SHOP-3']);
+    await record(['SHOP-2']);
+    expect(await intake(dbPath)).toEqual(['jira:default/SHOP-2']);
+  });
 });

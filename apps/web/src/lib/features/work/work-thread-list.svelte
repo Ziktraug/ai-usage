@@ -1,12 +1,18 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits closed true/false ARIA states; SSR and browser regressions assert their values. -->
 <script lang="ts">
   import type {
+    WorkIntakeCommandResult,
+    WorkThreadCommand,
+    WorkThreadCommandResult,
+  } from '@ai-usage/report-core/work-thread';
+  import type {
     WorkThreadListDataset,
     WorkThreadListQuery,
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
   import { tick } from 'svelte';
   import WorkHarnessGlyph from './work-harness-glyph.svelte';
+  import WorkJiraIntake from './work-jira-intake.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import {
     bucketThreadMarks,
@@ -29,6 +35,7 @@
     onOpen,
     onFilter,
     onMore,
+    onCommand,
     loadingMore = false,
     continuation = false,
   }: {
@@ -40,6 +47,7 @@
     onOpen: (event: MouseEvent, id: string, day?: string) => void;
     onFilter: (patch: Partial<WorkThreadListQuery>) => Promise<void>;
     onMore: () => void;
+    onCommand: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
     loadingMore?: boolean;
     continuation?: boolean;
   } = $props();
@@ -133,6 +141,16 @@
   </div>
 </div>
 <WorkThreadSources now={dataset.generatedAt} sources={dataset.sources} {timeZone} />
+{#if query.tab === 'open'}
+  <WorkJiraIntake
+    items={dataset.jiraIntake.items}
+    now={dataset.generatedAt}
+    {onCommand}
+    tasks={rows.filter((row) => row.thread.followState !== 'done')}
+    {timeZone}
+    truncated={dataset.jiraIntake.truncated}
+  />
+{/if}
 
 <div aria-labelledby={`work-tab-${query.tab}`} id="work-task-panel" role="tabpanel">
   <div class="wt-board">

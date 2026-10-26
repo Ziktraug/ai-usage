@@ -8,8 +8,10 @@ import {
   parseJiraIssueObservation,
   parsePullRequestObservation,
 } from '@ai-usage/report-core/work-attention';
+import { jiraKeysInBranch } from '@ai-usage/report-core/work-attention-facts';
 import {
   isWorkThreadId,
+  jiraIssueLinkKey,
   parseWorkThread,
   parseWorkThreadCommand,
   parseWorkThreadEvent,
@@ -17,6 +19,7 @@ import {
   parseWorkThreadLinkKey,
   WORK_THREAD_BOUNDS,
   WORK_THREAD_COMMAND_FAILURES,
+  type WorkIntakeCommandResult,
   type WorkThread,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
@@ -24,6 +27,7 @@ import {
   type WorkThreadIntent,
   type WorkThreadLink,
   type WorkThreadLinkKind,
+  type WorkThreadTaskCommand,
   type WorkThreadWait,
 } from '@ai-usage/report-core/work-thread';
 import { WORK_THREAD_VIEW_BOUNDS, type WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
@@ -37,6 +41,7 @@ export const WORK_THREAD_TABLES = [
   'work_thread_links',
   'work_thread_events',
   'work_thread_commands',
+  'work_jira_intake',
 ] as const;
 
 export const workThreadSchemaSql = `
@@ -91,6 +96,15 @@ export const workThreadSchemaSql = `
     result_json TEXT NOT NULL,
     recorded_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS work_jira_intake (
+    machine_id TEXT NOT NULL,
+    link_key TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    assigned INTEGER NOT NULL CHECK (assigned IN (0, 1)),
+    assigned_at TEXT NOT NULL,
+    dismissed_at TEXT,
+    PRIMARY KEY (machine_id, link_key)
+  );
 `;
 
 interface SqliteDatabase {
@@ -134,6 +148,8 @@ export interface WorkThreadSeed {
   readonly origin: 'pull-request' | 'jira-issue' | 'session';
   readonly originKey: string;
   readonly projectLabel: string | null;
+  /** `jira:<site>/<KEY>` an authored PR's head branch names; routes the PR to that ticket's task. */
+  readonly routingJiraKey?: string | null;
   readonly title: string;
 }
 
@@ -223,6 +239,34 @@ export interface ApplyWorkThreadWaitObservationsResult {
   readonly unproven: number;
 }
 
+export interface RecordJiraIntakeInput {
+  /** Only a complete search proves that an issue absent from it is no longer assigned. */
+  readonly complete: boolean;
+  readonly dbPath: string;
+  /** Issue keys (`XLB-1`) the assigned-issue search returned this run. */
+  readonly keys: readonly string[];
+  readonly machineId: string;
+  readonly now: string;
+}
+
+export interface QueryJiraIntakeInput {
+  readonly dbPath: string;
+  readonly limit: number;
+  readonly machineId: string;
+}
+
+export interface JiraIntakeEntry {
+  readonly firstSeenAt: CanonicalInstant;
+  /** `jira:<site>/<KEY>` */
+  readonly key: string;
+}
+
+export interface QueryJiraIntakeResult {
+  readonly items: readonly JiraIntakeEntry[];
+  readonly truncated: boolean;
+}
+
+const MAX_JIRA_INTAKE_KEYS = 500;
 export interface QueryWorkThreadsPageInput {
   readonly dbPath: string;
   readonly query: WorkThreadListQuery;
@@ -602,17 +646,19 @@ const failure = (
   currentRevision: number | null = null,
 ): WorkThreadCommandResult => ({ currentRevision, failure: kind, message, ok: false });
 
-const replayResult = (value: unknown): WorkThreadCommandResult => {
+const replayResult = (value: unknown): WorkThreadCommandResult | WorkIntakeCommandResult => {
   const result = record(json(record(value).result_json));
   if (
     result.ok === true &&
     typeof result.applied === 'boolean' &&
-    isWorkThreadId(result.threadId) &&
+    (result.threadId === null || isWorkThreadId(result.threadId)) &&
     typeof result.followRevision === 'number' &&
     Number.isSafeInteger(result.followRevision) &&
     result.followRevision >= 1
   ) {
-    return { applied: false, followRevision: result.followRevision, ok: true, threadId: result.threadId };
+    return isWorkThreadId(result.threadId)
+      ? { applied: false, followRevision: result.followRevision, ok: true, threadId: result.threadId }
+      : { applied: false, followRevision: INTAKE_RESULT_REVISION, ok: true, threadId: null };
   }
   if (
     result.ok === false &&
@@ -695,11 +741,41 @@ const applyLink = (
   return success(thread);
 };
 
+/** Intake decisions carry no follow state; the fixed revision only satisfies the result shape. */
+const INTAKE_RESULT_REVISION = 1;
+
+const applyIntakeDismissal = (
+  db: SqliteDatabase,
+  machineId: string,
+  command: Extract<WorkThreadCommand, { op: 'dismiss-intake' }>,
+  now: CanonicalInstant,
+): WorkIntakeCommandResult => {
+  const key = canonicalLinkKey('jira-issue', command.key);
+  const row = db
+    .query('SELECT dismissed_at FROM work_jira_intake WHERE machine_id = ? AND link_key = ?')
+    .get(machineId, key);
+  const dismissedAt = command.dismissed ? now : null;
+  if (row === null) {
+    // Dismissing before discovery returned the issue still records the operator's choice.
+    db.query(`INSERT INTO work_jira_intake(machine_id, link_key, first_seen_at, assigned, assigned_at, dismissed_at)
+      VALUES (?, ?, ?, 0, ?, ?)`).run(machineId, key, now, now, dismissedAt);
+  } else if ((record(row).dismissed_at !== null) === command.dismissed) {
+    return { applied: false, followRevision: INTAKE_RESULT_REVISION, ok: true, threadId: null };
+  } else {
+    db.query('UPDATE work_jira_intake SET dismissed_at = ? WHERE machine_id = ? AND link_key = ?').run(
+      dismissedAt,
+      machineId,
+      key,
+    );
+  }
+  return { applied: true, followRevision: INTAKE_RESULT_REVISION, ok: true, threadId: null };
+};
+
 const executeCommand = (
   db: SqliteDatabase,
   input: ApplyWorkThreadCommandInput,
   now: CanonicalInstant,
-): WorkThreadCommandResult => {
+): WorkThreadCommandResult | WorkIntakeCommandResult => {
   let normalized: unknown = input.command;
   if (input.command.op === 'create' && Array.isArray(input.command.links)) {
     normalized = { ...input.command, links: input.command.links.map(normalizeCommandLink) };
@@ -735,6 +811,9 @@ const executeCommand = (
     }
     addEvent(db, thread, now, 'created', { toState: 'following' });
     return success(thread);
+  }
+  if (command.op === 'dismiss-intake') {
+    return applyIntakeDismissal(db, input.machineId, command, now);
   }
   const thread = readThread(db, command.threadId);
   if (!thread) {
@@ -934,6 +1013,86 @@ const attachReconciledPullRequest = (
   addEvent(db, task, now, 'link-added', { linkKey: key });
 };
 
+interface JiraKeyFollowers {
+  /** Done tasks following the ticket: a new PR does not silently reopen or join them. */
+  readonly done: number;
+  /** Following or Waiting tasks that follow the ticket, oldest first. */
+  readonly open: readonly WorkThread[];
+}
+
+/**
+ * Tasks that follow one Jira issue: by origin, by an active link, or (for change tasks) through an
+ * active pull request whose latest head branch names the key as a whole segment. Review tasks only
+ * count through an explicit link: a teammate's ticket is context. A detached link to the issue is
+ * the operator's veto and removes that task.
+ */
+const jiraKeyFollowers = (db: SqliteDatabase, machineId: string, linkKey: string): JiraKeyFollowers => {
+  const parsed = parseWorkThreadLinkKey('jira-issue', linkKey);
+  if (parsed?.kind !== 'jira-issue') {
+    return { done: 0, open: [] };
+  }
+  const vetoed = new Set(
+    db
+      .query(
+        "SELECT thread_id FROM work_thread_links WHERE kind = 'jira-issue' AND link_key = ? AND detached_at IS NOT NULL",
+      )
+      .all(linkKey)
+      .map((row) => String(record(row).thread_id)),
+  );
+  const tasks = new Map<string, WorkThread>();
+  for (const row of db
+    .query(
+      `SELECT t.* FROM work_threads t WHERE t.machine_id = ? AND (t.origin_key = ? OR EXISTS (
+        SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.kind = 'jira-issue'
+        AND l.link_key = ? AND l.detached_at IS NULL))`,
+    )
+    .all(machineId, linkKey, linkKey)) {
+    const task = threadFromRecord(row);
+    tasks.set(task.threadId, task);
+  }
+  // A cheap prefilter on the key text; the exact segment rule decides.
+  const branches = db
+    .query(
+      `WITH latest AS (
+        SELECT lower(host) || '/' || lower(repository) || '#' || number AS link_key, head_ref,
+          ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
+        FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed'
+      )
+      SELECT t.*, latest.head_ref AS routed_head_ref FROM work_threads t
+      JOIN work_thread_links l ON l.thread_id = t.thread_id AND l.kind = 'pull-request' AND l.detached_at IS NULL
+      JOIN latest ON latest.link_key = lower(l.link_key) AND latest.rank = 1
+      WHERE t.machine_id = ? AND (t.intent IS NULL OR t.intent != 'review') AND latest.head_ref LIKE ?`,
+    )
+    .all(machineId, machineId, `%${parsed.key}%`);
+  for (const row of branches) {
+    const headRef = record(row).routed_head_ref;
+    if (typeof headRef === 'string' && jiraKeysInBranch(headRef).includes(parsed.key)) {
+      const task = threadFromRecord(row);
+      tasks.set(task.threadId, task);
+    }
+  }
+  const followers = [...tasks.values()].filter((task) => !vetoed.has(task.threadId));
+  return {
+    done: followers.filter((task) => task.followState === 'done').length,
+    open: followers
+      .filter((task) => task.followState !== 'done')
+      .sort(
+        (left, right) => left.createdAt.localeCompare(right.createdAt) || left.threadId.localeCompare(right.threadId),
+      ),
+  };
+};
+
+const activeLinkCount = (db: SqliteDatabase, threadId: string): number => {
+  const count = record(
+    db
+      .query('SELECT COUNT(*) AS count FROM work_thread_links WHERE thread_id = ? AND detached_at IS NULL')
+      .get(threadId),
+  ).count;
+  return typeof count === 'number' ? count : Number.POSITIVE_INFINITY;
+};
+
+const branchEvidence = (linkKey: string): string => `Head branch names ${linkKey.slice(linkKey.lastIndexOf('/') + 1)}`;
+
 /** Reuse only an unambiguous, operator-linked session task with no prior PR association. */
 const reconciliationCandidates = (db: SqliteDatabase, input: SeedWorkThreadsInput): Map<string, WorkThread | null> => {
   const result = new Map<string, WorkThread | null>();
@@ -1085,10 +1244,17 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       }),
     );
 
-  const applyWorkThreadCommand = (
+  // A task command's result names its task; only an intake decision answers without one.
+  function applyWorkThreadCommand(
+    input: ApplyWorkThreadCommandInput & { readonly command: WorkThreadTaskCommand },
+  ): Effect.Effect<WorkThreadCommandResult, UsageStoreError>;
+  function applyWorkThreadCommand(
     input: ApplyWorkThreadCommandInput,
-  ): Effect.Effect<WorkThreadCommandResult, UsageStoreError> =>
-    write(input.dbPath, 'applyWorkThreadCommand', (db) => {
+  ): Effect.Effect<WorkThreadCommandResult | WorkIntakeCommandResult, UsageStoreError>;
+  function applyWorkThreadCommand(
+    input: ApplyWorkThreadCommandInput,
+  ): Effect.Effect<WorkThreadCommandResult | WorkIntakeCommandResult, UsageStoreError> {
+    return write(input.dbPath, 'applyWorkThreadCommand', (db) => {
       if (!isWorkThreadId(input.command.commandId)) {
         return invalidInput('Invalid work thread command id');
       }
@@ -1107,6 +1273,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       );
       return result;
     });
+  }
 
   const seedWorkThreads = (input: SeedWorkThreadsInput): Effect.Effect<SeedWorkThreadsResult, UsageStoreError> =>
     write(input.dbPath, 'seedWorkThreads', (db) => {
@@ -1134,6 +1301,35 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           existing++;
           continue;
         }
+        const routingKey =
+          seed.origin === 'pull-request' && seed.routingJiraKey
+            ? canonicalLinkKey('jira-issue', seed.routingJiraKey)
+            : null;
+        if (routingKey !== null && !parseWorkThreadLinkKey('jira-issue', routingKey)) {
+          return invalidInput('A routing Jira key must be qualified');
+        }
+        // One ticket, one delivery task: an authored PR joins the single open task that follows
+        // its branch's ticket. Several followers, or a Done one, stay visible as separate tasks.
+        const followers = routingKey === null ? null : jiraKeyFollowers(db, input.machineId, routingKey);
+        const [joined] = followers?.open ?? [];
+        if (
+          routingKey !== null &&
+          followers?.open.length === 1 &&
+          joined &&
+          activeLinkCount(db, joined.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
+        ) {
+          addLink(db, {
+            createdAt: now,
+            key: originKey,
+            kind: 'pull-request',
+            provenance: 'declared',
+            threadId: joined.threadId,
+          });
+          saveThread(db, { ...joined, updatedAt: now });
+          addEvent(db, joined, now, 'link-added', { linkKey: originKey, reason: branchEvidence(routingKey) });
+          existing++;
+          continue;
+        }
         const discoveredAt = instant(seed.discoveredAt);
         const thread = newThread({
           ...seed,
@@ -1151,6 +1347,17 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           threadId: thread.threadId,
         });
         addEvent(db, thread, discoveredAt, 'created', { toState: 'following' });
+        if (routingKey !== null && followers?.open.length === 0 && followers.done === 0) {
+          // The new task now follows the ticket, so later PRs and the Jira intake find it.
+          addLink(db, {
+            createdAt: discoveredAt,
+            key: routingKey,
+            kind: 'jira-issue',
+            provenance: 'declared',
+            threadId: thread.threadId,
+          });
+          addEvent(db, thread, discoveredAt, 'link-added', { linkKey: routingKey, reason: branchEvidence(routingKey) });
+        }
         created++;
       }
       // Observation-only PRs never create a task. They may still enrich a proven followed session.
@@ -1568,8 +1775,67 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         ),
     );
 
+  /** Assignment is recorded, never turned into a task: the operator chooses what to follow. */
+  const recordJiraIntake = (input: RecordJiraIntakeInput): Effect.Effect<number, UsageStoreError> =>
+    write(input.dbPath, 'recordJiraIntake', (db) => {
+      const now = instant(input.now);
+      if (input.keys.length > MAX_JIRA_INTAKE_KEYS) {
+        return invalidInput('Too many assigned Jira issues for one intake record');
+      }
+      const keys = [...new Set(input.keys)].map((key) => jiraIssueLinkKey({ key, site: 'default' }));
+      if (keys.some((key) => !parseWorkThreadLinkKey('jira-issue', key))) {
+        return invalidInput('Assigned Jira issues must be qualified keys');
+      }
+      for (const key of keys) {
+        db.query(`INSERT INTO work_jira_intake(machine_id, link_key, first_seen_at, assigned, assigned_at)
+          VALUES (?, ?, ?, 1, ?)
+          ON CONFLICT(machine_id, link_key) DO UPDATE SET assigned = 1, assigned_at = excluded.assigned_at`).run(
+          input.machineId,
+          key,
+          now,
+          now,
+        );
+      }
+      if (input.complete) {
+        db.query(
+          `UPDATE work_jira_intake SET assigned = 0 WHERE machine_id = ? AND assigned = 1
+          AND link_key NOT IN (SELECT value FROM json_each(?))`,
+        ).run(input.machineId, JSON.stringify(keys));
+      }
+      return keys.length;
+    });
+
+  /** Assigned, undismissed issues that no open task follows, newest assignment first. */
+  const queryJiraIntake = (input: QueryJiraIntakeInput): Effect.Effect<QueryJiraIntakeResult, UsageStoreError> =>
+    read(input.dbPath, 'queryJiraIntake', (db) => {
+      if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MAX_JIRA_INTAKE_KEYS) {
+        return invalidInput('Invalid Jira intake limit');
+      }
+      const rows = db
+        .query(
+          `SELECT link_key, first_seen_at FROM work_jira_intake
+          WHERE machine_id = ? AND assigned = 1 AND dismissed_at IS NULL
+          ORDER BY first_seen_at DESC, link_key LIMIT ?`,
+        )
+        .all(input.machineId, MAX_JIRA_INTAKE_KEYS + 1);
+      const items: JiraIntakeEntry[] = [];
+      for (const row of rows.slice(0, MAX_JIRA_INTAKE_KEYS)) {
+        const value = record(row);
+        const key = String(value.link_key);
+        if (jiraKeyFollowers(db, input.machineId, key).open.length === 0) {
+          items.push({ firstSeenAt: instant(String(value.first_seen_at)), key });
+        }
+      }
+      return {
+        items: items.slice(0, input.limit),
+        truncated: items.length > input.limit || rows.length > MAX_JIRA_INTAKE_KEYS,
+      };
+    });
+
   return {
     ...createWorkThreadSessionEvidenceStore(dependencies),
+    queryJiraIntake,
+    recordJiraIntake,
     applyWorkThreadCommand,
     applyWorkThreadWaitObservations,
     attachDeclaredWorkThreadSessions,

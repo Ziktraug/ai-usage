@@ -248,8 +248,8 @@ const createAnalysisFromServedSession = async (
   const response = await commandResponse;
   expect(response.status()).toBe(200);
   const created = parseWorkThreadsCommandOutput(decodeRpcResponseBody(await response.text()));
-  if (!created.ok) {
-    throw new Error(created.message);
+  if (!created.ok || created.threadId === null) {
+    throw new Error(created.ok ? 'Task creation answered without its task.' : created.message);
   }
   await session.getByRole('link', { name: 'Open task', exact: true }).click();
   await hydrated(page);
@@ -570,8 +570,8 @@ const followP1Session = async (page: Page, request: APIRequestContext): Promise<
   const response = await responsePromise;
   expect(response.status()).toBe(200);
   const result = parseWorkThreadsCommandOutput(decodeRpcResponseBody(await response.text()));
-  if (!result.ok) {
-    throw new Error(result.message);
+  if (!result.ok || result.threadId === null) {
+    throw new Error(result.ok ? 'Task creation answered without its task.' : result.message);
   }
   await session.getByRole('link', { name: 'Open task', exact: true }).click();
   await hydrated(page);

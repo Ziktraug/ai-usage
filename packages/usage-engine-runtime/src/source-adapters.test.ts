@@ -34,6 +34,7 @@ import {
   applyWorkThreadCommand,
   importPullRequestObservations,
   publishServedReportRevision,
+  queryJiraIntake,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -2181,7 +2182,7 @@ describe('discovered work fact sources', () => {
     }
   });
 
-  test('discovers and observes assigned Jira issues without sessions', async () => {
+  test('discovers and observes assigned Jira issues into the intake without creating tasks', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'engine-discovery-jira-'));
     try {
       const calls: BoundedProcessOptions[] = [];
@@ -2212,9 +2213,11 @@ describe('discovered work fact sources', () => {
           query: { cursor: null, limit: 50, project: null, search: null, tab: 'open' },
         }),
       );
-      expect(threads.rows.map(({ thread }) => [thread.origin, thread.originKey])).toEqual([
-        ['jira-issue', 'jira:default/DEMO-12'],
-      ]);
+      expect(threads.rows).toEqual([]);
+      const intake = await Effect.runPromise(
+        queryJiraIntake({ dbPath: usageStorePath(home), limit: 50, machineId: machine.id }),
+      );
+      expect(intake.items.map(({ key }) => key)).toEqual(['jira:default/DEMO-12']);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

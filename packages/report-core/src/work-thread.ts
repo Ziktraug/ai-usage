@@ -173,7 +173,9 @@ export type WorkThreadCommand =
     }
   | { readonly commandId: string; readonly linkId: string; readonly op: 'detach-link'; readonly threadId: string }
   | { readonly commandId: string; readonly note: string | null; readonly op: 'set-note'; readonly threadId: string }
-  | { readonly commandId: string; readonly op: 'rename'; readonly threadId: string; readonly title: string };
+  | { readonly commandId: string; readonly op: 'rename'; readonly threadId: string; readonly title: string }
+  /** Hide (or restore) an assigned Jira issue in the intake; it concerns no task. */
+  | { readonly commandId: string; readonly dismissed: boolean; readonly key: string; readonly op: 'dismiss-intake' };
 
 export type WorkThreadCommandResult =
   | {
@@ -189,6 +191,14 @@ export type WorkThreadCommandResult =
       readonly failure: WorkThreadCommandFailure;
       readonly message: string;
     };
+
+/** Commands addressed to one task; their result always names it. */
+export type WorkThreadTaskCommand = Exclude<WorkThreadCommand, { readonly op: 'dismiss-intake' }>;
+
+/** An intake decision changes no task, so its result names none (and a fixed revision of 1). */
+export type WorkIntakeCommandResult =
+  | { readonly ok: true; readonly applied: boolean; readonly followRevision: number; readonly threadId: null }
+  | Extract<WorkThreadCommandResult, { readonly ok: false }>;
 
 // ---------------------------------------------------------------------------------------------
 // Qualified keys. A path or a common name is never an identity; each key names its authority.
@@ -617,6 +627,12 @@ export const parseWorkThreadCommand = (value: unknown): WorkThreadCommand | null
         note !== undefined &&
         isWorkThreadId(value.threadId)
         ? { commandId, note, op: 'set-note', threadId: value.threadId }
+        : null;
+    }
+    case 'dismiss-intake': {
+      const link = parseLinkInput({ key: value.key, kind: 'jira-issue' });
+      return hasOnlyKeys(value, ['commandId', 'dismissed', 'key', 'op']) && link && typeof value.dismissed === 'boolean'
+        ? { commandId, dismissed: value.dismissed, key: link.key, op: 'dismiss-intake' }
         : null;
     }
     case 'rename': {

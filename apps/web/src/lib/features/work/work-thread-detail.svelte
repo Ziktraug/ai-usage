@@ -1,14 +1,14 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits closed true/false ARIA states; SSR and browser regressions assert their values. -->
 <script lang="ts">
   import type {
-    WorkThreadCommand,
     WorkThreadCommandResult,
     WorkThreadFollowState,
+    WorkThreadTaskCommand,
     WorkThreadWait,
   } from '@ai-usage/report-core/work-thread';
   import { taskNativeRequests } from '@ai-usage/report-core/work-thread-situation';
   import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
-  import { createWorkThreadCommandAction, type WorkThreadCommandActionInput } from '../../rpc/work-threads-client';
+  import { createWorkThreadCommandAction, type WorkThreadTaskCommandActionInput } from '../../rpc/work-threads-client';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import WorkThreadEpisode from './work-thread-episode.svelte';
   import { captureFollowUndo, createFollowUndo, type FollowUndoAction } from './work-thread-follow-undo';
@@ -61,7 +61,7 @@
     nextHref?: string | null;
     selectedDay?: string | null;
     onBack: (event: MouseEvent) => void;
-    onCommand: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult>;
+    onCommand: (command: WorkThreadTaskCommand) => Promise<WorkThreadCommandResult>;
     onPickerOpen: () => void;
     sessionChoices?: readonly SessionChoice[];
     sessionsLoading?: boolean;
@@ -122,7 +122,7 @@
   );
 
   type Success = Extract<WorkThreadCommandResult, { ok: true }>;
-  const execute = async (command: WorkThreadCommand, success: (result: Success) => void): Promise<void> => {
+  const execute = async (command: WorkThreadTaskCommand, success: (result: Success) => void): Promise<void> => {
     if (busy) {
       return;
     }
@@ -147,13 +147,13 @@
       busy = false;
     }
   };
-  const act = (input: WorkThreadCommandActionInput, success: (result: Success) => void): Promise<void> =>
+  const act = (input: WorkThreadTaskCommandActionInput, success: (result: Success) => void): Promise<void> =>
     execute(createWorkThreadCommandAction(input), success);
   const followInput = (
     to: WorkThreadFollowState,
     expectedRevision: number,
     extra?: { waitingFor: string | null; waitingOn: WorkThreadWait | null },
-  ): WorkThreadCommandActionInput => ({
+  ): WorkThreadTaskCommandActionInput => ({
     op: 'set-follow-state',
     threadId: thread.threadId,
     expectedRevision,

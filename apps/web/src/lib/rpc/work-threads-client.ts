@@ -1,3 +1,4 @@
+import type { WorkThreadTaskCommand } from '@ai-usage/report-core/work-thread';
 import {
   parseWorkThreadsCommandOutput,
   parseWorkThreadsDetailOutput,
@@ -37,8 +38,11 @@ export class WorkThreadsUnavailableError extends Error {
 }
 type WithoutCommandId<T> = T extends { readonly commandId: string } ? Omit<T, 'commandId'> : never;
 export type WorkThreadCommandActionInput = WithoutCommandId<WorkThreadsCommandInput>;
+export type WorkThreadTaskCommandActionInput = WithoutCommandId<WorkThreadTaskCommand>;
 /** Call once at the user gesture. Keep this object when retrying an uncertain response. */
-export const createWorkThreadCommandAction = (input: WorkThreadCommandActionInput): WorkThreadsCommandInput => ({
+export const createWorkThreadCommandAction = <Input extends WorkThreadCommandActionInput>(
+  input: Input,
+): Input & { readonly commandId: string } => ({
   ...input,
   commandId: crypto.randomUUID(),
 });

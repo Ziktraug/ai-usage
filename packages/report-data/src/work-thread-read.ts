@@ -33,6 +33,7 @@ import {
   type LatestCheckoutStatusObservations,
   type LatestJiraIssueObservations,
   type LatestPullRequestObservations,
+  queryJiraIntake,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -831,6 +832,34 @@ const sourcesOf = (
   return sources;
 };
 
+/** Assigned issues no open task follows, with their latest successful Jira read. */
+const readJiraIntake = (
+  dbPath: string,
+  machineId: string,
+): Effect.Effect<WorkThreadListDataset['jiraIntake'], UsageStoreError> =>
+  Effect.gen(function* () {
+    const intake = yield* queryJiraIntake({ dbPath, machineId, limit: WORK_THREAD_VIEW_BOUNDS.maxJiraIntake });
+    const keys = intake.items.flatMap((item) => {
+      const parsed = parseWorkThreadLinkKey('jira-issue', item.key);
+      return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [{ key: parsed.key, machineId }] : [];
+    });
+    const facts = yield* queryLatestJiraIssueObservations({ dbPath, batch: keys });
+    const issues = new Map(
+      facts.items.map((item) => [
+        item.latest.key,
+        item.latest.outcome === 'observed' ? item.latest : (item.latestObserved ?? null),
+      ]),
+    );
+    return {
+      items: intake.items.map((item) => ({
+        firstSeenAt: item.firstSeenAt,
+        issue: issues.get(item.key.slice(item.key.lastIndexOf('/') + 1)) ?? null,
+        key: item.key,
+      })),
+      truncated: intake.truncated || facts.truncated,
+    };
+  });
+
 export const queryWorkThreadList = (input: {
   readonly dbPath: string;
   readonly query: WorkThreadListQuery;
@@ -857,6 +886,7 @@ export const queryWorkThreadList = (input: {
       return {
         counts: yield* countWorkThreads(input),
         generatedAt,
+        jiraIntake: yield* readJiraIntake(input.dbPath, machine.id),
         machineId: machine.id,
         nextCursor: page.nextCursor,
         projects: yield* queryWorkThreadProjects(input),
@@ -920,6 +950,7 @@ export const queryWorkThreadList = (input: {
     return {
       counts: yield* countWorkThreads(input),
       generatedAt,
+      jiraIntake: yield* readJiraIntake(input.dbPath, machine.id),
       machineId: machine.id,
       nextCursor: page.nextCursor,
       projects: yield* queryWorkThreadProjects(input),

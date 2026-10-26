@@ -22,6 +22,8 @@ export const WORK_THREAD_VIEW_BOUNDS = {
   defaultPageSize: 50,
   maxSearch: 200,
   maxProjects: 200,
+  /** Assigned Jira issues awaiting the operator's choice, shown at once above the tasks. */
+  maxJiraIntake: 100,
 } as const;
 
 export const WORK_THREAD_TABS = ['open', 'done'] as const;
@@ -137,9 +139,23 @@ export interface WorkThreadRow {
   readonly thread: WorkThread;
 }
 
+/**
+ * An issue Jira assigns to the operator that no open task follows yet. Assignment alone is not a
+ * commitment: the operator follows it, attaches it to a task, or dismisses it.
+ */
+export interface WorkThreadJiraIntakeItem {
+  /** First time discovery returned the issue as assigned. */
+  readonly firstSeenAt: CanonicalInstant;
+  /** Latest successful observation; `null` until the issue has been read. */
+  readonly issue: JiraIssueObservation | null;
+  /** `jira:<site>/<KEY>`, as a task link names it. */
+  readonly key: string;
+}
+
 export interface WorkThreadListDataset {
   readonly counts: { readonly done: number; readonly open: number };
   readonly generatedAt: CanonicalInstant;
+  readonly jiraIntake: { readonly items: readonly WorkThreadJiraIntakeItem[]; readonly truncated: boolean };
   readonly machineId: string;
   readonly nextCursor: string | null;
   readonly projects: readonly string[];

@@ -1,7 +1,7 @@
 import type {
-  WorkThreadCommand,
   WorkThreadCommandResult,
   WorkThreadFollowState,
+  WorkThreadTaskCommand,
   WorkThreadWait,
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
@@ -51,13 +51,13 @@ export const createFollowUndo = (
   snapshot: FollowUndoSnapshot,
   currentState: WorkThreadFollowState,
   revision: number,
-  execute: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult>,
+  execute: (command: WorkThreadTaskCommand) => Promise<WorkThreadCommandResult>,
 ): FollowUndoAction => {
   const targets: readonly WorkThreadFollowState[] =
     currentState === 'done' && snapshot.state === 'waiting' ? ['following', 'waiting'] : [snapshot.state];
   let step = 0;
   let expectedRevision = revision;
-  let pending: WorkThreadCommand | null = null;
+  let pending: WorkThreadTaskCommand | null = null;
   let terminal: FollowUndoResult | null = null;
   return {
     run: async () => {

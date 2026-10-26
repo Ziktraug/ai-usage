@@ -1,6 +1,12 @@
 <script lang="ts">
   import { shell } from '@ai-usage/design-system/svelte';
-  import { isWorkThreadId, sessionLinkKey, type WorkThreadCommand } from '@ai-usage/report-core/work-thread';
+  import {
+    isWorkThreadId,
+    sessionLinkKey,
+    type WorkThreadCommand,
+    type WorkThreadCommandResult,
+    type WorkThreadTaskCommand,
+  } from '@ai-usage/report-core/work-thread';
   import { createInfiniteQuery, createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { onMount, tick, untrack } from 'svelte';
   import { browser } from '$app/env';
@@ -8,6 +14,7 @@
   import { reportBootstrapQueryOptions } from '../../query/options/report';
   import { workSessionsOptions } from '../../query/options/work';
   import {
+    invalidateWorkThreadListQueries,
     invalidateWorkThreadQueries,
     loadNextLinkableSessionPage,
     workThreadDetailQueryOptions,
@@ -174,9 +181,23 @@
   const command = async (input: WorkThreadCommand) => {
     const result = await clients.threads.command(input);
     const requestedId = 'threadId' in input ? input.threadId : null;
-    const id = result.ok ? result.threadId : requestedId;
+    const id = result.ok ? (result.threadId ?? requestedId) : requestedId;
     if (id) {
       await invalidateWorkThreadQueries(queryClient, id);
+    } else if (result.ok) {
+      // An intake decision changes no task; only the list (and its intake) is stale.
+      await invalidateWorkThreadListQueries(queryClient);
+    }
+    return result;
+  };
+  // Task commands always answer with their task; the detail and its undo rely on that shape.
+  const taskCommand = async (input: WorkThreadTaskCommand): Promise<WorkThreadCommandResult> => {
+    const result = await command(input);
+    if (!result.ok) {
+      return result;
+    }
+    if (result.threadId === null) {
+      throw new Error('The task command answered without its task.');
     }
     return result;
   };
@@ -238,7 +259,7 @@
             moreSessions={sessions.hasNextPage}
             nextHref={next ? href(next) : null}
             onBack={back}
-            onCommand={command}
+            onCommand={taskCommand}
             onMoreSessions={() => loadNextLinkableSessionPage(sessions)}
             onPickerOpen={() => (pickerOpen = true)}
             previousHref={previous ? href(previous) : null}
@@ -299,6 +320,7 @@
           {dataset}
           {href}
           loadingMore={listQueries.some((result) => result.isFetching)}
+          onCommand={command}
           onFilter={updateFilter}
           onMore={() => {
             if (dataset.nextCursor) {

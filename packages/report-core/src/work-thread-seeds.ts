@@ -1,14 +1,21 @@
 import type { CanonicalInstant } from './canonical-instant';
-import type { JiraIssueObservation, PullRequestObservation } from './work-attention';
+import type { PullRequestObservation } from './work-attention';
+import { jiraKeysInBranch } from './work-attention-facts';
 import { jiraIssueLinkKey, pullRequestLinkKey, WORK_THREAD_BOUNDS, type WorkThreadIntent } from './work-thread';
 
 export interface WorkThreadSeed {
   readonly discoveredAt: CanonicalInstant;
   readonly intent: WorkThreadIntent | null;
-  readonly linkKind: 'pull-request' | 'jira-issue';
-  readonly origin: 'pull-request' | 'jira-issue';
+  readonly linkKind: 'pull-request';
+  readonly origin: 'pull-request';
   readonly originKey: string;
   readonly projectLabel: string;
+  /**
+   * The one Jira link key (`jira:default/XLB-1`) an authored pull request's head branch names as a
+   * whole segment. It lets the PR join the task that already follows that ticket. Reviews never
+   * carry one: a teammate's ticket is context, not the operator's delivery.
+   */
+  readonly routingJiraKey: string | null;
   readonly title: string;
 }
 
@@ -51,6 +58,8 @@ export const workThreadSeedsFromPullRequests = (observations: readonly PullReque
       return [];
     }
     const originKey = pullRequestSeedKey(observation);
+    const branchKeys = jiraKeysInBranch(observation.headRef ?? '');
+    const [branchKey] = branchKeys;
     return [
       {
         discoveredAt: observation.observedAt,
@@ -59,21 +68,11 @@ export const workThreadSeedsFromPullRequests = (observations: readonly PullReque
         origin: 'pull-request',
         originKey,
         projectLabel: observation.repository,
+        routingJiraKey:
+          observation.discoveryRole === 'author' && branchKeys.length === 1 && branchKey !== undefined
+            ? jiraIssueLinkKey({ key: branchKey, site: 'default' })
+            : null,
         title: boundedTitle(observation.title, `${observation.repository}#${observation.number}`),
       },
     ];
   });
-
-/** The Jira CLI owns its configured site; observations currently identify that site as `default`. */
-export const workThreadSeedsFromJiraIssues = (observations: readonly JiraIssueObservation[]): WorkThreadSeed[] =>
-  latestSuccessful(observations, (observation) => jiraIssueLinkKey({ key: observation.key, site: 'default' })).map(
-    (observation): WorkThreadSeed => ({
-      discoveredAt: observation.observedAt,
-      intent: null,
-      linkKind: 'jira-issue',
-      origin: 'jira-issue',
-      originKey: jiraIssueLinkKey({ key: observation.key, site: 'default' }),
-      projectLabel: observation.key.split('-')[0] ?? observation.key,
-      title: boundedTitle(observation.summary, observation.key),
-    }),
-  );

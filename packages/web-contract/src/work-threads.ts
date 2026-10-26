@@ -12,6 +12,7 @@ import {
   parseWorkThreadLink,
   WORK_THREAD_BOUNDS,
   WORK_THREAD_COMMAND_FAILURES,
+  type WorkIntakeCommandResult,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
 } from '@ai-usage/report-core/work-thread';
@@ -159,9 +160,14 @@ export const workThreadsListInputSchema = strictObject({
   tab: picklist(WORK_THREAD_TABS),
 });
 export const workThreadsDetailInputSchema = strictObject({ threadId: id });
+const jiraIntakeItem = strictObject({ firstSeenAt: instant, issue: nullable(jira), key: text });
 export const workThreadsListDataSchema = strictObject({
   counts: strictObject({ done: count, open: count }),
   generatedAt: instant,
+  jiraIntake: strictObject({
+    items: pipe(array(jiraIntakeItem), maxLength(WORK_THREAD_VIEW_BOUNDS.maxJiraIntake)),
+    truncated: boolean(),
+  }),
   machineId: text,
   nextCursor: nullable(pipe(string(), minLength(1), maxLength(4096))),
   projects: pipe(array(text), maxLength(WORK_THREAD_VIEW_BOUNDS.maxProjects)),
@@ -260,7 +266,7 @@ export const workThreadsCommandInputSchema = frozenSchema(parseWorkThreadCommand
 export const workThreadsCommandOutputSchema = pipe(
   custom<unknown>(isJsonWireValue, 'Expected a finite JSON value.'),
   variant('ok', [
-    strictObject({ ok: literal(true), applied: boolean(), followRevision: revision, threadId: id }),
+    strictObject({ ok: literal(true), applied: boolean(), followRevision: revision, threadId: nullable(id) }),
     strictObject({
       ok: literal(false),
       currentRevision: nullable(revision),
@@ -274,7 +280,7 @@ export type WorkThreadsDetailInput = InferOutput<typeof workThreadsDetailInputSc
 export type WorkThreadsListOutput = InferOutput<typeof workThreadsListOutputSchema>;
 export type WorkThreadsDetailOutput = InferOutput<typeof workThreadsDetailOutputSchema>;
 export type WorkThreadsCommandInput = WorkThreadCommand;
-export type WorkThreadsCommandOutput = WorkThreadCommandResult;
+export type WorkThreadsCommandOutput = WorkThreadCommandResult | WorkIntakeCommandResult;
 export const parseWorkThreadsListOutput = (value: unknown): WorkThreadsListOutput =>
   parse(workThreadsListOutputSchema, value);
 export const parseWorkThreadsDetailOutput = (value: unknown): WorkThreadsDetailOutput =>

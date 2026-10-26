@@ -66,10 +66,7 @@ import {
   sessionLinkKey,
   pullRequestLinkKey as workThreadPullRequestKey,
 } from '@ai-usage/report-core/work-thread';
-import {
-  workThreadSeedsFromJiraIssues,
-  workThreadSeedsFromPullRequests,
-} from '@ai-usage/report-core/work-thread-seeds';
+import { workThreadSeedsFromPullRequests } from '@ai-usage/report-core/work-thread-seeds';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
@@ -95,6 +92,7 @@ import {
   queryUsageStoreGeneration,
   queryWorkThreadWaitCandidates,
   type RtkSavingsContribution,
+  recordJiraIntake,
   recordWorkFactRun,
   type ServedLocalProjectSource,
   seedWorkThreads,
@@ -1753,18 +1751,15 @@ const createJiraIssueSource = (input: {
             ]
           : []),
       ];
-      // Only assigned issues the discovery returned become threads; a key read from a branch name
-      // stays a fact of the sessions that wrote it.
-      const discoveredKeys = new Set(discovery.keys);
-      const jiraSeeds = workThreadSeedsFromJiraIssues(
-        batch.observations.filter((observation) => discoveredKeys.has(observation.key)),
-      );
-      if (jiraSeeds.length > 0) {
-        yield* seedWorkThreads({
+      // Assignment alone is not a commitment (ADR 0079): assigned issues enter the Work intake,
+      // where the operator follows, attaches or dismisses them. A failed search proves nothing.
+      if (discovery.outcome === 'observed') {
+        yield* recordJiraIntake({
+          complete: !discovery.truncated,
           dbPath: input.dbPath,
+          keys: discovery.keys,
           machineId: input.machine.id,
           now: input.now().toISOString(),
-          seeds: jiraSeeds,
         }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
       }
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;

@@ -4,6 +4,7 @@
 - **Date:** 2026-10-24
 - **Extends:** [0050](0050-work-attention-facts-outside-the-served-revision.md), [0051](0051-engine-read-only-github-and-checkout-observation.md), [0054](0054-jira-issue-facts-explicit-keys-read-only.md)
 - **Plan:** [123](../../plans/123-work-thread-convergence.md)
+- **Amended by:** [0078](0078-work-association-evidence-and-activity.md), [0079](0079-ticket-routing-and-jira-intake.md) (assigned issues enter an intake, not tasks)
 
 ## Context
 

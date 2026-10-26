@@ -71,6 +71,13 @@ the sessions actually read, independently of unchanged native timestamps.
 These auxiliary rows do not enter served revisions, exports or replication.
 Validation uses disposable stores; no daily-store upgrade is authorized here.
 
+2026-10-26 (ADR 0079): `work_jira_intake` records assigned Jira issues and the
+operator's dismissals, under the same usage version 4. Only the engine creates
+it; existing tasks, links and Jira-origin threads are left as they are, and no
+issue is backfilled until the next successful assigned-issue search. Query-only
+readers of a store without the table report it as not yet upgraded. Validation
+uses disposable stores; no daily-store upgrade is authorized here.
+
 The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
 and `claude_desktop_collection_state` to the usage store without changing
 `user_version`, following the `skill_observations` precedent: the engine

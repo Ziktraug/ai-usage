@@ -106,6 +106,7 @@ export {
   queryDelegationJobs,
   queryDistillationSessionMetadata,
   queryExecutorAccountChanges,
+  queryJiraIntake,
   queryLatestCheckoutStatusObservations,
   queryLatestExecutorObservations,
   queryLatestJiraIssueObservations,
