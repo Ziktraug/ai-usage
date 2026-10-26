@@ -124,6 +124,11 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
     if (fact.state !== 'OPEN') {
       continue;
     }
+    // Someone else's pull request: its conflicts, checks and drafts are the author's work, not the operator's.
+    if (marker.role === 'review-requested') {
+      remainders.push({ ...evidence, kind: 'review-requested' });
+      continue;
+    }
     const priorCount = remainders.length;
     if (fact.reviewDecision === 'CHANGES_REQUESTED') {
       remainders.push({ ...evidence, kind: 'changes-requested' });
@@ -140,14 +145,11 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
     if (marker.mergeStateStatus === 'BEHIND') {
       remainders.push({ ...evidence, kind: 'behind-base', baseRef: fact.baseRef });
     }
-    if (marker.role === 'review-requested') {
-      remainders.push({ ...evidence, kind: 'review-requested' });
-    }
     const unresolved = fact.unresolvedReviewThreads;
     if (typeof unresolved === 'number' && Number.isSafeInteger(unresolved) && unresolved > 0) {
       remainders.push({ ...evidence, kind: 'unresolved-review-threads', count: unresolved });
     }
-    if (fact.reviewDecision === 'REVIEW_REQUIRED' && marker.role !== 'review-requested') {
+    if (fact.reviewDecision === 'REVIEW_REQUIRED') {
       remainders.push({ ...evidence, kind: 'awaiting-review' });
     }
     if (fact.draft === true) {
@@ -222,6 +224,11 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
   }
   localRemainders(row, now, remainders);
   pullRequestRemainders(row, now, remainders);
+  // While a pull request is open, an unfinished ticket is its expected state, not a separate step.
+  const pullRequestOpen = row.markers.pullRequests.some((marker) => {
+    const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful;
+    return fact?.state === 'OPEN';
+  });
   for (const marker of row.markers.jiraIssues) {
     const fact = observation(marker, 'jira', now, remainders);
     if (fact === null) {
@@ -230,7 +237,7 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
     const evidence = { key: marker.key, observedAt: fact.observedAt, source: 'jira' as const };
     if (fact.statusCategory === null || fact.statusCategory === 'unknown') {
       remainders.push({ ...evidence, kind: 'source-unknown' });
-    } else if (fact.statusCategory !== 'done') {
+    } else if (fact.statusCategory !== 'done' && !pullRequestOpen) {
       remainders.push({ ...evidence, kind: 'jira-open' });
     }
   }
@@ -278,7 +285,6 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'unresolved-review-threads',
   'changes-requested',
   'failing-checks',
-  'behind-base',
   'review-requested',
   'native-request',
   'local-files',
@@ -288,6 +294,9 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'pending-checks',
   'ready-to-merge',
   'awaiting-review',
+  // Strict branch protection makes an update necessary only once review is settled; updating earlier
+  // is undone by the next merge to the base, so awaiting review outranks it.
+  'behind-base',
   'open-pr',
   'source-unavailable',
   'source-stale',

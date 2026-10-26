@@ -168,7 +168,7 @@
               <p class="wt-meta">
                 Updated
                 <time datetime={row.lastActivityAt}
-                  >{threadDate(row.lastActivityAt, timeZone)}
+                  >{threadDate(row.lastActivityAt, timeZone, false, dataset.generatedAt)}
                   · {threadTime(row.lastActivityAt, timeZone)}</time
                 >
               </p>

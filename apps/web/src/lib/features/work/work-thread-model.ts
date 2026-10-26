@@ -105,12 +105,17 @@ export const bucketThreadMarks = (marks: readonly WorkThreadMark[], timeZone: st
   return days;
 };
 
-export const threadDate = (at: string, timeZone: string, long = false): string =>
+const yearIn = (at: string, timeZone: string): string =>
+  new Date(at).toLocaleDateString('en-US', { timeZone, year: 'numeric' });
+
+/** With `now`, a date from another year names its year, so an old PR does not read as recent. */
+export const threadDate = (at: string, timeZone: string, long = false, now?: string): string =>
   new Date(at).toLocaleDateString('en-US', {
     timeZone,
     month: long ? 'long' : 'short',
     day: 'numeric',
     ...(long ? { weekday: 'long' as const } : {}),
+    ...(now !== undefined && yearIn(at, timeZone) !== yearIn(now, timeZone) ? { year: 'numeric' as const } : {}),
   });
 
 export const threadTime = (at: string, timeZone: string): string =>

@@ -60,7 +60,7 @@ import {
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
-import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
+import { explicitJiraKeys, jiraKeysInBranch } from '@ai-usage/report-core/work-attention-facts';
 import {
   parseWorkThreadLinkKey,
   sessionLinkKey,
@@ -89,6 +89,7 @@ import {
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
+  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
@@ -915,6 +916,73 @@ const normalizedLinkKey = (link: PullRequestLink): string =>
     repository: link.repository.trim().toLowerCase(),
   });
 
+/** Active Jira links read per run; each run still observes at most `JIRA_ISSUE_DEFAULTS.maxKeys`. */
+const JIRA_ISSUE_CANDIDATE_LIMIT = 200;
+
+/**
+ * Keys named by the head branches of followed pull requests. The Work view shows these tickets on
+ * the pull request's task, so they need observations even when no thread links them explicitly.
+ * Merged pull requests stay included: their ticket is often the last open step.
+ */
+const pullRequestBranchJiraKeys = (
+  dbPath: string,
+  machineId: string,
+): Effect.Effect<{ readonly keys: readonly string[]; readonly truncated: boolean }, UsageStoreError> =>
+  Effect.gen(function* () {
+    const active = yield* queryActiveWorkThreadLinks({
+      dbPath,
+      machineId,
+      kind: 'pull-request',
+      limit: JIRA_ISSUE_CANDIDATE_LIMIT,
+    });
+    const links = active.links.flatMap((link): PullRequestLink[] => {
+      const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+      return parsed?.kind === 'pull-request' ? [parsed] : [];
+    });
+    if (links.length === 0) {
+      return { keys: [], truncated: active.truncated };
+    }
+    const { items } = yield* queryLatestPullRequestObservations({
+      dbPath,
+      limit: MAX_WORK_FACT_QUERY_LIMIT,
+      links,
+      machineId,
+    });
+    const keys = items.flatMap((item) => {
+      const fact = item.latest.outcome === 'observed' ? item.latest : item.latestObserved;
+      return jiraKeysInBranch(fact?.headRef ?? '');
+    });
+    return { keys: [...new Set(keys)], truncated: active.truncated };
+  });
+
+/**
+ * Rotates a bounded batch through every candidate: never-read keys first, then the oldest reads,
+ * so an issue past the per-run bound is still observed within a few runs. Equal ages keep the
+ * candidates' priority order.
+ */
+const leastRecentlyObservedJiraKeys = (
+  dbPath: string,
+  machineId: string,
+  candidates: readonly string[],
+): Effect.Effect<readonly string[], UsageStoreError> =>
+  Effect.gen(function* () {
+    if (candidates.length <= JIRA_ISSUE_DEFAULTS.maxKeys) {
+      return candidates;
+    }
+    const { items } = yield* queryLatestJiraIssueObservations({
+      dbPath,
+      keys: candidates,
+      limit: MAX_WORK_FACT_QUERY_LIMIT,
+      machineId,
+    });
+    const observedAt = new Map(items.map((item) => [item.latest.key, Date.parse(item.latest.observedAt)]));
+    return candidates
+      .map((key, index) => ({ at: observedAt.get(key) ?? Number.NEGATIVE_INFINITY, index, key }))
+      .sort((left, right) => left.at - right.at || left.index - right.index)
+      .slice(0, JIRA_ISSUE_DEFAULTS.maxKeys)
+      .map(({ key }) => key);
+  });
+
 /**
  * Leaves out the links whose latest stored observation already showed the pull request merged.
  * A merge is terminal: re-reading it every cadence for the fourteen days a session stays active
@@ -1610,7 +1678,7 @@ const createJiraIssueSource = (input: {
           machineId: input.machine.id,
           kind: 'jira-issue',
           jiraSite: 'default',
-          limit: JIRA_ISSUE_DEFAULTS.maxKeys,
+          limit: JIRA_ISSUE_CANDIDATE_LIMIT,
         }),
         { links: [], truncated: false },
       );
@@ -1619,9 +1687,21 @@ const createJiraIssueSource = (input: {
         // The current Jira observation authority is the CLI's default site only.
         return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [parsed.key] : [];
       });
-      const candidates = [...new Set([...threadKeys, ...desktop.jiraKeys, ...discovery.keys])];
-      const keys = candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
-      const truncated = candidates.length > keys.length || discovery.truncated || threadLinks.truncated;
+      const branchKeys = yield* servedInputsOrEmpty(
+        'jira.issues',
+        pullRequestBranchJiraKeys(input.dbPath, input.machine.id),
+        { keys: [], truncated: false },
+      );
+      const candidates = [
+        ...new Set([...threadKeys, ...branchKeys.keys, ...desktop.jiraKeys, ...discovery.keys]),
+      ].slice(0, MAX_WORK_FACT_QUERY_LIMIT);
+      const keys = yield* servedInputsOrEmpty(
+        'jira.issues',
+        leastRecentlyObservedJiraKeys(input.dbPath, input.machine.id, candidates),
+        candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys),
+      );
+      const truncated =
+        candidates.length > keys.length || discovery.truncated || threadLinks.truncated || branchKeys.truncated;
       const waits = yield* servedInputsOrEmpty(
         'jira.issues',
         queryWorkThreadWaitCandidates({
@@ -1694,7 +1774,7 @@ const createJiraIssueSource = (input: {
       const notInstalled =
         batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
       const truncation = truncated
-        ? `Observed ${String(keys.length)} of ${String(candidates.length)} candidate Jira issues; additional search results may be omitted.`
+        ? `Observed ${String(keys.length)} of ${String(candidates.length)} candidate Jira issues; the least recently read go first on the next run, and additional search results may be omitted.`
         : null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,

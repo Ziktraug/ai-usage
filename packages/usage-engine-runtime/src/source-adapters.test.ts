@@ -2296,6 +2296,41 @@ test('Jira discovery keeps explicit keys first and reports the observation ceili
   }
 });
 
+test('Jira candidates past the ceiling rotate in on the next run, never-read keys first', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-rotation-'));
+  try {
+    let now = new Date('2026-10-21T21:00:00.000Z');
+    writeClaudeDesktopJiraRegistry(home, now);
+    const calls: BoundedProcessOptions[] = [];
+    const registry = await createRegistry(home, {
+      acliAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: (options) =>
+        options.args[2] === 'search'
+          ? Effect.succeed({
+              durationMs: 1,
+              exitCode: 0,
+              stdout: JSON.stringify(Array.from({ length: 25 }, (_, index) => ({ key: `DEMO-${String(index + 1)}` }))),
+            })
+          : fakeJiraRunner(calls)(options),
+    });
+    await Effect.runPromise(registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'));
+    await Effect.runPromise(registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'));
+    const first = calls.splice(0).map(({ args }) => args[3]);
+    expect(first).toHaveLength(20);
+    now = new Date('2026-10-21T21:10:00.000Z');
+    await Effect.runPromise(registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'));
+    const second = calls.map(({ args }) => args[3]);
+    const unread = Array.from({ length: 8 }, (_, index) => `DEMO-${String(index + 18)}`);
+    // Discovery seeded threads on the first run, so equal read times follow thread-link order.
+    expect(new Set(second.slice(0, 8))).toEqual(new Set(unread));
+    expect(second.slice(8).every((key) => first.includes(key))).toBe(true);
+    expect(new Set([...first, ...second]).size).toBe(28);
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test('Jira discovery authentication failure remains visible while explicit issues are observed', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-discovery-failure-'));
   try {

@@ -27,6 +27,7 @@ import {
   remainderCopy,
   remainderEvidenceCopy,
   taskSourceStatuses,
+  threadDate,
   threadDayKey,
   threadDisplayMarkers,
   threadEventActor,
@@ -62,6 +63,12 @@ if (!episode) {
 }
 
 describe('task presentation model', () => {
+  test('a date from another year names its year', () => {
+    const now = '2026-10-26T12:00:00.000Z';
+    expect(threadDate('2023-04-21T09:09:21.000Z', 'UTC', false, now)).toBe('Apr 21, 2023');
+    expect(threadDate('2026-04-21T09:09:21.000Z', 'UTC', false, now)).toBe('Apr 21');
+    expect(threadDate('2023-04-21T09:09:21.000Z', 'UTC')).toBe('Apr 21');
+  });
   test.each([
     ['same day', '2026-10-24T09:20:00.000Z', '2026-10-24T09:44:00.000Z', 'UTC', '09:20–09:44'],
     ['overnight', '2026-10-24T22:06:00.000Z', '2026-10-25T02:19:00.000Z', 'UTC', '22:06–02:19 +1d'],

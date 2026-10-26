@@ -311,7 +311,9 @@
 </nav>
 <header class="wt-task-head">
   <div>
-    <p class="wt-id">Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone)}</p>
+    <p class="wt-id">
+      Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone, false, data.generatedAt)}
+    </p>
     <h1 data-title-length={thread.title.length > 90 ? 'long' : 'normal'}>
       {thread.title}
     </h1>
@@ -366,7 +368,9 @@
             <p>
               {request.text}
               · {request.harness} · {request.sourceSessionId} ·
-              {request.askedAt ? threadDate(request.askedAt, timeZone) : 'date unknown'}<br>{request.detail}
+              {request.askedAt
+                ? threadDate(request.askedAt, timeZone, false, data.generatedAt)
+                : 'date unknown'}<br>{request.detail}
             </p>
           {/each}
         </details>

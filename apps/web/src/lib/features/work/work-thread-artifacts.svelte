@@ -8,7 +8,7 @@
     if (!at) {
       return 'Not observed';
     }
-    const date = `${threadDate(at, timeZone)} ${threadTime(at, timeZone)}`;
+    const date = `${threadDate(at, timeZone, false, now)} ${threadTime(at, timeZone)}`;
     if (outcome !== 'observed') {
       return `Latest read: ${outcome} · ${date}`;
     }
