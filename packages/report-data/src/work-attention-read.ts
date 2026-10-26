@@ -45,6 +45,7 @@ import {
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -55,6 +56,7 @@ import {
   type ServedSessionRowIdentity,
   UsageStoreError,
   type WorkFactRunState,
+  type WorkSessionReadScope,
 } from '@ai-usage/usage-store/reader';
 import { Effect } from 'effect';
 import {
@@ -117,6 +119,8 @@ export interface QueryWorkAttentionInput {
   readonly limit?: number;
   readonly machineId?: string;
   readonly now?: Date;
+  /** Applied by store readers before each bounded page; parents remain linked by native identity. */
+  readonly scope?: WorkSessionReadScope;
   /**
    * Roots whose family had no activity in this window are left out unless their attention is a
    * human request or an external wait (a question stays a question at any age); defaults to 30 days.
@@ -1255,6 +1259,7 @@ export const assembleWorkAttention = (input: AssembleWorkAttentionInput): WorkAt
             family,
             generatedAt: harness.generatedAt,
             harness: harness.harness,
+            ...(harness.workObservations === undefined ? {} : { workObservations: harness.workObservations }),
             now,
             ...(rootsPerCheckout === undefined ? {} : { rootsPerCheckout }),
           });
@@ -1395,10 +1400,13 @@ interface DesktopSessionRead {
 const readDesktopSessions = (
   dbPath: string,
   machineFilter: { readonly machineId?: string },
+  scope?: WorkSessionReadScope,
 ): Effect.Effect<DesktopSessionRead, UsageStoreError> =>
   Effect.gen(function* () {
+    const scopeFilter = scope === undefined ? {} : { scope };
     const recent = yield* queryClaudeDesktopSessions({
       dbPath,
+      ...scopeFilter,
       limit: MAX_CLAUDE_DESKTOP_SESSION_READ,
       ...machineFilter,
     });
@@ -1412,6 +1420,7 @@ const readDesktopSessions = (
         limit: MAX_CLAUDE_DESKTOP_SESSION_READ,
         olderThanLastActivityAt: oldest,
         pendingOnly: true,
+        ...scopeFilter,
         ...machineFilter,
       });
       observations.push(...pending.observations);
@@ -1495,21 +1504,42 @@ export const queryWorkAttention = (
     // One reference instant for the harness window and the assembly, so both read the same window.
     const now = input.now ?? new Date();
     const sinceDays = input.sinceDays ?? WORK_ATTENTION_DEFAULT_SINCE_DAYS;
-    const read = yield* readDesktopSessions(input.dbPath, machineFilter);
+    const read = yield* readDesktopSessions(input.dbPath, machineFilter, input.scope);
     const states = yield* queryClaudeDesktopCollectionState({ dbPath: input.dbPath, ...machineFilter });
     const sessions = yield* joinSessions(input.dbPath, read.observations);
     const harnessRead = yield* queryRecentServedHarnessSessions({
       activeSince: now.getTime() - sinceDays * DAY_MS,
       dbPath: input.dbPath,
       harnessKey: WORK_UNDECLARED_HARNESS,
+      ...(input.scope === undefined ? {} : { scope: input.scope }),
       // The Codex budget at most (ADR 0059): a family beyond it is counted, never shown.
       limit: Math.min(input.limit ?? WORK_ATTENTION_DEFAULT_LIMIT, WORK_ATTENTION_BOUNDS.maxCodexRoots),
       ...machineFilter,
     });
-    const harnessSessions: WorkHarnessSessions = { ...harnessRead, harness: WORK_UNDECLARED_HARNESS };
+    const workIdentities = new Map<string, string[]>();
+    for (const family of harnessRead.families) {
+      for (const member of family.members) {
+        const ids = workIdentities.get(member.machineId) ?? [];
+        ids.push(member.sourceSessionId);
+        workIdentities.set(member.machineId, ids);
+      }
+    }
+    const workReads = yield* Effect.forEach([...workIdentities], ([machineId, sourceSessionIds]) =>
+      queryCodexWorkObservations({ dbPath: input.dbPath, machineId, sourceSessionIds }),
+    );
+    const harnessSessions: WorkHarnessSessions = {
+      ...harnessRead,
+      harness: WORK_UNDECLARED_HARNESS,
+      workObservations: workReads.flatMap((result) => result.observations),
+      refusedRows: harnessRead.refusedRows + workReads.reduce((total, result) => total + result.skipped, 0),
+    };
     const externalFacts = yield* readExternalFacts(input, read.observations, harnessSessions.families);
     const history = yield* readDeclarationHistory(input.dbPath, read.observations, machineFilter);
-    const sessionsStored = yield* countClaudeDesktopSessions({ dbPath: input.dbPath, ...machineFilter });
+    const sessionsStored = yield* countClaudeDesktopSessions({
+      dbPath: input.dbPath,
+      ...machineFilter,
+      ...(input.scope === undefined ? {} : { scope: input.scope }),
+    });
     return assembleWorkAttention({
       collectionStates: states.states,
       declarations: history.declarations,

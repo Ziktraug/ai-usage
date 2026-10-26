@@ -8,6 +8,13 @@ import {
   type ClaudeReviewOutcome,
   launchClaudeReview,
 } from '@ai-usage/local-collectors/claude-review-launcher';
+import {
+  type CodexReviewLaunch,
+  CodexReviewLaunchError,
+  type CodexReviewLaunchOptions,
+  type CodexReviewOutcome,
+  launchCodexReview,
+} from '@ai-usage/local-collectors/codex-review-launcher';
 import { type ClaudeAccountProbe, probeClaudeAccount } from '@ai-usage/local-collectors/executor-observations';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '@ai-usage/local-machine/local-history';
 import { readLocalRoutingDeclarations } from '@ai-usage/local-machine/routing-config';
@@ -29,6 +36,7 @@ import {
   type UnresolvedReviewReservation,
 } from '@ai-usage/report-core/work-attempts';
 import type { ReviewTarget } from '@ai-usage/report-core/work-routing';
+import { declarationForReviewCandidate } from '@ai-usage/report-core/work-routing';
 import {
   boundUsageEngineReviewMessage,
   type UsageEngineCommand,
@@ -79,6 +87,8 @@ export interface ReviewAttemptServiceOptions {
    * after the structural checks, so a rule that forbids a route for a delegation forbids it here.
    */
   readonly admission: ReviewAdmissionPort;
+  readonly codexLauncher?: typeof launchCodexReview;
+  readonly codexLaunchOptions?: CodexReviewLaunchOptions;
   readonly dbPath: string;
   /** Looks for the process a lost attempt started; defaults to the Linux process table. */
   readonly findProcesses?: FindReviewProcesses;
@@ -125,7 +135,7 @@ export interface ReviewAttemptService extends UsageEngineReviewAttemptPort {
 }
 
 interface TrackedRun {
-  readonly launch: ClaudeReviewLaunch;
+  readonly launch: ClaudeReviewLaunch | CodexReviewLaunch;
   readonly settled: Promise<void>;
 }
 
@@ -148,12 +158,18 @@ const reviewTargetFor = (
 const bounded = (value: string | null | undefined, maximum: number): string | null =>
   value === null || value === undefined ? null : value.slice(0, maximum);
 
-const outcomeFields = (outcome: ClaudeReviewOutcome, endedAt: string): Omit<ReviewAttemptPatch, 'state'> => ({
+const outcomeFields = (
+  outcome: ClaudeReviewOutcome | CodexReviewOutcome,
+  endedAt: string,
+): Omit<ReviewAttemptPatch, 'state'> => ({
   durationMs: outcome.durationMs,
   endedAt,
   exitCode: outcome.exitCode,
   failureReason: outcome.failureReason,
   nativeSessionId: outcome.nativeSessionId,
+  ...('nativeTurnId' in outcome
+    ? { nativeTurnId: outcome.nativeTurnId, stopConfirmedAt: outcome.stopConfirmed ? endedAt : null }
+    : {}),
   numTurns: outcome.numTurns,
   resultExcerpt: outcome.resultExcerpt,
   resultKind: outcome.resultKind,
@@ -162,6 +178,9 @@ const outcomeFields = (outcome: ClaudeReviewOutcome, endedAt: string): Omit<Revi
 });
 
 const launchFailureReason = (error: unknown): string => {
+  if (error instanceof CodexReviewLaunchError) {
+    return `${error.kind}: ${error.message}`;
+  }
   if (error instanceof ClaudeReviewLaunchError) {
     return error.kind === 'scope-unavailable'
       ? `scope-unavailable: ${error.message}`
@@ -252,7 +271,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     ): UnresolvedReviewReservation => ({
       attemptId: attempt.attemptId,
       evidence,
-      launchSessionId: attempt.launchSessionId,
+      launchSessionId: attempt.executorHarness === 'codex' ? null : attempt.launchSessionId,
       lostAt: attempt.endedAt,
       pids,
     });
@@ -260,7 +279,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
       // This engine still holds the pipe; the process is its own and alive.
       return unresolved('process-running', [runs.get(attempt.attemptId)?.launch.pid ?? 0]);
     }
-    if (attempt.launchSessionId === null) {
+    if (attempt.executorHarness === 'codex' || attempt.launchSessionId === null) {
       return unresolved('process-evidence-unavailable');
     }
     const scan = await findProcesses(attempt.launchSessionId);
@@ -284,7 +303,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     return null;
   };
 
-  const track = (attempt: ReviewAttempt, launch: ClaudeReviewLaunch): void => {
+  const track = (attempt: ReviewAttempt, launch: ClaudeReviewLaunch | CodexReviewLaunch): void => {
     const settled = (async () => {
       try {
         const outcome = await launch.outcome;
@@ -306,7 +325,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
           endedAt,
         );
         let late = false;
-        if (!applied) {
+        if (!applied && outcome.kind !== 'lost') {
           // The row left the live states without this engine: contact was recorded lost while the
           // process ran. Its end is now known, so the outcome is recorded and the reservation released.
           late = (
@@ -369,6 +388,32 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
         }
       },
     };
+    if (decision.candidate.harness === 'codex') {
+      const pin = decision.declaration.accountFingerprint;
+      if (pin === undefined) {
+        throw new CodexReviewLaunchError('identity-changed', 'Codex requires a pinned account');
+      }
+      return await (options.codexLauncher ?? launchCodexReview)(
+        { ...spec, accountFingerprint: pin },
+        {
+          ...events,
+          onTurn: async (nativeTurnId) => {
+            await transition(attempt.attemptId, { nativeTurnId });
+          },
+        },
+        {
+          ...options.codexLaunchOptions,
+          scope: {
+            ...options.codexLaunchOptions?.scope,
+            revision: {
+              baseSha: admission.scope.baseSha,
+              headSha: admission.scope.headSha,
+              kind: admission.scope.kind,
+            },
+          },
+        },
+      );
+    }
     // The reserved revision is the reviewed one: the scope is prepared from the frozen SHAs the
     // admission recorded, never from a `HEAD` that may have moved since.
     const launchOptions = options.launchOptions ?? {};
@@ -456,7 +501,9 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
               attempt: {
                 candidateId: command.candidateId,
                 declaration: null,
-                executorHarness: SUPPORTED_REVIEW_EXECUTOR,
+                executorHarness:
+                  declarationForReviewCandidate(read.declarations, command.candidateId)?.declaration.harness ??
+                  SUPPORTED_REVIEW_EXECUTOR,
                 failureReason: `${reason.reason}: ${reason.message}`,
                 idempotencyKey,
                 machineId,
@@ -501,7 +548,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     // now, with the launch's own CLI and CLAUDE_CONFIG_DIR, so a later sign-in to another account
     // never runs the review under it (ADR 0057).
     const pin = decision.declaration.accountFingerprint;
-    if (pin !== undefined) {
+    if (pin !== undefined && decision.candidate.harness === 'claude-code') {
       const current = await probeAccount();
       signal?.throwIfAborted();
       if (current.accountFingerprint !== pin) {
@@ -567,7 +614,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
       };
     }
     const attempt = requested.attempt;
-    let launch: ClaudeReviewLaunch;
+    let launch: ClaudeReviewLaunch | CodexReviewLaunch;
     try {
       if (stopping) {
         throw new Error('the engine is stopping; the review was not launched');
@@ -651,14 +698,14 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     // Look for each process before recording the loss, so the reason says what was found.
     const scans = new Map<string, Awaited<ReturnType<FindReviewProcesses>>>();
     for (const attempt of live.attempts) {
-      if (attempt.launchSessionId !== null) {
+      if (attempt.executorHarness !== 'codex' && attempt.launchSessionId !== null) {
         scans.set(attempt.attemptId, await findProcesses(attempt.launchSessionId));
       }
     }
     const describe = (attemptId: string): string => {
       const scan = scans.get(attemptId);
       if (scan === undefined) {
-        return 'no launch marker was recorded, so the process cannot be looked for; the target stays reserved';
+        return 'no independently verifiable process marker is available for this harness; the target stays reserved';
       }
       if (scan.kind === 'found') {
         return `a process carrying its launch marker still runs (pid ${scan.pids.slice(0, 4).join(', ')}); it is not adopted or stopped, and the target stays reserved`;
@@ -764,7 +811,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
       return answer('process-found', { pids: [tracked.launch.pid] });
     }
     let evidence: 'operator-declared-ended' | 'process-absent' = 'operator-declared-ended';
-    if (attempt.launchSessionId !== null) {
+    if (attempt.executorHarness !== 'codex' && attempt.launchSessionId !== null) {
       const scan = await findProcesses(attempt.launchSessionId);
       if (scan.kind === 'found') {
         return answer('process-found', { pids: scan.pids.slice(0, 16) });
@@ -785,5 +832,31 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     return answer('released', { evidence, releasedAt: at });
   };
 
-  return { live: () => [...runs.keys()], recoverLost, releaseReservation, settle, shutdown, start };
+  const stop: ReviewAttemptService['stop'] = async (command, signal) => {
+    signal?.throwIfAborted();
+    const run = runs.get(command.attemptId);
+    if (run === undefined) {
+      const rows = await Effect.runPromise(
+        queryReviewAttempts({ dbPath: options.dbPath, machineId: options.machine().id }),
+      );
+      const row = rows.attempts.find((attempt) => attempt.attemptId === command.attemptId);
+      return {
+        kind: 'review-attempt-stop',
+        attemptId: command.attemptId,
+        result:
+          row !== undefined && !isLiveReviewAttemptState(row.state) && row.state !== 'lost'
+            ? 'already-ended'
+            : 'not-owned',
+      };
+    }
+    const at = now().toISOString();
+    const applied = await transition(command.attemptId, { stopRequestedAt: at });
+    if (!applied) {
+      return { kind: 'review-attempt-stop', attemptId: command.attemptId, result: 'already-ended' };
+    }
+    run.launch.terminate();
+    return { kind: 'review-attempt-stop', attemptId: command.attemptId, result: 'requested' };
+  };
+
+  return { live: () => [...runs.keys()], recoverLost, releaseReservation, settle, shutdown, start, stop };
 };

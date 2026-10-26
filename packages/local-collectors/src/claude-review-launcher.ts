@@ -1,12 +1,12 @@
 import {
   boundReviewExcerpt,
   buildReviewPrompt,
+  type ClaudeReviewHarnessGuarantee,
   parseClaudeStreamJsonLine,
   REVIEW_ATTEMPT_RUN_LIMITS,
   REVIEW_READ_ONLY_TOOLS,
   type ReviewAttemptResultKind,
   type ReviewAttemptScope,
-  type ReviewHarnessGuarantee,
 } from '@ai-usage/report-core/work-attempts';
 import { CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY, resolveClaudeExecutable } from './claude-command';
 import { ClaudeCliQualificationError, observeManagedSettings, qualifyClaudeCli } from './claude-review-cli';
@@ -49,7 +49,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
 export const CLAUDE_REVIEW_ALLOWED_TOOLS = REVIEW_READ_ONLY_TOOLS;
 /** Setting sources the launch loads: none. `--setting-sources` takes the empty list as `""`. */
-export const CLAUDE_REVIEW_SETTING_SOURCES: ReviewHarnessGuarantee['settingSources'] = [];
+export const CLAUDE_REVIEW_SETTING_SOURCES: ClaudeReviewHarnessGuarantee['settingSources'] = [];
 export const CLAUDE_REVIEW_DISALLOWED_TOOLS = [
   'Edit',
   'Write',
@@ -125,7 +125,7 @@ export interface ClaudeReviewOutcome {
 export interface ClaudeReviewLaunch {
   readonly args: readonly string[];
   /** What the launched session was configured with, as qualified before the spawn. */
-  readonly guarantee: ReviewHarnessGuarantee;
+  readonly guarantee: ClaudeReviewHarnessGuarantee;
   readonly outcome: Promise<ClaudeReviewOutcome>;
   readonly pid: number;
   readonly prompt: string;
@@ -224,7 +224,7 @@ export const launchClaudeReview = async (
     }
     throw error;
   }
-  const guarantee: ReviewHarnessGuarantee = {
+  const guarantee: ClaudeReviewHarnessGuarantee = {
     cliVersion,
     effort: spec.effort,
     managedSettings: await observeManagedSettings(options.managedSettingsPaths),

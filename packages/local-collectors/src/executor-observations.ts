@@ -14,6 +14,7 @@ import {
   parseExecutorObservation,
 } from '@ai-usage/report-core/work-executors';
 import { type ClaudeCommand, ClaudeCommandError, claudeCommandFor } from './claude-command';
+import { type CodexAccountObservation, probeCodexAccount } from './codex-app-server-client';
 import { type CodexCommand, codexCommandFor } from './codex-review-worker';
 
 /**
@@ -69,6 +70,8 @@ export const runBoundedProcess: BoundedRun = async (spec) => {
 };
 
 export interface ObserveExecutorsInput {
+  /** Test seam for the account/rate-limit handshake; production always uses the app-server. */
+  readonly codexAccountProbe?: () => Promise<CodexAccountObservation | null>;
   /**
    * The environment the review launch uses (default `process.env`): its `CLAUDE_CONFIG_DIR` and
    * `AI_USAGE_CLAUDE_EXECUTABLE` decide which CLI and which account the Claude probe reads, its
@@ -293,7 +296,7 @@ const codexAuthProbe = async (run: BoundedRun, timeoutMs: number, codex: CodexCo
   }
   const mentionsLoggedIn = CODEX_LOGGED_IN_PATTERN.test(result.stdout);
   const authMethod = classifyCodexAuthMethod(result.stdout) ?? codexAuthMethodFrom(result.stderrClass);
-  // Codex names its account only inside its credential file, which is never read: no fingerprint.
+  // Login status names no account; the app-server handshake supplies identity separately.
   return {
     accountFingerprint: null,
     authMethod,
@@ -344,7 +347,9 @@ const resolveLaunchCommand = (
 
 const observeExecutor = async (
   harness: ExecutorHarness,
-  input: Required<Pick<ObserveExecutorsInput, 'env' | 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>>,
+  input: Required<
+    Pick<ObserveExecutorsInput, 'codexAccountProbe' | 'env' | 'machineId' | 'now' | 'run' | 'timeoutMs' | 'which'>
+  >,
 ): Promise<ExecutorObservation> => {
   const observedAt = input.now().toISOString();
   const base: ObservationBase = { harness, machineId: input.machineId, observedAt };
@@ -382,10 +387,26 @@ const observeExecutor = async (
     versionOutcome = outcomeOfFailure(kind);
     versionEvidence = `${command} --version ${kind}`;
   }
-  const auth =
+  let auth =
     claude === null
       ? await codexAuthProbe(input.run, input.timeoutMs, launch)
       : await claudeAuthProbe(input.run, input.timeoutMs, claude);
+  if (claude === null && auth.authState === 'logged-in') {
+    try {
+      const account = await input.codexAccountProbe();
+      if (account !== null) {
+        auth = { ...account, outcome: 'observed' };
+      }
+    } catch {
+      auth = {
+        accountFingerprint: null,
+        authMethod: null,
+        authState: 'unknown',
+        evidence: 'Codex app-server account identity unavailable',
+        outcome: 'invalid',
+      };
+    }
+  }
   if (auth.outcome === 'unavailable') {
     return unavailableObservation(base, `${auth.evidence} to the bounded runner`);
   }
@@ -444,8 +465,8 @@ export interface CodexAuthProbe {
 /**
  * Reads the Codex sign-in now, with the launch's own command and `CODEX_HOME` (`codexCommandFor`):
  * what a start re-checks just before launching a Codex worker, so the profile that bills the run is
- * the one admitted (a subscription, never an API key). Codex names no account, so there is no
- * fingerprint to compare; the state and the method word are the whole evidence.
+ * the one admitted (a subscription, never an API key). This login-status probe names no account;
+ * a pinned route separately confirms its fingerprint through the app-server handshake.
  */
 export const probeCodexAuth = async (input: {
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -463,6 +484,9 @@ export const probeCodexAuth = async (input: {
 
 export const observeExecutors = async (input: ObserveExecutorsInput): Promise<ExecutorObservation[]> => {
   const resolved = {
+    codexAccountProbe:
+      input.codexAccountProbe ??
+      (() => probeCodexAccount({ env: input.env ?? process.env, timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS })),
     env: input.env ?? process.env,
     machineId: input.machineId,
     now: input.now ?? (() => new Date()),

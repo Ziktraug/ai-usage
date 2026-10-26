@@ -24,7 +24,7 @@ What this version does and does not do:
   are read from the store directly and stay readable when the engine is down.
   The web server is not needed.
 - The worker CLIs installed and signed in with your subscription
-  (`claude auth status`, `codex login status`). AI Usage never reads their
+  (`claude auth status`, `codex login status` and Codex app-server account observations). AI Usage never reads their
   credential files.
 - In the home config (`~/.config/ai-usage/config.json`), or from
   **Manage › Delegation** in the web app:
@@ -231,7 +231,7 @@ GitHub remotes only when every remote is identified or known not to be GitHub
 (another host over HTTPS or `git://`, a local path). Write remotes with
 GitHub's own host if you want rules to read them.
 
-A quota observed before the latest observed change of the Claude Code account
+A quota observed before the latest observed change of an observed executor account
 is not attributed to the current account. The engine records the time of that
 change per executor when it imports the observations; the record outlives the
 pruning of the observation history and engine restarts. The route waits for a
@@ -270,7 +270,10 @@ A job records three different things:
   `unstructured`); an automated check records which.
 - **Verification** — the calling model's check of the findings
   (`delegation.evaluate`, author `calling-model`).
-- **Acceptance** — yours, in the Work view (accepted, rejected, taken over).
+- **Acceptance** — yours, in **My work → Delegation results** at
+  `/work/sessions#work-delegations-heading` (accepted, rejected, taken over).
+  `/work` keeps the durable tasks; the session intake and delegation results
+  remain secondary.
 
 A `lost` job means the engine lost contact (restart, shutdown). It is never
 relaunched; it keeps its reservation until the engine shows that the process
@@ -291,8 +294,12 @@ route and the refusal reason are never cut.
 
 ## 7. Limits
 
-- Codex exposes no account identity outside its credential file. A Codex route
-  rests on your declaration; a rule requiring an observed identity blocks it.
+- Codex identity is observed through the bounded app-server account handshake,
+  without reading credentials. A rule requiring observed identity refuses when
+  that observation is unavailable. A pinned Codex delegation rechecks the same
+  profile before launching `codex exec`; the Work review's app-server path also
+  rechecks its pinned account and included capacity before starting its turn.
+  Both paths pass the common admission and share target and pool reservations.
 - Quota is read with its freshness rule and is not force-refreshed: a stale
   reading excludes the route and names the refresh.
 - Announced resets, promotions and resets you could consume are not collected.

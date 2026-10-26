@@ -657,6 +657,7 @@ const runState = (
   machineId: MACHINE,
   message: null,
   observed: 1,
+  outcomeCode: null,
   ranAt: hoursAgo(0.25),
   sourceId,
   ...overrides,
@@ -1401,7 +1402,7 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
   const factIds = (root: { readonly facts: readonly { readonly id: string }[] }) =>
     new Set(root.facts.map(({ id }) => id));
 
-  test('Q1, then a message in the harness, then Q2: Q1 reads answered with dated evidence, Q2 stays the request', async () => {
+  test('Q1, then a message in the harness, then Q2: Q1 is superseded without answer attribution, Q2 stays current', async () => {
     const dbPath = await emptyStore();
     const asked = { id: 'q', status: 'blocked' as const, title: 'Fixture: two questions' };
     await sweep(
@@ -1448,10 +1449,10 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     expect(root?.attention).toBe('human-request');
     expect(root?.reconsidered).toBe(false);
     expect(root?.declared).toMatchObject({ at: hoursAgo(4), needsAction: 'Q2: delete branch b?' });
-    expect(root?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'earlier-request-answered']);
+    expect(root?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'earlier-request-superseded']);
     const answered = root?.interpretations[1];
     expect(answered?.text).toBe(
-      `Answered in Claude Desktop: the question “Q1: keep checkout 3?” (asked ${hoursAgo(6)}); you wrote to the session at ${hoursAgo(5.5)} and it declared again at ${hoursAgo(4)}.`,
+      `Declaration replaced: the question “Q1: keep checkout 3?” (asked ${hoursAgo(6)}) was replaced by the session’s declaration at ${hoursAgo(4)}.`,
     );
     // Every piece of evidence resolves to a fact of the root, each dated by the session.
     const ids = factIds(root ?? { facts: [] });
@@ -1464,7 +1465,7 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     });
   });
 
-  test('a message recorded after the current question answers it without any confirmation here', async () => {
+  test('a message recorded after the current question leaves attention open without an attributed answer', async () => {
     const dbPath = await emptyStore();
     const asked = {
       id: 'r',
@@ -1474,13 +1475,13 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
       title: 'Fixture: replied',
     };
     await sweep(dbPath, [nativeDocument({ ...asked, activityHoursAgo: 3, frameHoursAgo: 3.5 })], 2.9);
-    // The person answered; the session is working, so its activity moved and its summary has not.
+    // A message arrived; its date cannot distinguish an answer from “je reviens demain”.
     await sweep(dbPath, [nativeDocument({ ...asked, activityHoursAgo: 2, frameHoursAgo: 2.5 })], 1.9);
     const root = (await read(dbPath)).roots.find((candidate) => candidate.desktopSessionId === 'local_r');
-    expect(root?.attention).toBe('none');
+    expect(root?.attention).toBe('human-request');
     expect(root?.declared?.at).toBe(hoursAgo(3));
-    expect(root?.interpretations.map(({ kind }) => kind)).toEqual(['request-answered']);
-    expect(root?.interpretations[0]?.text).toContain(`you wrote to the session at ${hoursAgo(2.5)}`);
+    expect(root?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-message-observed']);
+    expect(root?.interpretations[1]?.text).toContain(`Message observed in Claude Desktop at ${hoursAgo(2.5)}`);
   });
 
   test('a single sweep cannot date a reply it did not see: the question stays open', async () => {
@@ -1504,7 +1505,7 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     expect(root?.attention).toBe('human-request');
   });
 
-  test('a session started from the root after its question and completed handles it; one still running is to reconsider', async () => {
+  test('a session started from the root after its question is linked activity, whether completed or still running', async () => {
     const dbPath = await emptyStore();
     await sweep(
       dbPath,
@@ -1566,10 +1567,10 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     const dataset = await read(dbPath);
     const byId = new Map(dataset.roots.map((root) => [root.desktopSessionId, root]));
     const handled = byId.get('local_h');
-    expect(handled?.attention).toBe('none');
-    expect(handled?.interpretations.map(({ kind }) => kind)).toEqual(['request-handled-elsewhere']);
-    expect(handled?.interpretations[0]?.text).toContain('Handled in “Fixture: fix it”: started from this session at');
-    expect(handled?.interpretations[0]?.evidence.every((id) => factIds(handled).has(id))).toBe(true);
+    expect(handled?.attention).toBe('human-request');
+    expect(handled?.interpretations.map(({ kind }) => kind)).toEqual(['request-open', 'request-continued-elsewhere']);
+    expect(handled?.interpretations[1]?.text).toContain('“Fixture: fix it” (started from this session at');
+    expect(handled?.interpretations[1]?.evidence.every((id) => factIds(handled).has(id))).toBe(true);
     const continued = byId.get('local_k');
     expect(continued?.attention).toBe('human-request');
     expect(continued?.reconsidered).toBe(true);
@@ -1584,7 +1585,7 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     );
   });
 
-  test('proposals offered before a later message or past their expiry are no lead; the last offer is', async () => {
+  test('proposals offered before a later message remain open; only native expiry removes the offer', async () => {
     const dbPath = await emptyStore();
     await sweep(
       dbPath,
@@ -1618,10 +1619,10 @@ describe('queryWorkAttention against what Claude Desktop recorded after a reques
     const offers = byId.get('local_p');
     expect(offers?.attention).toBe('optional-lead');
     const kinds = new Map(offers?.interpretations.map((entry) => [entry.kind, entry.evidence]));
-    expect(kinds.get('proposal-open')).toEqual(['local_p:proposal:task_last']);
-    expect(kinds.get('proposal-superseded')).toEqual(['local_p:proposal:task_before']);
+    expect(kinds.get('proposal-open')).toEqual(['local_p:proposal:task_before', 'local_p:proposal:task_last']);
+    expect(kinds.has('proposal-superseded')).toBe(false);
     expect(kinds.get('proposal-expired')).toEqual(['local_p:proposal:task_expired']);
-    expect(byId.get('local_p2')?.attention).toBe('none');
+    expect(byId.get('local_p2')?.attention).toBe('optional-lead');
     expect(JSON.stringify([...byId.values()])).not.toContain('PRIVATE_PROMPT_NEVER_READ');
   });
 

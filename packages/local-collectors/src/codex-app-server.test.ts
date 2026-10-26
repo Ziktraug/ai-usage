@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
 import { CodexQuotaCollectionError, createCodexAppServerBatchSource } from './codex-app-server';
+import { codexAccountFingerprint } from './codex-app-server-client';
 
 const fixturePath = path.join(import.meta.dir, 'test-fixtures', 'fake-codex-app-server.ts');
 
 describe('Codex app-server quota collector', () => {
-  test('performs only initialization and a correlated rate-limit read', async () => {
+  test('binds quota to the same ChatGPT account handshake used by launch', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-app-server-'));
     const logPath = path.join(directory, 'requests.json');
     const source = createCodexAppServerBatchSource({
@@ -19,7 +20,9 @@ describe('Codex app-server quota collector', () => {
 
     const result = await Effect.runPromise(
       source.collect({
-        accountScope: 'account-digest',
+        accountScope:
+          codexAccountFingerprint({ type: 'chatgpt', email: 'quota@example.test' }, { accountId: 'quota-account' }) ??
+          '',
         machineId: 'machine-1',
         machineLabel: 'Laptop',
         observedAt: new Date('2026-07-15T10:00:00.000Z'),
@@ -30,7 +33,8 @@ describe('Codex app-server quota collector', () => {
     expect(JSON.parse(readFileSync(logPath, 'utf8'))).toEqual([
       { id: 1, method: 'initialize' },
       { method: 'initialized' },
-      { id: 2, method: 'account/rateLimits/read' },
+      { id: 2, method: 'account/read' },
+      { id: 3, method: 'account/rateLimits/read' },
     ]);
   });
 

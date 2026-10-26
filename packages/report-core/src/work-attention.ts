@@ -1,4 +1,5 @@
 import type { CanonicalInstant } from './canonical-instant';
+import type { CodexWorkRequest } from './codex-work-observation';
 import { isRecord } from './datasets';
 import { normalizeIsoTimestamp } from './provider-status';
 
@@ -599,11 +600,17 @@ export interface PullRequestObservation {
   readonly accountLabel: string | null;
   readonly baseRef: string | null;
   readonly checksRollup: PullRequestCheckRollup | null;
+  /** When GitHub closed it without merging; `mergedAt` carries a merge. */
+  readonly closedAt?: CanonicalInstant | null;
+  readonly createdAt?: CanonicalInstant | null;
+  readonly discoveryRole?: 'author' | 'review-requested' | null;
   readonly draft: boolean | null;
   readonly headRef: string | null;
   readonly host: string;
   readonly machineId: string;
+  readonly mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
   readonly mergedAt: CanonicalInstant | null;
+  readonly mergeStateStatus?: string | null;
   readonly number: number;
   readonly observedAt: CanonicalInstant;
   readonly outcome: PullRequestObservationOutcome;
@@ -612,9 +619,28 @@ export interface PullRequestObservation {
   readonly reviewDecision: string | null;
   readonly state: PullRequestState | null;
   readonly title: string | null;
+  /**
+   * Review threads GitHub reports unresolved (`reviewThreads.isResolved`) on an open pull request;
+   * `null` when not read or not completely countable. A comment is not an unresolved thread.
+   */
+  readonly unresolvedReviewThreads?: number | null;
   readonly updatedAt: CanonicalInstant | null;
   readonly url: string | null;
 }
+
+/** New GitHub dates accept UTC ISO strings only; older persisted instant fields keep their existing parser. */
+const optionalPullRequestLifecycleInstant = (value: unknown): CanonicalInstant | null | undefined => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = normalizeIsoTimestamp(value);
+  return normalized !== null && (normalized === value || normalized.replace('.000Z', 'Z') === value)
+    ? normalized
+    : undefined;
+};
 
 export const parsePullRequestObservation = (value: unknown): PullRequestObservation | null => {
   if (!isRecord(value)) {
@@ -628,9 +654,21 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
   const outcome = oneOf(PULL_REQUEST_OBSERVATION_OUTCOMES, value.outcome);
   const outcomeMessage = optionalText(value.outcomeMessage, maxDetailText);
   const accountLabel = optionalText(value.accountLabel, maxShortText);
+  const discoveryRole =
+    value.discoveryRole === null || value.discoveryRole === undefined
+      ? null
+      : oneOf(['author', 'review-requested'] as const, value.discoveryRole);
+  const mergeable =
+    value.mergeable === null || value.mergeable === undefined
+      ? null
+      : oneOf(['MERGEABLE', 'CONFLICTING', 'UNKNOWN'] as const, value.mergeable);
+  const mergeStateStatus = optionalText(value.mergeStateStatus, maxShortText);
   const state = value.state === null || value.state === undefined ? null : oneOf(PULL_REQUEST_STATES, value.state);
   const draft = optionalBoolean(value.draft);
   const reviewDecision = optionalText(value.reviewDecision, maxShortText);
+  const createdAt = optionalPullRequestLifecycleInstant(value.createdAt);
+  const closedAt = optionalPullRequestLifecycleInstant(value.closedAt);
+  const unresolvedReviewThreads = optionalCount(value.unresolvedReviewThreads);
   const mergedAt = optionalInstant(value.mergedAt);
   const updatedAt = optionalInstant(value.updatedAt);
   const title = optionalText(value.title, maxShortText);
@@ -652,9 +690,15 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     outcome === undefined ||
     outcomeMessage === undefined ||
     accountLabel === undefined ||
+    discoveryRole === undefined ||
+    mergeable === undefined ||
+    mergeStateStatus === undefined ||
     state === undefined ||
     draft === undefined ||
     reviewDecision === undefined ||
+    createdAt === undefined ||
+    closedAt === undefined ||
+    unresolvedReviewThreads === undefined ||
     mergedAt === undefined ||
     updatedAt === undefined ||
     title === undefined ||
@@ -669,10 +713,15 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     accountLabel,
     baseRef,
     checksRollup,
+    closedAt,
+    createdAt,
+    discoveryRole,
     draft,
     headRef,
     host,
     machineId,
+    mergeable,
+    mergeStateStatus,
     mergedAt,
     number,
     observedAt,
@@ -682,6 +731,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     reviewDecision,
     state,
     title,
+    unresolvedReviewThreads,
     updatedAt,
     url,
   };
@@ -986,7 +1036,14 @@ export const WORK_ATTENTION_KINDS = [
 ] as const;
 export type WorkAttentionKind = (typeof WORK_ATTENTION_KINDS)[number];
 
-export const WORK_FACT_SOURCES = ['claude-desktop', 'claude-transcript', 'github', 'local-checkout', 'jira'] as const;
+export const WORK_FACT_SOURCES = [
+  'claude-desktop',
+  'claude-transcript',
+  'codex-rollout',
+  'github',
+  'local-checkout',
+  'jira',
+] as const;
 export type WorkFactSource = (typeof WORK_FACT_SOURCES)[number];
 
 export interface WorkFactProvenance {
@@ -1003,6 +1060,19 @@ interface WorkFactBase {
 
 export type WorkFact = WorkFactBase &
   (
+    | {
+        readonly kind: 'codex-user-request';
+        readonly sourceSessionId: string;
+        readonly request: CodexWorkRequest;
+      }
+    | {
+        readonly kind: 'codex-session-context';
+        readonly sourceSessionId: string;
+        readonly originator: string | null;
+        readonly executionSource: string | null;
+        readonly threadSource: string | null;
+        readonly forkedFromId: string | null;
+      }
     | {
         readonly kind: 'declared-turn';
         readonly declaredAt: CanonicalInstant;
@@ -1108,18 +1178,21 @@ export type WorkFactKind = WorkFact['kind'];
 
 /**
  * What an interpretation names. The request kinds read one declaration against what followed it
- * (ADR 0056): `request-open` is a current confirmed block; `request-satisfied-elsewhere` and
+ * (ADR 0056): `request-open` is a current declared block; `request-satisfied-elsewhere` and
  * `request-continued-elsewhere` make it an older declaration to reconsider (an unproven link, the
  * question stays the person's), and so does `request-dormant` (no activity in its session family
- * for more than `WORK_REQUEST_DORMANT_AFTER_MS`, which closes nothing); `request-answered`, `request-handled-elsewhere` and
- * `request-archived` name a dated, explicit native record that it is no longer waiting; the
- * `earlier-request-*` kinds read declarations a later turn replaced.
+ * for more than `WORK_REQUEST_DORMANT_AFTER_MS`, which closes nothing). `request-message-observed`
+ * records a later message without attributing an answer. `request-archived` removes current
+ * attention without claiming a decision. `request-answered` and `request-handled-elsewhere` need
+ * an exact native attribution; chronology and lineage alone never qualify. The
+ * `earlier-request-*` kinds read declarations a later turn replaced without implying delivery.
  */
 export const WORK_INTERPRETATION_KINDS = [
   'request-open',
   'request-satisfied-elsewhere',
   'request-continued-elsewhere',
   'request-dormant',
+  'request-message-observed',
   'request-answered',
   'request-handled-elsewhere',
   'request-archived',

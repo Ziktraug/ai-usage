@@ -1,4 +1,3 @@
-import { SUPPORTED_REVIEW_EXECUTOR } from '@ai-usage/report-core/work-attempts';
 import { EXECUTOR_HARNESSES, type ExecutorHarness } from '@ai-usage/report-core/work-executors';
 import {
   type CandidateIdentity,
@@ -128,9 +127,9 @@ export const routingSummary = (input: RoutingSummaryInput): RoutingSummaryRow[] 
           : declarations.map(declaredLine),
       detected: detectedLine(observation, harness, input.referenceTime),
       execution:
-        harness === SUPPORTED_REVIEW_EXECUTOR
-          ? 'Execution: a real recommendation can launch a read-only review.'
-          : 'Execution: simulated only; this version launches no Codex review.',
+        harness === 'codex'
+          ? 'Execution: the engine rechecks the pinned ChatGPT account, model and credit policy before a read-only review; any unqualified billing mode is refused.'
+          : 'Execution: a real recommendation can launch a read-only review.',
       harness,
       identity: identities,
       label: harnessLabel(harness),

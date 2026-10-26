@@ -18,6 +18,7 @@ import {
   queryWorkFactRunStates,
   type UsageStoreError,
 } from './reader';
+import { MAX_WORK_THREAD_CHECKOUT_KEYS, MAX_WORK_THREAD_FACT_KEYS, migrateWorkFactSchema } from './work-fact-store';
 import {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
@@ -48,10 +49,15 @@ const pullRequest = (overrides: Partial<PullRequestObservation> = {}): PullReque
     accountLabel: null,
     baseRef: 'main',
     checksRollup: 'success',
+    closedAt: null,
+    createdAt: null,
+    discoveryRole: null,
     draft: false,
     headRef: 'feat/work-view',
     host: 'github.com',
     machineId: 'machine-a',
+    mergeable: null,
+    mergeStateStatus: null,
     mergedAt: null,
     number: 66,
     observedAt: at(0),
@@ -61,6 +67,7 @@ const pullRequest = (overrides: Partial<PullRequestObservation> = {}): PullReque
     reviewDecision: 'REVIEW_REQUIRED',
     state: 'OPEN',
     title: 'Add the Work view',
+    unresolvedReviewThreads: null,
     updatedAt: parseCanonicalInstant('2026-10-21T18:30:00.000Z'),
     url: 'https://github.com/fixture/project/pull/66',
     ...overrides,
@@ -138,6 +145,140 @@ const failureReason = async (effect: Effect.Effect<unknown, UsageStoreError>): P
 };
 
 describe('work fact store: pull request observations', () => {
+  test('upgrades the previous PR table additively, keeps every old row and reads absent facts without writing', async () => {
+    const dbPath = await createStore('previous-pr-schema');
+    const previous = new Database(dbPath);
+    // The complete table definition from the pre-R2 schema, independent of the current schema helper.
+    previous.exec(`
+      DROP TABLE pull_request_observations;
+      CREATE TABLE pull_request_observations (
+        id INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL, host TEXT NOT NULL, repository TEXT NOT NULL,
+        number INTEGER NOT NULL CHECK (number > 0), observed_at TEXT NOT NULL, outcome TEXT NOT NULL,
+        outcome_message TEXT, account_label TEXT, state TEXT, draft INTEGER CHECK (draft IN (0, 1)),
+        review_decision TEXT, merged_at TEXT, updated_at TEXT, title TEXT, url TEXT,
+        head_ref TEXT, base_ref TEXT, checks_rollup TEXT, discovery_role TEXT, mergeable TEXT, merge_state_status TEXT
+      );
+      CREATE UNIQUE INDEX idx_pull_request_observations_identity
+        ON pull_request_observations(machine_id, host, repository, number, observed_at DESC);
+    `);
+    for (const number of [11, 12]) {
+      previous
+        .query(`INSERT INTO pull_request_observations
+        (id, machine_id, host, repository, number, observed_at, outcome, title, state, discovery_role)
+        VALUES (?, 'machine-a', 'github.com', 'demo/migration', ?, ?, 'observed', ?, 'OPEN', 'author')`)
+        .run(number, number, at(0), `Historical PR ${number}`);
+    }
+    const oldRows = previous.query('SELECT * FROM pull_request_observations ORDER BY id').all() as Record<
+      string,
+      unknown
+    >[];
+    previous.close();
+
+    const legacyRead = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(legacyRead.items).toHaveLength(2);
+    expect(legacyRead.skipped).toBe(0);
+    for (const { latestObserved } of legacyRead.items) {
+      expect(latestObserved).toMatchObject({ closedAt: null, createdAt: null, unresolvedReviewThreads: null });
+    }
+    const beforeUpgrade = new Database(dbPath, { readonly: true });
+    expect(beforeUpgrade.query('PRAGMA table_info(pull_request_observations)').all()).toHaveLength(22);
+    beforeUpgrade.close();
+
+    // The engine's normal writer open owns the migration transaction.
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const upgraded = new Database(dbPath);
+    expect(upgraded.query('SELECT * FROM pull_request_observations ORDER BY id').all()).toEqual(
+      oldRows.map((row) => ({ ...row, closed_at: null, created_at: null, unresolved_review_threads: null })),
+    );
+    const columns = upgraded.query('PRAGMA table_info(pull_request_observations)').all() as {
+      name: string;
+      type: string;
+      notnull: number;
+    }[];
+    expect(
+      columns
+        .filter(({ name }) => ['created_at', 'closed_at', 'unresolved_review_threads'].includes(name))
+        .map(({ name, type, notnull }) => ({ name, type, notnull })),
+    ).toEqual([
+      { name: 'created_at', type: 'TEXT', notnull: 0 },
+      { name: 'closed_at', type: 'TEXT', notnull: 0 },
+      { name: 'unresolved_review_threads', type: 'INTEGER', notnull: 0 },
+    ]);
+    expect(migrateWorkFactSchema(upgraded as unknown as Parameters<typeof migrateWorkFactSchema>[0])).toBe(false);
+    expect(upgraded.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+    upgraded.close();
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    expect(rowCount(dbPath, 'pull_request_observations')).toBe(2);
+    expect(await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }))).toEqual(legacyRead);
+  });
+
+  test('round-trips opened and closed dates and unresolved thread counts including zero', async () => {
+    const dbPath = await createStore('pr-lifecycle');
+    const observations = [
+      pullRequest({ number: 31, createdAt: at(0), observedAt: at(1), unresolvedReviewThreads: 2 }),
+      pullRequest({ number: 32, createdAt: at(0), observedAt: at(1), unresolvedReviewThreads: 0 }),
+      pullRequest({
+        number: 33,
+        createdAt: at(0),
+        closedAt: at(1),
+        mergedAt: at(1),
+        observedAt: at(2),
+        state: 'MERGED',
+      }),
+    ];
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations }));
+    const actual = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(
+      actual.items
+        .map(({ latestObserved }) => latestObserved)
+        .sort((left, right) => (left?.number ?? 0) - (right?.number ?? 0)),
+    ).toEqual(observations);
+    const db = new Database(dbPath, { readonly: true });
+    expect(
+      db
+        .query('SELECT created_at, closed_at, unresolved_review_threads FROM pull_request_observations ORDER BY number')
+        .all(),
+    ).toEqual([
+      { created_at: at(0), closed_at: null, unresolved_review_threads: 2 },
+      { created_at: at(0), closed_at: null, unresolved_review_threads: 0 },
+      { created_at: at(0), closed_at: at(1), unresolved_review_threads: null },
+    ]);
+    db.close();
+  });
+
+  test('reads legacy columns without migration and adds nullable columns on the next import', async () => {
+    const dbPath = await createStore('legacy-discovery');
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [pullRequest()] }));
+    const legacy = new Database(dbPath);
+    for (const column of ['discovery_role', 'mergeable', 'merge_state_status']) {
+      legacy.exec(`ALTER TABLE pull_request_observations DROP COLUMN ${column}`);
+    }
+    legacy.close();
+    const before = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(before.items[0]?.latestObserved).toEqual(pullRequest());
+    const observed = pullRequest({
+      discoveryRole: 'author',
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'BEHIND',
+      observedAt: at(1),
+    });
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [observed] }));
+    expect((await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }))).items[0]?.latestObserved).toEqual(
+      observed,
+    );
+    const migrated = new Database(dbPath);
+    expect(
+      migrated
+        .query(
+          'SELECT discovery_role, mergeable, merge_state_status FROM pull_request_observations ORDER BY observed_at DESC LIMIT 1',
+        )
+        .get(),
+    ).toEqual({ discovery_role: 'author', mergeable: 'MERGEABLE', merge_state_status: 'BEHIND' });
+    expect(migrateWorkFactSchema(migrated as unknown as Parameters<typeof migrateWorkFactSchema>[0])).toBe(false);
+    migrated.close();
+  });
+
   test('keeps the latest observation and the latest successful one apart, and re-imports idempotently', async () => {
     const dbPath = await createStore('pull-requests');
     const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
@@ -257,13 +398,13 @@ describe('work fact store: checkout status observations', () => {
     ).toEqual({ inserted: 3, pruned: 0, rejected: 1, unchanged: 0 });
     const all = await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }));
     expect(all.items).toEqual([
-      { latest: failedCheckout(2), latestObserved: checkout() },
-      { latest: other, latestObserved: other },
+      { countsChangedAt: null, latest: failedCheckout(2), latestObserved: checkout() },
+      { countsChangedAt: null, latest: other, latestObserved: other },
     ]);
     const filtered = await Effect.runPromise(
       queryLatestCheckoutStatusObservations({ dbPath, paths: ['/home/alex/projects/other'] }),
     );
-    expect(filtered.items).toEqual([{ latest: other, latestObserved: other }]);
+    expect(filtered.items).toEqual([{ countsChangedAt: null, latest: other, latestObserved: other }]);
     expect(filtered.skipped).toBe(0);
   });
 
@@ -278,15 +419,209 @@ describe('work fact store: checkout status observations', () => {
     );
     expect(rowCount(dbPath, 'checkout_status_observations')).toBe(6);
     const latest = await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }));
-    expect(latest.items).toEqual([{ latest: failedCheckout(6), latestObserved: checkout() }]);
+    expect(latest.items).toEqual([{ countsChangedAt: null, latest: failedCheckout(6), latestObserved: checkout() }]);
     await Effect.runPromise(
       importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(7) })] }),
     );
     expect(rowCount(dbPath, 'checkout_status_observations')).toBe(5);
   });
+
+  test('count activity requires a proven change and survives polls, failures, retention and late imports', async () => {
+    const dbPath = await createStore('checkout-activity');
+    const read = async () =>
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath, machineId: 'machine-a' }))).items[0]
+        ?.countsChangedAt;
+    await Effect.runPromise(importCheckoutStatusObservations({ dbPath, observations: [checkout()] }));
+    expect(await read()).toBeNull();
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(1) })] }),
+    );
+    expect(await read()).toBeNull();
+    // A shuffled batch is compared by observation time, never import order.
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout({ observedAt: at(4), modifiedCount: 8 }),
+          checkout({ observedAt: at(2), modifiedCount: 8 }),
+          failedCheckout(3),
+          checkout({ machineId: 'machine-b', observedAt: at(5), modifiedCount: 99 }),
+        ],
+      }),
+    );
+    expect(await read()).toBe(at(2));
+    for (let minute = 5; minute < 13; minute++) {
+      await Effect.runPromise(
+        importCheckoutStatusObservations({
+          dbPath,
+          observations: [checkout({ observedAt: at(minute), modifiedCount: 8 })],
+        }),
+      );
+    }
+    expect(await read()).toBe(at(2));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [failedCheckout(13), failedCheckout(14)] }),
+    );
+    expect(await read()).toBe(at(2));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(15), modifiedCount: 9 })] }),
+    );
+    expect(await read()).toBe(at(15));
+    // Late history does not stamp the current poll time onto an already proven change.
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(14), modifiedCount: 8 })] }),
+    );
+    expect(await read()).toBe(at(15));
+  });
+
+  test('backfilled evidence moves a proven count change earlier without losing a retained baseline', async () => {
+    const dbPath = await createStore('checkout-activity-backfill');
+    const read = async () =>
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt;
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout({ observedAt: at(10), modifiedCount: 0 }),
+          checkout({ observedAt: at(12), modifiedCount: 1 }),
+        ],
+      }),
+    );
+    expect(await read()).toBe(at(12));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(11), modifiedCount: 1 })] }),
+    );
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [13, 14, 15, 16, 17, 18].map((minute) => failedCheckout(minute)),
+      }),
+    );
+    // Only one success survives; its predecessor and the actual change observation have been pruned.
+    expect(rowCount(dbPath, 'checkout_status_observations')).toBe(6);
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(19), modifiedCount: 1 })] }),
+    );
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(20), modifiedCount: 2 })] }),
+    );
+    expect(await read()).toBe(at(20));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [21, 22, 23, 24, 25, 26].map((minute) => failedCheckout(minute)),
+      }),
+    );
+    // A sole retained success may itself be the observation where the counts changed.
+    expect(await read()).toBe(at(20));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(27), modifiedCount: 2 })] }),
+    );
+    expect(await read()).toBe(at(20));
+  });
+
+  test('backfilled observations before retained history preserve its proven change checkpoint', async () => {
+    const dbPath = await createStore('checkout-activity-retained-backfill');
+    const read = async () =>
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt;
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout({ observedAt: at(10), modifiedCount: 0 }),
+          checkout({ observedAt: at(12), modifiedCount: 1 }),
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(11), modifiedCount: 1 })] }),
+    );
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [13, 14, 15, 16, 17, 18, 19, 20].map((minute) =>
+          checkout({ observedAt: at(minute), modifiedCount: 1 }),
+        ),
+      }),
+    );
+    expect(await read()).toBe(at(11));
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(10), modifiedCount: 0 })] }),
+    );
+    expect(await read()).toBe(at(11));
+  });
+
+  test('unknown counts cannot establish change and legacy readers remain read-only before migration', async () => {
+    const dbPath = await createStore('checkout-legacy-activity');
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [checkout({ modifiedCount: null }), checkout({ observedAt: at(1), modifiedCount: 8 })],
+      }),
+    );
+    expect(
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt,
+    ).toBeNull();
+    const legacy = new Database(dbPath);
+    legacy.exec('ALTER TABLE checkout_status_observations DROP COLUMN counts_changed_at');
+    legacy.exec('ALTER TABLE work_fact_run_state DROP COLUMN outcome_code');
+    legacy.close();
+    expect(
+      (await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt,
+    ).toBeNull();
+    expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).runs).toEqual([]);
+    const before = new Database(dbPath, { readonly: true });
+    expect(
+      before
+        .query('PRAGMA table_info(checkout_status_observations)')
+        .all()
+        .some(
+          (column) =>
+            typeof column === 'object' && column !== null && 'name' in column && column.name === 'counts_changed_at',
+        ),
+    ).toBe(false);
+    before.close();
+    await Effect.runPromise(
+      importCheckoutStatusObservations({ dbPath, observations: [checkout({ observedAt: at(2), modifiedCount: 9 })] }),
+    );
+    expect((await Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath }))).items[0]?.countsChangedAt).toBe(
+      at(2),
+    );
+  });
 });
 
 describe('work fact store: run state', () => {
+  test('persists and clears a typed discovery authentication outcome without parsing messages', async () => {
+    const dbPath = await createStore('typed-outcome');
+    const input = {
+      dbPath,
+      machineId: 'machine-a',
+      sourceId: 'github.pull-requests' as const,
+      ranAt: at(0),
+      disabled: false,
+      failed: 1,
+      observed: 0,
+      message: 'fixture',
+      outcomeCode: 'unauthenticated' as const,
+    };
+    expect(await Effect.runPromise(recordWorkFactRun(input))).toEqual({ changed: true });
+    expect(await Effect.runPromise(recordWorkFactRun(input))).toEqual({ changed: false });
+    expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).runs[0]?.outcomeCode).toBe('unauthenticated');
+    expect(await Effect.runPromise(recordWorkFactRun({ ...input, outcomeCode: null }))).toEqual({ changed: true });
+    expect((await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).runs[0]?.outcomeCode).toBeNull();
+    expect(await failureReason(recordWorkFactRun({ ...input, outcomeCode: 'arbitrary' as 'unauthenticated' }))).toBe(
+      'invalid-input',
+    );
+    const corrupt = new Database(dbPath);
+    corrupt.exec('PRAGMA ignore_check_constraints = ON');
+    corrupt.exec("UPDATE work_fact_run_state SET outcome_code = 'arbitrary'");
+    corrupt.close();
+    expect(await Effect.runPromise(queryWorkFactRunStates({ dbPath }))).toEqual({ runs: [], skipped: 1 });
+  });
+
   test('records one row per source, reports change, and validates the input', async () => {
     const dbPath = await createStore('runs');
     const run = {
@@ -321,6 +656,7 @@ describe('work fact store: run state', () => {
           machineId: 'machine-a',
           message: null,
           observed: 3,
+          outcomeCode: null,
           ranAt: at(0),
           sourceId: 'checkouts.status',
         },
@@ -330,6 +666,7 @@ describe('work fact store: run state', () => {
           machineId: 'machine-a',
           message: 'github.enabled is false in the local config',
           observed: 0,
+          outcomeCode: null,
           ranAt: at(0),
           sourceId: 'github.pull-requests',
         },
@@ -469,9 +806,196 @@ describe('work fact store: Jira issue observations', () => {
         machineId: 'machine-a',
         message: 'acli not installed',
         observed: 0,
+        outcomeCode: null,
         ranAt: at(0),
         sourceId: 'jira.issues',
       },
     ]);
+  });
+});
+
+describe('work fact store: exact page batches', () => {
+  test('joins mixed-case PR history to normalized keys while isolating machines and numbers', async () => {
+    const dbPath = await createStore('page-pr-casing');
+    const success = pullRequest({ host: 'GitHub.COM', repository: 'Fixture/Project', observedAt: at(2) });
+    const failure = failedPullRequest(3, { repository: 'FIXTURE/project' });
+    const second = pullRequest({ machineId: 'machine-b', number: 7, observedAt: at(1) });
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          pullRequest(),
+          success,
+          failure,
+          second,
+          pullRequest({ machineId: 'machine-b', observedAt: at(5) }),
+          pullRequest({ number: 7, observedAt: at(5) }),
+          pullRequest({ host: 'other.example', observedAt: at(5) }),
+        ],
+      }),
+    );
+    const result = await Effect.runPromise(
+      queryLatestPullRequestObservations({
+        dbPath,
+        batch: [
+          { host: 'github.com', repository: 'fixture/project', number: 66, machineId: 'machine-a' },
+          { host: 'GITHUB.COM', repository: 'fixture/PROJECT', number: 7, machineId: 'machine-b' },
+        ],
+      }),
+    );
+    expect(result).toEqual({
+      items: [
+        { latest: failure, latestObserved: success },
+        { latest: second, latestObserved: second },
+      ],
+      skipped: 0,
+      truncated: false,
+    });
+  });
+
+  test('batches Jira and checkout identities without mixing same-key histories across machines', async () => {
+    const dbPath = await createStore('page-machine-isolation');
+    const secondCheckout = checkout({ machineId: 'machine-b', checkoutPath: '/other', observedAt: at(1) });
+    await Effect.runPromise(
+      importCheckoutStatusObservations({
+        dbPath,
+        observations: [
+          checkout(),
+          failedCheckout(3),
+          secondCheckout,
+          checkout({ machineId: 'machine-b', observedAt: at(5) }),
+          checkout({ checkoutPath: '/other', observedAt: at(5) }),
+        ],
+      }),
+    );
+    expect(
+      await Effect.runPromise(
+        queryLatestCheckoutStatusObservations({
+          dbPath,
+          batch: [checkout(), secondCheckout],
+        }),
+      ),
+    ).toEqual({
+      items: [
+        { countsChangedAt: null, latest: failedCheckout(3), latestObserved: checkout() },
+        { countsChangedAt: null, latest: secondCheckout, latestObserved: secondCheckout },
+      ],
+      skipped: 0,
+      truncated: false,
+    });
+    const secondJira = jiraIssue({ machineId: 'machine-b', key: 'XLB-7', observedAt: at(1) });
+    await Effect.runPromise(
+      importJiraIssueObservations({
+        dbPath,
+        observations: [
+          jiraIssue(),
+          failedJiraIssue(3),
+          secondJira,
+          jiraIssue({ machineId: 'machine-b', observedAt: at(5) }),
+          jiraIssue({ key: 'XLB-7', observedAt: at(5) }),
+        ],
+      }),
+    );
+    expect(
+      await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: [jiraIssue(), secondJira] })),
+    ).toEqual({
+      items: [
+        { latest: failedJiraIssue(3), latestObserved: jiraIssue() },
+        { latest: secondJira, latestObserved: secondJira },
+      ],
+      skipped: 0,
+      truncated: false,
+    });
+  });
+
+  test('empty page batches read no unscoped observations', async () => {
+    const dbPath = await createStore('page-empty');
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations: [pullRequest()] }));
+    await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue()] }));
+    await Effect.runPromise(importCheckoutStatusObservations({ dbPath, observations: [checkout()] }));
+    for (const result of await Promise.all([
+      Effect.runPromise(queryLatestPullRequestObservations({ dbPath, batch: [] })),
+      Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: [] })),
+      Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath, batch: [] })),
+    ])) {
+      expect(result).toEqual({ items: [], skipped: 0, truncated: false });
+    }
+  });
+
+  test('returns more than 500 exact identities without the generic query ceiling or SQL expression limit', async () => {
+    const dbPath = await createStore('page-large');
+    const pullRequests = Array.from({ length: 501 }, (_, index) => pullRequest({ number: index + 1 }));
+    const jiraIssues = Array.from({ length: 501 }, (_, index) => jiraIssue({ key: `XLB-${index + 1}` }));
+    const checkouts = Array.from({ length: 501 }, (_, index) => checkout({ checkoutPath: `/checkout/${index}` }));
+    for (let start = 0; start < 501; start += 500) {
+      await Effect.runPromise(
+        importPullRequestObservations({ dbPath, observations: pullRequests.slice(start, start + 500) }),
+      );
+      await Effect.runPromise(
+        importJiraIssueObservations({ dbPath, observations: jiraIssues.slice(start, start + 500) }),
+      );
+      await Effect.runPromise(
+        importCheckoutStatusObservations({ dbPath, observations: checkouts.slice(start, start + 500) }),
+      );
+    }
+    for (const result of await Promise.all([
+      Effect.runPromise(queryLatestPullRequestObservations({ dbPath, batch: pullRequests })),
+      Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: jiraIssues })),
+      Effect.runPromise(queryLatestCheckoutStatusObservations({ dbPath, batch: checkouts })),
+    ])) {
+      expect(result.items).toHaveLength(501);
+      expect(result.skipped).toBe(0);
+      expect(result.truncated).toBe(false);
+    }
+    const duplicateKeys = Array.from({ length: MAX_WORK_THREAD_FACT_KEYS }, () => pullRequest());
+    expect(
+      (await Effect.runPromise(queryLatestPullRequestObservations({ dbPath, batch: duplicateKeys }))).items,
+    ).toHaveLength(1);
+    const generic = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, limit: 500 }));
+    expect(generic.items).toHaveLength(500);
+    expect(generic.truncated).toBe(true);
+  });
+
+  test('rejects oversized or invalid exact batches and preserves the generic ceiling', async () => {
+    const dbPath = await createStore('page-bounds');
+    for (const effect of [
+      queryLatestPullRequestObservations({
+        dbPath,
+        batch: Array.from({ length: MAX_WORK_THREAD_FACT_KEYS + 1 }, () => pullRequest()),
+      }),
+      queryLatestJiraIssueObservations({
+        dbPath,
+        batch: Array.from({ length: MAX_WORK_THREAD_FACT_KEYS + 1 }, () => jiraIssue()),
+      }),
+      queryLatestCheckoutStatusObservations({
+        dbPath,
+        batch: Array.from({ length: MAX_WORK_THREAD_CHECKOUT_KEYS + 1 }, () => ({
+          machineId: 'machine-a',
+          checkoutPath: '/checkout',
+        })),
+      }),
+      queryLatestPullRequestObservations({ dbPath, batch: [pullRequest({ machineId: '' })] }),
+      queryLatestPullRequestObservations({ dbPath, batch: [pullRequest({ number: 0 })] }),
+      queryLatestJiraIssueObservations({ dbPath, batch: [{ machineId: 'machine-a', key: 'bad-key' }] }),
+      queryLatestCheckoutStatusObservations({ dbPath, batch: [{ machineId: 'machine-a', checkoutPath: '' }] }),
+      queryLatestPullRequestObservations({ dbPath, limit: 501 }),
+      queryLatestJiraIssueObservations({ dbPath, limit: 501 }),
+      queryLatestCheckoutStatusObservations({ dbPath, limit: 501 }),
+    ]) {
+      expect(await failureReason(effect)).toBe('invalid-input');
+    }
+  });
+
+  test('reports invalid stored observations in an exact batch', async () => {
+    const dbPath = await createStore('page-invalid-history');
+    await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue()] }));
+    const db = new Database(dbPath);
+    db.exec("UPDATE jira_issue_observations SET comments_json = 'invalid-json'");
+    db.close();
+    expect(await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, batch: [jiraIssue()] }))).toEqual({
+      items: [],
+      skipped: 1,
+      truncated: false,
+    });
   });
 });

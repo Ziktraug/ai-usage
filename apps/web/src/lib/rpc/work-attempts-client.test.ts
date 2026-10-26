@@ -29,6 +29,7 @@ describe('Work attempts browser client', () => {
     const controller = new AbortController();
     const calls: unknown[] = [];
     const client = createWorkAttemptsClient({
+      stop: () => Promise.resolve({ data: { attemptId: 'a', result: 'requested' }, ok: true }),
       list: (input, options) => {
         calls.push(['list', input, options?.signal]);
         return Promise.resolve(listOutput);
@@ -57,11 +58,16 @@ describe('Work attempts browser client', () => {
 
   test('keeps the demo tag, maps everything else to unavailable and never leaks a server detail', async () => {
     const demo = createWorkAttemptsClient({
+      stop: () => Promise.reject(new ORPCError('ForbiddenDemo', { defined: true, message: 'Demo mode.', status: 403 })),
       list: () => Promise.reject(new ORPCError('ForbiddenDemo', { defined: true, message: 'Demo mode.', status: 403 })),
       release: () =>
         Promise.reject(new ORPCError('ForbiddenDemo', { defined: true, message: 'Demo mode.', status: 403 })),
       start: () =>
         Promise.reject(new ORPCError('ForbiddenDemo', { defined: true, message: 'Demo mode.', status: 403 })),
+    });
+    expect(await demo.stop({ attemptId: 'a' })).toEqual({
+      error: { message: 'Demo mode.', tag: 'ForbiddenDemo' },
+      ok: false,
     });
     expect(await demo.list({})).toEqual({ error: { message: 'Demo mode.', tag: 'ForbiddenDemo' }, ok: false });
     expect(await demo.start(startInput)).toEqual({
@@ -74,10 +80,12 @@ describe('Work attempts browser client', () => {
     });
     const privatePath = '/private/store.sqlite';
     const malformed = createWorkAttemptsClient({
+      stop: () => Promise.reject(new Error(`engine at ${privatePath}`)),
       list: () => Promise.resolve({ ...listOutput, data: { ...listOutput.data, databasePath: privatePath } } as never),
       release: () => Promise.reject(new Error(`engine at ${privatePath}`)),
       start: () => Promise.reject(new Error(`engine at ${privatePath}`)),
     } as WorkAttemptsRpcTransport);
+    expect(await malformed.stop({ attemptId: 'a' })).toMatchObject({ error: { tag: 'Unavailable' }, ok: false });
     const list = await malformed.list({});
     expect(list.ok).toBe(false);
     expect(JSON.stringify(list)).not.toContain(privatePath);
@@ -91,10 +99,12 @@ describe('Work attempts browser client', () => {
     const controller = new AbortController();
     controller.abort();
     const client = createWorkAttemptsClient({
+      stop: () => Promise.resolve({ data: { attemptId: 'a', result: 'requested' }, ok: true }),
       list: () => Promise.resolve(listOutput),
       release: () => Promise.resolve(releaseOutput as never),
       start: () => Promise.resolve({ data: { attemptId: 'a', reused: false, state: 'starting' }, ok: true }),
     });
+    await expect(client.stop({ attemptId: 'a' }, { signal: controller.signal })).rejects.toThrow();
     await expect(client.list({}, { signal: controller.signal })).rejects.toThrow();
     await expect(client.release({ attemptId: 'a' }, { signal: controller.signal })).rejects.toThrow();
     await expect(client.start(startInput, { signal: controller.signal })).rejects.toThrow();

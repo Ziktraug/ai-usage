@@ -32,7 +32,9 @@
     workHarnessLabel,
     workRootId,
     workRootLastDecision,
+    workRootNativeRequests,
     workRootNextAction,
+    workRootObservedActivity,
     workRootStanding,
   } from './work-attention-model';
   import WorkRouting from './work-routing.svelte';
@@ -57,6 +59,7 @@
     workRowTop,
     workStack,
   } from './work-styles';
+  import WorkThreadIntake from './work-thread-intake.svelte';
 
   let {
     root,
@@ -105,6 +108,8 @@
   const statusTones = { blocked: statusPillWarn, completed: statusPillOk, review_ready: statusPillInfo } as const;
   const standing = $derived(workRootStanding(root));
   const decision = $derived(workRootLastDecision(root));
+  const nativeRequests = $derived(workRootNativeRequests(root));
+  const activity = $derived(workRootObservedActivity(root));
   const next = $derived(workRootNextAction(root));
   const request = $derived(
     root.declared?.needsAction ?? (root.declared?.status === 'review_ready' ? 'Review requested' : null),
@@ -175,8 +180,78 @@
         {/if}
       </p>
     {/if}
+    {#if activity}
+      <p class={workMuted} data-work-observed-activity>{activity}</p>
+    {/if}
     {#if next}
       <p class={workDetailText} data-work-next>Next: {next}</p>
+    {/if}
+  </section>
+
+  {#if nativeRequests.length > 0}
+    <section aria-labelledby="work-native-requests" class={workStack} data-work-native-requests>
+      <h3 class={workDetailLabel} id="work-native-requests">Native Codex questions</h3>
+      {#each nativeRequests as fact (fact.id)}
+        <div class={workStack}>
+          <p class={workMuted}>
+            Session {fact.sourceSessionId} · {fact.request.tool} · call {fact.request.callId} · asked
+            {formatExactInstant(fact.request.askedAt)}
+          </p>
+          {#if fact.request.rejectedAt}
+            <p class={workMuted}>
+              Delivery rejected {formatExactInstant(fact.request.rejectedAt)}; this invocation did not establish a
+              presented question.
+            </p>
+          {:else if fact.request.acknowledgedAt}
+            <p class={workMuted}>
+              Tool acknowledged {formatExactInstant(fact.request.acknowledgedAt)}; acknowledgement is not an answer.
+            </p>
+          {/if}
+          <ul class={workFactList}>
+            {#each fact.request.questions as question, index (question.id ?? index)}
+              <li class={workFactItem}>
+                <p class={workDetailText}>{question.text}{question.textTruncated ? ' [text truncated]' : ''}</p>
+                <p class={workMuted}>
+                  {#if question.answeredAt}
+                    Answer attributed to this question at {formatExactInstant(question.answeredAt)}.
+                  {:else if fact.request.rejectedAt}
+                    No presented question established.
+                  {:else}
+                    No attributable answer observed; this question stays pending.
+                  {/if}
+                </p>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/each}
+      <p class={workMuted}>
+        Only selected native sessions and retained requests are covered. General turn state and runtime approvals remain
+        unknown; a message or completed child does not answer a question.
+      </p>
+    </section>
+  {/if}
+
+  <section aria-labelledby="work-routing-heading" class={workStack}>
+    <h3 class={workHeading} id="work-routing-heading">Review this work</h3>
+    {#if sessionRow}
+      <p class={workMuted}>
+        Choose an executor for a read-only review of “{root.title}”. The engine checks the target before launch.
+      </p>
+      {#key sessionRow.rowId}
+        <WorkThreadIntake row={sessionRow} />
+      {/key}
+      <WorkRouting {mode} {providers} {quotaUnavailable} target={sessionRow} />
+    {:else if root.session && lookup.isPending}
+      <p class={workMuted} role="status">Resolving the collected Session for this root…</p>
+    {:else if root.session}
+      <p class={workMuted} role="status">
+        The collected Session could not be resolved at this revision; no review target is identified.
+      </p>
+    {:else}
+      <p class={workMuted}>
+        No collected transcript identifies a review target for this root. A simulation needs the joined Session.
+      </p>
     {/if}
   </section>
 
@@ -201,6 +276,11 @@
       <p class={workDetailText}>{root.declared.detail}</p>
       <p class={workMuted}>
         Declared by the session at {formatExactInstant(root.declared.at)}; its current state is unobserved.
+      </p>
+    {:else if root.key.harness === 'codex' && nativeRequests.length > 0}
+      <p class={workMuted}>
+        Codex has no Desktop turn declaration. Native questions above have their own evidence; general session status
+        remains unknown.
       </p>
     {:else if root.attention === 'not-observable'}
       <!-- ADR 0059: the harness declares nothing, so nothing is presented as pending or as settled. -->
@@ -282,7 +362,7 @@
       <p class={workDetailText}>
         {root.children.count}
         child {root.children.count === 1 ? 'session' : 'sessions'}
-        {#if root.attention === 'not-observable'}
+        {#if root.key.harness === 'codex'}
           · linked by their declared parent in {workHarnessLabel(root.key.harness)}; their outcomes are not declared
         {:else}
           · {root.children.blocked} blocked · {root.children.reviewReady} review ready ·
@@ -348,26 +428,6 @@
       <a class={workLink} href={detailHref(root.session.rowId)}>Open session detail</a>
     {:else}
       <p class={workMuted}>Transcript not collected yet; there is no session detail to open.</p>
-    {/if}
-  </section>
-
-  <section aria-labelledby="work-routing-heading" class={workStack}>
-    <h3 class={workHeading} id="work-routing-heading">Review assignment simulation</h3>
-    {#if sessionRow}
-      <p class={workMuted}>
-        Simulates a read-only review of “{root.title}” on its collected Session. Nothing is started.
-      </p>
-      <WorkRouting {mode} {providers} {quotaUnavailable} target={sessionRow} />
-    {:else if root.session && lookup.isPending}
-      <p class={workMuted} role="status">Resolving the collected Session for this root…</p>
-    {:else if root.session}
-      <p class={workMuted} role="status">
-        The collected Session could not be resolved at this revision; no review target is identified.
-      </p>
-    {:else}
-      <p class={workMuted}>
-        No collected transcript identifies a review target for this root. A simulation needs the joined Session.
-      </p>
     {/if}
   </section>
 </article>

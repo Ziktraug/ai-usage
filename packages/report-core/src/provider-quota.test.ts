@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { ProviderQuotaHistoryPoint, ProviderQuotaObservation } from './provider-quota';
 import {
+  assessCodexReviewCapacity,
+  codexQuotaWindowModel,
   downsampleProviderQuotaHistoryPoints,
   normalizeCodexAppServerQuotaObservation,
   parseProviderQuotaHistoryRequest,
@@ -11,7 +13,177 @@ import {
   segmentProviderQuotaHistoryPoints,
 } from './provider-quota';
 
+const CODEX_NOW = Date.parse('2026-10-22T18:00:00.000Z');
+const codexSnapshot = (overrides: Record<string, unknown> = {}) => ({
+  limitId: 'codex',
+  normalModelSlug: null,
+  spendControlReached: false,
+  rateLimitReachedType: null,
+  individualLimit: null,
+  credits: { hasCredits: false, unlimited: false, balance: null },
+  primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: CODEX_NOW / 1000 + 3600 },
+  secondary: null,
+  ...overrides,
+});
+const codexCapacity = (root: Record<string, unknown>, buckets: Record<string, unknown> | null = null) =>
+  assessCodexReviewCapacity({
+    model: 'gpt-6',
+    now: CODEX_NOW,
+    result: { ordinaryUsageAllowed: true, rateLimits: root, rateLimitsByLimitId: buckets },
+  });
+
+describe('native Codex included-usage authority', () => {
+  test('requires the global bucket and every exact selected-model bucket', () => {
+    const global = codexSnapshot();
+    const selected = codexSnapshot({ limitId: 'alias', normalModelSlug: 'gpt-6' });
+    expect(codexCapacity(global, { selected })).toEqual({ kind: 'available' });
+    expect(codexCapacity(selected)).toEqual({ kind: 'unavailable', reason: 'unknown-capacity' });
+    expect(codexCapacity(global, { selected: { ...selected, primary: null } })).toEqual({
+      kind: 'unavailable',
+      reason: 'unknown-capacity',
+    });
+    expect(codexCapacity(codexSnapshot({ primary: null }), { selected })).toEqual({
+      kind: 'unavailable',
+      reason: 'unknown-capacity',
+    });
+  });
+  test.each([
+    { spendControlReached: true },
+    { primary: null, rateLimitReachedType: 'rate_limit_reached' },
+    { primary: null, rateLimitReachedType: 'spend_control_limit_reached' },
+  ])('preserves explicit denial %j even with another healthy bucket', (denial) => {
+    expect(codexCapacity(codexSnapshot(denial), { codex: codexSnapshot() })).toEqual({
+      kind: 'unavailable',
+      reason: 'denied',
+    });
+    expect(
+      codexCapacity(codexSnapshot(), {
+        alias: codexSnapshot({ ...denial, limitId: 'alias', normalModelSlug: 'gpt-6' }),
+      }),
+    ).toEqual({ kind: 'unavailable', reason: 'denied' });
+  });
+  test('ignores only exact other model capacity, never infers an unknown alias from its label', () => {
+    const denied = codexSnapshot({
+      limitId: 'quota-alias',
+      normalModelSlug: 'gpt-6-mini',
+      primary: null,
+      rateLimitReachedType: 'rate_limit_reached',
+    });
+    expect(codexCapacity(codexSnapshot(), { denied })).toEqual({ kind: 'available' });
+    expect(codexCapacity(codexSnapshot(), { denied: { ...denied, normalModelSlug: 'gpt-6' } })).toEqual({
+      kind: 'unavailable',
+      reason: 'denied',
+    });
+    expect(
+      codexCapacity(codexSnapshot(), { denied: { ...denied, normalModelSlug: null, limitName: 'gpt-6-mini' } }),
+    ).toEqual({ kind: 'unavailable', reason: 'unknown-alias' });
+    expect(codexCapacity(codexSnapshot({ limitId: 'unrecognized' }))).toEqual({
+      kind: 'unavailable',
+      reason: 'unknown-alias',
+    });
+  });
+  test.each([
+    { spendControlReached: null },
+    { spendControlReached: undefined },
+    { rateLimitReachedType: undefined },
+    { primary: null },
+    { primary: undefined },
+    { primary: { usedPercent: null, windowDurationMins: 300, resetsAt: CODEX_NOW / 1000 + 3600 } },
+    { primary: { usedPercent: 20, windowDurationMins: Number.MAX_VALUE, resetsAt: CODEX_NOW / 1000 + 3600 } },
+    { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: CODEX_NOW / 1000 } },
+    { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: Number.MAX_VALUE } },
+    { individualLimit: { remainingPercent: 0, resetsAt: CODEX_NOW / 1000 + 3600 } },
+    { individualLimit: { remainingPercent: 50, resetsAt: CODEX_NOW / 1000 } },
+  ])('does not infer recovery or capacity from incomplete native evidence %j', (unknown) => {
+    expect(codexCapacity(codexSnapshot(unknown))).toEqual({ kind: 'unavailable', reason: 'unknown-capacity' });
+  });
+  test('denies ordinary usage false/null and unknown/malformed mandatory collections', () => {
+    for (const ordinaryUsageAllowed of [false, null]) {
+      expect(
+        assessCodexReviewCapacity({
+          model: 'gpt-6',
+          now: CODEX_NOW,
+          result: { ordinaryUsageAllowed, rateLimits: codexSnapshot(), rateLimitsByLimitId: null },
+        }),
+      ).toEqual({ kind: 'unavailable', reason: 'included-usage' });
+    }
+    expect(
+      assessCodexReviewCapacity({
+        model: 'gpt-6',
+        now: CODEX_NOW,
+        result: { ordinaryUsageAllowed: true, rateLimits: codexSnapshot() },
+      }),
+    ).toEqual({ kind: 'unavailable', reason: 'unknown-capacity' });
+    expect(codexCapacity(codexSnapshot(), { malformed: null })).toEqual({
+      kind: 'unavailable',
+      reason: 'unknown-capacity',
+    });
+  });
+  test('preserves the no-credit guard across every observed bucket, including other models', () => {
+    for (const credits of [
+      null,
+      undefined,
+      { hasCredits: true, unlimited: false },
+      { hasCredits: false, unlimited: true },
+      { hasCredits: false },
+    ]) {
+      expect(codexCapacity(codexSnapshot({ credits }))).toEqual({ kind: 'unavailable', reason: 'credits' });
+    }
+    expect(
+      codexCapacity(codexSnapshot(), {
+        other: codexSnapshot({
+          limitId: 'alias',
+          normalModelSlug: 'gpt-6-mini',
+          credits: { hasCredits: true, unlimited: false },
+        }),
+      }),
+    ).toEqual({ kind: 'unavailable', reason: 'credits' });
+  });
+});
+
 describe('normalizeCodexAppServerQuotaObservation', () => {
+  test('retains native denial and unknown availability without manufacturing a numeric window', () => {
+    for (const rateLimitReachedType of ['rate_limit_reached', null]) {
+      const result = normalizeCodexAppServerQuotaObservation({
+        machineId: 'machine-1',
+        observedAt: new Date(CODEX_NOW),
+        result: {
+          rateLimits: codexSnapshot(),
+          rateLimitsByLimitId: {
+            alias: codexSnapshot({ limitId: 'alias', normalModelSlug: 'gpt-6', primary: null, rateLimitReachedType }),
+          },
+        },
+      });
+      expect(result?.state).toBe('partial');
+      expect(result?.windows[1]).toMatchObject({
+        blocked: rateLimitReachedType !== null,
+        usedPercent: null,
+        remainingPercent: null,
+        resetsAt: null,
+        limitSeconds: null,
+        scope: 'model',
+      });
+      expect(codexQuotaWindowModel(result?.windows[1]?.id ?? '')).toBe('gpt-6');
+      expect(parseProviderQuotaObservation(result)).toEqual(result);
+    }
+  });
+  test('preserves denial when a repeated bucket first reported healthy and retains distinct model buckets', () => {
+    const result = normalizeCodexAppServerQuotaObservation({
+      machineId: 'machine-1',
+      observedAt: new Date(CODEX_NOW),
+      result: {
+        rateLimits: codexSnapshot(),
+        rateLimitsByLimitId: {
+          codex: codexSnapshot({ spendControlReached: true }),
+          aliasA: codexSnapshot({ limitId: 'alias-a', normalModelSlug: 'gpt-6' }),
+          aliasB: codexSnapshot({ limitId: 'alias-b', normalModelSlug: 'gpt-6' }),
+        },
+      },
+    });
+    expect(result?.windows.filter((window) => window.id === 'codex:primary')).toHaveLength(1);
+    expect(result?.windows.find((window) => window.id === 'codex:primary')?.blocked).toBe(true);
+    expect(result?.windows.filter((window) => codexQuotaWindowModel(window.id) === 'gpt-6')).toHaveLength(2);
+  });
   test('normalizes root and provider-defined quota windows', () => {
     const observation = normalizeCodexAppServerQuotaObservation({
       accountScope: 'account-digest',

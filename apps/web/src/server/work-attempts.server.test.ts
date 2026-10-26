@@ -6,6 +6,7 @@ import {
   listWorkAttemptsForServer,
   releaseWorkAttemptReservationForServer,
   startWorkAttemptForServer,
+  stopWorkAttemptForServer,
   toWorkAttemptWire,
   type WorkAttemptsServerReaders,
 } from './work-attempts.server';
@@ -47,6 +48,9 @@ const attempt: ReviewAttempt = {
   launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
   machineId: 'machine-a',
   nativeSessionId: 'native-1',
+  nativeTurnId: null,
+  stopRequestedAt: null,
+  stopConfirmedAt: null,
   numTurns: 2,
   pid: 4242,
   releaseEvidence: null,
@@ -121,6 +125,80 @@ const completion = (output: unknown): UsageEngineCommandCompletion =>
   }) as UsageEngineCommandCompletion;
 
 describe('Work attempts server', () => {
+  test('preserves Codex native identity and actual controls in the result wire', () => {
+    const guarantee = {
+      kind: 'codex-app-server',
+      cliVersion: '0.163.0',
+      model: 'gpt-5.3-codex',
+      effort: 'high',
+      sandbox: 'read-only',
+      approvalPolicy: 'never',
+      networkAccess: false,
+      accountFingerprint: 'fixture-account',
+      externalTools: 'disabled',
+      managedPolicy: 'inherited',
+    } as const;
+    const wire = toWorkAttemptWire({
+      ...attempt,
+      executorHarness: 'codex',
+      nativeTurnId: 'turn-1',
+      stopRequestedAt: NOW.toISOString(),
+      guarantee,
+    });
+    expect(wire.guarantee).toEqual(guarantee);
+    expect(wire.nativeTurnId).toBe('turn-1');
+    expect(wire.stopRequestedAt).toBe(NOW.toISOString());
+    expect(wire.stopConfirmedAt).toBeNull();
+    expect(wire.resultExcerpt).toBe('Finding 1');
+    expect(wire.guarantee).not.toHaveProperty('safeMode');
+  });
+
+  test('requests owned stop through the engine without claiming confirmation and guards runtime boundaries', async () => {
+    const controller = new AbortController();
+    const calls: unknown[] = [];
+    const output = await stopWorkAttemptForServer(
+      { attemptId: 'attempt-1' },
+      (command, options) => {
+        calls.push({ command, signal: options?.signal });
+        return Promise.resolve({
+          command: 'stop-review-attempt',
+          commandId: 'c'.repeat(36) as UsageEngineCommandId,
+          completedAt: NOW.toISOString(),
+          state: 'succeeded',
+          output: { kind: 'review-attempt-stop', attemptId: 'attempt-1', result: 'requested' },
+        });
+      },
+      { mode: 'live', signal: controller.signal },
+    );
+    expect(calls).toEqual([
+      { command: { command: 'stop-review-attempt', attemptId: 'attempt-1' }, signal: controller.signal },
+    ]);
+    expect(output).toEqual({ data: { attemptId: 'attempt-1', result: 'requested' }, ok: true });
+    let executions = 0;
+    const execute = () => {
+      executions += 1;
+      return Promise.reject(new Error('private failure'));
+    };
+    expect(await stopWorkAttemptForServer({ attemptId: 'a' }, execute, { mode: 'demo' })).toMatchObject({
+      error: { tag: 'ForbiddenDemo' },
+    });
+    expect(await stopWorkAttemptForServer({ attemptId: 'a' }, execute, { mode: 'e2e' })).toMatchObject({
+      error: { tag: 'Unavailable' },
+    });
+    expect(executions).toBe(0);
+    expect(await stopWorkAttemptForServer({ attemptId: 'a' }, execute, { mode: 'live' })).toEqual({
+      error: {
+        tag: 'Unavailable',
+        message: 'The stop request did not complete; check the attempt before trying again.',
+      },
+      ok: false,
+    });
+    controller.abort();
+    await expect(
+      stopWorkAttemptForServer({ attemptId: 'a' }, execute, { mode: 'live', signal: controller.signal }),
+    ).rejects.toThrow();
+    expect(executions).toBe(1);
+  });
   test('lists attempts without pid, key or declaration snapshot and resolves the target admission', async () => {
     const wire = toWorkAttemptWire(attempt, 'row-native-1');
     expect(wire).not.toHaveProperty('pid');

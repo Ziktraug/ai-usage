@@ -36,6 +36,8 @@ export interface SessionVcsCommit {
 export interface SessionVcsPullRequest {
   number: number | null;
   observedAt: string | null;
+  /** Native transcript association; absent for legacy or checkout-derived observations. */
+  provenance?: 'session-pr-link';
   repository: string | null;
   url: string;
 }
@@ -78,7 +80,7 @@ const DOT_GIT_SUFFIX_PATTERN = /\.git$/i;
 const REPOSITORY_KEYS = new Set(['host', 'ownerPath', 'provenance', 'webUrl']);
 const BRANCH_KEYS = new Set(['firstObservedAt', 'lastObservedAt', 'name', 'provenance', 'webUrl']);
 const COMMIT_KEYS = new Set(['hash', 'observedAt', 'provenance', 'webUrl']);
-const PULL_REQUEST_KEYS = new Set(['number', 'observedAt', 'repository', 'url']);
+const PULL_REQUEST_KEYS = new Set(['number', 'observedAt', 'provenance', 'repository', 'url']);
 const CONTEXT_KEYS = new Set(['branches', 'headCommit', 'partial', 'pullRequests', 'repository']);
 const RESOLVE_RESPONSE_AVAILABLE_KEYS = new Set(['pullRequests', 'repositoryUrl', 'status']);
 const RESOLVE_RESPONSE_UNAVAILABLE_KEYS = new Set(['reason', 'status']);
@@ -273,6 +275,7 @@ export const compactSessionVcsBranchObservations = (
 const isPullRequest = (value: unknown): value is SessionVcsPullRequest =>
   isRecord(value) &&
   hasOnlyKeys(value, PULL_REQUEST_KEYS) &&
+  (value.provenance === undefined || value.provenance === 'session-pr-link') &&
   (value.number === null || (Number.isSafeInteger(value.number) && Number(value.number) > 0)) &&
   isNullableTimestamp(value.observedAt) &&
   (value.repository === null || isBoundedText(value.repository)) &&
@@ -293,7 +296,7 @@ export const normalizeSessionVcsPullRequests = (
       partial = true;
       continue;
     }
-    if (!byUrl.has(url)) {
+    if (!byUrl.has(url) || candidate.provenance === 'session-pr-link') {
       byUrl.set(url, { ...candidate, url });
     }
   }

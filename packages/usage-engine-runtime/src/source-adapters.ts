@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { annotateWideEventIfAvailable } from '@ai-usage/effect-runtime';
 import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
-import { observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
+import { CHECKOUT_STATUS_DEFAULTS, observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
 import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
 import {
   collectClaudeRetentionWarnings,
@@ -10,11 +12,13 @@ import {
 } from '@ai-usage/local-collectors/collectors';
 import { type BoundedRun, observeExecutors } from '@ai-usage/local-collectors/executor-observations';
 import { collectCursorCommitAttributionResult } from '@ai-usage/local-collectors/facets';
+import { discoverPullRequests } from '@ai-usage/local-collectors/github-pull-request-discovery';
 import {
   GITHUB_PULL_REQUEST_DEFAULTS,
   observePullRequests,
   type PullRequestLink,
 } from '@ai-usage/local-collectors/github-pull-requests';
+import { discoverJiraIssues } from '@ai-usage/local-collectors/jira-issue-discovery';
 import {
   JIRA_ISSUE_DEFAULTS,
   JIRA_NOT_INSTALLED_MESSAGE,
@@ -33,6 +37,7 @@ import {
 } from '@ai-usage/local-machine/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
+import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import type { AiUsageGitHubConfig } from '@ai-usage/report-core/project-alias';
 import { projectSourcePathFromId } from '@ai-usage/report-core/project-group';
 import {
@@ -57,8 +62,20 @@ import {
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
 import {
+  parseWorkThreadLinkKey,
+  sessionLinkKey,
+  pullRequestLinkKey as workThreadPullRequestKey,
+} from '@ai-usage/report-core/work-thread';
+import {
+  workThreadSeedsFromJiraIssues,
+  workThreadSeedsFromPullRequests,
+} from '@ai-usage/report-core/work-thread-seeds';
+import {
+  applyWorkThreadWaitObservations,
+  attachDeclaredWorkThreadSessions,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importCodexWorkObservations,
   importExecutorObservations,
   importJiraIssueObservations,
   importLocalRows,
@@ -66,16 +83,20 @@ import {
   importPullRequestObservations,
   importSkillObservations,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
+  MAX_CODEX_WORK_BATCH,
   MAX_WORK_FACT_QUERY_LIMIT,
+  queryActiveWorkThreadLinks,
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
   queryLatestPullRequestObservations,
   queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
+  queryWorkThreadWaitCandidates,
   type RtkSavingsContribution,
   recordWorkFactRun,
   type ServedLocalProjectSource,
+  seedWorkThreads,
   type UsageStoreError,
   upsertRtkSavingsContributions,
   usageStorePath,
@@ -290,6 +311,7 @@ const collectHarness = (
   adapter: HarnessAdapter,
 ): Effect.Effect<
   {
+    workObservations?: readonly CodexWorkObservation[];
     // Optional, and deliberately so: a harness that cannot observe skills
     // (Cursor) omits this rather than reporting an empty list, which would be
     // indistinguishable from having observed nothing (ADR 0022).
@@ -397,6 +419,16 @@ const createSessionSource = (input: {
   id: input.id,
   run: (context) =>
     Effect.gen(function* () {
+      const codexCollectionId = input.id === 'codex.sessions' ? randomUUID() : null;
+      if (codexCollectionId !== null) {
+        yield* importCodexWorkObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          observedAt: input.now().toISOString(),
+          observations: [],
+          collection: { id: codexCollectionId, phase: 'start' },
+        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      }
       yield* reportProgress(context, { phase: 'reading' });
       const availability = yield* input.detect;
       if (availability.availability !== 'detected') {
@@ -459,6 +491,40 @@ const createSessionSource = (input: {
               minimumExposureObservedAt,
               observations: preparedObservations.observations,
             }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      const importedWork = { changed: 0, rejected: 0 };
+      const workObservations = collection.workObservations ?? [];
+      const observedAt = input.now().toISOString();
+      // The store bound applies to each transaction, not to the user's history. Empty snapshots
+      // must also survive: they clear request evidence from an earlier parse of that session.
+      for (let offset = 0; offset < workObservations.length; offset += MAX_CODEX_WORK_BATCH) {
+        yield* abortIfRequested(context.signal);
+        const batch = yield* importCodexWorkObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          observedAt,
+          observations: workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH),
+          ...(codexCollectionId === null
+            ? {}
+            : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
+        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        importedWork.changed += batch.changed;
+        importedWork.rejected += batch.rejected;
+      }
+      if (importedWork.rejected > 0) {
+        return yield* Effect.fail(
+          sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
+        );
+      }
+      if (codexCollectionId !== null && collection.workObservations !== undefined) {
+        yield* abortIfRequested(context.signal);
+        yield* importCodexWorkObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          observedAt,
+          observations: [],
+          collection: { id: codexCollectionId, phase: 'complete' },
+        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      }
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
         changed:
@@ -466,6 +532,7 @@ const createSessionSource = (input: {
           imported.updated > 0 ||
           importedObservations.inserted > 0 ||
           importedObservations.updated > 0 ||
+          importedWork.changed > 0 ||
           importedObservations.stateChanged,
         inputCount: collection.rows.length,
         outputCount: rows.length,
@@ -591,12 +658,25 @@ const createClaudeDesktopSessionSource = (input: {
   id: 'claude.desktop-sessions',
   run: (context) =>
     Effect.gen(function* () {
+      // One sweep identity is shared by its observations and completeness record. A failed
+      // detection/read/cancel must not leave an older successful sweep looking current.
+      const collectedAt = input.now();
+      yield* importClaudeDesktopSessions({
+        collectedAt,
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        observations: [],
+        completeness: { filesSeen: 0, filesParsed: 0, rejected: 0, unsupported: 0, truncated: true },
+      }).pipe(Effect.mapError((cause) => sourceFailure('claude.desktop-sessions', cause)));
       yield* reportProgress(context, { phase: 'reading' });
       const availability = yield* input.detect;
       if (availability.availability !== 'detected') {
         return sourceUnavailableResult();
       }
-      const collection = yield* collectClaudeDesktopSessions({ machineId: input.machine.id, now: input.now }).pipe(
+      const collection = yield* collectClaudeDesktopSessions({
+        machineId: input.machine.id,
+        now: () => collectedAt,
+      }).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
         Effect.mapError((cause) => sourceFailure('claude.desktop-sessions', cause)),
       );
@@ -612,7 +692,7 @@ const createClaudeDesktopSessionSource = (input: {
         total: collection.observations.length,
       });
       const imported = yield* importClaudeDesktopSessions({
-        collectedAt: input.now(),
+        collectedAt,
         completeness: collection.completeness,
         dbPath: input.dbPath,
         machineId: input.machine.id,
@@ -810,6 +890,8 @@ const pullRequestLinkKey = (link: PullRequestLink): string => JSON.stringify([li
 const DESKTOP_WORK_FACT_WINDOW_MS = 14 * 86_400_000;
 
 interface DesktopWorkFactInputs {
+  readonly declarations: readonly { readonly pullRequestKey: string; readonly sessionKey: string }[];
+  readonly declarationsTruncated: boolean;
   /** Jira keys written in the sessions' branch names (ADR 0054), never read from titles or paths. */
   readonly jiraKeys: readonly string[];
   readonly links: readonly PullRequestLink[];
@@ -817,10 +899,21 @@ interface DesktopWorkFactInputs {
   readonly warnings: readonly { readonly code: string; readonly message: string }[];
 }
 
-const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = { jiraKeys: [], links: [], paths: [], warnings: [] };
+const NO_DESKTOP_WORK_FACT_INPUTS: DesktopWorkFactInputs = {
+  declarations: [],
+  declarationsTruncated: false,
+  jiraKeys: [],
+  links: [],
+  paths: [],
+  warnings: [],
+};
 
 const normalizedLinkKey = (link: PullRequestLink): string =>
-  pullRequestLinkKey({ host: link.host.trim().toLowerCase(), number: link.number, repository: link.repository.trim() });
+  pullRequestLinkKey({
+    host: link.host.trim().toLowerCase(),
+    number: link.number,
+    repository: link.repository.trim().toLowerCase(),
+  });
 
 /**
  * Leaves out the links whose latest stored observation already showed the pull request merged.
@@ -885,8 +978,10 @@ const desktopWorkFactInputs = (input: {
     machineId: input.machineId,
     sinceLastActivityAt: new Date(input.now().getTime() - DESKTOP_WORK_FACT_WINDOW_MS).toISOString(),
   }).pipe(
-    Effect.flatMap(({ observations }) => {
+    Effect.flatMap(({ observations, skipped, truncated }) => {
       const paths: string[] = [];
+      const declarations = new Map<string, { pullRequestKey: string; sessionKey: string }>();
+      let declarationsTruncated = truncated || skipped > 0;
       const links: PullRequestLink[] = [];
       const jiraKeys: string[] = [];
       const seenLinks = new Set<string>();
@@ -907,6 +1002,22 @@ const desktopWorkFactInputs = (input: {
             repository: pullRequest.repository,
           };
           const key = pullRequestLinkKey(link);
+          const declaration = {
+            pullRequestKey: workThreadPullRequestKey(link),
+            sessionKey: sessionLinkKey({
+              machineId: observation.machineId,
+              harness: 'claude',
+              sessionId: observation.cliSessionId,
+            }),
+          };
+          if (
+            parseWorkThreadLinkKey('pull-request', declaration.pullRequestKey) &&
+            parseWorkThreadLinkKey('session', declaration.sessionKey)
+          ) {
+            declarations.set(JSON.stringify(declaration), declaration);
+          } else {
+            declarationsTruncated = true;
+          }
           if (!seenLinks.has(key)) {
             seenLinks.add(key);
             links.push(link);
@@ -914,7 +1025,16 @@ const desktopWorkFactInputs = (input: {
         }
       }
       return withoutMergedLinks(input.dbPath, input.machineId, links).pipe(
-        Effect.map((open): DesktopWorkFactInputs => ({ jiraKeys, links: open.links, paths, warnings: open.warnings })),
+        Effect.map(
+          (open): DesktopWorkFactInputs => ({
+            declarations: [...declarations.values()],
+            declarationsTruncated,
+            jiraKeys,
+            links: open.links,
+            paths,
+            warnings: open.warnings,
+          }),
+        ),
       );
     }),
     Effect.catch((error) =>
@@ -939,8 +1059,9 @@ const desktopWorkFactInputs = (input: {
 const accountFor = (github: AiUsageGitHubConfig | undefined, link: PullRequestLink): string | null => {
   const owner = link.repository.split('/')[0]?.toLowerCase() ?? '';
   return (
-    github?.accounts?.find((account) => account.host === link.host && account.owner.toLowerCase() === owner)?.ghUser ??
-    null
+    github?.accounts?.find(
+      (account) => account.host.toLowerCase() === link.host.toLowerCase() && account.owner.toLowerCase() === owner,
+    )?.ghUser ?? null
   );
 };
 
@@ -985,12 +1106,46 @@ const createCheckoutStatusSource = (input: {
         ? yield* input.options.workFactInputs.candidateCheckoutPaths()
         : [];
       // Desktop checkouts first, then the served plan and the injected candidates, each path once.
-      const paths = [
+      const candidates = [
         ...new Set([
           ...candidateCheckoutPaths([], input.machine.id, desktop.paths),
           ...candidateCheckoutPaths(served, input.machine.id, injected),
         ]),
       ];
+      let paths = candidates;
+      if (candidates.length > CHECKOUT_STATUS_DEFAULTS.maxPaths) {
+        const probes = yield* Effect.forEach(
+          candidates,
+          (candidate) =>
+            abortIfRequested(context.signal).pipe(
+              Effect.andThen(
+                Effect.tryPromise({
+                  try: async () => {
+                    try {
+                      await stat(candidate);
+                      return { candidate, exists: true };
+                    } catch (cause) {
+                      if (
+                        cause !== null &&
+                        typeof cause === 'object' &&
+                        'code' in cause &&
+                        (cause.code === 'ENOENT' || cause.code === 'ENOTDIR')
+                      ) {
+                        return { candidate, exists: false };
+                      }
+                      throw cause;
+                    }
+                  },
+                  catch: (cause) => sourceFailure('checkouts.status', cause),
+                }),
+              ),
+            ),
+          { concurrency: 8 },
+        );
+        paths = [...probes.filter(({ exists }) => exists), ...probes.filter(({ exists }) => !exists)].map(
+          ({ candidate }) => candidate,
+        );
+      }
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: paths.length });
       const batch = yield* observeCheckoutStatus({
         machineId: input.machine.id,
@@ -1005,13 +1160,27 @@ const createCheckoutStatusSource = (input: {
         Effect.mapError((cause) => sourceFailure('checkouts.status', cause)),
       );
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
-      const message = batch.truncated
+      const missing = batch.observations.filter(({ outcome }) => outcome === 'missing').length;
+      const notRepositories = batch.observations.filter(({ outcome }) => outcome === 'not-a-repository').length;
+      const truncation = batch.truncated
         ? `Observed the first ${String(batch.observations.length)} of ${String(paths.length)} candidate checkouts.`
         : null;
+      const message =
+        [
+          truncation,
+          missing === 0
+            ? null
+            : `${String(missing)} known ${missing === 1 ? 'path no longer exists' : 'paths no longer exist'}.`,
+          notRepositories === 0
+            ? null
+            : `${String(notRepositories)} known ${notRepositories === 1 ? 'path is not a repository' : 'paths are not repositories'}.`,
+        ]
+          .filter(Boolean)
+          .join(' ') || null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: false,
-        failed: batch.observations.length - observed,
+        failed: batch.observations.length - observed - missing - notRepositories,
         machineId: input.machine.id,
         message,
         observed,
@@ -1022,7 +1191,10 @@ const createCheckoutStatusSource = (input: {
         changed: false,
         inputCount: paths.length,
         outputCount: batch.observations.length,
-        warnings: [...desktop.warnings, ...(message === null ? [] : [{ code: 'checkouts-truncated', message }])],
+        warnings: [
+          ...desktop.warnings,
+          ...(truncation === null ? [] : [{ code: 'checkouts-truncated', message: truncation }]),
+        ],
       };
     }),
 });
@@ -1072,8 +1244,12 @@ const createPullRequestSource = (input: {
       }
       const served = yield* servedInputsOrEmpty(
         'github.pull-requests',
-        queryServedSessionPullRequestLinks({ dbPath: input.dbPath }).pipe(Effect.map((result) => result.links)),
-        [] as readonly PullRequestLink[],
+        queryServedSessionPullRequestLinks({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          now: input.now().getTime(),
+        }),
+        { links: [], declarations: [], truncated: false, revision: '', scannedRows: 0 },
       );
       const desktop = yield* desktopWorkFactInputs({
         dbPath: input.dbPath,
@@ -1083,22 +1259,99 @@ const createPullRequestSource = (input: {
       const injected = input.options.workFactInputs?.linkedPullRequests
         ? yield* input.options.workFactInputs.linkedPullRequests()
         : [];
-      // Desktop-declared pull requests first, then the served links and the injected ones, each once.
-      const unique = new Map<string, PullRequestLink>();
-      for (const link of [...desktop.links, ...served, ...injected]) {
+      const threadLinks = yield* servedInputsOrEmpty(
+        'github.pull-requests',
+        queryActiveWorkThreadLinks({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'pull-request',
+          excludeObservedMerged: true,
+          limit: GITHUB_PULL_REQUEST_DEFAULTS.maxLinks,
+        }),
+        { links: [], truncated: false },
+      );
+      const threadPullRequests = threadLinks.links.flatMap((link): PullRequestLink[] => {
+        const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+        return parsed?.kind === 'pull-request' ? [parsed] : [];
+      });
+      // Store eligibility precedes its bound, so completed links cannot crowd out older pending links.
+      // Operator-followed links precede session declarations and retain their account on discovery.
+      const keyFor = (link: PullRequestLink): string =>
+        pullRequestLinkKey({
+          host: link.host.trim().toLowerCase(),
+          number: link.number,
+          repository: link.repository.trim().toLowerCase(),
+        });
+      const unique = new Map<string, { link: PullRequestLink; account: string | null }>();
+      for (const link of [...threadPullRequests, ...desktop.links, ...served.links, ...injected]) {
         const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
-        const key = pullRequestLinkKey(candidate);
+        const key = keyFor(candidate);
         if (!unique.has(key)) {
-          unique.set(key, candidate);
+          unique.set(key, { link: candidate, account: accountFor(config.github, candidate) });
         }
       }
-      const links = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
-      const truncated = unique.size > links.length;
+      const accounts = new Map<string | null, string[]>();
+      const routedOwners = new Set<string>();
+      for (const account of config.github?.accounts ?? []) {
+        const owner = account.owner.toLowerCase();
+        // Match accountFor: only the first configured account for an owner can observe its PRs.
+        if (account.host === 'github.com' && !routedOwners.has(owner)) {
+          routedOwners.add(owner);
+          accounts.set(account.ghUser, [...new Set([...(accounts.get(account.ghUser) ?? []), account.owner])]);
+        }
+      }
+      if (accounts.size === 0) {
+        accounts.set(null, []);
+      }
+      const discoveryWarnings: { code: string; message: string }[] = [];
+      let discoveryFailures = 0;
+      let discoveryTruncated = threadLinks.truncated || served.truncated;
+      let discoveryUnauthenticated = false;
+      for (const [account, owners] of accounts) {
+        yield* abortIfRequested(context.signal);
+        const discovery = yield* discoverPullRequests({
+          environment: ghEnvironment(),
+          ...(account === null ? {} : { account: { ghUser: account }, owners }),
+          ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+          ...(context.signal === undefined ? {} : { signal: context.signal }),
+        });
+        discoveryTruncated ||= discovery.truncated;
+        discoveryUnauthenticated ||= discovery.outcome === 'unauthenticated';
+        if (discovery.outcome !== 'observed') {
+          discoveryFailures += 1;
+          discoveryWarnings.push({
+            code: `pull-request-discovery-${discovery.outcome}`,
+            message: discovery.outcomeMessage ?? 'Pull request discovery failed.',
+          });
+        }
+        for (const link of discovery.links) {
+          const key = keyFor(link);
+          const explicit = unique.get(key);
+          if (explicit) {
+            // Author takes precedence if multiple accounts discover the same pull request.
+            const discoveryRole = explicit.link.discoveryRole === 'author' ? 'author' : link.discoveryRole;
+            unique.set(key, { ...explicit, link: { ...explicit.link, discoveryRole } });
+          } else {
+            unique.set(key, { link, account });
+          }
+        }
+      }
+      const selected = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
+      const links = selected.map(({ link }) => link);
+      const truncated = unique.size > links.length || discoveryTruncated;
+      const waits = yield* servedInputsOrEmpty(
+        'github.pull-requests',
+        queryWorkThreadWaitCandidates({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'pull-request-review',
+          linkKeys: links.map(workThreadPullRequestKey),
+        }),
+        { candidates: [], truncated: false },
+      );
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: links.length });
-      // One batch per gh login: the active account for owners without a configured one.
       const byAccount = new Map<string | null, PullRequestLink[]>();
-      for (const link of links) {
-        const account = accountFor(config.github, link);
+      for (const { link, account } of selected) {
         byAccount.set(account, [...(byAccount.get(account) ?? []), link]);
       }
       const observations: PullRequestObservation[] = [];
@@ -1120,11 +1373,100 @@ const createPullRequestSource = (input: {
       yield* importPullRequestObservations({ dbPath: input.dbPath, observations }).pipe(
         Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
       );
+      const waitResult =
+        waits.candidates.length === 0
+          ? { satisfied: 0, unchanged: 0, unproven: 0 }
+          : yield* applyWorkThreadWaitObservations({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              now: input.now().toISOString(),
+              candidates: waits.candidates,
+              pullRequests: observations,
+            }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      const waitWarnings = [
+        ...(waits.truncated
+          ? [
+              {
+                code: 'work-thread-waits-truncated',
+                message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
+              },
+            ]
+          : []),
+        ...(waitResult.unproven > 0
+          ? [
+              {
+                code: 'pull-request-wait-unproven',
+                message: `Stored observations cannot prove a new review decision for ${String(waitResult.unproven)} identified waits; they remain waiting.`,
+              },
+            ]
+          : []),
+      ];
+      const declarations = [
+        ...new Map(
+          [...desktop.declarations, ...served.declarations].map((declaration) => [
+            JSON.stringify([declaration.pullRequestKey, declaration.sessionKey]),
+            declaration,
+          ]),
+        ).values(),
+      ];
+      // Candidate selection and PR attachment share the seed writer transaction.
+      const pullRequestSeeds = workThreadSeedsFromPullRequests(observations);
+      const seeded = yield* seedWorkThreads({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        now: input.now().toISOString(),
+        seeds: pullRequestSeeds,
+        observedPullRequestKeys: observations
+          .filter((observation) => observation.outcome === 'observed')
+          .map(workThreadPullRequestKey),
+        declarations,
+        declarationsTruncated: desktop.declarationsTruncated || served.truncated,
+      }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      const attached =
+        declarations.length === 0
+          ? { truncated: false }
+          : yield* attachDeclaredWorkThreadSessions({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              now: input.now().toISOString(),
+              declarations,
+            }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      const identityWarnings =
+        seeded.uncertain > 0
+          ? [
+              {
+                code: 'work-thread-identity-uncertain',
+                message:
+                  'Session evidence does not establish a unique task identity; pull requests remain independently discovered.',
+              },
+            ]
+          : [];
+      const declarationWarnings =
+        attached.truncated || served.truncated || desktop.declarationsTruncated
+          ? [
+              {
+                code: 'declared-sessions-truncated',
+                message: 'Some declared session links could not be read or exceeded the read or attachment limits.',
+              },
+            ]
+          : [];
       const observed = observations.filter(({ outcome }) => outcome === 'observed').length;
-      const failed = observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
-      const message = truncated
-        ? `Observed the first ${String(links.length)} of ${String(unique.size)} linked pull requests.`
+      const failed =
+        discoveryFailures +
+        observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
+      const truncation = truncated
+        ? `Observed ${String(links.length)} of ${String(unique.size)} candidate pull requests; additional search results may be omitted.`
         : null;
+      const message =
+        [
+          truncation,
+          ...discoveryWarnings.map((warning) => warning.message),
+          ...waitWarnings.map((warning) => warning.message),
+          ...declarationWarnings.map((warning) => warning.message),
+          ...identityWarnings.map((warning) => warning.message),
+        ]
+          .filter(Boolean)
+          .join(' ') || null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: false,
@@ -1133,20 +1475,28 @@ const createPullRequestSource = (input: {
         message,
         observed,
         ranAt: input.now(),
+        outcomeCode: discoveryUnauthenticated ? 'unauthenticated' : null,
         sourceId: 'github.pull-requests',
       }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
       return {
         changed: false,
         inputCount: links.length,
         outputCount: observations.length,
-        warnings: [...desktop.warnings, ...(message === null ? [] : [{ code: 'pull-requests-truncated', message }])],
+        warnings: [
+          ...desktop.warnings,
+          ...discoveryWarnings,
+          ...waitWarnings,
+          ...declarationWarnings,
+          ...identityWarnings,
+          ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
+        ],
       };
     }),
 });
 
 /**
- * The Jira issue producer (ADR 0054): one bounded `acli` read per key the active Desktop sessions
- * wrote in a branch name, through the operator's own CLI session. The run records itself
+ * The Jira issue producer (ADR 0054): personal assigned-issue discovery joins explicit Desktop
+ * branch keys before bounded issue reads through the operator's own CLI session. The run records itself
  * `disabled` when `jira.enabled` is false, and also when every read found no `acli` (the binary
  * left between detection and the run), so the Work view can name the reason.
  */
@@ -1166,7 +1516,19 @@ const createJiraIssueSource = (input: {
       yield* reportProgress(context, { phase: 'discovering' });
       const availability = yield* input.detect;
       if (availability.availability !== 'detected') {
-        return sourceUnavailableResult();
+        if (availability.availability === 'not-detected') {
+          yield* recordWorkFactRun({
+            dbPath: input.dbPath,
+            disabled: true,
+            failed: 0,
+            machineId: input.machine.id,
+            message: JIRA_NOT_INSTALLED_MESSAGE,
+            observed: 0,
+            ranAt: input.now(),
+            sourceId: 'jira.issues',
+          }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+        }
+        return { ...sourceUnavailableResult(), unavailable: availability.reason };
       }
       const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
@@ -1198,8 +1560,69 @@ const createJiraIssueSource = (input: {
         machineId: input.machine.id,
         now: input.now,
       });
-      const keys = desktop.jiraKeys.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
-      const truncated = desktop.jiraKeys.length > keys.length;
+      yield* abortIfRequested(context.signal);
+      const discovery = yield* discoverJiraIssues({
+        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      });
+      yield* abortIfRequested(context.signal);
+      if (discovery.outcome === 'unavailable') {
+        yield* recordWorkFactRun({
+          dbPath: input.dbPath,
+          disabled: true,
+          failed: 0,
+          machineId: input.machine.id,
+          message: JIRA_NOT_INSTALLED_MESSAGE,
+          observed: 0,
+          ranAt: input.now(),
+          sourceId: 'jira.issues',
+        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+        return {
+          changed: false,
+          inputCount: 0,
+          outputCount: 0,
+          unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE },
+          warnings: desktop.warnings,
+        };
+      }
+      const discoveryWarnings =
+        discovery.outcome === 'observed'
+          ? []
+          : [
+              {
+                code: `jira-discovery-${discovery.outcome}`,
+                message: discovery.outcomeMessage ?? 'Jira issue discovery failed.',
+              },
+            ];
+      const threadLinks = yield* servedInputsOrEmpty(
+        'jira.issues',
+        queryActiveWorkThreadLinks({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'jira-issue',
+          jiraSite: 'default',
+          limit: JIRA_ISSUE_DEFAULTS.maxKeys,
+        }),
+        { links: [], truncated: false },
+      );
+      const threadKeys = threadLinks.links.flatMap((link) => {
+        const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+        // The current Jira observation authority is the CLI's default site only.
+        return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [parsed.key] : [];
+      });
+      const candidates = [...new Set([...threadKeys, ...desktop.jiraKeys, ...discovery.keys])];
+      const keys = candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
+      const truncated = candidates.length > keys.length || discovery.truncated || threadLinks.truncated;
+      const waits = yield* servedInputsOrEmpty(
+        'jira.issues',
+        queryWorkThreadWaitCandidates({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          kind: 'jira-update',
+          linkKeys: keys.map((key) => `jira:default/${key}`),
+        }),
+        { candidates: [], truncated: false },
+      );
       yield* reportProgress(context, { completed: 0, phase: 'reading', total: keys.length });
       const batch = yield* observeJiraIssues({
         keys,
@@ -1213,31 +1636,85 @@ const createJiraIssueSource = (input: {
       yield* importJiraIssueObservations({ dbPath: input.dbPath, observations: batch.observations }).pipe(
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
+      const waitResult =
+        waits.candidates.length === 0
+          ? { satisfied: 0, unchanged: 0, unproven: 0 }
+          : yield* applyWorkThreadWaitObservations({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              now: input.now().toISOString(),
+              candidates: waits.candidates,
+              jiraIssues: batch.observations,
+            }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+      const waitWarnings = [
+        ...(waits.truncated
+          ? [
+              {
+                code: 'work-thread-waits-truncated',
+                message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
+              },
+            ]
+          : []),
+        ...(waitResult.unproven > 0
+          ? [
+              {
+                code: 'jira-wait-unproven',
+                message: `Stored observations cannot prove a status change for ${String(waitResult.unproven)} identified waits; they remain waiting.`,
+              },
+            ]
+          : []),
+      ];
+      // Only assigned issues the discovery returned become threads; a key read from a branch name
+      // stays a fact of the sessions that wrote it.
+      const discoveredKeys = new Set(discovery.keys);
+      const jiraSeeds = workThreadSeedsFromJiraIssues(
+        batch.observations.filter((observation) => discoveredKeys.has(observation.key)),
+      );
+      if (jiraSeeds.length > 0) {
+        yield* seedWorkThreads({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          now: input.now().toISOString(),
+          seeds: jiraSeeds,
+        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+      }
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
-      const failed = batch.observations.filter(
-        ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled',
-      ).length;
+      const failed =
+        discoveryWarnings.length +
+        batch.observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
       const notInstalled =
         batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
       const truncation = truncated
-        ? `Observed the first ${String(keys.length)} of ${String(desktop.jiraKeys.length)} linked Jira issues.`
+        ? `Observed ${String(keys.length)} of ${String(candidates.length)} candidate Jira issues; additional search results may be omitted.`
         : null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: notInstalled,
         failed,
         machineId: input.machine.id,
-        message: notInstalled ? JIRA_NOT_INSTALLED_MESSAGE : truncation,
+        message: notInstalled
+          ? JIRA_NOT_INSTALLED_MESSAGE
+          : [
+              truncation,
+              ...discoveryWarnings.map((warning) => warning.message),
+              ...waitWarnings.map((warning) => warning.message),
+            ]
+              .filter(Boolean)
+              .join(' ') || null,
         observed,
         ranAt: input.now(),
+        outcomeCode: discovery.outcome === 'unauthenticated' ? 'unauthenticated' : null,
         sourceId: 'jira.issues',
       }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
       return {
         changed: false,
         inputCount: keys.length,
         outputCount: batch.observations.length,
+        ...(notInstalled ? { unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE } } : {}),
         warnings: [
+          ...discoveryWarnings,
           ...desktop.warnings,
+          ...waitWarnings,
           ...(truncation === null ? [] : [{ code: 'jira-issues-truncated', message: truncation }]),
         ],
       };

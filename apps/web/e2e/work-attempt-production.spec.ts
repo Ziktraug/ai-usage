@@ -126,11 +126,11 @@ test('launches one read-only review from the cockpit, follows it to its result a
   // The production fixture pins the server clock; the browser judges freshness against its own
   // clock, so it is aligned with the server's before the page loads (it keeps flowing from there).
   await page.clock.install({ time: serverNow });
-  await page.goto(`/work?root=${BLOCKED_ROOT_ID}`);
+  await page.goto(`/work/sessions?root=${BLOCKED_ROOT_ID}`);
   await waitForHydratedWork(page);
   const aside = page.getByRole('main').locator('[data-work-aside]');
   await expect(aside.locator('[data-work-detail]')).toHaveAttribute('data-work-detail', BLOCKED_ROOT_ID);
-  await expect(aside.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(aside.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
 
   // Before any click: the attempts list exists and is empty; no button exists before a simulation.
   const attempts = aside.locator('[data-work-attempts]');

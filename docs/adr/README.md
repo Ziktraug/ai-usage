@@ -95,12 +95,16 @@ was deleted.
 | [0057](0057-observed-account-identity-and-on-demand-routing-qualification.md) | Observed account identity, models of one account, on-demand routing qualification | 2026-10-22 | Accepted; extends 0009, 0052, 0053 |
 | [0058](0058-harness-sessions-read-work-context-through-one-bounded-projection.md) | Harness sessions read Work context through one bounded, read-only projection (CLI and local MCP) | 2026-10-22 | Accepted; extends 0009, 0027, 0050, 0056 |
 | [0059](0059-work-roots-for-harnesses-that-declare-no-wait.md) | Work shows sessions of a harness that declares no wait, with their attention not observable | 2026-10-22 | Accepted; extends 0016, 0050, 0056 |
+| [0060](0060-attribute-work-responses-to-their-requests.md) | Attribute Work responses to their requests | 2026-10-22 | Accepted; amends 0056 |
+| [0061](0061-local-codex-request-observations.md) | Keep native Codex request observations local and attributable | 2026-10-22 | Accepted; amends 0059; extends 0050, 0060 |
+| [0062](0062-owned-codex-review-through-app-server.md) | Run owned Codex reviews through the subscription app-server | 2026-10-22 | Accepted; amends 0053, 0055; extends 0057 |
+| [0063](0063-durable-work-threads-and-personal-follow-up.md) | Durable Work threads carry the operator's follow-up | 2026-10-24 | Accepted; extends 0050, 0051, 0054 |
 | [0070](0070-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011; amended 2026-10-24 |
 | [0071](0071-effect-4.md) | Run every Effect surface on Effect 4 | 2026-10-22 | Accepted; amends 0001; amended 2026-10-24 |
 | [0072](0072-sveltekit-3-official-bun-adapter.md) | Run SvelteKit 3 on the official `@sveltejs/adapter-bun` | 2026-10-22 | Accepted; amends 0011; amended 2026-10-24 |
 | [0073](0073-ultracite-8-rule-policy.md) | Ultracite 8 rule policy: rules that churn style, misread the code or change behaviour stay off | 2026-10-22 | Accepted, amended 2026-10-24 (platform-only text removed; nursery promise and Svelte rules on) |
 | [0074](0074-local-only-single-operator-product.md) | Local-only, single-operator product; manual transfer bundles are the only cross-machine path | 2026-10-24 | Accepted; supersedes 0023, 0030, 0031, 0033–0036; amends 0024, 0026–0029, 0038 |
-| [0075](0075-local-store-schema-evolution.md) | Local store schema evolution: forward-only, additive where possible, widen-only reads | 2026-10-24 | Accepted; extends 0009 |
+| [0075](0075-local-store-schema-evolution.md) | Local store schema evolution: forward-only, additive where possible, widen-only reads | 2026-10-24 | Accepted; extends 0009; amended 2026-10-25 (nullable columns) |
 | [0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md) | Browser boundary: oRPC contract + TanStack Query, derived once | 2026-10-24 | Accepted; supersedes 0010 and 0012 |
 | [0077](0077-delegation-independent-of-the-calling-harness.md) | Delegation owned by AI Usage, independent of the calling harness (read-only reviews, Claude Code and Codex executors) | 2026-10-25 | Accepted; extends 0009, 0052, 0053, 0055, 0057, 0058, 0074, 0075; amends 0051 (stderr classification) |
 

@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { prepareReviewScope, ReviewScopeError } from '@ai-usage/local-collectors/claude-review-scope';
 import { claudeReviewWorkerAdapter } from '@ai-usage/local-collectors/claude-review-worker';
+import { type CodexAccountObservation, probeCodexAccount } from '@ai-usage/local-collectors/codex-app-server-client';
 import { codexReviewWorkerAdapter } from '@ai-usage/local-collectors/codex-review-worker';
 import {
   freezeDelegationScope,
@@ -164,6 +165,8 @@ export interface DelegationServiceOptions {
    * pinned route is re-checked with it at start (ADR 0057). Defaults to `claude auth status`.
    */
   readonly probeClaudeAccount?: () => Promise<ClaudeAccountProbe>;
+  /** Reconfirms an explicitly pinned Codex account through the same launch profile. */
+  readonly probeCodexAccount?: () => Promise<CodexAccountObservation>;
   /**
    * Reads the Codex sign-in now, with the launch's own executable and `CODEX_HOME`; a Codex route is
    * re-checked with it at start: signed out refuses the executor, an API-key sign-in refuses the route
@@ -451,6 +454,13 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
   };
   const probeAccount = options.probeClaudeAccount ?? (async () => await probeClaudeAccount(probeOptions));
   const probeCodex = options.probeCodexAuth ?? (async () => await probeCodexAuth(probeOptions));
+  const probeCodexIdentity =
+    options.probeCodexAccount ??
+    (() =>
+      probeCodexAccount({
+        ...(adapterOptions.env === undefined ? {} : { env: adapterOptions.env }),
+        ...(adapterOptions.executable === undefined ? {} : { command: adapterOptions.executable }),
+      }));
   const runWithWriter = options.runWithWriter ?? (async <Value>(operation: () => Promise<Value>) => await operation());
   const report = options.report ?? (() => undefined);
   const runLimits = { ...REVIEW_ATTEMPT_RUN_LIMITS, ...options.runLimits };
@@ -1046,9 +1056,8 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
         );
       }
     }
-    // Codex names no account, so the launch profile's sign-in itself is re-read now: the retained
-    // observation admitted the route, the profile that would bill this run must still be a signed-in
-    // subscription. Anything short of a confirmed sign-in refuses rather than guesses.
+    // The profile that would bill this run must still be a signed-in subscription. When the
+    // declaration pins an account observed through app-server, confirm that identity as well.
     if (route.harness === 'codex') {
       const codexAuth = await probeCodex();
       signal?.throwIfAborted();
@@ -1065,6 +1074,25 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
           'route-not-admissible',
           `The Codex launch profile is signed in with an API key (${codexAuth.authMethod}), which bills the API; delegation routes are subscription-only. Sign that profile in with a ChatGPT subscription, then qualify again.`,
         );
+      }
+      const codexPin = declared?.declaration.accountFingerprint;
+      if (codexPin !== undefined) {
+        let current: CodexAccountObservation;
+        try {
+          current = await probeCodexIdentity();
+        } catch {
+          return await refuse(
+            'identity-changed',
+            'The pinned Codex account could not be confirmed at start; qualify again.',
+          );
+        }
+        signal?.throwIfAborted();
+        if (current.authMethod !== 'chatgpt' || current.accountFingerprint !== codexPin) {
+          return await refuse(
+            'identity-changed',
+            'The Codex ChatGPT account differs from the pinned route; qualify again.',
+          );
+        }
       }
     }
     const requested = await gated(

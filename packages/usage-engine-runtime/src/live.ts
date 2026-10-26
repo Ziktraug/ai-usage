@@ -74,7 +74,7 @@ import {
   type UsageEngineSourceControlPort,
   type UsageEngineWriterLease,
 } from './runtime';
-import { createScheduledSourceRegistry, type ScheduledSource } from './source-adapters';
+import { createScheduledSourceRegistry, type ScheduledSource, type SourceAdapterOptions } from './source-adapters';
 import {
   createSourceControl,
   type ReportPublicationPort,
@@ -84,6 +84,7 @@ import {
   type SourcePolicyStore,
 } from './source-control';
 import { createSourceSnapshotBroker } from './source-snapshot-broker';
+import { createWorkThreadService } from './work-threads';
 import { createUsageEngineWriterGate, type UsageEngineWriterGate } from './writer-gate';
 
 const TERMINAL_SOURCE_OUTCOMES = new Set(['failed', 'timed-out']);
@@ -519,6 +520,16 @@ export interface LiveUsageEngineRuntimeOptions {
   /** One operator-log line per review attempt or delegation transition (ADR 0053, 0077); never a transcript. */
   readonly reportReviewAttempt?: (line: string) => void;
   readonly retainRevisions?: (input: { readonly dbPath: string; readonly now: number }) => Promise<void>;
+  /** Process seams forwarded to fact/executor sources; production uses their bounded default runners. */
+  readonly sourceOptions?: Pick<
+    SourceAdapterOptions,
+    | 'acliAvailable'
+    | 'claudeLiveAvailable'
+    | 'executorObservation'
+    | 'ghAvailable'
+    | 'gitAvailable'
+    | 'workFactProcessRunner'
+  >;
   readonly storage?: LocalHistoryStorageService;
   readonly temporaryRoot: string;
   readonly wideEventSinkLayer: Layer.Layer<WideEventResourceService | WideEventSink>;
@@ -973,6 +984,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     }
     const sources = await runWithStorage(
       createScheduledSourceRegistry({
+        ...options.sourceOptions,
         ...(options.codexLiveAvailable === undefined ? {} : { codexLiveAvailable: options.codexLiveAvailable }),
         configCwd: options.configCwd,
         dbPath: options.dbPath,
@@ -1044,6 +1056,13 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
       await requireMutation().setCampaignLabelOverride(command, signal),
     setMachineLabel: async (label, signal) => await requireMutation().setMachineLabel(label, signal),
   };
+
+  const workThreads = createWorkThreadService({
+    dbPath: options.dbPath,
+    machine: requireMachine,
+    now,
+    runWithWriter: (operation, signal) => writerGate.run(operation, signal),
+  });
 
   // Delegation (ADR 0077): gated short writes, workers run outside the gate, startup recovery inside
   // the gated `recover`, with the adapters' private files under an engine-owned directory in the
@@ -1120,6 +1139,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     delegation,
     reviewAttempts,
     routingQualification,
+    workThreads,
     recover: async () =>
       await writerGate.run(async () => {
         await observe(

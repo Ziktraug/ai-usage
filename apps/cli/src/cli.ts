@@ -62,7 +62,11 @@ export interface ReplicationStatusArgs {
 export interface WorkContextArgs {
   json: boolean;
   /** As given: a relative checkout path is resolved against the operator's working directory. */
-  scope: { checkoutPath: string; kind: 'checkout' } | { kind: 'project-label'; projectLabel: string };
+  scope:
+    | { checkoutPath: string; kind: 'checkout' }
+    | { checkoutPaths: readonly string[]; kind: 'checkouts' }
+    | { kind: 'project-label'; projectLabel: string };
+  sinceDays?: number;
 }
 
 export interface DelegationQualifyArgs {
@@ -237,7 +241,7 @@ export const helpText =
   '  replication status [--json]\n' +
   '                         show content-free Usage and Memory outbox state\n' +
   '\nWork:\n' +
-  '  work context (--checkout <path> | --project-label <name>) [--json]\n' +
+  '  work context (--checkout <path>... | --project-label <name>) [--since-days <1-3650>] [--json]\n' +
   '                         waits, settled decisions, linked facts and coverage from\n' +
   '                         Claude Desktop sessions; reads the store only, starts no engine\n' +
   '\nDelegation (qualify, start and cancel need a running engine and never start one):\n' +
@@ -597,6 +601,7 @@ const parseWorkCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgument
       return yield* Effect.fail(cliArgumentError(`Unknown work subcommand: ${subcommand ?? ''}`.trim()));
     }
     let json = false;
+    let sinceDays: number | undefined;
     const scopes: WorkContextArgs['scope'][] = [];
     while (rest.length) {
       const arg = rest.shift()!;
@@ -604,17 +609,28 @@ const parseWorkCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgument
         json = true;
       } else if (arg === '--checkout') {
         scopes.push({ checkoutPath: yield* parseRequiredValue(rest, '--checkout'), kind: 'checkout' });
+      } else if (arg === '--since-days') {
+        sinceDays = Number(yield* parseRequiredValue(rest, '--since-days'));
+        if (!Number.isSafeInteger(sinceDays) || sinceDays < 1 || sinceDays > 3650) {
+          return yield* Effect.fail(cliArgumentError('--since-days must be an integer from 1 to 3650'));
+        }
       } else if (arg === '--project-label') {
         scopes.push({ kind: 'project-label', projectLabel: yield* parseRequiredValue(rest, '--project-label') });
       } else {
         return yield* Effect.fail(cliArgumentError(`Unknown option for work context: ${arg}`));
       }
     }
-    const [scope, ...others] = scopes;
-    if (scope === undefined || others.length > 0) {
+    const checkoutPaths = scopes.flatMap((value) => (value.kind === 'checkout' ? [value.checkoutPath] : []));
+    let scope: WorkContextArgs['scope'] | undefined;
+    if (checkoutPaths.length > 1 && checkoutPaths.length === scopes.length) {
+      scope = { kind: 'checkouts', checkoutPaths };
+    } else if (scopes.length === 1) {
+      scope = scopes[0];
+    }
+    if (scope === undefined || checkoutPaths.length > 10) {
       return yield* Effect.fail(cliArgumentError(WORK_CONTEXT_SCOPE_MESSAGE));
     }
-    return { _tag: 'WorkContext', args: { json, scope } };
+    return { _tag: 'WorkContext', args: { json, scope, ...(sinceDays === undefined ? {} : { sinceDays }) } };
   });
 
 const DEFAULT_DELEGATION_SELECTOR_VERSION = 'operator/ai-usage-cli';

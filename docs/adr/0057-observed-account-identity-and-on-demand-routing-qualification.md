@@ -3,6 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-10-22
 - **Extends**: 0009, 0052, 0053
+- **Amended by**: [0062](0062-owned-codex-review-through-app-server.md), for native Codex account identity and account-scoped quota at launch.
 
 ## Context
 

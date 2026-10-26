@@ -10,11 +10,68 @@ import {
   workAttentionKey,
   workAttentionQueryOptions,
   workAttentionRequest,
+  workAttentionRequestFromSearch,
 } from './work-attention';
 
 const dataset = syntheticWorkAttentionDataset();
 
 describe('Work attention Query identity and policy', () => {
+  test('reads an exact project and explicit older window without raising the budget', () => {
+    expect(workAttentionRequestFromSearch(new URLSearchParams('context-project=ai-usage&context-days=180'))).toEqual({
+      ok: true,
+      input: {
+        limit: 100,
+        machineId: null,
+        scope: { kind: 'project-label', projectLabel: 'ai-usage' },
+        sinceDays: 180,
+      },
+    });
+    expect(workAttentionRequestFromSearch(new URLSearchParams())).toEqual({ ok: true, input: workAttentionRequest() });
+    expect(workAttentionRequestFromSearch(new URLSearchParams('context-project=30'))).toEqual({
+      ok: true,
+      input: { ...workAttentionRequest(), scope: { kind: 'project-label', projectLabel: '30' } },
+    });
+  });
+  test('refuses invalid nonempty context instead of silently reading all projects', () => {
+    for (const search of [
+      'context-project=/work/ai-usage',
+      'context-project=..',
+      'context-days=Infinity',
+      'context-days=',
+      'context-days=3651',
+    ]) {
+      expect(workAttentionRequestFromSearch(new URLSearchParams(search))).toMatchObject({
+        ok: false,
+        error: { tag: 'InvalidProjectContext' },
+      });
+    }
+  });
+  test('keeps scoped historical context distinct from the global page', async () => {
+    const identity = {
+      limit: 20,
+      machineId: null,
+      scope: { kind: 'checkouts' as const, checkoutPaths: ['/src/a', '/src/b'] },
+      sinceDays: 180,
+    };
+    const seen: unknown[] = [];
+    const client: WorkAttentionClient = {
+      attention: (input) => {
+        seen.push(input);
+        return Promise.resolve({ data: dataset, ok: true });
+      },
+    };
+    const queryClient = createHydratedWebQueryClient({ dehydratedState: { mutations: [], queries: [] } });
+    try {
+      await queryClient.fetchQuery(workAttentionQueryOptions(client, identity, { browser: true, enabled: true }));
+      expect(seen).toEqual([identity]);
+      expect(workAttentionKey(identity)).not.toEqual(workAttentionKey({ limit: 20, machineId: null }));
+      expect(workAttentionKey(identity)).toEqual(
+        workAttentionKey({ ...identity, scope: { kind: 'checkouts', checkoutPaths: ['/src/b', '/src/a'] } }),
+      );
+    } finally {
+      queryClient.clear();
+    }
+  });
   test('lives on the collection cadence prefix with scalar identity parts', () => {
     expect(workAttentionKey(workAttentionRequest())).toEqual([
       'web',

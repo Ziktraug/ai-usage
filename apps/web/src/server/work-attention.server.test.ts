@@ -82,6 +82,16 @@ const seededStore = async (): Promise<string> => {
 };
 
 describe('work attention server', () => {
+  test('forwards exact project scope and explicit history to the bounded reader', async () => {
+    const dbPath = await seededStore();
+    const result = await readWorkAttentionForServer(
+      { limit: 1, scope: { kind: 'project-label', projectLabel: 'unrelated' }, sinceDays: 180 },
+      { dbPath, mode: 'live', now: () => NOW },
+    );
+    expect(result.ok && result.data.roots).toEqual([]);
+    expect(result.ok && result.data.coverage.window.sinceDays).toBe(180);
+    expect(parseWorkAttentionOutput(result)).toEqual(JSON.parse(JSON.stringify(result)));
+  });
   test('reads the live store through the read model and returns the contract envelope', async () => {
     const dbPath = await seededStore();
     const result = await readWorkAttentionForServer(

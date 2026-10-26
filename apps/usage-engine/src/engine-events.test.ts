@@ -102,11 +102,20 @@ test('emits engine lifecycle and command boundaries from the production composit
   });
   const runtime = createLiveUsageEngineRuntime({
     acquireWriterLease: () => Promise.resolve({ release: () => Promise.resolve() }),
+    codexLiveAvailable: () => false,
     configCwd: root,
     dbPath: path.join(root, 'state', 'usage.sqlite'),
     inboxDirectory,
     instanceId,
     operatorCwd: root,
+    // No external CLI is reachable from this composition test: fact sources stay undetected.
+    sourceOptions: {
+      acliAvailable: () => false,
+      claudeLiveAvailable: () => false,
+      executorObservation: { which: () => null },
+      ghAvailable: () => false,
+      gitAvailable: () => false,
+    },
     storage: createLocalHistoryStorage(path.join(root, 'home')),
     temporaryRoot,
     wideEventSinkLayer,

@@ -14,7 +14,12 @@ import { createWebQueryRuntime } from '../../query/composition';
 import { retainedCampaignOptions } from '../../query/options/campaigns';
 import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
 import { WORK_PAGE_SIZE, workRequest, workSessionsOptions } from '../../query/options/work';
-import { workAttentionKey, workAttentionQueryOptions, workAttentionRequest } from '../../query/options/work-attention';
+import {
+  workAttentionKey,
+  workAttentionQueryOptions,
+  workAttentionRequest,
+  workAttentionRequestFromSearch,
+} from '../../query/options/work-attention';
 import { prefetchWorkQueries } from '../../query/work-prefetch';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import type { WorkAttentionClient } from '../../rpc/work-attention-client';
@@ -378,6 +383,42 @@ describe('Work bounded stored metadata and Query hydration', () => {
       expect(failures.attention?.message).toContain('older than this build');
       expect(JSON.stringify(failures)).not.toContain('/home/private');
       expect(failures.sessions).toBeNull();
+    } finally {
+      runtime.queryClient.clear();
+    }
+  });
+  test('invalid context never prefetches global attention and valid scope is forwarded', async () => {
+    const runtime = createWebQueryRuntime({
+      fetch: () => Promise.reject(new Error('no transport')),
+      url: new URL('http://work.invalid/work'),
+    });
+    const seen: unknown[] = [];
+    const sources = {
+      attention: {
+        attention: (input: unknown) => {
+          seen.push(input);
+          return Promise.resolve({ ok: true as const, data: syntheticWorkAttentionDataset() });
+        },
+      },
+      sessions: { client: createSyntheticWorkClient(), revision: WORK_DEMO_REVISION },
+    };
+    try {
+      const invalid = await prefetchWorkQueries(
+        runtime,
+        sources,
+        workAttentionRequestFromSearch(new URLSearchParams('context-project=/work/ai-usage')),
+      );
+      expect(invalid.attention?.kind).toBe('attention-unavailable');
+      expect(seen).toHaveLength(0);
+      expect(runtime.queryClient.getQueryData(workAttentionKey(workAttentionRequest()))).toBeUndefined();
+      await prefetchWorkQueries(
+        runtime,
+        sources,
+        workAttentionRequestFromSearch(new URLSearchParams('context-project=30&context-days=180')),
+      );
+      expect(seen).toEqual([
+        { limit: 100, machineId: null, scope: { kind: 'project-label', projectLabel: '30' }, sinceDays: 180 },
+      ]);
     } finally {
       runtime.queryClient.clear();
     }

@@ -1,4 +1,5 @@
 import { isCanonicalInstant } from './canonical-instant';
+import { codexQuotaWindowModel, isCodexQuotaAvailabilityWindow } from './provider-quota';
 import {
   LIVE_PROVIDER_STATUS_MAX_AGE_MS,
   type ProviderLimitWindow,
@@ -291,11 +292,15 @@ const windowModelWords = (window: ProviderLimitWindow): ReadonlySet<string> => {
 };
 
 /**
- * Whether a model-scoped window applies to the declared model. Any shared model word counts
+ * Native Codex windows carry an exact model identity. For legacy labels, any shared model word counts
  * ("claude-opus-4-1" and "opus" both match an "Opus" window): counting a window that might apply
  * can only exclude a candidate, while missing one would launch a model whose limit is exhausted.
  */
 const windowNamesModel = (window: ProviderLimitWindow, model: string): boolean => {
+  const nativeCodexModel = codexQuotaWindowModel(window.id);
+  if (nativeCodexModel !== null) {
+    return nativeCodexModel === model;
+  }
   const words = windowModelWords(window);
   return wordsOf(model).some((word) => words.has(word));
 };
@@ -1003,11 +1008,15 @@ const checkQuota = (candidate: ReviewCandidate, referenceTime: string, result: E
     result.excluded.push('Quota source is not an observed provider or session-log reading.');
   }
   const fresh = providerStatusWithFeedFreshness(quota, new Date(now));
-  // The collectors read a provider as `partial` as soon as one window is blocked. Every window is
+  // Collectors report `partial` when a window is blocked or its native availability is unknown. Each is
   // judged on its own below, so one exhausted model window excludes only the models it applies to,
   // never the account's other models.
-  const partialFromBlockedWindow = fresh.state === 'partial' && quota.windows.some((window) => window.blocked);
-  if (fresh.state !== 'ok' && !partialFromBlockedWindow) {
+  const partialFromScopedWindow =
+    fresh.state === 'partial' &&
+    quota.windows.some(
+      (window) => window.blocked || (scope.family === 'codex' && isCodexQuotaAvailabilityWindow(window.id)),
+    );
+  if (fresh.state !== 'ok' && !partialFromScopedWindow) {
     result.excluded.push(`Quota observation is ${fresh.state}; current capacity is not established.`);
   }
   requireEvidence(result, quota.windows.length > 0, 'Usable quota windows');

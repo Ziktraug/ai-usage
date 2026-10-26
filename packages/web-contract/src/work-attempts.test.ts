@@ -4,12 +4,14 @@ import {
   parseWorkAttemptsListOutput,
   parseWorkAttemptsReleaseOutput,
   parseWorkAttemptsStartOutput,
+  parseWorkAttemptsStopOutput,
   type WorkAttemptsListData,
   type WorkAttemptWire,
   workAttemptsContract,
   workAttemptsListInputSchema,
   workAttemptsReleaseInputSchema,
   workAttemptsStartInputSchema,
+  workAttemptsStopInputSchema,
 } from './work-attempts';
 import { parseWorkRoutingContext } from './work-routing';
 
@@ -88,6 +90,16 @@ const listData: WorkAttemptsListData = {
 };
 
 describe('Work attempts Web contract', () => {
+  test('stop addresses one owned attempt and cannot assert confirmed termination', () => {
+    expect(workAttemptsContract.stop['~orpc'].route).toMatchObject({ method: 'POST', path: '/work/attempts/stop' });
+    expect(parse(workAttemptsStopInputSchema, { attemptId: 'a' })).toEqual({ attemptId: 'a' });
+    expect(() => parse(workAttemptsStopInputSchema, { attemptId: 'a', pid: 12 })).toThrow();
+    for (const result of ['requested', 'not-owned', 'already-ended']) {
+      const output = { ok: true, data: { attemptId: 'a', result } };
+      expect(parseWorkAttemptsStopOutput(output)).toEqual(output as never);
+    }
+    expect(() => parseWorkAttemptsStopOutput({ ok: true, data: { attemptId: 'a', result: 'killed' } })).toThrow();
+  });
   test('exposes two POST procedures and parses both inputs strictly', () => {
     expect(workAttemptsContract.list['~orpc'].route).toMatchObject({ method: 'POST', path: '/work/attempts' });
     expect(workAttemptsContract.start['~orpc'].route).toMatchObject({ method: 'POST', path: '/work/attempts/start' });
@@ -238,5 +250,38 @@ describe('Work attempts Web contract', () => {
     expect(parseWorkRoutingContext(withTargets)).toEqual(withTargets);
     expect(() => parseWorkRoutingContext({ ...context, reviewTargets: [{ checkoutPath: '' }] })).toThrow();
     expect(() => parseWorkRoutingContext({ ...context, reviewTargets: [{ checkoutPath: '/x', secret: 1 }] })).toThrow();
+  });
+
+  test('keeps Codex native identity and stop evidence separate from Claude guarantees', () => {
+    const codex = {
+      ...attempt,
+      executorHarness: 'codex',
+      nativeTurnId: 'turn-1',
+      stopRequestedAt: '2026-10-22T10:00:20.000Z',
+      stopConfirmedAt: null,
+      guarantee: {
+        kind: 'codex-app-server',
+        cliVersion: '0.163.0',
+        model: 'fixture-model',
+        effort: 'high',
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+        networkAccess: false,
+        accountFingerprint: '0123456789abcdef',
+        externalTools: 'disabled',
+        managedPolicy: 'inherited',
+      },
+    };
+    const output = { data: { ...listData, attempts: [codex] }, ok: true };
+    expect(parseWorkAttemptsListOutput(output)).toEqual(output as never);
+    for (const guarantee of [
+      { ...codex.guarantee, networkAccess: true },
+      { ...codex.guarantee, safeMode: true },
+      { ...codex.guarantee, accountFingerprint: 'raw-account-identity' },
+    ]) {
+      expect(() =>
+        parseWorkAttemptsListOutput({ ...output, data: { ...output.data, attempts: [{ ...codex, guarantee }] } }),
+      ).toThrow();
+    }
   });
 });

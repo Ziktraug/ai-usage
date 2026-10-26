@@ -13,7 +13,9 @@
     workRootFactChips,
     workRootId,
     workRootLastDecision,
+    workRootNativeQuestion,
     workRootNextAction,
+    workRootObservedActivity,
     workRootRelevantInstant,
     workRootRowTitle,
     workRootStanding,
@@ -56,6 +58,7 @@
   const chips = $derived(workRootFactChips(root));
   const standing = $derived(workRootStanding(root));
   const decision = $derived(workRootLastDecision(root));
+  const activity = $derived(workRootObservedActivity(root));
   const next = $derived(workRootNextAction(root));
   // ADR 0056 age tier: the request is dated, then said to be untouched since.
   const dormant = $derived(workRootDormantNote(root));
@@ -79,7 +82,9 @@
     root.declared ? workDeclaredStatusLabel(root.declared.status) : workUndeclaredSituation(root),
   );
   const request = $derived(
-    root.declared?.needsAction ?? (root.declared?.status === 'review_ready' ? 'Review requested' : null),
+    root.declared?.needsAction ??
+      workRootNativeQuestion(root) ??
+      (root.declared?.status === 'review_ready' ? 'Review requested' : null),
   );
 </script>
 
@@ -131,6 +136,9 @@
           >
         {/if}</span
       >
+    {/if}
+    {#if activity}
+      <span class={workRowMeta} data-work-observed-activity>{activity}</span>
     {/if}
     {#if next}
       <span class={workRowNext} data-work-next>Next: {next}</span>

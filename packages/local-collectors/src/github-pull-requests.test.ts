@@ -1,10 +1,11 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type BoundedProcessRunner, runBoundedProcess } from '@ai-usage/local-machine/bounded-process';
 import { canonicalInstantFromDate, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
-import { Effect } from 'effect';
+import { parsePullRequestObservation } from '@ai-usage/report-core/work-attention';
+import { Effect, Exit } from 'effect';
 import { observePullRequests, parsePullRequestView, rollupChecks } from './github-pull-requests';
 
 const NOW = new Date('2026-10-21T21:00:00.000Z');
@@ -30,14 +31,34 @@ interface FakeGh {
   readonly run: BoundedProcessRunner;
 }
 
+interface FakeResponse {
+  readonly delayMs?: number;
+  readonly exitCode?: number;
+  readonly stdout?: string;
+}
+interface FakeScenario {
+  readonly api?: Readonly<Record<string, FakeResponse>>;
+  readonly authToken?: FakeResponse;
+  readonly pullRequests?: Readonly<Record<string, FakeResponse>>;
+}
+const reviewThreadsBody = (nodes: readonly unknown[], totalCount = nodes.length) =>
+  JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { totalCount, nodes } } } } });
+
 /** Installs the fake `gh` on a private PATH that also carries the Bun executable for its shebang. */
-const installFakeGh = (scenario: unknown): FakeGh => {
+const installFakeGh = (scenario: FakeScenario): FakeGh => {
   const binDirectory = mkdtempSync(path.join(tmpdir(), 'ai-usage-fake-gh-'));
   temporaryRoots.push(binDirectory);
   const ghPath = path.join(binDirectory, 'gh');
   copyFileSync(fixturePath, ghPath);
   chmodSync(ghPath, 0o700);
-  writeFileSync(path.join(binDirectory, 'scenario.json'), JSON.stringify(scenario));
+  writeFileSync(
+    path.join(binDirectory, 'scenario.json'),
+    JSON.stringify({
+      authToken: { stdout: `${TOKEN_SENTINEL}\n` },
+      ...scenario,
+      api: { graphql: { stdout: reviewThreadsBody([]) }, ...scenario.api },
+    }),
+  );
   const searchPath = [binDirectory, path.dirname(process.execPath)].join(path.delimiter);
   return {
     calls: () => {
@@ -104,6 +125,26 @@ describe('rollupChecks', () => {
 });
 
 describe('parsePullRequestView', () => {
+  test('matches only owner and repository path segments case-insensitively', () => {
+    for (const repository of ['Fixture/project', 'fixture/Project', 'FIXTURE/PROJECT']) {
+      expect(parsePullRequestView(view({ url: `https://github.com/${repository}/pull/66` }), link(66))).toMatchObject({
+        state: 'OPEN',
+      });
+    }
+    for (const url of [
+      'http://github.com/Fixture/Project/pull/66',
+      'https://elsewhere.test/Fixture/Project/pull/66',
+      'https://github.com/other/Project/pull/66',
+      'https://github.com/Fixture/other/pull/66',
+      'https://github.com/Fixture/Project/PULL/66',
+      'https://github.com/Fixture/Project/pull/67',
+      'https://github.com/Fixture/Project/pull/066',
+      'https://github.com/Fixture/Project/pull/66/',
+    ]) {
+      expect(parsePullRequestView(view({ url }), link(66))).toBeNull();
+    }
+  });
+
   test('ignores unknown keys and rejects missing or mistyped expected ones', () => {
     expect(parsePullRequestView(view({ extra: 'ignored', reviewDecision: '' }), link(66))).toMatchObject({
       checksRollup: 'success',
@@ -123,6 +164,98 @@ describe('parsePullRequestView', () => {
 });
 
 describe('observePullRequests through a fake gh on PATH', () => {
+  test('observes discovered and stored repository spellings once with the first spelling and role', async () => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout: reviewThreadsBody([{ isResolved: false }]) } },
+      pullRequests: { 'Owner/Repo#1': { stdout: view({ url: 'https://github.com/Owner/Repo/pull/1' }) } },
+    });
+    const batch = await observe(fake, {
+      links: [
+        { ...link(1, 'Owner/Repo', 'GitHub.com'), discoveryRole: 'author' },
+        link(1, 'owner/repo'),
+        { ...link(1, 'OWNER/REPO'), discoveryRole: 'review-requested' },
+      ],
+    });
+    expect(batch.observations).toEqual([
+      expect.objectContaining({
+        discoveryRole: 'author',
+        host: 'github.com',
+        number: 1,
+        outcome: 'observed',
+        repository: 'Owner/Repo',
+        unresolvedReviewThreads: 1,
+      }),
+    ]);
+    expect(batch.truncated).toBe(false);
+    const calls = fake.calls();
+    expect(calls.map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+    expect(calls[1]?.args.slice(0, 5)).toEqual(['pr', 'view', '1', '--repo', 'Owner/Repo']);
+    expect(calls[2]?.args.slice(4)).toEqual(['-f', 'owner=Owner', '-f', 'name=Repo', '-F', 'number=1']);
+  });
+
+  test.each([undefined, null] as const)(
+    'merges a later role into a %s role without changing the first spelling',
+    async (discoveryRole) => {
+      const fake = installFakeGh({
+        pullRequests: { 'owner/repo#1': { stdout: view({ url: 'https://github.com/Owner/Repo/pull/1' }) } },
+      });
+      const batch = await observe(fake, {
+        links: [
+          { ...link(1, 'owner/repo'), ...(discoveryRole === undefined ? {} : { discoveryRole }) },
+          { ...link(1, 'Owner/Repo'), discoveryRole: 'review-requested' },
+          { ...link(1, 'OWNER/REPO'), discoveryRole: 'author' },
+        ],
+        maxLinks: 1,
+      });
+      expect(batch.truncated).toBe(false);
+      expect(batch.observations).toEqual([
+        expect.objectContaining({ discoveryRole: 'review-requested', outcome: 'observed', repository: 'owner/repo' }),
+      ]);
+      expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+        ['auth', 'token'],
+        ['pr', 'view'],
+        ['api', 'graphql'],
+      ]);
+    },
+  );
+
+  test('bounds distinct identities after merging case variants and still rejects mismatched URLs', async () => {
+    const fake = installFakeGh({
+      pullRequests: {
+        'Owner/Repo#1': { stdout: view({ url: 'https://github.com/owner/repo/pull/1' }) },
+        'Owner/Repo#2': { stdout: view({ url: 'https://github.com/owner/other/pull/2' }) },
+        'Owner/Repo#3': { stdout: view({ url: 'https://github.com/owner/repo/pull/4' }) },
+      },
+    });
+    const batch = await observe(fake, {
+      links: [
+        link(1, 'Owner/Repo'),
+        link(1, 'owner/repo'),
+        link(2, 'Owner/Repo'),
+        link(3, 'Owner/Repo'),
+        link(4, 'Owner/Repo'),
+      ],
+      maxLinks: 3,
+    });
+    expect(batch.observations.map(({ number, outcome }) => [number, outcome])).toEqual([
+      [1, 'observed'],
+      [2, 'invalid'],
+      [3, 'invalid'],
+    ]);
+    expect(batch.truncated).toBe(true);
+    expect(
+      fake
+        .calls()
+        .filter(({ args }) => args[0] === 'pr')
+        .map(({ args }) => args[2]),
+    ).toEqual(['1', '2', '3']);
+    expect(fake.calls().filter(({ args }) => args[0] === 'api')).toHaveLength(1);
+  });
+
   test('observes open, merged and draft pull requests, deduplicates links and bounds the batch', async () => {
     const fake = installFakeGh({
       pullRequests: {
@@ -164,11 +297,16 @@ describe('observePullRequests through a fake gh on PATH', () => {
       accountLabel: null,
       baseRef: 'main',
       checksRollup: 'success',
+      createdAt: null,
+      closedAt: null,
+      discoveryRole: null,
       draft: false,
       headRef: 'feat/work-view',
       host: 'github.com',
       machineId: 'machine-a',
+      mergeable: null,
       mergedAt: null,
+      mergeStateStatus: null,
       number: 66,
       observedAt: canonicalInstantFromDate(NOW),
       outcome: 'observed',
@@ -177,6 +315,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
       reviewDecision: 'REVIEW_REQUIRED',
       state: 'OPEN',
       title: 'Add the Work view',
+      unresolvedReviewThreads: 0,
       updatedAt: parseCanonicalInstant('2026-10-21T18:30:00.000Z'),
       url: 'https://github.com/fixture/project/pull/66',
     });
@@ -196,17 +335,19 @@ describe('observePullRequests through a fake gh on PATH', () => {
       reviewDecision: null,
     });
     const calls = fake.calls();
-    expect(calls.map(({ args }) => args.slice(0, 5))).toEqual([
+    expect(calls[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
+    expect(calls.filter(({ args }) => args[0] === 'pr').map(({ args }) => args.slice(0, 5))).toEqual([
       ['pr', 'view', '66', '--repo', 'fixture/project'],
       ['pr', 'view', '67', '--repo', 'fixture/project'],
       ['pr', 'view', '68', '--repo', 'fixture/project'],
     ]);
-    expect(calls[0]?.args.slice(5)).toEqual([
+    expect(calls[1]?.args.slice(5)).toEqual([
       '--json',
-      'state,isDraft,reviewDecision,mergedAt,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
+      'state,isDraft,reviewDecision,createdAt,closedAt,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
     ]);
+    expect(calls[0]?.token).toBeNull();
+    expect(calls.slice(1).map(({ token }) => token)).toEqual(Array.from({ length: 5 }, () => TOKEN_SENTINEL));
     for (const call of calls) {
-      expect(call.token).toBeNull();
       expect(call.environment).toContain('GH_PROMPT_DISABLED');
       expect(call.environment).toContain('GH_NO_UPDATE_NOTIFIER');
     }
@@ -242,7 +383,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
       [66, 'unauthenticated', 'gh reported that authentication is required (exit 4)'],
       [67, 'unauthenticated', 'not attempted: gh reported that authentication is required (exit 4)'],
     ]);
-    expect(fake.calls()).toHaveLength(1);
+    expect(fake.calls()).toHaveLength(2);
   });
 
   test('distinguishes not-found from network silence with one bounded REST follow-up', async () => {
@@ -267,17 +408,27 @@ describe('observePullRequests through a fake gh on PATH', () => {
       'GitHub returned HTTP 404 (not found or not visible to this account)',
     );
 
+    const beforeNetwork = fake.calls().length;
     const network = await observe(fake, { links: [link(500), link(67)] });
     expect(network.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
       ['network', 'gh exited 1 without output (network failure or not found)'],
       ['network', 'not attempted: gh exited 1 without output (network failure or not found)'],
     ]);
 
+    const networkCalls = fake.calls().slice(beforeNetwork);
+    expect(networkCalls.map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'repos/fixture/project/pulls/500'],
+    ]);
+    expect(networkCalls.slice(1).map(({ token }) => token)).toEqual([TOKEN_SENTINEL, TOKEN_SENTINEL]);
+    expect(JSON.stringify(network)).not.toContain(TOKEN_SENTINEL);
+
     const rejected = await observe(fake, { links: [link(401), link(67)] });
     expect(rejected.observations.map(({ outcome }) => outcome)).toEqual(['unauthenticated', 'unauthenticated']);
     expect(rejected.observations[0]?.outcomeMessage).toBe('GitHub rejected the credentials (HTTP 401)');
 
-    const apiCalls = fake.calls().filter(({ args }) => args[0] === 'api');
+    const apiCalls = fake.calls().filter(({ args }) => args[0] === 'api' && args[1] !== 'graphql');
     expect(apiCalls.map(({ args }) => args[1])).toEqual([
       'repos/fixture/project/pulls/404',
       'repos/fixture/project/pulls/500',
@@ -297,7 +448,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
     expect(performance.now() - startedAt).toBeLessThan(2500);
     expect(batch.observations.map(({ outcome }) => outcome)).toEqual(['timeout', 'timeout']);
     expect(batch.observations[1]?.outcomeMessage).toBe('not attempted: gh timed out');
-    expect(fake.calls()).toHaveLength(1);
+    expect(fake.calls()).toHaveLength(2);
   });
 
   test('records malformed or mismatched JSON as invalid and keeps going', async () => {
@@ -323,7 +474,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
       }),
     );
     expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
-      ['disabled', 'gh is not installed'],
+      ['disabled', 'not attempted: gh is not installed'],
       ['disabled', 'not attempted: gh is not installed'],
     ]);
   });
@@ -341,10 +492,13 @@ describe('observePullRequests through a fake gh on PATH', () => {
     expect(calls.map(({ args }) => args.slice(0, 2))).toEqual([
       ['auth', 'token'],
       ['pr', 'view'],
+      ['api', 'graphql'],
     ]);
     expect(calls[0]?.args).toEqual(['auth', 'token', '--user', 'alice', '--hostname', 'github.com']);
     expect(calls[0]?.token).toBeNull();
     expect(calls[1]?.token).toBe(TOKEN_SENTINEL);
+    expect(JSON.stringify(calls.map(({ args }) => args))).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
   });
 
   test('records every link as unauthenticated when the configured account has no stored token', async () => {
@@ -358,5 +512,462 @@ describe('observePullRequests through a fake gh on PATH', () => {
       ['unauthenticated', 'not attempted: gh has no stored token for alice on github.com'],
     ]);
     expect(fake.calls().map(({ args }) => args[0])).toEqual(['auth']);
+  });
+});
+
+describe('pull request discovery roles and mergeability', () => {
+  test('keeps behind separate from conflict and accepts old missing fields', () => {
+    expect(parsePullRequestView(view(), link(66))).toMatchObject({ mergeable: null, mergeStateStatus: null });
+    expect(parsePullRequestView(view({ mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' }), link(66))).toMatchObject({
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'BEHIND',
+    });
+    expect(parsePullRequestView(view({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }), link(66))).toMatchObject(
+      { mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' },
+    );
+    expect(
+      parsePullRequestView(view({ mergeable: 'UNKNOWN', mergeStateStatus: 'FUTURE_STATUS' }), link(66)),
+    ).toMatchObject({ mergeable: 'UNKNOWN', mergeStateStatus: 'FUTURE_STATUS' });
+    expect(parsePullRequestView(view({ mergeable: 'yes' }), link(66))).toBeNull();
+    expect(parsePullRequestView(view({ mergeStateStatus: 42 }), link(66))).toBeNull();
+  });
+  test('propagates a discovery role and requests raw mergeability fields', async () => {
+    const fake = installFakeGh({
+      pullRequests: { 'fixture/project#66': { stdout: view({ mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' }) } },
+    });
+    const batch = await observe(fake, { links: [{ ...link(66), discoveryRole: 'review-requested' }] });
+    expect(batch.observations[0]).toMatchObject({
+      discoveryRole: 'review-requested',
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'BEHIND',
+    });
+    const fields = fake
+      .calls()
+      .find(({ args }) => args[0] === 'pr')
+      ?.args.at(-1)
+      ?.split(',');
+    expect(fields).toContain('mergeable');
+    expect(fields).toContain('mergeStateStatus');
+  });
+  test('link-only observations have a null role and failed discoveries retain their role', async () => {
+    const good = installFakeGh({ pullRequests: { 'fixture/project#66': { stdout: view() } } });
+    expect((await observe(good)).observations[0]?.discoveryRole).toBeNull();
+    const failed = installFakeGh({ pullRequests: { 'fixture/project#66': { exitCode: 4 } } });
+    expect(
+      (await observe(failed, { links: [{ ...link(66), discoveryRole: 'author' }] })).observations[0],
+    ).toMatchObject({ discoveryRole: 'author', outcome: 'unauthenticated', mergeable: null, mergeStateStatus: null });
+  });
+});
+
+test('resolves the active account token before observing when automatic credential lookup fails', async () => {
+  const fake = installFakeGh({
+    authToken: { stdout: `${TOKEN_SENTINEL}\n` },
+    pullRequests: {
+      'fixture/project#66': { stdout: view() },
+      'fixture/project#67': { stdout: view({ url: 'https://github.com/fixture/project/pull/67' }) },
+    },
+  });
+  const requireExplicitToken: BoundedProcessRunner = (options) => {
+    if (options.args[0] === 'pr' && options.env?.GH_TOKEN !== TOKEN_SENTINEL) {
+      return Effect.succeed({ durationMs: 0, exitCode: 4, stdout: '' });
+    }
+    return fake.run(options);
+  };
+  const stderr = spyOn(process.stderr, 'write');
+  try {
+    const batch = await observe(fake, { links: [link(66), link(67)], run: requireExplicitToken });
+    expect(batch.observations.map(({ outcome }) => outcome)).toEqual(['observed', 'observed']);
+    expect(batch.accountLabel).toBeNull();
+    expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+    expect(fake.calls()[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
+    expect(fake.calls()[0]?.token).toBeNull();
+    expect(
+      fake
+        .calls()
+        .slice(1)
+        .map(({ token }) => token),
+    ).toEqual(Array.from({ length: 4 }, () => TOKEN_SENTINEL));
+    expect(JSON.stringify(fake.calls().map(({ args }) => args))).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
+    const emittedStderr = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(emittedStderr).not.toContain(TOKEN_SENTINEL);
+    expect(emittedStderr).not.toContain(STDERR_SENTINEL);
+  } finally {
+    stderr.mockRestore();
+  }
+});
+
+test.each([{ stdout: '' }, { stdout: '  \n\t' }, { exitCode: 1, stdout: '' }])(
+  'halts the active-account batch when no usable token is returned: %j',
+  async (authToken) => {
+    const fake = installFakeGh({
+      authToken,
+      pullRequests: { 'fixture/project#66': { stdout: view() } },
+    });
+    const batch = await observe(fake, { links: [link(66), link(67)] });
+    expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
+      ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
+      ['unauthenticated', 'not attempted: gh has no stored token for the active account on github.com'],
+    ]);
+    expect(fake.calls().map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
+  },
+);
+
+test('halts after a bounded active-account token read timeout without observing a link', async () => {
+  const fake = installFakeGh({ authToken: { delayMs: 3000, stdout: TOKEN_SENTINEL } });
+  const batch = await observe(fake, { links: [link(66), link(67)], timeoutMs: 200 });
+  expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
+    ['timeout', 'not attempted: gh timed out while reading the account token'],
+    ['timeout', 'not attempted: gh timed out while reading the account token'],
+  ]);
+  expect(fake.calls().map(({ args }) => args)).toEqual([['auth', 'token', '--hostname', 'github.com']]);
+  expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+});
+
+describe('pull request dates and unresolved review threads', () => {
+  test('normalizes optional lifecycle dates with the same lenient instant contract as mergedAt', () => {
+    expect(parsePullRequestView(view(), link(66))).toMatchObject({ createdAt: null, closedAt: null });
+    expect(
+      parsePullRequestView(
+        view({ createdAt: '2026-10-19T11:00:00.123456+02:00', closedAt: '2026-10-20T06:00:00-04:00' }),
+        link(66),
+      ),
+    ).toMatchObject({ createdAt: '2026-10-19T09:00:00.123Z', closedAt: '2026-10-20T10:00:00.000Z' });
+    expect(parsePullRequestView(view({ createdAt: 0, closedAt: '2026-02-30T00:00:00Z' }), link(66))).toMatchObject({
+      createdAt: '1970-01-01T00:00:00.000Z',
+      closedAt: '2026-03-02T00:00:00.000Z',
+    });
+  });
+
+  test('observes offset lifecycle dates without a warning', async () => {
+    const fake = installFakeGh({
+      pullRequests: {
+        'fixture/project#66': {
+          stdout: view({ createdAt: '2026-10-19T11:00:00+02:00', closedAt: '2026-10-20T06:00:00.456-04:00' }),
+        },
+      },
+    });
+    const observation = (await observe(fake)).observations[0];
+    expect(observation).toMatchObject({
+      createdAt: '2026-10-19T09:00:00.000Z',
+      closedAt: '2026-10-20T10:00:00.456Z',
+      outcome: 'observed',
+      outcomeMessage: null,
+      unresolvedReviewThreads: 0,
+    });
+    expect(parsePullRequestObservation(observation)).toEqual(observation ?? null);
+  });
+
+  test.each(['createdAt', 'closedAt'] as const)('keeps a malformed %s visible without hiding the PR', async (field) => {
+    const fake = installFakeGh({
+      pullRequests: { 'fixture/project#66': { stdout: view({ [field]: 'PRIVATE_INVALID_DATE' }) } },
+    });
+    const batch = await observe(fake);
+    expect(batch.observations[0]).toMatchObject({
+      [field]: null,
+      outcome: 'observed',
+      outcomeMessage: `Invalid lifecycle dates: ${field}`,
+      title: 'Add the Work view',
+      checksRollup: 'success',
+      unresolvedReviewThreads: 0,
+    });
+    expect(JSON.stringify(batch)).not.toContain('PRIVATE_INVALID_DATE');
+    expect(parsePullRequestObservation(batch.observations[0])).toEqual(batch.observations[0] ?? null);
+    expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+  });
+
+  test('appends both malformed lifecycle dates to the review-thread note and continues', async () => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout: reviewThreadsBody([{ isResolved: false }], 2) } },
+      pullRequests: {
+        'fixture/project#66': { stdout: view({ createdAt: {}, closedAt: { toString: null } }) },
+        'fixture/project#67': { stdout: view({ state: 'CLOSED', url: 'https://github.com/fixture/project/pull/67' }) },
+      },
+    });
+    const batch = await observe(fake, { links: [link(66), link(67)] });
+    expect(batch.observations[0]).toMatchObject({
+      createdAt: null,
+      closedAt: null,
+      outcome: 'observed',
+      outcomeMessage:
+        'Review threads unavailable: incomplete review thread connection; Invalid lifecycle dates: createdAt, closedAt',
+      unresolvedReviewThreads: null,
+    });
+    expect(batch.observations[1]).toMatchObject({ outcome: 'observed', outcomeMessage: null });
+    expect(fake.calls().filter(({ args }) => args[1] === 'graphql')).toHaveLength(1);
+  });
+
+  test.each([{}, { createdAt: null, closedAt: null }, { createdAt: '', closedAt: '' }])(
+    'keeps absent optional lifecycle dates quiet: %j',
+    async (dates) => {
+      const fake = installFakeGh({ pullRequests: { 'fixture/project#66': { stdout: view(dates) } } });
+      expect((await observe(fake)).observations[0]).toMatchObject({
+        createdAt: null,
+        closedAt: null,
+        outcome: 'observed',
+        outcomeMessage: null,
+      });
+    },
+  );
+
+  test('counts only unresolved threads in one complete bounded connection with the batch token', async () => {
+    const fake = installFakeGh({
+      api: {
+        graphql: { stdout: reviewThreadsBody([{ isResolved: false }, { isResolved: true }, { isResolved: false }]) },
+      },
+      pullRequests: { 'fixture/project#66': { stdout: view({ createdAt: '2026-10-19T09:00:00Z' }) } },
+    });
+    const batch = await observe(fake);
+    expect(batch.observations[0]).toMatchObject({
+      outcome: 'observed',
+      outcomeMessage: null,
+      unresolvedReviewThreads: 2,
+      createdAt: '2026-10-19T09:00:00.000Z',
+      closedAt: null,
+    });
+    const graphCalls = fake.calls().filter(({ args }) => args[1] === 'graphql');
+    expect(graphCalls).toHaveLength(1);
+    expect(graphCalls[0]?.args).toEqual([
+      'api',
+      'graphql',
+      '-f',
+      expect.stringContaining('query=query($owner: String!, $name: String!, $number: Int!)'),
+      '-f',
+      'owner=fixture',
+      '-f',
+      'name=project',
+      '-F',
+      'number=66',
+    ]);
+    expect(graphCalls[0]?.args[3]).toContain('reviewThreads(first: 100) { totalCount nodes { isResolved } }');
+    expect(graphCalls[0]?.token).toBe(TOKEN_SENTINEL);
+    expect(JSON.stringify(graphCalls.map(({ args }) => args))).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+    expect(JSON.stringify(batch)).not.toContain(STDERR_SENTINEL);
+  });
+
+  test.each([{ nodes: [] }, { nodes: [{ isResolved: true }] }])(
+    'records a complete zero count for %j',
+    async ({ nodes }) => {
+      const fake = installFakeGh({
+        api: { graphql: { stdout: reviewThreadsBody(nodes) } },
+        pullRequests: { 'fixture/project#66': { stdout: view() } },
+      });
+      expect((await observe(fake)).observations[0]).toMatchObject({
+        outcome: 'observed',
+        unresolvedReviewThreads: 0,
+        outcomeMessage: null,
+      });
+    },
+  );
+
+  test.each([
+    {
+      name: 'more than 100 threads',
+      stdout: reviewThreadsBody(
+        Array.from({ length: 100 }, () => ({ isResolved: false })),
+        150,
+      ),
+    },
+    { name: 'incomplete nodes', stdout: reviewThreadsBody([{ isResolved: false }], 2) },
+    { name: 'extra nodes', stdout: reviewThreadsBody([{ isResolved: false }], 0) },
+    { name: 'nonboolean node', stdout: reviewThreadsBody([{ isResolved: 'false' }]) },
+    { name: 'null node', stdout: reviewThreadsBody([null]) },
+    { name: 'negative count', stdout: reviewThreadsBody([], -1) },
+    { name: 'fractional count', stdout: reviewThreadsBody([], 1.5) },
+    { name: 'unsafe count', stdout: reviewThreadsBody([], Number.MAX_SAFE_INTEGER + 1) },
+    { name: 'missing data', stdout: '{}' },
+    { name: 'malformed JSON', stdout: 'not-json' },
+    { name: 'null repository', stdout: '{"data":{"repository":null}}' },
+    {
+      name: 'partial GraphQL errors',
+      stdout: JSON.stringify({
+        ...JSON.parse(reviewThreadsBody([{ isResolved: false }])),
+        errors: [{ message: 'PRIVATE_GRAPHQL_DIAGNOSTIC' }],
+      }),
+    },
+    { name: 'mistyped GraphQL errors', stdout: JSON.stringify({ ...JSON.parse(reviewThreadsBody([])), errors: {} }) },
+  ])('keeps $name visible as unknown without discarding the successful PR view', async ({ stdout }) => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout } },
+      pullRequests: { 'fixture/project#66': { stdout: view() } },
+    });
+    const batch = await observe(fake);
+    expect(batch.observations[0]).toMatchObject({
+      outcome: 'observed',
+      unresolvedReviewThreads: null,
+      outcomeMessage: expect.stringContaining('Review threads unavailable:'),
+    });
+    expect(JSON.stringify(batch)).not.toContain('PRIVATE_GRAPHQL_DIAGNOSTIC');
+    expect(fake.calls().filter(({ args }) => args[1] === 'graphql')).toHaveLength(1);
+  });
+
+  test.each([{ exitCode: 1, stdout: 'PRIVATE_GRAPHQL_DIAGNOSTIC' }, { exitCode: 4 }, { delayMs: 1000 }])(
+    'failed review-thread read does not halt the next PR: %j',
+    async (response) => {
+      const fake = installFakeGh({
+        api: { graphql: response },
+        pullRequests: {
+          'fixture/project#66': { stdout: view() },
+          'fixture/project#67': {
+            stdout: view({ state: 'CLOSED', url: 'https://github.com/fixture/project/pull/67' }),
+          },
+        },
+      });
+      const batch = await observe(fake, { links: [link(66), link(67)], timeoutMs: 200 });
+      expect(batch.observations.map(({ outcome }) => outcome)).toEqual(['observed', 'observed']);
+      expect(batch.observations[0]).toMatchObject({
+        unresolvedReviewThreads: null,
+        outcomeMessage: expect.stringContaining('Review threads unavailable:'),
+      });
+      expect(batch.observations[1]).toMatchObject({ unresolvedReviewThreads: null, outcomeMessage: null });
+      expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+        ['auth', 'token'],
+        ['pr', 'view'],
+        ['api', 'graphql'],
+        ['pr', 'view'],
+      ]);
+      expect(JSON.stringify(batch)).not.toContain('PRIVATE_GRAPHQL_DIAGNOSTIC');
+    },
+  );
+
+  test.each(['CLOSED', 'MERGED'])('keeps dates without an extra GraphQL call for %s', async (state) => {
+    const closedAt = '2026-10-20T10:00:00Z';
+    const fake = installFakeGh({
+      pullRequests: {
+        'fixture/project#66': {
+          stdout: view({
+            state,
+            createdAt: '2026-10-19T09:00:00Z',
+            closedAt,
+            mergedAt: state === 'MERGED' ? closedAt : null,
+          }),
+        },
+      },
+    });
+    expect((await observe(fake)).observations[0]).toMatchObject({
+      state,
+      createdAt: '2026-10-19T09:00:00.000Z',
+      closedAt: '2026-10-20T10:00:00.000Z',
+      mergedAt: state === 'MERGED' ? '2026-10-20T10:00:00.000Z' : null,
+      unresolvedReviewThreads: null,
+      outcomeMessage: null,
+    });
+    expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+    ]);
+  });
+});
+
+test.each(['throw', 'effect defect'] as const)(
+  'contains a review-thread runner %s without losing the observation or later reads',
+  async (failureKind) => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout: reviewThreadsBody([{ isResolved: false }]) } },
+      pullRequests: {
+        'fixture/project#66': { stdout: view() },
+        'fixture/project#67': { stdout: view({ url: 'https://github.com/fixture/project/pull/67' }) },
+      },
+    });
+    const calls: (readonly string[])[] = [];
+    const run: BoundedProcessRunner = (options) => {
+      calls.push(options.args);
+      if (options.args[1] === 'graphql') {
+        expect(options.env?.GH_TOKEN).toBe(TOKEN_SENTINEL);
+        if (options.args.includes('number=66')) {
+          const defect = new Error(`PRIVATE_REVIEW_RUNNER_DEFECT ${TOKEN_SENTINEL}`);
+          if (failureKind === 'throw') {
+            throw defect;
+          }
+          return Effect.die(defect);
+        }
+      }
+      return fake.run(options);
+    };
+    const batch = await observe(fake, { links: [link(66), link(67)], run });
+    expect(batch.observations[0]).toMatchObject({
+      outcome: 'observed',
+      outcomeMessage: 'Review threads unavailable: gh runner failed',
+      title: 'Add the Work view',
+      unresolvedReviewThreads: null,
+    });
+    expect(batch.observations[1]).toMatchObject({
+      outcome: 'observed',
+      outcomeMessage: null,
+      unresolvedReviewThreads: 1,
+    });
+    expect(calls.map((args) => args.slice(0, 2))).toEqual([
+      ['auth', 'token'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+      ['pr', 'view'],
+      ['api', 'graphql'],
+    ]);
+    expect(JSON.stringify(batch)).not.toContain('PRIVATE_REVIEW_RUNNER_DEFECT');
+    expect(JSON.stringify(batch)).not.toContain(TOKEN_SENTINEL);
+  },
+);
+
+test('does not convert review-thread interruption into a successful observation', async () => {
+  const fake = installFakeGh({ pullRequests: { 'fixture/project#66': { stdout: view() } } });
+  const calls: (readonly string[])[] = [];
+  const run: BoundedProcessRunner = (options) => {
+    calls.push(options.args);
+    return options.args[1] === 'graphql' ? Effect.interrupt : fake.run(options);
+  };
+  const result = await Effect.runPromiseExit(
+    observePullRequests({ links: [link(66), link(67)], machineId: 'machine-a', now: () => NOW, run }),
+  );
+  expect(Exit.hasInterrupts(result)).toBe(true);
+  expect(calls.map((args) => args.slice(0, 2))).toEqual([
+    ['auth', 'token'],
+    ['pr', 'view'],
+    ['api', 'graphql'],
+  ]);
+});
+
+test('review-thread output obeys the same process ceiling and remains a visible partial observation', async () => {
+  const fake = installFakeGh({
+    api: { graphql: { stdout: 'x'.repeat(2048) } },
+    pullRequests: { 'fixture/project#66': { stdout: view() } },
+  });
+  const controller = new AbortController();
+  let graphReads = 0;
+  const boundedRun: BoundedProcessRunner = (options) => {
+    if (options.args[1] === 'graphql') {
+      graphReads += 1;
+      expect(options.command).toBe('gh');
+      expect(options.maximumOutputBytes).toBe(1024);
+      expect(options.timeoutMs).toBe(1000);
+      expect(options.signal).toBe(controller.signal);
+      expect(options.env?.GH_TOKEN).toBe(TOKEN_SENTINEL);
+    }
+    return fake.run(options);
+  };
+  const batch = await observe(fake, {
+    maxOutputBytes: 1024,
+    timeoutMs: 1000,
+    run: boundedRun,
+    signal: controller.signal,
+  });
+  expect(graphReads).toBe(1);
+  expect(batch.observations[0]).toMatchObject({
+    outcome: 'observed',
+    unresolvedReviewThreads: null,
+    outcomeMessage: 'Review threads unavailable: gh output-limit',
   });
 });

@@ -1,4 +1,5 @@
 import type { LocalHistoryWarning } from '@ai-usage/local-machine/errors';
+import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import {
   completeSkillObservationCollection,
   MAX_SKILL_OBSERVATIONS_PER_SESSION,
@@ -27,11 +28,13 @@ export interface CodexCollectionResult {
   observations: SkillObservation[];
   rows: ReturnType<typeof sessionToUsageRow>[];
   warnings: LocalHistoryWarning[];
+  workObservations: CodexWorkObservation[];
 }
 
 export const collectCodexResult = Effect.gen(function* () {
   if (!(yield* hasCodexHistory)) {
     return {
+      workObservations: [],
       observationCompleteness: completeSkillObservationCollection(),
       observations: [],
       rows: [],
@@ -56,6 +59,7 @@ export const collectCodexResult = Effect.gen(function* () {
     : null;
   const deferredWarning = deferredUsageOwnershipWarning('codex', result.ownershipDeferredSessions);
   return {
+    workObservations: result.workObservations,
     observationCompleteness: result.observationCompleteness,
     observations: result.observations,
     rows: result.sessions.map(sessionToUsageRow),

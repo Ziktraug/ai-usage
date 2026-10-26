@@ -13,14 +13,18 @@
     "./codex-history": "./src/codex-history.ts",
     "./codex-review-worker": "./src/codex-review-worker.ts",
     "./delegation-checkout": "./src/delegation-checkout.ts",
+    "./github-pull-request-discovery": "./src/github-pull-request-discovery.ts",
     "./github-pull-requests": "./src/github-pull-requests.ts",
+    "./jira-issue-discovery": "./src/jira-issue-discovery.ts",
     "./jira-issues": "./src/jira-issues.ts",
     "./collectors": "./src/collectors/index.ts",
     "./datasets": "./src/datasets.ts",
     "./executor-observations": "./src/executor-observations.ts",
     "./facets": "./src/facets.ts",
     "./review-worker": "./src/review-worker.ts",
-    "./rtk-enrichment": "./src/rtk-enrichment.ts"
+    "./rtk-enrichment": "./src/rtk-enrichment.ts",
+    "./codex-review-launcher": "./src/codex-review-launcher.ts",
+    "./codex-app-server-client": "./src/codex-app-server-client.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

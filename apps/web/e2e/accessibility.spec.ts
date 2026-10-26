@@ -32,7 +32,7 @@ const NAVIGATION_DESTINATIONS = [
   'Delegation',
 ] as const;
 const routes = [
-  { heading: 'Work', path: '/work' },
+  { heading: 'One thread per task.', path: '/work' },
   { heading: 'Usage overview', path: '/' },
   { heading: 'Memory', path: '/memory' },
   { heading: 'Projects', path: '/projects' },

@@ -72,6 +72,7 @@ import {
   claudeDesktopSessionSchemaSql,
   createClaudeDesktopSessionStore,
 } from './claude-desktop-session-store';
+import { CODEX_WORK_TABLES, codexWorkSchemaSql, createCodexWorkStore } from './codex-work-store';
 import { createDelegationStore, DELEGATION_TABLES, migrateDelegationSchema } from './delegation-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import { createExecutorObservationStore, migrateExecutorAccountChangeSchema } from './executor-observation-store';
@@ -93,8 +94,15 @@ import {
   servedReportSchemaSql,
 } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
-import { createWorkFactStore, WORK_FACT_TABLES, type WorkFactSourceId, workFactSchemaSql } from './work-fact-store';
+import {
+  createWorkFactStore,
+  migrateWorkFactSchema,
+  WORK_FACT_TABLES,
+  type WorkFactSourceId,
+  workFactSchemaSql,
+} from './work-fact-store';
 import { createWorkSessionJoinStore } from './work-session-join';
+import { createWorkThreadStore, WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-store';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -743,11 +751,15 @@ export interface ServedSessionPullRequestLink {
 export interface QueryServedSessionPullRequestLinksInput extends Omit<QueryServedReportRevisionInput, 'revision'> {
   /** Distinct links returned at most; more sets `truncated`. Default 200, maximum 500. */
   readonly limit?: number;
+  /** Restrict identities before applying bounds; an engine only attaches its own machine's sessions. */
+  readonly machineId?: string;
   /** Only Sessions active within this many days before `now`. Default 14, maximum 365. */
   readonly sinceDays?: number;
 }
 
 export interface ServedSessionPullRequestLinks {
+  /** Exact declaring session/PR pairs, independently bounded to 500 per read. */
+  readonly declarations: readonly import('./work-thread-store').DeclaredWorkThreadSession[];
   readonly links: readonly ServedSessionPullRequestLink[];
   readonly revision: string;
   readonly scannedRows: number;
@@ -788,6 +800,7 @@ export interface RecordWorkFactRunInput {
   readonly machineId: string;
   readonly message: string | null;
   readonly observed: number;
+  readonly outcomeCode?: 'unauthenticated' | null;
   readonly ranAt: Date | string;
   readonly sourceId: WorkFactSourceId;
 }
@@ -798,6 +811,7 @@ export interface WorkFactRunState {
   readonly machineId: string;
   readonly message: string | null;
   readonly observed: number;
+  readonly outcomeCode?: 'unauthenticated' | null;
   readonly ranAt: PullRequestObservation['observedAt'];
   readonly sourceId: WorkFactSourceId;
 }
@@ -858,6 +872,7 @@ export interface QueryLatestCheckoutStatusObservationsInput {
 
 export interface LatestCheckoutStatusObservations {
   readonly items: readonly {
+    readonly countsChangedAt: CheckoutStatusObservation['observedAt'] | null;
     readonly latest: CheckoutStatusObservation;
     readonly latestObserved: CheckoutStatusObservation | null;
   }[];
@@ -1464,6 +1479,10 @@ const migrate = (db: SqliteDatabase): boolean => {
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
   schemaChanged ||= claudeDesktopSessionsMissing;
+  const codexWorkMissing = CODEX_WORK_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= codexWorkMissing;
   // Review attempts (ADR 0053) follow the same additive rule: presence of the table is the signal.
   const reviewAttemptsMissing = REVIEW_ATTEMPT_TABLES.some(
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
@@ -1475,6 +1494,10 @@ const migrate = (db: SqliteDatabase): boolean => {
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
   schemaChanged ||= delegationTablesMissing;
+  const workThreadsMissing = WORK_THREAD_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= workThreadsMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Skill tier and observable-producer literals in this schema-v3 migration are historical
@@ -1770,6 +1793,10 @@ const migrate = (db: SqliteDatabase): boolean => {
       ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
     db.exec(workFactSchemaSql);
+    if (migrateWorkFactSchema(db)) {
+      schemaChanged = true;
+    }
+    db.exec(workThreadSchemaSql);
     // Additive under the same user_version: a store that created executor_observations before the
     // sign-in method was recorded gains the nullable column; older rows read as "no method".
     const executorColumns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
@@ -1828,6 +1855,7 @@ const migrate = (db: SqliteDatabase): boolean => {
       }
     }
     db.exec(claudeDesktopSessionSchemaSql);
+    db.exec(codexWorkSchemaSql);
     // Additive under the same user_version (ADR 0056): a claude_desktop_sessions table created before
     // the harness's message time was recorded gains the nullable column; older rows read as "none".
     const desktopColumns = db.query('PRAGMA table_info(claude_desktop_sessions)').all() as Array<{ name?: unknown }>;
@@ -4494,6 +4522,57 @@ export const {
   withUsageStoreReader,
   withUsageStoreWriter,
 });
+
+export const { importCodexWorkObservations, queryCodexWorkObservations } = createCodexWorkStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+
+export const {
+  applyWorkThreadCommand,
+  applyWorkThreadWaitObservations,
+  attachDeclaredWorkThreadSessions,
+  countWorkThreads,
+  queryActiveWorkThreadLinks,
+  queryWorkThreadById,
+  queryWorkThreadEvents,
+  queryWorkThreadLinks,
+  queryWorkThreadProjects,
+  queryWorkThreadWaitCandidates,
+  queryWorkThreadSessionEvidence,
+  queryWorkThreadsPage,
+  seedWorkThreads,
+} = createWorkThreadStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export type {
+  ApplyWorkThreadCommandInput,
+  ApplyWorkThreadWaitObservationsInput,
+  ApplyWorkThreadWaitObservationsResult,
+  AttachDeclaredWorkThreadSessionsInput,
+  AttachDeclaredWorkThreadSessionsResult,
+  DeclaredWorkThreadSession,
+  QueryActiveWorkThreadLinksInput,
+  QueryActiveWorkThreadLinksResult,
+  QueryWorkThreadByIdInput,
+  QueryWorkThreadLinksInput,
+  QueryWorkThreadSessionEvidenceInput,
+  QueryWorkThreadsPageInput,
+  QueryWorkThreadsPageResult,
+  QueryWorkThreadWaitCandidatesInput,
+  QueryWorkThreadWaitCandidatesResult,
+  SeedWorkThreadsInput,
+  SeedWorkThreadsResult,
+  WorkThreadPageRow,
+  WorkThreadSeed,
+  WorkThreadSessionEvidence,
+  WorkThreadWaitCandidate,
+} from './work-thread-store';
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,

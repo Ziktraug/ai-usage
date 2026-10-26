@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { normalizeClaudeAgentSdkQuotaObservation, projectLatestProviderQuotaObservation } from './provider-quota';
+import {
+  normalizeClaudeAgentSdkQuotaObservation,
+  normalizeCodexAppServerQuotaObservation,
+  projectLatestProviderQuotaObservation,
+} from './provider-quota';
 import type { ProviderLimitWindow, ProviderStatus } from './provider-status';
 import type { ExecutorDeclaration, ExecutorObservation } from './work-executors';
 import {
@@ -119,6 +123,69 @@ const simulate = (candidates: readonly ReviewCandidate[], overrides: Partial<Rev
 
 const excluded = (result: ReturnType<typeof simulate>, id: string) =>
   result.evaluations.find((entry) => entry.candidateId === id)?.exclusionReasons.join(' ');
+
+describe('native Codex quota applicability in routing', () => {
+  const nativeQuota = (model: string | null, overrides: Record<string, unknown> = {}) => {
+    const root = {
+      limitId: 'codex',
+      normalModelSlug: null,
+      spendControlReached: false,
+      rateLimitReachedType: null,
+      primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: Date.parse(NOW) / 1000 + 3600 },
+      secondary: null,
+    };
+    const observation = normalizeCodexAppServerQuotaObservation({
+      accountScope: 'codex-account',
+      machineId: TARGET.machineId,
+      observedAt: RECENT,
+      result: {
+        rateLimits: root,
+        rateLimitsByLimitId: {
+          alias: {
+            ...root,
+            limitId: 'quota-alias',
+            normalModelSlug: model,
+            limitName: 'gpt-6-mini',
+            primary: null,
+            rateLimitReachedType: 'rate_limit_reached',
+            ...overrides,
+          },
+        },
+      },
+    });
+    if (!observation) {
+      throw new Error('Synthetic native quota did not normalize');
+    }
+    return projectLatestProviderQuotaObservation({ observation, lastObservedAt: RECENT });
+  };
+  test('gpt-6 does not match gpt-6-mini through shared words or a display label', () => {
+    const quota = nativeQuota('gpt-6-mini');
+    const result = simulate([candidate('codex', { model: 'gpt-6', quota })]);
+    expect(result.chosenCandidateId).toBe('codex');
+    expect(simulate([candidate('codex', { model: 'gpt-6-mini', quota })]).chosenCandidateId).toBeNull();
+    expect(simulate([candidate('codex', { model: 'gpt-6', quota: nativeQuota(null) })]).chosenCandidateId).toBeNull();
+  });
+  test('unknown capacity is scoped to its exact native model, while selected and global capacity remain mandatory', () => {
+    const quota = nativeQuota('gpt-6-mini', { rateLimitReachedType: null });
+    expect(simulate([candidate('codex', { model: 'gpt-6', quota })]).chosenCandidateId).toBe('codex');
+    expect(simulate([candidate('codex', { model: 'gpt-6-mini', quota })]).chosenCandidateId).toBeNull();
+    expect(
+      simulate([
+        candidate('codex', {
+          model: 'gpt-6',
+          quota: nativeQuota(null, { limitId: 'codex', spendControlReached: null, rateLimitReachedType: null }),
+        }),
+      ]).chosenCandidateId,
+    ).toBeNull();
+  });
+  test('a reset crossed after observation cannot grant capacity', () => {
+    const quota = nativeQuota('gpt-6', {
+      rateLimitReachedType: null,
+      primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: Date.parse(NOW) / 1000 },
+    });
+    expect(simulate([candidate('codex', { model: 'gpt-6', quota })]).chosenCandidateId).toBeNull();
+  });
+});
 
 describe('read-only review routing simulation', () => {
   test('applies a configurable harness preference only after constraints and does not compare offer percentages', () => {

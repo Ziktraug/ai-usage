@@ -39,10 +39,14 @@ export const renderWorkContext = (context: WorkContextDataset, json: boolean): s
     return JSON.stringify(context, null, 2);
   }
   const { omitted } = context.truncation;
-  const scope =
-    context.scope.kind === 'checkout'
-      ? `checkout ${context.scope.checkoutPath} and paths inside it`
-      : `project ${context.scope.projectLabel}`;
+  let scope: string;
+  if (context.scope.kind === 'checkout') {
+    scope = `checkout ${context.scope.checkoutPath} and paths inside it`;
+  } else if (context.scope.kind === 'checkouts') {
+    scope = `explicit checkouts ${context.scope.checkoutPaths.join(', ')}`;
+  } else {
+    scope = `project ${context.scope.projectLabel}`;
+  }
   const waits = context.waiting.flatMap((wait) => {
     let label = wait.attention === 'human-request' ? 'needs you' : 'waiting on others';
     if (wait.reconsidered) {
@@ -68,6 +72,13 @@ export const renderWorkContext = (context: WorkContextDataset, json: boolean): s
     `Work context · ${scope} · read ${context.generatedAt}`,
     counted('Waiting', context.waiting.length, omitted.waits),
     ...orNone(waits),
+    counted('Sessions', context.sessions.length, omitted.sessions),
+    ...orNone(
+      context.sessions.map(
+        ({ root, age, attention: sessionAttention }) =>
+          `  - ${root.title} [${root.key.harness}; ${sessionAttention}] ${root.key.sourceSessionId} (last activity ${age.lastActivityAt ?? 'unknown'})`,
+      ),
+    ),
     counted('Decided', context.decisions.length, omitted.decisions),
     ...orNone(decisions),
     counted('Pull requests', context.linked.pullRequests.length, omitted.pullRequests),
@@ -77,7 +88,7 @@ export const renderWorkContext = (context: WorkContextDataset, json: boolean): s
     counted('Jira issues', context.linked.jiraIssues.length, omitted.jiraIssues),
     ...orNone(context.linked.jiraIssues.map(jiraLine)),
     `Coverage: ${String(roots.inScope)} of ${String(roots.read)} roots read are in scope (${String(roots.total)} in the Work read${roots.unscopedPaths > 0 ? `; ${String(roots.unscopedPaths)} with a non-absolute recorded path not compared` : ''}); Desktop registry collected ${attention.desktopSessions.collectedAt ?? 'never'}; window ${String(attention.window.sinceDays)} days.`,
-    `Harnesses: Claude Desktop ${String(context.coverage.harnesses.claudeDesktop.inScope)} in scope (declared waits) · Codex ${String(context.coverage.harnesses.codex.inScope)} in scope (sessions only; ${String(context.coverage.harnesses.codex.campaignsRead)} of ${String(context.coverage.harnesses.codex.campaignsInWindow)} recent campaigns read${context.coverage.harnesses.codex.cutByPage > 0 ? `; ${String(context.coverage.harnesses.codex.cutByPage)} cut by the page limit before the scope, so more may be in scope` : ''}).`,
+    `Harnesses: Claude Desktop ${String(context.coverage.harnesses.claudeDesktop.inScope)} in scope (declared waits) · Codex ${String(context.coverage.harnesses.codex.inScope)} in scope (native structured requests; general status unknown; ${String(context.coverage.harnesses.codex.campaignsRead)} of ${String(context.coverage.harnesses.codex.campaignsInWindow)} recent campaigns read${context.coverage.harnesses.codex.cutByPage > 0 ? `; ${String(context.coverage.harnesses.codex.cutByPage)} scoped campaigns cut by the page limit` : ''}).`,
     ...context.coverage.notes.map((note) => `  · ${note.text}`),
     ...(context.truncated
       ? [

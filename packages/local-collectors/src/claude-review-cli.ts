@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { BoundedProcessError, executeBoundedProcess } from '@ai-usage/local-machine/bounded-process';
-import type { ReviewHarnessGuarantee } from '@ai-usage/report-core/work-attempts';
+import type { ClaudeReviewHarnessGuarantee } from '@ai-usage/report-core/work-attempts';
 
 /**
  * Qualifies the installed Claude Code CLI before a launch (ADR 0055) and states the guarantee the
@@ -121,7 +121,7 @@ export const qualifyClaudeCli = async (
 /** Whether a managed settings file (or drop-in directory) exists on this machine. */
 export const observeManagedSettings = async (
   paths: readonly string[] = CLAUDE_MANAGED_SETTINGS_PATHS[process.platform] ?? [],
-): Promise<ReviewHarnessGuarantee['managedSettings']> => {
+): Promise<ClaudeReviewHarnessGuarantee['managedSettings']> => {
   for (const candidate of paths) {
     try {
       await stat(candidate);

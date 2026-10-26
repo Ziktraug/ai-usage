@@ -1,4 +1,9 @@
 import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import {
+  CODEX_WORK_BOUNDS,
+  type CodexWorkQuestion,
+  type CodexWorkRequest,
+} from '@ai-usage/report-core/codex-work-observation';
 import { isRecord } from '@ai-usage/report-core/datasets';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
@@ -23,7 +28,9 @@ import {
   type WorkRoot,
 } from '@ai-usage/report-core/work-attention';
 import type { WebContractClient } from '@ai-usage/web-contract';
+import { type WorkAttentionInput, workAttentionInputSchema } from '@ai-usage/web-contract/work';
 import { ORPCError } from '@orpc/client';
+import { parse } from 'valibot';
 
 /**
  * Browser-side mirror of the `work.attention` oRPC envelope. The procedure is produced in
@@ -31,10 +38,7 @@ import { ORPCError } from '@orpc/client';
  * report-core contract instead of trusting a transport type: an unexpected shape is a typed
  * `MalformedResponse` failure, never a partially rendered dataset.
  */
-export interface WorkAttentionRequest {
-  readonly limit?: number;
-  readonly machineId?: string | null;
-}
+export type WorkAttentionRequest = WorkAttentionInput;
 
 export interface WorkAttentionClientCallOptions {
   readonly signal?: AbortSignal;
@@ -157,8 +161,81 @@ const parseProvenance = (value: unknown): WorkFact['provenance'] | undefined => 
 type DistributiveOmit<Value, Key extends PropertyKey> = Value extends unknown ? Omit<Value, Key> : never;
 type WorkFactBody = DistributiveOmit<WorkFact, 'id' | 'provenance'>;
 
+const parseCodexRequest = (value: unknown): CodexWorkRequest | undefined => {
+  if (!isRecord(value)) {
+    return;
+  }
+  const callId = requiredText(value.callId, CODEX_WORK_BOUNDS.maxId);
+  const tool = oneOf(['request_user_input', 'request_user_input_async'] as const, value.tool);
+  const askedAt = instant(value.askedAt);
+  const acknowledgedAt = optionalInstant(value.acknowledgedAt);
+  const rejectedAt = optionalInstant(value.rejectedAt);
+  const questions = boundedList<CodexWorkQuestion>(value.questions, CODEX_WORK_BOUNDS.maxQuestions, (question) => {
+    if (!isRecord(question)) {
+      return;
+    }
+    const id = optionalText(question.id, CODEX_WORK_BOUNDS.maxId);
+    const questionText = requiredText(question.text, CODEX_WORK_BOUNDS.maxText);
+    const answeredAt = optionalInstant(question.answeredAt);
+    if (
+      id === undefined ||
+      questionText === undefined ||
+      answeredAt === undefined ||
+      typeof question.textTruncated !== 'boolean'
+    ) {
+      return;
+    }
+    return { id, text: questionText, textTruncated: question.textTruncated, answeredAt };
+  });
+  if (!(callId && tool && askedAt) || acknowledgedAt === undefined || rejectedAt === undefined || !questions?.length) {
+    return;
+  }
+  if (
+    (acknowledgedAt !== null && acknowledgedAt < askedAt) ||
+    (rejectedAt !== null && (rejectedAt < askedAt || acknowledgedAt !== null)) ||
+    questions.some(
+      (question) => question.answeredAt !== null && (question.id === null || question.answeredAt < askedAt),
+    )
+  ) {
+    return;
+  }
+  return { callId, tool, askedAt, acknowledgedAt, rejectedAt, questions };
+};
+
 const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined => {
   switch (value.kind) {
+    case 'codex-user-request': {
+      const sourceSessionId = requiredText(value.sourceSessionId, CODEX_WORK_BOUNDS.maxId);
+      const request = parseCodexRequest(value.request);
+      if (!(sourceSessionId && request)) {
+        return;
+      }
+      return { kind: 'codex-user-request', sourceSessionId, request };
+    }
+    case 'codex-session-context': {
+      const sourceSessionId = requiredText(value.sourceSessionId, CODEX_WORK_BOUNDS.maxId);
+      const originator = optionalText(value.originator, CODEX_WORK_BOUNDS.maxId);
+      const executionSource = optionalText(value.executionSource, CODEX_WORK_BOUNDS.maxId);
+      const threadSource = optionalText(value.threadSource, CODEX_WORK_BOUNDS.maxId);
+      const forkedFromId = optionalText(value.forkedFromId, CODEX_WORK_BOUNDS.maxId);
+      if (
+        !sourceSessionId ||
+        originator === undefined ||
+        executionSource === undefined ||
+        threadSource === undefined ||
+        forkedFromId === undefined
+      ) {
+        return;
+      }
+      return {
+        kind: 'codex-session-context',
+        sourceSessionId,
+        originator,
+        executionSource,
+        threadSource,
+        forkedFromId,
+      };
+    }
     case 'declared-turn': {
       const declaredAt = instant(value.declaredAt);
       const desktopSessionId = requiredText(value.desktopSessionId, maxId);
@@ -670,10 +747,7 @@ const normalizeRequest = (input: WorkAttentionRequest): WorkAttentionRequest => 
   ) {
     throw new RangeError(`Work attention limit must be an integer between 1 and ${WORK_ATTENTION_LIMIT_BOUNDS.max}.`);
   }
-  return {
-    ...(limit === undefined ? {} : { limit }),
-    ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
-  };
+  return parse(workAttentionInputSchema, input);
 };
 
 export const createWorkAttentionClient = (rpc: WorkAttentionRpc): WorkAttentionClient => ({

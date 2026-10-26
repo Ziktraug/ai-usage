@@ -41,6 +41,54 @@ const row = (date: string): CollectorRow => ({
 });
 
 describe('shared collector row cache', () => {
+  test.each(
+    [
+      undefined,
+      [],
+      [{ harness: 'codex', sourceSessionId: 'synthetic-thread' }],
+      [{ harness: 'codex', sourceSessionId: '' }],
+      Array.from({ length: 33 }, () => ({ harness: 'codex', sourceSessionId: 'synthetic-thread' })),
+    ].map((delegatedSessions) => ({ delegatedSessions })),
+  )('retains optional delegation facts without tightening the stored list: %j', ({ delegatedSessions }) => {
+    const source = { harnessKey: 'claude', sourceSessionId: 'synthetic-parent', delegatedSessions };
+    const revived = reviveCollectorRowsResult([{ ...row('2026-06-01T00:00:00.000Z'), source }]);
+    expect(revived).toMatchObject({ rejectedMetricRecords: 0, valid: true });
+    expect(revived.rows).toHaveLength(1);
+    expect<unknown>(revived.rows[0]?.source).toEqual(source);
+  });
+
+  test.each(
+    [
+      null,
+      {},
+      'synthetic-thread',
+      [null],
+      [['codex', 'synthetic-thread']],
+      [{ harness: 'claude', sourceSessionId: 'synthetic-thread' }],
+      [{ harness: 'codex', sourceSessionId: 42 }],
+      [{ harness: 'codex' }],
+      [{ sourceSessionId: 'synthetic-thread' }],
+      [{ harness: 'codex', sourceSessionId: 'synthetic-thread', extra: true }],
+    ].map((delegatedSessions) => ({ delegatedSessions })),
+  )('rejects malformed delegation facts with the existing cache rejection count: %j', ({ delegatedSessions }) => {
+    const source = { harnessKey: 'claude', sourceSessionId: 'synthetic-parent', delegatedSessions };
+    expect(reviveCollectorRowsResult([{ ...row('2026-06-01T00:00:00.000Z'), source }])).toEqual({
+      rejectedMetricRecords: 1,
+      rows: [],
+      valid: true,
+    });
+  });
+
+  test('retains legacy rows without source or optional delegation fields', () => {
+    const legacy = row('2026-06-01T00:00:00.000Z');
+    const source = { harnessKey: 'claude', sourceSessionId: 'synthetic-parent' };
+    const revived = reviveCollectorRowsResult([legacy, { ...legacy, source }]);
+    expect(revived).toMatchObject({ rejectedMetricRecords: 0, valid: true });
+    expect(revived.rows).toHaveLength(2);
+    expect(revived.rows[0]?.source).toBeUndefined();
+    expect(revived.rows[1]?.source).toEqual(source);
+  });
+
   test('revives strict bounded VCS context and rejects unsafe or unknown source fields', () => {
     const vcs = {
       branches: [],

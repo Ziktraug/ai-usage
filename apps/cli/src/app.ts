@@ -365,14 +365,20 @@ export const app = Effect.gen(function* () {
 
   if (command._tag === 'WorkContext') {
     // A stored read (ADR 0058): the store opens read-only, no engine starts, none is contacted.
-    const { scope } = command.args;
+    let { scope } = command.args;
+    if (scope.kind === 'checkout') {
+      scope = { checkoutPath: path.resolve(runtime.paths.operatorCwd, scope.checkoutPath), kind: 'checkout' };
+    } else if (scope.kind === 'checkouts') {
+      scope = {
+        kind: 'checkouts',
+        checkoutPaths: scope.checkoutPaths.map((value) => path.resolve(runtime.paths.operatorCwd, value)),
+      };
+    }
     const result = yield* fromPromise(() =>
       readWorkContext({
         dbPath: runtime.paths.databasePath,
-        scope:
-          scope.kind === 'checkout'
-            ? { checkoutPath: path.resolve(runtime.paths.operatorCwd, scope.checkoutPath), kind: 'checkout' }
-            : scope,
+        ...(command.args.sinceDays === undefined ? {} : { sinceDays: command.args.sinceDays }),
+        scope,
         signal: runtime.signal,
       }),
     );

@@ -24,6 +24,7 @@ import {
   parseWorkAttemptsListOutput,
   parseWorkAttemptsReleaseOutput,
   parseWorkAttemptsStartOutput,
+  parseWorkAttemptsStopOutput,
   type WorkAttemptsListInput,
   type WorkAttemptsListOutput,
   type WorkAttemptsReleaseInput,
@@ -31,6 +32,8 @@ import {
   type WorkAttemptsResolvedTarget,
   type WorkAttemptsStartInput,
   type WorkAttemptsStartOutput,
+  type WorkAttemptsStopInput,
+  type WorkAttemptsStopOutput,
   type WorkAttemptWire,
 } from '@ai-usage/web-contract/work-attempts';
 import { Effect } from 'effect';
@@ -165,6 +168,16 @@ export const createWorkAttemptsServerReaders = (
 const nativeHarnessKey = (executorHarness: ReviewAttempt['executorHarness']): string =>
   executorHarness === 'claude-code' ? 'claude' : 'codex';
 
+const guaranteeToWire = (guarantee: ReviewAttempt['guarantee']): WorkAttemptWire['guarantee'] => {
+  if (guarantee === null) {
+    return null;
+  }
+  if ('kind' in guarantee) {
+    return { ...guarantee };
+  }
+  return { ...guarantee, settingSources: [...guarantee.settingSources], tools: [...guarantee.tools] };
+};
+
 /**
  * The wire shape: no pid, no idempotency key, no launch session id, no declaration snapshot; the
  * declared account and effort and the launched candidate's model stay, with the reviewed scope,
@@ -192,17 +205,13 @@ export const toWorkAttemptWire = (
   executorHarness: attempt.executorHarness,
   exitCode: attempt.exitCode,
   failureReason: attempt.failureReason,
-  guarantee:
-    attempt.guarantee === null
-      ? null
-      : {
-          ...attempt.guarantee,
-          settingSources: [...attempt.guarantee.settingSources],
-          tools: [...attempt.guarantee.tools],
-        },
+  guarantee: guaranteeToWire(attempt.guarantee),
   machineId: attempt.machineId,
   nativeSessionId: attempt.nativeSessionId,
   nativeSessionRowId,
+  nativeTurnId: attempt.nativeTurnId,
+  stopRequestedAt: attempt.stopRequestedAt,
+  stopConfirmedAt: attempt.stopConfirmedAt,
   numTurns: attempt.numTurns,
   requestedAt: attempt.requestedAt,
   reservation: {
@@ -458,6 +467,72 @@ export const releaseWorkAttemptReservationFromRequestForServer = async (
     throw trustFailure;
   }
   return await releaseWorkAttemptReservationForServer(input, execute, {
+    ...(mode === undefined ? {} : { mode }),
+    signal: request.signal,
+  });
+};
+
+type StopReviewAttemptCommand = Extract<WebUsageEngineCommand, { readonly command: 'stop-review-attempt' }>;
+export type ExecuteStopReviewAttemptCommand = (
+  command: StopReviewAttemptCommand,
+  options?: ExecuteUsageEngineCommandOptions,
+) => Promise<UsageEngineCommandCompletion>;
+
+const stopFailure = (tag: 'ForbiddenDemo' | 'Unavailable', message: string): WorkAttemptsStopOutput => ({
+  error: { message, tag },
+  ok: false,
+});
+const executeStopCommand: ExecuteStopReviewAttemptCommand = async (command, options) => {
+  const control = await resolveUsageEngineControlClientForServer();
+  return await executeUsageEngineCommandToCompletion(control, command, options);
+};
+
+/** Requests interruption only of an attempt the engine owns. Acknowledgement is not confirmed termination. */
+export const stopWorkAttemptForServer = async (
+  input: WorkAttemptsStopInput,
+  execute: ExecuteStopReviewAttemptCommand = executeStopCommand,
+  options: Omit<WorkAttemptsServerOptions, 'readers'> = {},
+): Promise<WorkAttemptsStopOutput> => {
+  const mode = options.mode ?? getServerRuntimeMode();
+  options.signal?.throwIfAborted();
+  if (mode === 'demo') {
+    return stopFailure('ForbiddenDemo', 'Execution is not available in the demo.');
+  }
+  if (mode === 'e2e') {
+    return stopFailure('Unavailable', 'Execution is not available in this runtime.');
+  }
+  const command = parseWebUsageEngineCommand({ attemptId: input.attemptId, command: 'stop-review-attempt' });
+  if (command.command !== 'stop-review-attempt') {
+    throw new Error('Expected a review stop command.');
+  }
+  let completion: UsageEngineCommandCompletion;
+  try {
+    completion = await execute(command, options.signal === undefined ? {} : { signal: options.signal });
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+    return stopFailure('Unavailable', 'The stop request did not complete; check the attempt before trying again.');
+  }
+  if (completion.state !== 'succeeded' || completion.command !== 'stop-review-attempt') {
+    return stopFailure('Unavailable', 'The engine did not complete the stop request.');
+  }
+  const { attemptId, result } = completion.output;
+  return parseWorkAttemptsStopOutput({ data: { attemptId, result }, ok: true });
+};
+
+export const stopWorkAttemptFromRequestForServer = async (
+  request: Request,
+  input: WorkAttemptsStopInput,
+  execute?: ExecuteStopReviewAttemptCommand,
+  mode?: RuntimeMode,
+): Promise<WorkAttemptsStopOutput> => {
+  const trustFailure = validateTrustedLocalRequest(request);
+  if (trustFailure) {
+    throw trustFailure;
+  }
+  return await stopWorkAttemptForServer(input, execute, {
     ...(mode === undefined ? {} : { mode }),
     signal: request.signal,
   });

@@ -217,6 +217,7 @@ interface Fixture {
   readonly checkout: string;
   readonly commits: readonly string[];
   readonly dbPath: string;
+  readonly harness: 'claude-code' | 'codex';
   readonly home: string;
   readonly privateRoot: string;
   readonly storage: ReturnType<typeof createLocalHistoryStorage>;
@@ -225,9 +226,11 @@ interface Fixture {
 interface FixtureOptions {
   /** The `delegation` home section; defaults to one annotated Claude route and no rule. */
   readonly delegation?: Record<string, unknown>;
+  readonly harness?: 'claude-code' | 'codex';
 }
 
 const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => {
+  const harness = options.harness ?? 'claude-code';
   const root = await mkdtemp(path.join(tmpdir(), 'engine-review-policy-'));
   roots.push(root);
   const home = path.join(root, 'home');
@@ -273,7 +276,7 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
     `${JSON.stringify(
       {
         delegation: {
-          routes: [{ accountScope: 'personal', context: 'professional', harness: 'claude-code' }],
+          routes: [{ accountScope: 'personal', context: 'professional', harness }],
           ...options.delegation,
         },
         github: { accounts: [{ ghUser: 'octocat', host: 'github.com', owner: 'acme' }] },
@@ -285,7 +288,8 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
               authorization: 'allowed',
               capabilities: ['read-only-review'],
               declaredAt: '2026-10-21T08:00:00.000Z',
-              harness: 'claude-code',
+              harness,
+              ...(harness === 'codex' ? { model: 'gpt-6-astra' } : {}),
               quality: 'review-capable',
               subscription: 'verified',
               targets: [{ kind: 'any-local-session' }],
@@ -304,10 +308,10 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
   const observation: ExecutorObservation = {
     accountFingerprint: FINGERPRINT,
     authEvidence: 'claude auth status exit 0 loggedIn=true',
-    authMethod: 'claude.ai',
+    authMethod: harness === 'codex' ? 'chatgpt' : 'claude.ai',
     authState: 'logged-in',
     binaryPath: '/usr/local/bin/claude',
-    harness: 'claude-code',
+    harness,
     machineId: machine.id,
     observedAt: '2026-10-25T09:58:00.000Z',
     outcome: 'observed',
@@ -321,7 +325,7 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
     observedAt: '2026-10-25T09:57:00.000Z',
     plan: 'max',
     providerGeneratedAt: null,
-    providerKey: 'claude',
+    providerKey: harness === 'codex' ? 'codex' : 'claude',
     providerLabel: 'Claude',
     source: { confidence: 'authoritative', key: 'fixture-quota', mode: 'poll' },
     state: 'ok',
@@ -393,7 +397,7 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
       observations: [desktop],
     }),
   );
-  return { checkout, commits, dbPath, home, privateRoot, storage };
+  return { checkout, commits, dbPath, harness, home, privateRoot, storage };
 };
 
 const scanAbsent: FindReviewProcesses = async () => ({ kind: 'absent' });
@@ -410,6 +414,7 @@ interface Engines {
 }
 
 interface EngineExtras {
+  readonly codexFingerprint?: string | null;
   readonly findProcesses?: FindReviewProcesses;
   /** The legacy service's account probe, run between its admission and its insert transaction. */
   readonly probeAccount?: () => Promise<ClaudeAccountProbe>;
@@ -425,19 +430,51 @@ const engines = (fixture: Fixture, extra: EngineExtras = {}): Engines => {
   };
   const delegation = createDelegationService({
     adapterOptions: { env: { HOME: fixture.home, PATH: process.env.PATH } },
-    adapters: [adapter.adapter],
+    adapters: [{ ...adapter.adapter, harness: fixture.harness }],
     dbPath: fixture.dbPath,
     findProcesses: extra.findProcesses ?? scanAbsent,
     machine: () => machine,
     now: () => new Date(NOW),
     privateRoot: fixture.privateRoot,
     probeClaudeAccount: () => Promise.resolve({ accountFingerprint: FINGERPRINT, evidence: 'fixture' }),
+    probeCodexAuth: async () => ({
+      authState: 'logged-in',
+      authMethod: 'chatgpt',
+      evidence: 'fixture',
+      outcome: 'observed',
+    }),
+    probeCodexAccount: async () => ({
+      authState: 'logged-in',
+      authMethod: 'chatgpt',
+      evidence: 'fixture',
+      accountFingerprint: extra.codexFingerprint === undefined ? FINGERPRINT : extra.codexFingerprint,
+      quota: null,
+    }),
     report,
     runLimits: { heartbeatMs: 25 },
     storage: fixture.storage,
   });
   const legacy = createReviewAttemptService({
     admission: delegation.admitReview,
+    codexLauncher: async (spec, events = {}, options = {}) => {
+      const launch = await launcher.launcher(spec, events, options);
+      return {
+        ...launch,
+        guarantee: {
+          kind: 'codex-app-server',
+          cliVersion: '0.164.0',
+          model: spec.model ?? '',
+          effort: spec.effort,
+          sandbox: 'read-only',
+          approvalPolicy: 'never',
+          networkAccess: false,
+          accountFingerprint: spec.accountFingerprint,
+          externalTools: 'disabled',
+          managedPolicy: 'inherited',
+        },
+        outcome: launch.outcome.then((value) => ({ ...value, nativeTurnId: 'native-turn', stopConfirmed: false })),
+      };
+    },
     dbPath: fixture.dbPath,
     findProcesses: extra.findProcesses ?? scanAbsent,
     launcher: launcher.launcher,
@@ -586,6 +623,99 @@ const endAttemptRaw = (dbPath: string, attemptId: string): void => {
 };
 
 describe('one review policy before any launch (legacy Work command and delegation)', () => {
+  const codexRoute = `declared:${JSON.stringify([machine.id, 'codex', 'personal'])}`;
+
+  test('the Codex app-server entry cannot bypass a forbid rule shared with delegation', async () => {
+    const fixture = await createFixture({
+      harness: 'codex',
+      delegation: {
+        rules: [{ effect: 'forbid', id: 'no-acme', match: { githubOwner: 'acme' } }],
+      },
+    });
+    const engine = engines(fixture);
+    const legacy = await engine.legacy.start(legacyCommand(codexRoute));
+    expect(legacy.refusal).toMatchObject({ reason: 'policy-refused' });
+    expect(legacy.refusal?.message).toContain('Forbidden by rule no-acme');
+    const qualification = await qualify(engine.delegation, fixture, 2);
+    const delegated = await engine.delegation.start(
+      startCommand('codex:forbidden', fixture, 2, qualification, codexRoute),
+    );
+    expect(delegated.refusal).toMatchObject({ reason: 'route-not-admissible' });
+    expect(engine.spawns()).toBe(0);
+  });
+
+  test.each(['f'.repeat(16), null])(
+    'Codex exec refuses a changed or unknown pinned account before spawning (%s)',
+    async (codexFingerprint) => {
+      const fixture = await createFixture({ harness: 'codex' });
+      const engine = engines(fixture, { codexFingerprint });
+      const qualification = await qualify(engine.delegation, fixture, 2);
+      expect(qualification.admissibleRouteIds).toEqual([codexRoute]);
+      const result = await engine.delegation.start(
+        startCommand('codex:account-changed', fixture, 2, qualification, codexRoute),
+      );
+      expect(result.refusal?.reason).toBe('identity-changed');
+      expect(engine.spawns()).toBe(0);
+    },
+  );
+
+  test.each([1, 2])(
+    'Codex app-server and exec concurrent starts share the pool and target (commit %i)',
+    async (commit) => {
+      const fixture = await createFixture({ harness: 'codex' });
+      const engine = engines(fixture);
+      const qualification = await qualify(engine.delegation, fixture, commit);
+      expect(qualification.admissibleRouteIds).toEqual([codexRoute]);
+      const [legacy, delegated] = await Promise.all([
+        engine.legacy.start(legacyCommand(codexRoute)),
+        engine.delegation.start(startCommand('codex:race', fixture, commit, qualification, codexRoute)),
+      ]);
+      expect(engine.spawns()).toBe(1);
+      const outcomes = [
+        legacy.refusal?.reason ?? legacy.attempt.state,
+        delegated.refusal?.reason ?? delegated.job?.state,
+      ];
+      expect(outcomes.filter((value) => value === 'starting')).toHaveLength(1);
+      expect(outcomes.filter((value) => value === 'pool-busy' || value === 'target-reserved')).toHaveLength(1);
+      engine.launcher.launches[0]?.settle(FINISHED);
+      engine.adapter.launches[0]?.settle(workerFinished());
+      await Promise.all([engine.legacy.settle(), engine.delegation.settle()]);
+    },
+  );
+
+  test('Codex app-server launches the recorded frozen scope, reuses it and retains a lost reservation against exec', async () => {
+    const fixture = await createFixture({ harness: 'codex' });
+    const engine = engines(fixture);
+    const idle = await qualify(engine.delegation, fixture, 1);
+    const started = await engine.legacy.start(legacyCommand(codexRoute));
+    expect(started.attempt.state).toBe('starting');
+    const [launch] = engine.launcher.launches;
+    expect(launch?.options.scope?.revision).toEqual({
+      baseSha: fixture.commits[1],
+      headSha: fixture.commits[2],
+      kind: 'commit',
+    });
+    expect(frozenShasOf(fixture.dbPath, started.attempt.attemptId)).toEqual({
+      base_sha: fixture.commits[1],
+      head_sha: fixture.commits[2],
+    });
+    expect((await engine.legacy.start(legacyCommand(codexRoute))).attempt).toMatchObject({
+      attemptId: started.attempt.attemptId,
+      reused: true,
+    });
+    await Effect.runPromise(
+      markReviewAttemptsLost({ at: NOW, dbPath: fixture.dbPath, machineId: machine.id, reason: () => 'lost' }),
+    );
+    const restarted = engines(fixture, { findProcesses: scanAbsent });
+    expect((await restarted.legacy.start(legacyCommand(codexRoute))).refusal?.reason).toBe('attempt-unresolved');
+    const blocked = await restarted.delegation.start(startCommand('codex:held', fixture, 1, idle, codexRoute));
+    expect(blocked.refusal?.reason).toBe('pool-busy');
+    expect(restarted.spawns()).toBe(0);
+    expect((await attemptById(fixture.dbPath, started.attempt.attemptId)).releasedAt).toBeNull();
+    launch?.settle(FINISHED);
+    await engine.legacy.settle();
+  });
+
   test('an applying forbid rule refuses the legacy command and the delegation before any spawn', async () => {
     // Personal account signed in and pin-confirmed, fresh quota, professional checkout admitted:
     // everything the structural launch policy wants. The delegation rule forbids reviews of acme repositories.

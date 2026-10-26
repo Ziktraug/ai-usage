@@ -74,6 +74,7 @@ const observe = (
   harnesses?: ExecutorObservation['harness'][],
 ) =>
   observeExecutors({
+    codexAccountProbe: async () => null,
     ...(harnesses === undefined ? {} : { harnesses }),
     machineId: 'machine-a',
     now: () => NOW,
@@ -245,6 +246,7 @@ describe('observeExecutors', () => {
       [`${override} login status`]: okOnStderr('Logged in using ChatGPT\n'),
     });
     const [observation] = await observeExecutors({
+      codexAccountProbe: async () => null,
       env: { AI_USAGE_CODEX_EXECUTABLE: override, CODEX_HOME: home, PATH: '/usr/bin' },
       harnesses: ['codex'],
       machineId: 'machine-a',
@@ -266,6 +268,7 @@ describe('observeExecutors', () => {
     // Without either variable the probe runs `codex` from the PATH with no extra environment.
     const plain = scripted({ 'codex --version': ok('codex-cli 0.164.0'), 'codex login status': ok('') });
     await observeExecutors({
+      codexAccountProbe: async () => null,
       env: { PATH: '/usr/bin' },
       harnesses: ['codex'],
       machineId: 'machine-a',
@@ -643,4 +646,28 @@ describe.skipIf(installed.length === 0)('observeExecutors against the installed 
       }
     }
   }, 30_000);
+});
+
+test('Codex app-server identity replaces ambiguous login-status stdout without retaining account or quota bodies', async () => {
+  const { run } = scripted({ 'codex --version': ok('codex-cli 0.163.0\n'), 'codex login status': ok('') });
+  const observations = await observeExecutors({
+    machineId: 'machine-a',
+    harnesses: ['codex'],
+    which: bothPresent,
+    run,
+    now: () => NOW,
+    codexAccountProbe: async () => ({
+      accountFingerprint: 'a'.repeat(16),
+      authMethod: 'chatgpt',
+      authState: 'logged-in',
+      evidence: 'Codex app-server account/read: ChatGPT',
+      quota: { private: 'must not persist' },
+    }),
+  });
+  expect(observations[0]).toMatchObject({
+    accountFingerprint: 'a'.repeat(16),
+    authMethod: 'chatgpt',
+    authState: 'logged-in',
+  });
+  expect(JSON.stringify(observations)).not.toContain('must not persist');
 });

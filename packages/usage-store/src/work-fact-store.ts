@@ -10,6 +10,8 @@ import {
   parsePullRequestObservation,
   WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
+import { WORK_THREAD_BOUNDS } from '@ai-usage/report-core/work-thread';
+import { WORK_THREAD_VIEW_BOUNDS } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
 import type { UsageStoreError, UsageStoreErrorReason } from './errors';
 import type {
@@ -53,6 +55,26 @@ export const MAX_WORK_FACT_BATCH = 500;
 export const MAX_WORK_FACT_QUERY_LIMIT = 500;
 export const DEFAULT_WORK_FACT_QUERY_LIMIT = 200;
 
+/** Exact page scopes may exceed the generic history browser's 500-identity ceiling. */
+export const MAX_WORK_THREAD_FACT_KEYS = WORK_THREAD_VIEW_BOUNDS.maxPageSize * WORK_THREAD_BOUNDS.maxLinksPerThread;
+export const MAX_WORK_THREAD_CHECKOUT_KEYS =
+  MAX_WORK_THREAD_FACT_KEYS * (WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren + 1);
+
+export interface QueryPullRequestObservationBatchInput {
+  readonly batch: readonly Pick<PullRequestObservation, 'machineId' | 'host' | 'repository' | 'number'>[];
+  readonly dbPath: string;
+}
+
+export interface QueryJiraIssueObservationBatchInput {
+  readonly batch: readonly Pick<JiraIssueObservation, 'machineId' | 'key'>[];
+  readonly dbPath: string;
+}
+
+export interface QueryCheckoutStatusObservationBatchInput {
+  readonly batch: readonly Pick<CheckoutStatusObservation, 'machineId' | 'checkoutPath'>[];
+  readonly dbPath: string;
+}
+
 export const workFactSchemaSql = `
   CREATE TABLE IF NOT EXISTS pull_request_observations (
     id INTEGER PRIMARY KEY,
@@ -73,7 +95,13 @@ export const workFactSchemaSql = `
     url TEXT,
     head_ref TEXT,
     base_ref TEXT,
-    checks_rollup TEXT
+    checks_rollup TEXT,
+    discovery_role TEXT,
+    mergeable TEXT,
+    merge_state_status TEXT,
+    created_at TEXT,
+    closed_at TEXT,
+    unresolved_review_threads INTEGER
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_pull_request_observations_identity
     ON pull_request_observations(machine_id, host, repository, number, observed_at DESC);
@@ -93,6 +121,7 @@ export const workFactSchemaSql = `
     modified_count INTEGER CHECK (modified_count IS NULL OR modified_count >= 0),
     untracked_count INTEGER CHECK (untracked_count IS NULL OR untracked_count >= 0),
     last_commit_at TEXT,
+    counts_changed_at TEXT,
     dirty INTEGER CHECK (dirty IN (0, 1))
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_checkout_status_observations_identity
@@ -125,7 +154,8 @@ export const workFactSchemaSql = `
     observed INTEGER NOT NULL CHECK (observed >= 0),
     failed INTEGER NOT NULL CHECK (failed >= 0),
     disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
-    message TEXT
+    message TEXT,
+    outcome_code TEXT CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')
   ) WITHOUT ROWID;
 `;
 
@@ -152,6 +182,29 @@ interface SqliteDatabase {
   query: (sql: string) => SqliteStatement;
 }
 
+/** Presence-based, additive migration; only called by the usage-store writer. */
+export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {
+  let changed = false;
+  for (const [table, additions] of [
+    [
+      'pull_request_observations',
+      ['discovery_role', 'mergeable', 'merge_state_status', 'created_at', 'closed_at', 'unresolved_review_threads'],
+    ],
+    ['checkout_status_observations', ['counts_changed_at']],
+    ['work_fact_run_state', ['outcome_code']],
+  ] as const) {
+    const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    for (const name of additions) {
+      if (!columns.some((column) => column.name === name)) {
+        const type = name === 'unresolved_review_threads' ? 'INTEGER' : 'TEXT';
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+        changed = true;
+      }
+    }
+  }
+  return changed;
+};
+
 interface WorkFactStoreDependencies {
   readonly usageStoreError: (
     operation: string,
@@ -174,11 +227,16 @@ interface PullRequestRecord {
   account_label: string | null;
   base_ref: string | null;
   checks_rollup: string | null;
+  closed_at?: string | null;
+  created_at?: string | null;
+  discovery_role?: string | null;
   draft: number | null;
   head_ref: string | null;
   host: string;
   id: number;
   machine_id: string;
+  merge_state_status?: string | null;
+  mergeable?: string | null;
   merged_at: string | null;
   number: number;
   observed_at: string;
@@ -189,6 +247,7 @@ interface PullRequestRecord {
   review_decision: string | null;
   state: string | null;
   title: string | null;
+  unresolved_review_threads?: number | null;
   updated_at: string | null;
   url: string | null;
 }
@@ -198,6 +257,7 @@ interface CheckoutStatusRecord {
   behind: number | null;
   branch: string | null;
   checkout_path: string;
+  counts_changed_at?: string | null;
   dirty: number | null;
   head_sha: string | null;
   id: number;
@@ -237,6 +297,7 @@ interface RunStateRecord {
   machine_id: string;
   message: string | null;
   observed: number;
+  outcome_code?: string | null;
   ran_at: string;
   source_id: string;
 }
@@ -259,10 +320,15 @@ const pullRequestValue = (record: PullRequestRecord): unknown => ({
   accountLabel: record.account_label,
   baseRef: record.base_ref,
   checksRollup: record.checks_rollup,
+  closedAt: record.closed_at,
+  createdAt: record.created_at,
+  discoveryRole: record.discovery_role,
   draft: booleanFromColumn(record.draft),
   headRef: record.head_ref,
   host: record.host,
   machineId: record.machine_id,
+  mergeable: record.mergeable,
+  mergeStateStatus: record.merge_state_status,
   mergedAt: record.merged_at,
   number: record.number,
   observedAt: record.observed_at,
@@ -272,6 +338,7 @@ const pullRequestValue = (record: PullRequestRecord): unknown => ({
   reviewDecision: record.review_decision,
   state: record.state,
   title: record.title,
+  unresolvedReviewThreads: record.unresolved_review_threads,
   updatedAt: record.updated_at,
   url: record.url,
 });
@@ -292,6 +359,54 @@ const checkoutStatusValue = (record: CheckoutStatusRecord): unknown => ({
   untrackedCount: record.untracked_count,
   upstream: record.upstream,
 });
+
+const CHECKOUT_COUNT_COLUMNS = ['ahead', 'behind', 'staged_count', 'modified_count', 'untracked_count'] as const;
+
+/** Keep the last proven count change on every success so retention cannot turn an unchanged poll into activity. */
+const updateCheckoutCountChanges = (
+  db: SqliteDatabase,
+  key: Pick<CheckoutStatusObservation, 'machineId' | 'checkoutPath'>,
+  baselineId: number | null,
+): void => {
+  const records = db
+    .query(`
+    SELECT * FROM checkout_status_observations
+    WHERE machine_id = ? AND checkout_path = ? AND outcome = 'observed'
+    ORDER BY observed_at, id
+  `)
+    .all(key.machineId, key.checkoutPath) as CheckoutStatusRecord[];
+  const first = records[0];
+  if (first === undefined) {
+    return;
+  }
+  let previous: CheckoutStatusRecord | undefined;
+  let changedAt: string | null = null;
+  const update = db.query('UPDATE checkout_status_observations SET counts_changed_at = ? WHERE id = ?');
+  for (const record of records) {
+    const checkpoint = record.id === baselineId ? record.counts_changed_at : null;
+    if (
+      previous !== undefined &&
+      CHECKOUT_COUNT_COLUMNS.some(
+        (column) => previous?.[column] !== null && record[column] !== null && previous?.[column] !== record[column],
+      )
+    ) {
+      // A new sample before retained history must not replace its earlier proven change
+      // with the date of the first poll that happens to remain in the retention window.
+      changedAt =
+        checkpoint && checkpoint > previous.observed_at && checkpoint <= record.observed_at
+          ? checkpoint
+          : record.observed_at;
+    } else if (checkpoint && (changedAt === null || checkpoint > changedAt)) {
+      // Only the pre-import retained baseline carries proof from pruned predecessors.
+      // Later rows are recomputed so a backfill inside that window can move a change earlier.
+      changedAt = checkpoint;
+    }
+    if ((record.counts_changed_at ?? null) !== changedAt) {
+      update.run(changedAt, record.id);
+    }
+    previous = record;
+  }
+};
 
 /** The stored comments; a column that no longer parses is handed over as text, which is not a list and fails re-validation. */
 const commentsFromColumn = (value: string): unknown => {
@@ -487,11 +602,13 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           >();
           db.exec('BEGIN IMMEDIATE');
           try {
+            migrateWorkFactSchema(db);
             const insert = db.query(`
               INSERT OR IGNORE INTO pull_request_observations (
                 machine_id, host, repository, number, observed_at, outcome, outcome_message, account_label,
-                state, draft, review_decision, merged_at, updated_at, title, url, head_ref, base_ref, checks_rollup
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                state, draft, review_decision, merged_at, updated_at, title, url, head_ref, base_ref, checks_rollup,
+                discovery_role, mergeable, merge_state_status, created_at, closed_at, unresolved_review_threads
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             for (const candidate of input.observations) {
               const observation = parsePullRequestObservation(candidate);
@@ -518,6 +635,12 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 observation.headRef,
                 observation.baseRef,
                 observation.checksRollup,
+                observation.discoveryRole ?? null,
+                observation.mergeable ?? null,
+                observation.mergeStateStatus ?? null,
+                observation.createdAt ?? null,
+                observation.closedAt ?? null,
+                observation.unresolvedReviewThreads ?? null,
               );
               if (changes(db) === 1) {
                 result.inserted += 1;
@@ -561,9 +684,13 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
       Effect.try({
         try: () => {
           const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
-          const touched = new Map<string, Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'>>();
+          const touched = new Map<
+            string,
+            Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'> & { baselineId: number | null }
+          >();
           db.exec('BEGIN IMMEDIATE');
           try {
+            migrateWorkFactSchema(db);
             const insert = db.query(`
               INSERT OR IGNORE INTO checkout_status_observations (
                 machine_id, checkout_path, observed_at, outcome, branch, head_sha, upstream, ahead, behind,
@@ -575,6 +702,15 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               if (observation === null) {
                 result.rejected += 1;
                 continue;
+              }
+              const identity = JSON.stringify([observation.machineId, observation.checkoutPath]);
+              if (!touched.has(identity)) {
+                const baseline = db
+                  .query(`SELECT id FROM checkout_status_observations
+                  WHERE machine_id = ? AND checkout_path = ? AND outcome = 'observed'
+                  ORDER BY observed_at, id LIMIT 1`)
+                  .get(observation.machineId, observation.checkoutPath) as { id: number } | null;
+                touched.set(identity, { ...observation, baselineId: baseline?.id ?? null });
               }
               insert.run(
                 observation.machineId,
@@ -597,9 +733,9 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               } else {
                 result.unchanged += 1;
               }
-              touched.set(JSON.stringify([observation.machineId, observation.checkoutPath]), observation);
             }
             for (const key of touched.values()) {
+              updateCheckoutCountChanges(db, key, key.baselineId);
               result.pruned += retainCheckout(db, key);
             }
             db.exec('COMMIT');
@@ -686,6 +822,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
 
   const recordWorkFactRun = (input: RecordWorkFactRunInput): Effect.Effect<{ changed: boolean }, UsageStoreError> => {
     const ranAt = normalizeIsoTimestamp(input.ranAt);
+    const outcomeCode = input.outcomeCode ?? null;
     if (
       !isWorkFactSourceId(input.sourceId) ||
       ranAt === null ||
@@ -693,7 +830,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
       input.machineId === undefined ||
       !(Number.isSafeInteger(input.observed) && input.observed >= 0) ||
       !(Number.isSafeInteger(input.failed) && input.failed >= 0) ||
-      !(input.message === null || typeof input.message === 'string')
+      !(input.message === null || typeof input.message === 'string') ||
+      !(outcomeCode === null || outcomeCode === 'unauthenticated')
     ) {
       return Effect.fail(
         usageStoreError('recordWorkFactRun', input.dbPath, 'Work fact run state is invalid', 'invalid-input'),
@@ -703,20 +841,31 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
         try: () => {
+          migrateWorkFactSchema(db);
           const existing = db
             .query('SELECT * FROM work_fact_run_state WHERE source_id = ?')
             .get(input.sourceId) as RunStateRecord | null;
           db.query(`
-            INSERT INTO work_fact_run_state (source_id, machine_id, ran_at, observed, failed, disabled, message)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO work_fact_run_state (source_id, machine_id, ran_at, observed, failed, disabled, message, outcome_code)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_id) DO UPDATE SET
               machine_id = excluded.machine_id,
               ran_at = excluded.ran_at,
               observed = excluded.observed,
               failed = excluded.failed,
               disabled = excluded.disabled,
-              message = excluded.message
-          `).run(input.sourceId, input.machineId, ranAt, input.observed, input.failed, input.disabled ? 1 : 0, message);
+              message = excluded.message,
+              outcome_code = excluded.outcome_code
+          `).run(
+            input.sourceId,
+            input.machineId,
+            ranAt,
+            input.observed,
+            input.failed,
+            input.disabled ? 1 : 0,
+            message,
+            outcomeCode,
+          );
           const changed =
             existing === null ||
             existing.machine_id !== input.machineId ||
@@ -724,7 +873,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
             existing.observed !== input.observed ||
             existing.failed !== input.failed ||
             existing.disabled !== (input.disabled ? 1 : 0) ||
-            existing.message !== message;
+            existing.message !== message ||
+            (existing.outcome_code ?? null) !== outcomeCode;
           return { changed };
         },
         catch: (cause) => usageStoreError('recordWorkFactRun', input.dbPath, cause, 'storage-failure'),
@@ -733,12 +883,29 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestPullRequestObservations = (
-    input: QueryLatestPullRequestObservationsInput,
+    query: QueryLatestPullRequestObservationsInput | QueryPullRequestObservationBatchInput,
   ): Effect.Effect<LatestPullRequestObservations, UsageStoreError> => {
-    const limit = validLimit(input.limit);
+    const batch = 'batch' in query ? query.batch : undefined;
+    const input: QueryLatestPullRequestObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
     const links = input.links ?? [];
     if (
       limit === null ||
+      (batch !== undefined &&
+        (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
+          batch.some(
+            (key) =>
+              typeof key.machineId !== 'string' ||
+              !validMachineId(key.machineId) ||
+              typeof key.host !== 'string' ||
+              key.host.length === 0 ||
+              key.host.length > WORK_ATTENTION_BOUNDS.maxId ||
+              typeof key.repository !== 'string' ||
+              key.repository.length === 0 ||
+              key.repository.length > WORK_ATTENTION_BOUNDS.maxId ||
+              !Number.isSafeInteger(key.number) ||
+              key.number <= 0,
+          ))) ||
       !validMachineId(input.machineId) ||
       links.length > MAX_WORK_FACT_QUERY_LIMIT ||
       links.some(
@@ -758,31 +925,48 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
         ),
       );
     }
-    const linkFilter =
+    if (batch?.length === 0) {
+      return Effect.succeed({ items: [], skipped: 0, truncated: false });
+    }
+    const legacyLinkFilter =
       links.length === 0 ? '' : `AND (${links.map(() => '(host = ? AND repository = ? AND number = ?)').join(' OR ')})`;
-    const linkParams = links.flatMap((link) => [link.host, link.repository, link.number]);
+    const linkFilter =
+      batch === undefined
+        ? legacyLinkFilter
+        : `AND (machine_id, LOWER(host), LOWER(repository), number) IN (
+          SELECT json_extract(value, '$.machineId'), LOWER(json_extract(value, '$.host')),
+            LOWER(json_extract(value, '$.repository')), json_extract(value, '$.number') FROM json_each(?)
+        )`;
+    const linkParams =
+      batch === undefined
+        ? links.flatMap((link) => [link.host, link.repository, link.number])
+        : [JSON.stringify(batch)];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
+          const caseInsensitive = batch !== undefined;
+          const identityColumns = caseInsensitive
+            ? 'machine_id, LOWER(host), LOWER(repository), number'
+            : 'machine_id, host, repository, number';
           const records = db
             .query(`
               WITH ranked AS (
                 SELECT *,
                   ROW_NUMBER() OVER (
-                    PARTITION BY machine_id, host, repository, number
+                    PARTITION BY ${identityColumns}
                     ORDER BY observed_at DESC, id DESC
                   ) AS rank_all,
                   ROW_NUMBER() OVER (
-                    PARTITION BY machine_id, host, repository, number, outcome = 'observed'
+                    PARTITION BY ${identityColumns}, outcome = 'observed'
                     ORDER BY observed_at DESC, id DESC
                   ) AS rank_outcome,
-                  MAX(observed_at) OVER (PARTITION BY machine_id, host, repository, number) AS key_latest
+                  MAX(observed_at) OVER (PARTITION BY ${identityColumns}) AS key_latest
                 FROM pull_request_observations
                 WHERE (? IS NULL OR machine_id = ?) ${linkFilter}
               )
               SELECT * FROM ranked
               WHERE rank_all = 1 OR (outcome = 'observed' AND rank_outcome = 1)
-              ORDER BY key_latest DESC, machine_id, host, repository, number, rank_all
+              ORDER BY key_latest DESC, ${identityColumns}, rank_all
               LIMIT ?
             `)
             .all(
@@ -793,7 +977,13 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
             ) as PullRequestRecord[];
           return groupLatest(
             records,
-            (record) => JSON.stringify([record.machine_id, record.host, record.repository, record.number]),
+            (record) =>
+              JSON.stringify([
+                record.machine_id,
+                caseInsensitive ? record.host.toLowerCase() : record.host,
+                caseInsensitive ? record.repository.toLowerCase() : record.repository,
+                record.number,
+              ]),
             (record) => parsePullRequestObservation(pullRequestValue(record)),
             limit,
           );
@@ -804,13 +994,25 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestCheckoutStatusObservations = (
-    input: QueryLatestCheckoutStatusObservationsInput,
+    query: QueryLatestCheckoutStatusObservationsInput | QueryCheckoutStatusObservationBatchInput,
   ): Effect.Effect<LatestCheckoutStatusObservations, UsageStoreError> => {
-    const limit = validLimit(input.limit);
+    const batch = 'batch' in query ? query.batch : undefined;
+    const input: QueryLatestCheckoutStatusObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_CHECKOUT_KEYS;
     const paths = input.paths ?? [];
     if (
       limit === null ||
       !validMachineId(input.machineId) ||
+      (batch !== undefined &&
+        (batch.length > MAX_WORK_THREAD_CHECKOUT_KEYS ||
+          batch.some(
+            (key) =>
+              typeof key.machineId !== 'string' ||
+              !validMachineId(key.machineId) ||
+              typeof key.checkoutPath !== 'string' ||
+              key.checkoutPath.length === 0 ||
+              key.checkoutPath.length > WORK_ATTENTION_BOUNDS.maxPath,
+          ))) ||
       paths.length > MAX_WORK_FACT_QUERY_LIMIT ||
       paths.some((candidate) => typeof candidate !== 'string' || candidate.length === 0)
     ) {
@@ -823,7 +1025,17 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
         ),
       );
     }
-    const pathFilter = paths.length === 0 ? '' : `AND checkout_path IN (${paths.map(() => '?').join(', ')})`;
+    if (batch?.length === 0) {
+      return Effect.succeed({ items: [], skipped: 0, truncated: false });
+    }
+    const legacyPathFilter = paths.length === 0 ? '' : `AND checkout_path IN (${paths.map(() => '?').join(', ')})`;
+    const pathFilter =
+      batch === undefined
+        ? legacyPathFilter
+        : `AND (machine_id, checkout_path) IN (
+          SELECT json_extract(value, '$.machineId'), json_extract(value, '$.checkoutPath') FROM json_each(?)
+        )`;
+    const pathParams = batch === undefined ? paths : [JSON.stringify(batch)];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
@@ -848,13 +1060,39 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ORDER BY key_latest DESC, machine_id, checkout_path, rank_all
               LIMIT ?
             `)
-            .all(input.machineId ?? null, input.machineId ?? null, ...paths, 2 * (limit + 1)) as CheckoutStatusRecord[];
-          return groupLatest(
+            .all(
+              input.machineId ?? null,
+              input.machineId ?? null,
+              ...pathParams,
+              2 * (limit + 1),
+            ) as CheckoutStatusRecord[];
+          const grouped = groupLatest(
             records,
             (record) => JSON.stringify([record.machine_id, record.checkout_path]),
-            (record) => parseCheckoutStatusObservation(checkoutStatusValue(record)),
+            (record) =>
+              record.counts_changed_at != null && normalizeIsoTimestamp(record.counts_changed_at) === null
+                ? null
+                : parseCheckoutStatusObservation(checkoutStatusValue(record)),
             limit,
           );
+          const changedByIdentity = new Map(
+            records
+              .filter((record) => record.outcome === 'observed')
+              .map((record) => [
+                JSON.stringify([record.machine_id, record.checkout_path]),
+                record.counts_changed_at == null ? null : normalizeIsoTimestamp(record.counts_changed_at),
+              ]),
+          );
+          return {
+            ...grouped,
+            items: grouped.items.map((item) => ({
+              ...item,
+              countsChangedAt:
+                item.latestObserved === null
+                  ? null
+                  : (changedByIdentity.get(JSON.stringify([item.latest.machineId, item.latest.checkoutPath])) ?? null),
+            })),
+          };
         },
         catch: (cause) => usageStoreReadError('queryLatestCheckoutStatusObservations', input.dbPath, cause),
       }),
@@ -862,13 +1100,24 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
   };
 
   const queryLatestJiraIssueObservations = (
-    input: QueryLatestJiraIssueObservationsInput,
+    query: QueryLatestJiraIssueObservationsInput | QueryJiraIssueObservationBatchInput,
   ): Effect.Effect<LatestJiraIssueObservations, UsageStoreError> => {
-    const limit = validLimit(input.limit);
+    const batch = 'batch' in query ? query.batch : undefined;
+    const input: QueryLatestJiraIssueObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
     const keys = input.keys ?? [];
     if (
       limit === null ||
       !validMachineId(input.machineId) ||
+      (batch !== undefined &&
+        (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
+          batch.some(
+            (key) =>
+              typeof key.machineId !== 'string' ||
+              !validMachineId(key.machineId) ||
+              typeof key.key !== 'string' ||
+              !JIRA_ISSUE_KEY_PATTERN.test(key.key),
+          ))) ||
       keys.length > MAX_WORK_FACT_QUERY_LIMIT ||
       keys.some((key) => typeof key !== 'string' || !JIRA_ISSUE_KEY_PATTERN.test(key))
     ) {
@@ -881,7 +1130,17 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
         ),
       );
     }
-    const keyFilter = keys.length === 0 ? '' : `AND issue_key IN (${keys.map(() => '?').join(', ')})`;
+    if (batch?.length === 0) {
+      return Effect.succeed({ items: [], skipped: 0, truncated: false });
+    }
+    const legacyKeyFilter = keys.length === 0 ? '' : `AND issue_key IN (${keys.map(() => '?').join(', ')})`;
+    const keyFilter =
+      batch === undefined
+        ? legacyKeyFilter
+        : `AND (machine_id, issue_key) IN (
+          SELECT json_extract(value, '$.machineId'), json_extract(value, '$.key') FROM json_each(?)
+        )`;
+    const keyParams = batch === undefined ? keys : [JSON.stringify(batch)];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
         try: () => {
@@ -906,7 +1165,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ORDER BY key_latest DESC, machine_id, issue_key, rank_all
               LIMIT ?
             `)
-            .all(input.machineId ?? null, input.machineId ?? null, ...keys, 2 * (limit + 1)) as JiraIssueRecord[];
+            .all(input.machineId ?? null, input.machineId ?? null, ...keyParams, 2 * (limit + 1)) as JiraIssueRecord[];
           return groupLatest(
             records,
             (record) => JSON.stringify([record.machine_id, record.issue_key]),
@@ -930,6 +1189,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           let skipped = 0;
           for (const record of records) {
             const ranAt: CanonicalInstant | null = normalizeIsoTimestamp(record.ran_at);
+            const outcomeCode = record.outcome_code ?? null;
             if (
               !isWorkFactSourceId(record.source_id) ||
               ranAt === null ||
@@ -938,7 +1198,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               !(Number.isSafeInteger(record.observed) && record.observed >= 0) ||
               !(Number.isSafeInteger(record.failed) && record.failed >= 0) ||
               !(record.disabled === 0 || record.disabled === 1) ||
-              !(record.message === null || typeof record.message === 'string')
+              !(record.message === null || typeof record.message === 'string') ||
+              !(outcomeCode === null || outcomeCode === 'unauthenticated')
             ) {
               skipped += 1;
               continue;
@@ -949,6 +1210,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               machineId: record.machine_id,
               message: record.message,
               observed: record.observed,
+              outcomeCode,
               ranAt,
               sourceId: record.source_id,
             });

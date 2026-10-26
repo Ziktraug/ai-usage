@@ -32,6 +32,11 @@ describe('Svelte application shell navigation', () => {
     },
   );
 
+  test('keeps Work active on the session intake below it', () => {
+    const navigation = mobileNavigationFor(new URL('http://localhost/work/sessions'), 'live');
+    expect(navigation.primary.filter(({ active }) => active).map(({ label }) => label)).toEqual(['Work']);
+  });
+
   test('hides business management destinations in demo while retaining Campaigns access', () => {
     const url = new URL('http://localhost/campaigns?range=all&machine=%5B%22demo%22%5D');
     const demo = mobileNavigationFor(url, 'demo');

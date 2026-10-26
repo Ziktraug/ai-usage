@@ -4,7 +4,6 @@ import {
   type ReviewAttemptState,
   type ReviewCheckoutOrigin,
   type ReviewReservationReleaseEvidence,
-  SUPPORTED_REVIEW_EXECUTOR,
 } from '@ai-usage/report-core/work-attempts';
 import type { ReviewCandidate, ReviewRecommendation } from '@ai-usage/report-core/work-routing';
 import type {
@@ -12,6 +11,7 @@ import type {
   WorkAttemptScopeWire,
   WorkAttemptsListOutput,
   WorkAttemptsReleaseOutput,
+  WorkAttemptsStopOutput,
   WorkAttemptWire,
 } from '@ai-usage/web-contract/work-attempts';
 
@@ -23,6 +23,8 @@ import type {
  */
 export const DEMO_EXECUTION_TEXT = 'Execution is not available in the demo.';
 export const START_REVIEW_LABEL = 'Start read-only review (Claude Code)';
+export const startReviewLabel = (harness: ReviewCandidate['harness']): string =>
+  `Start read-only review (${harness === 'codex' ? 'Codex' : 'Claude Code'})`;
 
 export interface LaunchGateInput {
   readonly attempts: WorkAttemptsListOutput | null;
@@ -51,10 +53,10 @@ export const launchGate = (input: LaunchGateInput): LaunchGate => {
           : 'launch requires a real recommendation, and none selects a candidate.',
     };
   }
-  if (chosen.harness !== SUPPORTED_REVIEW_EXECUTOR) {
+  if (chosen.harness === 'codex' && (chosen.identity?.state !== 'confirmed' || !chosen.model)) {
     return {
       kind: 'closed',
-      reason: 'only Claude Code launches a review in this version; Codex is simulated, not executed.',
+      reason: 'Codex needs a confirmed account fingerprint and an explicit model before launch.',
     };
   }
   const live = liveAttemptOf(input.attempts);
@@ -187,6 +189,9 @@ export const DIRTY_TREE_TEXT =
 
 /** The guarantee the launch rested on, and the limits of "read-only", in the operator's words. */
 export const guaranteeSummary = (guarantee: WorkAttemptGuaranteeWire): string => {
+  if ('kind' in guarantee) {
+    return `Ran under Codex ${guarantee.cliVersion} through app-server: model ${guarantee.model}${guarantee.effort === null ? '' : `, effort ${guarantee.effort}`}; account ${guarantee.accountFingerprint}; read-only sandbox, approvals never, network off, external tools disabled. Managed policy remains inherited. Codex may write its own session logs; this does not establish that every descendant process stopped.`;
+  }
   const sources =
     guarantee.settingSources.length === 0
       ? 'none (user, project and local settings, and their hooks, were not loaded)'
@@ -211,4 +216,33 @@ export const resultHeading = (
   ]
     .join(' · ')
     .concat(':');
+};
+
+export const stopOutcomeText = (output: WorkAttemptsStopOutput): string => {
+  if (!output.ok) {
+    return `Stop unconfirmed: ${output.error.message}`;
+  }
+  if (output.data.result === 'requested') {
+    return 'Stop requested; waiting for native confirmation. Partial output is kept. Descendant processes are not confirmed stopped.';
+  }
+  if (output.data.result === 'not-owned') {
+    return 'Stop unavailable: the engine no longer owns this attempt. Check its native session; no external session was stopped.';
+  }
+  return 'The attempt already ended; its recorded result is kept.';
+};
+
+export const canRequestStop = (attempt: WorkAttemptWire): boolean =>
+  attempt.executorHarness === 'codex' &&
+  isLiveReviewAttemptState(attempt.state) &&
+  !attempt.stopRequestedAt &&
+  !attempt.stopConfirmedAt;
+
+export const attemptProgressLabel = (attempt: WorkAttemptWire): string => {
+  if (attempt.stopConfirmedAt) {
+    return 'stopped (native turn confirmed)';
+  }
+  if (attempt.stopRequestedAt && isLiveReviewAttemptState(attempt.state)) {
+    return 'stop requested; awaiting native confirmation';
+  }
+  return reviewAttemptStateLabel(attempt.state);
 };

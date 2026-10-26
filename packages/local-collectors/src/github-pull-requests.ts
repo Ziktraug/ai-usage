@@ -20,9 +20,9 @@ import { Effect } from 'effect';
 /**
  * External fact: what GitHub shows for one explicitly linked pull request at one instant, read
  * through the operator's own `gh` CLI and credentials. The engine never holds a token of its own:
- * by default the CLI's active account answers; when the local config names an account for an
- * owner, its token is obtained with `gh auth token --user` for this run only and handed to the
- * read through `GH_TOKEN`, never stored, logged or echoed into an observation.
+ * one `gh auth token` read selects the active account, or `--user` selects the locally configured
+ * account for an owner. Its token is handed to every read through `GH_TOKEN` for this batch only,
+ * never stored, logged or echoed into an observation.
  *
  * `gh` writes its diagnostics to stderr, which the bounded runner discards. Failures are
  * therefore classified from exit codes and from stdout alone:
@@ -38,6 +38,7 @@ import { Effect } from 'effect';
  */
 
 export interface PullRequestLink {
+  readonly discoveryRole?: 'author' | 'review-requested' | null;
   readonly host: string;
   readonly number: number;
   /** `owner/name`. */
@@ -81,7 +82,11 @@ const PULL_REQUEST_FIELDS = [
   'state',
   'isDraft',
   'reviewDecision',
+  'createdAt',
+  'closedAt',
   'mergedAt',
+  'mergeable',
+  'mergeStateStatus',
   'updatedAt',
   'title',
   'url',
@@ -105,7 +110,8 @@ const GH_ENVIRONMENT: Readonly<Record<string, string>> = {
 
 const { maxDetailText, maxPath, maxShortText } = WORK_ATTENTION_BOUNDS;
 
-const linkKey = (link: PullRequestLink): string => JSON.stringify([link.host, link.repository, link.number]);
+const linkKey = (link: PullRequestLink): string =>
+  JSON.stringify([link.host, link.repository.toLowerCase(), link.number]);
 
 const normalizeLink = (link: PullRequestLink): PullRequestLink | null => {
   const host = typeof link.host === 'string' ? link.host.trim().toLowerCase() : '';
@@ -120,7 +126,7 @@ const normalizeLink = (link: PullRequestLink): PullRequestLink | null => {
   ) {
     return null;
   }
-  return { host, number: link.number, repository };
+  return { discoveryRole: link.discoveryRole ?? null, host, number: link.number, repository };
 };
 
 const failedObservation = (
@@ -132,11 +138,16 @@ const failedObservation = (
   accountLabel: context.accountLabel,
   baseRef: null,
   checksRollup: null,
+  closedAt: null,
+  createdAt: null,
+  discoveryRole: link.discoveryRole ?? null,
   draft: null,
   headRef: null,
   host: link.host,
   machineId: context.machineId,
+  mergeable: null,
   mergedAt: null,
+  mergeStateStatus: null,
   number: link.number,
   observedAt: context.observedAt,
   outcome,
@@ -145,6 +156,7 @@ const failedObservation = (
   reviewDecision: null,
   state: null,
   title: null,
+  unresolvedReviewThreads: null,
   updatedAt: null,
   url: null,
 });
@@ -190,9 +202,14 @@ export const rollupChecks = (items: unknown): PullRequestCheckRollup => {
 interface ParsedPullRequest {
   readonly baseRef: string;
   readonly checksRollup: PullRequestCheckRollup;
+  readonly closedAt: CanonicalInstant | null;
+  readonly createdAt: CanonicalInstant | null;
   readonly draft: boolean;
   readonly headRef: string;
+  readonly lifecycleDateMessage: string | null;
+  readonly mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
   readonly mergedAt: CanonicalInstant | null;
+  readonly mergeStateStatus: string | null;
   readonly reviewDecision: string | null;
   readonly state: PullRequestState;
   readonly title: string;
@@ -205,6 +222,16 @@ const optionalInstant = (value: unknown): CanonicalInstant | null | undefined =>
     return null;
   }
   return normalizeIsoTimestamp(value) ?? undefined;
+};
+
+/** Malformed optional lifecycle dates must not discard the rest of a successful PR read. */
+const lifecycleInstant = (value: unknown): CanonicalInstant | null | undefined => {
+  try {
+    return optionalInstant(value);
+  } catch {
+    // JSON objects can also fail the normalizer's string conversion.
+    return undefined;
+  }
 };
 
 const boundedText = (value: unknown, maximum: number): string | undefined =>
@@ -230,6 +257,21 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     value.reviewDecision === null || value.reviewDecision === undefined || value.reviewDecision === ''
       ? null
       : boundedText(value.reviewDecision, maxShortText);
+  const validMergeable =
+    value.mergeable === 'MERGEABLE' || value.mergeable === 'CONFLICTING' || value.mergeable === 'UNKNOWN'
+      ? value.mergeable
+      : undefined;
+  const mergeable = value.mergeable === undefined || value.mergeable === null ? null : validMergeable;
+  const mergeStateStatus =
+    value.mergeStateStatus === undefined || value.mergeStateStatus === null
+      ? null
+      : boundedText(value.mergeStateStatus, maxShortText);
+  const createdAt = lifecycleInstant(value.createdAt);
+  const closedAt = lifecycleInstant(value.closedAt);
+  const invalidDates = [
+    createdAt === undefined ? 'createdAt' : null,
+    closedAt === undefined ? 'closedAt' : null,
+  ].filter((field) => field !== null);
   const mergedAt = optionalInstant(value.mergedAt);
   const updatedAt = normalizeIsoTimestamp(value.updatedAt);
   const title = boundedText(value.title, maxShortText);
@@ -240,10 +282,14 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
   if (url !== undefined) {
     try {
       const parsed = new URL(url);
+      const segments = parsed.pathname.split('/');
       urlMatchesLink =
         parsed.protocol === 'https:' &&
         parsed.hostname === link.host &&
-        parsed.pathname === `/${link.repository}/pull/${String(link.number)}`;
+        segments.length === 5 &&
+        `${segments[1]}/${segments[2]}`.toLowerCase() === link.repository.toLowerCase() &&
+        segments[3] === 'pull' &&
+        segments[4] === String(link.number);
     } catch {
       urlMatchesLink = false;
     }
@@ -252,6 +298,8 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     state === undefined ||
     draft === undefined ||
     reviewDecision === undefined ||
+    mergeable === undefined ||
+    mergeStateStatus === undefined ||
     mergedAt === undefined ||
     updatedAt === null ||
     title === undefined ||
@@ -270,9 +318,14 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
   return {
     baseRef,
     checksRollup: rollupChecks(value.statusCheckRollup),
+    closedAt: closedAt ?? null,
+    createdAt: createdAt ?? null,
     draft,
     headRef,
+    lifecycleDateMessage: invalidDates.length > 0 ? `Invalid lifecycle dates: ${invalidDates.join(', ')}` : null,
+    mergeable,
     mergedAt,
+    mergeStateStatus,
     reviewDecision,
     state,
     title,
@@ -372,6 +425,81 @@ const classifyRestError = (read: GhRead): Classification => {
   };
 };
 
+const REVIEW_THREADS_QUERY =
+  'query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { totalCount nodes { isResolved } } } } }';
+interface ReviewThreadRead {
+  readonly count: number | null;
+  readonly message: string | null;
+}
+const unknownReviewThreads = (reason: string): ReviewThreadRead => ({
+  count: null,
+  message: `Review threads unavailable: ${reason}`,
+});
+
+/** Only a complete connection establishes a count; partial GraphQL data never establishes zero. */
+const parseReviewThreads = (stdout: string): ReviewThreadRead => {
+  let body: unknown;
+  try {
+    body = JSON.parse(stdout);
+  } catch {
+    return unknownReviewThreads('invalid GraphQL response');
+  }
+  if (!isRecord(body) || (body.errors !== undefined && (!Array.isArray(body.errors) || body.errors.length > 0))) {
+    return unknownReviewThreads('GraphQL response contains errors');
+  }
+  const repository = isRecord(body.data) ? body.data.repository : undefined;
+  const pullRequest = isRecord(repository) ? repository.pullRequest : undefined;
+  const connection = isRecord(pullRequest) ? pullRequest.reviewThreads : undefined;
+  if (
+    !isRecord(connection) ||
+    typeof connection.totalCount !== 'number' ||
+    !Number.isSafeInteger(connection.totalCount) ||
+    connection.totalCount < 0
+  ) {
+    return unknownReviewThreads('invalid review thread connection');
+  }
+  if (connection.totalCount > 100) {
+    return unknownReviewThreads('more than 100 threads; count is incomplete');
+  }
+  if (!Array.isArray(connection.nodes) || connection.nodes.length !== connection.totalCount) {
+    return unknownReviewThreads('incomplete review thread connection');
+  }
+  let count = 0;
+  for (const node of connection.nodes) {
+    if (!isRecord(node) || typeof node.isResolved !== 'boolean') {
+      return unknownReviewThreads('invalid review thread node');
+    }
+    if (!node.isResolved) {
+      count += 1;
+    }
+  }
+  return { count, message: null };
+};
+
+const observeReviewThreads = (context: RunContext, link: PullRequestLink): Effect.Effect<ReviewThreadRead> =>
+  Effect.gen(function* () {
+    const [owner, name] = link.repository.split('/');
+    const response = yield* gh(context, [
+      'api',
+      'graphql',
+      '-f',
+      `query=${REVIEW_THREADS_QUERY}`,
+      '-f',
+      `owner=${owner}`,
+      '-f',
+      `name=${name}`,
+      '-F',
+      `number=${String(link.number)}`,
+    ]);
+    if (response.kind !== 'completed') {
+      return unknownReviewThreads(`gh ${response.kind}`);
+    }
+    if (response.exitCode !== 0) {
+      return unknownReviewThreads(`gh exited ${String(response.exitCode)}`);
+    }
+    return parseReviewThreads(response.stdout);
+  }).pipe(Effect.catchDefect(() => Effect.succeed(unknownReviewThreads('gh runner failed'))));
+
 const observeLink = (
   context: RunContext,
   link: PullRequestLink,
@@ -417,25 +545,35 @@ const observeLink = (
           outcome: 'invalid',
         });
       }
+      const reviewThreads =
+        parsed.state === 'OPEN' ? yield* observeReviewThreads(context, link) : { count: null, message: null };
       return {
         halt: null,
         observation: {
           accountLabel: context.accountLabel,
           baseRef: parsed.baseRef,
           checksRollup: parsed.checksRollup,
+          closedAt: parsed.closedAt,
+          createdAt: parsed.createdAt,
+          discoveryRole: link.discoveryRole ?? null,
           draft: parsed.draft,
           headRef: parsed.headRef,
           host: link.host,
           machineId: context.machineId,
+          mergeable: parsed.mergeable,
           mergedAt: parsed.mergedAt,
+          mergeStateStatus: parsed.mergeStateStatus,
           number: link.number,
           observedAt,
           outcome: 'observed',
-          outcomeMessage: null,
+          outcomeMessage:
+            [reviewThreads.message, parsed.lifecycleDateMessage].filter((message) => message !== null).join('; ') ||
+            null,
           repository: link.repository,
           reviewDecision: parsed.reviewDecision,
           state: parsed.state,
           title: parsed.title,
+          unresolvedReviewThreads: reviewThreads.count,
           updatedAt: parsed.updatedAt,
           url: parsed.url,
         },
@@ -461,15 +599,14 @@ const observeLink = (
 
 const resolveAccountToken = (
   context: Omit<RunContext, 'environment'>,
-  ghUser: string,
+  ghUser: string | null,
   environment: Readonly<Record<string, string>>,
 ): Effect.Effect<{ readonly token: string } | { readonly failure: Classification }> =>
   Effect.gen(function* () {
     const read = yield* gh({ ...context, environment }, [
       'auth',
       'token',
-      '--user',
-      ghUser,
+      ...(ghUser === null ? [] : ['--user', ghUser]),
       '--hostname',
       SUPPORTED_GITHUB_HOST,
     ]);
@@ -485,7 +622,7 @@ const resolveAccountToken = (
       return {
         failure: {
           haltsRun: true,
-          message: `gh has no stored token for ${ghUser} on ${SUPPORTED_GITHUB_HOST}`,
+          message: `gh has no stored token for ${ghUser ?? 'the active account'} on ${SUPPORTED_GITHUB_HOST}`,
           outcome: 'unauthenticated',
         },
       };
@@ -497,13 +634,13 @@ const resolveAccountToken = (
  * Observes each distinct link once, in order, up to `maxLinks`. Hosts other than github.com are
  * recorded as `disabled`. After a run-halting failure (timeout, missing `gh`, no credentials,
  * network silence) the remaining links are recorded with that outcome without another call, so
- * an offline machine costs at most two process spawns per cycle. Never fails.
+ * an offline machine costs at most three process spawns per cycle (token, view, REST). Each
+ * successful OPEN view adds one bounded review-thread read; its failure never halts later links. Never fails.
  */
 export const observePullRequests = (options: ObservePullRequestsOptions): Effect.Effect<PullRequestObservationBatch> =>
   Effect.gen(function* () {
     const maxLinks = options.maxLinks ?? GITHUB_PULL_REQUEST_DEFAULTS.maxLinks;
-    const unique: PullRequestLink[] = [];
-    const seen = new Set<string>();
+    const unique = new Map<string, PullRequestLink>();
     let rejected = 0;
     for (const candidate of options.links) {
       const link = normalizeLink(candidate);
@@ -512,13 +649,16 @@ export const observePullRequests = (options: ObservePullRequestsOptions): Effect
         continue;
       }
       const key = linkKey(link);
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(link);
+      const first = unique.get(key);
+      const discoveryRole = link.discoveryRole ?? null;
+      if (first === undefined) {
+        unique.set(key, link);
+      } else if (first.discoveryRole === null && discoveryRole !== null) {
+        unique.set(key, { ...first, discoveryRole });
       }
     }
-    const selected = unique.slice(0, maxLinks);
-    const truncated = unique.length > selected.length;
+    const selected = [...unique.values()].slice(0, maxLinks);
+    const truncated = unique.size > selected.length;
     const accountLabel = options.account?.ghUser ?? null;
     const baseContext: Omit<RunContext, 'environment'> = {
       accountLabel,
@@ -551,15 +691,14 @@ export const observePullRequests = (options: ObservePullRequestsOptions): Effect
     }
     let halt: Classification | null = null;
     let environment: Readonly<Record<string, string>> = baseEnvironment;
-    if (options.account !== undefined) {
-      const resolved = yield* resolveAccountToken(baseContext, options.account.ghUser, baseEnvironment);
-      if ('failure' in resolved) {
-        halt = resolved.failure;
-      } else {
-        // The token lives in this closure for the duration of the batch and reaches `gh` only as
-        // the GH_TOKEN variable of the calls below.
-        environment = { ...baseEnvironment, GH_TOKEN: resolved.token };
-      }
+    // Resolve even the active account explicitly: automatic credential lookup in `gh pr view`
+    // can fail under the engine while the bounded `gh auth token` read succeeds.
+    const resolved = yield* resolveAccountToken(baseContext, options.account?.ghUser ?? null, baseEnvironment);
+    if ('failure' in resolved) {
+      halt = resolved.failure;
+    } else {
+      // The token stays in this batch and reaches `gh` only through its environment.
+      environment = { ...baseEnvironment, GH_TOKEN: resolved.token };
     }
     const context: RunContext = { ...baseContext, environment };
     for (const link of supported) {

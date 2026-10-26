@@ -4,6 +4,13 @@ export type {
 } from './claude-desktop-session-store';
 export { MAX_CLAUDE_DESKTOP_SESSION_BATCH, MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
 export type {
+  CodexWorkImportResult,
+  CodexWorkQueryResult,
+  ImportCodexWorkObservationsInput,
+  QueryCodexWorkObservationsInput,
+} from './codex-work-store';
+export { MAX_CODEX_WORK_BATCH } from './codex-work-store';
+export type {
   CountDelegationRetryChainInput,
   DelegationJobPatch,
   DelegationJobRead,
@@ -122,6 +129,9 @@ export type {
 } from './index';
 export {
   acknowledgeUsageReplicationBatch,
+  applyWorkThreadCommand,
+  applyWorkThreadWaitObservations,
+  attachDeclaredWorkThreadSessions,
   backfillUsageReplicationOutbox,
   blockUsageReplicationBatch,
   checkpointUsageStore,
@@ -132,6 +142,7 @@ export {
   exportLocalMergeBundle,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importCodexWorkObservations,
   importExecutorObservations,
   importJiraIssueObservations,
   importLocalRows,
@@ -147,8 +158,10 @@ export {
   markReviewAttemptsLost,
   previewPeerMergeBundle,
   publishServedReportRevision,
+  queryActiveWorkThreadLinks,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryCurrentServedLocalProjectSources,
   queryDelegationEvaluations,
   queryDelegationJobs,
@@ -173,6 +186,8 @@ export {
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
   queryWorkFactRunStates,
+  queryWorkThreadsPage,
+  queryWorkThreadWaitCandidates,
   quiesceUsageStoreForShutdown,
   readDelegationJob,
   readDelegationJobs,
@@ -191,6 +206,7 @@ export {
   retainServedReportRevisions,
   retainSkillObservations,
   retryUsageReplicationBatch,
+  seedWorkThreads,
   transitionDelegationJob,
   transitionReviewAttempt,
   updateUsageMachineLabel,
@@ -230,3 +246,16 @@ export {
   reviewTargetReservationHolder,
 } from './review-reservations';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
+export type {
+  ApplyWorkThreadWaitObservationsInput,
+  ApplyWorkThreadWaitObservationsResult,
+  AttachDeclaredWorkThreadSessionsInput,
+  AttachDeclaredWorkThreadSessionsResult,
+  DeclaredWorkThreadSession,
+  QueryActiveWorkThreadLinksInput,
+  QueryActiveWorkThreadLinksResult,
+  QueryWorkThreadWaitCandidatesInput,
+  QueryWorkThreadWaitCandidatesResult,
+  WorkThreadSeed,
+  WorkThreadWaitCandidate,
+} from './work-thread-store';

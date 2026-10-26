@@ -58,6 +58,19 @@ data (ADR 0009).
 
 ## Consequences
 
+### Amendment: scope before bounds (2026-10-22, plan 122, then numbered 119)
+
+The common reader now applies checkout or project scope in the store query
+before selecting a bounded page. This replaces the widest-global-page filter
+described above, which could miss a project behind unrelated sessions. Explicit
+multiple-checkout scopes accept at most ten literal absolute paths. An explicit
+`sinceDays` selects 1–3650 days without changing the default thirty-day window.
+`coverage.scopeAppliedBeforeBounds` distinguishes scoped store reads from
+projection of a page supplied by a caller. A bounded `sessions` inventory also
+keeps quiet explorations reachable; omitted sessions are counted. Existing
+payload and family bounds remain in force. Native Codex requests can enter
+`waiting` under [ADR 0061](0061-local-codex-request-observations.md).
+
 - A harness gets declarations dated by the session, never presented as a
   current state, with the same uncertainty the Work view shows.
 - A store swept only once cannot show answered decisions (ADR 0056); the

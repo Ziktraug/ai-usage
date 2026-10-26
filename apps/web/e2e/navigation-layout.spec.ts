@@ -127,7 +127,7 @@ for (const width of [320, 375, 390]) {
     await navigation.getByRole('link', { name: 'Overview', exact: true }).click();
     await waitForHydratedReport(page);
     await work.click();
-    await expect(page.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'One thread per task.', exact: true })).toBeVisible();
     await expectNavigationGeometry(navigation.locator('a, button'), true);
   });
 }
@@ -154,7 +154,7 @@ for (const width of [768, 1024, 1279]) {
     await work.hover();
     await expectReadableRailTooltip(work);
     await work.click();
-    await expect(page.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'One thread per task.', exact: true })).toBeVisible();
     await expect(work).toHaveAttribute('aria-current', 'page');
   });
 }

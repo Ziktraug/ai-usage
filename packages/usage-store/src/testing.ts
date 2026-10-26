@@ -1,8 +1,10 @@
 export type { NewDelegationJob } from './delegation-store';
 export {
+  attachDeclaredWorkThreadSessions,
   createUsageStore,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
+  importCodexWorkObservations,
   importJiraIssueObservations,
   importLocalRows,
   importNormalizedDatasetItems,
@@ -15,6 +17,7 @@ export {
   publishServedReportRevision,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
+  queryCodexWorkObservations,
   queryCurrentServedReportRevision,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
@@ -24,6 +27,9 @@ export {
   queryReviewTargetResolution,
   querySkillObservations,
   queryWorkFactRunStates,
+  queryWorkThreadById,
+  queryWorkThreadEvents,
+  queryWorkThreadLinks,
   quiesceUsageStoreForShutdown,
   recordDelegationEvaluation,
   recordWorkFactRun,

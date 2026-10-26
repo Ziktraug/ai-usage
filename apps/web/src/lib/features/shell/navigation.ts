@@ -97,7 +97,7 @@ interface MobileDestination extends ShellDestination {
 /** Four direct destinations and one Manage disclosure, including in the isolated demo. */
 export const mobileNavigationFor = (url: URL, runtimeMode: RuntimeMode) => {
   const primary: readonly MobileDestination[] = [
-    { ...workDestination, active: url.pathname === workDestination.href },
+    { ...workDestination, active: isActiveManagementDestination(url.pathname, workDestination.href) },
     ...reportTabs.map((destination) => ({
       href: reportDestinationUrl(url, destination.tab).href,
       icon: destination.icon,

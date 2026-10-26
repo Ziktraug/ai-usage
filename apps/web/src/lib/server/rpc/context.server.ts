@@ -416,6 +416,11 @@ const createWorkDependencies = (): WebRpcRouterDependencies['work'] => ({
 });
 
 const createWorkAttemptsDependencies = (request: Request): WebRpcRouterDependencies['workAttempts'] => ({
+  stop: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-attempts.server');
+      return await server.stopWorkAttemptFromRequestForServer(request, input);
+    }),
   list: async (input, signal) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/work-attempts.server');
@@ -430,6 +435,24 @@ const createWorkAttemptsDependencies = (request: Request): WebRpcRouterDependenc
     await phaseBound(signal, async () => {
       const server = await import('../../../server/work-attempts.server');
       return await server.startWorkAttemptFromRequestForServer(request, input);
+    }),
+});
+
+const createWorkThreadsDependencies = (request: Request): WebRpcRouterDependencies['workThreads'] => ({
+  list: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-threads.server');
+      return await server.readWorkThreadListForServer(input, abortOptions(signal));
+    }),
+  detail: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-threads.server');
+      return await server.readWorkThreadDetailForServer(input, abortOptions(signal));
+    }),
+  command: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/work-threads.server');
+      return await server.executeWorkThreadCommandFromRequestForServer(request, input);
     }),
 });
 
@@ -507,5 +530,6 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
     work: createWorkDependencies(),
     workAttempts: createWorkAttemptsDependencies(request),
     workRouting: createWorkRoutingDependencies(request),
+    workThreads: createWorkThreadsDependencies(request),
   });
 };

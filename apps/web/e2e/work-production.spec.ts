@@ -65,8 +65,8 @@ const MINIMUM_ROOTS = 20;
  * final registry files: the replied root, whose reply only an earlier sweep can date, stays a
  * current block here (ADR 0056); the e2e fixture and the history chain test replay the earlier sweep.
  */
-const NEEDS_YOU_ROOTS = 12;
-const RECONSIDER_ROOTS = 5;
+const NEEDS_YOU_ROOTS = 13;
+const RECONSIDER_ROOTS = 6;
 const WAITING_ROOTS = 1;
 const LEAD_ROOTS = 2;
 const FOLDED_ROOTS = 10;
@@ -90,8 +90,11 @@ const BLOCKED_DECLARED_AT = 'Jul 03, 2026, 13:00 GMT+2';
 // A worktree removed since its session is a fact about that session, stated in words, never a failed read.
 const MISSING_WORKTREE = '/.claude/worktrees/checkout-3: no longer on disk (removed since the session)';
 const CHECKOUTS_FAILED_PATTERN = /Checkouts: .* failed/;
-const CHECKOUTS_UNREAD_PATTERN =
-  /Checkouts: [1-9]\d*\s+observed, [1-9]\d* not read\s[^·]*· of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
+// A checkout path that no longer exists is a fact about the path, not an unread checkout (plan 123):
+// it is named as gone, never counted as "not read".
+const CHECKOUTS_GONE_PATTERN =
+  /Checkouts: [1-9]\d*\s+observed[^·]*· of the checkouts the roots shown name: [1-9]\d* no longer on disk \(removed since the session\)/;
+const CHECKOUTS_UNREAD_PATTERN = /Checkouts: [^·]*not read/;
 const SATISFIED_ROOT_ID = 'local_fixture-satisfied-root';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_CHILD_TITLE = 'Fixture: open the collector pull request';
@@ -222,7 +225,7 @@ const waitForCollectedWork = async (request: APIRequestContext): Promise<void> =
 };
 
 const openWorkRoot = async (page: Page, rootId: string): Promise<Locator> => {
-  await page.goto(`/work?root=${rootId}`);
+  await page.goto(`/work/sessions?root=${rootId}`);
   await waitForHydratedWork(page);
   const aside = page.getByRole('main').locator('[data-work-aside]');
   await expect(aside.locator('[data-work-detail]')).toHaveAttribute('data-work-detail', rootId);
@@ -237,7 +240,7 @@ test('renders the collected registry and its observed facts as a resume surface,
   await page.setViewportSize({ width: 1440, height: 900 });
   const tracked = trackRequests(page, new URL(baseURL ?? DEFAULT_ORIGIN).origin);
   await waitForCollectedWork(request);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
@@ -252,7 +255,8 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(coverage.locator('[data-work-harness-coverage="other"]')).toHaveText('Other harnesses: not read here');
   await expect(coverage).toContainText(PULL_REQUESTS_OBSERVED_PATTERN);
   await expect(coverage).toContainText(CHECKOUTS_OBSERVED_PATTERN);
-  await expect(coverage).toContainText(CHECKOUTS_UNREAD_PATTERN);
+  await expect(coverage).toContainText(CHECKOUTS_GONE_PATTERN);
+  await expect(coverage).not.toContainText(CHECKOUTS_UNREAD_PATTERN);
   await expect(coverage).not.toContainText(CHECKOUTS_FAILED_PATTERN);
   await expect(coverage.locator('[data-work-jira-coverage]')).toContainText('Jira: not observed');
   await expect(coverage.locator('[data-work-window]')).toContainText(
@@ -395,8 +399,10 @@ test('renders the collected registry and its observed facts as a resume surface,
 
   // Routing: the disposable HOME declares no executor, so the panel can only name what would
   // qualify one; the simulation chooses nobody and starts nothing.
-  await expect(aside.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
-  await expect(aside).toContainText(`Simulates a read-only review of “${BLOCKED_TITLE}” on its collected Session.`);
+  await expect(aside.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
+  await expect(aside).toContainText(
+    `Choose an executor for a read-only review of “${BLOCKED_TITLE}”. The engine checks the target before launch.`,
+  );
   await expect(aside).toContainText(NO_DECLARATION_TEXT);
   const evidence = aside.locator('summary').filter({ hasText: EVIDENCE_COUNT_PATTERN });
   await expect(evidence).toBeVisible();
@@ -417,6 +423,8 @@ test('renders the collected registry and its observed facts as a resume surface,
   await expect(result).not.toContainText('Real recommendation');
   await expect(result).not.toContainText('Conditional (missing');
   await expect(result).not.toContainText('Chosen:');
+  await expect(aside.getByRole('button', { name: 'Start read-only review (Codex)', exact: true })).toHaveCount(0);
+  await expect(aside.getByRole('button', { name: 'Start read-only review (Claude Code)', exact: true })).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expectAxeClean(page);
   await capture(page, 'work-prod-1440-detail-blocked.png', { fullPage: true });
@@ -468,7 +476,7 @@ test('shows the collected Codex sessions apart, wait unknown, each opening its o
   expect(output.data.totalRoots).toBe(DESKTOP_ROOTS + CODEX_FAMILIES);
   expect(output.data.truncated).toBe(true);
 
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   const section = main.locator('[data-work-section="not-observable"]');
@@ -608,7 +616,7 @@ test('lists the Desktop registry as a detected source whose last run succeeded',
   await capture(page, 'sources-prod-1440.png', { fullPage: true });
 
   // The Work view repeats the same source state beside its dataset.
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const sources = page.getByRole('main').locator('details[data-work-sources]');
   await sources.locator('> summary').click();
@@ -620,7 +628,7 @@ test('lists the Desktop registry as a detected source whose last run succeeded',
 test('opens the collected root as a drawer at 390px without overflow', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await waitForCollectedWork(request);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeVisible();
@@ -632,7 +640,7 @@ test('opens the collected root as a drawer at 390px without overflow', async ({ 
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('[data-work-question]')).toHaveText(BLOCKED_QUESTION);
   await expect(dialog).toContainText(`Declared by the session at ${BLOCKED_DECLARED_AT}`);
-  await expect(dialog.getByRole('heading', { level: 3, name: 'Review assignment simulation' })).toBeVisible();
+  await expect(dialog.getByRole('heading', { level: 3, name: 'Review this work' })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Close detail', exact: true })).toBeFocused();
   await settleAnimations(page);
   await expectNoOverflow(page);
@@ -657,7 +665,7 @@ test('reads on the production path what the native registry says about requests,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await waitForCollectedWork(request);
-  await page.goto('/work');
+  await page.goto('/work/sessions');
   await waitForHydratedWork(page);
   const main = page.getByRole('main');
 
@@ -683,23 +691,23 @@ test('reads on the production path what the native registry says about requests,
   // Offers made before a later message, or expired, are no longer a lead.
   const offers = rowNamed(page, OFFERS_TITLE);
   await expect(main.locator('[data-work-section="optional-lead"]').locator(offers)).toHaveCount(1);
-  await expect(offers).toContainText('proposals 1 open / 0 resolved / 2 no longer pending');
+  await expect(offers).toContainText('proposals 2 open / 0 resolved / 1 no longer pending');
 
-  // Handled in a session started from the root after its question: no longer waiting, with provenance.
-  await main.locator('[data-work-section="none"] button', { hasText: 'Show all' }).click();
+  // A completed linked session does not identify an answer to the root’s question.
   const handled = rowNamed(page, HANDLED_TITLE);
-  await expect(main.locator('[data-work-section="none"]').locator(handled)).toHaveCount(1);
-  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Handled in a linked session');
+  await expect(main.locator('[data-work-reconsider]').locator(handled)).toHaveCount(1);
+  await expect(handled.locator('[data-work-standing-marker]')).toHaveText('Older declaration to reconsider');
+  await expect(handled.locator('[data-work-decision]')).toHaveCount(0);
   await capture(page, 'work-prod-1440-standings.png', { fullPage: true });
   await expectAxeClean(page);
 
   const handledDetail = await openWorkRoot(page, HANDLED_ROOT_ID);
-  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'handled');
+  await expect(handledDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'reconsider');
   await expect(handledDetail).toContainText(
-    'Handled in “Fixture: fix the flaky export test”: started from this session at',
+    'Older declaration to reconsider: work continued after the question in “Fixture: fix the flaky export test”',
   );
   await expect(handledDetail.locator('[data-work-next]')).toHaveText(
-    'Next: Nothing asked of you; the linked session’s outcome is in the detail.',
+    'Next: Check what followed; answer or archive the session in Claude Desktop to settle it.',
   );
   const continuedDetail = await openWorkRoot(page, CONTINUED_ROOT_ID);
   await expect(continuedDetail.locator('[data-work-request]')).toHaveAttribute('data-work-request', 'reconsider');

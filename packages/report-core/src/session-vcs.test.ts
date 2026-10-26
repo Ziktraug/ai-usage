@@ -162,3 +162,19 @@ describe('session VCS context', () => {
     ).toThrow();
   });
 });
+
+test('retains native PR provenance over a duplicate weak checkout observation in either order', () => {
+  const weak = {
+    number: 12,
+    observedAt: '2026-10-24T12:00:00.000Z',
+    repository: 'fixture/project',
+    url: 'https://github.com/fixture/project/pull/12',
+  };
+  const strong = { ...weak, provenance: 'session-pr-link' as const };
+  for (const candidates of [
+    [weak, strong],
+    [strong, weak],
+  ]) {
+    expect(normalizeSessionVcsPullRequests(candidates)).toEqual({ partial: false, pullRequests: [strong] });
+  }
+});

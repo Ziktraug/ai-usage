@@ -611,6 +611,7 @@ describe('Svelte Skills workspace SSR', () => {
           work: unavailableServices<WebRpcRouterDependencies['work']>(),
           workAttempts: unavailableServices<WebRpcRouterDependencies['workAttempts']>(),
           workRouting: unavailableServices<WebRpcRouterDependencies['workRouting']>(),
+          workThreads: unavailableServices<WebRpcRouterDependencies['workThreads']>(),
         });
       },
     });

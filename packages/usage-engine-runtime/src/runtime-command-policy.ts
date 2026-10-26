@@ -14,8 +14,10 @@ export type UsageEngineCommandOutputKind =
   | 'publication'
   | 'replication-status'
   | 'review-attempt'
+  | 'review-attempt-stop'
   | 'review-reservation-release'
-  | 'routing-qualification';
+  | 'routing-qualification'
+  | 'work-thread';
 
 interface UsageEngineCommandPolicy {
   readonly interruptible: boolean;
@@ -55,4 +57,6 @@ export const usageEngineCommandPolicies = {
   'start-review-attempt': { interruptible: false, outputKind: 'review-attempt' },
   // One locked home-config write under an expected revision.
   'update-delegation-config': { interruptible: false, outputKind: 'delegation-config' },
+  'stop-review-attempt': { interruptible: false, outputKind: 'review-attempt-stop' },
+  'work-thread': { interruptible: false, outputKind: 'work-thread' },
 } as const satisfies Record<UsageEngineCommandName, UsageEngineCommandPolicy>;

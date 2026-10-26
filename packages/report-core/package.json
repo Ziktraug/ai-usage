@@ -8,6 +8,7 @@
     "./analytics": "./src/analytics.ts",
     "./auth": "./src/auth.ts",
     "./canonical-instant": "./src/canonical-instant.ts",
+    "./codex-work-observation": "./src/codex-work-observation.ts",
     "./campaign-label": "./src/campaign-label.ts",
     "./campaign-map": "./src/campaign-map.ts",
     "./csv": "./src/csv.ts",
@@ -59,7 +60,11 @@
     "./work-attempts-vocabulary": "./src/work-attempts-vocabulary.ts",
     "./work-executors": "./src/work-executors.ts",
     "./work-routing": "./src/work-routing.ts",
-    "./work-routing-vocabulary": "./src/work-routing-vocabulary.ts"
+    "./work-routing-vocabulary": "./src/work-routing-vocabulary.ts",
+    "./work-thread": "./src/work-thread.ts",
+    "./work-thread-seeds": "./src/work-thread-seeds.ts",
+    "./work-thread-situation": "./src/work-thread-situation.ts",
+    "./work-thread-view": "./src/work-thread-view.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

@@ -46,6 +46,8 @@ export const readWorkAttentionFromStore = async (input: {
       Effect.result(
         queryWorkAttention({
           dbPath: input.dbPath,
+          ...(input.request.scope === undefined ? {} : { scope: input.request.scope }),
+          ...(input.request.sinceDays === undefined ? {} : { sinceDays: input.request.sinceDays }),
           ...(input.request.limit === undefined ? {} : { limit: input.request.limit }),
           ...(input.request.machineId === undefined || input.request.machineId === null
             ? {}

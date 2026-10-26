@@ -20,6 +20,7 @@ import type { WorkAttemptsRpcDependencies } from './work-attempts';
 import { createWorkAttemptsRpcRouter } from './work-attempts';
 import type { WorkRoutingRpcDependencies } from './work-routing';
 import { createWorkRoutingRpcRouter } from './work-routing';
+import { createWorkThreadsRpcRouter, type WorkThreadsRpcDependencies } from './work-threads';
 
 export interface WebRpcRouterDependencies {
   readonly delegation: DelegationRpcDependencies;
@@ -36,6 +37,7 @@ export interface WebRpcRouterDependencies {
   readonly work: WorkRpcDependencies;
   readonly workAttempts: WorkAttemptsRpcDependencies;
   readonly workRouting: WorkRoutingRpcDependencies;
+  readonly workThreads: WorkThreadsRpcDependencies;
 }
 
 export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
@@ -50,6 +52,7 @@ export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
   work: createWorkRpcRouter(dependencies.work),
   workAttempts: createWorkAttemptsRpcRouter(dependencies.workAttempts),
   workRouting: createWorkRoutingRpcRouter(dependencies.workRouting),
+  workThreads: createWorkThreadsRpcRouter(dependencies.workThreads),
 });
 
 export type WebRpcRouter = ReturnType<typeof createWebRpcRouter>;

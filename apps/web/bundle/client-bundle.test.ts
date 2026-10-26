@@ -38,20 +38,10 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// Plan 119 dependency upgrade, local production builds: 298,131 B after the in-major bumps,
-// 299,795 B with Panda 2.3.0 alone (larger css() runtime and stylesheet), 302,512 B with
-// SvelteKit 3.1.0 alone (client runtime), 304,465 B with both.
-// The review fixes then reached 305,058 B, over the ceiling; Panda's
-// optimize.removeUnusedTokens/removeUnusedKeyframes brings it to 300,373 B (stylesheet
-// 23,768 -> 19,082 B: the unused preset-panda palettes and keyframes are no longer shipped).
-// Plan 120 web opportunities: Svelte createContext (-331 B), Kit snapshot() (+240 B, shared by the
-// navigation chunk) and the forced-colours selection rings and switch thumb (+223 B of CSS)
-// bring it to 300,502 B.
-// Merging feat/work-resume-cockpit (PR #67) adds the Work destination to the shell: the navigation
-// model with the Work and mobile destinations, the import-free attempt and routing vocabularies and
-// the Work query policy, 304,220 B in a local production build (Bun 1.4.3); the Work route itself
-// stays out of the initial closure.
-const RECORDED_GZIP_CLOSURE_BYTES = 304_220;
+// Plan 123: the narrow project-group reference parser removes unrelated engine command parsers
+// from the report closure; Work-only CSS is loaded by the Work route instead of the global
+// Panda stylesheet. A fresh production build measures 304,123 B gzip, below the unchanged ceiling.
+const RECORDED_GZIP_CLOSURE_BYTES = 304_123;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
