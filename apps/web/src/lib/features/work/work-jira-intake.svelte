@@ -24,6 +24,8 @@
     timeZone: string;
     onCommand: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
   } = $props();
+  // Held here: a refetch can briefly empty the block, and a remounted <details> would fold again.
+  let open = $state(false);
 
   let busyKey = $state<string | null>(null);
   let failure = $state<{ key: string; message: string } | null>(null);
@@ -71,7 +73,7 @@
 </script>
 
 {#if items.length > 0 || lastDismissed}
-  <details class="wt-intake">
+  <details class="wt-intake wt-jira-intake" bind:open>
     <summary>
       <span aria-hidden="true" class="wt-intake-chevron">›</span>
       <strong>Assigned in Jira</strong>

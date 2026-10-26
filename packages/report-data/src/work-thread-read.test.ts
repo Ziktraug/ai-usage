@@ -1758,9 +1758,12 @@ describe('work-thread reader', () => {
       'checkout_status_observations',
       'work_thread_events',
     ]) {
-      expect(page.queries.filter((sql) => sql.includes(`FROM ${table}`))).toHaveLength(
-        table === 'checkout_status_observations' ? 1 : 2,
-      );
+      // Pull requests: page facts, Jira keys in their branches, and one global combination scan (ADR 0080).
+      const expected = { checkout_status_observations: 1, pull_request_observations: 3 }[table] ?? 2;
+      expect(
+        page.queries.filter((sql) => sql.includes(`FROM ${table}`)),
+        table,
+      ).toHaveLength(expected);
     }
     expect(page.list.rows).toHaveLength(9);
     expect(page.list.rows.flatMap((row) => row.markers.pullRequests)).toHaveLength(558);
@@ -2597,4 +2600,42 @@ test('a deleted dedicated worktree stays visible even without a previous success
   await run(importCheckoutStatusObservations({ dbPath, observations: [missing] }));
   const result = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
   expect(result?.row.markers.local).toMatchObject([{ latest: { outcome: 'missing' }, latestSuccessful: null }]);
+});
+
+describe('combined tasks read as one (ADR 0080)', () => {
+  test('the kept task lists its members and their links; a member points at the kept task', async () => {
+    const dbPath = await fixture();
+    const ticket = { kind: 'jira-issue' as const, key: 'jira:default/SHOP-9' };
+    const kept = await create(dbPath, [ticket], 'Ticket task', -30);
+    const member = await create(
+      dbPath,
+      [ticket, { kind: 'pull-request', key: 'github.com/fixture/repo#9' }],
+      'PR task',
+    );
+    const before = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    const [suggestion] = before.combineSuggestions.items;
+    expect(suggestion).toMatchObject({ blockers: [], keptThreadId: kept, ticketKey: 'jira:default/SHOP-9' });
+    await command(dbPath, {
+      commandId: randomUUID(),
+      op: 'combine',
+      participants: (suggestion?.participants ?? []).map((item) => ({
+        expectedRevision: item.followRevision,
+        threadId: item.threadId,
+      })),
+      threadId: kept,
+      ticketKey: 'jira:default/SHOP-9',
+    });
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(list.combineSuggestions.items).toEqual([]);
+    expect(list.counts.open).toBe(1);
+    const [row] = list.rows;
+    expect(row?.combinedThreads).toEqual([{ threadId: member, title: 'PR task' }]);
+    expect(row?.links.map((link) => link.key).toSorted()).toEqual(['github.com/fixture/repo#9', 'jira:default/SHOP-9']);
+    expect(row?.markers.pullRequests.map((marker) => marker.key)).toEqual(['github.com/fixture/repo#9']);
+    const memberDetail = await run(queryWorkThreadDetail({ dbPath, threadId: member, now: NOW }));
+    expect(memberDetail?.combinedInto).toEqual({ threadId: kept, title: 'Ticket task' });
+    const keptDetail = await run(queryWorkThreadDetail({ dbPath, threadId: kept, now: NOW }));
+    expect(keptDetail?.combinedInto).toBeNull();
+    expect(keptDetail?.events.filter((event) => event.kind === 'combined')).toHaveLength(2);
+  });
 });

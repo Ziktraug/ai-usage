@@ -42,6 +42,7 @@ export const WORK_THREAD_TABLES = [
   'work_thread_events',
   'work_thread_commands',
   'work_jira_intake',
+  'work_thread_combinations',
 ] as const;
 
 export const workThreadSchemaSql = `
@@ -96,6 +97,20 @@ export const workThreadSchemaSql = `
     result_json TEXT NOT NULL,
     recorded_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS work_thread_combinations (
+    combination_id INTEGER PRIMARY KEY,
+    member_thread_id TEXT NOT NULL REFERENCES work_threads(thread_id),
+    kept_thread_id TEXT NOT NULL REFERENCES work_threads(thread_id),
+    ticket_key TEXT NOT NULL,
+    combined_at TEXT NOT NULL,
+    combine_command_id TEXT NOT NULL,
+    separated_at TEXT,
+    separate_command_id TEXT,
+    CHECK (member_thread_id != kept_thread_id),
+    CHECK ((separated_at IS NULL) = (separate_command_id IS NULL))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_work_thread_combinations_active
+    ON work_thread_combinations(member_thread_id) WHERE separated_at IS NULL;
   CREATE TABLE IF NOT EXISTS work_jira_intake (
     machine_id TEXT NOT NULL,
     link_key TEXT NOT NULL,
@@ -267,6 +282,31 @@ export interface QueryJiraIntakeResult {
 }
 
 const MAX_JIRA_INTAKE_KEYS = 500;
+
+export interface WorkThreadCombination {
+  readonly keptThreadId: string;
+  readonly keptTitle: string;
+  readonly memberThreadId: string;
+  readonly memberTitle: string;
+  readonly ticketKey: string;
+}
+
+export interface WorkThreadCombineSuggestionEntry {
+  readonly blockers: readonly string[];
+  readonly keptThreadId: string;
+  readonly participants: readonly {
+    readonly pullRequestKeys: readonly string[];
+    readonly sessionCount: number;
+    readonly thread: WorkThread;
+  }[];
+  readonly ticketKey: string;
+}
+
+export interface QueryWorkThreadCombineSuggestionsResult {
+  readonly items: readonly WorkThreadCombineSuggestionEntry[];
+  readonly truncated: boolean;
+}
+
 export interface QueryWorkThreadsPageInput {
   readonly dbPath: string;
   readonly query: WorkThreadListQuery;
@@ -634,6 +674,16 @@ const newThread = (input: {
   return parsed ?? invalidInput('Invalid new work thread');
 };
 
+/** The kept task and its active members, as a subquery of thread ids for `alias.thread_id`. */
+const taskThreadsSql = (alias: string): string =>
+  `(SELECT ${alias}.thread_id UNION ALL SELECT combination.member_thread_id FROM work_thread_combinations combination
+    WHERE combination.kept_thread_id = ${alias}.thread_id AND combination.separated_at IS NULL)`;
+
+/** True for a task combined into another (hidden from lists, read-only for commands). */
+const notCombinedMemberSql = (alias: string): string =>
+  `NOT EXISTS (SELECT 1 FROM work_thread_combinations combination
+    WHERE combination.member_thread_id = ${alias}.thread_id AND combination.separated_at IS NULL)`;
+
 const success = (thread: WorkThread, applied = true): WorkThreadCommandResult => ({
   applied,
   followRevision: thread.followRevision,
@@ -741,6 +791,125 @@ const applyLink = (
   return success(thread);
 };
 
+/**
+ * Combine the tasks following one ticket (ADR 0080). The engine recomputes the group from current
+ * evidence inside this transaction: the operator approved exactly these tasks for this ticket, so
+ * any difference is `stale-preview`, never a silent adjustment.
+ */
+const applyCombine = (
+  db: SqliteDatabase,
+  machineId: string,
+  kept: WorkThread,
+  command: Extract<WorkThreadCommand, { op: 'combine' }>,
+  now: CanonicalInstant,
+): WorkThreadCommandResult => {
+  const ticketKey = canonicalLinkKey('jira-issue', command.ticketKey);
+  const expected = new Map(command.participants.map((item) => [item.threadId, item.expectedRevision]));
+  const group = new Set((openTasksByTicket(db, machineId).get(ticketKey) ?? []).map((thread) => thread.threadId));
+  const threads: WorkThread[] = [];
+  for (const threadId of expected.keys()) {
+    const thread = readThread(db, threadId);
+    if (!thread || thread.machineId !== machineId) {
+      return failure('not-found', 'A task of this combination was not found', kept.followRevision);
+    }
+    threads.push(thread);
+  }
+  if (group.size !== expected.size || [...group].some((threadId) => !expected.has(threadId))) {
+    return failure(
+      'stale-preview',
+      'The tasks following this ticket changed since the preview; review the combination again.',
+      kept.followRevision,
+    );
+  }
+  for (const thread of threads) {
+    if (thread.followRevision !== expected.get(thread.threadId)) {
+      return failure('revision-conflict', `“${thread.title}” changed since the preview`, thread.followRevision);
+    }
+  }
+  if (keptThreadFor(threads, ticketKey)?.threadId !== kept.threadId) {
+    return failure('stale-preview', 'Another task now keeps this combination; review it again.', kept.followRevision);
+  }
+  const blockers = combineBlockers(db, threads);
+  if (blockers.length > 0) {
+    return failure('invalid-transition', blockers.join(' '), kept.followRevision);
+  }
+  // Revisions advance so a follow-state command prepared before the combination conflicts.
+  const nextKept = { ...kept, followRevision: kept.followRevision + 1, updatedAt: now };
+  saveThread(db, nextKept);
+  const members = threads.filter((thread) => thread.threadId !== kept.threadId);
+  for (const member of members) {
+    db.query(`INSERT INTO work_thread_combinations(member_thread_id, kept_thread_id, ticket_key, combined_at,
+      combine_command_id) VALUES (?, ?, ?, ?, ?)`).run(
+      member.threadId,
+      kept.threadId,
+      ticketKey,
+      now,
+      command.commandId,
+    );
+    const next = { ...member, followRevision: member.followRevision + 1, updatedAt: now };
+    saveThread(db, next);
+    addEvent(db, next, now, 'combined', { linkKey: ticketKey, reason: `Combined into “${kept.title}”` });
+  }
+  addEvent(db, nextKept, now, 'combined', {
+    linkKey: ticketKey,
+    reason:
+      `Combined ${members.length} ${members.length === 1 ? 'task' : 'tasks'}: ${members.map((member) => `“${member.title}”`).join(', ')}`.slice(
+        0,
+        WORK_THREAD_BOUNDS.maxNote,
+      ),
+  });
+  return success(nextKept);
+};
+
+/** End a combination: members return with the state they kept; work done on the kept task stays. */
+const applySeparate = (
+  db: SqliteDatabase,
+  kept: WorkThread,
+  command: Extract<WorkThreadCommand, { op: 'separate' }>,
+  now: CanonicalInstant,
+): WorkThreadCommandResult => {
+  if (kept.followRevision !== command.expectedRevision) {
+    return failure('revision-conflict', 'The task changed since this command was prepared', kept.followRevision);
+  }
+  const memberIds = memberThreadIdsOf(db, kept.threadId);
+  if (memberIds.length === 0) {
+    return failure('invalid-transition', 'No task is combined into this one', kept.followRevision);
+  }
+  const wait = kept.waitingOn;
+  if (
+    wait !== null &&
+    db
+      .query(
+        `SELECT 1 FROM work_thread_links WHERE thread_id = ? AND kind = ? AND detached_at IS NULL
+        AND ${comparableLinkSql(waitLinkKind(wait.kind))} = ?`,
+      )
+      .get(kept.threadId, waitLinkKind(wait.kind), canonicalLinkKey(waitLinkKind(wait.kind), wait.linkKey)) === null
+  ) {
+    return failure(
+      'invalid-transition',
+      'This task waits on a link that would leave with a separated task; change the wait first.',
+      kept.followRevision,
+    );
+  }
+  db.query(
+    'UPDATE work_thread_combinations SET separated_at = ?, separate_command_id = ? WHERE kept_thread_id = ? AND separated_at IS NULL',
+  ).run(now, command.commandId, kept.threadId);
+  const nextKept = { ...kept, followRevision: kept.followRevision + 1, updatedAt: now };
+  saveThread(db, nextKept);
+  addEvent(db, nextKept, now, 'separated', {
+    reason: `Separated ${memberIds.length} ${memberIds.length === 1 ? 'task' : 'tasks'}`,
+  });
+  for (const memberId of memberIds) {
+    const member = readThread(db, memberId);
+    if (member) {
+      const next = { ...member, followRevision: member.followRevision + 1, updatedAt: now };
+      saveThread(db, next);
+      addEvent(db, next, now, 'separated', { reason: `Separated from “${kept.title}”` });
+    }
+  }
+  return success(nextKept);
+};
+
 /** Intake decisions carry no follow state; the fixed revision only satisfies the result shape. */
 const INTAKE_RESULT_REVISION = 1;
 
@@ -819,15 +988,31 @@ const executeCommand = (
   if (!thread) {
     return failure('not-found', 'The work thread was not found');
   }
+  const keptId = keptThreadIdOf(db, thread.threadId);
+  if (keptId !== null) {
+    const kept = readThread(db, keptId);
+    return failure(
+      'task-combined',
+      `This task was combined into “${kept?.title ?? keptId}”; act on that task or separate it first.`,
+      thread.followRevision,
+    );
+  }
   switch (command.op) {
+    case 'combine':
+      return applyCombine(db, input.machineId, thread, command, now);
+    case 'separate':
+      return applySeparate(db, thread, command, now);
     case 'set-follow-state':
       return applyFollowState(db, thread, command, now);
     case 'link':
       return applyLink(db, thread, command, now);
     case 'detach-link': {
+      // A kept task shows its members' links as its own: detaching one detaches every active copy
+      // of that key across the combination, so it cannot stay attached through another member.
+      const group = JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)]);
       const row = db
-        .query('SELECT * FROM work_thread_links WHERE thread_id = ? AND link_id = ?')
-        .get(thread.threadId, command.linkId);
+        .query('SELECT * FROM work_thread_links WHERE link_id = ? AND thread_id IN (SELECT value FROM json_each(?))')
+        .get(command.linkId, group);
       if (row === null) {
         return failure('invalid-link', 'The link does not belong to this thread', thread.followRevision);
       }
@@ -835,7 +1020,10 @@ const executeCommand = (
       if (link.detachedAt !== null) {
         return success(thread, false);
       }
-      db.query('UPDATE work_thread_links SET detached_at = ? WHERE link_id = ?').run(now, link.linkId);
+      db.query(
+        `UPDATE work_thread_links SET detached_at = ? WHERE detached_at IS NULL AND kind = ?
+        AND ${comparableLinkSql(link.kind)} = ? AND thread_id IN (SELECT value FROM json_each(?))`,
+      ).run(now, link.kind, canonicalLinkKey(link.kind, link.key), group);
       saveThread(db, { ...thread, updatedAt: now });
       addEvent(db, thread, now, 'link-detached', { linkKey: link.key });
       return success(thread);
@@ -902,28 +1090,29 @@ const sourceActivitySql = `source_activity AS MATERIALIZED (
  ) WHERE at IS NOT NULL AND at != '' GROUP BY machine_id, kind, link_key
 )`;
 
+// A kept task's activity spans its combined members' events and links (ADR 0080).
 const threadActivitySql = `COALESCE((SELECT MAX(at) FROM (
-  SELECT e.at AS at FROM work_thread_events e WHERE e.thread_id = t.thread_id AND (
-    json_extract(e.event_json, '$.kind') IN ('follow-state', 'note', 'renamed', 'wait-satisfied')
+  SELECT e.at AS at FROM work_thread_events e WHERE e.thread_id IN ${taskThreadsSql('t')} AND (
+    json_extract(e.event_json, '$.kind') IN ('follow-state', 'note', 'renamed', 'wait-satisfied', 'combined', 'separated')
     OR (json_extract(e.event_json, '$.kind') = 'created' AND t.origin IN ('user', 'session'))
     OR (json_extract(e.event_json, '$.kind') IN ('link-added', 'link-detached') AND EXISTS (
-      SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.provenance = 'user'
+      SELECT 1 FROM work_thread_links l WHERE l.thread_id = e.thread_id AND l.provenance = 'user'
         AND l.link_key = json_extract(e.event_json, '$.linkKey')
     ))
   )
   UNION ALL
   SELECT a.at FROM work_thread_links l JOIN source_activity a
     ON a.machine_id = t.machine_id AND a.kind = l.kind AND a.link_key = CASE WHEN l.kind = 'pull-request' THEN lower(l.link_key) ELSE l.link_key END
-    WHERE l.thread_id = t.thread_id AND l.detached_at IS NULL
+    WHERE l.thread_id IN ${taskThreadsSql('t')} AND l.detached_at IS NULL
   UNION ALL
   SELECT j.at FROM work_thread_links l JOIN pull_request_observations p
     ON p.machine_id = t.machine_id AND lower(l.link_key) = lower(p.host || '/' || p.repository || '#' || p.number)
     JOIN source_activity j ON j.machine_id = t.machine_id AND j.kind = 'jira-issue'
       AND instr('/' || p.head_ref || '/', '/' || substr(j.link_key, length('jira:default/') + 1) || '/') > 0
-    WHERE l.thread_id = t.thread_id AND l.kind = 'pull-request' AND l.detached_at IS NULL AND p.outcome = 'observed'
+    WHERE l.thread_id IN ${taskThreadsSql('t')} AND l.kind = 'pull-request' AND l.detached_at IS NULL AND p.outcome = 'observed'
       AND p.observed_at = (SELECT MAX(last.observed_at) FROM pull_request_observations last
         WHERE last.machine_id = p.machine_id AND last.host = p.host AND last.repository = p.repository AND last.number = p.number AND last.outcome = 'observed')
-      AND NOT EXISTS (SELECT 1 FROM work_thread_links detached WHERE detached.thread_id = t.thread_id
+      AND NOT EXISTS (SELECT 1 FROM work_thread_links detached WHERE detached.thread_id IN ${taskThreadsSql('t')}
         AND detached.link_key = j.link_key AND detached.detached_at IS NOT NULL)
 ) WHERE at IS NOT NULL AND at != ''), t.created_at)`;
 
@@ -940,7 +1129,10 @@ const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[
   ) {
     return invalidInput('Invalid work thread page query');
   }
-  const conditions = [query.tab === 'done' ? "t.follow_state = 'done'" : "t.follow_state IN ('following', 'waiting')"];
+  const conditions = [
+    query.tab === 'done' ? "t.follow_state = 'done'" : "t.follow_state IN ('following', 'waiting')",
+    notCombinedMemberSql('t'),
+  ];
   const params: unknown[] = [];
   if (query.project !== null) {
     conditions.push('t.project_label = ?');
@@ -948,7 +1140,7 @@ const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[
   }
   if (query.search !== null && query.search.length > 0) {
     conditions.push(`(instr(lower(t.title), lower(?)) > 0 OR EXISTS (
-      SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.detached_at IS NULL AND (
+      SELECT 1 FROM work_thread_links l WHERE l.thread_id IN ${taskThreadsSql('t')} AND l.detached_at IS NULL AND (
         instr(lower(l.link_key), lower(?)) > 0 OR (l.kind = 'session' AND l.link_key IN (
             SELECT 'session:' || session.machine_id || '/' ||
               json_extract(session.source_row_json, '$.source.harnessKey') || '/' ||
@@ -1013,6 +1205,178 @@ const attachReconciledPullRequest = (
   addEvent(db, task, now, 'link-added', { linkKey: key });
 };
 
+// ---------------------------------------------------------------------------------------------
+// Combined tasks (ADR 0080). A member keeps its links, events and state; while the combination is
+// active, every task-level reading and automatic write resolves it to the kept task.
+// ---------------------------------------------------------------------------------------------
+
+const keptThreadIdOf = (db: SqliteDatabase, threadId: string): string | null => {
+  const row = db
+    .query('SELECT kept_thread_id FROM work_thread_combinations WHERE member_thread_id = ? AND separated_at IS NULL')
+    .get(threadId);
+  return row === null ? null : String(record(row).kept_thread_id);
+};
+
+const memberThreadIdsOf = (db: SqliteDatabase, keptThreadId: string): string[] =>
+  db
+    .query(
+      `SELECT member_thread_id FROM work_thread_combinations WHERE kept_thread_id = ? AND separated_at IS NULL
+      ORDER BY combination_id`,
+    )
+    .all(keptThreadId)
+    .map((row) => String(record(row).member_thread_id));
+
+/** The task that answers for `thread`: itself, or the task it is combined into. */
+const effectiveThread = (db: SqliteDatabase, thread: WorkThread): WorkThread => {
+  const kept = keptThreadIdOf(db, thread.threadId);
+  return kept === null ? thread : (readThread(db, kept) ?? thread);
+};
+
+const MAX_TICKET_EVIDENCE_THREADS = 2000;
+
+/**
+ * Exactly which ticket each task follows, by the rule combinations use (stricter than routing):
+ * its Jira origin, an active Jira link, or an active PR on a non-review task whose latest observed
+ * head branch names exactly one key. A detached link to a ticket removes the task from it.
+ */
+const tasksByTicket = (db: SqliteDatabase, machineId: string): Map<string, Set<string>> => {
+  const byTicket = new Map<string, Set<string>>();
+  const add = (ticket: string, threadId: string) => {
+    const group = byTicket.get(ticket) ?? new Set<string>();
+    group.add(threadId);
+    byTicket.set(ticket, group);
+  };
+  const vetoes = new Set(
+    db
+      .query(
+        `SELECT l.thread_id || ' ' || l.link_key AS veto FROM work_thread_links l JOIN work_threads t USING(thread_id)
+        WHERE t.machine_id = ? AND l.kind = 'jira-issue' AND l.detached_at IS NOT NULL`,
+      )
+      .all(machineId)
+      .map((row) => String(record(row).veto)),
+  );
+  for (const row of db
+    .query(
+      `SELECT t.thread_id, t.origin_key AS ticket FROM work_threads t WHERE t.machine_id = ? AND t.origin = 'jira-issue'
+      UNION SELECT l.thread_id, l.link_key FROM work_thread_links l JOIN work_threads t USING(thread_id)
+        WHERE t.machine_id = ? AND l.kind = 'jira-issue' AND l.detached_at IS NULL
+      LIMIT ?`,
+    )
+    .all(machineId, machineId, MAX_TICKET_EVIDENCE_THREADS)) {
+    add(String(record(row).ticket), String(record(row).thread_id));
+  }
+  for (const row of db
+    .query(
+      `WITH latest AS (
+        SELECT lower(host) || '/' || lower(repository) || '#' || number AS link_key, head_ref,
+          ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
+        FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed'
+      )
+      SELECT t.thread_id, latest.head_ref FROM work_threads t
+      JOIN work_thread_links l ON l.thread_id = t.thread_id AND l.kind = 'pull-request' AND l.detached_at IS NULL
+      JOIN latest ON latest.link_key = lower(l.link_key) AND latest.rank = 1
+      WHERE t.machine_id = ? AND (t.intent IS NULL OR t.intent != 'review') LIMIT ?`,
+    )
+    .all(machineId, machineId, MAX_TICKET_EVIDENCE_THREADS)) {
+    const keys = jiraKeysInBranch(String(record(row).head_ref ?? ''));
+    const [key] = keys;
+    if (keys.length === 1 && key !== undefined) {
+      add(jiraIssueLinkKey({ key, site: 'default' }), String(record(row).thread_id));
+    }
+  }
+  for (const [ticket, group] of byTicket) {
+    for (const threadId of group) {
+      if (vetoes.has(`${threadId} ${ticket}`)) {
+        group.delete(threadId);
+      }
+    }
+  }
+  return byTicket;
+};
+
+/** Open tasks following each ticket: a Done follow-up is history and never joins a combination. */
+const openTasksByTicket = (db: SqliteDatabase, machineId: string): Map<string, WorkThread[]> => {
+  const result = new Map<string, WorkThread[]>();
+  const threads = new Map<string, WorkThread | null>();
+  for (const [ticket, ids] of tasksByTicket(db, machineId)) {
+    const open: WorkThread[] = [];
+    for (const threadId of ids) {
+      if (!threads.has(threadId)) {
+        threads.set(threadId, readThread(db, threadId));
+      }
+      const thread = threads.get(threadId);
+      if (thread && thread.followState !== 'done') {
+        open.push(thread);
+      }
+    }
+    result.set(ticket, open);
+  }
+  return result;
+};
+
+const distinctActiveLinkCount = (db: SqliteDatabase, threadIds: readonly string[]): number => {
+  const row = record(
+    db
+      .query(
+        `SELECT COUNT(DISTINCT kind || ' ' || CASE WHEN kind = 'pull-request' THEN lower(link_key) ELSE link_key END)
+        AS count FROM work_thread_links WHERE detached_at IS NULL AND thread_id IN (SELECT value FROM json_each(?))`,
+      )
+      .get(JSON.stringify(threadIds)),
+  );
+  return typeof row.count === 'number' ? row.count : Number.POSITIVE_INFINITY;
+};
+
+/** A key active on one participant but detached (an operator veto) on another. */
+const crossVetoedKeys = (db: SqliteDatabase, threadIds: readonly string[]): string[] =>
+  db
+    .query(
+      `SELECT DISTINCT active.link_key AS key FROM work_thread_links active JOIN work_thread_links detached
+        ON detached.kind = active.kind AND detached.link_key = active.link_key AND detached.detached_at IS NOT NULL
+        AND detached.thread_id != active.thread_id
+      WHERE active.detached_at IS NULL AND active.thread_id IN (SELECT value FROM json_each(?))
+        AND detached.thread_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify(threadIds), JSON.stringify(threadIds))
+    .map((row) => String(record(row).key));
+
+/** Why a group cannot be combined yet; empty when it can. Readable as preview text. */
+const combineBlockers = (db: SqliteDatabase, threads: readonly WorkThread[]): string[] => {
+  const blockers: string[] = [];
+  const ids = threads.map((thread) => thread.threadId);
+  for (const thread of threads) {
+    const name = `“${thread.title.slice(0, 60)}”`;
+    if (thread.followState !== 'following') {
+      blockers.push(`${name} is ${thread.followState === 'done' ? 'Done' : 'Waiting'}; resume following it first.`);
+    }
+    if (thread.intent === 'review') {
+      blockers.push(`${name} is a review; a review stays its own task.`);
+    }
+    if (thread.note !== null) {
+      blockers.push(`${name} has a note; move or clear it first.`);
+    }
+    if (keptThreadIdOf(db, thread.threadId) !== null || memberThreadIdsOf(db, thread.threadId).length > 0) {
+      blockers.push(`${name} is already part of a combination.`);
+    }
+  }
+  if (threads.length > WORK_THREAD_BOUNDS.maxCombinedThreads) {
+    blockers.push(`More than ${WORK_THREAD_BOUNDS.maxCombinedThreads} tasks follow this ticket.`);
+  }
+  if (distinctActiveLinkCount(db, ids) > WORK_THREAD_BOUNDS.maxLinksPerThread) {
+    blockers.push(`Together they hold more than ${WORK_THREAD_BOUNDS.maxLinksPerThread} links.`);
+  }
+  for (const key of crossVetoedKeys(db, ids)) {
+    blockers.push(`${key} is detached from one task but active on another.`);
+  }
+  return blockers;
+};
+
+/** The ticket's own task keeps the combination; otherwise the oldest. */
+const keptThreadFor = (threads: readonly WorkThread[], ticketKey: string): WorkThread | undefined =>
+  threads.find((thread) => thread.originKey === ticketKey) ??
+  threads.toSorted(
+    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.threadId.localeCompare(right.threadId),
+  )[0];
+
 interface JiraKeyFollowers {
   /** Done tasks following the ticket: a new PR does not silently reopen or join them. */
   readonly done: number;
@@ -1071,7 +1435,14 @@ const jiraKeyFollowers = (db: SqliteDatabase, machineId: string, linkKey: string
       tasks.set(task.threadId, task);
     }
   }
-  const followers = [...tasks.values()].filter((task) => !vetoed.has(task.threadId));
+  // A combination answers as its kept task, and a veto on any of its tasks holds for all of them.
+  const effective = new Map<string, WorkThread>();
+  for (const task of tasks.values()) {
+    const kept = effectiveThread(db, task);
+    effective.set(kept.threadId, kept);
+  }
+  const vetoedTasks = new Set([...vetoed].map((threadId) => keptThreadIdOf(db, threadId) ?? threadId));
+  const followers = [...effective.values()].filter((task) => !vetoedTasks.has(task.threadId));
   return {
     done: followers.filter((task) => task.followState === 'done').length,
     open: followers
@@ -1143,7 +1514,7 @@ const reconciliationCandidates = (db: SqliteDatabase, input: SeedWorkThreadsInpu
         )
         .all(input.machineId, sessionKey);
       for (const value of matches) {
-        const task = threadFromRecord(value);
+        const task = effectiveThread(db, threadFromRecord(value));
         tasks.set(task.threadId, task);
         if (group.strong.has(sessionKey)) {
           strongTasks.add(task.threadId);
@@ -1438,7 +1809,18 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           .all(input.machineId, pullRequestKey, sessionKey, WORK_THREAD_BOUNDS.maxLinksPerThread, remaining + 1);
         result.truncated ||= candidates.length > remaining;
         for (const candidate of candidates.slice(0, remaining)) {
-          const thread = threadFromRecord(candidate);
+          // A combined task's sessions belong to the kept task; skip one that already holds it.
+          const thread = effectiveThread(db, threadFromRecord(candidate));
+          if (
+            db
+              .query(
+                `SELECT 1 FROM work_thread_links WHERE kind = 'session' AND link_key = ?
+                AND thread_id IN (SELECT value FROM json_each(?))`,
+              )
+              .get(sessionKey, JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)])) !== null
+          ) {
+            continue;
+          }
           addLink(db, {
             threadId: thread.threadId,
             kind: 'session',
@@ -1481,8 +1863,8 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         .query(`SELECT * FROM (
         SELECT t.*, l.link_id AS waited_link_id, ROW_NUMBER() OVER (
           PARTITION BY t.thread_id ORDER BY l.created_at, l.link_id) AS candidate_rank
-        FROM work_threads t JOIN work_thread_links l ON l.thread_id = t.thread_id
-        WHERE t.machine_id = ? AND t.follow_state = 'waiting'
+        FROM work_threads t JOIN work_thread_links l ON l.thread_id IN ${taskThreadsSql('t')}
+        WHERE t.machine_id = ? AND t.follow_state = 'waiting' AND ${notCombinedMemberSql('t')}
           AND json_extract(t.waiting_on_json, '$.kind') = ? AND l.kind = ? AND l.detached_at IS NULL
           AND ${linkKey} = ${waitKey} AND ${linkKey} IN (SELECT value FROM json_each(?))
       ) WHERE candidate_rank = 1 ORDER BY updated_at, thread_id LIMIT ?`)
@@ -1567,9 +1949,14 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           wait.kind !== candidate.waitingOn.kind ||
           wait.since !== candidate.waitingOn.since ||
           canonicalLinkKey(kind, wait.linkKey) !== candidate.waitingOn.linkKey ||
+          keptThreadIdOf(db, thread.threadId) !== null ||
           db
-            .query('SELECT 1 FROM work_thread_links WHERE link_id = ? AND thread_id = ? AND detached_at IS NULL')
-            .get(candidate.linkId, thread.threadId) === null
+            .query(
+              `SELECT 1 FROM work_thread_links WHERE link_id = ? AND detached_at IS NULL
+              AND thread_id IN (SELECT value FROM json_each(?))`,
+            )
+            .get(candidate.linkId, JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)])) ===
+            null
         ) {
           result.unchanged++;
           continue;
@@ -1715,7 +2102,10 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         .query(`${latestObservations} SELECT * FROM (
         SELECT links.*, ROW_NUMBER() OVER (PARTITION BY ${input.kind === 'pull-request' ? 'lower(link_key)' : 'link_key'}
           ORDER BY links.created_at DESC, links.link_id) AS rank
-        FROM work_thread_links links JOIN work_threads threads USING(thread_id)
+        FROM work_thread_links links
+        LEFT JOIN work_thread_combinations combination
+          ON combination.member_thread_id = links.thread_id AND combination.separated_at IS NULL
+        JOIN work_threads threads ON threads.thread_id = COALESCE(combination.kept_thread_id, links.thread_id)
         WHERE threads.machine_id = ? AND threads.follow_state != 'done'
           AND links.kind = ? AND links.detached_at IS NULL
           ${eligibility}
@@ -1750,7 +2140,8 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       const row = record(
         db
           .query(`SELECT COUNT(CASE WHEN follow_state = 'done' THEN 1 END) AS done,
-        COUNT(CASE WHEN follow_state IN ('following', 'waiting') THEN 1 END) AS open FROM work_threads`)
+        COUNT(CASE WHEN follow_state IN ('following', 'waiting') THEN 1 END) AS open FROM work_threads t
+        WHERE ${notCombinedMemberSql('t')}`)
           .get(),
       );
       return {
@@ -1764,8 +2155,8 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
   }): Effect.Effect<readonly string[], UsageStoreError> =>
     read(input.dbPath, 'queryWorkThreadProjects', (db) =>
       db
-        .query(`SELECT DISTINCT project_label FROM work_threads
-      WHERE project_label IS NOT NULL ORDER BY project_label LIMIT ?`)
+        .query(`SELECT DISTINCT project_label FROM work_threads t
+      WHERE project_label IS NOT NULL AND ${notCombinedMemberSql('t')} ORDER BY project_label LIMIT ?`)
         .all(WORK_THREAD_VIEW_BOUNDS.maxProjects)
         .map((value) =>
           validated(
@@ -1832,9 +2223,93 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       };
     });
 
+  /** Active combinations touching these tasks, kept or member, with both titles. */
+  const queryWorkThreadCombinations = (
+    input: QueryWorkThreadLinksInput,
+  ): Effect.Effect<readonly WorkThreadCombination[], UsageStoreError> =>
+    read(input.dbPath, 'queryWorkThreadCombinations', (db) => {
+      const ids = [...new Set(input.threadIds)];
+      if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
+        return invalidInput('Invalid work thread combination scope');
+      }
+      return db
+        .query(
+          `SELECT c.kept_thread_id, kept.title AS kept_title, c.member_thread_id, member.title AS member_title, c.ticket_key
+          FROM work_thread_combinations c
+          JOIN work_threads kept ON kept.thread_id = c.kept_thread_id
+          JOIN work_threads member ON member.thread_id = c.member_thread_id
+          WHERE c.separated_at IS NULL AND (c.kept_thread_id IN (SELECT value FROM json_each(?))
+            OR c.member_thread_id IN (SELECT value FROM json_each(?)))
+          ORDER BY c.combination_id`,
+        )
+        .all(JSON.stringify(ids), JSON.stringify(ids))
+        .map((row): WorkThreadCombination => {
+          const value = record(row);
+          return {
+            keptThreadId: String(value.kept_thread_id),
+            keptTitle: String(value.kept_title),
+            memberThreadId: String(value.member_thread_id),
+            memberTitle: String(value.member_title),
+            ticketKey: String(value.ticket_key),
+          };
+        });
+    });
+
+  /**
+   * Tickets followed by several open tasks, each with the task that would be kept and what blocks
+   * the combination. Groups already combined into one task are not proposed again.
+   */
+  const queryWorkThreadCombineSuggestions = (input: {
+    readonly dbPath: string;
+    readonly machineId: string;
+  }): Effect.Effect<QueryWorkThreadCombineSuggestionsResult, UsageStoreError> =>
+    read(input.dbPath, 'queryWorkThreadCombineSuggestions', (db) => {
+      const items: WorkThreadCombineSuggestionEntry[] = [];
+      let oversized = false;
+      for (const [ticketKey, threads] of openTasksByTicket(db, input.machineId)) {
+        const effective = new Set(threads.map((thread) => keptThreadIdOf(db, thread.threadId) ?? thread.threadId));
+        const kept = keptThreadFor(threads, ticketKey);
+        if (effective.size < 2 || !kept) {
+          continue;
+        }
+        if (threads.length > WORK_THREAD_VIEW_BOUNDS.maxCombineParticipants) {
+          oversized = true;
+          continue;
+        }
+        items.push({
+          blockers: combineBlockers(db, threads).slice(0, WORK_THREAD_VIEW_BOUNDS.maxCombineBlockers),
+          keptThreadId: kept.threadId,
+          participants: threads.map((thread) => {
+            const links = db
+              .query(
+                `SELECT kind, link_key FROM work_thread_links WHERE thread_id = ? AND detached_at IS NULL
+                AND kind IN ('pull-request', 'session')`,
+              )
+              .all(thread.threadId)
+              .map(record);
+            return {
+              pullRequestKeys: links
+                .filter((link) => link.kind === 'pull-request')
+                .map((link) => String(link.link_key)),
+              sessionCount: links.filter((link) => link.kind === 'session').length,
+              thread,
+            };
+          }),
+          ticketKey,
+        });
+      }
+      items.sort((left, right) => left.ticketKey.localeCompare(right.ticketKey));
+      return {
+        items: items.slice(0, WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions),
+        truncated: oversized || items.length > WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions,
+      };
+    });
+
   return {
     ...createWorkThreadSessionEvidenceStore(dependencies),
     queryJiraIntake,
+    queryWorkThreadCombinations,
+    queryWorkThreadCombineSuggestions,
     recordJiraIntake,
     applyWorkThreadCommand,
     applyWorkThreadWaitObservations,

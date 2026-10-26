@@ -3,6 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-10-26
 - **Amends**: 0063, 0078
+- **Amended by**: [0080](0080-combined-work-threads.md) (existing duplicates are combined)
 
 ## Context
 
@@ -37,8 +38,8 @@ Following tasks the operator never chose.
 
 ## Consequences
 
-Existing duplicate tasks (Jira-origin tasks beside their PR tasks) stay until an
-explicit combine command exists; nothing is migrated silently (0078). A ticket
+Existing duplicate tasks (Jira-origin tasks beside their PR tasks) stay until the
+operator combines them (0080); nothing is migrated silently (0078). A ticket
 whose two PRs already have separate tasks remains ambiguous for routing until
 then. The intake table is additive under usage version 4; readers of an older
 store report it as not yet upgraded.

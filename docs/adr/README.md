@@ -109,6 +109,7 @@ was deleted.
 | [0077](0077-delegation-independent-of-the-calling-harness.md) | Delegation owned by AI Usage, independent of the calling harness (read-only reviews, Claude Code and Codex executors) | 2026-10-25 | Accepted; extends 0009, 0052, 0053, 0055, 0057, 0058, 0074, 0075; amends 0051 (stderr classification) |
 | [0078](0078-work-association-evidence-and-activity.md) | Work association evidence and source activity | 2026-10-26 | Accepted; amends 0063 |
 | [0079](0079-ticket-routing-and-jira-intake.md) | One delivery task per ticket, and a Jira intake instead of automatic tasks | 2026-10-26 | Accepted; amends 0063, 0078 |
+| [0080](0080-combined-work-threads.md) | Combine the tasks of one ticket through a reversible membership | 2026-10-26 | Accepted; amends 0063, 0079 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

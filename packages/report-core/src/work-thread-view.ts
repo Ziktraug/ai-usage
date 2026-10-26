@@ -24,6 +24,11 @@ export const WORK_THREAD_VIEW_BOUNDS = {
   maxProjects: 200,
   /** Assigned Jira issues awaiting the operator's choice, shown at once above the tasks. */
   maxJiraIntake: 100,
+  /** Ticket groups proposed for combination at once. */
+  maxCombineSuggestions: 50,
+  /** Participants and blockers one suggestion previews; a larger group is reported, not listed. */
+  maxCombineParticipants: 16,
+  maxCombineBlockers: 12,
 } as const;
 
 export const WORK_THREAD_TABS = ['open', 'done'] as const;
@@ -116,6 +121,8 @@ export interface WorkThreadNativeRequest {
 export interface WorkThreadRow {
   /** Facts newer than `doneAt` on a Done thread: shown, never reopening it silently (plan 123 decision 3). */
   readonly afterDone: { readonly count: number; readonly latestAt: CanonicalInstant } | null;
+  /** Tasks combined into this one (ADR 0080); their links and history read as this task's. */
+  readonly combinedThreads: readonly WorkThreadReference[];
   /**
    * Sessions those linked sessions delegated (subagents, automated reviews), nested under their
    * parent and counted apart: they are part of the work, not more work to follow.
@@ -139,6 +146,35 @@ export interface WorkThreadRow {
   readonly thread: WorkThread;
 }
 
+export interface WorkThreadReference {
+  readonly threadId: string;
+  readonly title: string;
+}
+
+/** One task proposed for a combination, with what the preview shows of it. */
+export interface WorkThreadCombineParticipant {
+  readonly followRevision: number;
+  readonly origin: WorkThread['origin'];
+  /** Pull request link keys the task holds itself. */
+  readonly pullRequestKeys: readonly string[];
+  readonly sessionCount: number;
+  readonly threadId: string;
+  readonly title: string;
+}
+
+/**
+ * Open tasks that follow the same ticket and could become one (ADR 0080). `blockers` lists what the
+ * operator must settle first; a suggestion with blockers is shown but cannot be applied.
+ */
+export interface WorkThreadCombineSuggestion {
+  readonly blockers: readonly string[];
+  readonly issue: JiraIssueObservation | null;
+  readonly keptThreadId: string;
+  readonly participants: readonly WorkThreadCombineParticipant[];
+  /** `jira:<site>/<KEY>` */
+  readonly ticketKey: string;
+}
+
 /**
  * An issue Jira assigns to the operator that no open task follows yet. Assignment alone is not a
  * commitment: the operator follows it, attaches it to a task, or dismisses it.
@@ -153,6 +189,10 @@ export interface WorkThreadJiraIntakeItem {
 }
 
 export interface WorkThreadListDataset {
+  readonly combineSuggestions: {
+    readonly items: readonly WorkThreadCombineSuggestion[];
+    readonly truncated: boolean;
+  };
   readonly counts: { readonly done: number; readonly open: number };
   readonly generatedAt: CanonicalInstant;
   readonly jiraIntake: { readonly items: readonly WorkThreadJiraIntakeItem[]; readonly truncated: boolean };
@@ -224,6 +264,8 @@ export interface WorkThreadFactEvent {
 }
 
 export interface WorkThreadDetailDataset {
+  /** Set when this task was combined into another: it is read-only history until separated. */
+  readonly combinedInto: WorkThreadReference | null;
   readonly detachedLinks: readonly WorkThreadLink[];
   readonly episodes: readonly WorkThreadEpisode[];
   readonly events: readonly WorkThreadEvent[];

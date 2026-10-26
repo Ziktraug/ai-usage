@@ -52,6 +52,7 @@ const row = {
   nativeRequests: [],
   nativeRequestCoverage: 'complete',
   afterDone: null,
+  combinedThreads: [],
   delegatedSessionCount: 20,
   firstActivityAt: at,
   lastActivityAt: at,
@@ -176,6 +177,7 @@ describe('Work thread wire contract', () => {
     const data = {
       counts: { done: 0, open: 0 },
       generatedAt: at,
+      combineSuggestions: { items: [], truncated: false },
       jiraIntake: { items: [], truncated: false },
       machineId: 'test',
       nextCursor: null,
@@ -233,6 +235,7 @@ describe('Work thread wire contract', () => {
 
 describe('Work thread wire contract — dated facts and labels', () => {
   const detail = {
+    combinedInto: null,
     detachedLinks: [],
     episodes: [episode],
     events: [],

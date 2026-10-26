@@ -31,6 +31,7 @@ const row = (patch: Partial<WorkThreadRow> = {}): WorkThreadRow => ({
   nativeRequests: [],
   nativeRequestCoverage: 'complete',
   afterDone: null,
+  combinedThreads: [],
   firstActivityAt: at,
   lastActivityAt: at,
   links: [],
@@ -292,6 +293,13 @@ describe('Work thread situation', () => {
     const requested = withPr(pr({ unresolvedReviewThreads: 0 }), { role: 'review-requested' });
     expect(kinds(requested)).toEqual(['review-requested']);
     expect(deriveWorkThreadSituation(requested, at).reason).toBe('review-requested');
+  });
+  test("a ticket's own task, with no declared intent, is ready to close once its PRs merged", () => {
+    const value = withPr(pr({ state: 'MERGED' }));
+    expect(deriveWorkThreadSituation({ ...value, thread: { ...value.thread, intent: null } }, at)).toMatchObject({
+      hint: 'ready-to-close',
+      reason: 'merged-complete',
+    });
   });
   test('no PR or completed session alone ends a change follow-up', () => {
     expect(deriveWorkThreadSituation(row({ sessionCount: 1 }), at).hint).toBe('undecided');

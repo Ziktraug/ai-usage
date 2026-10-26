@@ -57,6 +57,9 @@ export const WORK_THREAD_EVENT_KINDS = [
   'note',
   'renamed',
   'wait-satisfied',
+  // ADR 0080: recorded on the kept task and on each task combined into it, then on separation.
+  'combined',
+  'separated',
 ] as const;
 export type WorkThreadEventKind = (typeof WORK_THREAD_EVENT_KINDS)[number];
 
@@ -65,11 +68,17 @@ export const WORK_THREAD_COMMAND_FAILURES = [
   'revision-conflict',
   'invalid-transition',
   'invalid-link',
+  /** The task was combined into another; commands go to the kept task (ADR 0080). */
+  'task-combined',
+  /** The tasks following the ticket changed since the combination was previewed. */
+  'stale-preview',
 ] as const;
 export type WorkThreadCommandFailure = (typeof WORK_THREAD_COMMAND_FAILURES)[number];
 
 export const WORK_THREAD_BOUNDS = {
   maxAcknowledgedRemainders: 16,
+  /** Tasks one combination may join, the kept task included. */
+  maxCombinedThreads: 8,
   maxEventsPerThread: 500,
   maxKey: 640,
   maxLinksPerThread: 64,
@@ -174,6 +183,24 @@ export type WorkThreadCommand =
   | { readonly commandId: string; readonly linkId: string; readonly op: 'detach-link'; readonly threadId: string }
   | { readonly commandId: string; readonly note: string | null; readonly op: 'set-note'; readonly threadId: string }
   | { readonly commandId: string; readonly op: 'rename'; readonly threadId: string; readonly title: string }
+  /**
+   * Combine every task following one ticket into the kept task (ADR 0080). The exact participant set
+   * and their revisions are what the operator previewed; any drift is refused, never adjusted.
+   */
+  | {
+      readonly commandId: string;
+      readonly op: 'combine';
+      readonly participants: readonly { readonly expectedRevision: number; readonly threadId: string }[];
+      readonly threadId: string;
+      readonly ticketKey: string;
+    }
+  /** End the combination kept by `threadId`; each task returns with the state it kept. */
+  | {
+      readonly commandId: string;
+      readonly expectedRevision: number;
+      readonly op: 'separate';
+      readonly threadId: string;
+    }
   /** Hide (or restore) an assigned Jira issue in the intake; it concerns no task. */
   | { readonly commandId: string; readonly dismissed: boolean; readonly key: string; readonly op: 'dismiss-intake' };
 
@@ -627,6 +654,45 @@ export const parseWorkThreadCommand = (value: unknown): WorkThreadCommand | null
         note !== undefined &&
         isWorkThreadId(value.threadId)
         ? { commandId, note, op: 'set-note', threadId: value.threadId }
+        : null;
+    }
+    case 'combine': {
+      const ticket = parseLinkInput({ key: value.ticketKey, kind: 'jira-issue' });
+      const rawParticipants = value.participants;
+      if (
+        !(
+          hasOnlyKeys(value, ['commandId', 'op', 'participants', 'threadId', 'ticketKey']) &&
+          ticket &&
+          isWorkThreadId(value.threadId) &&
+          Array.isArray(rawParticipants)
+        ) ||
+        rawParticipants.length < 2 ||
+        rawParticipants.length > WORK_THREAD_BOUNDS.maxCombinedThreads
+      ) {
+        return null;
+      }
+      const participants = rawParticipants.map((item: unknown) => {
+        if (!(isRecord(item) && hasOnlyKeys(item, ['expectedRevision', 'threadId']) && isWorkThreadId(item.threadId))) {
+          return null;
+        }
+        const expectedRevision = revision(item.expectedRevision);
+        return expectedRevision === null ? null : { expectedRevision, threadId: item.threadId };
+      });
+      if (
+        !participants.every((item): item is { expectedRevision: number; threadId: string } => item !== null) ||
+        new Set(participants.map((item) => item.threadId)).size !== participants.length ||
+        !participants.some((item) => item.threadId === value.threadId)
+      ) {
+        return null;
+      }
+      return { commandId, op: 'combine', participants, threadId: value.threadId, ticketKey: ticket.key };
+    }
+    case 'separate': {
+      const expectedRevision = revision(value.expectedRevision);
+      return hasOnlyKeys(value, ['commandId', 'expectedRevision', 'op', 'threadId']) &&
+        expectedRevision !== null &&
+        isWorkThreadId(value.threadId)
+        ? { commandId, expectedRevision, op: 'separate', threadId: value.threadId }
         : null;
     }
     case 'dismiss-intake': {

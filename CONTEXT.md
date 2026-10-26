@@ -362,6 +362,12 @@ above the tasks until the operator follows, attaches or dismisses each one.
 Assignment alone never creates a Work thread (ADR 0079).
 _Avoid_: backlog task, inbox, auto-followed ticket
 
+**Combined task**:
+A Work thread whose members, other threads following the same ticket, read as
+part of it until the operator separates them. Members keep their links and
+history; they are not ended (ADR 0080).
+_Avoid_: merged task, duplicate, absorbed (in UI copy)
+
 **Follow state**:
 The operator's own standing on a Work thread: Following, Waiting or Done. Only
 explicit commands change it. Ending a follow-up closes the operator's

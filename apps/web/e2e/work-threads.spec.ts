@@ -17,6 +17,8 @@ const ids = {
   longTitle: '12000000-0000-4000-8000-000000000009',
   mergedPr: '12000000-0000-4000-8000-000000000010',
   unknownDuration: '12000000-0000-4000-8000-000000000011',
+  webhookTicket: '12000000-0000-4000-8000-000000000013',
+  webhookPullRequest: '12000000-0000-4000-8000-000000000014',
 };
 const DONE_TAB = /^Done /;
 const FOLLOWING_TAB = /^Following /;
@@ -722,7 +724,7 @@ test('work exposes artifact links and independent states, with a global recent v
 
 test('assigned Jira tickets wait in a folded intake until followed or dismissed', async ({ page }) => {
   await open(page);
-  const intake = page.locator('details.wt-intake');
+  const intake = page.locator('details.wt-jira-intake');
   // SHOP-2085 is assigned too, but a task already follows it.
   await expect(intake.locator('summary')).toContainText('2 tickets not followed yet');
   await intake.locator('summary').click();
@@ -745,4 +747,38 @@ test('assigned Jira tickets wait in a folded intake until followed or dismissed'
     hasText: 'Synthetic: show delivery dates on the cart summary',
   });
   await expect(followed).toContainText('SHOP-3001');
+});
+
+test('tasks of one ticket combine after a preview, undo, read as one, and separate again', async ({ page }) => {
+  await open(page);
+  const block = page.locator('details.wt-combine');
+  await expect(block.locator('summary')).toContainText('1 ticket to combine');
+  await block.locator('summary').click();
+  const suggestion = block.locator('.wt-intake-item', { hasText: 'SHOP-3100' });
+  await expect(suggestion).toContainText('Keeps “Webhook deliveries are lost after a timeout”');
+  await expect(suggestion).toContainText('Joins · (SHOP-3100) Retry webhook deliveries with backoff · #1510');
+  await assertAxe(page);
+
+  await suggestion.getByRole('button', { name: 'Combine 2 tasks', exact: true }).click();
+  await expect(block.getByRole('status')).toContainText('SHOP-3100 combined into');
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(0);
+  await expect(row(page, ids.webhookTicket)).toContainText('combines 2 tasks');
+  await expect(row(page, ids.webhookTicket)).toContainText('PR #1510');
+  await block.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(1);
+
+  await block
+    .locator('.wt-intake-item', { hasText: 'SHOP-3100' })
+    .getByRole('button', { name: 'Combine 2 tasks' })
+    .click();
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(0);
+  await open(page, ids.webhookPullRequest);
+  await expect(page.getByRole('note')).toContainText('This task was combined into “Webhook deliveries are lost');
+  await open(page, ids.webhookTicket);
+  const banner = page.locator('.wt-combined-banner');
+  await expect(banner).toContainText('Combines 2 tasks for one ticket');
+  await banner.getByRole('button', { name: 'Separate', exact: true }).click();
+  await expect(banner).toHaveCount(0);
+  await open(page);
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(1);
 });

@@ -193,6 +193,12 @@
       },
     );
   };
+  // Ending a combination is itself the undo: each task returns with the state it kept (ADR 0080).
+  const separate = (): Promise<void> =>
+    act({ op: 'separate', expectedRevision: thread.followRevision, threadId: thread.threadId }, () => {
+      toast = 'Tasks separated';
+      undo = null;
+    });
   const restoreFollowState = async (restore: FollowUndoAction): Promise<void> => {
     if (busy) {
       return;
@@ -340,6 +346,24 @@
 </header>
 <WorkThreadSources now={data.generatedAt} sources={taskSourceStatuses(data)} {timeZone} />
 
+{#if data.combinedInto}
+  <div class="wt-done-banner" role="note">
+    <strong>This task was combined into “{data.combinedInto.title}”.</strong>
+    <p>
+      Its links and history read as part of that task, which also holds its follow-up. Separate them there to follow
+      this one on its own again.
+    </p>
+    <a class="wt-link" href={`/work?task=${data.combinedInto.threadId}`}>Open “{data.combinedInto.title}” →</a>
+  </div>
+{:else if row.combinedThreads.length > 0}
+  <div class="wt-combined-banner">
+    <p>
+      Combines {row.combinedThreads.length + 1} tasks for one ticket:
+      {row.combinedThreads.map((member) => `“${member.title}”`).join(', ')}. Their links and history read here.
+    </p>
+    <button class="wt-button" disabled={busy} onclick={separate} type="button">Separate</button>
+  </div>
+{/if}
 {#if thread.followState === 'done'}
   <div class="wt-done-banner">
     <strong

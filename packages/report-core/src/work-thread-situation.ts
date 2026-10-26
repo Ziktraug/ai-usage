@@ -328,7 +328,8 @@ export const deriveWorkThreadSituation = (
       return { hint: 'ready-to-close', reason: 'no-remainder', action: 'end-follow-up', remainders };
     }
     if (
-      row.thread.intent === 'change' &&
+      // An undeclared intent (a ticket's own task) delivers through its pull requests like a change.
+      (row.thread.intent === 'change' || row.thread.intent === null) &&
       row.markers.pullRequests.length > 0 &&
       row.markers.pullRequests.every(
         (marker) => marker.latest?.outcome === 'observed' && marker.latest.state === 'MERGED',

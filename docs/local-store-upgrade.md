@@ -78,6 +78,12 @@ issue is backfilled until the next successful assigned-issue search. Query-only
 readers of a store without the table report it as not yet upgraded. Validation
 uses disposable stores; no daily-store upgrade is authorized here.
 
+2026-10-26 (ADR 0080): `work_thread_combinations` records combined tasks and
+their separation, under the same usage version 4. Only the engine creates it; no
+existing task, link or event is rewritten. An older binary ignores the table and
+lists combined members as separate tasks again. Validation uses disposable
+stores; no daily-store upgrade is authorized here.
+
 The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
 and `claude_desktop_collection_state` to the usage store without changing
 `user_version`, following the `skill_observations` precedent: the engine

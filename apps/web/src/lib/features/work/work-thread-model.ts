@@ -672,6 +672,8 @@ export const threadEventCopy = (
     note: 'Resume note updated',
     renamed: 'Task renamed',
     'wait-satisfied': 'New response observed',
+    combined: 'Tasks combined',
+    separated: 'Tasks separated',
   };
   const linkLabel = event.linkKey ? eventLinkLabel(event.linkKey, episodes) : null;
   const detail =

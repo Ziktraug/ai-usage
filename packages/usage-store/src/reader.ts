@@ -140,6 +140,8 @@ export {
   queryUsageSyncFleet,
   queryWorkFactRunStates,
   queryWorkThreadById,
+  queryWorkThreadCombinations,
+  queryWorkThreadCombineSuggestions,
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   queryWorkThreadProjects,

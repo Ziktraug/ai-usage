@@ -1529,3 +1529,37 @@
     justify-content: flex-start;
   }
 }
+
+.wt-combine-all {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 18px;
+  border-top: 1px solid var(--wt-line);
+}
+.wt-intake ul.wt-combine-participants {
+  flex-basis: 100%;
+  padding: 0;
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--wt-muted);
+  list-style: none;
+  border-top: 0;
+}
+.wt-combine .wt-intake-issue > .wt-read-warning {
+  flex-basis: 100%;
+  font-size: 11px;
+}
+
+.wt-combined-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin: 12px 0;
+  font-size: 12px;
+  color: var(--wt-muted);
+  background: var(--wt-soft);
+  border: 1px solid var(--wt-line);
+  border-radius: 8px;
+}

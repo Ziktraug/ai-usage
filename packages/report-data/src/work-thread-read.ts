@@ -25,6 +25,7 @@ import {
   type WorkThreadListQuery,
   type WorkThreadMark,
   type WorkThreadMarkers,
+  type WorkThreadReference,
   type WorkThreadRow,
   type WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
@@ -40,6 +41,8 @@ import {
   queryUsageLocalMachine,
   queryWorkFactRunStates,
   queryWorkThreadById,
+  queryWorkThreadCombinations,
+  queryWorkThreadCombineSuggestions,
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   queryWorkThreadProjects,
@@ -356,10 +359,96 @@ const sessionCountsOf = (
 };
 
 interface RowScope {
+  /** Tasks combined into this one (ADR 0080); their links are already merged into `links`. */
+  readonly combinedThreads?: readonly WorkThreadReference[];
   readonly evidence: WorkThreadSessionEvidence;
   readonly links: readonly WorkThreadLink[];
   readonly thread: WorkThread;
 }
+
+interface CombinedMembers {
+  readonly eventsByThread: ReadonlyMap<string, readonly WorkThreadEvent[]>;
+  /** Kept task of each combined member. */
+  readonly keptOf: ReadonlyMap<string, WorkThreadReference>;
+  readonly linksByThread: ReadonlyMap<string, readonly WorkThreadLink[]>;
+  readonly membersOf: ReadonlyMap<string, readonly WorkThreadReference[]>;
+}
+
+const chunks = <Value>(values: readonly Value[], size: number): Value[][] =>
+  Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size));
+
+/** The members combined into these tasks, with their own links and events, read once. */
+const readCombinedMembers = (
+  dbPath: string,
+  threadIds: readonly string[],
+): Effect.Effect<CombinedMembers, UsageStoreError> =>
+  Effect.gen(function* () {
+    const membersOf = new Map<string, WorkThreadReference[]>();
+    const keptOf = new Map<string, WorkThreadReference>();
+    for (const batch of chunks(threadIds, WORK_THREAD_VIEW_BOUNDS.maxPageSize)) {
+      for (const combination of yield* queryWorkThreadCombinations({ dbPath, threadIds: batch })) {
+        const kept = { threadId: combination.keptThreadId, title: combination.keptTitle };
+        const member = { threadId: combination.memberThreadId, title: combination.memberTitle };
+        keptOf.set(member.threadId, kept);
+        const group = membersOf.get(kept.threadId) ?? [];
+        if (!group.some((item) => item.threadId === member.threadId)) {
+          group.push(member);
+        }
+        membersOf.set(kept.threadId, group);
+      }
+    }
+    const memberIds = [...membersOf.values()].flat().map((member) => member.threadId);
+    const linksByThread = new Map<string, WorkThreadLink[]>();
+    const eventsByThread = new Map<string, WorkThreadEvent[]>();
+    for (const batch of chunks(memberIds, WORK_THREAD_VIEW_BOUNDS.maxPageSize)) {
+      for (const link of yield* queryWorkThreadLinks({ dbPath, threadIds: batch })) {
+        linksByThread.set(link.threadId, [...(linksByThread.get(link.threadId) ?? []), link]);
+      }
+      for (const event of yield* queryWorkThreadEvents({ dbPath, threadIds: batch })) {
+        eventsByThread.set(event.threadId, [...(eventsByThread.get(event.threadId) ?? []), event]);
+      }
+    }
+    return { eventsByThread, keptOf, linksByThread, membersOf };
+  });
+
+/**
+ * One active link per key across a kept task and its members; its own copy wins. Members' links read
+ * as the kept task's; commands resolve a link id back to the task that holds it.
+ */
+const mergedLinks = (
+  keptId: string,
+  own: readonly WorkThreadLink[],
+  members: readonly WorkThreadReference[],
+  combined: CombinedMembers,
+): WorkThreadLink[] => {
+  const all = [
+    ...own,
+    ...members.flatMap((member) =>
+      (combined.linksByThread.get(member.threadId) ?? []).map((link) => ({ ...link, threadId: keptId })),
+    ),
+  ];
+  const seen = new Set<string>();
+  return all.filter((link) => {
+    if (link.detachedAt !== null) {
+      return true;
+    }
+    const identity = `${link.kind} ${link.kind === 'pull-request' ? link.key.toLowerCase() : link.key}`;
+    if (seen.has(identity)) {
+      return false;
+    }
+    seen.add(identity);
+    return true;
+  });
+};
+
+const mergedEvents = (
+  own: readonly WorkThreadEvent[],
+  members: readonly WorkThreadReference[],
+  combined: CombinedMembers,
+): WorkThreadEvent[] =>
+  [...own, ...members.flatMap((member) => combined.eventsByThread.get(member.threadId) ?? [])]
+    .sort((left, right) => left.at.localeCompare(right.at) || left.eventId.localeCompare(right.eventId))
+    .slice(-WORK_THREAD_BOUNDS.maxEventsPerThread);
 interface RowFacts {
   readonly checkouts: ReadonlyMap<string, LatestCheckoutStatusObservations['items'][number]>;
   readonly jiraIssues: ReadonlyMap<string, LatestJiraIssueObservations['items'][number]>;
@@ -531,7 +620,7 @@ const weekMarksOf = (
 };
 
 const readRow = (
-  { thread, links, evidence }: RowScope,
+  { thread, links, evidence, combinedThreads = [] }: RowScope,
   events: readonly WorkThreadEvent[],
   factsRead: RowFacts,
   now: CanonicalInstant,
@@ -736,6 +825,7 @@ const readRow = (
       nativeRequests,
       nativeRequestCoverage,
       afterDone: after.length === 0 ? null : { count: after.length, latestAt: latest(after) },
+      combinedThreads,
       firstActivityAt,
       lastActivityAt:
         storedActivity ??
@@ -860,6 +950,43 @@ const readJiraIntake = (
     };
   });
 
+/** Tickets split across several open tasks, previewed with each participant (ADR 0080). */
+const readCombineSuggestions = (
+  dbPath: string,
+  machineId: string,
+): Effect.Effect<WorkThreadListDataset['combineSuggestions'], UsageStoreError> =>
+  Effect.gen(function* () {
+    const suggestions = yield* queryWorkThreadCombineSuggestions({ dbPath, machineId });
+    const keys = suggestions.items.flatMap((item) => {
+      const parsed = parseWorkThreadLinkKey('jira-issue', item.ticketKey);
+      return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [{ key: parsed.key, machineId }] : [];
+    });
+    const facts = yield* queryLatestJiraIssueObservations({ dbPath, batch: keys });
+    const issues = new Map(
+      facts.items.map((item) => [
+        item.latest.key,
+        item.latest.outcome === 'observed' ? item.latest : (item.latestObserved ?? null),
+      ]),
+    );
+    return {
+      items: suggestions.items.map((item) => ({
+        blockers: item.blockers,
+        issue: issues.get(item.ticketKey.slice(item.ticketKey.lastIndexOf('/') + 1)) ?? null,
+        keptThreadId: item.keptThreadId,
+        participants: item.participants.map(({ thread, pullRequestKeys, sessionCount }) => ({
+          followRevision: thread.followRevision,
+          origin: thread.origin,
+          pullRequestKeys,
+          sessionCount,
+          threadId: thread.threadId,
+          title: thread.title,
+        })),
+        ticketKey: item.ticketKey,
+      })),
+      truncated: suggestions.truncated,
+    };
+  });
+
 export const queryWorkThreadList = (input: {
   readonly dbPath: string;
   readonly query: WorkThreadListQuery;
@@ -884,6 +1011,7 @@ export const queryWorkThreadList = (input: {
             : source,
       );
       return {
+        combineSuggestions: yield* readCombineSuggestions(input.dbPath, machine.id),
         counts: yield* countWorkThreads(input),
         generatedAt,
         jiraIntake: yield* readJiraIntake(input.dbPath, machine.id),
@@ -905,10 +1033,18 @@ export const queryWorkThreadList = (input: {
       group.push(link);
       linksByThread.set(link.threadId, group);
     }
-    const scopes = page.rows.map(({ thread }) => ({
-      thread,
-      links: linksByThread.get(thread.threadId) ?? [],
-    }));
+    const combined = yield* readCombinedMembers(
+      input.dbPath,
+      page.rows.map(({ thread }) => thread.threadId),
+    );
+    const scopes = page.rows.map(({ thread }) => {
+      const members = combined.membersOf.get(thread.threadId) ?? [];
+      return {
+        thread,
+        combinedThreads: members,
+        links: mergedLinks(thread.threadId, linksByThread.get(thread.threadId) ?? [], members, combined),
+      };
+    });
     const evidence = yield* queryWorkThreadSessionEvidence({
       dbPath: input.dbPath,
       threads: scopes.map(({ thread, links: threadLinks }) => ({
@@ -940,7 +1076,7 @@ export const queryWorkThreadList = (input: {
     const reads = rowScopes.map((scope, index) =>
       readRow(
         scope,
-        eventsByThread.get(scope.thread.threadId) ?? [],
+        mergedEvents(eventsByThread.get(scope.thread.threadId) ?? [], scope.combinedThreads ?? [], combined),
         facts,
         generatedAt,
         page.rows[index]?.lastActivityAt,
@@ -948,6 +1084,7 @@ export const queryWorkThreadList = (input: {
     );
     const runStates = yield* queryWorkFactRunStates(input);
     return {
+      combineSuggestions: yield* readCombineSuggestions(input.dbPath, machine.id),
       counts: yield* countWorkThreads(input),
       generatedAt,
       jiraIntake: yield* readJiraIntake(input.dbPath, machine.id),
@@ -970,14 +1107,22 @@ export const queryWorkThreadDetail = (input: {
     if (thread === null) {
       return null;
     }
-    const links = yield* queryWorkThreadLinks({ dbPath: input.dbPath, threadIds: [thread.threadId] });
-    const events = yield* queryWorkThreadEvents(input);
+    // A kept task reads as one with its members; a member reads alone, pointing at its kept task.
+    const combined = yield* readCombinedMembers(input.dbPath, [thread.threadId]);
+    const members = combined.membersOf.get(thread.threadId) ?? [];
+    const links = mergedLinks(
+      thread.threadId,
+      yield* queryWorkThreadLinks({ dbPath: input.dbPath, threadIds: [thread.threadId] }),
+      members,
+      combined,
+    );
+    const events = mergedEvents(yield* queryWorkThreadEvents(input), members, combined);
     const evidence = yield* queryWorkThreadSessionEvidence({
       dbPath: input.dbPath,
       machineId: thread.machineId,
       links: links.filter((link) => link.detachedAt === null),
     });
-    const scope = { thread, links, evidence };
+    const scope = { thread, links, evidence, combinedThreads: members };
     const facts = yield* readFacts(input.dbPath, [scope]);
     const read = readRow(scope, events, facts, generatedAt);
     const runStates = yield* queryWorkFactRunStates(input);
@@ -999,6 +1144,7 @@ export const queryWorkThreadDetail = (input: {
       }),
     );
     return {
+      combinedInto: combined.keptOf.get(thread.threadId) ?? null,
       detachedLinks: detachedLinks.slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread),
       episodes: read.episodes,
       events,

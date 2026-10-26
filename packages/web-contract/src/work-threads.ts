@@ -12,6 +12,7 @@ import {
   parseWorkThreadLink,
   WORK_THREAD_BOUNDS,
   WORK_THREAD_COMMAND_FAILURES,
+  WORK_THREAD_ORIGINS,
   type WorkIntakeCommandResult,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
@@ -128,10 +129,15 @@ const nativeRequest = strictObject({
   detail: publicMessageSchema,
 });
 const nativeRequests = pipe(array(nativeRequest), maxLength(WORK_THREAD_VIEW_BOUNDS.maxNativeRequests));
+const reference = strictObject({
+  threadId: id,
+  title: pipe(string(), minLength(1), maxLength(WORK_THREAD_BOUNDS.maxTitle)),
+});
 export const workThreadRowSchema = strictObject({
   nativeRequests,
   nativeRequestCoverage: picklist(['complete', 'partial']),
   afterDone: nullable(strictObject({ count, latestAt: instant })),
+  combinedThreads: pipe(array(reference), maxLength(WORK_THREAD_BOUNDS.maxCombinedThreads)),
   delegatedSessionCount: count,
   firstActivityAt: instant,
   lastActivityAt: instant,
@@ -161,7 +167,31 @@ export const workThreadsListInputSchema = strictObject({
 });
 export const workThreadsDetailInputSchema = strictObject({ threadId: id });
 const jiraIntakeItem = strictObject({ firstSeenAt: instant, issue: nullable(jira), key: text });
+const combineSuggestion = strictObject({
+  blockers: pipe(array(publicMessageSchema), maxLength(WORK_THREAD_VIEW_BOUNDS.maxCombineBlockers)),
+  issue: nullable(jira),
+  keptThreadId: id,
+  participants: pipe(
+    array(
+      strictObject({
+        followRevision: revision,
+        origin: picklist(WORK_THREAD_ORIGINS),
+        pullRequestKeys: pipe(array(text), maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread)),
+        sessionCount: count,
+        threadId: id,
+        title: pipe(string(), minLength(1), maxLength(WORK_THREAD_BOUNDS.maxTitle)),
+      }),
+    ),
+    minLength(2),
+    maxLength(WORK_THREAD_VIEW_BOUNDS.maxCombineParticipants),
+  ),
+  ticketKey: text,
+});
 export const workThreadsListDataSchema = strictObject({
+  combineSuggestions: strictObject({
+    items: pipe(array(combineSuggestion), maxLength(WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions)),
+    truncated: boolean(),
+  }),
   counts: strictObject({ done: count, open: count }),
   generatedAt: instant,
   jiraIntake: strictObject({
@@ -231,6 +261,7 @@ export const workThreadEpisodeSchema = custom<WorkThreadEpisode>((value) => {
   return true;
 }, 'Invalid task session episode.');
 export const workThreadsDetailDataSchema = strictObject({
+  combinedInto: nullable(reference),
   detachedLinks: pipe(array(link), maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread)),
   episodes: pipe(array(workThreadEpisodeSchema), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodes)),
   events: pipe(array(event), maxLength(WORK_THREAD_BOUNDS.maxEventsPerThread)),

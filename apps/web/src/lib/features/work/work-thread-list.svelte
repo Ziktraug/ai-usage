@@ -11,6 +11,7 @@
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
   import { tick } from 'svelte';
+  import WorkCombineSuggestions from './work-combine-suggestions.svelte';
   import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import WorkJiraIntake from './work-jira-intake.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
@@ -142,6 +143,11 @@
 </div>
 <WorkThreadSources now={dataset.generatedAt} sources={dataset.sources} {timeZone} />
 {#if query.tab === 'open'}
+  <WorkCombineSuggestions
+    items={dataset.combineSuggestions.items}
+    {onCommand}
+    truncated={dataset.combineSuggestions.truncated}
+  />
   <WorkJiraIntake
     items={dataset.jiraIntake.items}
     now={dataset.generatedAt}
@@ -195,7 +201,7 @@
                 · {row.sessionCount} linked
                 {row.sessionCount === 1 ? 'session' : 'sessions'}{row.delegatedSessionCount > 0
                   ? ` · ${row.delegatedSessionCount} delegated`
-                  : ''}
+                  : ''}{row.combinedThreads.length > 0 ? ` · combines ${row.combinedThreads.length + 1} tasks` : ''}
               </p>
               <WorkThreadArtifacts now={dataset.generatedAt} {row} {timeZone} />
               <p class="wt-meta">
