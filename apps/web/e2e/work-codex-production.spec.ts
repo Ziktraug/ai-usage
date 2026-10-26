@@ -292,14 +292,17 @@ test('a delayed qualification cannot replace another selected root or a newer qu
     }
   });
   await first.click();
+  await expect(page).toHaveURL((url) => url.searchParams.get('root') === firstId);
   const aside = page.locator('[data-work-aside]');
   const qualify = aside.getByRole('button', { name: 'Qualify now with the engine' });
   const simulated = aside.getByRole('region', { name: 'Routing result' });
   await expect(qualify).toBeVisible();
   // Both are among the served page's newest rows, so selection reuses the same WorkRouting component.
   await second.click();
+  await expect(page).toHaveURL((url) => url.searchParams.get('root') === secondId);
   await expect(qualify).toBeVisible();
   await first.click();
+  await expect(page).toHaveURL((url) => url.searchParams.get('root') === firstId);
   await expect(qualify).toBeVisible();
   expect(lookups).toHaveLength(0);
 
@@ -328,7 +331,7 @@ test('a delayed qualification cannot replace another selected root or a newer qu
     await qualify.click();
     await expect.poll(() => deferred.length).toBe(1);
     await second.click();
-    expect(new URL(page.url()).searchParams.get('root')).toBe(secondId);
+    await expect(page).toHaveURL((url) => url.searchParams.get('root') === secondId);
     await aside
       .getByLabel('Review executor')
       .selectOption({ label: `Codex · gpt-6-sol · high · ${CODEX_JOURNEY_ACCOUNT}` });
@@ -342,11 +345,13 @@ test('a delayed qualification cannot replace another selected root or a newer qu
 
     // A -> B -> A must invalidate the first A even though its identity matches again.
     await first.click();
+    await expect(page).toHaveURL((url) => url.searchParams.get('root') === firstId);
     await qualify.click();
     await expect.poll(() => deferred.length).toBe(2);
     await second.click();
+    await expect(page).toHaveURL((url) => url.searchParams.get('root') === secondId);
     await first.click();
-    expect(new URL(page.url()).searchParams.get('root')).toBe(firstId);
+    await expect(page).toHaveURL((url) => url.searchParams.get('root') === firstId);
     await qualify.click();
     await expect.poll(() => deferred.length).toBe(3);
     await settleResponse(1);

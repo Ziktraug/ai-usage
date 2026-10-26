@@ -1,9 +1,5 @@
 import { type ProjectGroupConfig, projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
-import {
-  parseUsageEngineProjectGroupReferenceCommand,
-  type UsageEngineProjectSourceReference,
-  type WebUsageEngineCommand,
-} from '@ai-usage/usage-engine-control';
+import type { UsageEngineProjectSourceReference, WebUsageEngineCommand } from '@ai-usage/usage-engine-control';
 
 type ProjectGroupReferenceCommand = Extract<
   WebUsageEngineCommand,
@@ -29,7 +25,8 @@ export const buildProjectGroupReferenceCommand = async (
   projectGroups: readonly ProjectGroupConfig[],
   revision: string,
 ): Promise<ProjectGroupReferenceCommand> => {
-  // The narrow parser: the report's first load must not carry every engine command's validation.
+  // Validate on save without loading command validation on the report's first load.
+  const { parseUsageEngineProjectGroupReferenceCommand } = await import('@ai-usage/usage-engine-control');
   return parseUsageEngineProjectGroupReferenceCommand({
     command: 'replace-project-groups-by-reference',
     projectGroups: await Promise.all(
