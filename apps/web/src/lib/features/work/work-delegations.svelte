@@ -98,7 +98,7 @@
     delegationJobsQueryOptions(
       client,
       { limit: WORK_DELEGATIONS_LIMIT },
-      { browser, enabled: mode === 'live' && jobs === undefined },
+      { browser, enabled: mode !== 'demo' && jobs === undefined },
     ),
   );
   const resolved = $derived.by<DelegationClientResult<DelegationJobsOutput> | null>(() => {
@@ -111,7 +111,7 @@
     // A transport failure carries no safe detail for the page; the tag is enough to act on.
     return query.error ? { error: { message: 'The request did not complete.', tag: 'Unavailable' }, ok: false } : null;
   });
-  const pending = $derived(jobs === undefined && mode === 'live' && query.isPending);
+  const pending = $derived(jobs === undefined && mode !== 'demo' && query.isPending);
   const referenceTime = $derived(reference ?? (resolved === null ? '' : new Date().toISOString()));
   const when = (instant: string): string =>
     `${formatRelativeAge(instant, referenceTime)} (${formatExactInstant(instant)})`;
