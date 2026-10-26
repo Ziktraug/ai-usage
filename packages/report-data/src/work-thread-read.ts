@@ -47,6 +47,7 @@ import {
   type WorkThreadSessionEvidence,
 } from '@ai-usage/usage-store/reader';
 import { Effect } from 'effect';
+import { readWorkThreadNativeRequests, type WorkThreadNativeRequestsRead } from './work-thread-requests';
 
 const DAY_MS = 86_400_000;
 const text = (value: string | null | undefined): string | null =>
@@ -103,6 +104,7 @@ const episodeOf = (
     origin = 'automated-review';
   }
   return {
+    nativeRequests: [],
     activeMs:
       typeof member.durationMs === 'number' && Number.isFinite(member.durationMs) && member.durationMs >= 0
         ? member.durationMs
@@ -356,6 +358,7 @@ interface RowScope {
 interface RowFacts {
   readonly checkouts: ReadonlyMap<string, LatestCheckoutStatusObservations['items'][number]>;
   readonly jiraIssues: ReadonlyMap<string, LatestJiraIssueObservations['items'][number]>;
+  readonly nativeRequests: WorkThreadNativeRequestsRead;
   readonly pullRequests: ReadonlyMap<string, LatestPullRequestObservations['items'][number]>;
   readonly truncated: ReadonlySet<WorkThreadSourceStatus['source']>;
 }
@@ -407,7 +410,12 @@ const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<R
     if (local.skipped || local.truncated) {
       truncated.add('checkouts');
     }
+    const nativeRequests = yield* readWorkThreadNativeRequests(
+      dbPath,
+      scopes.map((scope) => scope.evidence),
+    );
     return {
+      nativeRequests,
       pullRequests: new Map(prs.items.map((item) => [pullRequestIdentity(item.latest), item])),
       jiraIssues: new Map(jira.items.map((item) => [identityOf(item.latest.machineId, item.latest.key), item])),
       checkouts: new Map(
@@ -518,7 +526,48 @@ const readRow = (
   storedActivity = thread.updatedAt,
 ): RowRead => {
   const active = links.filter((link) => link.detachedAt === null);
-  const { episodes, omitted, delegatedKeys } = episodesOf(evidence, active);
+  const { episodes: rawEpisodes, omitted, delegatedKeys } = episodesOf(evidence, active);
+  const nativeSessions = evidence.sessions.map((session) => factsRead.nativeRequests.get(keyOf(session)));
+  const allRequests = [
+    ...new Map(
+      nativeSessions.flatMap((item) => item?.requests ?? []).map((request) => [request.key, request]),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      Number(right.state === 'open' || right.state === 'uncertain') -
+        Number(left.state === 'open' || left.state === 'uncertain') ||
+      (right.askedAt ?? '').localeCompare(left.askedAt ?? '') ||
+      left.key.localeCompare(right.key),
+  );
+  const nativeRequests = allRequests.slice(0, WORK_THREAD_VIEW_BOUNDS.maxNativeRequests);
+  const nativeRequestCoverage =
+    evidence.truncated ||
+    omitted ||
+    allRequests.length > nativeRequests.length ||
+    nativeSessions.some(
+      (item) =>
+        item === undefined ||
+        item.partial ||
+        item.observedAt === null ||
+        Date.parse(now) - Date.parse(item.observedAt) > 7 * DAY_MS,
+    )
+      ? 'partial'
+      : 'complete';
+  const addRequests = (episode: WorkThreadEpisode): WorkThreadEpisode => ({
+    ...episode,
+    nativeRequests: nativeRequests.filter((request) => request.sessionKey === episode.linkKey),
+    question:
+      nativeRequests
+        .filter(
+          (request) =>
+            request.sessionKey === episode.linkKey && (request.state === 'open' || request.state === 'uncertain'),
+        )
+        .map((request) => request.text)
+        .join(' · ')
+        .slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodeText) || null,
+    children: episode.children.map(addRequests),
+  });
+  const episodes = rawEpisodes.map(addRequests);
   const truncated = new Set(factsRead.truncated);
   if (evidence.truncated || omitted) {
     truncated.add('sessions');
@@ -634,7 +683,13 @@ const readRow = (
         : normalizeIsoTimestamp(new Date(session.member.activeAt).toISOString()));
     return activeAt === null ? [] : [activeAt];
   });
-  const dates = [...factDates.values(), ...sessionDates];
+  const dates = [
+    ...factDates.values(),
+    ...sessionDates,
+    ...nativeRequests.flatMap((request) =>
+      [request.askedAt, request.answeredAt].filter((at): at is CanonicalInstant => at !== null),
+    ),
+  ];
   const after = thread.doneAt === null ? [] : dates.filter((at) => Date.parse(at) > Date.parse(thread.doneAt ?? at));
   const marks = weekMarksOf(episodes, factEvents, events, now);
   const latest = (instants: readonly CanonicalInstant[]): CanonicalInstant =>
@@ -645,6 +700,8 @@ const readRow = (
     factEvents,
     truncated,
     row: {
+      nativeRequests,
+      nativeRequestCoverage,
       afterDone: after.length === 0 ? null : { count: after.length, latestAt: latest(after) },
       firstActivityAt,
       lastActivityAt: latest([storedActivity, ...dates]),

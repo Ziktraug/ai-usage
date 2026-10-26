@@ -139,6 +139,67 @@ const fixture = async () => {
 };
 
 describe('Claude per-file collector cache', () => {
+  test('invalidates version 19 once to recover native PR provenance, then serves genuine warm hits', async () => {
+    const { alpha, beta, cachePath, reads, run } = await fixture();
+    await appendFile(
+      alpha,
+      jsonl({
+        type: 'pr-link',
+        sessionId: 'alpha',
+        timestamp: '2026-04-25T08:01:00.000Z',
+        prUrl: 'https://github.com/fixture/project/pull/12',
+        prNumber: 12,
+        prRepository: 'fixture/project',
+      }),
+    );
+    const cold = await run();
+    const native = cold.rows.find((row) => row.source?.sourceSessionId === 'alpha')?.source?.vcs?.pullRequests;
+    expect(native).toEqual([
+      {
+        number: 12,
+        observedAt: '2026-04-25T08:01:00.000Z',
+        provenance: 'session-pr-link',
+        repository: 'fixture/project',
+        url: 'https://github.com/fixture/project/pull/12',
+      },
+    ]);
+    const before = await stat(alpha);
+    const cache = await readCache(cachePath);
+    cache.version = 19;
+    const cachedRows = record(cache.files[alpha]).rows;
+    if (!Array.isArray(cachedRows)) {
+      throw new Error('Expected cached synthetic rows');
+    }
+    for (const row of cachedRows) {
+      const vcs = record(record(record(row).source).vcs);
+      if (!Array.isArray(vcs.pullRequests)) {
+        throw new Error('Expected cached PR observations');
+      }
+      vcs.pullRequests = vcs.pullRequests.map((value) => {
+        const { provenance: _provenance, ...legacy } = record(value);
+        return legacy;
+      });
+    }
+    await writeFile(cachePath, JSON.stringify(cache));
+    expect(await run()).toEqual(cold);
+    expect((await readCache(cachePath)).version).toBe(20);
+    expect(reads).toEqual(
+      new Map([
+        [alpha, 2],
+        [beta, 2],
+      ]),
+    );
+    expect((await stat(alpha)).mtimeMs).toBe(before.mtimeMs);
+    expect(await run()).toEqual(cold);
+    expect(await run()).toEqual(cold);
+    expect(reads).toEqual(
+      new Map([
+        [alpha, 2],
+        [beta, 2],
+      ]),
+    );
+  });
+
   test.each([1, 33])(
     'reads a delegation-bearing transcript once across cold and warm scans: %i launches',
     async (count) => {
@@ -195,7 +256,7 @@ describe('Claude per-file collector cache', () => {
         { harness: 'codex', sourceSessionId: delegatedId(0) },
       ]);
       const cache = await readCache(cachePath);
-      expect(cache.version).toBe(19);
+      expect(cache.version).toBe(20);
       cache.version = version;
       const cachedRows = record(cache.files[alpha]).rows;
       if (!Array.isArray(cachedRows)) {
@@ -212,7 +273,7 @@ describe('Claude per-file collector cache', () => {
           [beta, 2],
         ]),
       );
-      expect((await readCache(cachePath)).version).toBe(19);
+      expect((await readCache(cachePath)).version).toBe(20);
       expect(await run()).toEqual(cold);
       expect(await run()).toEqual(cold);
       expect(reads).toEqual(
@@ -283,7 +344,7 @@ describe('Claude per-file collector cache', () => {
     reads.clear();
     expect(await run()).toEqual(cold);
     expect([...reads.keys()].sort()).toEqual([alpha, beta, child].sort());
-    expect((await readCache(cachePath)).version).toBe(19);
+    expect((await readCache(cachePath)).version).toBe(20);
   });
 
   test('keeps competing declarations unresolved on cold and warm scans, then rechecks the remaining evidence', async () => {
@@ -421,7 +482,7 @@ describe('Claude per-file collector cache', () => {
     );
     expect(result.rows).toHaveLength(2);
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(19);
+    expect(cache.version).toBe(20);
     expect(cache.provider).toBe('Claude sub');
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
     expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(
@@ -542,7 +603,7 @@ describe('Claude per-file collector cache', () => {
     expect(Object.keys((await readCache(cachePath)).files)).toEqual([beta]);
   });
 
-  test('ignores version 14 caches and rewrites them as version 19 after a full parse', async () => {
+  test('ignores version 14 caches and rewrites them as version 20 after a full parse', async () => {
     const { alpha, beta, cachePath, reads, run } = await fixture();
     const cold = await run();
     await writeFile(
@@ -558,7 +619,7 @@ describe('Claude per-file collector cache', () => {
       ]),
     );
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(19);
+    expect(cache.version).toBe(20);
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
   });
 

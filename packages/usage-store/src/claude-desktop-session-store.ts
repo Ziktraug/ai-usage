@@ -669,6 +669,10 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
                 stored.file_modified_at === observation.fileModifiedAt
               ) {
                 result.unchanged++;
+                // Refresh evidence coverage, not declaration identity or source activity.
+                db.query(
+                  'UPDATE claude_desktop_sessions SET observed_at = ? WHERE machine_id = ? AND desktop_session_id = ?',
+                ).run(observation.observedAt, input.machineId, observation.desktopSessionId);
                 // An unchanged file changes no declaration, unless its current one was never recorded
                 // (a store from before the history existed): then the history starts from this sweep.
                 if (

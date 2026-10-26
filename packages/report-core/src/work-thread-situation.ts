@@ -1,5 +1,5 @@
 import type { CanonicalInstant } from './canonical-instant';
-import type { WorkThreadFact, WorkThreadRow } from './work-thread-view';
+import type { WorkThreadFact, WorkThreadNativeRequest, WorkThreadRow } from './work-thread-view';
 
 /** Matches the Work attention freshness horizon; freshness is interpreted, never persisted. */
 export const WORK_THREAD_STALE_AFTER_MS = 7 * 86_400_000;
@@ -12,6 +12,7 @@ interface RemainderEvidence {
 }
 export type WorkThreadRemainder = RemainderEvidence &
   (
+    | { readonly kind: 'native-request'; readonly request: WorkThreadNativeRequest }
     | {
         readonly kind: 'local-files';
         readonly modified: number | null;
@@ -170,6 +171,20 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
 
 const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadRemainder[] => {
   const remainders: WorkThreadRemainder[] = [];
+  for (const request of row.nativeRequests) {
+    if (request.state === 'open' || request.state === 'uncertain') {
+      remainders.push({
+        key: request.key,
+        observedAt: request.askedAt,
+        source: 'sessions',
+        kind: 'native-request',
+        request,
+      });
+    }
+  }
+  if (row.nativeRequestCoverage === 'partial') {
+    remainders.push({ key: row.thread.threadId, observedAt: null, source: 'sessions', kind: 'source-unknown' });
+  }
   localRemainders(row, now, remainders);
   pullRequestRemainders(row, now, remainders);
   for (const marker of row.markers.jiraIssues) {
@@ -230,6 +245,7 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'failing-checks',
   'behind-base',
   'review-requested',
+  'native-request',
   'local-files',
   'unpushed-commits',
   'jira-open',
@@ -257,7 +273,7 @@ export const deriveWorkThreadSituation = (
   if (row.thread.followState === 'done') {
     return { hint: 'done', reason: 'follow-up-ended', action: 'reopen', remainders };
   }
-  if (row.thread.followState === 'waiting') {
+  if (row.thread.followState === 'waiting' && !remainders.some((item) => item.kind === 'native-request')) {
     return { hint: 'waiting', reason: 'explicit-wait', action: 'copy-context', remainders };
   }
   if (row.runningSessions > 0) {
@@ -285,10 +301,11 @@ export const deriveWorkThreadSituation = (
     hint = 'waiting';
   }
   const actions = { github: 'open-pr', jira: 'open-jira', local: 'copy-context', sessions: 'copy-context' } as const;
+  const sourceAction = evidence === undefined ? 'copy-context' : actions[evidence.source];
   return {
     hint,
     reason,
-    action: evidence === undefined ? 'copy-context' : actions[evidence.source],
+    action: reason === 'native-request' ? 'resume-session' : sourceAction,
     remainders,
   };
 };

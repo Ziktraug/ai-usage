@@ -301,6 +301,7 @@ describe('parseClaudeSessionFacts', () => {
       {
         number: 27,
         observedAt: '2026-07-01T08:01:31.000Z',
+        provenance: 'session-pr-link',
         repository: 'fixture/project',
         url: 'https://github.com/fixture/project/pull/27',
       },
@@ -1005,4 +1006,35 @@ describe('parseClaudeSessionFacts', () => {
     expect(facts?.detailFacts.interactions[0]?.childSourceSessionId).toBe('agent-a6331997c22b0d1fb');
     expect(facts?.detailFacts.interactions[0]?.label).toHaveLength(256);
   });
+});
+
+test.each([
+  { name: 'root native association', isAgentFile: false, sessionId: 'native', sidechain: false, proven: true },
+  { name: 'foreign inherited session', isAgentFile: false, sessionId: 'other', sidechain: false, proven: false },
+  { name: 'agent transcript', isAgentFile: true, sessionId: 'native', sidechain: false, proven: false },
+  { name: 'sidechain transcript', isAgentFile: false, sessionId: 'native', sidechain: true, proven: false },
+])('qualifies PR identity evidence: $name', ({ isAgentFile, sessionId, sidechain, proven }) => {
+  const facts = parseClaudeSessionFacts({
+    isAgentFile,
+    sourceSessionId: 'native',
+    repository: null,
+    records: [
+      {
+        type: 'assistant',
+        timestamp: '2026-10-24T10:00:00.000Z',
+        isSidechain: sidechain,
+        message: { id: 'm', usage: { input_tokens: 1, output_tokens: 1 } },
+      },
+      {
+        type: 'pr-link',
+        timestamp: '2026-10-24T10:01:00.000Z',
+        sessionId,
+        prUrl: 'https://github.com/fixture/project/pull/12',
+        prNumber: 12,
+        prRepository: 'fixture/project',
+      },
+    ],
+  });
+  expect(facts?.source.vcs?.pullRequests).toHaveLength(1);
+  expect(facts?.source.vcs?.pullRequests[0]?.provenance).toBe(proven ? 'session-pr-link' : undefined);
 });

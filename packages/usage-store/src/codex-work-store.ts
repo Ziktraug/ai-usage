@@ -11,7 +11,7 @@ import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 
 export const MAX_CODEX_WORK_BATCH = 10_000;
 export const MAX_CODEX_WORK_SESSION_FILTER = 500;
-export const CODEX_WORK_TABLES = ['codex_work_observations'] as const;
+export const CODEX_WORK_TABLES = ['codex_work_observations', 'codex_work_collection_coverage'] as const;
 
 /** Auxiliary local evidence, excluded from report generations, snapshots and replication. */
 export const codexWorkSchemaSql = `
@@ -22,6 +22,13 @@ export const codexWorkSchemaSql = `
     last_event_at TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     observation_json TEXT NOT NULL,
+    PRIMARY KEY (machine_id, source_session_id)
+  ) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS codex_work_collection_coverage (
+    machine_id TEXT NOT NULL,
+    source_session_id TEXT NOT NULL,
+    collection_id TEXT NOT NULL,
+    complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
     PRIMARY KEY (machine_id, source_session_id)
   ) WITHOUT ROWID;
 `;
@@ -54,6 +61,8 @@ interface CodexWorkStoreDependencies {
 }
 
 export interface ImportCodexWorkObservationsInput {
+  /** One existing collector pass; a partial or interrupted pass never establishes absence. */
+  readonly collection?: { readonly id: string; readonly phase: 'start' | 'observations' | 'complete' };
   readonly dbPath: string;
   readonly machineId: string;
   readonly observations: readonly unknown[];
@@ -73,6 +82,8 @@ export interface CodexWorkImportResult {
 }
 
 export interface CodexWorkQueryResult {
+  /** Missing latest-pass membership or an incomplete pass; historical requests remain available. */
+  readonly incompleteSessionIds: readonly string[];
   readonly observations: readonly StoredCodexWorkObservation[];
   readonly skipped: number;
 }
@@ -87,7 +98,14 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
     input: ImportCodexWorkObservationsInput,
   ): Effect.Effect<CodexWorkImportResult, UsageStoreError> => {
     const observedAt = normalizeIsoTimestamp(input.observedAt);
-    if (!validId(input.machineId) || observedAt === null || input.observations.length > MAX_CODEX_WORK_BATCH) {
+    if (
+      !validId(input.machineId) ||
+      observedAt === null ||
+      input.observations.length > MAX_CODEX_WORK_BATCH ||
+      (input.collection !== undefined &&
+        (!(validId(input.collection.id) && ['start', 'observations', 'complete'].includes(input.collection.phase)) ||
+          (input.collection.phase !== 'observations' && input.observations.length !== 0)))
+    ) {
       return Effect.fail(
         usageStoreError(
           'importCodexWorkObservations',
@@ -105,6 +123,14 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
           let rejected = 0;
           db.exec('BEGIN IMMEDIATE');
           try {
+            const collection = input.collection;
+            if (collection?.phase === 'start') {
+              db.query(`INSERT INTO codex_work_collection_coverage(machine_id, source_session_id, collection_id, complete)
+                VALUES (?, '', ?, 0) ON CONFLICT(machine_id, source_session_id) DO UPDATE SET collection_id = excluded.collection_id, complete = 0`).run(
+                input.machineId,
+                collection.id,
+              );
+            }
             for (const candidate of input.observations) {
               const observation = parseCodexWorkObservation(candidate);
               if (observation === null || observation.lastEventAt > observedAt) {
@@ -118,6 +144,25 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
                   'SELECT content_hash, last_event_at FROM codex_work_observations WHERE machine_id = ? AND source_session_id = ?',
                 )
                 .get(input.machineId, observation.sourceSessionId);
+              if (
+                collection?.phase === 'observations' &&
+                !(
+                  isRecord(previous) &&
+                  typeof previous.last_event_at === 'string' &&
+                  previous.last_event_at > observation.lastEventAt
+                )
+              ) {
+                db.query(`INSERT INTO codex_work_collection_coverage(machine_id, source_session_id, collection_id, complete)
+                  SELECT ?, ?, ?, 1 WHERE EXISTS (SELECT 1 FROM codex_work_collection_coverage
+                    WHERE machine_id = ? AND source_session_id = '' AND collection_id = ?)
+                  ON CONFLICT(machine_id, source_session_id) DO UPDATE SET collection_id = excluded.collection_id, complete = 1`).run(
+                  input.machineId,
+                  observation.sourceSessionId,
+                  collection.id,
+                  input.machineId,
+                  collection.id,
+                );
+              }
               if (
                 isRecord(previous) &&
                 (previous.content_hash === hash ||
@@ -137,6 +182,11 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
                 json,
               );
               changed++;
+            }
+            if (collection?.phase === 'complete') {
+              db.query(
+                "UPDATE codex_work_collection_coverage SET complete = 1 WHERE machine_id = ? AND source_session_id = '' AND collection_id = ?",
+              ).run(input.machineId, collection.id);
             }
             db.exec('COMMIT');
             return { changed, unchanged, rejected };
@@ -168,7 +218,7 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
       );
     }
     if (input.sourceSessionIds.length === 0) {
-      return Effect.succeed({ observations: [], skipped: 0 });
+      return Effect.succeed({ observations: [], skipped: 0, incompleteSessionIds: [] });
     }
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
@@ -213,7 +263,30 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
             }
             observations.push({ ...observation, machineId: input.machineId, observedAt });
           }
-          return { observations, skipped };
+          const complete = new Set<string>();
+          if (
+            db
+              .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'codex_work_collection_coverage'")
+              .get()
+          ) {
+            const members = db
+              .query(`SELECT member.source_session_id FROM codex_work_collection_coverage member
+              JOIN codex_work_collection_coverage collection ON collection.machine_id = member.machine_id
+                AND collection.source_session_id = '' AND collection.collection_id = member.collection_id AND collection.complete = 1
+              WHERE member.machine_id = ? AND member.complete = 1 AND member.source_session_id IN (${ids.map(() => '?').join(',')})`)
+              .all(input.machineId, ...ids);
+            for (const member of members) {
+              if (isRecord(member) && typeof member.source_session_id === 'string') {
+                complete.add(member.source_session_id);
+              }
+            }
+          }
+          const readable = new Set(observations.map((observation) => observation.sourceSessionId));
+          return {
+            observations,
+            skipped,
+            incompleteSessionIds: ids.filter((id) => !(complete.has(id) && readable.has(id))),
+          };
         },
         catch: (cause) =>
           cause instanceof UsageStoreError

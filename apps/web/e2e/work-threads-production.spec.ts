@@ -9,9 +9,11 @@ import {
   type WorkThreadsDetailOutput,
   type WorkThreadsListOutput,
 } from '@ai-usage/web-contract/work-threads';
+import AxeBuilder from '@axe-core/playwright';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transport';
+import { P1_PR_KEY, P1_QUESTION, P1_SESSION_LABEL, P1_TASK_TITLE, p1FixtureFiles } from './work-threads-p1-fixture';
 
 type WorkThreadDetailDataset = Extract<WorkThreadsDetailOutput, { ok: true }>['data'];
 type WorkThreadListDataset = Extract<WorkThreadsListOutput, { ok: true }>['data'];
@@ -20,7 +22,8 @@ type WorkThreadRow = WorkThreadListDataset['rows'][number];
 /**
  * Live production composition only: native histories -> engine -> disposable SQLite -> read-only
  * Work thread RPC -> browser. All writes below are browser gestures through the public UI.
- * The only filesystem read is the fake gh argv journal inside the fixture's isolated HOME.
+ * The P1 journey evolves only native fixture files and the fake gh response in its validated HOME.
+ * User task commands remain browser gestures; provider calls terminate in fake executables.
  */
 const DISCOVERED_KEY = 'github.com/fixture/discovered#77';
 const DISCOVERED_TITLE = 'Discovered fixture pull request';
@@ -517,4 +520,179 @@ test('production Work threads survive source refresh, follow-up transitions and 
     throw new Error('The analysis task is needed to locate the isolated fixture journal.');
   }
   await assertReadOnlyGhCalls(await fixtureGhLog(analysis));
+});
+
+const runNativeSourceFromUi = async (page: Page, sourceId: string): Promise<void> => {
+  await page.goto('/sources');
+  await expect(page.locator('main[data-route-shell="sources"][data-hydrated="true"]')).toBeVisible();
+  const healthy = page.locator('[data-healthy-source-summary]');
+  const source = page
+    .locator('[data-source-card], [data-healthy-source-row]')
+    .filter({ has: page.getByText(sourceId, { exact: true }) });
+  await expect(async () => {
+    if ((await healthy.count()) && (await healthy.getAttribute('open')) === null) {
+      await healthy.locator('> summary').click();
+    }
+    await expect(source).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
+  const run = source.getByRole('button', { name: 'Run now', exact: true });
+  await expect(run).toBeEnabled();
+  const responsePromise = page.waitForResponse(
+    (candidate) => new URL(candidate.url()).pathname === SOURCE_COMMAND_PATH && candidate.request().method() === 'POST',
+  );
+  await run.click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+  expect(JSON.parse(response.request().postData() ?? 'null')).toEqual({ command: 'run-now', sourceId });
+  expect(parseSourceControlCommandResponse(await response.json()).ok).toBe(true);
+};
+
+const openTask = async (page: Page, threadId: string): Promise<void> => {
+  await page.goto(`/work?task=${threadId}`);
+  await hydrated(page);
+};
+
+const followP1Session = async (page: Page, request: APIRequestContext): Promise<WorkThreadDetailDataset> => {
+  await expect(async () => {
+    await page.goto('/work/sessions');
+    await hydrated(page);
+    const served = page.locator('details[data-work-served-roots]');
+    await served.locator('> summary').click();
+    await expect(served.getByRole('heading', { name: P1_SESSION_LABEL, exact: true })).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: COLLECTION_TIMEOUT_MS });
+  const session = page
+    .locator('[data-work-session]')
+    .filter({ has: page.getByRole('heading', { name: P1_SESSION_LABEL, exact: true }) });
+  await session.getByRole('button', { name: 'Follow as a task', exact: true }).click();
+  await session.getByRole('textbox', { name: 'Task title', exact: true }).fill(P1_TASK_TITLE);
+  const responsePromise = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === COMMAND_PATH);
+  await session.getByRole('button', { name: 'Create task', exact: true }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+  const result = parseWorkThreadsCommandOutput(decodeRpcResponseBody(await response.text()));
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+  await session.getByRole('link', { name: 'Open task', exact: true }).click();
+  await hydrated(page);
+  return readDetail(request, result.threadId);
+};
+
+test('production P1 continuity and native decisions survive collection, closure and reload', async ({
+  page,
+  request,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  await collectedDiscoveredTask(request);
+  const analysis = await createAnalysisFromServedSession(page, request);
+  const analysisId = analysis.row.thread.threadId;
+  const home = path.dirname(await fixtureGhLog(analysis));
+  const files = await p1FixtureFiles(home);
+
+  await test.step('a followed session keeps its task identity when its first proven PR appears', async () => {
+    await files.seedSession();
+    await runNativeSourceFromUi(page, 'claude.sessions');
+    const before = await followP1Session(page, request);
+    const threadId = before.row.thread.threadId;
+    expect(before.row.links).toHaveLength(1);
+    expect(before.row.markers.pullRequests).toHaveLength(0);
+    await files.discoverPullRequest();
+    await runNativeSourceFromUi(page, 'claude.sessions');
+    await expect
+      .poll(async () => (await readDetail(request, threadId)).episodes[0]?.endedAt, { timeout: COLLECTION_TIMEOUT_MS })
+      .toBe('2026-07-03T11:33:00.000Z');
+    await runGitHubSourceFromUi(page, request);
+    await expect
+      .poll(
+        async () =>
+          (await readDetail(request, threadId)).row.links.some(
+            (link) => link.key === P1_PR_KEY && link.detachedAt === null,
+          ),
+        { timeout: COLLECTION_TIMEOUT_MS },
+      )
+      .toBe(true);
+    const after = await readDetail(request, threadId);
+    expect(after.row.thread).toMatchObject({
+      threadId,
+      title: P1_TASK_TITLE,
+      followState: before.row.thread.followState,
+      followRevision: before.row.thread.followRevision,
+      note: before.row.thread.note,
+    });
+    expect(after.row.links.filter((link) => link.kind === 'session')).toEqual(before.row.links);
+    const response = await request.post('/rpc/workThreads/list', {
+      data: encodeRpcResponseBody({ cursor: null, limit: 100, project: null, search: P1_PR_KEY, tab: 'open' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    const listed = parseWorkThreadsListOutput(decodeRpcResponseBody(await response.text()));
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) {
+      throw new Error(listed.error.message);
+    }
+    expect(listed.data.rows.map((row) => row.thread.threadId)).toEqual([threadId]);
+    await openTask(page, threadId);
+    await expect(page.getByRole('heading', { name: P1_TASK_TITLE, exact: true })).toBeVisible();
+    await expect(page.getByText('PR #78', { exact: false }).first()).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('p1-session-first-pr.png'), fullPage: true });
+  });
+
+  await test.step('native question participates in the warning and its acknowledgement without changing the source', async () => {
+    await files.ask();
+    await runNativeSourceFromUi(page, 'codex.sessions');
+    await expect(async () => {
+      await openTask(page, analysisId);
+      await expect(page.getByRole('region', { name: "What's left", exact: true })).toContainText(P1_QUESTION, {
+        timeout: 1000,
+      });
+    }).toPass({ timeout: COLLECTION_TIMEOUT_MS });
+    await expect(page.getByText('Ready to close', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: "What's left", exact: true })).not.toContainText(
+      'No known remainder',
+    );
+    const episode = page.locator(`[data-session-key="${ROOT_SESSION_KEY}"]`);
+    const toggle = episode.locator('> .wt-session-button');
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+      await toggle.click();
+    }
+    await expect(episode).toContainText(P1_QUESTION);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual(
+      [],
+    );
+    const nativeBefore = await readFile(files.codex, 'utf8');
+    await page.screenshot({ path: testInfo.outputPath('p1-native-request.png'), fullPage: true });
+    await clickEnd(page);
+    await expect(page.getByRole('heading', { name: 'These remainders will stay', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: "What's left", exact: true })).toContainText(P1_QUESTION);
+    await page.screenshot({ path: testInfo.outputPath('p1-request-warning.png'), fullPage: true });
+    await page.getByRole('button', { name: 'End anyway', exact: true }).click();
+    await expectDone(page);
+    await page.reload();
+    await hydrated(page);
+    await expectDone(page);
+    const ended = await readDetail(request, analysisId);
+    expect(ended.row.thread.followState).toBe('done');
+    expect(ended.events.at(-1)?.acknowledgedRemainders.some((entry) => entry.includes(P1_QUESTION))).toBe(true);
+    expect(await readFile(files.codex, 'utf8')).toBe(nativeBefore);
+    await page.screenshot({ path: testInfo.outputPath('p1-request-done.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Reopen', exact: true }).first().click();
+    await expect(page.locator('[data-follow-state="following"]')).toBeVisible();
+    await expect(page.getByRole('region', { name: "What's left", exact: true })).toContainText(P1_QUESTION);
+  });
+
+  await test.step('attributed native answer clears only the wait without a confirmation or ending follow-up', async () => {
+    const before = await readDetail(request, analysisId);
+    await files.answer();
+    await runNativeSourceFromUi(page, 'codex.sessions');
+    await expect(async () => {
+      await openTask(page, analysisId);
+      await expect(page.getByRole('region', { name: "What's left", exact: true })).not.toContainText(P1_QUESTION, {
+        timeout: 1000,
+      });
+    }).toPass({ timeout: COLLECTION_TIMEOUT_MS });
+    const after = await readDetail(request, analysisId);
+    expect(after.row.thread.followState).toBe('following');
+    expect(after.row.thread.followRevision).toBe(before.row.thread.followRevision);
+    expect(after.events).toEqual(before.events);
+    await page.screenshot({ path: testInfo.outputPath('p1-native-answered.png'), fullPage: true });
+  });
 });

@@ -145,7 +145,7 @@ describe('local Codex request evidence', () => {
         await Effect.runPromise(
           store.queryCodexWorkObservations({ dbPath: ':memory:', machineId: 'a', sourceSessionIds: ['session'] }),
         ),
-      ).toEqual({ observations: [], skipped: 1 });
+      ).toEqual({ observations: [], skipped: 1, incompleteSessionIds: ['session'] });
       const failed = await Effect.runPromise(
         Effect.result(
           store.queryCodexWorkObservations({
@@ -160,4 +160,75 @@ describe('local Codex request evidence', () => {
       store.db.close();
     }
   });
+});
+
+test('collection membership invalidates missing sessions without deleting their historical requests', async () => {
+  const store = fixture();
+  const base = { dbPath: ':memory:', machineId: 'a', observedAt: at(10) };
+  const read = () =>
+    Effect.runPromise(store.queryCodexWorkObservations({ ...base, sourceSessionIds: ['session', 'missing'] }));
+  const phase = (id: string, step: 'start' | 'observations' | 'complete', observations: readonly unknown[] = []) =>
+    Effect.runPromise(store.importCodexWorkObservations({ ...base, observations, collection: { id, phase: step } }));
+  try {
+    await Effect.runPromise(store.importCodexWorkObservations({ ...base, observations: [observation()] }));
+    expect((await read()).incompleteSessionIds).toEqual(['session', 'missing']);
+    await phase('first', 'start');
+    await phase('first', 'observations', [observation()]);
+    expect((await read()).incompleteSessionIds).toEqual(['session', 'missing']);
+    await phase('first', 'complete');
+    expect((await read()).incompleteSessionIds).toEqual(['missing']);
+    const historical = (await read()).observations;
+    // Same wall-clock time: membership, not lastEventAt/observedAt, identifies the current pass.
+    await phase('second', 'start');
+    await phase('second', 'complete');
+    expect((await read()).incompleteSessionIds).toEqual(['session', 'missing']);
+    expect((await read()).observations).toEqual(historical);
+    await phase('third', 'start');
+    await phase('third', 'observations', [observation()]);
+    await phase('third', 'complete');
+    expect((await read()).incompleteSessionIds).toEqual(['missing']);
+    expect((await read()).observations).toEqual(historical);
+  } finally {
+    store.db.close();
+  }
+});
+
+test('an interrupted collection, late completion and older import cannot establish complete coverage', async () => {
+  const store = fixture();
+  const base = { dbPath: ':memory:', machineId: 'a', observedAt: at(10) };
+  const phase = (id: string, step: 'start' | 'observations' | 'complete', observations: readonly unknown[] = []) =>
+    Effect.runPromise(store.importCodexWorkObservations({ ...base, observations, collection: { id, phase: step } }));
+  const read = () => Effect.runPromise(store.queryCodexWorkObservations({ ...base, sourceSessionIds: ['session'] }));
+  try {
+    await phase('first', 'start');
+    await phase('first', 'observations', [observation()]);
+    await phase('first', 'complete');
+    await phase('second', 'start');
+    await phase('first', 'observations', [observation()]);
+    await phase('first', 'complete');
+    expect((await read()).incompleteSessionIds).toEqual(['session']);
+    await phase('second', 'observations', [{ ...observation(), lastEventAt: at(4) }]);
+    await phase('second', 'complete');
+    expect((await read()).incompleteSessionIds).toEqual(['session']);
+    expect((await read()).observations[0]?.requests).toHaveLength(1);
+  } finally {
+    store.db.close();
+  }
+});
+
+test('read-only legacy stores without coverage preserve evidence and report unknown without migration', async () => {
+  const store = fixture();
+  const base = { dbPath: ':memory:', machineId: 'a', observedAt: at(10) };
+  try {
+    await Effect.runPromise(store.importCodexWorkObservations({ ...base, observations: [observation()] }));
+    store.db.exec('DROP TABLE codex_work_collection_coverage');
+    const read = await Effect.runPromise(store.queryCodexWorkObservations({ ...base, sourceSessionIds: ['session'] }));
+    expect(read.incompleteSessionIds).toEqual(['session']);
+    expect(read.observations[0]?.requests).toHaveLength(1);
+    expect(
+      store.db.query("SELECT name FROM sqlite_master WHERE name='codex_work_collection_coverage'").get(),
+    ).toBeNull();
+  } finally {
+    store.db.close();
+  }
 });

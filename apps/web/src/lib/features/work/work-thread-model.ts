@@ -202,6 +202,8 @@ export const acknowledgedRemainderCopy = (remainders: readonly WorkThreadRemaind
 
 export const remainderCopy = (remainder: WorkThreadRemainder): string => {
   switch (remainder.kind) {
+    case 'native-request':
+      return `Native request: ${remainder.request.text}${remainder.request.state === 'uncertain' ? ' (answer unknown)' : ''}`;
     case 'local-files':
       return `Local: ${remainder.modified ?? 'unknown'} modified · ${remainder.staged ?? 'unknown'} staged · ${remainder.untracked ?? 'unknown'} untracked`;
     case 'unpushed-commits':
@@ -485,18 +487,23 @@ export const episodeResumeText = (episode: WorkThreadEpisode, taskTitle: string)
 export const primaryResumeEpisode = (
   episodes: readonly WorkThreadEpisode[],
   runningCount: number,
+  requestSessionKey?: string,
 ): WorkThreadEpisode | null => {
   const running: WorkThreadEpisode[] = [];
   const visit = (items: readonly WorkThreadEpisode[]): void => {
     for (const episode of items) {
-      if (episode.running === true) {
+      if (requestSessionKey === undefined ? episode.running === true : episode.linkKey === requestSessionKey) {
         running.push(episode);
       }
       visit(episode.children);
     }
   };
   visit(episodes);
-  return runningCount === 1 && running.length === 1 && running[0]?.resume.kind === 'cli-resume' ? running[0] : null;
+  return (requestSessionKey !== undefined || runningCount === 1) &&
+    running.length === 1 &&
+    running[0]?.resume.kind === 'cli-resume'
+    ? running[0]
+    : null;
 };
 
 export const threadEventActor = (event: WorkThreadEvent): string => {

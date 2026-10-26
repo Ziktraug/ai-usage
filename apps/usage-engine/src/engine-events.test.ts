@@ -102,6 +102,7 @@ test('emits engine lifecycle and command boundaries from the production composit
   });
   const runtime = createLiveUsageEngineRuntime({
     acquireWriterLease: () => Promise.resolve({ release: () => Promise.resolve() }),
+    codexLiveAvailable: () => false,
     configCwd: root,
     dbPath: path.join(root, 'state', 'usage.sqlite'),
     inboxDirectory,

@@ -86,6 +86,9 @@
   let undo = $state<(() => Promise<void>) | null>(null);
   let retry = $state<(() => Promise<void>) | null>(null);
   const history = $derived(threadHistory(data, sessionsOnly, timeZone));
+  const nativePending = $derived(
+    row.nativeRequests.filter((request) => request.state === 'open' || request.state === 'uncertain'),
+  );
   const primaryRemainder = $derived(situation.remainders.find((item) => item.kind === situation.reason));
   const primaryPr = $derived(row.markers.pullRequests.find((marker) => marker.key === primaryRemainder?.key));
   const openPr = $derived(
@@ -98,7 +101,13 @@
       (marker) => (marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful)?.state === 'OPEN',
     ),
   );
-  const resumeEpisode = $derived(primaryResumeEpisode(data.episodes, row.runningSessions));
+  const resumeEpisode = $derived(
+    primaryResumeEpisode(
+      data.episodes,
+      row.runningSessions,
+      primaryRemainder?.kind === 'native-request' ? primaryRemainder.request.sessionKey : undefined,
+    ),
+  );
 
   type Success = Extract<WorkThreadCommandResult, { ok: true }>;
   const execute = async (command: WorkThreadCommand, success: (result: Success) => void): Promise<void> => {
@@ -335,6 +344,21 @@
       <p class="wt-eyebrow">What's left</p>
       <h2>{situation.headline}</h2>
       <p class="wt-subtitle">{situation.caption}</p>
+      {#if nativePending.length}
+        <details class="wt-meta">
+          <summary>
+            {nativePending.length}
+            native {nativePending.length === 1 ? 'request' : 'requests'} · {nativePending[0]?.text}
+          </summary>
+          {#each nativePending as request (request.key)}
+            <p>
+              {request.text}
+              · {request.harness} · {request.sourceSessionId} ·
+              {request.askedAt ? threadDate(request.askedAt, timeZone) : 'date unknown'}<br>{request.detail}
+            </p>
+          {/each}
+        </details>
+      {/if}
     </div>
     <div class="wt-actions">
       {#if situation.action === 'open-pr' && openPr}

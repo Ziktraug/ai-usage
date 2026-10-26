@@ -319,7 +319,8 @@ const evidenceFixture = async () => {
     CREATE TABLE claude_desktop_sessions(id INTEGER PRIMARY KEY, machine_id TEXT, desktop_session_id TEXT,
       cli_session_id TEXT, prior_cli_session_ids_json TEXT, title TEXT, created_at TEXT, last_activity_at TEXT,
       cwd TEXT, worktree_path TEXT, last_turn_report TEXT, status_category TEXT, needs_action TEXT,
-      status_detail TEXT, spawned_from_session_id TEXT, observed_at TEXT, branch TEXT);
+      status_detail TEXT, spawned_from_session_id TEXT, observed_at TEXT, branch TEXT,
+      format TEXT DEFAULT 'claude-desktop-session-v1', archived INTEGER DEFAULT 0);
     INSERT INTO served_report_current VALUES (1, 'fixture');
   `);
   db.query('INSERT INTO served_report_revisions VALUES (?, ?, 1)').run('fixture', NOW);
@@ -1296,7 +1297,7 @@ describe('work thread store', () => {
   test('three seed runs preserve done state and never resurrect a detached origin link', async () => {
     const dbPath = await createStore();
     const input = { dbPath, machineId: MACHINE, now: NOW, seeds: [seed(), seed()] };
-    expect(await run(seedWorkThreads(input))).toEqual({ created: 1, existing: 1 });
+    expect(await run(seedWorkThreads(input))).toEqual({ created: 1, existing: 1, uncertain: 0 });
     const first = (await page(dbPath)).rows[0]?.thread;
     if (!first) {
       throw new Error('Expected seed thread');
@@ -1314,8 +1315,8 @@ describe('work thread store', () => {
       threadId: first.threadId,
     });
     const before = threadSnapshot(dbPath);
-    expect(await run(seedWorkThreads({ ...input, now: LATER }))).toEqual({ created: 0, existing: 2 });
-    expect(await run(seedWorkThreads({ ...input, now: LATER }))).toEqual({ created: 0, existing: 2 });
+    expect(await run(seedWorkThreads({ ...input, now: LATER }))).toEqual({ created: 0, existing: 2, uncertain: 0 });
+    expect(await run(seedWorkThreads({ ...input, now: LATER }))).toEqual({ created: 0, existing: 2, uncertain: 0 });
     expect(threadSnapshot(dbPath)).toEqual(before);
     expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 1, open: 0 });
   });
@@ -1342,7 +1343,7 @@ describe('work thread store', () => {
     };
     expect(
       await run(seedWorkThreads({ dbPath, machineId: 'different-machine', now: NOW, seeds: [seed(), jira] })),
-    ).toEqual({ created: 0, existing: 2 });
+    ).toEqual({ created: 0, existing: 2, uncertain: 0 });
     const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [operator] }));
     if (!link) {
       throw new Error('Expected link');
@@ -1357,7 +1358,7 @@ describe('work thread store', () => {
           seeds: [link.kind === 'pull-request' ? seed() : jira],
         }),
       ),
-    ).toEqual({ created: 0, existing: 1 });
+    ).toEqual({ created: 0, existing: 1, uncertain: 0 });
     expect(
       await run(
         seedWorkThreads({
@@ -1367,7 +1368,7 @@ describe('work thread store', () => {
           seeds: [link.kind === 'pull-request' ? { ...seed(), originKey: 'GitHub.COM/FIXTURE/REPO#42' } : jira],
         }),
       ),
-    ).toEqual({ created: 0, existing: 1 });
+    ).toEqual({ created: 0, existing: 1, uncertain: 0 });
   });
 
   test.each([seed(), seed({ origin: 'jira-issue', linkKind: 'jira-issue', originKey: 'jira:default/FIX-42' })])(
@@ -1384,7 +1385,7 @@ describe('work thread store', () => {
       await command(dbPath, { op: 'detach-link', commandId: randomUUID(), threadId, linkId: link.linkId });
       const before = threadSnapshot(dbPath);
       const input = { dbPath, machineId: MACHINE, now: LATER, seeds: [candidate] };
-      expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
+      expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1, uncertain: 0 });
       expect(threadSnapshot(dbPath)).toEqual(before);
       expect(
         await command(
@@ -1399,7 +1400,7 @@ describe('work thread store', () => {
       expect(links.filter((item) => item.detachedAt === null)).toMatchObject([
         { kind: candidate.linkKind, key: candidate.originKey, provenance: 'user', createdAt: LATER },
       ]);
-      expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1 });
+      expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 1, uncertain: 0 });
       expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
       expect(await run(queryWorkThreadEvents({ dbPath, threadId }))).toMatchObject([
         { kind: 'created' },
@@ -2235,4 +2236,197 @@ describe('work thread wait recovery', () => {
     );
     expect((await eligible()).links).toHaveLength(0);
   });
+});
+
+describe('first PR reconciles a proven session task atomically', () => {
+  const nativeSession = `session:${MACHINE}/claude/native`;
+  const declaration = (pullRequestKey = PR, sessionKey = nativeSession) => ({
+    pullRequestKey,
+    sessionKey,
+    provenance: 'session-pr-link' as const,
+  });
+  const reconcile = (dbPath: string, declarations = [declaration()], seeds = [seed()]) =>
+    run(seedWorkThreads({ dbPath, machineId: MACHINE, now: LATER, declarations, seeds }));
+
+  test('preserves personal fields, notes, event history and Done through repeated concurrent writers', async () => {
+    const dbPath = await createStore();
+    const threadId = await create(dbPath, {
+      title: 'My analysis',
+      intent: 'analysis',
+      links: [{ kind: 'session', key: nativeSession }],
+    });
+    await command(dbPath, { op: 'set-note', commandId: randomUUID(), threadId, note: 'Keep the decision context' });
+    await command(dbPath, follow(threadId, 1, 'done', { reason: 'Ended voluntarily' }));
+    const before = await run(queryWorkThreadById({ dbPath, threadId }));
+    if (before === null) {
+      throw new Error('Missing followed task fixture');
+    }
+    const history = await run(queryWorkThreadEvents({ dbPath, threadId }));
+    await Promise.all([reconcile(dbPath), reconcile(dbPath), reconcile(dbPath)]);
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ open: 0, done: 1 });
+    expect(await run(queryWorkThreadById({ dbPath, threadId }))).toEqual({ ...before, updatedAt: LATER });
+    const events = await run(queryWorkThreadEvents({ dbPath, threadId }));
+    expect(events.slice(0, history.length)).toEqual([...history]);
+    expect(events.filter((event) => event.kind === 'link-added')).toHaveLength(1);
+    expect((await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).map((link) => link.key).sort()).toEqual(
+      [PR, nativeSession].sort(),
+    );
+  });
+
+  test('two proven PR declarations enrich the same task independently of batch ordering and replay', async () => {
+    for (const reverse of [false, true]) {
+      const dbPath = await createStore();
+      const threadId = await create(dbPath, { links: [{ kind: 'session', key: nativeSession }] });
+      const seeds = [seed(), seed({ originKey: 'github.com/fixture/repo#43' })];
+      const declarations = [declaration(), declaration('github.com/fixture/repo#43')];
+      if (reverse) {
+        seeds.reverse();
+        declarations.reverse();
+      }
+      await reconcile(dbPath, declarations, seeds);
+      const before = threadSnapshot(dbPath);
+      await reconcile(dbPath, declarations.toReversed(), seeds.toReversed());
+      expect(threadSnapshot(dbPath)).toEqual(before);
+      expect(await run(countWorkThreads({ dbPath }))).toEqual({ open: 1, done: 0 });
+      expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toHaveLength(3);
+    }
+  });
+
+  test('ambiguous session membership preserves intentionally distinct tasks and discovers independently', async () => {
+    const dbPath = await createStore();
+    const ids = await Promise.all([
+      create(dbPath, { title: 'Analysis', links: [{ kind: 'session', key: nativeSession }] }),
+      create(dbPath, { title: 'Implementation', links: [{ kind: 'session', key: nativeSession }] }),
+    ]);
+    expect(await reconcile(dbPath)).toEqual({ created: 1, existing: 0, uncertain: 1 });
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ open: 3, done: 0 });
+    expect(
+      (await run(queryWorkThreadLinks({ dbPath, threadIds: ids }))).some((link) => link.kind === 'pull-request'),
+    ).toBe(false);
+  });
+
+  test('weak, foreign-harness and unrelated repository declarations cannot assign identity', async () => {
+    for (const mode of ['weak', 'harness', 'repository'] as const) {
+      const dbPath = await createStore();
+      const threadId = await create(dbPath, { links: [{ kind: 'session', key: nativeSession }] });
+      const evidence =
+        mode === 'weak'
+          ? { pullRequestKey: PR, sessionKey: nativeSession }
+          : declaration(
+              mode === 'repository' ? 'github.com/different/repo#42' : PR,
+              mode === 'harness' ? `session:${MACHINE}/codex/native` : nativeSession,
+            );
+      await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: LATER, seeds: [seed()], declarations: [evidence] }));
+      expect(await run(countWorkThreads({ dbPath }))).toEqual({ open: 2, done: 0 });
+      expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toHaveLength(1);
+    }
+  });
+
+  test('does not cross machines or revive detached session or PR links', async () => {
+    for (const mode of ['machine', 'session', 'pull-request'] as const) {
+      const dbPath = await createStore();
+      const threadId = await create(dbPath, {
+        links: [
+          { kind: 'session', key: mode === 'machine' ? 'session:foreign/claude/native' : nativeSession },
+          ...(mode === 'pull-request' ? [{ kind: 'pull-request' as const, key: PR }] : []),
+        ],
+      });
+      if (mode !== 'machine') {
+        const link = (await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).find(
+          (item) => item.kind === mode,
+        );
+        if (!link) {
+          throw new Error('Fixture link missing');
+        }
+        await command(dbPath, { op: 'detach-link', commandId: randomUUID(), threadId, linkId: link.linkId });
+      }
+      const before = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+      await reconcile(dbPath);
+      expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toEqual(before);
+    }
+  });
+
+  test('an existing PR task and a session task are never silently merged; explicit multi-associations remain', async () => {
+    const dbPath = await createStore();
+    const first = await create(dbPath, { links: [{ kind: 'session', key: nativeSession }] });
+    const second = await create(dbPath, { links: [{ kind: 'pull-request', key: PR }] });
+    await reconcile(dbPath);
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ open: 2, done: 0 });
+    expect((await run(queryWorkThreadLinks({ dbPath, threadIds: [first] }))).some((link) => link.key === PR)).toBe(
+      false,
+    );
+    await command(dbPath, { op: 'link', commandId: randomUUID(), threadId: first, kind: 'pull-request', key: PR });
+    await reconcile(dbPath);
+    expect(
+      (await run(queryWorkThreadLinks({ dbPath, threadIds: [first, second] }))).filter((link) => link.key === PR),
+    ).toHaveLength(2);
+  });
+
+  test('partial declaration coverage cannot establish uniqueness', async () => {
+    const dbPath = await createStore();
+    const threadId = await create(dbPath, { links: [{ kind: 'session', key: nativeSession }] });
+    expect(
+      await run(
+        seedWorkThreads({
+          dbPath,
+          machineId: MACHINE,
+          now: LATER,
+          seeds: [seed()],
+          declarations: [declaration()],
+          declarationsTruncated: true,
+        }),
+      ),
+    ).toEqual({ created: 1, existing: 0, uncertain: 1 });
+    expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toHaveLength(1);
+  });
+});
+
+test('first PR batch cannot exceed task link capacity or pick one declaration by input order', async () => {
+  for (const reversed of [false, true]) {
+    const dbPath = await createStore();
+    const sessionKey = `session:${MACHINE}/claude/native`;
+    const threadId = await create(dbPath, {
+      links: Array.from({ length: WORK_THREAD_BOUNDS.maxLinksPerThread - 1 }, (_, index) => ({
+        kind: 'session',
+        key: index === 0 ? sessionKey : `session:${MACHINE}/claude/other-${index}`,
+      })),
+    });
+    const seeds = [seed(), seed({ originKey: 'github.com/fixture/repo#43' })];
+    if (reversed) {
+      seeds.reverse();
+    }
+    expect(
+      await run(
+        seedWorkThreads({
+          dbPath,
+          machineId: MACHINE,
+          now: LATER,
+          seeds,
+          declarations: seeds.map((item) => ({
+            pullRequestKey: item.originKey,
+            sessionKey,
+            provenance: 'session-pr-link',
+          })),
+        }),
+      ),
+    ).toEqual({ created: 2, existing: 0, uncertain: 2 });
+    expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toHaveLength(
+      WORK_THREAD_BOUNDS.maxLinksPerThread - 1,
+    );
+  }
+});
+
+test('observation-only PRs enrich a proven task but never create an unsolicited task', async () => {
+  const dbPath = await createStore();
+  const input = { dbPath, machineId: MACHINE, now: LATER, seeds: [], observedPullRequestKeys: [PR], declarations: [] };
+  expect(await run(seedWorkThreads(input))).toEqual({ created: 0, existing: 0, uncertain: 0 });
+  expect(await run(countWorkThreads({ dbPath }))).toEqual({ open: 0, done: 0 });
+  const sessionKey = `session:${MACHINE}/claude/native`;
+  const threadId = await create(dbPath, { links: [{ kind: 'session', key: sessionKey }] });
+  const declarations = [{ pullRequestKey: PR, sessionKey, provenance: 'session-pr-link' as const }];
+  expect(await run(seedWorkThreads({ ...input, declarations }))).toEqual({ created: 0, existing: 1, uncertain: 0 });
+  const before = threadSnapshot(dbPath);
+  await run(seedWorkThreads({ ...input, declarations }));
+  expect(threadSnapshot(dbPath)).toEqual(before);
+  expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toHaveLength(2);
 });

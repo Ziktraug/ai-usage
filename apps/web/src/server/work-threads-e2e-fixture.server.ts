@@ -109,6 +109,7 @@ const makeEpisode = (
   day: number,
   overrides: Partial<WorkThreadEpisode> = {},
 ): WorkThreadEpisode => ({
+  nativeRequests: [],
   activeMs: 24 * 60_000,
   children: [],
   spanMs: 24 * 60_000,
@@ -816,6 +817,8 @@ export const createSyntheticWorkThreadStore = (
             .sort();
     const latestAt = newer.at(-1);
     return {
+      nativeRequests: [],
+      nativeRequestCoverage: 'complete',
       afterDone: latestAt ? { count: newer.length, latestAt } : null,
       firstActivityAt:
         [

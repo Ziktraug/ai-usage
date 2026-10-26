@@ -102,7 +102,13 @@
         </div>
         <div>
           <dt>Current question</dt>
-          <dd>{episode.question ?? 'No question observed'}</dd>
+          <dd>
+            {#each episode.nativeRequests as request (request.key)}
+              <p>{request.text} · {request.state}<br>{request.detail}</p>
+            {:else}
+              No question observed; request coverage may be incomplete.
+            {/each}
+          </dd>
         </div>
         {#if episode.launchedBy}
           <div>

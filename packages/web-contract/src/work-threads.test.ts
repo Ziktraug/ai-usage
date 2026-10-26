@@ -27,6 +27,7 @@ const base = {
   acknowledgedRemainders: ['PR remains open'],
 };
 const episode = {
+  nativeRequests: [],
   activeMs: 60_000,
   children: [],
   endedAt: at,
@@ -48,6 +49,8 @@ const episode = {
   title: 'Synthetic session',
 };
 const row = {
+  nativeRequests: [],
+  nativeRequestCoverage: 'complete',
   afterDone: null,
   delegatedSessionCount: 20,
   firstActivityAt: at,

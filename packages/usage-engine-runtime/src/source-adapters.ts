@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { annotateWideEventIfAvailable } from '@ai-usage/effect-runtime';
@@ -418,6 +419,16 @@ const createSessionSource = (input: {
   id: input.id,
   run: (context) =>
     Effect.gen(function* () {
+      const codexCollectionId = input.id === 'codex.sessions' ? randomUUID() : null;
+      if (codexCollectionId !== null) {
+        yield* importCodexWorkObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          observedAt: input.now().toISOString(),
+          observations: [],
+          collection: { id: codexCollectionId, phase: 'start' },
+        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      }
       yield* reportProgress(context, { phase: 'reading' });
       const availability = yield* input.detect;
       if (availability.availability !== 'detected') {
@@ -492,6 +503,9 @@ const createSessionSource = (input: {
           machineId: input.machine.id,
           observedAt,
           observations: workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH),
+          ...(codexCollectionId === null
+            ? {}
+            : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
         }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
         importedWork.changed += batch.changed;
         importedWork.rejected += batch.rejected;
@@ -500,6 +514,16 @@ const createSessionSource = (input: {
         return yield* Effect.fail(
           sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
         );
+      }
+      if (codexCollectionId !== null && collection.workObservations !== undefined) {
+        yield* abortIfRequested(context.signal);
+        yield* importCodexWorkObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          observedAt,
+          observations: [],
+          collection: { id: codexCollectionId, phase: 'complete' },
+        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       }
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
@@ -634,12 +658,25 @@ const createClaudeDesktopSessionSource = (input: {
   id: 'claude.desktop-sessions',
   run: (context) =>
     Effect.gen(function* () {
+      // One sweep identity is shared by its observations and completeness record. A failed
+      // detection/read/cancel must not leave an older successful sweep looking current.
+      const collectedAt = input.now();
+      yield* importClaudeDesktopSessions({
+        collectedAt,
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        observations: [],
+        completeness: { filesSeen: 0, filesParsed: 0, rejected: 0, unsupported: 0, truncated: true },
+      }).pipe(Effect.mapError((cause) => sourceFailure('claude.desktop-sessions', cause)));
       yield* reportProgress(context, { phase: 'reading' });
       const availability = yield* input.detect;
       if (availability.availability !== 'detected') {
         return sourceUnavailableResult();
       }
-      const collection = yield* collectClaudeDesktopSessions({ machineId: input.machine.id, now: input.now }).pipe(
+      const collection = yield* collectClaudeDesktopSessions({
+        machineId: input.machine.id,
+        now: () => collectedAt,
+      }).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
         Effect.mapError((cause) => sourceFailure('claude.desktop-sessions', cause)),
       );
@@ -655,7 +692,7 @@ const createClaudeDesktopSessionSource = (input: {
         total: collection.observations.length,
       });
       const imported = yield* importClaudeDesktopSessions({
-        collectedAt: input.now(),
+        collectedAt,
         completeness: collection.completeness,
         dbPath: input.dbPath,
         machineId: input.machine.id,
@@ -1364,16 +1401,6 @@ const createPullRequestSource = (input: {
             ]
           : []),
       ];
-      // A discovered pull request becomes a Work thread once; the store keys it by origin (plan 120).
-      const pullRequestSeeds = workThreadSeedsFromPullRequests(observations);
-      if (pullRequestSeeds.length > 0) {
-        yield* seedWorkThreads({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          now: input.now().toISOString(),
-          seeds: pullRequestSeeds,
-        }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
-      }
       const declarations = [
         ...new Map(
           [...desktop.declarations, ...served.declarations].map((declaration) => [
@@ -1382,6 +1409,19 @@ const createPullRequestSource = (input: {
           ]),
         ).values(),
       ];
+      // Candidate selection and PR attachment share the seed writer transaction.
+      const pullRequestSeeds = workThreadSeedsFromPullRequests(observations);
+      const seeded = yield* seedWorkThreads({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        now: input.now().toISOString(),
+        seeds: pullRequestSeeds,
+        observedPullRequestKeys: observations
+          .filter((observation) => observation.outcome === 'observed')
+          .map(workThreadPullRequestKey),
+        declarations,
+        declarationsTruncated: desktop.declarationsTruncated || served.truncated,
+      }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
       const attached =
         declarations.length === 0
           ? { truncated: false }
@@ -1391,6 +1431,16 @@ const createPullRequestSource = (input: {
               now: input.now().toISOString(),
               declarations,
             }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      const identityWarnings =
+        seeded.uncertain > 0
+          ? [
+              {
+                code: 'work-thread-identity-uncertain',
+                message:
+                  'Session evidence does not establish a unique task identity; pull requests remain independently discovered.',
+              },
+            ]
+          : [];
       const declarationWarnings =
         attached.truncated || served.truncated || desktop.declarationsTruncated
           ? [
@@ -1413,6 +1463,7 @@ const createPullRequestSource = (input: {
           ...discoveryWarnings.map((warning) => warning.message),
           ...waitWarnings.map((warning) => warning.message),
           ...declarationWarnings.map((warning) => warning.message),
+          ...identityWarnings.map((warning) => warning.message),
         ]
           .filter(Boolean)
           .join(' ') || null;
@@ -1436,6 +1487,7 @@ const createPullRequestSource = (input: {
           ...discoveryWarnings,
           ...waitWarnings,
           ...declarationWarnings,
+          ...identityWarnings,
           ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
         ],
       };

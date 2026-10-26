@@ -384,6 +384,30 @@ describe('round 2 concise task evidence', () => {
   const observedAt = parseCanonicalInstant('2026-10-25T00:30:00.000Z');
   const evidence = { key: 'github.example/synthetic/shop#72', source: 'github' as const, observedAt };
   const examples: Record<WorkThreadRemainder['kind'], { input: WorkThreadRemainder; copy: string }> = {
+    'native-request': {
+      input: {
+        ...evidence,
+        source: 'sessions',
+        kind: 'native-request',
+        request: {
+          key: 'request',
+          sessionKey: episode.linkKey,
+          machineId: episode.machineId,
+          harness: episode.harness,
+          sourceSessionId: episode.sourceSessionId,
+          callId: 'call',
+          questionId: 'q',
+          askedAt: observedAt,
+          answeredAt: null,
+          observedAt,
+          text: 'Choose scope?',
+          state: 'open',
+          evidence: 'codex-request-user-input',
+          detail: 'No attributable answer.',
+        },
+      },
+      copy: 'Native request: Choose scope?',
+    },
     'local-files': {
       input: { ...evidence, source: 'local', kind: 'local-files', modified: 2, staged: 1, untracked: 0 },
       copy: 'Local: 2 modified · 1 staged · 0 untracked',
@@ -865,4 +889,42 @@ describe('source availability belongs to the current task', () => {
     expect(task.summary).toBe('GitHub sign-in required');
     expect(task.details).toHaveLength(1);
   });
+});
+
+test('native requests survive the closing trace and resume the exact asking episode', () => {
+  const request = {
+    key: 'qualified-request',
+    sessionKey: episode.linkKey,
+    machineId: episode.machineId,
+    harness: episode.harness,
+    sourceSessionId: episode.sourceSessionId,
+    callId: 'call',
+    questionId: 'choice',
+    askedAt: episode.startedAt,
+    answeredAt: null,
+    observedAt: episode.startedAt,
+    text: 'Choose the scope?',
+    state: 'open' as const,
+    evidence: 'codex-request-user-input' as const,
+    detail: 'No attributable answer is recorded.',
+  };
+  const remainder: WorkThreadRemainder = {
+    key: request.key,
+    observedAt: request.askedAt,
+    source: 'sessions',
+    kind: 'native-request',
+    request,
+  };
+  expect(acknowledgedRemainderCopy([remainder])[0]).toContain('Native request: Choose the scope?');
+  expect(acknowledgedRemainderCopy([remainder])[0]).toContain('qualified-request');
+  const asking: WorkThreadEpisode = {
+    ...episode,
+    running: false,
+    nativeRequests: [request],
+    resume: { kind: 'cli-resume', command: 'codex resume synthetic', cwd: null },
+  };
+  expect(primaryResumeEpisode([{ ...episode, linkKey: 'parent', children: [asking] }], 0, asking.linkKey)).toEqual(
+    asking,
+  );
+  expect(primaryResumeEpisode([asking], 0, 'unrelated-session')).toBeNull();
 });

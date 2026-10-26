@@ -12,6 +12,7 @@ import type { WorkThread, WorkThreadEvent, WorkThreadLink } from './work-thread'
 export const WORK_THREAD_VIEW_BOUNDS = {
   /** Session and work marks per row, for the compact week lane. */
   maxMarksPerRow: 64,
+  maxNativeRequests: 64,
   maxEpisodes: 100,
   maxEpisodeChildren: 20,
   maxEpisodeText: 1000,
@@ -92,6 +93,24 @@ export interface WorkThreadMark {
   readonly label: string | null;
 }
 
+/** One native question. Presentation acknowledgements and unrelated messages are never answers. */
+export interface WorkThreadNativeRequest {
+  readonly answeredAt: CanonicalInstant | null;
+  readonly askedAt: CanonicalInstant | null;
+  readonly callId: string | null;
+  readonly detail: string;
+  readonly evidence: 'codex-request-user-input' | 'codex-request-user-input-async' | 'claude-desktop-declaration';
+  readonly harness: string;
+  readonly key: string;
+  readonly machineId: string;
+  readonly observedAt: CanonicalInstant;
+  readonly questionId: string | null;
+  readonly sessionKey: string;
+  readonly sourceSessionId: string;
+  readonly state: 'open' | 'answered' | 'uncertain' | 'withdrawn';
+  readonly text: string;
+}
+
 export interface WorkThreadRow {
   /** Facts newer than `doneAt` on a Done thread: shown, never reopening it silently (plan 123 decision 3). */
   readonly afterDone: { readonly count: number; readonly latestAt: CanonicalInstant } | null;
@@ -109,6 +128,8 @@ export interface WorkThreadRow {
   readonly links: readonly WorkThreadLink[];
   readonly markers: WorkThreadMarkers;
   readonly marks: readonly WorkThreadMark[];
+  readonly nativeRequestCoverage: 'complete' | 'partial';
+  readonly nativeRequests: readonly WorkThreadNativeRequest[];
   /** Linked sessions still active by their own last activity, when the reader can tell. */
   readonly runningSessions: number;
   /** Linked sessions themselves (the episodes of the thread), without their delegated children. */
@@ -146,6 +167,7 @@ export interface WorkThreadEpisode {
   readonly launchedBy: { readonly harness: string; readonly title: string | null } | null;
   readonly linkKey: string;
   readonly machineId: string;
+  readonly nativeRequests: readonly WorkThreadNativeRequest[];
   readonly origin: 'human' | 'delegated' | 'automated-review' | null;
   readonly projectLabel: string | null;
   /** What the session declared it needs from the operator, as dated by the session. */

@@ -1,5 +1,5 @@
 import { rmSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -109,6 +109,16 @@ try {
     '#!/usr/bin/env bun\nprocess.stderr.write("Codex quota acquisition is unavailable in the production fixture.\\n");\nprocess.exitCode = 1;\n',
   );
   await chmod(fakeCodexPath, 0o700);
+  // Native history fixtures must never fall through to an installed harness or provider CLI.
+  // Attempt-specific profiles can replace these files with their own protocol simulators below.
+  for (const command of ['claude', 'opencode', 'cursor', 'acli']) {
+    const executable = path.join(fixtureBinDirectory, command);
+    await writeFile(
+      executable,
+      '#!/usr/bin/env bun\nprocess.stderr.write("Unavailable in the isolated production fixture.\\n");\nprocess.exitCode = 1;\n',
+      { mode: 0o700 },
+    );
+  }
   const codexSessionCount = scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT;
   const defaultProfile = !(scaleFixture || campaignContinuityFixture);
   const seeded = await seedHarnessHome(temporaryHome, {
@@ -154,6 +164,37 @@ try {
       await seedCodexNativeRefusalFixture(workFixture);
     }
   }
+  // The SDK can launch its bundled executable without consulting PATH. Disable acquisition and
+  // executor probes in the disposable user config as well as masking installed executables.
+  const fixtureConfigPath = path.join(temporaryHome, '.config', 'ai-usage', 'config.json');
+  const existingConfig: unknown = await readFile(fixtureConfigPath, 'utf8')
+    .then(JSON.parse)
+    .catch((error: unknown) => {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return {};
+      }
+      throw error;
+    });
+  if (typeof existingConfig !== 'object' || existingConfig === null || Array.isArray(existingConfig)) {
+    throw new Error('Invalid isolated production config.');
+  }
+  const policies = 'sourcePolicies' in existingConfig ? existingConfig.sourcePolicies : {};
+  if (typeof policies !== 'object' || policies === null || Array.isArray(policies)) {
+    throw new Error('Invalid isolated source policies.');
+  }
+  await writeFile(
+    fixtureConfigPath,
+    JSON.stringify({
+      ...existingConfig,
+      sourcePolicies: {
+        ...policies,
+        'claude.usage-limits': { enabled: false },
+        'codex.usage-limits': { enabled: false },
+        'executors.capabilities': { enabled: defaultProfile && workAttemptFixtureEnabled() },
+      },
+    }),
+    { mode: 0o600 },
+  );
   const child = Bun.spawn(['bun', '--no-env-file', 'run', 'start'], {
     cwd: rootDirectory,
     env: {

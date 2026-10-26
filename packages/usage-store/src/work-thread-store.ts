@@ -139,17 +139,24 @@ export interface WorkThreadSeed {
 
 export interface SeedWorkThreadsInput {
   readonly dbPath: string;
+  readonly declarations?: readonly DeclaredWorkThreadSession[];
+  /** Incomplete discovery cannot establish a unique candidate. */
+  readonly declarationsTruncated?: boolean;
   readonly machineId: string;
   readonly now: string;
+  /** Successfully observed links may enrich a candidate even without author/review discovery. */
+  readonly observedPullRequestKeys?: readonly string[];
   readonly seeds: readonly WorkThreadSeed[];
 }
 
 export interface SeedWorkThreadsResult {
   readonly created: number;
   readonly existing: number;
+  readonly uncertain: number;
 }
 
 export interface DeclaredWorkThreadSession {
+  readonly provenance?: 'session-pr-link';
   readonly pullRequestKey: string;
   readonly sessionKey: string;
 }
@@ -856,6 +863,134 @@ const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[
   return { params, sql: conditions.join(' AND ') };
 };
 
+const hasKnownWorkThreadLink = (db: SqliteDatabase, kind: WorkThreadLinkKind, key: string): boolean =>
+  db
+    .query(`SELECT 1 FROM work_threads WHERE ${kind === 'pull-request' ? 'lower(origin_key)' : 'origin_key'} = ?`)
+    .get(key) !== null ||
+  db.query(`SELECT 1 FROM work_thread_links WHERE kind = ? AND ${comparableLinkSql(kind)} = ?`).get(kind, key) !== null;
+
+const attachReconciledPullRequest = (
+  db: SqliteDatabase,
+  task: WorkThread,
+  key: string,
+  now: CanonicalInstant,
+): void => {
+  addLink(db, { threadId: task.threadId, kind: 'pull-request', key, provenance: 'declared', createdAt: now });
+  saveThread(db, { ...task, updatedAt: now });
+  addEvent(db, task, now, 'link-added', { linkKey: key });
+};
+
+/** Reuse only an unambiguous, operator-linked session task with no prior PR association. */
+const reconciliationCandidates = (db: SqliteDatabase, input: SeedWorkThreadsInput): Map<string, WorkThread | null> => {
+  const result = new Map<string, WorkThread | null>();
+  const declarations = input.declarations ?? [];
+  const incomplete = declarations.length > MAX_DECLARED_SESSION_LINKS || input.declarationsTruncated;
+  const seedKeys = new Set(
+    input.seeds
+      .filter((seed) => seed.origin === 'pull-request')
+      .map((seed) => canonicalLinkKey(seed.linkKind, seed.originKey)),
+  );
+  for (const key of input.observedPullRequestKeys ?? []) {
+    const canonical = canonicalLinkKey('pull-request', key);
+    if (!parseWorkThreadLinkKey('pull-request', canonical)) {
+      return invalidInput('Observed PR identities must be qualified');
+    }
+    seedKeys.add(canonical);
+  }
+  const byPullRequest = new Map<string, { all: Set<string>; strong: Set<string> }>();
+  for (const declaration of declarations.slice(0, MAX_DECLARED_SESSION_LINKS)) {
+    const session = parseWorkThreadLinkKey('session', declaration.sessionKey);
+    const key = canonicalLinkKey('pull-request', declaration.pullRequestKey);
+    if (
+      session?.kind !== 'session' ||
+      session.machineId !== input.machineId ||
+      !parseWorkThreadLinkKey('pull-request', key)
+    ) {
+      return invalidInput('Reconciliation requires qualified same-machine declarations');
+    }
+    const group = byPullRequest.get(key) ?? { all: new Set<string>(), strong: new Set<string>() };
+    group.all.add(declaration.sessionKey);
+    if (declaration.provenance === 'session-pr-link' && session.harness === 'claude') {
+      group.strong.add(declaration.sessionKey);
+    }
+    byPullRequest.set(key, group);
+  }
+  for (const [key, group] of byPullRequest) {
+    if (!seedKeys.has(key) || hasKnownWorkThreadLink(db, 'pull-request', key)) {
+      continue;
+    }
+    const tasks = new Map<string, WorkThread>();
+    const strongTasks = new Set<string>();
+    for (const sessionKey of group.all) {
+      const matches = db
+        .query(
+          `SELECT t.* FROM work_threads t WHERE t.machine_id = ? AND EXISTS (
+          SELECT 1 FROM work_thread_links s WHERE s.thread_id = t.thread_id AND s.kind = 'session'
+          AND s.link_key = ? AND s.detached_at IS NULL) ORDER BY t.thread_id LIMIT 2`,
+        )
+        .all(input.machineId, sessionKey);
+      for (const value of matches) {
+        const task = threadFromRecord(value);
+        tasks.set(task.threadId, task);
+        if (group.strong.has(sessionKey)) {
+          strongTasks.add(task.threadId);
+        }
+      }
+    }
+    if (tasks.size === 0) {
+      continue;
+    }
+    const task = tasks.size === 1 ? [...tasks.values()][0] : undefined;
+    const priorPR =
+      task &&
+      db
+        .query("SELECT 1 FROM work_thread_links WHERE thread_id = ? AND kind = 'pull-request' LIMIT 1")
+        .get(task.threadId);
+    const active =
+      task &&
+      record(
+        db
+          .query('SELECT COUNT(*) AS count FROM work_thread_links WHERE thread_id = ? AND detached_at IS NULL')
+          .get(task.threadId),
+      ).count;
+    result.set(
+      key,
+      !incomplete &&
+        task &&
+        strongTasks.has(task.threadId) &&
+        priorPR === null &&
+        typeof active === 'number' &&
+        active < WORK_THREAD_BOUNDS.maxLinksPerThread
+        ? task
+        : null,
+    );
+  }
+  // Reserve the whole batch per task; never choose one PR arbitrarily when capacity is insufficient.
+  const additions = new Map<string, number>();
+  for (const task of result.values()) {
+    if (task) {
+      additions.set(task.threadId, (additions.get(task.threadId) ?? 0) + 1);
+    }
+  }
+  for (const [key, task] of result) {
+    if (!task) {
+      continue;
+    }
+    const active = record(
+      db
+        .query('SELECT COUNT(*) AS count FROM work_thread_links WHERE thread_id = ? AND detached_at IS NULL')
+        .get(task.threadId),
+    ).count;
+    if (
+      typeof active !== 'number' ||
+      active + (additions.get(task.threadId) ?? 0) > WORK_THREAD_BOUNDS.maxLinksPerThread
+    ) {
+      result.set(key, null);
+    }
+  }
+  return result;
+};
+
 export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies) => {
   const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
   const write = <Value>(
@@ -924,21 +1059,24 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       const now = instant(input.now);
       let created = 0;
       let existing = 0;
+      let uncertain = 0;
+      // Compute every candidate before adding any PR: batch order cannot change identity.
+      const candidates = reconciliationCandidates(db, input);
       for (const seed of input.seeds) {
         const originKey = canonicalLinkKey(seed.linkKind, seed.originKey);
         if (seed.origin !== seed.linkKind || !parseWorkThreadLinkKey(seed.linkKind, originKey)) {
           return invalidInput('Seed origin and qualified link key must match');
         }
-        if (
-          db
-            .query(
-              `SELECT 1 FROM work_threads WHERE ${seed.origin === 'pull-request' ? 'lower(origin_key)' : 'origin_key'} = ?`,
-            )
-            .get(originKey) !== null ||
-          db
-            .query(`SELECT 1 FROM work_thread_links WHERE kind = ? AND ${comparableLinkSql(seed.linkKind)} = ?`)
-            .get(seed.linkKind, originKey) !== null
-        ) {
+        if (hasKnownWorkThreadLink(db, seed.linkKind, originKey)) {
+          existing++;
+          continue;
+        }
+        const candidate = candidates.get(originKey);
+        if (candidate === null) {
+          uncertain++;
+        }
+        if (candidate) {
+          attachReconciledPullRequest(db, candidate, originKey, now);
           existing++;
           continue;
         }
@@ -961,7 +1099,20 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         addEvent(db, thread, discoveredAt, 'created', { toState: 'following' });
         created++;
       }
-      return { created, existing };
+      // Observation-only PRs never create a task. They may still enrich a proven followed session.
+      const seededKeys = new Set(input.seeds.map((seed) => canonicalLinkKey(seed.linkKind, seed.originKey)));
+      for (const [key, candidate] of candidates) {
+        if (seededKeys.has(key) || hasKnownWorkThreadLink(db, 'pull-request', key)) {
+          continue;
+        }
+        if (candidate === null) {
+          uncertain++;
+        } else {
+          attachReconciledPullRequest(db, candidate, key, now);
+          existing++;
+        }
+      }
+      return { created, existing, uncertain };
     });
 
   const attachDeclaredWorkThreadSessions = (
@@ -1398,6 +1549,10 @@ export interface WorkThreadSessionEvidence {
       readonly rowId: string | null;
     };
     readonly desktop: {
+      readonly cliSessionId: string;
+      readonly desktopSessionId: string;
+      readonly archived: boolean;
+      readonly format: string;
       readonly branch: string | null;
       readonly createdAt: CanonicalInstant;
       readonly cwd: string;
@@ -1755,6 +1910,10 @@ const readThreadSessionEvidence = (
     return {
       desktopSessionId: validated(evidenceText(value.desktop_session_id, 512), 'Desktop session identity'),
       value: {
+        cliSessionId: validated(evidenceText(value.cli_session_id, 512), 'Desktop current CLI identity'),
+        desktopSessionId: validated(evidenceText(value.desktop_session_id, 512), 'Desktop session identity'),
+        archived: value.archived === 1,
+        format: validated(evidenceText(value.format), 'Desktop format'),
         branch: evidenceOptionalText(value.branch),
         createdAt: validated(normalizeIsoTimestamp(value.created_at), 'Desktop start instant'),
         cwd: validated(evidenceText(value.cwd), 'Desktop checkout'),

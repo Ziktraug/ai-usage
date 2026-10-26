@@ -28,6 +28,8 @@ const thread: WorkThread = {
   waitingOn: null,
 };
 const row = (patch: Partial<WorkThreadRow> = {}): WorkThreadRow => ({
+  nativeRequests: [],
+  nativeRequestCoverage: 'complete',
   afterDone: null,
   firstActivityAt: at,
   lastActivityAt: at,
@@ -518,4 +520,38 @@ describe('Work thread situation', () => {
   test('invalid now cannot make observations silently fresh', () => {
     expect(() => deriveWorkThreadSituation(row(), 'invalid')).toThrow(RangeError);
   });
+});
+
+test('native requests keep personal state independent, preserve other remainder priority, and block ready-to-close', () => {
+  const request = {
+    key: 'request',
+    sessionKey: 'session:test/codex/one',
+    machineId: 'test',
+    harness: 'codex',
+    sourceSessionId: 'one',
+    callId: 'call',
+    questionId: 'q',
+    askedAt: at,
+    answeredAt: null,
+    observedAt: at,
+    text: 'Choose?',
+    state: 'open' as const,
+    evidence: 'codex-request-user-input' as const,
+    detail: 'No attributable answer.',
+  };
+  for (const followState of ['following', 'waiting', 'done'] as const) {
+    const task = row({ thread: { ...thread, intent: 'analysis', followState }, nativeRequests: [request] });
+    const situation = deriveWorkThreadSituation(task, at);
+    expect(situation.remainders.map((item) => item.kind)).toContain('native-request');
+    expect(situation.hint).not.toBe('ready-to-close');
+    expect(task.thread.followState).toBe(followState);
+    expect(situation.reason).toBe(followState === 'done' ? 'follow-up-ended' : 'native-request');
+  }
+  expect(
+    deriveWorkThreadSituation({ ...withPr(pr({ checksRollup: 'failure' })), nativeRequests: [request] }, at).reason,
+  ).toBe('failing-checks');
+  expect(
+    deriveWorkThreadSituation(row({ thread: { ...thread, intent: 'analysis' }, nativeRequestCoverage: 'partial' }), at)
+      .hint,
+  ).not.toBe('ready-to-close');
 });

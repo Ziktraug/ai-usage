@@ -60,6 +60,17 @@ generations. Readers of an older store report that it has not been upgraded.
 The Codex parser cache is versioned separately so a warm cache cannot silently
 omit the new evidence. Campaign verification uses disposable stores only.
 
+2026-10-26 (PR #74 corrective coverage): `codex_work_collection_coverage`
+records the current Codex collection identity and each successfully parsed
+session's membership, under the same usage version 4. Only the engine creates
+this additive table; no historical observation is rewritten or backfilled.
+A missing or interrupted pass, an omitted session, or an older store without
+coverage is read as incomplete while retaining previously observed requests.
+Query-only readers never create the table. Recollection restores coverage for
+the sessions actually read, independently of unchanged native timestamps.
+These auxiliary rows do not enter served revisions, exports or replication.
+Validation uses disposable stores; no daily-store upgrade is authorized here.
+
 The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
 and `claude_desktop_collection_state` to the usage store without changing
 `user_version`, following the `skill_observations` precedent: the engine

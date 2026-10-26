@@ -1724,6 +1724,10 @@ const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSess
     if (record.type === 'pr-link') {
       if (typeof record.prUrl === 'string') {
         pullRequestCandidates.push({
+          ...(!(input.isAgentFile || sidechain) &&
+          (record.sessionId === undefined || record.sessionId === input.sourceSessionId)
+            ? { provenance: 'session-pr-link' as const }
+            : {}),
           number: Number.isSafeInteger(record.prNumber) && Number(record.prNumber) > 0 ? Number(record.prNumber) : null,
           observedAt: iso(current.at),
           repository: typeof record.prRepository === 'string' ? record.prRepository : null,

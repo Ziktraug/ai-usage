@@ -88,7 +88,7 @@ interface ClaudeCache {
 // and supported launch wrappers and redirects recover previously omitted attestations.
 // Bumped to 19 to reject resume evidence masked by later semicolon commands and
 // retain matching native thread evidence when a resumed command ends in error.
-const CLAUDE_CACHE_VERSION = 19;
+const CLAUDE_CACHE_VERSION = 20;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 

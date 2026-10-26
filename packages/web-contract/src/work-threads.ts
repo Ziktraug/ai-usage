@@ -110,7 +110,26 @@ const markers = strictObject({
     maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread),
   ),
 });
+const nativeRequest = strictObject({
+  key: pipe(string(), minLength(1), maxLength(4096)),
+  sessionKey: text,
+  machineId: text,
+  harness: text,
+  sourceSessionId: text,
+  callId: nullable(text),
+  questionId: nullable(text),
+  askedAt: nullable(instant),
+  answeredAt: nullable(instant),
+  observedAt: instant,
+  text: pipe(string(), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText)),
+  state: picklist(['open', 'answered', 'uncertain', 'withdrawn']),
+  evidence: picklist(['codex-request-user-input', 'codex-request-user-input-async', 'claude-desktop-declaration']),
+  detail: publicMessageSchema,
+});
+const nativeRequests = pipe(array(nativeRequest), maxLength(WORK_THREAD_VIEW_BOUNDS.maxNativeRequests));
 export const workThreadRowSchema = strictObject({
+  nativeRequests,
+  nativeRequestCoverage: picklist(['complete', 'partial']),
   afterDone: nullable(strictObject({ count, latestAt: instant })),
   delegatedSessionCount: count,
   firstActivityAt: instant,
@@ -151,6 +170,7 @@ export const workThreadsListDataSchema = strictObject({
 });
 const episodeText = nullable(pipe(string(), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText)));
 const episodeFields = {
+  nativeRequests,
   activeMs: nullable(duration),
   endedAt: nullable(instant),
   firstPrompt: episodeText,

@@ -754,14 +754,22 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
             // The PR remains observable, but a legacy row without a qualified identity cannot join a thread.
             truncated = true;
           } else {
-            const declaration = { pullRequestKey: pullRequestLinkKey(link), sessionKey };
+            const declaration: DeclaredWorkThreadSession = {
+              pullRequestKey: pullRequestLinkKey(link),
+              sessionKey,
+              ...(pullRequest.provenance === 'session-pr-link' && rowValue.source.harnessKey === 'claude'
+                ? { provenance: 'session-pr-link' as const }
+                : {}),
+            };
             const declarationKey = JSON.stringify([declaration.pullRequestKey, sessionKey]);
-            if (!declarations.has(declarationKey)) {
-              if (declarations.size < MAX_SESSION_PULL_REQUEST_LINK_LIMIT) {
+            if (declarations.has(declarationKey)) {
+              if (declaration.provenance === 'session-pr-link') {
                 declarations.set(declarationKey, declaration);
-              } else {
-                truncated = true;
               }
+            } else if (declarations.size < MAX_SESSION_PULL_REQUEST_LINK_LIMIT) {
+              declarations.set(declarationKey, declaration);
+            } else {
+              truncated = true;
             }
           }
           if (links.has(key)) {
