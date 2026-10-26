@@ -685,19 +685,24 @@ describe('one review policy before any launch (legacy Work command and delegatio
 
   test('Codex app-server launches the recorded frozen scope, reuses it and retains a lost reservation against exec', async () => {
     const fixture = await createFixture({ harness: 'codex' });
+    const parent = fixture.commits[1];
+    const head = fixture.commits[2];
+    if (parent === undefined || head === undefined) {
+      throw new Error('the fixture must contain the reviewed commit and its parent');
+    }
     const engine = engines(fixture);
     const idle = await qualify(engine.delegation, fixture, 1);
     const started = await engine.legacy.start(legacyCommand(codexRoute));
     expect(started.attempt.state).toBe('starting');
     const [launch] = engine.launcher.launches;
     expect(launch?.options.scope?.revision).toEqual({
-      baseSha: fixture.commits[1],
-      headSha: fixture.commits[2],
+      baseSha: parent,
+      headSha: head,
       kind: 'commit',
     });
     expect(frozenShasOf(fixture.dbPath, started.attempt.attemptId)).toEqual({
-      base_sha: fixture.commits[1],
-      head_sha: fixture.commits[2],
+      base_sha: parent,
+      head_sha: head,
     });
     expect((await engine.legacy.start(legacyCommand(codexRoute))).attempt).toMatchObject({
       attemptId: started.attempt.attemptId,
