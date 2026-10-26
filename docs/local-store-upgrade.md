@@ -318,6 +318,15 @@ upgrade, not deleted. Until the engine has reopened the store, the Work view's
 query-only read answers `schema-too-old` ("not upgraded for this version yet"),
 never an empty list.
 
+## Work artifact browser links (2026-10-26)
+
+The engine adds a nullable `url` column to `jira_issue_observations` under usage
+version 4. Existing rows remain unchanged and query-only readers tolerate the
+missing column. New observations retain only a public browser URL: the Jira REST
+`self` URL for self-hosted instances, or the CLI's authenticated public site when
+Atlassian returns an internal backend hostname. No auth status output or credential
+is stored. Back up both stores before restarting the engine with this change.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

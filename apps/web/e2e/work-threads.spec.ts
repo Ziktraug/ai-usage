@@ -270,7 +270,11 @@ test('Undo of Reopen restores the original closure reason and acknowledgements a
 
 test('a task exists for a PR with zero sessions and keeps a dated GitHub marker', async ({ page }) => {
   await open(page);
-  await expect(row(page, ids.review)).toContainText('PR #1492 · 0 linked sessions');
+  await expect(row(page, ids.review)).toContainText('0 linked sessions');
+  await expect(row(page, ids.review).getByRole('link', { name: 'PR #1492 ↗', exact: true })).toHaveAttribute(
+    'href',
+    'https://github.example/synthetic/example-shop/pull/1492',
+  );
   await row(page, ids.review).getByRole('link', { name: 'Check cart rounding' }).first().click();
   await expect(page.getByText('0 linked sessions · one task', { exact: true })).toBeVisible();
   await page.locator('summary').filter({ hasText: 'GITHUB' }).click();
@@ -382,10 +386,12 @@ test('episode durations and PR fact events use their own evidence dates', async 
   await expect(episode).toContainText('first to last activity, pauses included');
   await expect(page.locator('.wt-reason h2')).toHaveText('2 review threads to address');
   await open(page, ids.unknownDuration);
-  await expect(page.locator('.wt-duration')).toHaveText('Duration not recorded: —');
+  await expect(page.locator('.wt-duration')).toHaveCount(0);
+  await page.locator('.wt-session-button').first().click();
+  await expect(page.locator('.wt-inspector')).toContainText('Duration not recorded');
   await open(page, ids.mergedPr);
   await expect(page.locator('.wt-id')).toContainText('Since Oct 20');
-  await expect(page.locator('.wt-fact-event strong')).toHaveText(['PR #1502 opened', 'PR #1502 merged']);
+  await expect(page.locator('.wt-fact-event strong')).toHaveText(['PR #1502 merged', 'PR #1502 opened']);
   await expect(page.locator('.wt-fact-event .wt-event-source')).toHaveText(['GitHub', 'GitHub']);
   await expect(page.getByText('Task created', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Source linked', { exact: true })).toHaveCount(0);
@@ -461,6 +467,8 @@ test('links a recent served session of the project, detaches it, and can undo th
   await picker.getByRole('button', { name: 'Link Build report UI', exact: true }).click();
   await expect(page.getByText('1 linked session · one task', { exact: true })).toBeVisible();
   const linkedEvent = page.locator('.wt-event').filter({ hasText: 'Source linked' });
+  await expect(linkedEvent).toHaveCount(0);
+  await page.getByRole('checkbox', { name: 'Link changes', exact: true }).check();
   await expect(linkedEvent.getByText('Build report UI · Codex', { exact: true })).toHaveAttribute(
     'title',
     'session:fixture-machine/codex/campaign-root',
@@ -657,9 +665,9 @@ test('list and task layouts are accessible without overflow at desktop, tablet a
     await expect(taskLink).toHaveAttribute('title', longTitle);
     expect(await taskLink.locator('strong').evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe('2');
     const taskBounds = await row(page, ids.longTitle).boundingBox();
-    expect(taskBounds?.height).toBeLessThanOrEqual(width > 780 ? 100 : 150);
+    expect(taskBounds?.height).toBeLessThanOrEqual(width > 780 ? 240 : 360);
     if (width === 375) {
-      const titleBounds = await taskLink.boundingBox();
+      const titleBounds = await row(page, ids.longTitle).locator('.wt-task-summary').boundingBox();
       const weekControl = row(page, ids.longTitle).locator('.wt-day-button').first();
       const weekBounds = await weekControl.boundingBox();
       if (!(taskBounds && titleBounds && weekBounds)) {
@@ -679,4 +687,30 @@ test('list and task layouts are accessible without overflow at desktop, tablet a
   }
   await page.emulateMedia({ colorScheme: 'dark' });
   await assertAxe(page);
+});
+
+test('work exposes artifact links and independent states, with a global recent view and reversible chronology order', async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.getByRole('checkbox', { name: 'Group by project' })).not.toBeChecked();
+  await expect(row(page, ids.payments).getByRole('link', { name: 'PR #1487 ↗', exact: true })).toHaveAttribute(
+    'href',
+    'https://github.example/synthetic/example-shop/pull/1487',
+  );
+  await expect(row(page, ids.payments).getByRole('link', { name: 'SHOP-2085 ↗', exact: true })).toHaveAttribute(
+    'href',
+    'https://jira.example/browse/SHOP-2085',
+  );
+  await expect(row(page, ids.payments)).toContainText('CI');
+  await expect(row(page, ids.payments)).toContainText('Updated');
+  await open(page, ids.payments);
+  const order = page.getByRole('combobox', { name: 'Order', exact: true });
+  await expect(order).toHaveValue('true');
+  const times = page.locator('.wt-entry-time');
+  const newest = await times.first().getAttribute('datetime');
+  const oldest = await times.last().getAttribute('datetime');
+  expect(newest! >= oldest!).toBe(true);
+  await order.selectOption({ label: 'Oldest first' });
+  await expect(times.first()).toHaveAttribute('datetime', oldest!);
 });

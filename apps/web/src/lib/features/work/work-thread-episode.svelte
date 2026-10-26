@@ -1,5 +1,6 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits closed true/false ARIA states; SSR and browser regressions assert their values. -->
 <script lang="ts">
+  import type { WorkThreadLink } from '@ai-usage/report-core/work-thread';
   import type { WorkThreadEpisode } from '@ai-usage/report-core/work-thread-view';
   import { untrack } from 'svelte';
   import Episode from './work-thread-episode.svelte';
@@ -23,6 +24,7 @@
     onCopy,
     onDetach,
     linkedKeys,
+    links = [],
     busy = false,
     initiallyOpen = false,
   }: {
@@ -33,6 +35,7 @@
     onCopy: (text: string, message: string) => void;
     onDetach: (key: string) => void;
     linkedKeys: readonly string[];
+    links?: readonly WorkThreadLink[];
     busy?: boolean;
     initiallyOpen?: boolean;
   } = $props();
@@ -71,19 +74,30 @@
           : ''}</small
       ></span
     >
-    <span class="wt-duration" title={episodeDurationDetail(episode)}
-      ><span class="wt-sr"
-        >{episode.activeMs === null ? 'Duration not recorded: ' : 'Recorded for this episode: '}</span
-      >{episodeDuration(episode)}</span
-    >
+    {#if episode.activeMs !== null}
+      <span class="wt-duration" title={episodeDurationDetail(episode)}
+        ><span class="wt-sr"
+          >{episode.activeMs === null ? 'Duration not recorded: ' : 'Recorded for this episode: '}</span
+        >{episodeDuration(episode)}</span
+      >
+    {/if}
     <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
   </button>
-  {#if episode.result}
-    <p class="wt-session-result">{episode.result}</p>
-  {/if}
   {#if expanded}
     <div class="wt-inspector">
       <dl class="wt-context">
+        <div>
+          <dt>Linked because</dt>
+          <dd>
+            {#if links.find((link) => link.key === episode.linkKey)?.provenance === 'user'}
+              You linked this session
+            {:else if links.some((link) => link.key === episode.linkKey)}
+              Recorded task association
+            {:else}
+              Delegated by a linked session
+            {/if}
+          </dd>
+        </div>
         <div>
           <dt>Activity range</dt>
           <dd>{episodeTimeRange(episode, timeZone)}</dd>
@@ -174,7 +188,17 @@
     {#if delegationsExpanded}
       <div class="wt-children">
         {#each episode.children.slice(0, visibleChildCount) as child (child.linkKey)}
-          <Episode {busy} episode={child} {linkedKeys} {onCopy} {onDetach} {showDelegations} {taskTitle} {timeZone} />
+          <Episode
+            {busy}
+            episode={child}
+            {linkedKeys}
+            {links}
+            {onCopy}
+            {onDetach}
+            {showDelegations}
+            {taskTitle}
+            {timeZone}
+          />
         {/each}
         {#if episode.children.length > 5}
           <button

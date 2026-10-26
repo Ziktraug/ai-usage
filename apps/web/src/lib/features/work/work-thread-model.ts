@@ -614,7 +614,12 @@ const visibleThreadEvent = (event: WorkThreadEvent, data: WorkThreadDetailDatase
   return linksAtEvent.length === 0 || linksAtEvent.some((link) => link.provenance === 'user');
 };
 
-export const threadHistory = (data: WorkThreadDetailDataset, sessionsOnly: boolean, timeZone: string) => {
+export const threadHistory = (
+  data: WorkThreadDetailDataset,
+  sessionsOnly: boolean,
+  timeZone: string,
+  newestFirst = false,
+) => {
   const entries: ThreadHistoryEntry[] = data.episodes.map((entry) => ({
     kind: 'session',
     at: entry.startedAt,
@@ -637,6 +642,9 @@ export const threadHistory = (data: WorkThreadDetailDataset, sessionsOnly: boole
     );
   }
   entries.sort((left, right) => left.at.localeCompare(right.at) || left.id.localeCompare(right.id));
+  if (newestFirst) {
+    entries.reverse();
+  }
   const days = new Map<string, ThreadHistoryEntry[]>();
   for (const entry of entries) {
     const key = threadDayKey(entry.at, timeZone);
@@ -645,4 +653,20 @@ export const threadHistory = (data: WorkThreadDetailDataset, sessionsOnly: boole
     days.set(key, group);
   }
   return [...days].map(([key, items]) => ({ key, entries: items }));
+};
+
+export const localCheckoutStatus = (marker: WorkThreadMarkers['local'][number]): string => {
+  if (marker.latest?.outcome === 'missing') {
+    return 'Absent from disk';
+  }
+  if (marker.latest?.outcome !== 'observed') {
+    return 'Disk state unknown';
+  }
+  if (marker.latest.dirty === true) {
+    return 'On disk · changes';
+  }
+  if (marker.latest.dirty === false) {
+    return 'On disk · clean';
+  }
+  return 'On disk · state unknown';
 };

@@ -794,6 +794,60 @@ const immediate = <Value>(db: SqliteDatabase, use: () => Value): Value => {
 
 const cursorScope = (query: WorkThreadListQuery): string => JSON.stringify([query.tab, query.project, query.search]);
 
+/** Source change time and explicit operator events, evaluated before keyset pagination.
+ * Discovery, polling and automatic links must not turn old work into new activity.
+ */
+// Aggregate each source once before joining task links; a page must not rescan every
+// served transcript for every task (the 20,000-session fixture guards this boundary).
+const sourceActivitySql = `source_activity AS MATERIALIZED (
+ SELECT machine_id, kind, link_key, MAX(at) AS at FROM (
+   SELECT machine_id, 'session' AS kind, 'session:' || machine_id || '/claude/' || cli_session_id AS link_key,
+     last_activity_at AS at FROM claude_desktop_sessions
+   UNION ALL
+   SELECT d.machine_id, 'session', 'session:' || d.machine_id || '/claude/' || p.value, d.last_activity_at
+     FROM claude_desktop_sessions d, json_each(d.prior_cli_session_ids_json) p
+   UNION ALL
+   SELECT s.machine_id, 'session', 'session:' || s.machine_id || '/' || json_extract(s.source_row_json, '$.source.harnessKey')
+     || '/' || json_extract(s.source_row_json, '$.source.sourceSessionId'),
+     strftime('%Y-%m-%dT%H:%M:%fZ', s.active_time / 1000.0, 'unixepoch')
+     FROM served_report_rows s JOIN served_report_current c ON c.singleton = 1 AND c.revision = s.revision
+     JOIN served_report_revisions r ON r.revision = s.revision AND r.complete = 1
+     WHERE s.source_authority = 'local-observed'
+   UNION ALL
+   SELECT machine_id, 'pull-request', lower(host || '/' || repository || '#' || number),
+     MAX(COALESCE(updated_at, ''), COALESCE(merged_at, ''), COALESCE(created_at, ''), COALESCE(closed_at, ''))
+     FROM pull_request_observations WHERE outcome = 'observed'
+   UNION ALL
+   SELECT machine_id, 'jira-issue', 'jira:default/' || issue_key, updated_at
+     FROM jira_issue_observations WHERE outcome = 'observed'
+ ) WHERE at IS NOT NULL AND at != '' GROUP BY machine_id, kind, link_key
+)`;
+
+const threadActivitySql = `COALESCE((SELECT MAX(at) FROM (
+  SELECT e.at AS at FROM work_thread_events e WHERE e.thread_id = t.thread_id AND (
+    json_extract(e.event_json, '$.kind') IN ('follow-state', 'note', 'renamed', 'wait-satisfied')
+    OR (json_extract(e.event_json, '$.kind') = 'created' AND t.origin IN ('user', 'session'))
+    OR (json_extract(e.event_json, '$.kind') IN ('link-added', 'link-detached') AND EXISTS (
+      SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.provenance = 'user'
+        AND l.link_key = json_extract(e.event_json, '$.linkKey')
+    ))
+  )
+  UNION ALL
+  SELECT a.at FROM work_thread_links l JOIN source_activity a
+    ON a.machine_id = t.machine_id AND a.kind = l.kind AND a.link_key = CASE WHEN l.kind = 'pull-request' THEN lower(l.link_key) ELSE l.link_key END
+    WHERE l.thread_id = t.thread_id AND l.detached_at IS NULL
+  UNION ALL
+  SELECT j.at FROM work_thread_links l JOIN pull_request_observations p
+    ON p.machine_id = t.machine_id AND lower(l.link_key) = lower(p.host || '/' || p.repository || '#' || p.number)
+    JOIN source_activity j ON j.machine_id = t.machine_id AND j.kind = 'jira-issue'
+      AND instr('/' || p.head_ref || '/', '/' || substr(j.link_key, length('jira:default/') + 1) || '/') > 0
+    WHERE l.thread_id = t.thread_id AND l.kind = 'pull-request' AND l.detached_at IS NULL AND p.outcome = 'observed'
+      AND p.observed_at = (SELECT MAX(last.observed_at) FROM pull_request_observations last
+        WHERE last.machine_id = p.machine_id AND last.host = p.host AND last.repository = p.repository AND last.number = p.number AND last.outcome = 'observed')
+      AND NOT EXISTS (SELECT 1 FROM work_thread_links detached WHERE detached.thread_id = t.thread_id
+        AND detached.link_key = j.link_key AND detached.detached_at IS NOT NULL)
+) WHERE at IS NOT NULL AND at != ''), t.created_at)`;
+
 const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[] } => {
   if (
     !Number.isSafeInteger(query.limit) ||
@@ -857,7 +911,7 @@ const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[
     ) {
       return invalidInput('Invalid work thread cursor or changed query scope');
     }
-    conditions.push('(t.last_activity_at < ? OR (t.last_activity_at = ? AND t.thread_id > ?))');
+    conditions.push('(t.activity_at < ? OR (t.activity_at = ? AND t.thread_id > ?))');
     params.push(cursor.at, cursor.at, cursor.threadId);
   }
   return { params, sql: conditions.join(' AND ') };
@@ -1363,12 +1417,13 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
     read(input.dbPath, 'queryWorkThreadsPage', (db) => {
       const { sql, params } = pageFilter(input.query);
       const records = db
-        .query(`SELECT t.* FROM work_threads t WHERE ${sql}
-        ORDER BY t.last_activity_at DESC, t.thread_id ASC LIMIT ?`)
+        .query(`WITH ${sourceActivitySql}, activity AS MATERIALIZED (SELECT t.*, ${threadActivitySql} AS activity_at FROM work_threads t)
+        SELECT t.* FROM activity t WHERE ${sql}
+        ORDER BY t.activity_at DESC, t.thread_id ASC LIMIT ?`)
         .all(...params, input.query.limit + 1);
       const rows = records.slice(0, input.query.limit).map(
         (value): WorkThreadPageRow => ({
-          lastActivityAt: parseCanonicalInstant(record(value).last_activity_at),
+          lastActivityAt: parseCanonicalInstant(record(value).activity_at),
           thread: threadFromRecord(value),
         }),
       );

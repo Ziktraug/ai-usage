@@ -142,7 +142,8 @@ export const workFactSchemaSql = `
     sprint TEXT,
     parent_key TEXT,
     comment_count INTEGER CHECK (comment_count IS NULL OR comment_count >= 0),
-    comments_json TEXT NOT NULL
+    comments_json TEXT NOT NULL,
+    url TEXT
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_issue_observations_identity
     ON jira_issue_observations(machine_id, issue_key, observed_at DESC);
@@ -191,6 +192,7 @@ export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>
       ['discovery_role', 'mergeable', 'merge_state_status', 'created_at', 'closed_at', 'unresolved_review_threads'],
     ],
     ['checkout_status_observations', ['counts_changed_at']],
+    ['jira_issue_observations', ['url']],
     ['work_fact_run_state', ['outcome_code']],
   ] as const) {
     const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
@@ -289,6 +291,7 @@ interface JiraIssueRecord {
   status_category: string | null;
   summary: string | null;
   updated_at: string | null;
+  url?: string | null;
 }
 
 interface RunStateRecord {
@@ -418,6 +421,7 @@ const commentsFromColumn = (value: string): unknown => {
 };
 
 const jiraIssueValue = (record: JiraIssueRecord): unknown => ({
+  ...(record.url ? { url: record.url } : {}),
   assigneeLabel: record.assignee_label,
   commentCount: record.comment_count,
   comments: commentsFromColumn(record.comments_json),
@@ -773,8 +777,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
             const insert = db.query(`
               INSERT OR IGNORE INTO jira_issue_observations (
                 machine_id, issue_key, observed_at, outcome, outcome_message, status, status_category, summary,
-                updated_at, assignee_label, sprint, parent_key, comment_count, comments_json
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                updated_at, assignee_label, sprint, parent_key, comment_count, comments_json, url
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             for (const candidate of input.observations) {
               const observation = parseJiraIssueObservation(candidate);
@@ -797,6 +801,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 observation.parentKey,
                 observation.commentCount,
                 JSON.stringify(observation.comments),
+                observation.url ?? null,
               );
               if (changes(db) === 1) {
                 result.inserted += 1;

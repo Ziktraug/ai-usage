@@ -999,3 +999,35 @@ describe('work fact store: exact page batches', () => {
     });
   });
 });
+
+test('Jira browser URL survives storage without fabricating links for old observations', async () => {
+  const dbPath = await createStore('jira-url');
+  const observation = jiraIssue({ url: 'https://jira.example.test/browse/XLB-2090' });
+  await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [observation] }));
+  const result = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }));
+  expect(result.items[0]?.latest.url).toBe(observation.url);
+});
+
+test('old Jira observations remain readable without a URL; only the writer adds the nullable column', async () => {
+  const dbPath = await createStore('jira-legacy-url');
+  await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue()] }));
+  const db = new Database(dbPath);
+  try {
+    db.exec('ALTER TABLE jira_issue_observations DROP COLUMN url');
+    expect((await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }))).items[0]?.latest).toEqual(
+      jiraIssue(),
+    );
+    expect(
+      (db.query('PRAGMA table_info(jira_issue_observations)').all() as { name: string }[]).some(
+        (column) => column.name === 'url',
+      ),
+    ).toBe(false);
+    expect(migrateWorkFactSchema(db as unknown as Parameters<typeof migrateWorkFactSchema>[0])).toBe(true);
+    expect(migrateWorkFactSchema(db as unknown as Parameters<typeof migrateWorkFactSchema>[0])).toBe(false);
+    expect((await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }))).items[0]?.latest).toEqual(
+      jiraIssue(),
+    );
+  } finally {
+    db.close();
+  }
+});

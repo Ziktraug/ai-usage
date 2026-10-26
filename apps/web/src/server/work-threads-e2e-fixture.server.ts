@@ -172,6 +172,7 @@ const prMarker = (
 
 const jiraMarker = (key: string, done = false): WorkThreadMarkers['jiraIssues'][number] => {
   const observation: JiraIssueObservation = {
+    url: `https://jira.example/browse/${key}`,
     assigneeLabel: 'Synthetic operator',
     commentCount: 0,
     comments: [],
@@ -1045,7 +1046,11 @@ export const createSyntheticWorkThreadStore = (
         .filter((record) =>
           query.tab === 'done' ? record.thread.followState === 'done' : record.thread.followState !== 'done',
         )
-        .sort((left, right) => left.thread.threadId.localeCompare(right.thread.threadId));
+        .sort(
+          (left, right) =>
+            toRow(right).lastActivityAt.localeCompare(toRow(left).lastActivityAt) ||
+            left.thread.threadId.localeCompare(right.thread.threadId),
+        );
       const fingerprint = JSON.stringify([query.project, query.search, query.tab]);
       let offset = 0;
       if (query.cursor !== null) {

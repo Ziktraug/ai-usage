@@ -5,7 +5,9 @@ import type {
   JiraIssueObservation,
   PullRequestObservation,
 } from '@ai-usage/report-core/work-attention';
+import { jiraKeysInBranch } from '@ai-usage/report-core/work-attention-facts';
 import {
+  jiraIssueLinkKey,
   parseWorkThreadLinkKey,
   sessionLinkKey,
   WORK_THREAD_BOUNDS,
@@ -289,6 +291,7 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
   const paths = [
     ...evidence.branchCheckouts.map((entry) => ({
       ...entry,
+      dedicated: true,
       sessions: [] as { key: string; branch: string | null }[],
       via: 'branch-link' as const,
     })),
@@ -299,6 +302,7 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
         : [
             {
               checkoutPath,
+              dedicated: session.desktop?.worktreePath != null,
               key: keyOf(session),
               machineId: session.member.machineId,
               sessions: [
@@ -398,6 +402,13 @@ const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<R
       }
     }
     const prs = yield* queryLatestPullRequestObservations({ dbPath, batch: [...pullRequests.values()] });
+    for (const item of prs.items) {
+      const fact = item.latest.outcome === 'observed' ? item.latest : item.latestObserved;
+      for (const key of jiraKeysInBranch(fact?.headRef ?? '')) {
+        const target = { machineId: item.latest.machineId, key };
+        jiraIssues.set(identityOf(target.machineId, key), target);
+      }
+    }
     const jira = yield* queryLatestJiraIssueObservations({ dbPath, batch: [...jiraIssues.values()] });
     const local = yield* queryLatestCheckoutStatusObservations({ dbPath, batch: [...checkouts.values()] });
     const truncated = new Set<WorkThreadSourceStatus['source']>();
@@ -523,7 +534,7 @@ const readRow = (
   events: readonly WorkThreadEvent[],
   factsRead: RowFacts,
   now: CanonicalInstant,
-  storedActivity = thread.updatedAt,
+  storedActivity?: CanonicalInstant,
 ): RowRead => {
   const active = links.filter((link) => link.detachedAt === null);
   const { episodes: rawEpisodes, omitted, delegatedKeys } = episodesOf(evidence, active);
@@ -599,6 +610,19 @@ const readRow = (
       }
     }
   }
+  for (const marker of pullRequests) {
+    for (const key of jiraKeysInBranch(marker.latestSuccessful?.headRef ?? '')) {
+      const linkKey = jiraIssueLinkKey({ site: 'default', key });
+      if (
+        !(
+          jiraIssues.some((issue) => issue.key === linkKey) ||
+          links.some((link) => link.key === linkKey && link.detachedAt !== null)
+        )
+      ) {
+        jiraIssues.push(factOf(linkKey, factsRead.jiraIssues.get(identityOf(thread.machineId, key))));
+      }
+    }
+  }
   const checkoutPaths = checkoutPathsOf(evidence);
   if (checkoutPaths.length > WORK_THREAD_BOUNDS.maxLinksPerThread) {
     truncated.add('checkouts');
@@ -619,6 +643,14 @@ const readRow = (
       const successful = observation?.latest.outcome === 'observed' ? observation.latest : observation?.latestObserved;
       const branch = branchRef(successful?.branch);
       if (branch === null) {
+        if (
+          checkout.dedicated &&
+          checkout.sessions.some(
+            (session) => pullRequests.length === 0 || headRefs.has(branchRef(session.branch) ?? ''),
+          )
+        ) {
+          return [{ ...factOf(checkout.key, observation), via: checkout.via }];
+        }
         return [];
       }
       if (pullRequests.length > 0 && !headRefs.has(branch)) {
@@ -704,7 +736,21 @@ const readRow = (
       nativeRequestCoverage,
       afterDone: after.length === 0 ? null : { count: after.length, latestAt: latest(after) },
       firstActivityAt,
-      lastActivityAt: latest([storedActivity, ...dates]),
+      lastActivityAt:
+        storedActivity ??
+        latest([
+          ...dates,
+          ...events
+            .filter(
+              (event) =>
+                ['follow-state', 'note', 'renamed', 'wait-satisfied'].includes(event.kind) ||
+                (event.kind === 'created' && ['user', 'session'].includes(thread.origin)) ||
+                (['link-added', 'link-detached'].includes(event.kind) &&
+                  links.some((link) => link.key === event.linkKey && link.provenance === 'user')),
+            )
+            .map((event) => event.at),
+          ...(dates.length === 0 ? [thread.createdAt] : []),
+        ]),
       links: active,
       markers: { pullRequests, jiraIssues, local },
       marks,

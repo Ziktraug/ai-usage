@@ -1010,6 +1010,15 @@ const desktopWorkFactInputs = (input: {
               sessionId: observation.cliSessionId,
             }),
           };
+          // Desktop also lists PRs observed in a shared checkout. Only its own PR is
+          // evidence of continuity; observing a PR still makes it eligible for facts.
+          if (pullRequest.own !== true) {
+            if (!seenLinks.has(key)) {
+              seenLinks.add(key);
+              links.push(link);
+            }
+            continue;
+          }
           if (
             parseWorkThreadLinkKey('pull-request', declaration.pullRequestKey) &&
             parseWorkThreadLinkKey('session', declaration.sessionKey)

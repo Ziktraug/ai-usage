@@ -168,7 +168,7 @@
 .wt-board-head,
 .wt-task-row {
   display: grid;
-  grid-template-columns: 32% minmax(0, 1fr) 28%;
+  grid-template-columns: 48% minmax(0, 1fr) 28%;
 }
 .wt-board-head {
   align-items: center;
@@ -1055,7 +1055,7 @@
   }
   .wt-board-head,
   .wt-task-row {
-    grid-template-columns: 33% minmax(0, 1fr) 29%;
+    grid-template-columns: 46% minmax(0, 1fr) 29%;
   }
   .wt-task-title {
     padding-left: 16px;
@@ -1314,4 +1314,55 @@
   .wt-session-choice {
     flex-wrap: wrap;
   }
+}
+
+.wt-task-summary {
+  min-width: 0;
+  padding: 12px 18px;
+}
+.wt-task-summary .wt-task-title {
+  min-height: 24px;
+  padding: 0;
+}
+.wt-task-summary > .wt-meta {
+  margin-top: 5px;
+}
+.wt-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  font-size: 12px;
+}
+.wt-artifact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+.wt-artifact .wt-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.wt-status {
+  padding: 1px 5px;
+  border: 1px solid var(--wt-line);
+  border-radius: 4px;
+}
+.wt-status[data-state="MERGED"] {
+  color: var(--wt-accent);
+}
+.wt-status[data-state="failure"],
+.wt-read-warning {
+  color: var(--wt-warn);
+}
+@media (max-width: 780px) {
+  .wt-task-summary {
+    padding: 10px;
+  }
+}
+
+.wt-filters input[type="checkbox"] {
+  width: auto;
 }

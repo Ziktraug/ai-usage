@@ -107,6 +107,7 @@ was deleted.
 | [0075](0075-local-store-schema-evolution.md) | Local store schema evolution: forward-only, additive where possible, widen-only reads | 2026-10-24 | Accepted; extends 0009; amended 2026-10-25 (nullable columns) |
 | [0076](0076-browser-boundary-orpc-contract-and-tanstack-query.md) | Browser boundary: oRPC contract + TanStack Query, derived once | 2026-10-24 | Accepted; supersedes 0010 and 0012 |
 | [0077](0077-delegation-independent-of-the-calling-harness.md) | Delegation owned by AI Usage, independent of the calling harness (read-only reviews, Claude Code and Codex executors) | 2026-10-25 | Accepted; extends 0009, 0052, 0053, 0055, 0057, 0058, 0074, 0075; amends 0051 (stderr classification) |
+| [0078](0078-work-association-evidence-and-activity.md) | Work association evidence and source activity | 2026-10-26 | Accepted; amends 0063 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

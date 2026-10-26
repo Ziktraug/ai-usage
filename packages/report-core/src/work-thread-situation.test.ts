@@ -550,8 +550,32 @@ test('native requests keep personal state independent, preserve other remainder 
   expect(
     deriveWorkThreadSituation({ ...withPr(pr({ checksRollup: 'failure' })), nativeRequests: [request] }, at).reason,
   ).toBe('failing-checks');
+  const unrelated = {
+    ...request,
+    evidence: 'claude-desktop-declaration' as const,
+    text: '#42 merged; waiting on #99 CI',
+  };
+  const multiTaskSession = { ...withPr(pr({ state: 'MERGED', mergedAt: at })), nativeRequests: [unrelated] };
+  expect(kinds(multiTaskSession)).not.toContain('native-request');
+  expect(multiTaskSession.nativeRequests).toEqual([unrelated]);
   expect(
     deriveWorkThreadSituation(row({ thread: { ...thread, intent: 'analysis' }, nativeRequestCoverage: 'partial' }), at)
       .hint,
   ).not.toBe('ready-to-close');
+});
+
+test('a missing checkout keeps its unavailable evidence without treating historical files as current work', () => {
+  const previous = local({ dirty: true, modifiedCount: 2, ahead: 3 });
+  const value = row({
+    markers: {
+      jiraIssues: [],
+      pullRequests: [],
+      local: [
+        { key: 'checkout', via: 'session-checkout', latest: local({ outcome: 'missing' }), latestSuccessful: previous },
+      ],
+    },
+  });
+  const result = deriveWorkThreadSituation(value, at);
+  expect(result.remainders.map((item) => item.kind)).toEqual(['source-unavailable']);
+  expect(result.hint).not.toBe('ready-to-close');
 });

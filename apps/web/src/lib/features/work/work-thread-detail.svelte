@@ -6,8 +6,10 @@
     WorkThreadFollowState,
     WorkThreadWait,
   } from '@ai-usage/report-core/work-thread';
+  import { taskNativeRequests } from '@ai-usage/report-core/work-thread-situation';
   import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
   import { createWorkThreadCommandAction, type WorkThreadCommandActionInput } from '../../rpc/work-threads-client';
+  import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import WorkThreadEpisode from './work-thread-episode.svelte';
   import { captureFollowUndo, createFollowUndo, type FollowUndoAction } from './work-thread-follow-undo';
   import WorkThreadMarkers from './work-thread-markers.svelte';
@@ -85,10 +87,20 @@
   let toast = $state<string | null>(null);
   let undo = $state<(() => Promise<void>) | null>(null);
   let retry = $state<(() => Promise<void>) | null>(null);
-  const history = $derived(threadHistory(data, sessionsOnly, timeZone));
-  const nativePending = $derived(
-    row.nativeRequests.filter((request) => request.state === 'open' || request.state === 'uncertain'),
+  let newestFirst = $state(true);
+  let showLinkChanges = $state(false);
+  const history = $derived(
+    threadHistory(data, sessionsOnly, timeZone, newestFirst)
+      .map((day) => ({
+        ...day,
+        entries: day.entries.filter(
+          (entry) =>
+            showLinkChanges || entry.kind !== 'event' || !['link-added', 'link-detached'].includes(entry.event.kind),
+        ),
+      }))
+      .filter((day) => day.entries.length > 0),
   );
+  const nativePending = $derived(taskNativeRequests(row));
   const primaryRemainder = $derived(situation.remainders.find((item) => item.kind === situation.reason));
   const primaryPr = $derived(row.markers.pullRequests.find((marker) => marker.key === primaryRemainder?.key));
   const openPr = $derived(
@@ -454,6 +466,7 @@
     {/if}
   </div>
 {/if}
+<WorkThreadArtifacts now={data.generatedAt} {row} {timeZone} />
 <WorkThreadMarkers
   analysisOnly={thread.intent === 'analysis'}
   markers={threadDisplayMarkers(row)}
@@ -476,6 +489,14 @@
           Sessions
         </button>
       </fieldset>
+      <label class="wt-switch"><input type="checkbox" bind:checked={showLinkChanges}>Link changes</label>
+      <label class="wt-switch"
+        >Order
+        <select class="wt-input" bind:value={newestFirst}>
+          <option value={true}>Newest first</option>
+          <option value={false}>Oldest first</option>
+        </select>
+      </label>
       <label class="wt-switch"
         ><input type="checkbox" bind:checked={showDelegations}>
         Expand all delegations</label
@@ -498,6 +519,7 @@
                   episode={entry.episode}
                   initiallyOpen={selectedDay === day.key}
                   {linkedKeys}
+                  links={row.links}
                   onCopy={copy}
                   onDetach={detach}
                   {showDelegations}
@@ -608,7 +630,7 @@
 {/if}
 {#if data.detachedLinks.some((link) => link.kind === 'session')}
   <details class="wt-detached">
-    <summary>Detached sessions</summary>
+    <summary>{data.detachedLinks.filter((link) => link.kind === 'session').length} detached sessions</summary>
     {#each data.detachedLinks.filter((link) => link.kind === 'session') as link}
       <div class="wt-session-choice">
         <span>{link.key}</span

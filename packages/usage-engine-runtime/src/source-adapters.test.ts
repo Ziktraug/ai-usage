@@ -1627,9 +1627,36 @@ describe('jira issue source', () => {
       // Child (30 min ago) before root (1 h ago); each key once; the placeholder, the title's key
       // and the twenty-day-old session's key are never read.
       expect(calls.filter(({ args }) => args[2] === 'view').map(({ command, args }) => [command, ...args])).toEqual([
-        ['acli', 'jira', 'workitem', 'view', 'XLB-2091', '--json'],
-        ['acli', 'jira', 'workitem', 'view', 'XLB-2092', '--json'],
-        ['acli', 'jira', 'workitem', 'view', 'XLB-2090', '--json'],
+        [
+          'acli',
+          'jira',
+          'workitem',
+          'view',
+          'XLB-2091',
+          '--fields',
+          'key,summary,status,assignee,updated,parent,comment',
+          '--json',
+        ],
+        [
+          'acli',
+          'jira',
+          'workitem',
+          'view',
+          'XLB-2092',
+          '--fields',
+          'key,summary,status,assignee,updated,parent,comment',
+          '--json',
+        ],
+        [
+          'acli',
+          'jira',
+          'workitem',
+          'view',
+          'XLB-2090',
+          '--fields',
+          'key,summary,status,assignee,updated,parent,comment',
+          '--json',
+        ],
       ]);
       expect(calls.every(({ env }) => !Object.keys(env ?? {}).some((name) => SECRET_LIKE_VARIABLE.test(name)))).toBe(
         true,
@@ -1894,6 +1921,8 @@ test('Desktop PR declarations join same-cycle discovered threads once and respec
     for (const [id, numbers] of [
       ['declaring', [12, 13]],
       ['unrelated', []],
+      ['observed-only', [12]],
+      ['not-owned', [13]],
       ['unsupported', [12]],
     ] as const) {
       writeFileSync(
@@ -1912,7 +1941,7 @@ test('Desktop PR declarations join same-cycle discovered threads once and respec
             baseRef: 'main',
             branch: 'feature',
             host: 'github.com',
-            own: true,
+            own: id === 'observed-only' ? undefined : id !== 'not-owned',
             prNumber: number,
             provider: 'github',
             repo: 'fixture/project',

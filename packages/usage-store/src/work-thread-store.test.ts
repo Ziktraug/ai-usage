@@ -26,6 +26,7 @@ import {
   queryWorkThreadProjects,
   queryWorkThreadsPage,
 } from './reader';
+import { workFactSchemaSql } from './work-fact-store';
 import { createWorkThreadStore, type WorkThreadSeed, workThreadSchemaSql } from './work-thread-store';
 import {
   applyWorkThreadWaitObservations,
@@ -46,6 +47,88 @@ const MACHINE = 'thread-machine';
 const SESSION = `session:${MACHINE}/codex/session-one`;
 const PR = 'github.com/fixture/repo#42';
 const run = <Value>(effect: Effect.Effect<Value, UsageStoreError>): Promise<Value> => Effect.runPromise(effect);
+
+test('orders discovered work by source activity before pagination, never by collection or automatic links', async () => {
+  const dbPath = await createStore();
+  await run(
+    seedWorkThreads({
+      dbPath,
+      machineId: MACHINE,
+      now: NOW,
+      seeds: [42, 43].map((number) => ({
+        discoveredAt: NOW,
+        intent: 'change',
+        linkKind: 'pull-request',
+        origin: 'pull-request',
+        originKey: `github.com/fixture/repo#${number}`,
+        projectLabel: 'fixture/repo',
+        title: `PR ${number}`,
+      })),
+    }),
+  );
+  const observations: PullRequestObservation[] = [42, 43].map((number) => ({
+    accountLabel: null,
+    baseRef: 'main',
+    checksRollup: 'success',
+    draft: false,
+    headRef: 'topic',
+    host: 'github.com',
+    machineId: MACHINE,
+    mergedAt: null,
+    number,
+    observedAt: NOW,
+    outcome: 'observed',
+    outcomeMessage: null,
+    repository: 'fixture/repo',
+    reviewDecision: null,
+    state: 'OPEN',
+    title: `PR ${number}`,
+    url: `https://github.com/fixture/repo/pull/${number}`,
+    updatedAt: parseCanonicalInstant(number === 42 ? '2026-10-23T08:00:00.000Z' : '2026-10-24T09:00:00.000Z'),
+  }));
+  await run(importPullRequestObservations({ dbPath, observations }));
+  await run(
+    attachDeclaredWorkThreadSessions({
+      dbPath,
+      machineId: MACHINE,
+      now: LATER,
+      declarations: [{ pullRequestKey: PR, sessionKey: SESSION }],
+    }),
+  );
+  const first = await page(dbPath, { limit: 1 });
+  expect(first.rows[0]).toMatchObject({ thread: { title: 'PR 43' }, lastActivityAt: '2026-10-24T09:00:00.000Z' });
+  const second = await page(dbPath, { limit: 1, cursor: first.nextCursor });
+  expect(second.rows[0]).toMatchObject({ thread: { title: 'PR 42' }, lastActivityAt: '2026-10-23T08:00:00.000Z' });
+  expect(second.nextCursor).toBeNull();
+  await run(
+    importPullRequestObservations({
+      dbPath,
+      observations: observations.map((item) => ({ ...item, observedAt: LATER })),
+    }),
+  );
+  expect((await page(dbPath, { limit: 1 })).rows).toEqual(first.rows);
+  await run(
+    importPullRequestObservations({
+      dbPath,
+      observations: [
+        {
+          ...observations[0]!,
+          observedAt: parseCanonicalInstant('2026-10-24T12:00:00.000Z'),
+          headRef: 'fix/SHOP-42/changes',
+        },
+      ],
+    }),
+  );
+  await run(
+    importJiraIssueObservations({
+      dbPath,
+      observations: [
+        { machineId: MACHINE, key: 'SHOP-42', observedAt: LATER, updatedAt: NOW, outcome: 'observed', comments: [] },
+      ],
+    }),
+  );
+  expect((await page(dbPath, { limit: 1 })).rows[0]).toMatchObject({ thread: { title: 'PR 42' }, lastActivityAt: NOW });
+});
 
 describe('declared sessions join existing Work threads', () => {
   test('links exact declarations to each active PR thread once, including Done, without seeding', async () => {
@@ -311,11 +394,12 @@ const evidenceFixture = async () => {
   const dbPath = path.join(root, 'evidence.sqlite');
   const db = new Database(dbPath);
   db.exec(workThreadSchemaSql);
+  db.exec(workFactSchemaSql);
   db.exec(`
     CREATE TABLE served_report_current(singleton INTEGER, revision TEXT);
     CREATE TABLE served_report_revisions(revision TEXT, generated_at TEXT, complete INTEGER);
     CREATE TABLE served_report_rows(revision TEXT, ordinal INTEGER, row_id TEXT, project_label TEXT,
-      campaign_root INTEGER, origin TEXT, active_time INTEGER, machine_id TEXT, source_row_json TEXT);
+      campaign_root INTEGER, origin TEXT, active_time INTEGER, machine_id TEXT, source_row_json TEXT, source_authority TEXT DEFAULT 'local-observed');
     CREATE TABLE claude_desktop_sessions(id INTEGER PRIMARY KEY, machine_id TEXT, desktop_session_id TEXT,
       cli_session_id TEXT, prior_cli_session_ids_json TEXT, title TEXT, created_at TEXT, last_activity_at TEXT,
       cwd TEXT, worktree_path TEXT, last_turn_report TEXT, status_category TEXT, needs_action TEXT,
@@ -364,7 +448,7 @@ const evidenceFixture = async () => {
     } = {},
   ) => {
     ordinal++;
-    db.query('INSERT INTO served_report_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    db.query("INSERT INTO served_report_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'local-observed')").run(
       options.revision ?? 'fixture',
       ordinal,
       `row-${ordinal}`,

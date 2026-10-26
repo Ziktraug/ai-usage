@@ -6,12 +6,13 @@
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
   import { tick } from 'svelte';
+  import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import {
     bucketThreadMarks,
     groupThreadRows,
     harnessGlyph,
     harnessName,
-    threadRefs,
+    threadDate,
     threadSituationCopy,
     threadTime,
     threadWeek,
@@ -42,7 +43,13 @@
     continuation?: boolean;
   } = $props();
   const week = $derived(threadWeek(dataset.generatedAt, timeZone));
-  const groups = $derived(groupThreadRows(rows));
+  let groupByProject = $state(false);
+  const groups = $derived.by(() => {
+    if (groupByProject) {
+      return groupThreadRows(rows);
+    }
+    return rows.length ? [{ project: 'Latest activity', tasks: rows }] : [];
+  });
   let selectedMarks = $state<{ threadId: string; day: string } | null>(null);
   const closeMarks = (): void => {
     if (selectedMarks) {
@@ -89,6 +96,7 @@
     {/each}
   </div>
   <div class="wt-filters">
+    <label class="wt-switch"><input type="checkbox" bind:checked={groupByProject}>Group by project</label>
     <label class="wt-sr" for="work-task-search">Search tasks</label>
     <input
       class="wt-input"
@@ -118,7 +126,7 @@
 <div aria-labelledby={`work-tab-${query.tab}`} id="work-task-panel" role="tabpanel">
   <div class="wt-board">
     <div aria-hidden="true" class="wt-board-head">
-      <span>Task</span>
+      <span>Task · latest activity first ↓</span>
       <div class="wt-week-scale">
         {#each week as day}
           <span class:wt-today={day.today}>{day.label}</span>
@@ -139,16 +147,32 @@
             data-work-thread={row.thread.threadId}
             class:wt-waiting={row.thread.followState === 'waiting'}
           >
-            <a
-              aria-label={row.thread.title}
-              class="wt-task-title"
-              href={href(row.thread.threadId)}
-              onclick={(event) => onOpen(event, row.thread.threadId)}
-              title={row.thread.title}
-            >
-              <strong>{row.thread.title}</strong>
-              <span class="wt-meta">{threadRefs(row)}</span>
-            </a>
+            <div class="wt-task-summary">
+              <a
+                aria-label={row.thread.title}
+                class="wt-task-title"
+                href={href(row.thread.threadId)}
+                onclick={(event) => onOpen(event, row.thread.threadId)}
+                title={row.thread.title}
+              >
+                <strong>{row.thread.title}</strong>
+              </a>
+              <p class="wt-meta">
+                {row.thread.projectLabel ?? 'No project'}
+                · {row.sessionCount} linked
+                {row.sessionCount === 1 ? 'session' : 'sessions'}{row.delegatedSessionCount > 0
+                  ? ` · ${row.delegatedSessionCount} delegated`
+                  : ''}
+              </p>
+              <WorkThreadArtifacts now={dataset.generatedAt} {row} {timeZone} />
+              <p class="wt-meta">
+                Updated
+                <time datetime={row.lastActivityAt}
+                  >{threadDate(row.lastActivityAt, timeZone)}
+                  · {threadTime(row.lastActivityAt, timeZone)}</time
+                >
+              </p>
+            </div>
             <fieldset aria-label={`This week's activity for ${row.thread.title}`} class="wt-week">
               {#each week as day}
                 {@const marks = buckets.get(day.key) ?? []}

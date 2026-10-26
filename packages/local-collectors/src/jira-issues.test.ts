@@ -242,8 +242,24 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
       statusCategory: 'in-progress',
     });
     expect(fake.calls().map(({ args }) => args)).toEqual([
-      ['jira', 'workitem', 'view', 'XLB-2090', '--json'],
-      ['jira', 'workitem', 'view', 'XLB-2091', '--json'],
+      [
+        'jira',
+        'workitem',
+        'view',
+        'XLB-2090',
+        '--fields',
+        'key,summary,status,assignee,updated,parent,comment',
+        '--json',
+      ],
+      [
+        'jira',
+        'workitem',
+        'view',
+        'XLB-2091',
+        '--fields',
+        'key,summary,status,assignee,updated,parent,comment',
+        '--json',
+      ],
     ]);
     const serialized = JSON.stringify(batch);
     expect(serialized).not.toContain(STDERR_SENTINEL);
@@ -297,7 +313,8 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
     const slow = installFakeAcli({
       issues: { 'XLB-1': { delayMs: 2000, stdout: view('XLB-1') }, 'XLB-2': { stdout: view('XLB-2') } },
     });
-    const timedOut = await observe(slow, { keys: ['XLB-1', 'XLB-2'], timeoutMs: 150 });
+    // Allow the Bun fixture to start on a busy machine, while still timing out before its 2s response.
+    const timedOut = await observe(slow, { keys: ['XLB-1', 'XLB-2'], timeoutMs: 1000 });
     expect(timedOut.observations.map(({ outcome }) => outcome)).toEqual(['timeout', 'timeout']);
     expect(slow.calls()).toHaveLength(1);
   });
@@ -346,4 +363,44 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
     expect(call?.environment.filter((name) => !allowed(name))).toEqual([]);
     expect(call?.environment).not.toContain('JIRA_API_TOKEN');
   });
+});
+
+test('Jira provides its own browser authority, including a self-hosted context path', () => {
+  expect(
+    parseJiraIssueView(
+      JSON.stringify({ key: 'XLB-42', self: 'https://jira.example.test/jira/rest/api/2/issue/123', fields: {} }),
+      'XLB-42',
+    )?.url,
+  ).toBe('https://jira.example.test/jira/browse/XLB-42');
+  expect(
+    parseJiraIssueView(
+      JSON.stringify({ key: 'XLB-42', self: 'https://secret@jira.example.test/rest/api/2/issue/123', fields: {} }),
+      'XLB-42',
+    )?.url,
+  ).toBeUndefined();
+});
+
+test('Atlassian internal REST URLs use the public CLI site, read once per batch', async () => {
+  const fake = installFakeAcli({
+    auth: { stdout: 'Authenticated\n  Site: example.atlassian.net\n  Email: private@example.test' },
+    issues: Object.fromEntries(
+      ['XLB-1', 'XLB-2'].map((key) => [
+        key,
+        {
+          stdout: JSON.stringify({
+            key,
+            self: 'https://jira-prod-eu-25-2.prod.atl-paas.net/rest/api/3/issue/123',
+            fields: {},
+          }),
+        },
+      ]),
+    ),
+  });
+  const result = await observe(fake, { keys: ['XLB-1', 'XLB-2'] });
+  expect(result.observations.map((item) => item.url)).toEqual([
+    'https://example.atlassian.net/browse/XLB-1',
+    'https://example.atlassian.net/browse/XLB-2',
+  ]);
+  expect(fake.calls().filter((call) => call.args.join(' ') === 'jira auth status')).toHaveLength(1);
+  expect(JSON.stringify(result)).not.toContain('private@example.test');
 });

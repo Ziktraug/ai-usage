@@ -1758,7 +1758,9 @@ describe('work-thread reader', () => {
       'checkout_status_observations',
       'work_thread_events',
     ]) {
-      expect(page.queries.filter((sql) => sql.includes(`FROM ${table}`))).toHaveLength(1);
+      expect(page.queries.filter((sql) => sql.includes(`FROM ${table}`))).toHaveLength(
+        table === 'checkout_status_observations' ? 1 : 2,
+      );
     }
     expect(page.list.rows).toHaveLength(9);
     expect(page.list.rows.flatMap((row) => row.markers.pullRequests)).toHaveLength(558);
@@ -2495,4 +2497,104 @@ describe('work-thread reader', () => {
     );
     expect(invalid._tag).toBe('Failure');
   });
+});
+
+test('a PR branch supplies an exact Jira reference and its observed URL without guessing a site', async () => {
+  const dbPath = await fixture();
+  const threadId = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }]);
+  await run(importPullRequestObservations({ dbPath, observations: [{ ...pr(-2), headRef: 'fix/SHOP-42/url-limit' }] }));
+  const issue = parseJiraIssueObservation({
+    machineId: MACHINE,
+    key: 'SHOP-42',
+    observedAt: at(-1),
+    outcome: 'observed',
+    status: 'In progress',
+    url: 'https://jira.example.test/browse/SHOP-42',
+    comments: [],
+  });
+  if (!issue) {
+    throw new Error('Invalid Jira fixture');
+  }
+  await run(importJiraIssueObservations({ dbPath, observations: [issue] }));
+  const result = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+  expect(result?.row.markers.jiraIssues[0]?.latestSuccessful).toMatchObject({
+    key: 'SHOP-42',
+    status: 'In progress',
+    url: issue.url,
+  });
+  expect(result?.row.links.filter((link) => link.kind === 'session')).toHaveLength(0);
+});
+
+test('a deleted dedicated worktree stays visible even without a previous successful disk read', async () => {
+  const dbPath = await fixture();
+  const desktop = parseClaudeDesktopSessionObservation({
+    accountDirectory: 'account',
+    archived: false,
+    branch: 'feat/x',
+    cliSessionId: 'cli-id',
+    completedTurns: 1,
+    createdAt: at(-4),
+    cwd: '/fixture/desktop',
+    declaredPullRequests: [{ host: 'github.com', repository: 'fixture/repo', number: 7, state: 'OPEN' }],
+    desktopSessionId: 'desktop-id',
+    effort: null,
+    fileModifiedAt: at(-1),
+    filePath: 'account/session.json',
+    format: 'claude-desktop-session-v1',
+    lastActivityAt: at(-1),
+    lastTurnReport: 'Ready for review.',
+    machineId: MACHINE,
+    model: null,
+    observedAt: at(0),
+    openSuggestions: [],
+    organizationDirectory: 'org',
+    originCwd: null,
+    priorCliSessionIds: [],
+    resolvedSuggestions: {},
+    sideSessionNotes: [],
+    sourceBranch: null,
+    spawnedFrom: null,
+    title: 'Desktop title',
+    titleSource: 'auto',
+    turnSummary: {
+      detail: 'Waiting for decision',
+      needsAction: 'Review this',
+      status: 'review_ready',
+      summarizesUuid: null,
+    },
+    unsupportedReason: null,
+    worktreePath: '/fixture/deleted-worktree',
+    wrapUpDescription: null,
+    writtenBranches: [],
+  });
+
+  if (!desktop) {
+    throw new Error('Invalid Desktop fixture');
+  }
+  await run(
+    importClaudeDesktopSessions({
+      dbPath,
+      machineId: MACHINE,
+      collectedAt: NOW,
+      completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+      observations: [desktop],
+    }),
+  );
+  const threadId = await create(dbPath, [
+    { kind: 'session', key: sessionLinkKey({ machineId: MACHINE, harness: 'claude', sessionId: 'cli-id' }) },
+    { kind: 'pull-request', key: 'github.com/fixture/repo#7' },
+  ]);
+  await run(importPullRequestObservations({ dbPath, observations: [{ ...pr(-2), headRef: 'feat/x' }] }));
+  const missing = parseCheckoutStatusObservation({
+    machineId: MACHINE,
+    checkoutPath: '/fixture/deleted-worktree',
+    observedAt: at(-1),
+    outcome: 'missing',
+  });
+  if (!missing) {
+    throw new Error('Invalid missing checkout');
+  }
+  await run(importCheckoutStatusObservations({ dbPath, observations: [missing] }));
+  const result = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+  expect(result?.row.markers.local).toMatchObject([{ latest: { outcome: 'missing' }, latestSuccessful: null }]);
 });

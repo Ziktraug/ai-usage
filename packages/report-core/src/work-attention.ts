@@ -929,7 +929,39 @@ export interface JiraIssueObservation {
   readonly statusCategory: JiraStatusCategory | null;
   readonly summary: string | null;
   readonly updatedAt: CanonicalInstant | null;
+  readonly url?: string;
 }
+
+const JIRA_URL_PATH = /^(.*)(?:\/rest\/api\/[^/]+\/issue\/[^/]+|\/browse\/[^/]+)$/;
+
+/** Derive a browser link only from a Jira-provided site URL, never a guessed authority. */
+export const jiraBrowseUrl = (value: unknown, key: string): string | null => {
+  if (typeof value !== 'string' || !JIRA_ISSUE_KEY_PATTERN.test(key)) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.hostname === 'api.atlassian.com' ||
+      url.hostname.endsWith('.atl-paas.net')
+    ) {
+      return null;
+    }
+    const match = JIRA_URL_PATH.exec(url.pathname);
+    if (!match) {
+      return null;
+    }
+    url.pathname = `${match[1]}/browse/${key}`;
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return null;
+  }
+};
 
 const jiraKey = (value: unknown): string | null =>
   typeof value === 'string' && value.length <= maxShortText && JIRA_ISSUE_KEY_PATTERN.test(value) ? value : null;
@@ -1012,6 +1044,7 @@ export const parseJiraIssueObservation = (value: unknown): JiraIssueObservation 
     statusCategory,
     summary,
     updatedAt,
+    ...(jiraBrowseUrl(value.url, key) ? { url: jiraBrowseUrl(value.url, key)! } : {}),
   };
 };
 

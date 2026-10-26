@@ -83,7 +83,7 @@ const observation = <T extends DatedObservation>(
 const localRemainders = (row: WorkThreadRow, now: number, remainders: WorkThreadRemainder[]) => {
   for (const marker of row.markers.local) {
     const fact = observation(marker, 'local', now, remainders);
-    if (fact === null) {
+    if (fact === null || marker.latest?.outcome === 'missing') {
       continue;
     }
     const evidence = { key: marker.key, observedAt: fact.observedAt, source: 'local' as const };
@@ -169,9 +169,44 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
   }
 };
 
+/** Session-wide reports can discuss several PRs. Foreign references disqualify a report
+ * as the task's next action; the original report remains available on its session.
+ * This does not resolve a request or change the operator's follow state.
+ */
+export const taskNativeRequests = (row: WorkThreadRow): readonly WorkThreadNativeRequest[] => {
+  const numbers = new Set(
+    row.markers.pullRequests.flatMap((marker) => {
+      const fact = marker.latestSuccessful ?? marker.latest;
+      return fact ? [String(fact.number)] : [];
+    }),
+  );
+  const urls = new Set(
+    row.markers.pullRequests.flatMap((marker) => {
+      const fact = marker.latestSuccessful ?? marker.latest;
+      return fact ? [`${fact.host}/${fact.repository}/pull/${fact.number}`.toLowerCase()] : [];
+    }),
+  );
+  return row.nativeRequests.filter((request) => {
+    if (request.state !== 'open' && request.state !== 'uncertain') {
+      return false;
+    }
+    if (request.evidence !== 'claude-desktop-declaration' || numbers.size === 0) {
+      return true;
+    }
+    const references = [...request.text.matchAll(/#(\d+)\b/g)].map((match) => match[1]);
+    const qualified = [...request.text.matchAll(/https?:\/\/([^\s/]+\/[^\s/]+\/[^\s/]+\/pull\/\d+)\b/g)].map((match) =>
+      match[1]?.toLowerCase(),
+    );
+    return (
+      references.every((number) => number !== undefined && numbers.has(number)) &&
+      qualified.every((url) => url !== undefined && urls.has(url))
+    );
+  });
+};
+
 const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadRemainder[] => {
   const remainders: WorkThreadRemainder[] = [];
-  for (const request of row.nativeRequests) {
+  for (const request of taskNativeRequests(row)) {
     if (request.state === 'open' || request.state === 'uncertain') {
       remainders.push({
         key: request.key,
