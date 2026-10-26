@@ -37,7 +37,11 @@ import {
 } from '@ai-usage/report-core/work-attempts';
 import type { ReviewTarget } from '@ai-usage/report-core/work-routing';
 import { declarationForReviewCandidate } from '@ai-usage/report-core/work-routing';
-import type { UsageEngineCommand, UsageEngineReviewReservationReleaseOutput } from '@ai-usage/usage-engine-control';
+import {
+  boundUsageEngineReviewMessage,
+  type UsageEngineCommand,
+  type UsageEngineReviewReservationReleaseOutput,
+} from '@ai-usage/usage-engine-control';
 import {
   markReviewAttemptsLost,
   queryLatestExecutorObservations,
@@ -51,6 +55,7 @@ import {
   transitionReviewAttempt,
 } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
+import type { ReviewAdmission, ReviewAdmissionPort } from './delegation';
 import { createProcessTableScanner, type FindReviewProcesses } from './review-attempts-process';
 import type { UsageEngineReviewAttemptPort } from './runtime';
 
@@ -59,10 +64,14 @@ import type { UsageEngineReviewAttemptPort } from './runtime';
  * in this order: read the facts (declarations and review targets from the home config, executor
  * observations and quota from the store, the target's checkout from the Desktop session or the
  * served Session), settle any reservation a lost attempt still holds on the target with process
- * evidence, decide with the pure policy, record the attempt, spawn the harness, and return. The
- * process then runs in the background of the engine process; its heartbeats and its end are
- * written to the same row. Nothing here is decided by the browser, nothing is relaunched, and no
- * process this engine did not start is ever adopted or signalled.
+ * evidence, decide with the pure policy, submit the launch to the common review policy (the
+ * delegation service's admission, ADR 0077: canonical checkout, frozen revision, the home
+ * `delegation` rules and the reservations of both review families), record the attempt with its
+ * frozen revision, spawn the harness on exactly that revision, and return. The process then runs
+ * in the background of the engine process; its heartbeats and its end are written to the same
+ * row. Nothing here is decided by the browser, nothing is relaunched, and no process this engine
+ * did not start is ever adopted or signalled. The session lookup stays here: the common policy
+ * takes a checkout path, never a session.
  */
 type StartReviewAttemptCommand = Extract<UsageEngineCommand, { readonly command: 'start-review-attempt' }>;
 
@@ -73,6 +82,11 @@ export type ReviewLauncher = (
 ) => Promise<ClaudeReviewLaunch>;
 
 export interface ReviewAttemptServiceOptions {
+  /**
+   * The common review policy (the delegation service's `admitReview`): every launch passes it
+   * after the structural checks, so a rule that forbids a route for a delegation forbids it here.
+   */
+  readonly admission: ReviewAdmissionPort;
   readonly codexLauncher?: typeof launchCodexReview;
   readonly codexLaunchOptions?: CodexReviewLaunchOptions;
   readonly dbPath: string;
@@ -342,12 +356,17 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     runs.set(attempt.attemptId, { launch, settled });
   };
 
-  const launchFor = async (attempt: ReviewAttempt, decision: Extract<ReviewLaunchDecision, { kind: 'allowed' }>) => {
+  const launchFor = async (
+    attempt: ReviewAttempt,
+    decision: Extract<ReviewLaunchDecision, { kind: 'allowed' }>,
+    admission: Extract<ReviewAdmission, { kind: 'admitted' }>,
+  ) => {
     if (attempt.launchSessionId === null) {
       throw new Error(`review attempt ${attempt.attemptId} has no launch session id`);
     }
     const spec: ClaudeReviewLaunchSpec = {
-      checkoutPath: decision.checkout.checkoutPath,
+      // The canonical checkout the admission resolved, so the review runs where it is reserved.
+      checkoutPath: admission.checkout.path,
       effort: decision.declaration.effort,
       launchSessionId: attempt.launchSessionId,
       // The launched model is the candidate's: an alternate-model candidate (ADR 0057) shares its
@@ -382,10 +401,29 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
             await transition(attempt.attemptId, { nativeTurnId });
           },
         },
-        options.codexLaunchOptions ?? {},
+        {
+          ...options.codexLaunchOptions,
+          scope: {
+            ...options.codexLaunchOptions?.scope,
+            revision: {
+              baseSha: admission.scope.baseSha,
+              headSha: admission.scope.headSha,
+              kind: admission.scope.kind,
+            },
+          },
+        },
       );
     }
-    return await launcher(spec, events, options.launchOptions ?? {});
+    // The reserved revision is the reviewed one: the scope is prepared from the frozen SHAs the
+    // admission recorded, never from a `HEAD` that may have moved since.
+    const launchOptions = options.launchOptions ?? {};
+    return await launcher(spec, events, {
+      ...launchOptions,
+      scope: {
+        ...launchOptions.scope,
+        revision: { baseSha: admission.scope.baseSha, headSha: admission.scope.headSha, kind: admission.scope.kind },
+      },
+    });
   };
 
   const startAttempt: ReviewAttemptService['start'] = async (command, signal) => {
@@ -478,15 +516,33 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
           ),
         signal,
       );
+      if (refused.kind !== 'inserted') {
+        // A refusal row reserves nothing, so the store never answers it with a reservation refusal.
+        throw new Error(`unexpected store answer ${refused.kind} for a refused review attempt row`);
+      }
       report(`usage-engine review-attempt=refused attempt=${refused.attempt.attemptId} reason=${reason.reason}`);
+      // The row keeps the reason under the store's bound; the answer is cut to the control plane's.
       return {
         attempt: { attemptId: refused.attempt.attemptId, reused: false, state: 'refused' as const },
         kind: 'review-attempt' as const,
-        refusal: { message: reason.message, reason: reason.reason },
+        refusal: { message: boundUsageEngineReviewMessage(reason.message), reason: reason.reason },
       };
     };
     if (decision.kind === 'refused') {
       return await refuse(decision);
+    }
+    // The common review policy (ADR 0077), the same assessment a delegation start runs: canonical
+    // checkout admission, frozen scope, the home `delegation` rules, identity evidence, reserve
+    // and the reservations of both families. The candidate id is the delegation route id, so a
+    // forced candidate is judged as that route and cannot bypass a rule.
+    const admission = await options.admission({
+      checkoutPath: decision.checkout.checkoutPath,
+      routeId: command.candidateId,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    signal?.throwIfAborted();
+    if (admission.kind === 'refused') {
+      return await refuse({ kind: 'refused', message: admission.message, missing: [], reason: admission.reason });
     }
     // The stored observation can be up to two cadences old; a pinned route is confirmed again
     // now, with the launch's own CLI and CLAUDE_CONFIG_DIR, so a later sign-in to another account
@@ -519,15 +575,26 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
               launchSessionId: randomUUID(),
               machineId,
               requestedAt,
+              // What the row reserves across both families, checked under the insert transaction.
+              reservation: {
+                baseSha: admission.scope.baseSha,
+                headSha: admission.scope.headSha,
+                maxConcurrent: admission.route.requirements.maxConcurrent,
+                poolId: admission.route.poolId,
+              },
               state: 'requested',
-              target,
+              // The canonical checkout the review runs in and reserves; the origin says how the session led to it.
+              target: { ...target, checkoutPath: admission.checkout.path },
             },
             dbPath: options.dbPath,
           }),
         ),
       signal,
     );
-    if (requested.reused) {
+    if (requested.kind === 'target-reserved' || requested.kind === 'pool-busy') {
+      return await refuse({ kind: 'refused', message: requested.message, missing: [], reason: requested.kind });
+    }
+    if (requested.kind === 'reused') {
       if (requested.attempt.state === 'lost') {
         // Recorded lost between the read above and this write: still held, never twinned.
         const held = await settleLostReservation(requested.attempt, (operation) => gated(operation, signal));
@@ -552,7 +619,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
       if (stopping) {
         throw new Error('the engine is stopping; the review was not launched');
       }
-      launch = await launchFor(attempt, decision);
+      launch = await launchFor(attempt, decision, admission);
     } catch (error) {
       const endedAt = now().toISOString();
       const message = launchFailureReason(error);

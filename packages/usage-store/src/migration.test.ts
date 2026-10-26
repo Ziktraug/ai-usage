@@ -9,6 +9,7 @@ import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
   queryClaudeDesktopSessions,
+  queryExecutorAccountChanges,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
@@ -601,6 +602,142 @@ describe('usage-store forward migration', () => {
       truncated: false,
     });
     // Observations qualify routing; they are not report data and never request a publication.
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
+  test('adds the delegation tables to a current-version store without bumping user_version, idempotently', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-delegation-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    beforeMigration.exec(
+      'DROP TABLE delegation_evaluations; DROP TABLE delegation_jobs; DROP TABLE delegation_qualifications;',
+    );
+    const schemaWithout = readSchema(beforeMigration);
+    expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    beforeMigration.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const schemaAfter = readSchema(migrated);
+    const added = schemaAfter.filter((object) => !schemaWithout.some((previous) => previous.name === object.name));
+    expect(added.filter((object) => object.type === 'table').map((object) => object.name)).toEqual([
+      'delegation_evaluations',
+      'delegation_jobs',
+      'delegation_qualifications',
+    ]);
+    expect(added.filter((object) => object.type === 'index').map((object) => object.name)).toEqual([
+      'idx_delegation_evaluations_job',
+      'idx_delegation_jobs_machine_state',
+      'idx_delegation_jobs_pool',
+      'idx_delegation_jobs_reserved_target',
+      'idx_delegation_jobs_retry_of',
+      'idx_delegation_jobs_target',
+      'idx_delegation_qualifications_machine',
+    ]);
+    // Everything that was there before is unchanged.
+    expect(schemaAfter.filter((object) => !added.includes(object))).toEqual(schemaWithout);
+    migrated.close(true);
+
+    // A second open changes nothing.
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const reopened = new Database(dbPath, { create: false, readonly: true });
+    expect(readSchema(reopened)).toEqual(schemaAfter);
+    reopened.close(true);
+    // Jobs are not report data: the generation that drives publication did not move.
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
+  });
+
+  test('adds the executor account-change barrier table under the same user_version, backfilled from the retained history', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-account-change-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const observation = (machineId: string, harness: string, observedAt: string, accountFingerprint?: string) => ({
+      ...(accountFingerprint === undefined ? {} : { accountFingerprint }),
+      authEvidence: `${harness} status exit 0`,
+      authMethod: null,
+      authState: 'logged-in',
+      binaryPath: `/usr/bin/${harness}`,
+      harness,
+      machineId,
+      observedAt,
+      outcome: 'observed',
+      version: '1.0.0',
+    });
+    await Effect.runPromise(
+      importExecutorObservations({
+        dbPath,
+        observations: [
+          observation('machine-a', 'claude-code', '2026-10-25T08:00:00.000Z', '0123456789abcdef'),
+          observation('machine-a', 'claude-code', '2026-10-25T09:00:00.000Z', 'fedcba9876543210'),
+          observation('machine-a', 'claude-code', '2026-10-25T10:00:00.000Z', 'fedcba9876543210'),
+          observation('machine-a', 'codex', '2026-10-25T08:30:00.000Z'),
+          observation('machine-b', 'claude-code', '2026-10-25T07:00:00.000Z', '0123456789abcdef'),
+        ],
+      }),
+    );
+
+    // A store written before the table: the observations stay, the barrier does not exist yet.
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    beforeMigration.exec('DROP TABLE executor_account_changes;');
+    const schemaWithout = readSchema(beforeMigration);
+    expect(readUserVersion(beforeMigration)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    beforeMigration.close(true);
+    expect(await Effect.runPromise(queryExecutorAccountChanges({ dbPath, machineId: 'machine-a' }))).toEqual({
+      changes: [],
+      persisted: false,
+      skipped: 0,
+      truncated: false,
+    });
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect(readUserVersion(migrated)).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const schemaAfter = readSchema(migrated);
+    const added = schemaAfter.filter((object) => !schemaWithout.some((previous) => previous.name === object.name));
+    expect(added.map((object) => [object.type, object.name])).toEqual([['table', 'executor_account_changes']]);
+    expect(schemaAfter.filter((object) => !added.includes(object))).toEqual(schemaWithout);
+    migrated.close(true);
+    // The backfill applies the import rule to the retained history: a change still visible is kept.
+    expect(await Effect.runPromise(queryExecutorAccountChanges({ dbPath, machineId: 'machine-a' }))).toEqual({
+      changes: [
+        {
+          accountFingerprint: 'fedcba9876543210',
+          changedAt: '2026-10-25T09:00:00.000Z',
+          harness: 'claude-code',
+          machineId: 'machine-a',
+          observedAt: '2026-10-25T10:00:00.000Z',
+        },
+      ],
+      persisted: true,
+      skipped: 0,
+      truncated: false,
+    });
+    expect((await Effect.runPromise(queryExecutorAccountChanges({ dbPath, machineId: 'machine-b' }))).changes).toEqual([
+      {
+        accountFingerprint: '0123456789abcdef',
+        changedAt: null,
+        harness: 'claude-code',
+        machineId: 'machine-b',
+        observedAt: '2026-10-25T07:00:00.000Z',
+      },
+    ]);
+
+    // A second open changes nothing: the barrier is not backfilled again.
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const reopened = new Database(dbPath, { create: false, readonly: true });
+    expect(readSchema(reopened)).toEqual(schemaAfter);
+    reopened.close(true);
+    expect(
+      (await Effect.runPromise(queryExecutorAccountChanges({ dbPath, machineId: 'machine-a' }))).changes[0]?.changedAt,
+    ).toBe('2026-10-25T09:00:00.000Z');
+    // Barriers are not report data: the generation that drives publication did not move.
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generationBefore);
   });
 

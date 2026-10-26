@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { runBoundaryEffect, WideEventResourceService, WideEventSink } from '@ai-usage/effect-runtime';
 import {
   createLocalHistoryStorage,
@@ -52,6 +52,7 @@ import {
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/writer';
 import { Effect, Layer, ManagedRuntime, Stream } from 'effect';
+import { createDelegationService } from './delegation';
 import {
   discardUsageEngineHandoff,
   readUsageEngineInput,
@@ -502,6 +503,11 @@ export interface LiveUsageEngineRuntimeOptions {
   readonly codexLiveAvailable?: () => boolean;
   readonly configCwd: string;
   readonly dbPath: string;
+  /**
+   * Engine-owned directory for the delegation workers' private files (ADR 0077), created 0700;
+   * defaults to `delegation/` beside the inbox, inside the engine state directory.
+   */
+  readonly delegationPrivateRoot?: string;
   readonly inboxDirectory: string;
   readonly initialSourceDetection?: 'automatic' | 'deferred';
   readonly instanceId: string;
@@ -511,7 +517,7 @@ export interface LiveUsageEngineRuntimeOptions {
   readonly readInput?: typeof readUsageEngineInput;
   readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly reportRecovery?: (result: UsageEngineRecoveryReport) => void;
-  /** One operator-log line per review attempt transition (ADR 0053); never a transcript. */
+  /** One operator-log line per review attempt or delegation transition (ADR 0053, 0077); never a transcript. */
   readonly reportReviewAttempt?: (line: string) => void;
   readonly retainRevisions?: (input: { readonly dbPath: string; readonly now: number }) => Promise<void>;
   /** Process seams forwarded to fact/executor sources; production uses their bounded default runners. */
@@ -1058,9 +1064,22 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     runWithWriter: (operation, signal) => writerGate.run(operation, signal),
   });
 
-  // The review launcher writes short rows through the gate and runs the harness outside it; its
-  // startup recovery is called from the gated `recover` below, so that path writes ungated.
+  // Delegation (ADR 0077): gated short writes, workers run outside the gate, startup recovery inside
+  // the gated `recover`, with the adapters' private files under an engine-owned directory in the
+  // engine state directory. It also owns the common review policy every launch passes through.
+  const delegation = createDelegationService({
+    dbPath: options.dbPath,
+    machine: requireMachine,
+    now,
+    privateRoot: options.delegationPrivateRoot ?? join(dirname(options.inboxDirectory), 'delegation'),
+    ...(options.reportReviewAttempt === undefined ? {} : { report: options.reportReviewAttempt }),
+    runWithWriter: (operation, signal) => writerGate.run(operation, signal),
+    storage,
+  });
+  // The legacy review launcher (the Work view's command) follows the same discipline and submits
+  // every launch to the delegation service's admission before it records or spawns anything.
   const reviewAttempts = createReviewAttemptService({
+    admission: delegation.admitReview,
     dbPath: options.dbPath,
     machine: requireMachine,
     now,
@@ -1104,9 +1123,10 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
       }),
     quiesceStore: async () => {
       try {
-        // Running reviews are terminated and recorded as lost before the store is quiesced, so no
-        // background write can reopen the writer afterwards.
+        // Running reviews and delegation workers are terminated and recorded before the store is
+        // quiesced, so no background write can reopen the writer afterwards.
         await reviewAttempts.shutdown();
+        await delegation.shutdown();
         await writerGate.run(async () => {
           await Effect.runPromise(quiesceUsageStoreForShutdown({ dbPath: options.dbPath }));
         });
@@ -1116,6 +1136,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
       }
     },
     ...(options.readReplicationStatus === undefined ? {} : { readReplicationStatus: options.readReplicationStatus }),
+    delegation,
     reviewAttempts,
     routingQualification,
     workThreads,
@@ -1132,9 +1153,10 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
           },
           { phase: 'startup' },
         );
-        // A restart holds no pipe to any review the previous engine started: those rows become
-        // `lost` (to verify in the harness), never relaunched.
+        // A restart holds no pipe to any review or delegation worker the previous engine started:
+        // those rows become `lost` (to verify in the harness), never relaunched.
         await reviewAttempts.recoverLost();
+        await delegation.recoverLost();
         const gracePeriodMs = options.legacyArtifactGracePeriodMs ?? 5 * 60 * 1000;
         const recoveryTime = now().getTime();
         await repairManagedCursorUsageExportModes(options.configCwd);

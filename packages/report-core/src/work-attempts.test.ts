@@ -629,6 +629,14 @@ describe('attempt re-validation', () => {
       parseReviewAttemptScope({ ...scope, files: [{ ...scope.files[0], coverage: 'skimmed' }, scope.files[1]] }),
     ).toBeNull();
     expect(parseReviewAttemptScope({ ...scope, extra: 1 })).toBeNull();
+    // A frozen range (delegation): kind `range` goes with base `range-base` only, and vice versa.
+    const range: ReviewAttemptScope = { ...scope, base: 'range-base', kind: 'range' };
+    expect(parseReviewAttemptScope(range)).toEqual(range);
+    expect(parseReviewAttemptScope({ ...range, parentCount: 0 })).toEqual({ ...range, parentCount: 0 });
+    expect(parseReviewAttemptScope({ ...range, base: 'first-parent' })).toBeNull();
+    expect(parseReviewAttemptScope({ ...range, base: 'empty-tree' })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, base: 'range-base' })).toBeNull();
+    expect(parseReviewAttemptScope({ ...scope, kind: 'working-tree' })).toBeNull();
     expect(
       parseReviewAttemptScope({
         ...scope,

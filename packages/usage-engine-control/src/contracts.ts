@@ -4,6 +4,25 @@ import {
   parseCampaignLabelOverrideMutation,
 } from '@ai-usage/report-core/campaign-label';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+// The delegation vocabulary is import-free; the answer shapes are types only. The delegation parsers
+// (request, policy, qualification) stay out of this module: the edges run them, the control plane
+// checks shape and bounds.
+import type { DelegationCancelAnswer, DelegationStartAnswer } from '@ai-usage/report-core/delegation-contracts';
+import {
+  DELEGATION_BOUNDS,
+  DELEGATION_CANCEL_RESULTS,
+  DELEGATION_CONFIG_WRITE_RESULTS,
+  DELEGATION_IDEMPOTENCY_KEY_PATTERN,
+  DELEGATION_JOB_STATES,
+  DELEGATION_QUALIFICATION_OUTCOMES,
+  DELEGATION_QUALIFICATION_PURPOSES,
+  DELEGATION_REFUSAL_REASONS,
+  type DelegationConfigWriteResult,
+  type DelegationJobState,
+  type DelegationQualificationOutcome,
+  type DelegationQualificationPurpose,
+  type DelegationRefusalReason,
+} from '@ai-usage/report-core/delegation-vocabulary';
 import { type HarnessKey, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
 import { type MergePreviewProof, parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import { MAX_PORTABLE_USAGE_BYTES, MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
@@ -64,6 +83,18 @@ const maxOpaqueIdBytes = 160;
 const maxReviewIdentityBytes = 512;
 /** A refusal message names a checkout path, so it is allowed more than one status message. */
 const maxReviewMessageBytes = 1024;
+/**
+ * Refusal and status messages of the review-attempt and delegation answers (UTF-8 bytes). Exported
+ * on its own rather than in `usageEngineControlBounds`: that object is in the report's first load,
+ * and only the engine and tests read this bound.
+ */
+export const usageEngineMaxReviewMessageBytes = maxReviewMessageBytes;
+/** Policy and catalog revisions are 16 hexadecimal characters; the bound leaves room for a later format. */
+const maxDelegationRevisionBytes = 64;
+/** Config issues one `update-delegation-config` answer lists (the rule bound of the config). */
+const maxDelegationConfigIssues = 64;
+const DELEGATION_EVALUATION_COMMAND_AUTHORS = ['calling-model', 'operator'] as const;
+const DELEGATION_EVALUATION_REFUSAL_REASONS = ['invalid', 'not-ended', 'not-found'] as const;
 const maxCommandCompletionEventBytes = sourceControlBounds.maxSnapshotBytes;
 const maxStatusBytes = sourceControlBounds.maxSnapshotBytes + 32 * kibibyte;
 const maxForegroundEnvelopeBytes = 4 * kibibyte;
@@ -126,6 +157,9 @@ const hasOnlyKeys = (record: Record<string, unknown>, allowed: readonly string[]
   return Object.keys(record).every((key) => allowedKeys.has(key));
 };
 
+const isOneOf = <const Values extends readonly string[]>(values: Values, value: unknown): value is Values[number] =>
+  typeof value === 'string' && (values as readonly string[]).includes(value);
+
 const serializedByteLength = (value: unknown, label: string): number => {
   try {
     const serialized = JSON.stringify(value);
@@ -155,6 +189,89 @@ const parseBoundedString = (value: unknown, maximumBytes: number, label: string,
     return fail(`${label} is invalid or exceeds its byte limit.`);
   }
   return value;
+};
+
+const TRUNCATION_MARKER = '…';
+const utf8ByteLengthOfCodePoint = (codePoint: number): number => {
+  if (codePoint < 0x80) {
+    return 1;
+  }
+  if (codePoint < 0x8_00) {
+    return 2;
+  }
+  return codePoint < 0x1_00_00 ? 3 : 4;
+};
+
+/**
+ * The message a review-attempt or delegation answer carries, cut to `maxReviewMessageBytes` UTF-8
+ * bytes so the completion the engine publishes always parses: the cut falls on a code-point
+ * boundary (never inside a surrogate pair or a multi-byte sequence) and ends with a visible `…`
+ * counted inside the budget. A message within the bound is returned unchanged. The producer's
+ * stored row keeps its own, larger bound; only the control-plane answer is cut.
+ */
+export const boundUsageEngineReviewMessage = (message: string): string => {
+  if (encoder.encode(message).byteLength <= maxReviewMessageBytes) {
+    return message;
+  }
+  const budget = maxReviewMessageBytes - encoder.encode(TRUNCATION_MARKER).byteLength;
+  let bytes = 0;
+  let kept = '';
+  for (const character of message) {
+    const next = bytes + utf8ByteLengthOfCodePoint(character.codePointAt(0) ?? 0);
+    if (next > budget) {
+      break;
+    }
+    bytes = next;
+    kept += character;
+  }
+  return `${kept}${TRUNCATION_MARKER}`;
+};
+
+/**
+ * Serialized UTF-8 bytes the issues of one invalid delegation config answer take at most: half the
+ * completion event bound, so the envelope (command, ids, timestamps, revision) always fits beside.
+ */
+const maxDelegationConfigIssuesBytes = maxCommandCompletionEventBytes / 2;
+
+interface DelegationConfigIssueText {
+  readonly path: string;
+  readonly reason: string;
+}
+
+/**
+ * The issues an invalid `update-delegation-config` answer lists: each path and reason cut by
+ * `boundUsageEngineReviewMessage`, in order, while both the count (`maxDelegationConfigIssues`) and
+ * the serialized size (`maxDelegationConfigIssuesBytes`) leave room for one closing entry; the
+ * issues left out are never dropped in silence, the closing entry counts them.
+ */
+export const boundUsageEngineDelegationConfigIssues = (
+  issues: readonly DelegationConfigIssueText[],
+): DelegationConfigIssueText[] => {
+  const closing = (omitted: number): DelegationConfigIssueText => ({
+    path: 'delegation',
+    reason: `${omitted} more issue(s) not listed to keep the answer bounded; correct the ones above and save again to see them.`,
+  });
+  // The closing entry with the widest count this answer could carry, reserved up front.
+  const reserved = encoder.encode(JSON.stringify(closing(issues.length))).byteLength + 1;
+  const listed: DelegationConfigIssueText[] = [];
+  let bytes = 2;
+  for (const issue of issues) {
+    const entry = {
+      path: boundUsageEngineReviewMessage(issue.path),
+      reason: boundUsageEngineReviewMessage(issue.reason),
+    };
+    const size = encoder.encode(JSON.stringify(entry)).byteLength + (listed.length === 0 ? 0 : 1);
+    // The last issue needs no room for a closing entry: listing it lists everything.
+    const isLast = listed.length === issues.length - 1;
+    const byteRoom = isLast ? maxDelegationConfigIssuesBytes : maxDelegationConfigIssuesBytes - reserved;
+    const countRoom = isLast ? maxDelegationConfigIssues : maxDelegationConfigIssues - 1;
+    if (listed.length >= countRoom || bytes + size > byteRoom) {
+      break;
+    }
+    listed.push(entry);
+    bytes += size;
+  }
+  return listed.length === issues.length ? listed : [...listed, closing(issues.length - listed.length)];
 };
 
 const parseOpaqueId = <Name extends string>(value: unknown, label: string): Branded<string, Name> => {
@@ -315,6 +432,38 @@ export type UsageEngineCommand =
   | { readonly command: 'qualify-review-routing'; readonly target: UsageEngineReviewAttemptTarget }
   /** The operator declares that the lost attempt's review no longer runs (ADR 0055); nothing is stopped. */
   | { readonly attemptId: string; readonly command: 'release-review-reservation' }
+  /**
+   * Delegation (ADR 0077). The nested payloads travel as bounded objects: the control plane checks
+   * their shape and size, the engine parses them strictly and answers a typed refusal, never a
+   * contract failure, when a caller's request or selection does not conform.
+   */
+  | {
+      readonly command: 'qualify-delegation';
+      readonly purpose: DelegationQualificationPurpose;
+      readonly request: Readonly<Record<string, unknown>>;
+    }
+  | {
+      readonly command: 'start-delegation';
+      readonly idempotencyKey: string;
+      readonly request: Readonly<Record<string, unknown>>;
+      readonly selection: Readonly<Record<string, unknown>>;
+    }
+  | { readonly command: 'cancel-delegation'; readonly jobId: string }
+  /** `automated-check` is the engine's own author and is never accepted from a command. */
+  | {
+      readonly author: 'calling-model' | 'operator';
+      readonly authorLabel: string | null;
+      readonly command: 'record-delegation-evaluation';
+      readonly evaluation: Readonly<Record<string, unknown>>;
+      readonly jobId: string;
+    }
+  | {
+      readonly command: 'update-delegation-config';
+      readonly delegation?: Readonly<Record<string, unknown>>;
+      readonly executors?: readonly unknown[];
+      readonly expectedRevision: string;
+      readonly reviewTargets?: readonly unknown[];
+    }
   | { readonly attemptId: string; readonly command: 'stop-review-attempt' }
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
@@ -354,9 +503,14 @@ export const usageEngineReportSourceIdsFor = (
 type UsageEngineFileCommand = Extract<UsageEngineCommand, { readonly input: UsageEngineFileInput }>;
 type UsageEngineProjectGroupCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-groups' }>;
 type UsageEngineProjectAliasCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-aliases' }>;
+/** The web never launches a delegation in this version; it qualifies, cancels, evaluates and configures. */
+type UsageEngineDelegationStartCommand = Extract<UsageEngineCommand, { readonly command: 'start-delegation' }>;
 type UsageEngineCommandWithoutWebPaths = Exclude<
   UsageEngineCommand,
-  UsageEngineFileCommand | UsageEngineProjectAliasCommand | UsageEngineProjectGroupCommand
+  | UsageEngineDelegationStartCommand
+  | UsageEngineFileCommand
+  | UsageEngineProjectAliasCommand
+  | UsageEngineProjectGroupCommand
 >;
 type UsageEngineInboxFileInput = Extract<UsageEngineFileInput, { readonly kind: 'inbox-handoff' }>;
 
@@ -508,6 +662,52 @@ const parseFileInput = (value: unknown): UsageEngineFileInput => {
   return fail('Usage engine file input kind is unknown.');
 };
 
+/** A nested delegation payload: an object the engine parses; its size is bounded by the command bound. */
+const parseDelegationPayload = (value: unknown, label: string): Readonly<Record<string, unknown>> => {
+  if (!isRecord(value)) {
+    return fail(`${label} must be an object.`);
+  }
+  return value;
+};
+
+const parseDelegationJobId = (value: unknown): string =>
+  parseBoundedString(value, maxReviewIdentityBytes, 'Usage engine delegation job id');
+
+const parseDelegationRevision = (value: unknown, label: string): string =>
+  parseBoundedString(value, maxDelegationRevisionBytes, label);
+
+const parseDelegationConfigCommand = (
+  command: Record<string, unknown>,
+): Extract<UsageEngineCommand, { readonly command: 'update-delegation-config' }> => {
+  if (
+    !(
+      hasOnlyKeys(command, ['command', 'delegation', 'executors', 'expectedRevision', 'reviewTargets']) &&
+      'expectedRevision' in command
+    )
+  ) {
+    return fail('Usage engine update-delegation-config command contains unknown or missing fields.');
+  }
+  const { delegation, executors, reviewTargets } = command;
+  if (delegation === undefined && executors === undefined && reviewTargets === undefined) {
+    return fail('Usage engine update-delegation-config command names no section to write.');
+  }
+  if (executors !== undefined && !Array.isArray(executors)) {
+    return fail('Usage engine delegation executors must be an array.');
+  }
+  if (reviewTargets !== undefined && !Array.isArray(reviewTargets)) {
+    return fail('Usage engine delegation review targets must be an array.');
+  }
+  return {
+    command: 'update-delegation-config',
+    ...(delegation === undefined
+      ? {}
+      : { delegation: parseDelegationPayload(delegation, 'Usage engine delegation config') }),
+    ...(executors === undefined ? {} : { executors }),
+    expectedRevision: parseDelegationRevision(command.expectedRevision, 'Usage engine delegation expected revision'),
+    ...(reviewTargets === undefined ? {} : { reviewTargets }),
+  };
+};
+
 const requireCommandRecord = (value: unknown): Record<string, unknown> => {
   assertSerializedBound(value, usageEngineControlBounds.maxCommandBytes, 'Usage engine command');
   if (!(isRecord(value) && typeof value.command === 'string')) {
@@ -516,10 +716,17 @@ const requireCommandRecord = (value: unknown): Record<string, unknown> => {
   return value;
 };
 
-/** Validate the report action without retaining parsers for unrelated engine commands. */
-export const parseUsageEngineProjectGroupReferenceCommand = (
-  value: unknown,
-): Extract<UsageEngineCommand, { readonly command: 'replace-project-groups-by-reference' }> => {
+type ProjectGroupsByReferenceCommand = Extract<
+  UsageEngineCommand,
+  { readonly command: 'replace-project-groups-by-reference' }
+>;
+
+/**
+ * The one command the report builds in the browser (project groups edited in Analysis). It has its
+ * own parser so the report's first load carries this command's validation only, not every engine
+ * command's; `parseUsageEngineCommand` and the web projection answer it identically.
+ */
+export const parseUsageEngineProjectGroupReferenceCommand = (value: unknown): ProjectGroupsByReferenceCommand => {
   const command = requireCommandRecord(value);
   if (command.command !== 'replace-project-groups-by-reference') {
     return fail('Usage engine project group reference command kind is invalid.');
@@ -641,6 +848,63 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         attemptId: parseBoundedString(command.attemptId, maxReviewIdentityBytes, 'Usage engine review attempt id'),
         command: 'release-review-reservation',
       };
+    case 'qualify-delegation':
+      if (!hasExactKeys(command, ['command', 'purpose', 'request'])) {
+        return fail('Usage engine qualify-delegation command contains unknown or missing fields.');
+      }
+      if (!isOneOf(DELEGATION_QUALIFICATION_PURPOSES, command.purpose)) {
+        return fail('Usage engine delegation qualification purpose is unknown.');
+      }
+      return {
+        command: 'qualify-delegation',
+        purpose: command.purpose,
+        request: parseDelegationPayload(command.request, 'Usage engine delegation request'),
+      };
+    case 'start-delegation':
+      if (!hasExactKeys(command, ['command', 'idempotencyKey', 'request', 'selection'])) {
+        return fail('Usage engine start-delegation command contains unknown or missing fields.');
+      }
+      if (
+        !(typeof command.idempotencyKey === 'string' && DELEGATION_IDEMPOTENCY_KEY_PATTERN.test(command.idempotencyKey))
+      ) {
+        return fail('Usage engine delegation idempotency key is invalid.');
+      }
+      return {
+        command: 'start-delegation',
+        idempotencyKey: command.idempotencyKey,
+        request: parseDelegationPayload(command.request, 'Usage engine delegation request'),
+        selection: parseDelegationPayload(command.selection, 'Usage engine delegation selection'),
+      };
+    case 'cancel-delegation':
+      if (!hasExactKeys(command, ['command', 'jobId'])) {
+        return fail('Usage engine cancel-delegation command contains unknown or missing fields.');
+      }
+      return { command: 'cancel-delegation', jobId: parseDelegationJobId(command.jobId) };
+    case 'record-delegation-evaluation': {
+      if (!hasExactKeys(command, ['author', 'authorLabel', 'command', 'evaluation', 'jobId'])) {
+        return fail('Usage engine record-delegation-evaluation command contains unknown or missing fields.');
+      }
+      const author = command.author;
+      if (!isOneOf(DELEGATION_EVALUATION_COMMAND_AUTHORS, author)) {
+        return fail('Usage engine delegation evaluation author must be the calling model or the operator.');
+      }
+      return {
+        author,
+        authorLabel:
+          command.authorLabel === null
+            ? null
+            : parseBoundedString(
+                command.authorLabel,
+                usageEngineControlBounds.maxMessageBytes,
+                'Usage engine delegation evaluation author label',
+              ),
+        command: 'record-delegation-evaluation',
+        evaluation: parseDelegationPayload(command.evaluation, 'Usage engine delegation evaluation'),
+        jobId: parseDelegationJobId(command.jobId),
+      };
+    }
+    case 'update-delegation-config':
+      return parseDelegationConfigCommand(command);
     case 'set-machine-label':
       if (!hasExactKeys(command, ['command', 'label'])) {
         return fail('Usage engine set-machine-label command contains unknown fields.');
@@ -736,6 +1000,9 @@ export const parseWebUsageEngineCommand = (value: unknown): WebUsageEngineComman
   }
   if (command.command === 'replace-project-aliases') {
     return fail('Web usage engine commands cannot replace path-bearing project aliases.');
+  }
+  if (command.command === 'start-delegation') {
+    return fail('Web usage engine commands cannot start a delegation.');
   }
   return command;
 };
@@ -982,6 +1249,48 @@ export interface UsageEngineReviewReservationReleaseOutput {
   readonly result: 'not-held' | 'process-found' | 'released';
 }
 
+/**
+ * The qualification as the control plane carries it (ADR 0077): its version, id and outcome are
+ * checked here with its byte bound; every other field travels as the engine produced it, and an
+ * edge runs `parseDelegationQualification` (report-core) before trusting any of them.
+ */
+export interface UsageEngineDelegationQualificationEnvelope {
+  readonly outcome: DelegationQualificationOutcome;
+  readonly qualificationId: string;
+  readonly schemaVersion: 1;
+}
+
+export interface UsageEngineDelegationQualificationOutput {
+  readonly kind: 'delegation-qualification';
+  readonly qualification: UsageEngineDelegationQualificationEnvelope;
+}
+
+/** A refusal is a decision recorded as data, so it travels in a succeeded completion. */
+export interface UsageEngineDelegationStartOutput extends DelegationStartAnswer {
+  readonly kind: 'delegation-start';
+}
+
+export interface UsageEngineDelegationCancelOutput extends DelegationCancelAnswer {
+  readonly kind: 'delegation-cancel';
+}
+
+export type UsageEngineDelegationEvaluationRefusalReason = (typeof DELEGATION_EVALUATION_REFUSAL_REASONS)[number];
+
+export interface UsageEngineDelegationEvaluationOutput {
+  readonly evaluationId: string | null;
+  readonly kind: 'delegation-evaluation';
+  readonly refusal: { readonly message: string; readonly reason: UsageEngineDelegationEvaluationRefusalReason } | null;
+}
+
+export interface UsageEngineDelegationConfigOutput {
+  /** Config paths and reasons, never values; empty unless `result` is `invalid`. */
+  readonly issues: readonly { readonly path: string; readonly reason: string }[];
+  readonly kind: 'delegation-config';
+  readonly result: DelegationConfigWriteResult;
+  /** The policy revision after the write, or the current one when nothing was written. */
+  readonly revision: string;
+}
+
 /** An interrupt request is not confirmation that the native turn or its descendants stopped. */
 export interface UsageEngineReviewAttemptStopOutput {
   readonly attemptId: string;
@@ -1113,6 +1422,31 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
+      readonly command: 'qualify-delegation';
+      readonly output: UsageEngineDelegationQualificationOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'start-delegation';
+      readonly output: UsageEngineDelegationStartOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'cancel-delegation';
+      readonly output: UsageEngineDelegationCancelOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'record-delegation-evaluation';
+      readonly output: UsageEngineDelegationEvaluationOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'update-delegation-config';
+      readonly output: UsageEngineDelegationConfigOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
       readonly command: 'stop-review-attempt';
       readonly output: UsageEngineReviewAttemptStopOutput;
       readonly state: 'succeeded';
@@ -1120,16 +1454,21 @@ export type UsageEngineCommandCompletion =
   | (UsageEngineCommandCompletionBase & {
       readonly command: Exclude<
         UsageEngineCommandName,
+        | 'cancel-delegation'
         | 'collect-fresh-quota'
         | 'collect-fresh-report'
         | 'import-cursor'
         | 'preview-merge'
         | 'publish'
+        | 'qualify-delegation'
+        | 'record-delegation-evaluation'
         | 'replication-status'
         | 'set-machine-label'
+        | 'start-delegation'
         | 'start-review-attempt'
         | 'qualify-review-routing'
         | 'release-review-reservation'
+        | 'update-delegation-config'
         | 'stop-review-attempt'
         | 'work-thread'
       >;
@@ -1143,6 +1482,7 @@ export type UsageEngineCommandCompletion =
     });
 
 const usageEngineCommandNames = new Set<UsageEngineCommandName>([
+  'cancel-delegation',
   'collect-fresh-report',
   'collect-fresh-quota',
   'confirm-merge',
@@ -1150,7 +1490,9 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'import-cursor',
   'preview-merge',
   'publish',
+  'qualify-delegation',
   'qualify-review-routing',
+  'record-delegation-evaluation',
   'release-review-reservation',
   'replication-status',
   'replace-project-aliases',
@@ -1161,7 +1503,9 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'set-campaign-label-override',
   'set-machine-label',
   'set-source-enabled',
+  'start-delegation',
   'start-review-attempt',
+  'update-delegation-config',
   'stop-review-attempt',
   'work-thread',
 ]);
@@ -1507,6 +1851,171 @@ export const parseUsageEngineReviewReservationReleaseOutput = (
   };
 };
 
+export const parseUsageEngineDelegationQualificationOutput = (
+  value: unknown,
+): UsageEngineDelegationQualificationOutput => {
+  if (
+    !(isRecord(value) && hasExactKeys(value, ['kind', 'qualification']) && value.kind === 'delegation-qualification')
+  ) {
+    return fail('Usage engine delegation qualification output is invalid.');
+  }
+  const qualification = value.qualification;
+  if (
+    !(
+      isRecord(qualification) &&
+      qualification.schemaVersion === 1 &&
+      isBoundedString(qualification.qualificationId, maxReviewIdentityBytes) &&
+      isOneOf(DELEGATION_QUALIFICATION_OUTCOMES, qualification.outcome)
+    )
+  ) {
+    return fail('Usage engine delegation qualification is invalid.');
+  }
+  assertSerializedBound(
+    qualification,
+    DELEGATION_BOUNDS.maxQualificationBytes,
+    'Usage engine delegation qualification',
+  );
+  return {
+    kind: 'delegation-qualification',
+    qualification: {
+      ...qualification,
+      outcome: qualification.outcome,
+      qualificationId: qualification.qualificationId,
+      schemaVersion: 1,
+    },
+  };
+};
+
+const parseDelegationRefusal = (
+  value: unknown,
+): { readonly message: string; readonly reason: DelegationRefusalReason } | null => {
+  if (value === null) {
+    return null;
+  }
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['message', 'reason']) &&
+      isOneOf(DELEGATION_REFUSAL_REASONS, value.reason)
+    )
+  ) {
+    return fail('Usage engine delegation refusal is invalid.');
+  }
+  return {
+    message: parseBoundedString(value.message, maxReviewMessageBytes, 'Usage engine delegation refusal message'),
+    reason: value.reason,
+  };
+};
+
+export const parseUsageEngineDelegationStartOutput = (value: unknown): UsageEngineDelegationStartOutput => {
+  if (!(isRecord(value) && hasExactKeys(value, ['job', 'kind', 'refusal']) && value.kind === 'delegation-start')) {
+    return fail('Usage engine delegation start output is invalid.');
+  }
+  let job: UsageEngineDelegationStartOutput['job'] = null;
+  if (value.job !== null) {
+    if (
+      !(
+        isRecord(value.job) &&
+        hasExactKeys(value.job, ['jobId', 'reused', 'state']) &&
+        typeof value.job.reused === 'boolean' &&
+        isOneOf(DELEGATION_JOB_STATES, value.job.state)
+      )
+    ) {
+      return fail('Usage engine delegation job is invalid.');
+    }
+    job = { jobId: parseDelegationJobId(value.job.jobId), reused: value.job.reused, state: value.job.state };
+  }
+  const refusal = parseDelegationRefusal(value.refusal);
+  if (job === null && refusal === null) {
+    return fail('Usage engine delegation start output names neither a job nor a refusal.');
+  }
+  return { job, kind: 'delegation-start', refusal };
+};
+
+export const parseUsageEngineDelegationCancelOutput = (value: unknown): UsageEngineDelegationCancelOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['jobId', 'kind', 'result', 'state']) &&
+      value.kind === 'delegation-cancel' &&
+      isOneOf(DELEGATION_CANCEL_RESULTS, value.result) &&
+      (value.state === null || isOneOf(DELEGATION_JOB_STATES, value.state))
+    )
+  ) {
+    return fail('Usage engine delegation cancel output is invalid.');
+  }
+  const state: DelegationJobState | null = value.state;
+  return { jobId: parseDelegationJobId(value.jobId), kind: 'delegation-cancel', result: value.result, state };
+};
+
+export const parseUsageEngineDelegationEvaluationOutput = (value: unknown): UsageEngineDelegationEvaluationOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['evaluationId', 'kind', 'refusal']) &&
+      value.kind === 'delegation-evaluation' &&
+      (value.evaluationId === null) !== (value.refusal === null)
+    )
+  ) {
+    return fail('Usage engine delegation evaluation output is invalid.');
+  }
+  if (value.refusal === null) {
+    return { evaluationId: parseDelegationJobId(value.evaluationId), kind: 'delegation-evaluation', refusal: null };
+  }
+  if (
+    !(
+      isRecord(value.refusal) &&
+      hasExactKeys(value.refusal, ['message', 'reason']) &&
+      isOneOf(DELEGATION_EVALUATION_REFUSAL_REASONS, value.refusal.reason)
+    )
+  ) {
+    return fail('Usage engine delegation evaluation refusal is invalid.');
+  }
+  return {
+    evaluationId: null,
+    kind: 'delegation-evaluation',
+    refusal: {
+      message: parseBoundedString(
+        value.refusal.message,
+        maxReviewMessageBytes,
+        'Usage engine delegation evaluation refusal message',
+      ),
+      reason: value.refusal.reason,
+    },
+  };
+};
+
+export const parseUsageEngineDelegationConfigOutput = (value: unknown): UsageEngineDelegationConfigOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['issues', 'kind', 'result', 'revision']) &&
+      value.kind === 'delegation-config' &&
+      isOneOf(DELEGATION_CONFIG_WRITE_RESULTS, value.result) &&
+      Array.isArray(value.issues) &&
+      value.issues.length <= maxDelegationConfigIssues &&
+      (value.result === 'invalid') === value.issues.length > 0
+    )
+  ) {
+    return fail('Usage engine delegation config output is invalid.');
+  }
+  const issues = value.issues.map((issue: unknown) => {
+    if (!(isRecord(issue) && hasExactKeys(issue, ['path', 'reason']))) {
+      return fail('Usage engine delegation config issue is invalid.');
+    }
+    return {
+      path: parseBoundedString(issue.path, maxReviewMessageBytes, 'Usage engine delegation config issue path'),
+      reason: parseBoundedString(issue.reason, maxReviewMessageBytes, 'Usage engine delegation config issue reason'),
+    };
+  });
+  return {
+    issues,
+    kind: 'delegation-config',
+    result: value.result,
+    revision: parseDelegationRevision(value.revision, 'Usage engine delegation policy revision'),
+  };
+};
+
 const replicationDiagnosticCodes = new Set<UsageEngineReplicationDiagnosticCode>([
   'acknowledged',
   'blocked',
@@ -1793,6 +2302,31 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
       output: parseUsageEngineReviewReservationReleaseOutput(value.output),
       state: 'succeeded',
     };
+  }
+  if (command === 'qualify-delegation') {
+    return {
+      ...base,
+      command,
+      output: parseUsageEngineDelegationQualificationOutput(value.output),
+      state: 'succeeded',
+    };
+  }
+  if (command === 'start-delegation') {
+    return { ...base, command, output: parseUsageEngineDelegationStartOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'cancel-delegation') {
+    return { ...base, command, output: parseUsageEngineDelegationCancelOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'record-delegation-evaluation') {
+    return {
+      ...base,
+      command,
+      output: parseUsageEngineDelegationEvaluationOutput(value.output),
+      state: 'succeeded',
+    };
+  }
+  if (command === 'update-delegation-config') {
+    return { ...base, command, output: parseUsageEngineDelegationConfigOutput(value.output), state: 'succeeded' };
   }
   if (command === 'stop-review-attempt') {
     return {

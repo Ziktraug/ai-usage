@@ -199,7 +199,12 @@ closed when evidence is suspicious.
 
 The engine owns all usage-domain mutations, including source policies, machine
 identity/label, project groups, Cursor imports, merge preview/confirmation,
-collection, enrichment, and publication. The unrelated Skills control plane
+collection, enrichment, and publication. It is also the only process that runs
+work on the operator's behalf: session review attempts (ADR 0053) and
+delegation jobs (ADR 0077), whose workers it spawns, tracks, cancels and marks
+lost after a restart, which pass one admission policy and share one target
+and pool reservation rule, and whose routing and delegation configuration it writes
+section by section on an expected revision. The unrelated Skills control plane
 remains web-owned and may update only the `skills` field through a field-scoped
 config store that preserves unrelated configuration.
 
@@ -551,8 +556,12 @@ contracts while retaining ownership of its SQL projection and queries.
 Owns the harness-neutral MCP protocol edge, strict runtime input schemas,
 bounded serialization, read-only tool annotations, cancellation, stable error
 sanitization, retrieved-data labeling, local application-service
-composition, and safe registration helpers. It registers only real read tools
-and imports no storage adapter. Harness configuration reuses identity-checked
+composition, and safe registration helpers. It registers read tools (Memory,
+`work.context`, `delegation.status`, `delegation.list`) and the delegation
+command tools (`delegation.qualify`, `delegation.start`, `delegation.cancel`,
+`delegation.evaluate`) behind adapter-owned ports, with annotations that state
+their real effects, and imports no storage adapter, engine client or
+report-core module (ADR 0077). Harness configuration reuses identity-checked
 Skills projection locking and refuses unmanaged same-name entries.
 
 Current package ownership resumes below.
@@ -754,9 +763,13 @@ explicit exit so structured output and warning order remain unchanged.
 ### `apps/mcp`
 
 Owns the local stdio process and explicit registration command. It resolves the
-owner-only Memory rendezvous, adapts the bounded client to
-`@ai-usage/mcp-adapter`, and never opens a database. Failure to reach the local
-service is explicit; the process does not change modes or corpora.
+owner-only Memory rendezvous and adapts the bounded client to
+`@ai-usage/mcp-adapter`; it reads the usage store only through read-only
+`query_only` connections (`work.context`, delegation status and lists) and sends
+delegation commands to a running engine located from the AI Usage installation
+(never from the caller's working directory). It never writes a database, never
+starts an engine and never spawns a worker. Failure to reach the local service
+or the engine is explicit; the process does not change modes or corpora.
 
 ### `apps/web`
 

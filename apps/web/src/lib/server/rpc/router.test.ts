@@ -4,6 +4,7 @@ import { createWebRpcRouter } from './router';
 
 test('composes every router leaf under one root router', () => {
   const router = createWebRpcRouter({
+    delegation: {},
     memory: {},
     projects: {},
     report: {},
@@ -19,6 +20,7 @@ test('composes every router leaf under one root router', () => {
 
   expect(Object.keys(router).sort()).toEqual([
     'campaign',
+    'delegation',
     'memory',
     'projectGroup',
     'projects',

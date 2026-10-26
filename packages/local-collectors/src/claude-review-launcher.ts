@@ -1,4 +1,3 @@
-import { boundedProcessEnvironment } from '@ai-usage/local-machine/bounded-process';
 import {
   boundReviewExcerpt,
   buildReviewPrompt,
@@ -9,9 +8,10 @@ import {
   type ReviewAttemptResultKind,
   type ReviewAttemptScope,
 } from '@ai-usage/report-core/work-attempts';
-import { CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY, ClaudeCommandError, claudeCommandFor } from './claude-command';
+import { CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY, resolveClaudeExecutable } from './claude-command';
 import { ClaudeCliQualificationError, observeManagedSettings, qualifyClaudeCli } from './claude-review-cli';
 import { type PrepareReviewScopeOptions, prepareReviewScope, ReviewScopeError } from './claude-review-scope';
+import { spawnBoundedJsonlProcess, spawnFailureDetail } from './review-worker-process';
 
 /**
  * Launches one read-only Claude Code review (ADR 0053, 0055) and reads its `stream-json` output
@@ -39,10 +39,12 @@ import { type PrepareReviewScopeOptions, prepareReviewScope, ReviewScopeError } 
  *
  * The executable and its `CLAUDE_CONFIG_DIR` come from `claudeCommandFor` (`./claude-command`),
  * the resolution the executor probe uses too, so the account confirmed is the account launched.
+ * The process itself runs through the shared bounded runner (`./review-worker-process`), the one
+ * the delegation workers use.
  */
 export { CLAUDE_EXECUTABLE_ENVIRONMENT_KEY } from './claude-command';
+export { spawnFailureDetail } from './review-worker-process';
 
-const TERMINATE_GRACE_MS = 5000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
 export const CLAUDE_REVIEW_ALLOWED_TOOLS = REVIEW_READ_ONLY_TOOLS;
@@ -168,44 +170,16 @@ export const claudeReviewArguments = (
   ...(spec.effort === null ? [] : ['--effort', spec.effort]),
 ];
 
-/**
- * A spawn error by its class and code only. The runtime's own message quotes the offending
- * argument, which is the prompt (commit SHAs, subject, session title); a stored failure reason
- * must never carry it.
- */
-const ERROR_CODE = /^[A-Z0-9_]{1,64}$/u;
-
-export const spawnFailureDetail = (error: unknown): string => {
-  if (!(error instanceof Error)) {
-    return 'unknown error';
-  }
-  const code = 'code' in error && typeof error.code === 'string' && ERROR_CODE.test(error.code) ? error.code : null;
-  return code === null ? error.name : `${error.name} ${code}`;
-};
-
 /** The shared command and environment (`claudeCommandFor`), with the command made absolute for the spawn. */
 const resolveLaunch = (
   options: ClaudeReviewLaunchOptions,
   env: Readonly<Record<string, string | undefined>>,
 ): { readonly environment: Record<string, string>; readonly executable: string } => {
-  let claude: ReturnType<typeof claudeCommandFor>;
-  try {
-    claude = claudeCommandFor(env, options.executable);
-  } catch (error) {
-    if (error instanceof ClaudeCommandError) {
-      throw new ClaudeReviewLaunchError('executable-invalid', error.message);
-    }
-    throw error;
+  const resolved = resolveClaudeExecutable(env, options.executable);
+  if (resolved.kind !== 'resolved') {
+    throw new ClaudeReviewLaunchError(resolved.kind, resolved.message);
   }
-  const environment = boundedProcessEnvironment(claude.environment, env);
-  if (claude.command.includes('/')) {
-    return { environment, executable: claude.command };
-  }
-  const resolved = Bun.which(claude.command, { PATH: environment.PATH ?? '' });
-  if (resolved === null) {
-    throw new ClaudeReviewLaunchError('executable-missing', `${claude.command} was not found on the allow-listed PATH`);
-  }
-  return { environment, executable: resolved };
+  return { environment: resolved.environment, executable: resolved.executable };
 };
 
 interface StreamReadState {
@@ -265,119 +239,68 @@ export const launchClaudeReview = async (
   const heartbeatMs = spec.heartbeatMs ?? REVIEW_ATTEMPT_RUN_LIMITS.heartbeatMs;
   const maxOutputBytes = spec.maxOutputBytes ?? REVIEW_ATTEMPT_RUN_LIMITS.maxOutputBytes;
 
-  let child: ReturnType<typeof Bun.spawn>;
+  const state: StreamReadState = {
+    durationMs: null,
+    isError: false,
+    nativeSessionId: null,
+    numTurns: null,
+    resultSeen: false,
+    resultSubtype: null,
+    text: null,
+  };
+  const consumeLine = async (line: string): Promise<void> => {
+    const event = parseClaudeStreamJsonLine(line);
+    if (event === null) {
+      return;
+    }
+    if (event.kind === 'init') {
+      if (state.nativeSessionId === null) {
+        state.nativeSessionId = event.sessionId;
+        await Promise.resolve(events.onInit?.(event.sessionId)).catch(() => undefined);
+      }
+      return;
+    }
+    state.resultSeen = true;
+    state.isError = event.isError;
+    state.numTurns = event.numTurns;
+    state.durationMs = event.durationMs;
+    state.resultSubtype = event.subtype;
+    state.text = event.text;
+    state.nativeSessionId ??= event.sessionId;
+  };
+  let child: ReturnType<typeof spawnBoundedJsonlProcess>;
   try {
-    child = Bun.spawn([executable, ...args], {
-      cwd: spec.checkoutPath,
-      env: environment,
-      stderr: 'ignore',
-      stdin: 'ignore',
-      stdout: 'pipe',
-    });
+    child = spawnBoundedJsonlProcess(
+      {
+        args,
+        cwd: spec.checkoutPath,
+        env: environment,
+        executable,
+        heartbeatMs,
+        maxOutputBytes,
+        stdin: null,
+        timeoutMs,
+      },
+      { onHeartbeat: events.onHeartbeat, onLine: consumeLine },
+    );
   } catch (error) {
     throw new ClaudeReviewLaunchError(
       'spawn-failed',
       `claude could not be started in the checkout: ${spawnFailureDetail(error)}`,
     );
   }
-  const startedAt = performance.now();
-  let timedOut = false;
-  let overflow = false;
-  let terminated = false;
-  let killTimer: ReturnType<typeof setTimeout> | undefined;
-  const terminate = (): void => {
-    if (terminated) {
-      return;
-    }
-    terminated = true;
-    child.kill('SIGTERM');
-    killTimer = setTimeout(() => {
-      if (child.exitCode === null) {
-        child.kill('SIGKILL');
-      }
-    }, TERMINATE_GRACE_MS);
-  };
-  const deadline = setTimeout(() => {
-    timedOut = true;
-    terminate();
-  }, timeoutMs);
-  const heartbeat = setInterval(() => {
-    Promise.resolve(events.onHeartbeat?.()).catch(() => undefined);
-  }, heartbeatMs);
 
   const outcome = (async (): Promise<ClaudeReviewOutcome> => {
-    const state: StreamReadState = {
-      durationMs: null,
-      isError: false,
-      nativeSessionId: null,
-      numTurns: null,
-      resultSeen: false,
-      resultSubtype: null,
-      text: null,
-    };
-    const decoder = new TextDecoder();
-    let pending = '';
-    let bytes = 0;
-    const consumeLine = async (line: string): Promise<void> => {
-      const event = parseClaudeStreamJsonLine(line);
-      if (event === null) {
-        return;
-      }
-      if (event.kind === 'init') {
-        if (state.nativeSessionId === null) {
-          state.nativeSessionId = event.sessionId;
-          await Promise.resolve(events.onInit?.(event.sessionId)).catch(() => undefined);
-        }
-        return;
-      }
-      state.resultSeen = true;
-      state.isError = event.isError;
-      state.numTurns = event.numTurns;
-      state.durationMs = event.durationMs;
-      state.resultSubtype = event.subtype;
-      state.text = event.text;
-      state.nativeSessionId ??= event.sessionId;
-    };
-    try {
-      const stdout = child.stdout;
-      if (stdout instanceof ReadableStream) {
-        for await (const chunk of stdout) {
-          bytes += chunk.byteLength;
-          if (bytes > maxOutputBytes) {
-            overflow = true;
-            child.kill('SIGKILL');
-            break;
-          }
-          pending += decoder.decode(chunk, { stream: true });
-          let newline = pending.indexOf('\n');
-          while (newline >= 0) {
-            await consumeLine(pending.slice(0, newline));
-            pending = pending.slice(newline + 1);
-            newline = pending.indexOf('\n');
-          }
-        }
-        if (!overflow && pending.length > 0) {
-          await consumeLine(pending);
-        }
-      }
-    } catch {
-      // A broken pipe after the process died is settled below by the exit code.
-    }
-    const exitCode = await child.exited;
-    clearTimeout(deadline);
-    clearInterval(heartbeat);
-    if (killTimer !== undefined) {
-      clearTimeout(killTimer);
-    }
-    const wallMs = Math.max(0, Math.round(performance.now() - startedAt));
+    const end = await child.end;
     const base = {
-      durationMs: state.durationMs ?? wallMs,
-      exitCode,
+      durationMs: state.durationMs ?? end.wallMs,
+      exitCode: end.exitCode,
       nativeSessionId: state.nativeSessionId,
       numTurns: state.numTurns,
       resultExcerpt: boundReviewExcerpt(state.text),
     };
-    if (timedOut) {
+    const { exitCode } = end;
+    if (end.stop === 'deadline') {
       return {
         ...base,
         failureReason: `timed out after ${Math.round(timeoutMs / 1000)} s; the process was terminated`,
@@ -385,7 +308,7 @@ export const launchClaudeReview = async (
         resultKind: 'timeout',
       };
     }
-    if (overflow) {
+    if (end.stop === 'overflow') {
       return {
         ...base,
         failureReason: `stdout exceeded ${maxOutputBytes} bytes; the process was terminated`,
@@ -393,7 +316,7 @@ export const launchClaudeReview = async (
         resultKind: 'error',
       };
     }
-    if (terminated) {
+    if (end.stop !== null) {
       return { ...base, failureReason: 'terminated by the engine', kind: 'failed', resultKind: 'error' };
     }
     if (!state.resultSeen) {
@@ -418,5 +341,13 @@ export const launchClaudeReview = async (
     return { ...base, failureReason: null, kind: 'finished', resultKind: 'review' };
   })();
 
-  return { args, guarantee, outcome, pid: child.pid, prompt, scope: prepared.scope, terminate };
+  return {
+    args,
+    guarantee,
+    outcome,
+    pid: child.pid,
+    prompt,
+    scope: prepared.scope,
+    terminate: () => child.stop('shutdown'),
+  };
 };

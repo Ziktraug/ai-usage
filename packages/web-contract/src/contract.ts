@@ -1,4 +1,5 @@
 import type { ContractRouterClient } from '@orpc/contract';
+import { delegationContract } from './delegation';
 import { memoryContract } from './memory';
 import { projectsContract } from './projects';
 import { replicationContract } from './replication';
@@ -13,6 +14,7 @@ import { workThreadsContract } from './work-threads';
 
 export const webContract = {
   ...reportContract,
+  delegation: delegationContract,
   memory: memoryContract,
   projects: projectsContract,
   replication: replicationContract,

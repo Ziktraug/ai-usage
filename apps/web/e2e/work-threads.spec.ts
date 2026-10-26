@@ -111,6 +111,35 @@ test('analysis-only task ends, appears in Done, and reopens without changing sou
   });
 });
 
+test('My work keeps delegation results and human acceptance reachable through session intake', async ({ page }) => {
+  const finishedJob = '11111111-1111-4111-8111-111111111111';
+  let acceptance: unknown = null;
+  // The fixture runtime has no engine writer. Exercise the browser command contract explicitly;
+  // engine persistence and operator attribution are covered by the delegation integration tests.
+  await page.route('**/rpc/delegation/recordAcceptance', async (route) => {
+    acceptance = decodeRpcResponseBody(route.request().postData() ?? '{}');
+    await route.fulfill({
+      contentType: 'application/json',
+      body: encodeRpcResponseBody({ evaluationId: '55555555-5555-4555-8555-555555555555' }),
+    });
+  });
+  await open(page);
+  await expect(page.locator('[data-work-thread]')).not.toHaveCount(0);
+  await expect(page.locator('[data-work-delegations]')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Delegation results ↗', exact: true }).click();
+  await expect(page).toHaveURL('/work/sessions#work-delegations-heading');
+  const result = page.locator(`[data-work-delegation="${finishedJob}"]`);
+  await expect(result).toBeVisible();
+  await expect(result.locator('[data-work-delegation-frozen-scope]')).toContainText('Frozen scope');
+  await result.getByLabel('Note (optional)', { exact: true }).fill('Reviewed by the operator');
+  await result.locator('[data-work-delegation-verdict="accepted"]').click();
+  await expect(result.getByRole('status')).toContainText('Recorded as accepted by you');
+  expect(acceptance).toEqual({ jobId: finishedJob, note: 'Reviewed by the operator', verdict: 'accepted' });
+  await page.goto('/work');
+  await hydrated(page);
+  await expect(page.locator('[data-work-delegations]')).toHaveCount(0);
+});
+
 test('ending despite remainders records the decision and Undo restores follow-up only', async ({ page, request }) => {
   const task = await createTask(request, { intent: 'change', links: [{ key: prKey, kind: 'pull-request' }] });
   const before = await detail(request, task.threadId);

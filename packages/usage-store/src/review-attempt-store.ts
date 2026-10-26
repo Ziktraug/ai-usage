@@ -20,6 +20,12 @@ import {
 } from '@ai-usage/report-core/work-executors';
 import { Effect } from 'effect';
 import type { UsageStoreError, UsageStoreErrorReason } from './errors';
+import {
+  checkReviewReservations,
+  type ReviewReservationCheck,
+  type ReviewReservationHolder,
+  readReviewReservationHolders,
+} from './review-reservations';
 
 /**
  * Durable storage for review attempts (ADR 0053, 0055): the executions the product launched
@@ -83,7 +89,9 @@ const reviewAttemptColumnsSql = `
     released_at TEXT,
     release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ${RELEASE_EVIDENCE_SQL}),
     scope_json TEXT,
-    guarantee_json TEXT
+    guarantee_json TEXT,
+    base_sha TEXT,
+    head_sha TEXT
 `;
 
 const TARGET_INDEX_SQL = `
@@ -106,6 +114,11 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ],
   ['scope_json', 'scope_json TEXT'],
   ['guarantee_json', 'guarantee_json TEXT'],
+  // The revision frozen at request time (PR #73 F1): what the attempt reserves across both review
+  // families, written before any spawn. Older rows keep NULL and reserve what their recorded scope
+  // names, else their whole checkout (`review-reservations.ts`).
+  ['base_sha', 'base_sha TEXT'],
+  ['head_sha', 'head_sha TEXT'],
   ['native_turn_id', 'native_turn_id TEXT'],
   ['stop_requested_at', 'stop_requested_at TEXT'],
   ['stop_confirmed_at', 'stop_confirmed_at TEXT'],
@@ -189,7 +202,19 @@ export const migrateReviewAttemptSchema = (db: MigrationDatabase): boolean => {
   return changed;
 };
 
-export interface NewReviewAttempt {
+/**
+ * What a `requested` attempt reserves, checked inside the insert transaction against both review
+ * families (`review-reservations.ts`): the frozen revision it will review and the quota pool it
+ * occupies, under the admitted route's concurrency limit.
+ */
+export interface ReviewAttemptReservation {
+  readonly baseSha: string;
+  readonly headSha: string;
+  readonly maxConcurrent: number;
+  readonly poolId: string;
+}
+
+interface NewReviewAttemptFields {
   /** Defaults to a fresh UUID; tests may pin it. */
   readonly attemptId?: string;
   readonly candidateId: string;
@@ -201,22 +226,38 @@ export interface NewReviewAttempt {
   readonly launchSessionId?: string | null;
   readonly machineId: string;
   readonly requestedAt: string;
-  /** `requested` opens a live attempt; `refused` records a decision that launched nothing. */
-  readonly state: 'refused' | 'requested';
   readonly target: ReviewAttemptTarget;
 }
+
+/**
+ * A row to record. A `requested` row opens a live attempt and must carry its reservation: no
+ * caller opens a live attempt without the shared pool and target check, and `requestReviewAttempt`
+ * refuses (typed `invalid-input`, nothing inserted) a `requested` row whose reservation it cannot
+ * check. A `refused` row records a decision that launched nothing and reserves nothing.
+ */
+export type NewReviewAttempt =
+  | (NewReviewAttemptFields & { readonly reservation: ReviewAttemptReservation; readonly state: 'requested' })
+  | (NewReviewAttemptFields & { readonly reservation?: undefined; readonly state: 'refused' });
 
 export interface RequestReviewAttemptInput {
   readonly attempt: NewReviewAttempt;
   readonly dbPath: string;
 }
 
-export interface RequestReviewAttemptResult {
-  /** The inserted row, or the one already holding the identity's reservation (live, or lost and unreleased). */
-  readonly attempt: ReviewAttempt;
-  /** The identity was already reserved; nothing was inserted. */
-  readonly reused: boolean;
-}
+export type RequestReviewAttemptResult =
+  /** The inserted row. */
+  | { readonly attempt: ReviewAttempt; readonly kind: 'inserted'; readonly reused: false }
+  /** The row already holding the identity's reservation (live, or lost and unreleased); nothing was inserted. */
+  | { readonly attempt: ReviewAttempt; readonly kind: 'reused'; readonly reused: true }
+  /** Another row of either family reserves the target; nothing was inserted. */
+  | { readonly holder: ReviewReservationHolder; readonly kind: 'target-reserved'; readonly message: string }
+  /** The pool has no slot left under the limit, both families counted; nothing was inserted. */
+  | {
+      readonly count: number;
+      readonly holders: readonly ReviewReservationHolder[];
+      readonly kind: 'pool-busy';
+      readonly message: string;
+    };
 
 export interface ReviewAttemptPatch {
   readonly durationMs?: number | null;
@@ -296,6 +337,16 @@ export interface QueryReviewAttemptsResult {
   /** Persisted rows that no longer pass validation. Never silently omitted. */
   readonly skipped: number;
   readonly truncated: boolean;
+}
+
+export interface QueryReviewReservationsInput {
+  readonly dbPath: string;
+  readonly machineId: string;
+}
+
+export interface QueryReviewReservationsResult {
+  /** Every reserving row of both families on the machine, earliest request first. */
+  readonly holders: readonly ReviewReservationHolder[];
 }
 
 export interface QueryReviewTargetResolutionInput {
@@ -527,15 +578,50 @@ const patchValue = (key: keyof ReviewAttemptPatch, value: unknown): unknown => {
   return value ?? null;
 };
 
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const isObjectId = (value: unknown): value is string => typeof value === 'string' && OBJECT_ID.test(value);
+
+/**
+ * Why a `requested` row cannot take the shared reservation check, read from the values as given
+ * (the type is not trusted at this seam: a `requested` row must never enter without the check);
+ * `null` when it can.
+ */
+const requestedRowRefusal = (attempt: Extract<NewReviewAttempt, { readonly state: 'requested' }>): string | null => {
+  const reservation: unknown = attempt.reservation;
+  if (typeof reservation !== 'object' || reservation === null) {
+    return 'a requested review attempt must carry the reservation the shared target and pool check needs';
+  }
+  const { baseSha, headSha, maxConcurrent, poolId } = reservation as Record<string, unknown>;
+  if (!(isObjectId(baseSha) && isObjectId(headSha))) {
+    return 'reservation.baseSha and reservation.headSha must be git object ids (40 or 64 lowercase hex digits)';
+  }
+  if (!(Number.isSafeInteger(maxConcurrent) && typeof maxConcurrent === 'number' && maxConcurrent > 0)) {
+    return 'reservation.maxConcurrent must be a positive integer';
+  }
+  if (typeof poolId !== 'string' || poolId.length === 0) {
+    return 'reservation.poolId must name the quota pool the attempt occupies';
+  }
+  if (typeof attempt.target.checkoutPath !== 'string' || attempt.target.checkoutPath.length === 0) {
+    return 'a requested review attempt must name the checkout whose revision its reservation holds';
+  }
+  return null;
+};
+
 export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDependencies) => {
   const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
 
   const requestReviewAttempt = (
     input: RequestReviewAttemptInput,
-  ): Effect.Effect<RequestReviewAttemptResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
+  ): Effect.Effect<RequestReviewAttemptResult, UsageStoreError> => {
+    if (input.attempt.state === 'requested') {
+      const refusal = requestedRowRefusal(input.attempt);
+      if (refusal !== null) {
+        return Effect.fail(usageStoreError('requestReviewAttempt', input.dbPath, refusal, 'invalid-input'));
+      }
+    }
+    return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
-        try: () => {
+        try: (): RequestReviewAttemptResult => {
           const { attempt } = input;
           db.exec('BEGIN IMMEDIATE');
           try {
@@ -551,7 +637,26 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
                 if (existing === null) {
                   throw new Error(`Reserving review attempt ${live.attempt_id} does not satisfy its own contract`);
                 }
-                return { attempt: existing, reused: true };
+                return { attempt: existing, kind: 'reused', reused: true };
+              }
+              // The shared rule, under this transaction: the frozen target must be free of both
+              // families and the pool must have a slot, legacy attempts and delegation jobs counted
+              // together. Every requested row takes it (validated above, before the writer opened).
+              const { reservation } = attempt;
+              const check: ReviewReservationCheck = checkReviewReservations({
+                holders: readReviewReservationHolders(db, attempt.machineId),
+                maxConcurrent: reservation.maxConcurrent,
+                pool: { harness: attempt.executorHarness, poolId: reservation.poolId },
+                target: {
+                  action: REVIEW_ATTEMPT_ACTION,
+                  baseSha: reservation.baseSha,
+                  checkoutPath: attempt.target.checkoutPath ?? '',
+                  headSha: reservation.headSha,
+                },
+              });
+              if (check.kind !== 'free') {
+                db.exec('COMMIT');
+                return check;
               }
             }
             const attemptId = attempt.attemptId ?? randomUUID();
@@ -564,8 +669,8 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
                 attempt_id, machine_id, idempotency_key, action, target_harness, source_session_id, desktop_session_id,
                 checkout_path, checkout_origin, project_label, session_title, candidate_id, executor_harness,
                 declaration_json, state, requested_at, updated_at, validations_json, acceptance, failure_reason,
-                launch_session_id
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 'pending', ?, ?)
+                launch_session_id, base_sha, head_sha
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 'pending', ?, ?, ?, ?)
             `).run(
               attemptId,
               attempt.machineId,
@@ -586,13 +691,15 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
               attempt.requestedAt,
               boundedOrNull(attempt.failureReason, REVIEW_ATTEMPT_BOUNDS.maxFailureReason),
               attempt.launchSessionId ?? null,
+              attempt.state === 'requested' ? attempt.reservation.baseSha : null,
+              attempt.state === 'requested' ? attempt.reservation.headSha : null,
             );
             const inserted = readAttempt(db, attemptId);
             db.exec('COMMIT');
             if (inserted === null) {
               throw new Error(`Review attempt ${attemptId} does not satisfy its own contract after insert`);
             }
-            return { attempt: inserted, reused: false };
+            return { attempt: inserted, kind: 'inserted', reused: false };
           } catch (error) {
             db.exec('ROLLBACK');
             throw error;
@@ -601,6 +708,7 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
         catch: (cause) => usageStoreError('requestReviewAttempt', input.dbPath, cause, 'storage-failure'),
       }),
     );
+  };
 
   const transitionReviewAttempt = (
     input: TransitionReviewAttemptInput,
@@ -774,6 +882,20 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
     );
   };
 
+  /**
+   * The reservations both families hold on one machine, outside any transaction: what the
+   * delegation qualification shows before a launch decides. The insert transactions re-read them.
+   */
+  const queryReviewReservations = (
+    input: QueryReviewReservationsInput,
+  ): Effect.Effect<QueryReviewReservationsResult, UsageStoreError> =>
+    withUsageStoreReader(input.dbPath, (db) =>
+      Effect.try({
+        try: () => ({ holders: readReviewReservationHolders(db, input.machineId) }),
+        catch: (cause) => usageStoreReadError('queryReviewReservations', input.dbPath, cause),
+      }),
+    );
+
   const queryReviewTargetResolution = (
     input: QueryReviewTargetResolutionInput,
   ): Effect.Effect<ReviewTargetResolutionFacts, UsageStoreError> =>
@@ -858,6 +980,7 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
   return {
     markReviewAttemptsLost,
     queryReviewAttempts,
+    queryReviewReservations,
     queryReviewTargetResolution,
     releaseReviewAttemptReservation,
     requestReviewAttempt,

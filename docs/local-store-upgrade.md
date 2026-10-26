@@ -232,6 +232,63 @@ a typed `schema-too-old`, shown on the Work view as "not upgraded for this
 version yet; the engine upgrades it when it next starts", never as a raw
 storage failure.
 
+### Additive tables under usage version 4 (2026-10-25, delegation)
+
+Delegation (`packages/usage-store/src/delegation-store.ts`) adds three tables
+without changing `user_version`: `delegation_jobs` (one row per job a caller
+handed to AI Usage: request, frozen scope SHAs, chosen route, state, result,
+usage, harness guarantee, reservation release), `delegation_evaluations`
+(append-only verifications and acceptances) and `delegation_qualifications`
+(the admissible-route qualifications a selector chose from, pruned to the
+newest 500 per machine and 7 days unless a job cites them). The engine creates
+them on its next start when they are absent (`CREATE TABLE IF NOT EXISTS`,
+absence is the signal, ADR 0075); nothing is backfilled and the store
+generation does not move. A partial unique index keeps one reserving job per
+(machine, action, checkout, base SHA, head SHA); `lost` rows keep that
+reservation until release evidence is recorded, as review attempts do. Rows
+are re-validated on read with the shared `parseDelegationJob` and
+`parseDelegationEvaluation`; a row that no longer parses is counted in
+`skipped`. The three tables stay outside the served revision, the export, the
+merge bundle and the replication outbox; an older binary opens the store
+normally and ignores them. Until the engine has created them, the query-only
+reads (`readDelegationJobs`, `readDelegationJob`) answer a typed
+`store-not-upgraded`, never a raw storage failure.
+
+### Review fixes under usage version 4 (2026-10-25, PR #73 review)
+
+Two additive changes, both on the engine's next open, inside the migration
+transaction, without changing `user_version` or moving the store generation,
+and idempotent (presence of the column or the table is the signal):
+
+- `review_attempts` gains two nullable columns, `base_sha` and `head_sha`
+  (`ALTER TABLE … ADD COLUMN` through the same additive-column list as ADR
+  0055). The engine writes them only for a `requested` attempt that passed the
+  common review policy: the frozen revision it reviews and reserves. No
+  existing row is rewritten, no `lost` row is released or ended, and nothing is
+  backfilled. The shared reservation rule
+  (`packages/usage-store/src/review-reservations.ts`) reads what an older row
+  recorded: its launch scope's SHAs when it has one, otherwise its whole
+  checkout, or every review of the machine when it named no checkout. A row
+  whose declaration does not parse counts against every pool of its harness.
+  The query-only reads of `review_attempts` do not select the new columns, so
+  a store the engine has not reopened still reads. An older binary ignores
+  them.
+- A new table `executor_account_changes` (one row per machine and harness: the
+  last account fingerprint observed, the newest observation carrying it, and
+  the time of the latest observed change) keeps the account-change barrier
+  that makes a quota observed before the change unattributable. The engine
+  advances it in the same transaction as each executor-observation import, and
+  the observation pruning never touches it. On creation it is backfilled once
+  from the retained `executor_observations` with the same rule, so a change
+  still visible at upgrade time is kept. A null fingerprint (unknown identity)
+  never moves it; Codex fingerprints observed through app-server follow the
+  same barrier rule as Claude Code. The table is
+  outside the served revision, the export and the outbox. Query-only readers
+  answer "not persisted" while it is absent (only the history-derived change
+  then applies), and an older binary ignores it.
+
+There is no downgrade path: back up before the first start with the new code
+(see [Backup](#backup)).
 ### Additive tables and columns under usage version 4 (2026-10-24, Work threads)
 
 Durable Work threads (ADR 0063) add four tables without changing

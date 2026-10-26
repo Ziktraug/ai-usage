@@ -74,9 +74,13 @@ export const workAttemptTargetSchema = strictObject({
 const objectIdSchema = pipe(string(), regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u, 'Expected a git object id.'));
 const scopePathSchema = pipe(string(), minLength(1), maxLength(REVIEW_ATTEMPT_BOUNDS.maxScopePath));
 
-/** The one commit a review was given and how much of its patch it received (ADR 0055). */
+/**
+ * The commit (or range, since the delegation scopes widened report-core) a review was given and
+ * how much of its patch it received (ADR 0055). Widened reads only: a review attempt still cuts a
+ * single commit; the range values let a stored row from the shared scope type re-validate.
+ */
 export const workAttemptScopeSchema = strictObject({
-  base: picklist(['empty-tree', 'first-parent']),
+  base: picklist(['empty-tree', 'first-parent', 'range-base']),
   baseSha: objectIdSchema,
   fileCount: countSchema,
   files: pipe(
@@ -95,7 +99,7 @@ export const workAttemptScopeSchema = strictObject({
   headSha: objectIdSchema,
   includedBytes: countSchema,
   includedLines: countSchema,
-  kind: literal('commit'),
+  kind: picklist(['commit', 'range']),
   parentCount: countSchema,
   patchBytes: countSchema,
   patchLines: countSchema,

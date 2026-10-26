@@ -273,6 +273,7 @@
             <span>Synthetic demo</span>
           {/if}
           <a class="wt-link" href="/work/sessions">Session intake ↗</a>
+          <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results ↗</a>
         </div>
       </header>
       {#if listError}

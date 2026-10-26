@@ -5,9 +5,13 @@ import {
   BoundedProcessError,
   type BoundedProcessFailureKind,
   type BoundedRun,
+  type BoundedRunResult,
   type BoundedRunSpec,
+  CODEX_AUTH_METHODS,
+  classifyCodexAuthMethod,
   claudeAccountFingerprint,
   observeExecutors,
+  probeCodexAuth,
   runBoundedProcess,
 } from './executor-observations';
 
@@ -31,7 +35,7 @@ const EXPECTED_FINGERPRINT = createHash('sha256')
   .digest('hex')
   .slice(0, 16);
 
-type Script = Readonly<Record<string, (() => Promise<{ exitCode: number; stdout: string }>) | undefined>>;
+type Script = Readonly<Record<string, ((spec: BoundedRunSpec) => Promise<BoundedRunResult>) | undefined>>;
 
 const boundedFailure = (kind: BoundedProcessFailureKind, command: string): BoundedProcessError =>
   new BoundedProcessError({ kind, message: `${command}: ${kind}` });
@@ -44,7 +48,7 @@ const scripted = (script: Script): { readonly calls: BoundedRunSpec[]; readonly 
     if (!handler) {
       throw boundedFailure('unavailable', spec.command);
     }
-    return handler();
+    return handler(spec);
   };
   return { calls, run };
 };
@@ -55,6 +59,13 @@ const ok =
     Promise.resolve({ exitCode, stdout });
 const failing = (kind: BoundedProcessFailureKind, command: string) => () =>
   Promise.reject(boundedFailure(kind, command));
+/** A CLI that prints only on stderr: the runner answers the caller's classification, never the text. */
+const okOnStderr = (stderr: string) => (spec: BoundedRunSpec) =>
+  Promise.resolve({
+    exitCode: 0,
+    stdout: '',
+    ...(spec.classifyStderr === undefined ? {} : { stderrClass: spec.classifyStderr(stderr) }),
+  });
 const bothPresent = (command: string): string | null => `/usr/bin/${command}`;
 
 const observe = (
@@ -95,7 +106,7 @@ describe('observeExecutors', () => {
         version: '2.1.303 (Claude Code)',
       },
       {
-        authEvidence: 'codex login status exit 0 (output mentions "Logged in")',
+        authEvidence: 'codex login status exit 0 (output mentions "Logged in") authMethod=chatgpt',
         authMethod: 'chatgpt',
         authState: 'logged-in',
         binaryPath: '/usr/bin/codex',
@@ -115,6 +126,25 @@ describe('observeExecutors', () => {
       'codex login status',
     ]);
     expect(calls.every((call) => call.timeoutMs === 5000 && call.maximumOutputBytes > 0)).toBe(true);
+  });
+
+  test('classifies the Codex sign-in line printed on stderr without retaining it', async () => {
+    const subscription = scripted({
+      'codex --version': ok('codex-cli 0.164.0'),
+      'codex login status': okOnStderr(`Logged in using ChatGPT as ${SECRET_EMAIL}\n`),
+    });
+    const [chatgpt] = await observe(subscription.run, bothPresent, ['codex']);
+    expect(chatgpt?.authMethod).toBe('chatgpt');
+    expect(chatgpt?.authEvidence).toBe('codex login status exit 0 authMethod=chatgpt');
+    expect(JSON.stringify(chatgpt)).not.toContain(SECRET_EMAIL);
+    expect(subscription.calls.find((call) => call.args.join(' ') === 'login status')?.classifyStderr).toBeDefined();
+    const apiKey = scripted({
+      'codex --version': ok('codex-cli 0.164.0'),
+      'codex login status': okOnStderr('Logged in using an API key - sk-proj-***\n'),
+    });
+    const [key] = await observe(apiKey.run, bothPresent, ['codex']);
+    expect(key?.authMethod).toBe('api-key');
+    expect(JSON.stringify(key)).not.toContain('sk-proj');
   });
 
   test('propagates an API-key sign-in method from either CLI, bounded and printable', async () => {
@@ -206,6 +236,113 @@ describe('observeExecutors', () => {
     expect(refused).toMatchObject({ binaryPath: null, outcome: 'unavailable' });
     expect(refused?.authEvidence).toContain('AI_USAGE_CLAUDE_EXECUTABLE must be an absolute path');
     expect(relative.calls).toEqual([]);
+  });
+
+  test('probes the Codex sign-in the launch will use: its CODEX_HOME and its executable override', async () => {
+    const home = '/home/op/.codex-reviews';
+    const override = '/opt/codex-review/bin/codex';
+    const { calls, run } = scripted({
+      [`${override} --version`]: ok('codex-cli 0.164.0\n'),
+      [`${override} login status`]: okOnStderr('Logged in using ChatGPT\n'),
+    });
+    const [observation] = await observeExecutors({
+      codexAccountProbe: async () => null,
+      env: { AI_USAGE_CODEX_EXECUTABLE: override, CODEX_HOME: home, PATH: '/usr/bin' },
+      harnesses: ['codex'],
+      machineId: 'machine-a',
+      now: () => NOW,
+      run,
+      timeoutMs: 5000,
+      which: bothPresent,
+    });
+    expect(observation).toMatchObject({
+      authMethod: 'chatgpt',
+      authState: 'logged-in',
+      binaryPath: override,
+      outcome: 'observed',
+      version: 'codex-cli 0.164.0',
+    });
+    expect(calls.map((call) => call.command)).toEqual([override, override]);
+    expect(calls.every((call) => call.env?.CODEX_HOME === home)).toBe(true);
+
+    // Without either variable the probe runs `codex` from the PATH with no extra environment.
+    const plain = scripted({ 'codex --version': ok('codex-cli 0.164.0'), 'codex login status': ok('') });
+    await observeExecutors({
+      codexAccountProbe: async () => null,
+      env: { PATH: '/usr/bin' },
+      harnesses: ['codex'],
+      machineId: 'machine-a',
+      now: () => NOW,
+      run: plain.run,
+      timeoutMs: 5000,
+      which: bothPresent,
+    });
+    expect(plain.calls.map((call) => [call.command, call.env?.CODEX_HOME])).toEqual([
+      ['codex', undefined],
+      ['codex', undefined],
+    ]);
+
+    // A relative override is refused exactly as the launcher refuses it, and nothing runs.
+    const relative = scripted({});
+    const [refused] = await observeExecutors({
+      env: { AI_USAGE_CODEX_EXECUTABLE: 'bin/codex', PATH: '/usr/bin' },
+      harnesses: ['codex'],
+      machineId: 'machine-a',
+      now: () => NOW,
+      run: relative.run,
+      timeoutMs: 5000,
+      which: bothPresent,
+    });
+    expect(refused).toMatchObject({ binaryPath: null, outcome: 'unavailable' });
+    expect(refused?.authEvidence).toContain('AI_USAGE_CODEX_EXECUTABLE must be an absolute path');
+    expect(relative.calls).toEqual([]);
+  });
+
+  test('probeCodexAuth reads the launch profile sign-in: state, method word and the resolver refusal, no account', async () => {
+    const home = '/home/op/.codex-reviews';
+    const override = '/opt/codex-review/bin/codex';
+    const apiKey = scripted({ [`${override} login status`]: okOnStderr('Logged in using an API key - sk-proj-***\n') });
+    const probed = await probeCodexAuth({
+      env: { CODEX_HOME: home, PATH: '/usr/bin' },
+      executable: override,
+      run: apiKey.run,
+      timeoutMs: 5000,
+    });
+    expect(probed).toEqual({
+      authMethod: 'api-key',
+      authState: 'logged-in',
+      evidence: 'codex login status exit 0 authMethod=api-key',
+      outcome: 'observed',
+    });
+    expect(apiKey.calls.map((call) => [call.command, call.args.join(' '), call.env?.CODEX_HOME])).toEqual([
+      [override, 'login status', home],
+    ]);
+    expect(JSON.stringify(probed)).not.toContain('sk-proj');
+
+    const signedOut = scripted({ 'codex login status': ok('Not logged in', 1) });
+    expect(await probeCodexAuth({ env: { PATH: '/usr/bin' }, run: signedOut.run, timeoutMs: 5000 })).toEqual({
+      authMethod: null,
+      authState: 'logged-out',
+      evidence: 'codex login status exit 1',
+      outcome: 'observed',
+    });
+
+    const relative = scripted({});
+    const refused = await probeCodexAuth({
+      env: { AI_USAGE_CODEX_EXECUTABLE: 'bin/codex', PATH: '/usr/bin' },
+      run: relative.run,
+      timeoutMs: 5000,
+    });
+    expect(refused).toMatchObject({ authMethod: null, authState: 'unknown', outcome: 'unavailable' });
+    expect(refused.evidence).toContain('AI_USAGE_CODEX_EXECUTABLE must be an absolute path');
+    expect(relative.calls).toEqual([]);
+
+    const notRunnable = scripted({});
+    expect(await probeCodexAuth({ env: { PATH: '/usr/bin' }, run: notRunnable.run, timeoutMs: 5000 })).toMatchObject({
+      authState: 'unknown',
+      evidence: 'codex login status unavailable',
+      outcome: 'unavailable',
+    });
   });
 
   test('reports an absent binary as unavailable without running anything', async () => {
@@ -326,6 +463,44 @@ describe('observeExecutors', () => {
       authState: 'logged-in',
       outcome: 'observed',
     });
+  });
+
+  test('classifies the Codex sign-in method from a closed vocabulary, API keys of any provider included', async () => {
+    const lines: Record<string, (typeof CODEX_AUTH_METHODS)[number] | null> = {
+      'Logged in using ChatGPT': 'chatgpt',
+      'Logged in using ChatGPT as someone@example.test': 'chatgpt',
+      'Logged in using an API key': 'api-key',
+      'Logged in using API key - sk-proj-abc': 'api-key',
+      'Logged in using Amazon Bedrock API key': 'api-key',
+      'Logged in using Amazon Bedrock AWS access keys': 'aws-access-keys',
+      'Logged in using access token': 'access-token',
+      'Logged in using personal access token': 'personal-access-token',
+      'Logged in using workload identity': 'workload-identity',
+      'Logged in using something new': null,
+      '': null,
+    };
+    for (const [line, expected] of Object.entries(lines)) {
+      expect(classifyCodexAuthMethod(line)).toBe(expected);
+    }
+    for (const method of CODEX_AUTH_METHODS) {
+      expect(method.length).toBeLessThanOrEqual(EXECUTOR_BOUNDS.maxAuthMethod);
+    }
+    const bedrock = scripted({
+      'codex --version': ok('codex-cli 0.164.0'),
+      'codex login status': ok('Logged in using Amazon Bedrock AWS access keys\n'),
+    });
+    expect((await observe(bedrock.run, bothPresent, ['codex']))[0]).toMatchObject({
+      authEvidence: 'codex login status exit 0 (output mentions "Logged in") authMethod=aws-access-keys',
+      authMethod: 'aws-access-keys',
+      authState: 'logged-in',
+    });
+    const token = scripted({
+      'codex --version': ok('codex-cli 0.164.0'),
+      'codex login status': ok(`Logged in using personal access token ghp_${'x'.repeat(30)}\n`),
+    });
+    const [observation] = await observe(token.run, bothPresent, ['codex']);
+    expect(observation).toMatchObject({ authMethod: 'personal-access-token' });
+    expect(JSON.stringify(observation)).not.toContain('ghp_');
   });
 
   test('a timeout or failure of either command is an outcome, never a guess', async () => {

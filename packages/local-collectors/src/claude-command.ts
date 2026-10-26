@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { boundedProcessEnvironment } from '@ai-usage/local-machine/bounded-process';
 
 /**
  * The one way this repository names the Claude Code CLI it runs and the environment it runs it
@@ -49,4 +50,43 @@ export const claudeCommandFor = (
         ? {}
         : { [CLAUDE_CONFIG_DIR_ENVIRONMENT_KEY]: configDirectory },
   };
+};
+
+export type ClaudeExecutableResolution =
+  | {
+      /** The child's whole environment: the bounded allow-list, `CLAUDE_CONFIG_DIR` when set, and `explicit`. */
+      readonly environment: Record<string, string>;
+      readonly executable: string;
+      readonly kind: 'resolved';
+    }
+  | { readonly kind: 'executable-invalid' | 'executable-missing'; readonly message: string };
+
+/**
+ * The command made absolute for a spawn: `claudeCommandFor`, then a bare name looked up on the
+ * allow-listed PATH only. Shared by the review launcher and the delegation worker so both run the
+ * executable the executor probe observed.
+ */
+export const resolveClaudeExecutable = (
+  env: Readonly<Record<string, string | undefined>>,
+  override?: string,
+  explicit: Readonly<Record<string, string>> = {},
+): ClaudeExecutableResolution => {
+  let claude: ClaudeCommand;
+  try {
+    claude = claudeCommandFor(env, override);
+  } catch (error) {
+    if (error instanceof ClaudeCommandError) {
+      return { kind: 'executable-invalid', message: error.message };
+    }
+    throw error;
+  }
+  const environment = boundedProcessEnvironment({ ...claude.environment, ...explicit }, env);
+  if (claude.command.includes('/')) {
+    return { environment, executable: claude.command, kind: 'resolved' };
+  }
+  const resolved = Bun.which(claude.command, { PATH: environment.PATH ?? '' });
+  if (resolved === null) {
+    return { kind: 'executable-missing', message: `${claude.command} was not found on the allow-listed PATH` };
+  }
+  return { environment, executable: resolved, kind: 'resolved' };
 };

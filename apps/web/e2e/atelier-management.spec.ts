@@ -43,6 +43,16 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.locator('[data-healthy-source-row]').first()).toBeVisible();
       await expectAccessibleWithoutPageOverflow(page);
 
+      await page.goto('/delegation');
+      await expect(navigation).toBeVisible();
+      await expect(page.locator('main[data-delegation-hydrated="true"]')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Delegation', level: 1 })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Routes and accounts', level: 2 })).toBeVisible();
+      await expectAccessibleWithoutPageOverflow(page);
+      await page.getByRole('tablist', { name: 'Delegation sections' }).getByRole('tab', { name: 'Rules' }).click();
+      await expect(page.getByRole('heading', { name: 'Policy simulator', level: 2 })).toBeVisible();
+      await expectAccessibleWithoutPageOverflow(page);
+
       await page.goto('/sync');
       await expect(navigation).toBeVisible();
       await expect(page.getByRole('heading', { name: 'Machine fleet', level: 2 })).toBeVisible();

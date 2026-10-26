@@ -18,6 +18,11 @@ import {
   type UsageEngineCommandName,
   type UsageEngineCommandResult,
   type UsageEngineCursorImportOutput,
+  type UsageEngineDelegationCancelOutput,
+  type UsageEngineDelegationConfigOutput,
+  type UsageEngineDelegationEvaluationOutput,
+  type UsageEngineDelegationQualificationOutput,
+  type UsageEngineDelegationStartOutput,
   type UsageEngineEvent,
   type UsageEngineInstanceId,
   type UsageEngineMergePreviewOutput,
@@ -160,8 +165,57 @@ export interface UsageEngineWorkThreadPort {
   readonly execute: (command: WorkThreadCommand, signal?: AbortSignal) => Promise<UsageEngineWorkThreadOutput>;
 }
 
+type QualifyDelegationCommand = Extract<UsageEngineCommand, { readonly command: 'qualify-delegation' }>;
+type StartDelegationCommand = Extract<UsageEngineCommand, { readonly command: 'start-delegation' }>;
+type CancelDelegationCommand = Extract<UsageEngineCommand, { readonly command: 'cancel-delegation' }>;
+type RecordDelegationEvaluationCommand = Extract<
+  UsageEngineCommand,
+  { readonly command: 'record-delegation-evaluation' }
+>;
+type UpdateDelegationConfigCommand = Extract<UsageEngineCommand, { readonly command: 'update-delegation-config' }>;
+
+/**
+ * The engine side of a delegation (ADR 0077): qualification, launch, cancellation, evaluation and
+ * configuration. Every answer is data; a caller's invalid request or selection is a typed refusal,
+ * never a thrown error. Reads of jobs and results go through the store reader, not this port.
+ */
+export interface UsageEngineDelegationPort {
+  /**
+   * Cancels a job this engine tracks (its process is terminated; the outcome is `cancelled`);
+   * answers for ended, unknown and lost jobs without signalling any process this engine did not start.
+   */
+  readonly cancel: (
+    command: CancelDelegationCommand,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineDelegationCancelOutput>;
+  /** Qualifies after the executors were observed now (the executor switch runs the source first); records the qualification. */
+  readonly qualify: (
+    command: QualifyDelegationCommand,
+    executorRun: RoutingQualificationExecutorRun,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineDelegationQualificationOutput>;
+  /** Records a verification or an acceptance under the author the edge names; the ended-state rules are the store's. */
+  readonly recordEvaluation: (
+    command: RecordDelegationEvaluationCommand,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineDelegationEvaluationOutput>;
+  /**
+   * Re-qualifies, decides, records and spawns; resolves once the job row exists (reused, refused,
+   * abstained or spawned). The signal bounds the decision and the spawn only: an abort never kills a
+   * started worker.
+   */
+  readonly start: (command: StartDelegationCommand, signal?: AbortSignal) => Promise<UsageEngineDelegationStartOutput>;
+  /** Writes the named config sections under the expected policy revision, through the writer gate. */
+  readonly updateConfig: (
+    command: UpdateDelegationConfigCommand,
+    signal?: AbortSignal,
+  ) => Promise<UsageEngineDelegationConfigOutput>;
+}
+
 export interface UsageEngineRuntimeDependencies {
   readonly acquireWriterLease: () => Promise<UsageEngineWriterLease>;
+  /** Delegation (ADR 0077); absent in compositions that cannot execute anything. */
+  readonly delegation?: UsageEngineDelegationPort;
   readonly initializeStore: () => Promise<number>;
   readonly initialSourceControl: SourceControlView;
   readonly instanceId: UsageEngineInstanceId | string;

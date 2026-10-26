@@ -5,13 +5,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
-import { REVIEW_ATTEMPT_BOUNDS, type ReviewAttemptTarget } from '@ai-usage/report-core/work-attempts';
+import {
+  REVIEW_ATTEMPT_BOUNDS,
+  type ReviewAttempt,
+  type ReviewAttemptTarget,
+} from '@ai-usage/report-core/work-attempts';
 import { parseClaudeDesktopSessionObservation } from '@ai-usage/report-core/work-attention';
 import type { ExecutorDeclaration } from '@ai-usage/report-core/work-executors';
 import { Effect } from 'effect';
 import type { UsageStoreError } from './errors';
 import { queryReviewAttempts, queryReviewTargetResolution } from './reader';
-import type { NewReviewAttempt } from './review-attempt-store';
+import type { NewReviewAttempt, RequestReviewAttemptResult } from './review-attempt-store';
 import {
   importClaudeDesktopSessions,
   initializeUsageStore,
@@ -53,14 +57,41 @@ const target: ReviewAttemptTarget = {
   sessionTitle: 'Fixture: desktop session',
   sourceSessionId: 'cli-1',
 };
-const newAttempt = (overrides: Partial<NewReviewAttempt> = {}): NewReviewAttempt => ({
-  candidateId: 'declared:["machine-attempts","claude-code","personal"]',
+const POOL = 'declared:["machine-attempts","claude-code","personal"]';
+type RequestedReviewAttempt = Extract<NewReviewAttempt, { readonly state: 'requested' }>;
+type RefusedReviewAttempt = Extract<NewReviewAttempt, { readonly state: 'refused' }>;
+/** A wide pool: these tests are about identities and transitions, not the shared limit. */
+const RESERVATION: RequestedReviewAttempt['reservation'] = {
+  baseSha: 'b'.repeat(40),
+  headSha: 'a'.repeat(40),
+  maxConcurrent: 8,
+  poolId: POOL,
+};
+/** A reservation of another revision of the same checkout, so several rows can be live at once. */
+const reservationOf = (headDigit: string): RequestedReviewAttempt['reservation'] => ({
+  ...RESERVATION,
+  headSha: headDigit.repeat(40),
+});
+const newAttempt = (overrides: Partial<RequestedReviewAttempt> = {}): RequestedReviewAttempt => ({
+  candidateId: POOL,
   declaration,
   executorHarness: 'claude-code',
   idempotencyKey: 'k'.repeat(64),
   machineId: MACHINE,
   requestedAt: NOW,
+  reservation: RESERVATION,
   state: 'requested',
+  target,
+  ...overrides,
+});
+const newRefusal = (overrides: Partial<RefusedReviewAttempt> = {}): RefusedReviewAttempt => ({
+  candidateId: POOL,
+  declaration: null,
+  executorHarness: 'claude-code',
+  idempotencyKey: 'k'.repeat(64),
+  machineId: MACHINE,
+  requestedAt: NOW,
+  state: 'refused',
   target,
   ...overrides,
 });
@@ -75,11 +106,19 @@ const createStore = async (): Promise<string> => {
 
 const run = <Value>(effect: Effect.Effect<Value, UsageStoreError>): Promise<Value> => Effect.runPromise(effect);
 
+/** The row an insert or a reuse answered with; a reservation refusal is a failure of the test, not a row. */
+const attemptOf = (result: RequestReviewAttemptResult): ReviewAttempt => {
+  if (result.kind === 'inserted' || result.kind === 'reused') {
+    return result.attempt;
+  }
+  throw new Error(`expected an attempt row, got ${result.kind}: ${result.message}`);
+};
+
 describe('review attempt store', () => {
   test('persists the native turn and separate stop observations without releasing a running attempt', async () => {
     const dbPath = await createStore();
     const created = await run(requestReviewAttempt({ dbPath, attempt: newAttempt({ executorHarness: 'codex' }) }));
-    const attemptId = created.attempt.attemptId;
+    const attemptId = attemptOf(created).attemptId;
     await run(
       transitionReviewAttempt({
         dbPath,
@@ -103,8 +142,8 @@ describe('review attempt store', () => {
       stopConfirmedAt: null,
     });
     const duplicate = await run(requestReviewAttempt({ dbPath, attempt: newAttempt({ executorHarness: 'codex' }) }));
-    expect(duplicate.reused).toBe(true);
-    expect(duplicate.attempt.attemptId).toBe(attemptId);
+    expect(duplicate.kind).toBe('reused');
+    expect(attemptOf(duplicate).attemptId).toBe(attemptId);
     await run(
       transitionReviewAttempt({
         dbPath,
@@ -143,7 +182,7 @@ describe('review attempt store', () => {
     await run(initializeUsageStore({ dbPath }));
     const upgraded = await run(queryReviewAttempts({ dbPath, reserving: true }));
     expect(upgraded.attempts[0]).toMatchObject({
-      attemptId: created.attempt.attemptId,
+      attemptId: attemptOf(created).attemptId,
       nativeTurnId: null,
       stopRequestedAt: null,
       stopConfirmedAt: null,
@@ -179,6 +218,8 @@ describe('review attempt store', () => {
           'release_evidence',
           'scope_json',
           'guarantee_json',
+          'base_sha',
+          'head_sha',
         ]),
       );
     } finally {
@@ -336,6 +377,114 @@ describe('review attempt store', () => {
     }
   });
 
+  test('adds the frozen-revision columns to a table from the operator-release version, idempotently, with every row unchanged (PR #73 F1)', async () => {
+    const dbPath = await createStore();
+    const previous = new Database(dbPath);
+    const dump = (database: Database): unknown[] =>
+      database
+        .query(
+          'SELECT attempt_id, machine_id, idempotency_key, state, requested_at, ended_at, updated_at, released_at, release_evidence, scope_json, declaration_json, failure_reason FROM review_attempts ORDER BY attempt_id',
+        )
+        .all();
+    let before: unknown[];
+    try {
+      // The table as the operator-release version left it: every column but base_sha and head_sha.
+      previous.exec(`
+        DROP TABLE review_attempts;
+        CREATE TABLE review_attempts (
+          attempt_id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('read-only-review')), target_harness TEXT NOT NULL,
+          source_session_id TEXT NOT NULL, desktop_session_id TEXT, checkout_path TEXT,
+          checkout_origin TEXT CHECK (checkout_origin IS NULL OR checkout_origin IN ('desktop-worktree', 'desktop-cwd', 'served-session')),
+          project_label TEXT, session_title TEXT, candidate_id TEXT NOT NULL,
+          executor_harness TEXT NOT NULL CHECK (executor_harness IN ('claude-code', 'codex')), declaration_json TEXT,
+          state TEXT NOT NULL CHECK (state IN ('requested', 'starting', 'running', 'finished', 'failed', 'refused', 'lost')),
+          requested_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, updated_at TEXT NOT NULL, native_session_id TEXT,
+          pid INTEGER, exit_code INTEGER,
+          result_kind TEXT CHECK (result_kind IS NULL OR result_kind IN ('review', 'error', 'timeout')),
+          result_excerpt TEXT, num_turns INTEGER, duration_ms INTEGER, validations_json TEXT NOT NULL DEFAULT '[]',
+          acceptance TEXT NOT NULL DEFAULT 'pending' CHECK (acceptance IN ('pending', 'accepted', 'rejected')),
+          failure_reason TEXT, launch_session_id TEXT, released_at TEXT,
+          release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ('process-absent', 'outcome-recorded-late', 'recorded-before-reservations', 'operator-declared-ended')),
+          scope_json TEXT, guarantee_json TEXT
+        );
+        CREATE INDEX idx_review_attempts_target ON review_attempts(machine_id, target_harness, source_session_id, requested_at DESC);
+        CREATE UNIQUE INDEX idx_review_attempts_reserved_identity ON review_attempts(idempotency_key)
+          WHERE (state IN ('requested', 'starting', 'running') OR (state = 'lost' AND released_at IS NULL));
+      `);
+      const insert = previous.query(`
+        INSERT INTO review_attempts (attempt_id, machine_id, idempotency_key, action, target_harness, source_session_id,
+          checkout_path, checkout_origin, candidate_id, executor_harness, declaration_json, state, requested_at,
+          ended_at, updated_at, released_at, release_evidence, scope_json, failure_reason)
+        VALUES (?, '${MACHINE}', ?, 'read-only-review', 'claude', 'cli-1', '/home/fixture/work/project', 'desktop-cwd',
+          'candidate', 'claude-code', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      insert.run(
+        'done-1',
+        'a'.repeat(64),
+        JSON.stringify(declaration),
+        'finished',
+        NOW,
+        LATER,
+        LATER,
+        null,
+        null,
+        JSON.stringify({ baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40) }),
+        null,
+      );
+      insert.run('lost-held', 'b'.repeat(64), null, 'lost', NOW, LATER, LATER, null, null, null, 'engine restarted');
+      insert.run(
+        'live-1',
+        'c'.repeat(64),
+        JSON.stringify(declaration),
+        'running',
+        LATER,
+        null,
+        LATER,
+        null,
+        null,
+        null,
+        null,
+      );
+      before = dump(previous);
+    } finally {
+      previous.close();
+    }
+    await run(initializeUsageStore({ dbPath }));
+    // Idempotent: a second open finds the columns and changes nothing.
+    await run(initializeUsageStore({ dbPath }));
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const columns = (db.query('PRAGMA table_info(review_attempts)').all() as { name: string }[]).map(
+        ({ name }) => name,
+      );
+      expect(columns).toEqual(expect.arrayContaining(['base_sha', 'head_sha']));
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 4 });
+      // Every row is as it was; the new columns read as unknown, never invented.
+      expect(dump(db)).toEqual(before);
+      expect(db.query('SELECT attempt_id, base_sha, head_sha FROM review_attempts ORDER BY attempt_id').all()).toEqual([
+        { attempt_id: 'done-1', base_sha: null, head_sha: null },
+        { attempt_id: 'live-1', base_sha: null, head_sha: null },
+        { attempt_id: 'lost-held', base_sha: null, head_sha: null },
+      ]);
+      const indexes = (
+        db.query("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'review_attempts'").all() as {
+          name: string;
+        }[]
+      ).map(({ name }) => name);
+      expect(indexes.sort()).toEqual([
+        'idx_review_attempts_reserved_identity',
+        'idx_review_attempts_target',
+        'sqlite_autoindex_review_attempts_1',
+      ]);
+    } finally {
+      db.close();
+    }
+    // The lost row still holds its reservation (never released at migration), the finished one does not.
+    const reserving = await run(queryReviewAttempts({ dbPath, reserving: true }));
+    expect(reserving.attempts.map(({ attemptId }) => attemptId).sort()).toEqual(['live-1', 'lost-held']);
+  });
+
   test('a store whose review attempts predate the reservation columns reads as not upgraded yet, typed', async () => {
     const dbPath = await createStore();
     const db = new Database(dbPath);
@@ -367,8 +516,8 @@ describe('review attempt store', () => {
       attempt: { attemptId: 'attempt-1', state: 'requested', acceptance: 'pending' },
       reused: false,
     });
-    expect(first.attempt.declaration).toEqual(declaration);
-    expect(first.attempt.validations).toEqual([]);
+    expect(attemptOf(first).declaration).toEqual(declaration);
+    expect(attemptOf(first).validations).toEqual([]);
 
     const second = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-2' }), dbPath }));
     expect(second).toMatchObject({ attempt: { attemptId: 'attempt-1' }, reused: true });
@@ -376,10 +525,10 @@ describe('review attempt store', () => {
     // A refusal is recorded beside the live attempt and never blocks or reuses it.
     const refused = await run(
       requestReviewAttempt({
-        attempt: newAttempt({
+        attempt: newRefusal({
           attemptId: 'attempt-3',
+          declaration,
           failureReason: 'target-not-allowed: add routing.reviewTargets for /x',
-          state: 'refused',
         }),
         dbPath,
       }),
@@ -401,6 +550,46 @@ describe('review attempt store', () => {
     const listed = await run(queryReviewAttempts({ dbPath, target: { harness: 'claude', sourceSessionId: 'cli-1' } }));
     expect(listed.attempts.map(({ attemptId }) => attemptId)).toEqual(['attempt-4', 'attempt-3', 'attempt-1']);
     expect(listed).toMatchObject({ skipped: 0, truncated: false });
+  });
+
+  test('refuses a requested row without a valid reservation, typed, and inserts nothing', async () => {
+    const dbPath = await createStore();
+    // The type forbids these; the runtime check is what a caller outside the engine's admitted path meets.
+    const cases: readonly (readonly [label: string, reservation: unknown])[] = [
+      ['missing', undefined],
+      ['not an object', 'declared:pool'],
+      ['short head sha', { ...RESERVATION, headSha: 'abc' }],
+      ['uppercase base sha', { ...RESERVATION, baseSha: 'B'.repeat(40) }],
+      ['zero concurrency', { ...RESERVATION, maxConcurrent: 0 }],
+      ['fractional concurrency', { ...RESERVATION, maxConcurrent: 1.5 }],
+      ['empty pool', { ...RESERVATION, poolId: '' }],
+    ];
+    for (const [label, reservation] of cases) {
+      const attempt = { ...newAttempt({ attemptId: `invalid-${label}` }), reservation } as unknown as NewReviewAttempt;
+      const error = await Effect.runPromise(Effect.flip(requestReviewAttempt({ attempt, dbPath })));
+      expect([label, error]).toMatchObject([
+        label,
+        { _tag: 'UsageStoreError', operation: 'requestReviewAttempt', reason: 'invalid-input' },
+      ]);
+      expect(error.message).toContain('reservation');
+    }
+    // A requested row without the checkout its revision belongs to cannot reserve a revision either.
+    const noCheckout = newAttempt({ attemptId: 'invalid-checkout', target: { ...target, checkoutPath: null } });
+    const checkoutError = await Effect.runPromise(Effect.flip(requestReviewAttempt({ attempt: noCheckout, dbPath })));
+    expect(checkoutError).toMatchObject({ operation: 'requestReviewAttempt', reason: 'invalid-input' });
+    expect(checkoutError.message).toContain('checkout');
+    expect((await run(queryReviewAttempts({ dbPath }))).attempts).toEqual([]);
+
+    // A refusal reserves nothing and needs none; a valid reservation inserts.
+    const refused = await run(
+      requestReviewAttempt({
+        attempt: newRefusal({ attemptId: 'refused-1', failureReason: 'policy-refused: x' }),
+        dbPath,
+      }),
+    );
+    expect(refused).toMatchObject({ attempt: { attemptId: 'refused-1', state: 'refused' }, kind: 'inserted' });
+    const inserted = await run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'valid-1' }), dbPath }));
+    expect(inserted).toMatchObject({ attempt: { attemptId: 'valid-1', state: 'requested' }, kind: 'inserted' });
   });
 
   test('guards transitions by state and bounds the written text', async () => {
@@ -501,20 +690,35 @@ describe('review attempt store', () => {
 
   test('marks every live attempt of the machine lost with a bounded reason and leaves the rest alone', async () => {
     const dbPath = await createStore();
+    // Distinct identities on distinct revisions of the checkout: each row is live beside the others.
     await run(
       requestReviewAttempt({
-        attempt: newAttempt({ attemptId: 'requested-1', idempotencyKey: 'a'.repeat(64) }),
+        attempt: newAttempt({
+          attemptId: 'requested-1',
+          idempotencyKey: 'a'.repeat(64),
+          reservation: reservationOf('1'),
+        }),
         dbPath,
       }),
     );
     await run(
-      requestReviewAttempt({ attempt: newAttempt({ attemptId: 'running-1', idempotencyKey: 'b'.repeat(64) }), dbPath }),
+      requestReviewAttempt({
+        attempt: newAttempt({
+          attemptId: 'running-1',
+          idempotencyKey: 'b'.repeat(64),
+          reservation: reservationOf('2'),
+        }),
+        dbPath,
+      }),
     );
     await run(
       transitionReviewAttempt({ at: LATER, attemptId: 'running-1', dbPath, patch: { pid: 77, state: 'running' } }),
     );
     await run(
-      requestReviewAttempt({ attempt: newAttempt({ attemptId: 'done-1', idempotencyKey: 'c'.repeat(64) }), dbPath }),
+      requestReviewAttempt({
+        attempt: newAttempt({ attemptId: 'done-1', idempotencyKey: 'c'.repeat(64), reservation: reservationOf('3') }),
+        dbPath,
+      }),
     );
     await run(
       transitionReviewAttempt({ at: LATER, attemptId: 'done-1', dbPath, patch: { state: 'finished', endedAt: LATER } }),
@@ -555,7 +759,7 @@ describe('review attempt store', () => {
     const requested = await run(
       requestReviewAttempt({ attempt: newAttempt({ attemptId: 'attempt-1', launchSessionId }), dbPath }),
     );
-    expect(requested.attempt).toMatchObject({ launchSessionId, releasedAt: null, state: 'requested' });
+    expect(attemptOf(requested)).toMatchObject({ launchSessionId, releasedAt: null, state: 'requested' });
     await run(
       transitionReviewAttempt({ at: LATER, attemptId: 'attempt-1', dbPath, patch: { pid: 4242, state: 'running' } }),
     );
@@ -646,8 +850,8 @@ describe('review attempt store', () => {
       run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'client-a' }), dbPath })),
       run(requestReviewAttempt({ attempt: newAttempt({ attemptId: 'client-b' }), dbPath })),
     ]);
-    expect(results.filter((result) => !result.reused)).toHaveLength(1);
-    expect(new Set(results.map((result) => result.attempt.attemptId)).size).toBe(1);
+    expect(results.filter((result) => result.kind === 'inserted')).toHaveLength(1);
+    expect(new Set(results.map((result) => attemptOf(result).attemptId)).size).toBe(1);
     expect((await run(queryReviewAttempts({ dbPath }))).attempts).toHaveLength(1);
   });
 
@@ -719,6 +923,7 @@ describe('review attempt store', () => {
             attemptId: `attempt-${index}`,
             idempotencyKey: String(index).repeat(64),
             requestedAt: `2026-10-22T10:0${index}:00.000Z`,
+            reservation: reservationOf(String(index)),
           }),
           dbPath,
         }),

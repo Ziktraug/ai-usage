@@ -5,6 +5,9 @@ import { createORPCSvelteQueryUtils, type RouterUtils } from '@orpc/svelte-query
 
 const GET_RPC_PATHS = new Set([
   'campaign/labelOverrides',
+  'delegation/job',
+  'delegation/jobs',
+  'delegation/settings',
   'memory/proposalReviews',
   'projects/resolutionReviews',
   'replication/status',

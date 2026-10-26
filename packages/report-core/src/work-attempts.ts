@@ -402,10 +402,11 @@ export interface ReviewScopeFile {
  * Exactly what a review was given (ADR 0055): one commit, resolved to a SHA before anything else
  * was read, compared with its first parent (or the empty tree for a root commit), and the bounded
  * prefix of its patch the prompt carried. A review never claims more than this: not a branch, not
- * a pull request, not the working tree.
+ * a pull request, not the working tree. A delegated review may freeze a `range` instead: two
+ * SHAs the engine resolved, the base an ancestor of the head (`range-base`).
  */
 export interface ReviewAttemptScope {
-  readonly base: 'empty-tree' | 'first-parent';
+  readonly base: 'empty-tree' | 'first-parent' | 'range-base';
   readonly baseSha: string;
   /** Files the patch touches in total; `files` lists at most `maxScopeFiles` of them. */
   readonly fileCount: number;
@@ -414,8 +415,8 @@ export interface ReviewAttemptScope {
   /** Bytes and lines of the patch prefix the prompt carried. */
   readonly includedBytes: number;
   readonly includedLines: number;
-  readonly kind: 'commit';
-  /** 0 for a root commit, 2 or more for a merge (compared with its first parent only). */
+  readonly kind: 'commit' | 'range';
+  /** Parents of the head commit: 0 for a root commit, 2 or more for a merge (compared with its first parent only). */
   readonly parentCount: number;
   readonly patchBytes: number;
   readonly patchLines: number;
@@ -719,12 +720,16 @@ const isRepositoryPrefix = (value: unknown): value is string =>
       .split('/')
       .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..'));
 
-/** Strict re-validation of a stored scope: one commit, consistent counts, a declared truncation that matches them. */
+/** Strict re-validation of a stored scope: one commit or one frozen range, consistent counts, a declared truncation that matches them. */
 export const parseReviewAttemptScope = (value: unknown): ReviewAttemptScope | null => {
-  if (!isRecord(value) || hasOnlyKeys(value, SCOPE_KEYS).length > 0 || value.kind !== 'commit') {
+  if (
+    !isRecord(value) ||
+    hasOnlyKeys(value, SCOPE_KEYS).length > 0 ||
+    (value.kind !== 'commit' && value.kind !== 'range')
+  ) {
     return null;
   }
-  const { base, baseSha, fileCount, headSha, includedBytes, includedLines, parentCount, patchBytes, patchLines } =
+  const { base, baseSha, fileCount, headSha, includedBytes, includedLines, kind, parentCount, patchBytes, patchLines } =
     value;
   if (
     !(
@@ -753,8 +758,14 @@ export const parseReviewAttemptScope = (value: unknown): ReviewAttemptScope | nu
     return null;
   }
   const emptyTree = headSha.length === 40 ? GIT_EMPTY_TREE.sha1 : GIT_EMPTY_TREE.sha256;
-  const baseConsistent =
-    base === 'empty-tree' ? parentCount === 0 && baseSha === emptyTree : base === 'first-parent' && parentCount > 0;
+  let baseConsistent: boolean;
+  if (kind === 'range') {
+    baseConsistent = base === 'range-base';
+  } else if (base === 'empty-tree') {
+    baseConsistent = parentCount === 0 && baseSha === emptyTree;
+  } else {
+    baseConsistent = base === 'first-parent' && parentCount > 0;
+  }
   if (
     !(baseConsistent && Array.isArray(value.files)) ||
     value.files.length > REVIEW_ATTEMPT_BOUNDS.maxScopeFiles ||
@@ -770,15 +781,21 @@ export const parseReviewAttemptScope = (value: unknown): ReviewAttemptScope | nu
     }
     files.push(file);
   }
+  let parsedBase: ReviewAttemptScope['base'];
+  if (kind === 'range') {
+    parsedBase = 'range-base';
+  } else {
+    parsedBase = base === 'empty-tree' ? 'empty-tree' : 'first-parent';
+  }
   return {
-    base: base === 'empty-tree' ? 'empty-tree' : 'first-parent',
+    base: parsedBase,
     baseSha,
     fileCount,
     files,
     headSha,
     includedBytes,
     includedLines,
-    kind: 'commit',
+    kind,
     parentCount,
     patchBytes,
     patchLines,

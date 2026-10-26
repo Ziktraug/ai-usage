@@ -35,6 +35,7 @@ const unavailableServices = <Services>(overrides: object = {}): Services =>
   }) as Services;
 
 const dependencies = (): WebRpcRouterDependencies => ({
+  delegation: unavailableServices<WebRpcRouterDependencies['delegation']>(),
   memory: unavailableServices<WebRpcRouterDependencies['memory']>(),
   projects: unavailableServices<WebRpcRouterDependencies['projects']>(),
   report: unavailableServices<WebRpcRouterDependencies['report']>(),
@@ -110,8 +111,8 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(50);
-    expect(dependencyAcquisitions).toBe(50);
+    expect(observed).toHaveLength(57);
+    expect(dependencyAcquisitions).toBe(57);
     expect(rpcOperationPolicies.find(({ operation }) => operation === 'stopWorkAttempt')).toMatchObject({
       method: 'POST',
       target: 'workAttempts.stop',

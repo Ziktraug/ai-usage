@@ -1,3 +1,4 @@
+export type { NewDelegationJob } from './delegation-store';
 export {
   attachDeclaredWorkThreadSessions,
   createUsageStore,
@@ -30,11 +31,14 @@ export {
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   quiesceUsageStoreForShutdown,
+  recordDelegationEvaluation,
   recordWorkFactRun,
+  requestDelegationJob,
   requestReviewAttempt,
   setLocalProjectionReadFaultInjectorForTesting,
   setServedReportPublicationFaultInjectorForTesting,
   setServedReportReadFaultInjectorForTesting,
+  transitionDelegationJob,
   transitionReviewAttempt,
   USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   updateUsageMachineLabel,

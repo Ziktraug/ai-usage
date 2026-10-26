@@ -24,6 +24,7 @@ import type {
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
 import { Console, Effect, Exit } from 'effect';
 import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
+import { isDelegationCliCommand, liveCliDelegationDependencies, runDelegationCliCommand } from './delegation';
 import { type AppError, CliArgumentError, CliWorkContextError, formatAppError } from './errors';
 import { renderMemorySearch } from './memory';
 import { quotaStatusDataset, renderQuota, renderQuotaHistory, renderQuotaJson } from './quota';
@@ -385,6 +386,14 @@ export const app = Effect.gen(function* () {
       return yield* Effect.fail(new CliWorkContextError(result.failure));
     }
     yield* writeStdout(`${renderWorkContext(result.value, command.args.json)}\n`);
+    return;
+  }
+
+  if (isDelegationCliCommand(command)) {
+    // Daemon-only engine commands and read-only store reads (ADR 0077); `runtime.usageEngine`, whose
+    // foreground fallback would terminate the workers it launched, is deliberately not used here.
+    const output = yield* fromPromise(() => runDelegationCliCommand(command, liveCliDelegationDependencies(runtime)));
+    yield* writeStdout(`${output}\n`);
     return;
   }
 

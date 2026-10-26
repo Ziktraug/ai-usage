@@ -2,12 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import type { WorkThreadCommand, WorkThreadCommandResult } from '@ai-usage/report-core/work-thread';
 import {
+  boundUsageEngineDelegationConfigIssues,
+  boundUsageEngineReviewMessage,
   classifyUsageEngineRetry,
   parseUsageEngineCommand,
   parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandCompletion,
   parseUsageEngineCommandId,
   parseUsageEngineCommandResult,
+  parseUsageEngineDelegationConfigOutput,
+  parseUsageEngineDelegationStartOutput,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
   parseUsageEngineForegroundOutcome,
@@ -16,6 +20,7 @@ import {
   parseUsageEngineProtocolVersion,
   parseUsageEngineReplayCursor,
   parseUsageEngineReplicationStatusOutput,
+  parseUsageEngineReviewAttemptOutput,
   parseUsageEngineStatus,
   parseUsageEngineWorkThreadOutput,
   parseWebUsageEngineCommand,
@@ -23,6 +28,7 @@ import {
   type UsageEngineCommandCompletion,
   UsageEngineContractError,
   usageEngineControlBounds,
+  usageEngineMaxReviewMessageBytes,
 } from './contracts';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
 
@@ -268,6 +274,36 @@ describe('usage engine control contracts', () => {
       {
         command: 'qualify-review-routing',
         target: { desktopSessionId: null, harness: 'claude', sourceSessionId: 'session-a' },
+      },
+      {
+        command: 'qualify-delegation',
+        purpose: 'simulation',
+        request: { action: 'read-only-review', checkout: { path: '/home/operator/src/project' }, schemaVersion: 1 },
+      },
+      {
+        command: 'start-delegation',
+        idempotencyKey: 'claude-code:session-a:1',
+        request: { action: 'read-only-review', schemaVersion: 1 },
+        selection: { kind: 'abstain', qualificationId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5' },
+      },
+      { command: 'cancel-delegation', jobId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5' },
+      {
+        author: 'calling-model',
+        authorLabel: 'claude-code',
+        command: 'record-delegation-evaluation',
+        evaluation: { kind: 'verification', verdict: 'confirmed' },
+        jobId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5',
+      },
+      {
+        command: 'update-delegation-config',
+        delegation: { defaults: { reservePercent: 25 } },
+        expectedRevision: '0123456789abcdef',
+      },
+      {
+        command: 'update-delegation-config',
+        executors: [{ harness: 'claude-code' }],
+        expectedRevision: '0123456789abcdef',
+        reviewTargets: [{ checkoutPath: '/home/operator/src' }],
       },
       { command: 'collect-fresh-quota' },
       { command: 'import-cursor', input: { handoffId: 'handoff-1', kind: 'inbox-handoff' } },
@@ -789,6 +825,36 @@ describe('usage engine control contracts', () => {
     ).toThrow();
   });
 
+  test('carries the common review policy refusals of a legacy review attempt (PR #73 F1)', () => {
+    const completion = {
+      command: 'start-review-attempt',
+      commandId: 'command-1',
+      completedAt: '2026-10-25T08:00:02.000Z',
+      output: {
+        attempt: { attemptId: 'attempt-refused', reused: false, state: 'refused' },
+        kind: 'review-attempt',
+        refusal: {
+          message: 'The delegation policy does not admit route r: Forbidden by rule no-acme',
+          reason: 'policy-refused',
+        },
+      },
+      state: 'succeeded',
+    };
+    for (const reason of ['policy-refused', 'scope-unavailable', 'target-reserved', 'pool-busy']) {
+      const refused = {
+        ...completion,
+        output: { ...completion.output, refusal: { ...completion.output.refusal, reason } },
+      };
+      expect(parseUsageEngineCommandCompletion(refused)).toEqual(refused as never);
+    }
+    expect(() =>
+      parseUsageEngineCommandCompletion({
+        ...completion,
+        output: { ...completion.output, refusal: { ...completion.output.refusal, reason: 'rule-said-no' } },
+      }),
+    ).toThrow();
+  });
+
   test('carries the operator release of a held review reservation and its bounded answer (ADR 0055)', () => {
     const command = { attemptId: 'attempt-lost', command: 'release-review-reservation' };
     expect(parseUsageEngineCommand(command)).toEqual(command as never);
@@ -827,6 +893,159 @@ describe('usage engine control contracts', () => {
     }
   });
 
+  test('carries the delegation commands as bounded objects and keeps the start out of the web (ADR 0077)', () => {
+    const request = { action: 'read-only-review', checkout: { path: '/home/operator/src/project' }, schemaVersion: 1 };
+    const selection = { kind: 'choice', qualificationId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5', routeId: 'r' };
+    const qualify = { command: 'qualify-delegation', purpose: 'delegation', request };
+    const start = { command: 'start-delegation', idempotencyKey: 'session-a:turn-7', request, selection };
+    const cancel = { command: 'cancel-delegation', jobId: 'job-1' };
+    const evaluate = {
+      author: 'operator',
+      authorLabel: null,
+      command: 'record-delegation-evaluation',
+      evaluation: { kind: 'acceptance', verdict: 'accepted' },
+      jobId: 'job-1',
+    };
+    const configure = { command: 'update-delegation-config', expectedRevision: 'abcdef0123456789', reviewTargets: [] };
+    for (const command of [qualify, cancel, evaluate, configure]) {
+      expect(parseWebUsageEngineCommand(command) as unknown).toEqual(command);
+    }
+    expect(parseUsageEngineCommand(start) as unknown).toEqual(start);
+    expect(() => parseWebUsageEngineCommand(start)).toThrow('start a delegation');
+
+    // The nested payloads are objects the engine parses; the control plane refuses only non-objects.
+    expect(() => parseUsageEngineCommand({ ...qualify, request: 'review HEAD' })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ ...qualify, purpose: 'dry-run' })).toThrow('purpose');
+    expect(() => parseUsageEngineCommand({ ...qualify, extra: true })).toThrow('unknown');
+    expect(() => parseUsageEngineCommand({ ...start, idempotencyKey: 'short' })).toThrow('idempotency');
+    expect(() => parseUsageEngineCommand({ ...start, idempotencyKey: 'has space in it' })).toThrow('idempotency');
+    expect(() => parseUsageEngineCommand({ ...start, selection: [] })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ command: 'cancel-delegation' })).toThrow('unknown or missing');
+    // The engine's own author is never accepted from a caller.
+    expect(() => parseUsageEngineCommand({ ...evaluate, author: 'automated-check' })).toThrow('author');
+    expect(() => parseUsageEngineCommand({ ...evaluate, evaluation: null })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ command: 'update-delegation-config', expectedRevision: 'abc' })).toThrow(
+      'no section',
+    );
+    expect(() => parseUsageEngineCommand({ ...configure, executors: 'all' })).toThrow('array');
+    expect(() => parseUsageEngineCommand({ ...configure, delegation: [] })).toThrow('object');
+    expect(() => parseUsageEngineCommand({ ...configure, expectedRevision: 'x'.repeat(65) })).toThrow('revision');
+  });
+
+  test('carries the delegation answers and refuses outputs that do not conform (ADR 0077)', () => {
+    const base = { commandId: 'command-1', completedAt: '2026-10-25T08:00:02.000Z', state: 'succeeded' };
+    const qualification = {
+      admissibleRouteIds: [],
+      outcome: 'no-admissible-route',
+      qualificationId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5',
+      routes: [],
+      schemaVersion: 1,
+    };
+    const qualified = {
+      ...base,
+      command: 'qualify-delegation',
+      output: { kind: 'delegation-qualification', qualification },
+    };
+    expect(parseUsageEngineCommandCompletion(qualified)).toEqual(qualified as never);
+    for (const output of [
+      { kind: 'delegation-qualification', qualification: { ...qualification, schemaVersion: 2 } },
+      { kind: 'delegation-qualification', qualification: { ...qualification, outcome: 'maybe' } },
+      { kind: 'delegation-qualification', qualification: { ...qualification, qualificationId: 7 } },
+      { kind: 'delegation-qualification', qualification: { ...qualification, routes: ['x'.repeat(49 * 1024)] } },
+      { kind: 'delegation-qualification', qualification, rows: [] },
+      { kind: 'none' },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...qualified, output })).toThrow();
+    }
+
+    const started = {
+      ...base,
+      command: 'start-delegation',
+      output: { job: { jobId: 'job-1', reused: false, state: 'starting' }, kind: 'delegation-start', refusal: null },
+    };
+    expect(parseUsageEngineCommandCompletion(started)).toEqual(started as never);
+    const refused = {
+      ...started,
+      output: {
+        job: { jobId: 'job-2', reused: false, state: 'refused' },
+        kind: 'delegation-start',
+        refusal: { message: 'The cited qualification expired.', reason: 'qualification-expired' },
+      },
+    };
+    expect(parseUsageEngineCommandCompletion(refused)).toEqual(refused as never);
+    const refusedWithoutRow = { ...started, output: { ...refused.output, job: null } };
+    expect(parseUsageEngineCommandCompletion(refusedWithoutRow)).toEqual(refusedWithoutRow as never);
+    for (const output of [
+      { ...started.output, job: null },
+      { ...started.output, job: { ...started.output.job, state: 'queued' } },
+      { ...refused.output, refusal: { ...refused.output.refusal, reason: 'busy' } },
+      { ...refused.output, refusal: { message: 'x'.repeat(1025), reason: 'pool-busy' } },
+      { ...started.output, rows: [] },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...started, output })).toThrow();
+    }
+
+    const cancelled = {
+      ...base,
+      command: 'cancel-delegation',
+      output: { jobId: 'job-1', kind: 'delegation-cancel', result: 'cancelling', state: 'running' },
+    };
+    expect(parseUsageEngineCommandCompletion(cancelled)).toEqual(cancelled as never);
+    const unknownJob = { ...cancelled, output: { ...cancelled.output, result: 'not-found', state: null } };
+    expect(parseUsageEngineCommandCompletion(unknownJob)).toEqual(unknownJob as never);
+    expect(() =>
+      parseUsageEngineCommandCompletion({ ...cancelled, output: { ...cancelled.output, result: 'killed' } }),
+    ).toThrow();
+
+    const evaluated = {
+      ...base,
+      command: 'record-delegation-evaluation',
+      output: { evaluationId: 'evaluation-1', kind: 'delegation-evaluation', refusal: null },
+    };
+    expect(parseUsageEngineCommandCompletion(evaluated)).toEqual(evaluated as never);
+    const notEnded = {
+      ...evaluated,
+      output: {
+        evaluationId: null,
+        kind: 'delegation-evaluation',
+        refusal: { message: 'The job is still running.', reason: 'not-ended' },
+      },
+    };
+    expect(parseUsageEngineCommandCompletion(notEnded)).toEqual(notEnded as never);
+    for (const output of [
+      { evaluationId: null, kind: 'delegation-evaluation', refusal: null },
+      { ...notEnded.output, evaluationId: 'evaluation-1' },
+      { ...notEnded.output, refusal: { ...notEnded.output.refusal, reason: 'forbidden' } },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...evaluated, output })).toThrow();
+    }
+
+    const written = {
+      ...base,
+      command: 'update-delegation-config',
+      output: { issues: [], kind: 'delegation-config', result: 'written', revision: '0123456789abcdef' },
+    };
+    expect(parseUsageEngineCommandCompletion(written)).toEqual(written as never);
+    const invalid = {
+      ...written,
+      output: {
+        issues: [{ path: 'delegation.rules[0].id', reason: 'must match the rule id pattern' }],
+        kind: 'delegation-config',
+        result: 'invalid',
+        revision: '0123456789abcdef',
+      },
+    };
+    expect(parseUsageEngineCommandCompletion(invalid)).toEqual(invalid as never);
+    for (const output of [
+      { ...written.output, result: 'invalid' },
+      { ...invalid.output, result: 'written' },
+      { ...invalid.output, issues: [{ path: 'delegation', reason: 'x', value: 'secret' }] },
+      { ...written.output, result: 'skipped' },
+    ]) {
+      expect(() => parseUsageEngineCommandCompletion({ ...written, output })).toThrow();
+    }
+  });
+
   test('classifies retries by operation without trusting server input', () => {
     expect(classifyUsageEngineRetry('transport-failed', 'command')).toBe('same-command-id');
     expect(classifyUsageEngineRetry('transport-failed', 'status')).toBe('safe-request');
@@ -840,6 +1059,139 @@ describe('usage engine control contracts', () => {
     expect(classifyUsageEngineRetry('merge-store-failed', 'command')).toBe('never');
   });
 
+  test('bounds a review or delegation message by UTF-8 bytes on a code-point boundary', () => {
+    const limit = usageEngineMaxReviewMessageBytes;
+    const bytesOf = (value: string): number => new TextEncoder().encode(value).byteLength;
+    expect(limit).toBe(1024);
+
+    const ascii = 'a'.repeat(limit);
+    expect(boundUsageEngineReviewMessage(ascii)).toBe(ascii);
+    const asciiCut = boundUsageEngineReviewMessage(`${ascii}b`);
+    expect(asciiCut).toBe(`${'a'.repeat(limit - 3)}…`);
+    expect(bytesOf(asciiCut)).toBe(limit);
+
+    // CJK: three bytes per character, never cut inside one (341 characters fit, 342 do not).
+    const cjk = '日'.repeat(341);
+    expect(bytesOf(cjk)).toBe(limit - 1);
+    expect(boundUsageEngineReviewMessage(cjk)).toBe(cjk);
+    const cjkCut = boundUsageEngineReviewMessage(`${cjk}本`);
+    expect(cjkCut).toBe(`${'日'.repeat(340)}…`);
+    expect(bytesOf(cjkCut)).toBe(limit - 1);
+
+    // Emoji: four bytes and a surrogate pair in UTF-16, never split (256 fit exactly, 257 do not).
+    const emoji = '🧪'.repeat(limit / 4);
+    expect(bytesOf(emoji)).toBe(limit);
+    expect(boundUsageEngineReviewMessage(emoji)).toBe(emoji);
+    const emojiCut = boundUsageEngineReviewMessage(`${emoji}🧪`);
+    expect(emojiCut).toBe(`${'🧪'.repeat(limit / 4 - 1)}…`);
+    expect(bytesOf(emojiCut)).toBe(limit - 1);
+
+    // An ASCII run that ends where a four-byte character would overflow the budget: the marker takes its place.
+    const mixedCut = boundUsageEngineReviewMessage(`${'a'.repeat(limit - 4)}🧪🧪`);
+    expect(mixedCut).toBe(`${'a'.repeat(limit - 4)}…`);
+
+    // What the helper answers is exactly what the two start-output parsers accept.
+    for (const message of [asciiCut, cjkCut, emojiCut, mixedCut]) {
+      expect(
+        parseUsageEngineDelegationStartOutput({
+          job: null,
+          kind: 'delegation-start',
+          refusal: { message, reason: 'pool-busy' },
+        }).refusal?.message,
+      ).toBe(message);
+      expect(
+        parseUsageEngineReviewAttemptOutput({
+          attempt: { attemptId: 'attempt-1', reused: false, state: 'refused' },
+          kind: 'review-attempt',
+          refusal: { message, reason: 'pool-busy' },
+        }).refusal?.message,
+      ).toBe(message);
+    }
+    expect(() =>
+      parseUsageEngineDelegationStartOutput({
+        job: null,
+        kind: 'delegation-start',
+        refusal: { message: `${cjk}本`, reason: 'pool-busy' },
+      }),
+    ).toThrow('byte limit');
+  });
+});
+
+describe('narrow project-group command parser', () => {
+  test('answers exactly what the full command parser and the web projection answer', () => {
+    const command = {
+      command: 'replace-project-groups-by-reference',
+      projectGroups: [{ id: 'group-1', name: 'Group 1', sources: [`project-source:${'b'.repeat(64)}`] }],
+      revision: 'revision-b',
+    };
+    const narrow = parseUsageEngineProjectGroupReferenceCommand(command) as unknown;
+    expect(narrow).toEqual(parseUsageEngineCommand(command));
+    expect(narrow).toEqual(parseWebUsageEngineCommand(command));
+    expect(() => parseUsageEngineProjectGroupReferenceCommand({ ...command, extra: true })).toThrow('unknown fields');
+    expect(() => parseUsageEngineProjectGroupReferenceCommand({ command: 'publish' })).toThrow(
+      'command kind is invalid',
+    );
+    expect(() =>
+      parseUsageEngineProjectGroupReferenceCommand({
+        ...command,
+        projectGroups: [{ id: 'group-1', name: 'Group 1', sources: ['/private/history'] }],
+      }),
+    ).toThrow('reference');
+  });
+});
+
+describe('the delegation config issues an invalid answer lists', () => {
+  const issuesBytes = (issues: readonly object[]): number => Buffer.byteLength(JSON.stringify(issues), 'utf8');
+  const answer = (issues: readonly { path: string; reason: string }[]) => ({
+    issues,
+    kind: 'delegation-config' as const,
+    result: 'invalid' as const,
+    revision: '0123456789abcdef',
+  });
+
+  test('keeps a short list whole and empty stays empty', () => {
+    expect(boundUsageEngineDelegationConfigIssues([])).toEqual([]);
+    const few = [
+      { path: 'delegation.rules[0].effect', reason: 'must be forbid, restrict or require' },
+      { path: 'delegation.defaults.reservePercent', reason: 'must be a number between 0 and 100' },
+    ];
+    expect(boundUsageEngineDelegationConfigIssues(few)).toEqual(few);
+  });
+
+  test('counts the issues beyond the count bound in a closing entry instead of dropping them', () => {
+    const many = Array.from({ length: 100 }, (_, index) => ({
+      path: `delegation.rules[${index}]`,
+      reason: 'unknown field(s): x',
+    }));
+    const listed = boundUsageEngineDelegationConfigIssues(many);
+    expect(listed).toHaveLength(64);
+    expect(listed.slice(0, 63)).toEqual(many.slice(0, 63));
+    expect(listed[63]?.reason).toStartWith('37 more issue(s) not listed');
+    expect(parseUsageEngineDelegationConfigOutput(answer(listed)).issues).toHaveLength(64);
+  });
+
+  test('keeps sixty-four issues of a kilobyte each under half the completion bound', () => {
+    // One unknown key of about a kilobyte in each of the 64 rules the policy admits.
+    const wide = Array.from({ length: 64 }, (_, index) => ({
+      path: `delegation.rules[${index}]`,
+      reason: `unknown field(s): ${'k'.repeat(1000)}${index}`,
+    }));
+    expect(issuesBytes(wide)).toBeGreaterThan(usageEngineControlBounds.maxCommandCompletionEventBytes);
+    const listed = boundUsageEngineDelegationConfigIssues(wide);
+    expect(issuesBytes(listed)).toBeLessThanOrEqual(usageEngineControlBounds.maxCommandCompletionEventBytes / 2);
+    expect(listed.length).toBeLessThan(wide.length);
+    const omitted = wide.length - (listed.length - 1);
+    expect(listed.at(-1)?.reason).toStartWith(`${omitted} more issue(s) not listed`);
+    expect(listed.slice(0, -1)).toEqual(
+      wide
+        .slice(0, listed.length - 1)
+        .map((issue) => ({ ...issue, reason: boundUsageEngineReviewMessage(issue.reason) })),
+    );
+    expect(parseUsageEngineDelegationConfigOutput(answer(listed)).issues).toEqual(listed);
+  });
+});
+
+describe('review stop contract', () => {
   test('a review stop command identifies an owned attempt without claiming confirmed termination', () => {
     const command = { attemptId: 'attempt-owned', command: 'stop-review-attempt' };
     expect(parseUsageEngineCommand(command)).toEqual(command as never);

@@ -185,6 +185,53 @@ describe('review scope: one commit, resolved first, compared with its first pare
     expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 
+  test('a frozen revision diffs exactly the given SHAs, never reads HEAD and reports the range base', async () => {
+    const { git, root } = await repository();
+    await writeFile(path.join(root, 'a.txt'), 'one\n');
+    await git('add', 'a.txt');
+    await git('commit', '-q', '-m', 'first');
+    const first = await head(git);
+    await writeFile(path.join(root, 'a.txt'), 'one\ntwo\n');
+    await git('commit', '-q', '-am', 'second');
+    const second = await head(git);
+    await writeFile(path.join(root, 'b.txt'), 'b\n');
+    await git('add', 'b.txt');
+    await git('commit', '-q', '-m', 'third');
+    const third = await head(git);
+    // HEAD moves on while the frozen scope is prepared; the scope ignores it.
+    await writeFile(path.join(root, 'c.txt'), 'c\n');
+    await git('add', 'c.txt');
+    await git('commit', '-q', '-m', 'fourth, not reviewed');
+
+    const commit = await prepareReviewScope(root, { revision: { baseSha: first, headSha: second, kind: 'commit' } });
+    expect(commit.scope).toMatchObject({
+      base: 'first-parent',
+      baseSha: first,
+      headSha: second,
+      kind: 'commit',
+      parentCount: 1,
+      subject: 'second',
+    });
+    expect(commit.patch).toBe(await git(...REVIEW_DIFF_TREE_OPTIONS, first, second));
+    const range = await prepareReviewScope(root, { revision: { baseSha: first, headSha: third, kind: 'range' } });
+    expect(range.scope).toMatchObject({ base: 'range-base', baseSha: first, headSha: third, kind: 'range' });
+    expect(range.scope.files.map((file) => file.path)).toEqual(['a.txt', 'b.txt']);
+    expect(range.patch).toBe(await git(...REVIEW_DIFF_TREE_OPTIONS, first, third));
+    expect(parseReviewAttemptScope(range.scope)).toEqual(range.scope);
+    // A frozen commit whose base is not its first parent is refused instead of diffed.
+    await expect(
+      prepareReviewScope(root, { revision: { baseSha: first, headSha: third, kind: 'commit' } }),
+    ).rejects.toMatchObject({ kind: 'git-failed' });
+    await expect(
+      prepareReviewScope(root, { revision: { baseSha: 'HEAD~1', headSha: third, kind: 'range' } }),
+    ).rejects.toMatchObject({ kind: 'git-failed' });
+    const emptyRange = await prepareReviewScope(root, {
+      revision: { baseSha: third, headSha: third, kind: 'range' },
+    }).catch((caught: unknown) => caught);
+    expect(emptyRange).toMatchObject({ kind: 'empty' });
+    expect((emptyRange as Error).message).toContain(`range ${third}..${third}`);
+  });
+
   test('refuses when HEAD moves during preparation, rather than mixing two revisions', async () => {
     const { git, root } = await repository();
     await writeFile(path.join(root, 'a.txt'), 'a\n');

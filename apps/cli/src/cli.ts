@@ -1,3 +1,8 @@
+import { isDelegationIdempotencyKey, isDelegationUuid } from '@ai-usage/report-core/delegation-request';
+import {
+  DELEGATION_ABSTENTION_REASONS,
+  type DelegationAbstentionReason,
+} from '@ai-usage/report-core/delegation-vocabulary';
 import {
   type HarnessKey,
   harnessKeyList,
@@ -64,6 +69,38 @@ export interface WorkContextArgs {
   sinceDays?: number;
 }
 
+export interface DelegationQualifyArgs {
+  json: boolean;
+  /** A JSON request file path (relative to the operator's working directory) or `-` for stdin. */
+  request: string;
+  /** Record the qualification as a simulation: same function, nothing is meant to start from it. */
+  simulation: boolean;
+}
+
+/** What the operator chose: a route (the CLI is then the selector) or an abstention with its reason. */
+export type DelegationSelectionArgs =
+  | { confidence: number | null; kind: 'route'; routeId: string; selectorVersion: string }
+  | { kind: 'abstain'; reason: DelegationAbstentionReason };
+
+export interface DelegationStartArgs {
+  json: boolean;
+  key: string;
+  qualification: string;
+  request: string;
+  selection: DelegationSelectionArgs;
+}
+
+export interface DelegationJobArgs {
+  jobId: string;
+  json: boolean;
+}
+
+export interface DelegationListArgs {
+  json: boolean;
+  limit: number | null;
+  live: boolean;
+}
+
 export type QuotaHistoryRange = '24h' | '7d' | '30d';
 
 export const QUOTA_HISTORY_RANGES = ['24h', '7d', '30d'] as const satisfies readonly QuotaHistoryRange[];
@@ -93,6 +130,11 @@ export type CliCommand =
   | { _tag: 'MemorySearch'; args: MemorySearchArgs }
   | { _tag: 'ReplicationStatus'; args: ReplicationStatusArgs }
   | { _tag: 'WorkContext'; args: WorkContextArgs }
+  | { _tag: 'DelegationQualify'; args: DelegationQualifyArgs }
+  | { _tag: 'DelegationStart'; args: DelegationStartArgs }
+  | { _tag: 'DelegationStatus'; args: DelegationJobArgs }
+  | { _tag: 'DelegationList'; args: DelegationListArgs }
+  | { _tag: 'DelegationCancel'; args: DelegationJobArgs }
   | { _tag: 'ProjectsList'; args: ProjectsListArgs }
   | { _tag: 'CursorImport'; args: CursorImportArgs };
 
@@ -156,6 +198,7 @@ export const helpText =
   '  memory search <query>  search accepted local Memory\n' +
   '  replication status     show outbound publication state\n' +
   '  work context           stored Work context of one checkout or project\n' +
+  '  delegation <command>   qualify, start, follow and cancel delegated read-only reviews\n' +
   '  projects list          summarize detected projects\n' +
   '  cursor import <csv>    copy a Cursor usage export into local ignored storage\n' +
   '  quota                  subscription quota per provider (Claude, Codex)\n\n' +
@@ -201,6 +244,18 @@ export const helpText =
   '  work context (--checkout <path>... | --project-label <name>) [--since-days <1-3650>] [--json]\n' +
   '                         waits, settled decisions, linked facts and coverage from\n' +
   '                         Claude Desktop sessions; reads the store only, starts no engine\n' +
+  '\nDelegation (qualify, start and cancel need a running engine and never start one):\n' +
+  '  delegation qualify --request <file|-> [--simulation] [--json]\n' +
+  '                         admissible routes for a request (JSON file or stdin, at most 64 KiB)\n' +
+  '  delegation start --request <file|-> --qualification <id> --key <idempotency-key>\n' +
+  '                   (--route <id> [--selector-version <v>] [--confidence <0..1>] | --abstain <reason>)\n' +
+  '                   [--json]  start the chosen route, or record an abstention\n' +
+  '  delegation status <jobId> [--json]\n' +
+  '                         one job: state, route, executed / verified / accepted; reads the store only\n' +
+  '  delegation list [--live] [--limit <n>] [--json]\n' +
+  '                         recent jobs, newest first; reads the store only\n' +
+  '  delegation cancel <jobId> [--json]\n' +
+  '                         stop a live job this engine runs\n' +
   '\nProjects:\n' +
   '  projects list --paths [files...] [--local]\n' +
   '\nCursor:\n' +
@@ -578,6 +633,193 @@ const parseWorkCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgument
     return { _tag: 'WorkContext', args: { json, scope, ...(sinceDays === undefined ? {} : { sinceDays }) } };
   });
 
+const DEFAULT_DELEGATION_SELECTOR_VERSION = 'operator/ai-usage-cli';
+/** Jobs one `delegation list` answer carries at most (the read side's own bound). */
+const DELEGATION_LIST_MAX_LIMIT = 50;
+
+const isAbstentionReason = (value: string): value is DelegationAbstentionReason =>
+  (DELEGATION_ABSTENTION_REASONS as readonly string[]).includes(value);
+
+const parseDelegationJobId = (value: string | undefined, usage: string): Effect.Effect<string, CliArgumentError> => {
+  if (value === undefined || value.startsWith('--')) {
+    return Effect.fail(cliArgumentError(`${usage} expects a job id`));
+  }
+  return isDelegationUuid(value)
+    ? Effect.succeed(value)
+    : Effect.fail(cliArgumentError(`${usage} expects the lowercase UUID of a job`));
+};
+
+const parseJsonOnly = (rest: string[], usage: string): Effect.Effect<boolean, CliArgumentError> => {
+  let json = false;
+  for (const arg of rest) {
+    if (arg !== '--json') {
+      return Effect.fail(cliArgumentError(`Unknown option for ${usage}: ${arg}`));
+    }
+    json = true;
+  }
+  return Effect.succeed(json);
+};
+
+const parseDelegationQualifyArgs = (argv: string[]): Effect.Effect<DelegationQualifyArgs, CliArgumentError> =>
+  Effect.gen(function* () {
+    let request: string | null = null;
+    let json = false;
+    let simulation = false;
+    const rest = [...argv];
+    while (rest.length) {
+      const arg = rest.shift()!;
+      if (arg === '--request') {
+        request = yield* parseRequiredValue(rest, '--request');
+      } else if (arg === '--json') {
+        json = true;
+      } else if (arg === '--simulation') {
+        simulation = true;
+      } else {
+        return yield* Effect.fail(cliArgumentError(`Unknown option for delegation qualify: ${arg}`));
+      }
+    }
+    if (request === null) {
+      return yield* Effect.fail(cliArgumentError('delegation qualify expects --request <file|->'));
+    }
+    return { json, request, simulation };
+  });
+
+const parseDelegationStartArgs = (argv: string[]): Effect.Effect<DelegationStartArgs, CliArgumentError> =>
+  Effect.gen(function* () {
+    let request: string | null = null;
+    let qualification: string | null = null;
+    let key: string | null = null;
+    let routeId: string | null = null;
+    let selectorVersion: string | null = null;
+    let confidence: number | null = null;
+    let abstain: DelegationAbstentionReason | null = null;
+    let json = false;
+    const rest = [...argv];
+    while (rest.length) {
+      const arg = rest.shift()!;
+      if (arg === '--request') {
+        request = yield* parseRequiredValue(rest, '--request');
+      } else if (arg === '--qualification') {
+        const value = yield* parseRequiredValue(rest, '--qualification');
+        if (!isDelegationUuid(value)) {
+          return yield* Effect.fail(cliArgumentError('--qualification expects the lowercase UUID of a qualification'));
+        }
+        qualification = value;
+      } else if (arg === '--key') {
+        const value = yield* parseRequiredValue(rest, '--key');
+        if (!isDelegationIdempotencyKey(value)) {
+          return yield* Effect.fail(
+            cliArgumentError(
+              '--key expects 8 to 128 characters of letters, digits, dots, underscores, colons or dashes',
+            ),
+          );
+        }
+        key = value;
+      } else if (arg === '--route') {
+        routeId = yield* parseRequiredValue(rest, '--route');
+      } else if (arg === '--selector-version') {
+        selectorVersion = yield* parseRequiredValue(rest, '--selector-version');
+      } else if (arg === '--confidence') {
+        const value = Number(yield* parseRequiredValue(rest, '--confidence'));
+        if (!(Number.isFinite(value) && value >= 0 && value <= 1)) {
+          return yield* Effect.fail(cliArgumentError('--confidence expects a number from 0 to 1'));
+        }
+        confidence = value;
+      } else if (arg === '--abstain') {
+        const value = yield* parseRequiredValue(rest, '--abstain');
+        if (!isAbstentionReason(value)) {
+          return yield* Effect.fail(
+            cliArgumentError(`--abstain expects one of: ${DELEGATION_ABSTENTION_REASONS.join(', ')}`),
+          );
+        }
+        abstain = value;
+      } else if (arg === '--json') {
+        json = true;
+      } else {
+        return yield* Effect.fail(cliArgumentError(`Unknown option for delegation start: ${arg}`));
+      }
+    }
+    if (request === null || qualification === null || key === null) {
+      return yield* Effect.fail(
+        cliArgumentError(
+          'delegation start expects --request <file|->, --qualification <id> and --key <idempotency-key>',
+        ),
+      );
+    }
+    if ((routeId === null) === (abstain === null)) {
+      return yield* Effect.fail(
+        cliArgumentError('delegation start expects exactly one of --route <id> or --abstain <reason>'),
+      );
+    }
+    if (abstain !== null && (selectorVersion !== null || confidence !== null)) {
+      return yield* Effect.fail(
+        cliArgumentError(
+          '--selector-version and --confidence describe a route choice; they cannot accompany --abstain',
+        ),
+      );
+    }
+    const selection: DelegationSelectionArgs =
+      routeId === null
+        ? { kind: 'abstain', reason: abstain! }
+        : {
+            confidence,
+            kind: 'route',
+            routeId,
+            selectorVersion: selectorVersion ?? DEFAULT_DELEGATION_SELECTOR_VERSION,
+          };
+    return { json, key, qualification, request, selection };
+  });
+
+const parseDelegationListArgs = (argv: string[]): Effect.Effect<DelegationListArgs, CliArgumentError> =>
+  Effect.gen(function* () {
+    let json = false;
+    let live = false;
+    let limit: number | null = null;
+    const rest = [...argv];
+    while (rest.length) {
+      const arg = rest.shift()!;
+      if (arg === '--json') {
+        json = true;
+      } else if (arg === '--live') {
+        live = true;
+      } else if (arg === '--limit') {
+        limit = yield* parsePositiveInt(yield* parseRequiredValue(rest, '--limit'), '--limit');
+        if (limit > DELEGATION_LIST_MAX_LIMIT) {
+          return yield* Effect.fail(
+            cliArgumentError(`--limit expects an integer from 1 to ${DELEGATION_LIST_MAX_LIMIT}`),
+          );
+        }
+      } else {
+        return yield* Effect.fail(cliArgumentError(`Unknown option for delegation list: ${arg}`));
+      }
+    }
+    return { json, limit, live };
+  });
+
+const parseDelegationCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
+  Effect.gen(function* () {
+    const rest = [...argv];
+    const subcommand = rest.shift();
+    if (subcommand === 'qualify') {
+      return { _tag: 'DelegationQualify', args: yield* parseDelegationQualifyArgs(rest) };
+    }
+    if (subcommand === 'start') {
+      return { _tag: 'DelegationStart', args: yield* parseDelegationStartArgs(rest) };
+    }
+    if (subcommand === 'list') {
+      return { _tag: 'DelegationList', args: yield* parseDelegationListArgs(rest) };
+    }
+    if (subcommand === 'status' || subcommand === 'cancel') {
+      const usage = `delegation ${subcommand}`;
+      const jobId = yield* parseDelegationJobId(rest.shift(), usage);
+      const json = yield* parseJsonOnly(rest, usage);
+      return subcommand === 'status'
+        ? { _tag: 'DelegationStatus', args: { jobId, json } }
+        : { _tag: 'DelegationCancel', args: { jobId, json } };
+    }
+    return yield* Effect.fail(cliArgumentError(`Unknown delegation subcommand: ${subcommand ?? ''}`.trim()));
+  });
+
 export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
   Effect.gen(function* () {
     const rest = [...argv];
@@ -620,6 +862,10 @@ export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgum
     if (command === 'work') {
       rest.shift();
       return yield* parseWorkCommand(rest);
+    }
+    if (command === 'delegation') {
+      rest.shift();
+      return yield* parseDelegationCommand(rest);
     }
     if (command === 'report') {
       rest.shift();

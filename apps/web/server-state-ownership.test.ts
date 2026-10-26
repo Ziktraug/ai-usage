@@ -51,6 +51,7 @@ const withoutComments = (source: string): string =>
 
 const SERVER_PREFETCH_HELPERS = new Set([
   'lib/features/campaigns/campaigns-load.ts',
+  'lib/features/delegation/delegation-load.ts',
   'lib/features/memory/memory-load.ts',
   'lib/features/projects/projects-load.ts',
   'lib/features/report/core/report-bootstrap.ts',

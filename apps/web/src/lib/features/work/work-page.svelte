@@ -42,6 +42,7 @@
   } from './work-attention-model';
   import { createSyntheticWorkAttentionClient } from './work-attention-synthetic';
   import WorkCoverageLine from './work-coverage-line.svelte';
+  import WorkDelegations from './work-delegations.svelte';
   import type { WorkPageData } from './work-load';
   import WorkSession from './work-session.svelte';
   import WorkSources from './work-sources.svelte';
@@ -341,6 +342,8 @@
         </p>
       {/if}
       <WorkSources {generatedAt} mode={data.mode} support={bootstrap?.bootstrap ?? null} />
+      <!-- Delegations are checkout-scoped, not session-scoped: Work-wide state, beside the sources. -->
+      <WorkDelegations mode={data.mode} />
       {#if dataset}
         <div class={workLayout}>
           <WorkAttentionBoard

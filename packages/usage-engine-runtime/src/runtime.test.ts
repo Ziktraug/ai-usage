@@ -14,6 +14,7 @@ import {
   createUsageEngineRuntime,
   type RoutingQualificationExecutorRun,
   UsageEngineCommandError,
+  type UsageEngineDelegationPort,
   UsageEngineFatalConsistencyError,
   type UsageEngineMutationPort,
   type UsageEngineRoutingQualificationPort,
@@ -666,6 +667,111 @@ describe('usage engine runtime', () => {
     await without.start();
     await without.executeCommand({ command: 'qualify-review-routing', target }, 'qualify-absent');
     expect(await without.waitForCommand('qualify-absent')).toMatchObject({ state: 'failed' });
+    await without.dispose();
+  });
+
+  test('relays the delegation commands to their port, observing the executors before a qualification (ADR 0077)', async () => {
+    const baseSourceControl = createTestSourceControl();
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      runSource: (sourceId) => {
+        baseSourceControl.calls.push(`run-source:${sourceId}`);
+        return Promise.resolve(publishedSourceControl());
+      },
+    };
+    const calls: string[] = [];
+    const delegation: UsageEngineDelegationPort = {
+      cancel: (command) => {
+        calls.push(`cancel:${command.jobId}`);
+        return Promise.resolve({ jobId: command.jobId, kind: 'delegation-cancel', result: 'not-found', state: null });
+      },
+      qualify: (command, executorRun) => {
+        calls.push(`qualify:${command.purpose}:${executorRun.source?.id ?? 'none'}:${executorRun.startedAt}`);
+        return Promise.resolve({
+          kind: 'delegation-qualification',
+          qualification: {
+            outcome: 'no-admissible-route',
+            qualificationId: '0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5',
+            schemaVersion: 1,
+          },
+        });
+      },
+      recordEvaluation: (command) => {
+        calls.push(`evaluate:${command.author}`);
+        return Promise.resolve({ evaluationId: 'evaluation-1', kind: 'delegation-evaluation', refusal: null });
+      },
+      start: (command) => {
+        calls.push(`start:${command.idempotencyKey}`);
+        return Promise.resolve({
+          job: null,
+          kind: 'delegation-start',
+          refusal: { message: 'no route', reason: 'no-admissible-route' },
+        });
+      },
+      updateConfig: (command) => {
+        calls.push(`config:${command.expectedRevision}`);
+        return Promise.resolve({ issues: [], kind: 'delegation-config', result: 'written', revision: 'rev-2' });
+      },
+    };
+    const runtime = createUsageEngineRuntime({ ...createDependencies({ sourceControl }), delegation });
+    await runtime.start();
+    const request = { action: 'read-only-review', schemaVersion: 1 };
+    await runtime.executeCommand({ command: 'qualify-delegation', purpose: 'simulation', request }, 'd-qualify');
+    expect(await runtime.waitForCommand('d-qualify')).toMatchObject({
+      command: 'qualify-delegation',
+      output: { kind: 'delegation-qualification', qualification: { outcome: 'no-admissible-route' } },
+      state: 'succeeded',
+    });
+    await runtime.executeCommand(
+      { command: 'start-delegation', idempotencyKey: 'session-a:turn-1', request, selection: { kind: 'abstain' } },
+      'd-start',
+    );
+    expect(await runtime.waitForCommand('d-start')).toMatchObject({
+      output: { job: null, kind: 'delegation-start', refusal: { reason: 'no-admissible-route' } },
+      state: 'succeeded',
+    });
+    await runtime.executeCommand({ command: 'cancel-delegation', jobId: 'job-1' }, 'd-cancel');
+    expect(await runtime.waitForCommand('d-cancel')).toMatchObject({
+      output: { kind: 'delegation-cancel', result: 'not-found' },
+      state: 'succeeded',
+    });
+    await runtime.executeCommand(
+      {
+        author: 'operator',
+        authorLabel: 'web',
+        command: 'record-delegation-evaluation',
+        evaluation: { kind: 'acceptance', verdict: 'accepted' },
+        jobId: 'job-1',
+      },
+      'd-evaluate',
+    );
+    expect(await runtime.waitForCommand('d-evaluate')).toMatchObject({
+      output: { evaluationId: 'evaluation-1', kind: 'delegation-evaluation' },
+      state: 'succeeded',
+    });
+    await runtime.executeCommand(
+      { command: 'update-delegation-config', delegation: {}, expectedRevision: 'rev-1' },
+      'd-config',
+    );
+    expect(await runtime.waitForCommand('d-config')).toMatchObject({
+      output: { kind: 'delegation-config', result: 'written', revision: 'rev-2' },
+      state: 'succeeded',
+    });
+    expect(calls).toEqual([
+      `qualify:simulation:executors.capabilities:${FIXED_NOW.toISOString()}`,
+      'start:session-a:turn-1',
+      'cancel:job-1',
+      'evaluate:operator',
+      'config:rev-1',
+    ]);
+    // The executors source ran exactly once, before the qualification and for nothing else.
+    expect(sourceControl.calls.filter((entry) => entry === 'run-source:executors.capabilities')).toHaveLength(1);
+    await runtime.dispose();
+
+    const without = createUsageEngineRuntime(createDependencies());
+    await without.start();
+    await without.executeCommand({ command: 'cancel-delegation', jobId: 'job-1' }, 'd-absent');
+    expect(await without.waitForCommand('d-absent')).toMatchObject({ state: 'failed' });
     await without.dispose();
   });
 

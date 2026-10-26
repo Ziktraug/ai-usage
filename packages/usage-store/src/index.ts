@@ -73,8 +73,9 @@ import {
   createClaudeDesktopSessionStore,
 } from './claude-desktop-session-store';
 import { CODEX_WORK_TABLES, codexWorkSchemaSql, createCodexWorkStore } from './codex-work-store';
+import { createDelegationStore, DELEGATION_TABLES, migrateDelegationSchema } from './delegation-store';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
-import { createExecutorObservationStore } from './executor-observation-store';
+import { createExecutorObservationStore, migrateExecutorAccountChangeSchema } from './executor-observation-store';
 import {
   inspectPrivateStoreForConfirmation,
   type PrivateStoreConfirmationIdentity,
@@ -1487,6 +1488,12 @@ const migrate = (db: SqliteDatabase): boolean => {
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
   schemaChanged ||= reviewAttemptsMissing;
+  // Delegation jobs, evaluations and qualifications (design 2026-10-25) follow the same additive
+  // rule under user_version 4: presence of the three tables is the signal.
+  const delegationTablesMissing = DELEGATION_TABLES.some(
+    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+  );
+  schemaChanged ||= delegationTablesMissing;
   const workThreadsMissing = WORK_THREAD_TABLES.some(
     (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
   );
@@ -1802,9 +1809,18 @@ const migrate = (db: SqliteDatabase): boolean => {
       schemaChanged = true;
       db.exec('ALTER TABLE executor_observations ADD COLUMN account_fingerprint TEXT');
     }
+    // The account-change barrier table is created when absent, under the same user_version, and
+    // backfilled from the retained history; it needs the fingerprint column above.
+    if (migrateExecutorAccountChangeSchema(db)) {
+      schemaChanged = true;
+    }
     // Review attempts gain the reservation, scope and guarantee columns and the reserving unique
     // index additively (ADR 0055); the helper reports whether it changed anything.
     if (migrateReviewAttemptSchema(db)) {
+      schemaChanged = true;
+    }
+    // The delegation tables are created when absent, under the same user_version (ADR 0075).
+    if (migrateDelegationSchema(db)) {
       schemaChanged = true;
     }
     if (skillObservationCollectionStateMissing) {
@@ -4433,7 +4449,12 @@ export const { importSkillObservations, querySkillObservations, retainSkillObser
   },
 );
 
-export const { importExecutorObservations, queryLatestExecutorObservations } = createExecutorObservationStore({
+export const {
+  importExecutorObservations,
+  queryExecutorAccountChanges,
+  queryExecutorObservationHistory,
+  queryLatestExecutorObservations,
+} = createExecutorObservationStore({
   usageStoreError,
   usageStoreReadError,
   withUsageStoreReader,
@@ -4470,11 +4491,32 @@ export const {
 export const {
   markReviewAttemptsLost,
   queryReviewAttempts,
+  queryReviewReservations,
   queryReviewTargetResolution,
   releaseReviewAttemptReservation,
   requestReviewAttempt,
   transitionReviewAttempt,
 } = createReviewAttemptStore({
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
+export const {
+  countDelegationRetryChain,
+  markDelegationJobsLost,
+  queryDelegationEvaluations,
+  queryDelegationJobs,
+  readDelegationJob,
+  readDelegationJobs,
+  readDelegationQualification,
+  recordDelegationEvaluation,
+  recordDelegationQualification,
+  releaseDelegationJobReservation,
+  requestDelegationCancel,
+  requestDelegationJob,
+  transitionDelegationJob,
+} = createDelegationStore({
   usageStoreError,
   usageStoreReadError,
   withUsageStoreReader,

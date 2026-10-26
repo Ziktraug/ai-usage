@@ -25,6 +25,7 @@ import {
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
+import { createDelegationService, type ReviewAdmissionPort } from './delegation';
 import { createReviewAttemptService, type ReviewLauncher } from './review-attempts';
 import type { FindReviewProcesses } from './review-attempts-process';
 
@@ -197,6 +198,12 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
   await writeFile(
     path.join(home, '.config', 'ai-usage', 'config.json'),
     JSON.stringify({
+      // The common review policy needs the route's context declared (ADR 0077); no rule applies.
+      delegation: {
+        routes: [
+          { accountScope: 'personal', context: 'personal', harness: options.declaration?.harness ?? 'claude-code' },
+        ],
+      },
       routing: {
         executors: [
           {
@@ -333,6 +340,20 @@ const createFixture = async (options: FixtureOptions = {}): Promise<Fixture> => 
 const attempts = async (dbPath: string): Promise<readonly ReviewAttempt[]> =>
   (await Effect.runPromise(queryReviewAttempts({ dbPath }))).attempts;
 
+/**
+ * The common review policy every launch passes (PR #73 F1): the delegation service's admission over
+ * the same store and home, as `live.ts` wires it. Its adapters and probes are never reached here.
+ */
+const admissionFor = (fixture: Fixture): ReviewAdmissionPort =>
+  createDelegationService({
+    adapterOptions: { env: { HOME: fixture.home, PATH: process.env.PATH } },
+    dbPath: fixture.dbPath,
+    machine: () => machine,
+    now: () => NOW,
+    privateRoot: path.join(fixture.home, 'delegation'),
+    storage: fixture.storage,
+  }).admitReview;
+
 /** Every row of a test shares the pinned `requestedAt`, so rows are found by id, never by list order. */
 const attemptById = async (dbPath: string, attemptId: string): Promise<ReviewAttempt> => {
   const found = (await attempts(dbPath)).find((attempt) => attempt.attemptId === attemptId);
@@ -349,6 +370,7 @@ const service = (
 ) => {
   const lines: string[] = [];
   const created = createReviewAttemptService({
+    admission: admissionFor(fixture),
     dbPath: fixture.dbPath,
     ...(extra.findProcesses === undefined ? {} : { findProcesses: extra.findProcesses }),
     launchOptions: { env: { HOME: fixture.home, PATH: process.env.PATH }, executable },
@@ -384,6 +406,7 @@ describe('engine review attempts', () => {
       };
     };
     const engine = createReviewAttemptService({
+      admission: admissionFor(fixture),
       dbPath: fixture.dbPath,
       launcher,
       machine: () => machine,
@@ -539,7 +562,7 @@ describe('engine review attempts', () => {
     expect((await attempts(noQuota.dbPath)).every((attempt) => attempt.state === 'refused')).toBe(true);
   });
 
-  test('records the commit it reviewed and the guarantee it ran under; a checkout without a commit fails the attempt', async () => {
+  test('records the commit it reviewed and the guarantee it ran under; a checkout that is no git work tree is refused before any spawn', async () => {
     const fixture = await createFixture();
     const engine = service(fixture, await fixture.executable(emit(INIT_LINE, RESULT_LINE)));
     const started = await engine.start(command());
@@ -556,12 +579,18 @@ describe('engine review attempts', () => {
     });
     expect(attempt.launchSessionId).toMatch(UUID_PATTERN);
 
+    // The common policy resolves the checkout canonically before anything is recorded or spawned:
+    // a directory that is no git work tree is a refusal, not a failed attempt (PR #73 F1).
     await rm(path.join(fixture.checkout, '.git'), { force: true, recursive: true });
     const unscoped = await engine.start(command());
-    expect(unscoped.attempt.state).toBe('failed');
-    const failed = await attemptById(fixture.dbPath, unscoped.attempt.attemptId);
-    expect(failed).toMatchObject({ pid: null, resultKind: 'error', scope: null, state: 'failed' });
-    expect(failed.failureReason).toContain('scope-unavailable: the checkout has no commit to review');
+    expect(unscoped).toMatchObject({
+      attempt: { reused: false, state: 'refused' },
+      refusal: { reason: 'target-not-allowed' },
+    });
+    expect(unscoped.refusal?.message).toContain('not inside a git work tree');
+    const refused = await attemptById(fixture.dbPath, unscoped.attempt.attemptId);
+    expect(refused).toMatchObject({ pid: null, scope: null, state: 'refused' });
+    expect(refused.failureReason).toContain('target-not-allowed');
   });
 
   test('an alternate-model candidate launches with its own model, and the guarantee records it (ADR 0057)', async () => {
@@ -646,6 +675,7 @@ describe('engine review attempts', () => {
     const fixture = await createFixture();
     const controlled = controlledLauncher();
     const engine = createReviewAttemptService({
+      admission: admissionFor(fixture),
       dbPath: fixture.dbPath,
       launcher: controlled.launcher,
       machine: () => machine,
@@ -719,6 +749,7 @@ describe('engine review attempts', () => {
     const fixture = await createFixture();
     const controlled = controlledLauncher();
     const engine = createReviewAttemptService({
+      admission: admissionFor(fixture),
       dbPath: fixture.dbPath,
       launcher: controlled.launcher,
       machine: () => machine,
@@ -739,6 +770,7 @@ describe('engine review attempts', () => {
     expect((await engine.start(command())).refusal?.reason).toBe('attempt-unresolved');
     const next = controlledLauncher();
     const restarted = createReviewAttemptService({
+      admission: admissionFor(fixture),
       dbPath: fixture.dbPath,
       launcher: next.launcher,
       machine: () => machine,
@@ -760,6 +792,7 @@ describe('engine review attempts', () => {
     const fixture = await createFixture();
     const controlled = controlledLauncher();
     const owner = createReviewAttemptService({
+      admission: admissionFor(fixture),
       dbPath: fixture.dbPath,
       findProcesses: scanFound,
       launcher: controlled.launcher,
@@ -769,6 +802,7 @@ describe('engine review attempts', () => {
     });
     const started = await owner.start(command());
     const restarted = createReviewAttemptService({
+      admission: admissionFor(fixture),
       dbPath: fixture.dbPath,
       findProcesses: scanFound,
       launcher: controlledLauncher().launcher,
@@ -809,6 +843,7 @@ describe('engine review attempts', () => {
           launchSessionId: '6f1c1d4e-2b3a-4c5d-8e9f-0a1b2c3d4e5f',
           machineId: machine.id,
           requestedAt: NOW.toISOString(),
+          reservation: { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40), maxConcurrent: 8, poolId: CANDIDATE_ID },
           state: 'requested',
           target: {
             checkoutOrigin: 'desktop-cwd',
@@ -832,6 +867,7 @@ describe('engine review attempts', () => {
       }),
     );
     const engine = createReviewAttemptService({
+      admission: admissionFor(fixture),
       dbPath: fixture.dbPath,
       findProcesses: async () => ({ kind: 'unavailable', reason: 'no readable process table on darwin' }),
       launcher: controlledLauncher().launcher,
@@ -861,6 +897,7 @@ describe('engine review attempts', () => {
           idempotencyKey: 'e'.repeat(64),
           machineId: machine.id,
           requestedAt: NOW.toISOString(),
+          reservation: { baseSha: 'b'.repeat(40), headSha: 'c'.repeat(40), maxConcurrent: 8, poolId: CANDIDATE_ID },
           state: 'requested',
           target: {
             checkoutOrigin: 'desktop-cwd',
@@ -924,6 +961,7 @@ describe('engine review attempts', () => {
           launchSessionId: marker,
           machineId: machine.id,
           requestedAt: NOW.toISOString(),
+          reservation: { baseSha: 'b'.repeat(40), headSha: 'd'.repeat(40), maxConcurrent: 8, poolId: CANDIDATE_ID },
           state: 'requested',
           target: {
             checkoutOrigin: 'desktop-cwd',
@@ -1005,6 +1043,7 @@ describe('owned Codex review attempts', () => {
     const f = await codexFixture();
     const run = controlledCodex();
     const attemptService = createReviewAttemptService({
+      admission: admissionFor(f),
       dbPath: f.dbPath,
       storage: f.storage,
       machine: () => machine,
@@ -1031,6 +1070,7 @@ describe('owned Codex review attempts', () => {
     const run = controlledCodex();
     let scans = 0;
     const attemptService = createReviewAttemptService({
+      admission: admissionFor(f),
       dbPath: f.dbPath,
       storage: f.storage,
       machine: () => machine,
@@ -1060,6 +1100,7 @@ describe('owned Codex review attempts', () => {
     const f = await codexFixture();
     const run = controlledCodex();
     const attemptService = createReviewAttemptService({
+      admission: admissionFor(f),
       dbPath: f.dbPath,
       storage: f.storage,
       machine: () => machine,

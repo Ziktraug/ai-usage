@@ -14,6 +14,13 @@ describe('Web RPC client composition', () => {
     expect(rpcMethodForPath(['skills', 'snapshot'])).toBe('GET');
     expect(rpcMethodForPath(['replication', 'status'])).toBe('GET');
     expect(rpcMethodForPath(['workRouting', 'context'])).toBe('GET');
+    expect(rpcMethodForPath(['delegation', 'settings'])).toBe('GET');
+    expect(rpcMethodForPath(['delegation', 'jobs'])).toBe('GET');
+    expect(rpcMethodForPath(['delegation', 'job'])).toBe('GET');
+    expect(rpcMethodForPath(['delegation', 'saveSettings'])).toBe('POST');
+    expect(rpcMethodForPath(['delegation', 'simulate'])).toBe('POST');
+    expect(rpcMethodForPath(['delegation', 'cancel'])).toBe('POST');
+    expect(rpcMethodForPath(['delegation', 'recordAcceptance'])).toBe('POST');
     expect(rpcMethodForPath(['campaign', 'setLabelOverride'])).toBe('POST');
   });
 });

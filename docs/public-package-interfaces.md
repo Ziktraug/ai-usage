@@ -215,6 +215,9 @@ not belong here.
   label (ADR 0058), a projection of the Work attention read through the
   read-only store, shared by `ai-usage work context` and the `work.context`
   MCP tool; typed, path-free failures.
+- `./delegation-read`: delegation job views and lists for one store (ADR 0077),
+  read-only, projected with `report-core/delegation-job`; used by the MCP
+  delegation tools; a missing store is a typed failure, never an empty list.
 
 There are no collection, scheduler, source-adapter, one-shot writer, artifact,
 lease, or subprocess exports. Production `report-data` code may import only
@@ -349,6 +352,10 @@ one-scope rule, the response bound and sanitized errors, never the store.
 - `./client`: injected authenticated numeric-loopback HTTP client with bounded
   JSON, deadlines/abort mapping, and status-first SSE reconnect.
 - `./completion`: bounded command completion tracking over status/events.
+- `./delegation-operations`: the engine side of the delegation operations shared
+  by MCP and CLI: rendezvous lookup and target check without starting an engine,
+  and the qualify/start/cancel/evaluate commands mapped to closed, path-free
+  result codes.
 - `./handoff`: bounded byte staging, fsync, owner-only/no-follow inbox files,
   opaque handoff identifiers, and cleanup. The engine independently revalidates
   and consumes the file; this seam never parses/imports the document.
@@ -404,8 +411,11 @@ client and never starts an app-owned provider timer.
 Executable-only local stdio composition. It imports the MCP adapter, Memory
 loopback client, runtime-path contracts, and, for `work.context`,
 `@ai-usage/report-data/work-context-read` with the `usage-store/reader` store
-path (read-only `query_only`; it never starts or contacts an engine); it
-exports no in-process domain or storage API.
+path (read-only `query_only`; it never starts or contacts an engine). The
+delegation tools read jobs through `@ai-usage/report-data/delegation-read` and
+send commands through `@ai-usage/usage-engine-control/delegation-operations` to
+a running engine; it never starts one. It exports no in-process domain or
+storage API.
 
 ## `@ai-usage/web-contract`
 

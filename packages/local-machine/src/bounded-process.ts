@@ -9,7 +9,10 @@ import { Data, Effect } from 'effect';
  *   allow-listed locale and path variables below, plus what the caller passes by name;
  * - a deadline and an output ceiling, both enforced with SIGKILL;
  * - stderr drained and never retained, logged or returned: provider diagnostics can carry
- *   tokens, paths and prose;
+ *   tokens, paths and prose. A caller that must read one fact a CLI prints only there (`codex
+ *   login status` names its sign-in method on stderr) passes `classifyStderr`: at most
+ *   `BOUNDED_PROCESS_STDERR_CLASSIFICATION_BYTES` are held in memory, handed once to the
+ *   classifier, and dropped; only the classifier's closed-vocabulary answer is returned;
  * - stdout decoded as UTF-8 with fatal errors, so a binary or truncated stream is a failure
  *   rather than mojibake in a durable row.
  *
@@ -37,6 +40,11 @@ const failedProcess = (failure: BoundedProcessFailedCause): BoundedProcessError 
 
 export interface BoundedProcessOptions {
   readonly args: readonly string[];
+  /**
+   * Reads one closed-vocabulary fact from stderr, which is otherwise never inspected. The text is
+   * bounded, passed once, and dropped; return a word of your own vocabulary or `null`, never the text.
+   */
+  readonly classifyStderr?: (stderr: string) => string | null;
   /** A bare name resolved on the allow-listed PATH, or an absolute path. */
   readonly command: string;
   readonly cwd?: string;
@@ -53,6 +61,8 @@ export interface BoundedProcessOptions {
 export interface BoundedProcessResult {
   readonly durationMs: number;
   readonly exitCode: number;
+  /** The `classifyStderr` answer; absent when no classifier was passed, `null` when it named nothing. */
+  readonly stderrClass?: string | null;
   readonly stdout: string;
 }
 
@@ -64,6 +74,8 @@ export type BoundedProcessRunner = (
 export const BOUNDED_PROCESS_INHERITED_VARIABLES: readonly string[] = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ'];
 /** Prefixes the child may inherit: the XDG base directories locate `gh` and `git` configuration. */
 export const BOUNDED_PROCESS_INHERITED_PREFIXES: readonly string[] = ['XDG_'];
+/** The most stderr a `classifyStderr` caller may see; beyond it the classifier receives nothing. */
+export const BOUNDED_PROCESS_STDERR_CLASSIFICATION_BYTES = 4096;
 
 /**
  * The environment handed to a child: the allow-listed subset of `source`, then the caller's
@@ -150,8 +162,31 @@ export const executeBoundedProcess = async (options: BoundedProcessOptions): Pro
       }
       chunks.push(buffer);
     });
-    // Drained so the child never blocks on a full pipe; never retained, inspected or logged.
-    child.stderr.on('data', () => undefined);
+    // Drained so the child never blocks on a full pipe; never retained, inspected or logged,
+    // except the bounded prefix a caller's classifier reads once on close.
+    const stderrChunks: Buffer[] = [];
+    let stderrBytes = 0;
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      if (options.classifyStderr === undefined) {
+        return;
+      }
+      const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      stderrBytes += buffer.byteLength;
+      if (stderrBytes <= BOUNDED_PROCESS_STDERR_CLASSIFICATION_BYTES) {
+        stderrChunks.push(buffer);
+      }
+    });
+    const classifiedStderr = (): { readonly stderrClass?: string | null } => {
+      if (options.classifyStderr === undefined) {
+        return {};
+      }
+      if (stderrBytes > BOUNDED_PROCESS_STDERR_CLASSIFICATION_BYTES) {
+        return { stderrClass: null };
+      }
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(Buffer.concat(stderrChunks));
+      stderrChunks.length = 0;
+      return { stderrClass: options.classifyStderr(text) };
+    };
     child.once('error', () => finish(boundedProcessError('unavailable')));
     child.once('close', (code) => {
       if (aborted !== null) {
@@ -166,6 +201,7 @@ export const executeBoundedProcess = async (options: BoundedProcessOptions): Pro
           finish({
             durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
             exitCode: code,
+            ...classifiedStderr(),
             stdout: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)),
           });
         } catch {

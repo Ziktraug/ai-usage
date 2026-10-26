@@ -148,7 +148,7 @@ test('isolates the synthetic demo from every local data and control capability',
   ]);
   expect(guardedResponses.map((response) => response.status())).toEqual([404, 404, 404, 404, 404, 404]);
 
-  for (const pathname of ['/skills', '/sources', '/sync']) {
+  for (const pathname of ['/skills', '/sources', '/sync', '/delegation']) {
     await page.goto(pathname);
     await expect(page).toHaveURL('http://127.0.0.1:4176/');
     await expect(page.getByRole('banner').getByText('Demo data', { exact: true })).toBeVisible();

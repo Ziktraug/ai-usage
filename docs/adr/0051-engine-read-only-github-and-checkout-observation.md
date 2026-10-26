@@ -1,6 +1,6 @@
 # ADR 0051: Engine-side read-only GitHub and checkout status observation
 
-- **Status**: Accepted
+- **Status**: Accepted; amended 2026-10-25 by [ADR 0077](0077-delegation-independent-of-the-calling-harness.md) (stderr classification)
 - **Date**: 2026-10-21
 - **Extends**: 0009, 0044
 
@@ -104,3 +104,11 @@ action (sign in `gh`, or configure `github.accounts` for the owner).
 - `packages/usage-engine-runtime/src/source-adapters.ts` (the two sources,
   the config seam and the injectable inputs) and `packages/report-core/src/work-attention-facts.ts`
   (pure interpretation).
+
+## Amendment (2026-10-25, ADR 0077)
+
+The shared bounded runner still never retains, logs or returns stderr. A caller
+that needs one fact a CLI prints only there may pass a classifier: the runner
+holds at most 4 KiB of stderr, hands it once to the classifier and returns only
+the classifier's closed-vocabulary word. The first such caller is the Codex
+sign-in probe (`codex login status` → `chatgpt`, `api-key`, …).

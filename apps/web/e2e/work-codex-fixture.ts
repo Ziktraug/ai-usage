@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import { appendFile, chmod, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { normalizeCodexAppServerQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { importProviderQuotaBatch } from '@ai-usage/usage-store/testing';
+import { Effect } from 'effect';
 import { type SeedWorkAttemptFixtureInput, WORK_ATTEMPT_FIXTURE_WORKTREE } from './work-attempt-fixture';
 
 /** Explicit fake-process profile: no real Codex binary, credential or provider is contacted. */
@@ -97,6 +100,7 @@ await import(${JSON.stringify(fixturePath)});
   await chmod(executable, 0o700);
   const configPath = path.join(input.home, '.config', 'ai-usage', 'config.json');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.delegation.routes.push({ accountScope: CODEX_JOURNEY_ACCOUNT, context: 'personal', harness: 'codex' });
   config.routing.executors.push({
     accountScope: CODEX_JOURNEY_ACCOUNT,
     accountFingerprint: CODEX_JOURNEY_FINGERPRINT,
@@ -112,6 +116,39 @@ await import(${JSON.stringify(fixturePath)});
     targets: [{ kind: 'any-local-session' }],
   });
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  // Acquisition stays disabled in the isolated production profile. Seed the same synthetic
+  // account's quota at the pinned clock; launch still checks the fake app-server's live policy.
+  const observation = normalizeCodexAppServerQuotaObservation({
+    accountScope: CODEX_JOURNEY_ACCOUNT,
+    machineId: input.machineId,
+    machineLabel: input.machineLabel,
+    observedAt: input.epoch,
+    result: {
+      rateLimits: {
+        planType: 'pro',
+        primary: {
+          usedPercent: 20,
+          windowDurationMins: 300,
+          resetsAt: Math.floor(input.epoch.getTime() / 1000) + 3600,
+        },
+        secondary: {
+          usedPercent: 25,
+          windowDurationMins: 10_080,
+          resetsAt: Math.floor(input.epoch.getTime() / 1000) + 86_400,
+        },
+      },
+    },
+  });
+  if (!observation || observation.windows.length === 0) {
+    throw new Error('Invalid synthetic Codex quota observation.');
+  }
+  await Effect.runPromise(
+    importProviderQuotaBatch({
+      checkpointUpdates: [],
+      dbPath: input.databasePath,
+      items: [{ observation, sourceEventKey: 'codex-journey-e2e-fixture-1' }],
+    }),
+  );
   const record = process.env[CODEX_JOURNEY_RECORD_ENV];
   if (record) {
     await writeFile(record, JSON.stringify({ home: input.home, modePath, logPath }), { mode: 0o600 });

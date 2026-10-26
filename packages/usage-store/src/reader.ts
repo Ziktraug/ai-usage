@@ -12,9 +12,26 @@ export {
   MAX_CLAUDE_DESKTOP_SESSION_READ,
 } from './claude-desktop-session-store';
 export type { CodexWorkQueryResult, QueryCodexWorkObservationsInput } from './codex-work-store';
+export type {
+  DelegationJobRead,
+  DelegationJobsRead,
+  DelegationStoreReadFailure,
+  QueryDelegationEvaluationsInput,
+  QueryDelegationEvaluationsResult,
+  QueryDelegationJobsInput,
+  QueryDelegationJobsResult,
+  ReadDelegationJobInput,
+  ReadDelegationQualificationInput,
+  ReadDelegationQualificationResult,
+  StoredDelegationQualification,
+} from './delegation-store';
+export { DELEGATION_STORE_BOUNDS } from './delegation-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type {
+  ExecutorAccountBarrier,
+  QueryExecutorAccountChangesInput,
+  QueryExecutorAccountChangesResult,
   QueryLatestExecutorObservationsInput,
   QueryLatestExecutorObservationsResult,
 } from './executor-observation-store';
@@ -85,7 +102,10 @@ export {
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
+  queryDelegationEvaluations,
+  queryDelegationJobs,
   queryDistillationSessionMetadata,
+  queryExecutorAccountChanges,
   queryLatestCheckoutStatusObservations,
   queryLatestExecutorObservations,
   queryLatestJiraIssueObservations,
@@ -100,6 +120,7 @@ export {
   queryRecentServedHarnessSessions,
   queryReportRows,
   queryReviewAttempts,
+  queryReviewReservations,
   queryReviewTargetResolution,
   queryServedReportRevisionLocalSnapshot,
   queryServedReportRevisionPortableConfig,
@@ -123,15 +144,28 @@ export {
   queryWorkThreadProjects,
   queryWorkThreadSessionEvidence,
   queryWorkThreadsPage,
+  readDelegationJob,
+  readDelegationJobs,
+  readDelegationQualification,
   USAGE_STORE_SCHEMA_VERSION,
   usageStorePath,
 } from './index';
 export type {
   QueryReviewAttemptsInput,
   QueryReviewAttemptsResult,
+  QueryReviewReservationsInput,
+  QueryReviewReservationsResult,
   QueryReviewTargetResolutionInput,
   ReviewTargetResolutionFacts,
 } from './review-attempt-store';
+export type {
+  ReviewReservationFamily,
+  ReviewReservationHolder,
+  ReviewReservationPool,
+  ReviewReservationScope,
+  ReviewReservationTarget,
+} from './review-reservations';
+export { countReviewReservationsByPool, reviewTargetReservationHolder } from './review-reservations';
 export type { ServedRevisionQueryKind, ServedRevisionQueryResult } from './served-query-catalog';
 export type { ServedRevisionQueryTrace } from './served-revision';
 export type {
