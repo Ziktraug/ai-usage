@@ -15,6 +15,8 @@ export const threadSurface = css({
   '--wt-ok-soft': 'token(colors.status.okSoft)',
   '--wt-warn': 'token(colors.status.warn)',
   '--wt-warn-soft': 'token(colors.status.warnSoft)',
+  '--wt-danger': 'token(colors.status.danger)',
+  '--wt-danger-soft': 'token(colors.status.dangerSoft)',
   '--wt-claude': 'token(colors.harness.claude.fg)',
   '--wt-claude-bg': 'token(colors.harness.claude.bg)',
   '--wt-codex': 'token(colors.harness.codex.fg)',

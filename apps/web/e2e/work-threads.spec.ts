@@ -360,7 +360,8 @@ test('a mixed day shows both chips and lists dated marks before opening the task
   await open(page);
   const task = row(page, ids.payments);
   const day = task.locator('.wt-day-button:has(.wt-event-mark):has([data-harness])').first();
-  await expect(day.locator('[data-harness="claude"]')).toHaveText('Cl');
+  // The provider mark replaces letter glyphs that read like "CI" next to check states.
+  await expect(day.locator('[data-harness="claude"] svg')).toBeVisible();
   await expect(day.locator('.wt-event-mark')).toBeVisible();
   await day.focus();
   await page.keyboard.press('Enter');
@@ -702,7 +703,8 @@ test('work exposes artifact links and independent states, with a global recent v
     'href',
     'https://jira.example/browse/SHOP-2085',
   );
-  await expect(row(page, ids.payments)).toContainText('CI');
+  await expect(row(page, ids.payments)).toContainText('Changes requested');
+  await expect(row(page, ids.payments)).toContainText('Checks pass');
   await expect(row(page, ids.payments)).toContainText('Updated');
   await open(page, ids.payments);
   const order = page.getByRole('combobox', { name: 'Order', exact: true });

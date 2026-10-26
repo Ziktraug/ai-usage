@@ -1345,15 +1345,75 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.wt-status {
-  padding: 1px 5px;
-  border: 1px solid var(--wt-line);
-  border-radius: 4px;
+/* One state per artifact: the fill says whose move it is (warn: yours, danger: blocked), an outline
+   says it waits on someone else. Text always names the state, so colour is never the only cue. */
+.wt-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.3;
+  color: var(--wt-muted);
+  white-space: nowrap;
+  border: 1px solid var(--wt-line-strong);
+  border-radius: 999px;
 }
-.wt-status[data-state="MERGED"] {
+.wt-pill[data-tone="merged"] {
   color: var(--wt-accent);
+  background: var(--wt-tint);
+  border-color: transparent;
 }
-.wt-status[data-state="failure"],
+.wt-pill[data-tone="approved"],
+.wt-pill[data-tone="jira-done"] {
+  color: var(--wt-ok);
+  background: var(--wt-ok-soft);
+  border-color: transparent;
+}
+.wt-pill[data-tone="your-review"] {
+  color: var(--wt-warn);
+  background: var(--wt-warn-soft);
+  border-color: transparent;
+}
+.wt-pill[data-tone="blocked"] {
+  color: var(--wt-danger);
+  background: var(--wt-danger-soft);
+  border-color: transparent;
+}
+.wt-pill[data-tone="in-review"],
+.wt-pill[data-tone="open"],
+.wt-pill[data-tone="jira-in-progress"] {
+  color: var(--wt-ink);
+}
+.wt-pill[data-tone="jira-in-progress"] {
+  border-color: var(--wt-accent);
+}
+.wt-pill[data-tone="draft"],
+.wt-pill[data-tone="closed"],
+.wt-pill[data-tone="unknown"],
+.wt-pill[data-tone="jira-unknown"] {
+  border-style: dashed;
+}
+.wt-checks {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--wt-muted);
+}
+.wt-check-glyph {
+  font-weight: 700;
+}
+.wt-checks[data-tone="passing"] .wt-check-glyph {
+  color: var(--wt-ok);
+}
+.wt-checks[data-tone="failing"] {
+  color: var(--wt-danger);
+}
+.wt-checks[data-tone="pending"] .wt-check-glyph {
+  color: var(--wt-warn);
+}
 .wt-read-warning {
   color: var(--wt-warn);
 }

@@ -48,6 +48,8 @@ const APP_LOCAL_CUSTOM_PROPERTIES: ReadonlySet<string> = new Set([
   '--wt-codex',
   '--wt-codex-bg',
   '--wt-contrast',
+  '--wt-danger',
+  '--wt-danger-soft',
   '--wt-ink',
   '--wt-line',
   '--wt-line-strong',

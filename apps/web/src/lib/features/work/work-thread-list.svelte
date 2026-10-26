@@ -6,11 +6,12 @@
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
   import { tick } from 'svelte';
+  import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import {
     bucketThreadMarks,
     groupThreadRows,
-    harnessGlyph,
+    groupThreadRowsBySituation,
     harnessName,
     threadDate,
     threadSituationCopy,
@@ -44,11 +45,21 @@
   } = $props();
   const week = $derived(threadWeek(dataset.generatedAt, timeZone));
   let groupByProject = $state(false);
-  const groups = $derived.by(() => {
+  const situations = $derived(
+    new Map(
+      rows.map((row) => [
+        row.thread.threadId,
+        threadSituationCopy(row, dataset.generatedAt, dataset.sources, timeZone),
+      ]),
+    ),
+  );
+  const situationOf = (row: WorkThreadRow) =>
+    situations.get(row.thread.threadId) ?? threadSituationCopy(row, dataset.generatedAt, dataset.sources, timeZone);
+  const groups = $derived.by((): readonly { project: string; note?: string; tasks: readonly WorkThreadRow[] }[] => {
     if (groupByProject) {
       return groupThreadRows(rows);
     }
-    return rows.length ? [{ project: 'Latest activity', tasks: rows }] : [];
+    return groupThreadRowsBySituation(rows, (row) => situationOf(row).hint);
   });
   let selectedMarks = $state<{ threadId: string; day: string } | null>(null);
   const closeMarks = (): void => {
@@ -137,10 +148,14 @@
     {#each groups as group (group.project)}
       <section aria-label={`${group.project} tasks`}>
         <h2 class="wt-project">
-          {group.project} <span>{group.tasks.length} {group.tasks.length === 1 ? 'task' : 'tasks'}</span>
+          {group.project}
+          <span
+            >{group.tasks.length}
+            {group.tasks.length === 1 ? 'task' : 'tasks'}{group.note ? ` · ${group.note}` : ''}</span
+          >
         </h2>
         {#each group.tasks as row (row.thread.threadId)}
-          {@const situation = threadSituationCopy(row, dataset.generatedAt, dataset.sources, timeZone)}
+          {@const situation = situationOf(row)}
           {@const buckets = bucketThreadMarks(row.marks, timeZone)}
           <article
             class="wt-task-row"
@@ -202,7 +217,11 @@
                           aria-hidden="true"
                           class="wt-mark"
                           data-harness={sessions.length === 1 ? sessions[0]?.harness : ''}
-                          >{sessions.length > 1 ? sessions.length : harnessGlyph(sessions[0]?.harness ?? null)}</span
+                          >{#if sessions.length > 1}
+                            {sessions.length}
+                          {:else}
+                            <WorkHarnessGlyph harness={sessions[0]?.harness ?? null} />
+                          {/if}</span
                         >
                       {/if}
                       {#if marks.length > sessions.length}
@@ -297,8 +316,13 @@
 </div>
 <div class="wt-legend">
   <div>
-    <span><span class="wt-glyph" data-harness="claude">Cl</span> Claude session</span
-    ><span><span class="wt-glyph" data-harness="codex">Cx</span> Codex session</span><span>○ Work event</span>
+    <span
+      ><span class="wt-glyph" data-harness="claude"><WorkHarnessGlyph harness="claude" size={10} /></span>
+      Claude session</span
+    ><span
+      ><span class="wt-glyph" data-harness="codex"><WorkHarnessGlyph harness="codex" size={10} /></span>
+      Codex session</span
+    ><span><span class="wt-glyph">2</span> Several sessions that day</span><span>○ Work event</span>
   </div>
   <span>Placed by day · open a mark for times and episode spans</span>
 </div>

@@ -1,7 +1,14 @@
 <script lang="ts">
   import { parseWorkThreadLinkKey } from '@ai-usage/report-core/work-thread';
   import type { WorkThreadRow } from '@ai-usage/report-core/work-thread-view';
-  import { localCheckoutStatus, observedWebUrl, threadDate, threadTime } from './work-thread-model';
+  import {
+    localCheckoutStatus,
+    observedWebUrl,
+    pullRequestBadge,
+    pullRequestChecks,
+    threadDate,
+    threadTime,
+  } from './work-thread-model';
 
   let { row, now, timeZone }: { row: WorkThreadRow; now: string; timeZone: string } = $props();
   const freshness = (at: string | undefined, outcome: string | undefined): string => {
@@ -14,6 +21,7 @@
     }
     return `${Date.parse(now) - Date.parse(at) > 7 * 86_400_000 ? 'Stale · ' : ''}Observed ${date}`;
   };
+  const checkGlyph = { passing: '✓', failing: '✕', pending: '◌', unknown: '?' } as const;
 </script>
 <div class="wt-artifacts">
   {#each row.markers.pullRequests as marker (marker.key)}
@@ -23,6 +31,8 @@
       fact?.url ??
         (parsed?.kind === 'pull-request' ? `https://${parsed.host}/${parsed.repository}/pull/${parsed.number}` : null),
     )}
+    {@const badge = pullRequestBadge(marker)}
+    {@const checks = pullRequestChecks(marker)}
     <div class="wt-artifact" title={freshness(marker.latest?.observedAt, marker.latest?.outcome)}>
       {#if url}
         <a class="wt-link" href={url} rel="noopener noreferrer" target="_blank"
@@ -32,12 +42,11 @@
       {:else}
         <span>PR</span>
       {/if}
-      <span class="wt-status" data-state={fact?.state}
-        >{fact?.draft && fact.state === 'OPEN' ? 'Draft' : (fact?.state?.toLowerCase() ?? 'Unknown')}</span
-      >
-      <span class="wt-status" data-state={fact?.checksRollup}>CI {fact?.checksRollup ?? 'unknown'}</span>
-      {#if fact?.state === 'OPEN'}
-        <span>{fact.reviewDecision?.replaceAll('_', ' ').toLowerCase() ?? 'Review unknown'}</span>
+      <span class="wt-pill" data-tone={badge.tone}>{badge.label}</span>
+      {#if checks}
+        <span class="wt-checks" data-tone={checks.tone}
+          ><span aria-hidden="true" class="wt-check-glyph">{checkGlyph[checks.tone]}</span>{checks.label}</span
+        >
       {/if}
       {#if marker.latest?.outcome !== 'observed'}
         <span class="wt-read-warning">{marker.latest ? `Read: ${marker.latest.outcome}` : 'Not observed'}</span>
@@ -52,9 +61,11 @@
       {#if url}
         <a class="wt-link" href={url} rel="noopener noreferrer" target="_blank">{fact?.key} ↗</a>
       {:else}
-        <span>{fact?.key ?? (parsed?.kind === 'jira-issue' ? parsed.key : 'Jira')} · link unavailable</span>
+        <span>{fact?.key ?? (parsed?.kind === 'jira-issue' ? parsed.key : 'Jira')}</span>
       {/if}
-      <span>{fact?.status ?? 'Status unknown'}</span>
+      <span class="wt-pill" data-tone={`jira-${fact?.statusCategory ?? 'unknown'}`}
+        >{fact?.status ?? 'Not read yet'}</span
+      >
       {#if marker.latest && marker.latest.outcome !== 'observed'}
         <span class="wt-read-warning">Read: {marker.latest.outcome}</span>
       {/if}

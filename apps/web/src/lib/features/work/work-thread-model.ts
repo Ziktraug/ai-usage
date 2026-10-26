@@ -11,6 +11,7 @@ import type {
   WorkThreadListQuery,
   WorkThreadMark,
   WorkThreadMarkers,
+  WorkThreadPullRequestMarker,
   WorkThreadRow,
   WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
@@ -67,6 +68,25 @@ export const groupThreadRows = (rows: readonly WorkThreadRow[]) => {
   }
   return [...groups].map(([project, tasks]) => ({ project, tasks }));
 };
+
+const SITUATION_GROUPS = [
+  { hint: 'to-resume', label: 'To resume', note: 'Your next step' },
+  { hint: 'in-progress', label: 'In progress', note: 'A session is still running' },
+  { hint: 'undecided', label: 'To decide', note: 'Evidence is missing or stale' },
+  { hint: 'waiting', label: 'Waiting', note: 'On reviewers, checks or a reply' },
+  { hint: 'ready-to-close', label: 'Ready to close', note: 'Nothing known is left' },
+  { hint: 'done', label: 'Done', note: 'Follow-up ended' },
+] as const;
+
+/** Whose move it is first: tasks to resume lead, then work that waits on someone else. */
+export const groupThreadRowsBySituation = (
+  rows: readonly WorkThreadRow[],
+  hintOf: (row: WorkThreadRow) => (typeof SITUATION_GROUPS)[number]['hint'],
+) =>
+  SITUATION_GROUPS.flatMap(({ hint, label, note }) => {
+    const tasks = rows.filter((row) => hintOf(row) === hint);
+    return tasks.length ? [{ project: label, note, tasks }] : [];
+  });
 
 /** Calendar keys, not elapsed 24-hour intervals: correct across midnight and DST. */
 export const threadDayKey = (at: string | Date, timeZone: string): string => {
@@ -138,9 +158,81 @@ export const episodeTimeRange = (
   return `${start}–${threadTime(episode.endedAt, timeZone)}${dayOffset > 0 ? ` +${dayOffset}d` : ''}`;
 };
 
+export type PullRequestTone =
+  | 'merged'
+  | 'closed'
+  | 'draft'
+  | 'blocked'
+  | 'approved'
+  | 'your-review'
+  | 'in-review'
+  | 'open'
+  | 'unknown';
+
+/**
+ * One glanceable state per pull request, most decisive first: a conflict or requested changes
+ * block the author whatever the review says, and a review requested of the operator is theirs.
+ */
+export const pullRequestBadge = (
+  marker: WorkThreadPullRequestMarker,
+): { readonly tone: PullRequestTone; readonly label: string } => {
+  const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful;
+  if (!fact?.state) {
+    return { tone: 'unknown', label: 'State unknown' };
+  }
+  if (fact.state === 'MERGED') {
+    return { tone: 'merged', label: 'Merged' };
+  }
+  if (fact.state === 'CLOSED') {
+    return { tone: 'closed', label: 'Closed' };
+  }
+  if (marker.role === 'review-requested') {
+    return { tone: 'your-review', label: 'Your review' };
+  }
+  if (fact.draft) {
+    return { tone: 'draft', label: 'Draft' };
+  }
+  if (marker.mergeable === 'conflicting' || marker.mergeStateStatus === 'DIRTY') {
+    return { tone: 'blocked', label: 'Conflicts' };
+  }
+  if (fact.reviewDecision === 'CHANGES_REQUESTED') {
+    return { tone: 'blocked', label: 'Changes requested' };
+  }
+  if (fact.reviewDecision === 'APPROVED') {
+    return { tone: 'approved', label: 'Approved' };
+  }
+  if (fact.reviewDecision === 'REVIEW_REQUIRED') {
+    return { tone: 'in-review', label: 'In review' };
+  }
+  return { tone: 'open', label: 'Open' };
+};
+
+/** Checks only matter while the pull request is open; a merged PR's last run is history. */
+export const pullRequestChecks = (
+  marker: WorkThreadPullRequestMarker,
+): { readonly tone: 'passing' | 'failing' | 'pending' | 'unknown'; readonly label: string } | null => {
+  const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful;
+  if (fact?.state !== 'OPEN') {
+    return null;
+  }
+  switch (fact.checksRollup) {
+    case 'success':
+      return { tone: 'passing', label: 'Checks pass' };
+    case 'failure':
+      return { tone: 'failing', label: 'Checks fail' };
+    case 'pending':
+      return { tone: 'pending', label: 'Checks running' };
+    default:
+      return { tone: 'unknown', label: 'Checks unknown' };
+  }
+};
+
 export const harnessName = (harness: string): string =>
   ({ claude: 'Claude', 'claude-code': 'Claude', codex: 'Codex', cursor: 'Cursor', opencode: 'OpenCode' })[harness] ??
   harness;
+/** Harnesses whose provider publishes a mark the design system draws (`ProviderMark`). */
+export const harnessHasMark = (harness: string | null): boolean =>
+  harness !== null && ['claude', 'claude-code', 'codex', 'cursor', 'opencode'].includes(harness);
 export const harnessGlyph = (harness: string | null): string => {
   if (harness === null) {
     return 'S';

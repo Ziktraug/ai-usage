@@ -3,6 +3,7 @@
   import type { WorkThreadLink } from '@ai-usage/report-core/work-thread';
   import type { WorkThreadEpisode } from '@ai-usage/report-core/work-thread-view';
   import { untrack } from 'svelte';
+  import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import Episode from './work-thread-episode.svelte';
   import {
     episodeContext,
@@ -12,7 +13,6 @@
     episodeSpan,
     episodeSpanContext,
     episodeTimeRange,
-    harnessGlyph,
     harnessName,
   } from './work-thread-model';
 
@@ -64,7 +64,7 @@
     onclick={() => (expanded = !expanded)}
     type="button"
   >
-    <span class="wt-glyph" data-harness={episode.harness}>{harnessGlyph(episode.harness)}</span>
+    <span class="wt-glyph" data-harness={episode.harness}><WorkHarnessGlyph harness={episode.harness} /></span>
     <span class="wt-session-label"
       ><strong>{episode.title ?? 'Untitled session'}</strong
       ><small
