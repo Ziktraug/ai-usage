@@ -111,8 +111,8 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(56);
-    expect(dependencyAcquisitions).toBe(56);
+    expect(observed).toHaveLength(57);
+    expect(dependencyAcquisitions).toBe(57);
     expect(rpcOperationPolicies.find(({ operation }) => operation === 'stopWorkAttempt')).toMatchObject({
       method: 'POST',
       target: 'workAttempts.stop',
