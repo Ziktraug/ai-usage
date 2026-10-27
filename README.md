@@ -472,7 +472,7 @@ read-only tool `work.context`, with exactly one of `checkoutPath` (absolute),
 selection, so unrelated projects cannot occupy the requested project's page.
 Adding the tool registers nothing: the server is still
 registered only by your explicit `bun run mcp:register:codex` (or your own
-harness configuration).
+harness configuration); see [`docs/mcp.md`](docs/mcp.md).
 
 The answer (`schemaVersion` 1) has `waiting` (human requests and external
 waits with dated declarations or supported native request evidence),

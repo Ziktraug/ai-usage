@@ -14,14 +14,6 @@ const reportDataPackage = `${workspacePackageScope}report-data`;
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
 const usageStoreInternal = `${workspacePackageScope}usage-store/internal`;
 const usageStorePerformanceTesting = `${workspacePackageScope}usage-store/performance-testing`;
-const platformBridgePackage = ['@ai-usage', 'platform-bridge'].join('/');
-const platformCorePackage = `${workspacePackageScope}platform-core`;
-const authorizationContractPackage = `${workspacePackageScope}authorization-contract`;
-const authorizationPackage = `${workspacePackageScope}authorization`;
-const authorizationScopeInternal = `${authorizationPackage}/scope-internal`;
-const identityPackage = `${workspacePackageScope}identity`;
-const memorySqlitePackage = `${workspacePackageScope}memory-sqlite`;
-const memoryServicePackage = `${workspacePackageScope}memory-service`;
 const retiredLanPackage = `${workspacePackageScope}lan-pairing`;
 const retiredSyncPackage = `${workspacePackageScope}sync`;
 const webBridgePackage = ['@ai-usage', 'web-bridge'].join('/');
@@ -810,208 +802,35 @@ describe('package boundary guard', () => {
     expect(await collectViolations(root)).toEqual([]);
   });
 
-  test('keeps platform identity and authorization free from runtime adapters', async () => {
+  test('keeps the MCP adapter on the skills package and away from storage', async () => {
     const root = await createFixture();
     await writePackage(
       root,
       'packages',
-      'platform-core',
-      { dependencies: { '@ai-usage/usage-store': 'workspace:*' }, name: platformCorePackage },
-      "import 'bun:sqlite';\nimport 'node:fs/promises';\n",
-    );
-    await writePackage(root, 'packages', 'authorization', {
-      dependencies: { '@ai-usage/usage-store': 'workspace:*' },
-      name: authorizationPackage,
-    });
-    await writePackage(root, 'packages', 'authorization-contract', {
-      dependencies: { '@ai-usage/usage-store': 'workspace:*' },
-      name: authorizationContractPackage,
-    });
-    await writePackage(
-      root,
-      'packages',
-      'identity',
-      { dependencies: { '@ai-usage/authorization': 'workspace:*', pg: '1.0.0' }, name: identityPackage },
-      "import 'pg';\n",
-    );
-
-    expect(await collectViolations(root)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ packageName: platformCorePackage, specifier: '@ai-usage/usage-store' }),
-        expect.objectContaining({ packageName: platformCorePackage, specifier: 'bun:sqlite' }),
-        expect.objectContaining({ packageName: platformCorePackage, specifier: 'node:fs/promises' }),
-        expect.objectContaining({ packageName: authorizationPackage, specifier: '@ai-usage/usage-store' }),
-        expect.objectContaining({ packageName: authorizationContractPackage, specifier: '@ai-usage/usage-store' }),
-        expect.objectContaining({
-          file: 'packages/identity/package.json',
-          packageName: identityPackage,
-          specifier: 'pg',
-        }),
-        expect.objectContaining({
-          file: 'packages/identity/package.json',
-          packageName: identityPackage,
-          specifier: '@ai-usage/authorization',
-        }),
-        expect.objectContaining({
-          file: 'packages/identity/src/index.ts',
-          packageName: identityPackage,
-          specifier: 'pg',
-        }),
-      ]),
-    );
-  });
-
-  test('allows only apps/usage-engine to own the local Memory SQLite adapter', async () => {
-    const root = await createFixture();
-    await writePackage(
-      root,
-      'apps',
-      'web',
-      { dependencies: { [memorySqlitePackage]: 'workspace:*' }, name: '@ai-usage/web' },
-      `import '${memorySqlitePackage}/identity';\n`,
-    );
-    await writePackage(
-      root,
-      'apps',
-      'usage-engine',
-      { dependencies: { [memorySqlitePackage]: 'workspace:*' }, name: '@ai-usage/usage-engine' },
-      `import '${memorySqlitePackage}/identity';\n`,
+      'mcp-adapter',
+      {
+        dependencies: { '@ai-usage/skills': 'workspace:*', '@ai-usage/usage-store': 'workspace:*' },
+        name: '@ai-usage/mcp-adapter',
+      },
+      "import '@ai-usage/skills';\nimport 'bun:sqlite';\n",
     );
 
     const violations = await collectViolations(root);
     expect(violations).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ packageName: '@ai-usage/web', specifier: memorySqlitePackage }),
-        expect.objectContaining({ packageName: '@ai-usage/web', specifier: `${memorySqlitePackage}/identity` }),
-      ]),
-    );
-    expect(violations).not.toContainEqual(
-      expect.objectContaining({ packageName: '@ai-usage/usage-engine', specifier: memorySqlitePackage }),
-    );
-  });
-
-  test('keeps the local Memory adapter independent from Usage SQLite and HTTP', async () => {
-    const root = await createFixture();
-    await writePackage(
-      root,
-      'packages',
-      'memory-sqlite',
-      {
-        dependencies: { '@ai-usage/usage-store': 'workspace:*' },
-        name: memorySqlitePackage,
-      },
-      "import '@ai-usage/usage-store/writer';\nimport 'node:http';\n",
-    );
-
-    expect(await collectViolations(root)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ packageName: memorySqlitePackage, specifier: '@ai-usage/usage-store' }),
-        expect.objectContaining({ packageName: memorySqlitePackage, specifier: '@ai-usage/usage-store/writer' }),
-        expect.objectContaining({ packageName: memorySqlitePackage, specifier: 'node:http' }),
-      ]),
-    );
-  });
-
-  test('keeps the named Memory service independent from every storage adapter', async () => {
-    const root = await createFixture();
-    await writePackage(
-      root,
-      'packages',
-      'memory-service',
-      {
-        dependencies: { [memorySqlitePackage]: 'workspace:*' },
-        name: memoryServicePackage,
-      },
-      `import '${memorySqlitePackage}/identity';\n`,
-    );
-
-    expect(await collectViolations(root)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ packageName: memoryServicePackage, specifier: memorySqlitePackage }),
-        expect.objectContaining({ packageName: memoryServicePackage, specifier: `${memorySqlitePackage}/identity` }),
-      ]),
-    );
-  });
-
-  test('keeps Web and CLI production dependency closures authorization-implementation-free', async () => {
-    const root = await createFixture();
-    await writePackage(
-      root,
-      'apps',
-      'web',
-      {
-        dependencies: { [memoryServicePackage]: 'workspace:*', [platformBridgePackage]: 'workspace:*' },
-        name: '@ai-usage/web',
-      },
-      `import '${memoryServicePackage}/client';\nimport '${platformBridgePackage}';\n`,
-    );
-    await writePackage(root, 'packages', 'platform-bridge', {
-      dependencies: { [authorizationPackage]: 'workspace:*' },
-      name: platformBridgePackage,
-    });
-    await writePackage(root, 'packages', 'authorization-contract', {
-      dependencies: { [platformCorePackage]: 'workspace:*' },
-      name: authorizationContractPackage,
-    });
-    await writePackage(root, 'packages', 'memory-service', {
-      dependencies: { [authorizationContractPackage]: 'workspace:*' },
-      name: memoryServicePackage,
-    });
-    await writePackage(root, 'apps', 'cli', { name: '@ai-usage/cli' }, `import '${authorizationPackage}';\n`);
-
-    expect(await collectViolations(root)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ packageName: '@ai-usage/cli', specifier: authorizationPackage }),
         expect.objectContaining({
-          message: expect.stringContaining('@ai-usage/web -> @ai-usage/platform-bridge -> @ai-usage/authorization'),
-          packageName: '@ai-usage/web',
-          specifier: authorizationPackage,
+          file: 'packages/mcp-adapter/package.json',
+          packageName: '@ai-usage/mcp-adapter',
+          specifier: '@ai-usage/usage-store',
+        }),
+        expect.objectContaining({
+          file: 'packages/mcp-adapter/src/index.ts',
+          packageName: '@ai-usage/mcp-adapter',
+          specifier: 'bun:sqlite',
         }),
       ]),
     );
-  });
-
-  test('keeps opaque authorization scope internals inside the persistence adapter and tests', async () => {
-    const root = await createFixture();
-    await writePackage(
-      root,
-      'packages',
-      'route-adapter',
-      { name: '@ai-usage/route-adapter' },
-      `import '${authorizationScopeInternal}';\n`,
-    );
-    await writePackage(
-      root,
-      'packages',
-      'memory-sqlite',
-      { name: memorySqlitePackage },
-      `import '${authorizationScopeInternal}';\n`,
-    );
-    await writeFile(
-      path.join(root, 'packages/route-adapter/src/scope.test.ts'),
-      `import '${authorizationScopeInternal}';\n`,
-    );
-
-    const violations = await collectViolations(root);
-    expect(violations).toContainEqual(
-      expect.objectContaining({
-        file: 'packages/route-adapter/src/index.ts',
-        packageName: '@ai-usage/route-adapter',
-        specifier: authorizationScopeInternal,
-      }),
-    );
-    expect(violations).not.toContainEqual(
-      expect.objectContaining({
-        file: 'packages/memory-sqlite/src/index.ts',
-        specifier: authorizationScopeInternal,
-      }),
-    );
-    expect(violations).not.toContainEqual(
-      expect.objectContaining({
-        file: 'packages/route-adapter/src/scope.test.ts',
-        specifier: authorizationScopeInternal,
-      }),
-    );
+    expect(violations).not.toContainEqual(expect.objectContaining({ specifier: '@ai-usage/skills' }));
   });
 
   test('accepts the current workspace graph', async () => {

@@ -175,10 +175,7 @@ describe('Web Query composition', () => {
       'work-attempts',
       'delegation-settings',
       'delegation-jobs',
-      'memory',
-      'projects',
       'sync',
-      'replication',
       'sources',
     ]);
     // Exactly two families react to a completed publication cycle, and they react differently. The

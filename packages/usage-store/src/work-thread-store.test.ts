@@ -1662,19 +1662,13 @@ describe('work thread store', () => {
     });
   });
 
-  test('commands and seeds do not advance report generations or write replication events', async () => {
+  test('commands and seeds do not advance report generations', async () => {
     const dbPath = await createStore();
     const before = await run(queryUsageStoreGenerations({ dbPath }));
-    const db = new Database(dbPath, { readonly: true });
-    const outbox = db.query('SELECT * FROM replication_outbox_events').all();
-    db.close();
     const threadId = await create(dbPath);
     await command(dbPath, follow(threadId, 1, 'done'));
     await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [seed()] }));
     expect(await run(queryUsageStoreGenerations({ dbPath }))).toEqual(before);
-    const reopened = new Database(dbPath, { readonly: true });
-    expect(reopened.query('SELECT * FROM replication_outbox_events').all()).toEqual(outbox);
-    reopened.close();
   });
 
   test('a collection imports usage and work facts without changing durable threads', async () => {

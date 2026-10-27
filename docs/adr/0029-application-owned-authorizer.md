@@ -1,8 +1,8 @@
 # ADR 0029: Application-owned Authorizer
 
-- **Status**: Accepted; amended by
-  [ADR 0074](0074-local-only-single-operator-product.md); retires with accepted
-  Memory in plan 120 phase B
+- **Status**: Retired 2026-10-27 by
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md) (`packages/authorization` removed
+  with accepted Memory); amended by [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-08-29
 - **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
 

@@ -5,7 +5,9 @@
   stays dormant until [ADR 0074](0074-local-only-single-operator-product.md) phase B removes it
   (the client still starts when `AI_USAGE_PLATFORM_BASE_URL` is set), so the guard stays until
   then; the no-deletion obligation is the general rule of
-  [ADR 0075](0075-local-store-schema-evolution.md).
+  [ADR 0075](0075-local-store-schema-evolution.md). [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md)
+  (2026-10-27) removed replication and accepted Memory, so the guard has nothing left to
+  guard; the stored rows stay in the unopened Memory store file.
 - **Date**: 2026-10-06
 - **Amends**: 0042
 
@@ -62,4 +64,4 @@ and make a later sensitivity edit an implicit publication authorization.
 - [Promotion application](../../packages/memory-service/src/analysis-promotion.ts)
 - [Local promotion and replication regression](../../packages/memory-sqlite/src/analysis-promotion.test.ts)
 - [Local store upgrade](../local-store-upgrade.md)
-- [Session distillation](../session-distillation.md)
+- Session distillation: `docs/session-distillation.md`, removed with accepted Memory by ADR 0084 (git history keeps it)

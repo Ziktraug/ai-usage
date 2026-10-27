@@ -248,7 +248,7 @@ describe('claude desktop session store', () => {
     expect(columns.map(({ name }) => name)).toContain('needs_action');
   });
 
-  test('stays outside the served revision, the replication outbox and the merge bundle', async () => {
+  test('stays outside the served revision and the merge bundle', async () => {
     const dbPath = await createStore('desktop-isolation');
     const machine = { id: MACHINE, label: 'Desktop Machine' };
     await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
@@ -368,7 +368,6 @@ describe('claude desktop session store', () => {
     const db = new Database(dbPath, { readonly: true });
     const served = db.query('SELECT row_json, source_row_json, search_text FROM served_report_rows').all();
     const servedSupport = db.query('SELECT support_json FROM served_report_support').all();
-    const outbox = db.query('SELECT COUNT(*) AS count FROM replication_outbox_events').get() as { count: number };
     const usageRows = db.query('SELECT row_json FROM usage_rows').all();
     db.close(true);
     const exported = await Effect.runPromise(exportLocalMergeBundle({ dbPath, machine }));
@@ -377,7 +376,6 @@ describe('claude desktop session store', () => {
     expect(served).toHaveLength(1);
     expect(exported.rows).toHaveLength(1);
     expect(local.rows).toHaveLength(1);
-    expect(outbox.count).toBe(0);
     for (const payload of [served, servedSupport, usageRows, exported, local]) {
       const text = JSON.stringify(payload);
       expect(text).not.toContain(PRIVATE_SENTINEL);

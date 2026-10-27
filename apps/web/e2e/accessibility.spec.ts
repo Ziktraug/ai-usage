@@ -24,8 +24,6 @@ const NAVIGATION_DESTINATIONS = [
   'Overview',
   'Sessions',
   'Analysis',
-  'Memory',
-  'Projects',
   'Skills',
   'Sync',
   'Sources',
@@ -34,8 +32,6 @@ const NAVIGATION_DESTINATIONS = [
 const routes = [
   { heading: 'One thread per task.', path: '/work' },
   { heading: 'Usage overview', path: '/' },
-  { heading: 'Memory', path: '/memory' },
-  { heading: 'Projects', path: '/projects' },
   { heading: 'Skills', path: '/skills' },
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },
@@ -251,7 +247,7 @@ for (const route of routes) {
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });
     await manageButton.click();
     const manageNavigation = page.getByRole('navigation', { name: 'Manage destinations' });
-    for (const label of ['Campaigns', 'Memory', 'Projects', 'Skills', 'Sync', 'Sources', 'Delegation']) {
+    for (const label of ['Campaigns', 'Skills', 'Sync', 'Sources', 'Delegation']) {
       await expect(manageNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     await page.keyboard.press('Escape');
@@ -1147,31 +1143,6 @@ test('the skills worktable has no detectable accessibility violations', async ({
   await openHydratedSkills(page, '/skills');
   await expect(page.getByRole('table')).toBeVisible();
   await expect(page.getByRole('button', { name: ALL_FILTER_PATTERN })).toBeVisible();
-
-  await expectNoAxeViolations(page);
-});
-
-test('Memory has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/memory');
-  await waitForHydratedNavigation(page);
-  await expect(page.getByRole('link', { name: 'Knowledge', exact: true })).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByRole('heading', { level: 2, name: 'Search accepted Memory' })).toBeVisible();
-  await expectNoAxeViolations(page);
-
-  await page.getByRole('link', { name: 'Pending review', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Keep local Memory offline-first' })).toBeVisible();
-  await expectNoAxeViolations(page);
-
-  await page.getByRole('link', { name: 'Knowledge', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Search accepted Memory' })).toBeVisible();
-  await expectNoAxeViolations(page);
-});
-
-test('Projects has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/projects');
-  await waitForHydratedNavigation(page);
-  await expect(page.getByRole('heading', { level: 2, name: 'checkout:0198f179' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Leave unassigned' })).toBeVisible();
 
   await expectNoAxeViolations(page);
 });

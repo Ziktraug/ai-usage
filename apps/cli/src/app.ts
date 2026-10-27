@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { type BoundaryClassification, classifyExit, runBoundaryEffect } from '@ai-usage/effect-runtime';
-import { parseProjectId } from '@ai-usage/platform-core/identity';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryPoint } from '@ai-usage/report-core/provider-quota';
@@ -26,11 +25,9 @@ import { Console, Effect, Exit } from 'effect';
 import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
 import { isDelegationCliCommand, liveCliDelegationDependencies, runDelegationCliCommand } from './delegation';
 import { type AppError, CliArgumentError, CliWorkContextError, formatAppError } from './errors';
-import { renderMemorySearch } from './memory';
 import { quotaStatusDataset, renderQuota, renderQuotaHistory, renderQuotaJson } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
-import { renderReplicationStatus } from './replication';
 import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, renderWarningsForStderr } from './report';
 import { CliRuntime, type CliRuntime as CliRuntimeService } from './runtime';
 import { readUsageSnapshotFile } from './snapshot-file';
@@ -331,35 +328,6 @@ export const app = Effect.gen(function* () {
   if (command._tag === 'Machine') {
     const machine = yield* fromPromise(() => readOrInitializeUsageMachine(runtime));
     yield* Console.log(`Machine: ${machine.label}\nID: ${machine.id}`);
-    return;
-  }
-
-  if (command._tag === 'MemorySearch') {
-    const projectId = command.args.projectId === null ? null : parseProjectId(command.args.projectId);
-    const page = yield* fromPromise(() =>
-      runtime.memory.searchMemory(
-        {
-          cursor: command.args.cursor,
-          includeSpaceWide: command.args.includeSpaceWide,
-          limit: command.args.limit,
-          matchingMode: command.args.matchingMode,
-          projectId,
-          query: command.args.query,
-        },
-        { signal: runtime.signal },
-      ),
-    );
-    yield* writeStdout(`${renderMemorySearch(page, command.args.json)}\n`);
-    return;
-  }
-
-  if (command._tag === 'ReplicationStatus') {
-    const execution = yield* executeEngine(runtime, { command: 'replication-status' });
-    const completion = execution.completion;
-    if (!(completion.state === 'succeeded' && completion.command === 'replication-status')) {
-      return yield* Effect.fail(new CliUsageEngineError('invalid-response', 'Replication status result is invalid.'));
-    }
-    yield* writeStdout(`${renderReplicationStatus(completion.output, command.args.json)}\n`);
     return;
   }
 

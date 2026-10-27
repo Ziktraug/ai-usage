@@ -6,7 +6,6 @@
   "exports": {
     ".": "./src/runtime.ts",
     "./live": "./src/live.ts",
-    "./replication": "./src/replication.ts",
     "./recovery": "./src/recovery.ts",
     "./source-adapters": "./src/source-adapters.ts",
     "./source-control": "./src/source-control.ts"
@@ -22,8 +21,6 @@
     "@ai-usage/effect-runtime": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
     "@ai-usage/local-machine": "workspace:*",
-    "@ai-usage/replication-outbox": "workspace:*",
-    "@ai-usage/replication-protocol": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/report-data": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",

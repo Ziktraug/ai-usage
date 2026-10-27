@@ -14,7 +14,7 @@ import { parseClaudeDesktopSessionObservation } from '@ai-usage/report-core/work
 import type { ExecutorDeclaration } from '@ai-usage/report-core/work-executors';
 import { Effect } from 'effect';
 import type { UsageStoreError } from './errors';
-import { queryReviewAttempts, queryReviewTargetResolution } from './reader';
+import { queryReviewAttempts, queryReviewTargetResolution, USAGE_STORE_SCHEMA_VERSION } from './reader';
 import type { NewReviewAttempt, RequestReviewAttemptResult } from './review-attempt-store';
 import {
   importClaudeDesktopSessions,
@@ -198,7 +198,7 @@ describe('review attempt store', () => {
       ).toEqual({
         name: 'review_attempts',
       });
-      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 4 });
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: USAGE_STORE_SCHEMA_VERSION });
       const indexes = db
         .query("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'review_attempts'")
         .all() as { name: string }[];
@@ -459,7 +459,7 @@ describe('review attempt store', () => {
         ({ name }) => name,
       );
       expect(columns).toEqual(expect.arrayContaining(['base_sha', 'head_sha']));
-      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 4 });
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: USAGE_STORE_SCHEMA_VERSION });
       // Every row is as it was; the new columns read as unknown, never invented.
       expect(dump(db)).toEqual(before);
       expect(db.query('SELECT attempt_id, base_sha, head_sha FROM review_attempts ORDER BY attempt_id').all()).toEqual([

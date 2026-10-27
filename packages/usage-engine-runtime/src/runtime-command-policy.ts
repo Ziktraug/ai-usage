@@ -12,7 +12,6 @@ export type UsageEngineCommandOutputKind =
   | 'merge-preview'
   | 'none'
   | 'publication'
-  | 'replication-status'
   | 'review-attempt'
   | 'review-attempt-stop'
   | 'review-reservation-release'
@@ -42,7 +41,6 @@ export const usageEngineCommandPolicies = {
   'record-delegation-evaluation': { interruptible: false, outputKind: 'delegation-evaluation' },
   // Records the operator's declaration (or a process absence) on one row; nothing is stopped.
   'release-review-reservation': { interruptible: false, outputKind: 'review-reservation-release' },
-  'replication-status': { interruptible: true, outputKind: 'replication-status' },
   'replace-project-aliases': { interruptible: false, outputKind: 'none' },
   'replace-project-groups': { interruptible: false, outputKind: 'none' },
   'replace-project-groups-by-reference': { interruptible: false, outputKind: 'none' },

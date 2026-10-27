@@ -165,7 +165,7 @@ const installPeriodFixture = async (page: Page, initial: FixtureRevision) => {
 };
 
 const enterTimeline = async (page: Page, range: string): Promise<void> => {
-  await page.goto(`/projects?range=${encodeURIComponent(range)}`);
+  await page.goto(`/sync?range=${encodeURIComponent(range)}`);
   await waitForHydratedNavigation(page);
   await page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Campaigns', exact: true }).click();
   await expect(page.locator(CAMPAIGNS)).toBeVisible();

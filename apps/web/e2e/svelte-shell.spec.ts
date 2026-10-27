@@ -338,10 +338,14 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
 // so a link that asks to keep the scroll position must be honoured from its own click. SvelteKit 2
 // carried `noScroll` on each navigation.
 test('a preserve-scroll link keeps the scroll position while it supersedes a pending navigation', async ({ page }) => {
-  await page.goto('/memory?view=review');
+  await page.goto('/skills');
   await waitForHydratedNavigation(page);
-  const views = page.getByRole('navigation', { name: 'Memory views' });
-  const viewLink = (name: string): Locator => views.getByRole('link', { name, exact: true });
+  await waitForHydratedSkills(page);
+  // A worktable skill name is a link marked to keep the scroll position: it opens the skill drawer
+  // over the worktable the reader scrolled.
+  const skillLink = (name: string): Locator =>
+    page.locator(`[data-worktable-row="${name}"]`).getByRole('link', { exact: true, name });
+  const drawer = page.getByRole('dialog', { name: 'alpha-skill detail' });
   // Playwright's own click scrolls an in-flow link into view and hovers it first, which would move
   // the very position under test and preload the destination; the element's click activates the
   // link without either.
@@ -359,12 +363,16 @@ test('a preserve-scroll link keeps the scroll position while it supersedes a pen
   });
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(700);
 
-  await activate(viewLink('Knowledge'));
-  await expect(viewLink('Knowledge')).toHaveAttribute('aria-current', 'page');
+  await activate(skillLink('alpha-skill'));
+  await expect(drawer).toBeVisible();
+  expect(await settledScrollY()).toBe(700);
+  // Closing the drawer returns to the worktable and keeps the scroll position too.
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/skills');
   expect(await settledScrollY()).toBe(700);
 
-  // Hold the data of a Sync navigation, so the next link click starts while it is in flight. Memory
-  // view changes reuse the page's server data and fetch nothing that could be held instead.
+  // Hold the data of a Sync navigation, so the next skill link click starts while it is in flight.
   let markSyncHeld: () => void = () => undefined;
   const syncHeld = new Promise<void>((resolve) => {
     markSyncHeld = resolve;
@@ -381,10 +389,9 @@ test('a preserve-scroll link keeps the scroll position while it supersedes a pen
   try {
     await activate(page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Sync' }));
     await syncHeld;
-    await activate(viewLink('Pending review'));
-    await expect(viewLink('Pending review')).toHaveAttribute('aria-current', 'page');
-    expect(new URL(page.url()).pathname).toBe('/memory');
-    expect(new URL(page.url()).searchParams.get('view')).toBe('review');
+    await activate(skillLink('alpha-skill'));
+    await expect(drawer).toBeVisible();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/skills/global/alpha-skill');
     expect(await settledScrollY()).toBe(700);
   } finally {
     await releaseSync();

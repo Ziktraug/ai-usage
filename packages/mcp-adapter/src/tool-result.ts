@@ -1,7 +1,7 @@
 /**
  * The result envelope every tool of the local MCP server shares: one response bound, one notice
  * labelling returned text as retrieved data. Internal to the adapter; `index.ts` re-exports the
- * bound under `memoryMcpBounds`.
+ * bound under `mcpServerBounds`.
  */
 
 export const mcpToolOutputBounds = Object.freeze({

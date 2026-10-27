@@ -1,6 +1,8 @@
 # ADR 0075: Local store schema evolution: forward-only, additive where possible, widen-only reads
 
-- **Status**: Accepted
+- **Status**: Accepted; amended 2026-10-25 (nullable columns); rule 4 applied
+  2026-10-27 by [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md) (Memory store no
+  longer opened; usage schema 5 drops the outbox)
 - **Date**: 2026-10-24
 - **Extends**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
   (the engine is the only migrator)

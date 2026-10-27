@@ -4,8 +4,6 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createMemoryServiceClient } from '@ai-usage/memory-service/client';
-import { loadMemoryServiceRendezvous, memoryServiceRendezvousPath } from '@ai-usage/memory-service/node';
 import { parseUsageEngineStatus, USAGE_ENGINE_PROTOCOL_VERSION } from '@ai-usage/usage-engine-control';
 import {
   loadUsageEngineRendezvous,
@@ -14,14 +12,14 @@ import {
 } from '@ai-usage/usage-engine-control/node';
 import { USAGE_STORE_SCHEMA_VERSION } from '@ai-usage/usage-store/reader';
 import { usageEngineLockPath } from './engine-lock';
-import { localMemoryIdentityDatabasePath, localMemoryIdentityLockPath } from './memory-identity-runtime';
 
 /**
- * Real-process proofs for the two local stores the engine owns (ADR 0009,
- * ADR 0024, ADR 0038): fresh install, upgrade from a base-of-PR state, reopen,
- * newer-schema refusal, writer ownership, and interrupted-start recovery.
- * Every persistent path the runtime resolves is isolated under one temporary
- * root; nothing here touches the operator's default state.
+ * Real-process proofs for the usage store the engine owns (ADR 0009, ADR
+ * 0084): fresh install, upgrade from a schema-4 store, reopen, newer-schema
+ * refusal, writer ownership, interrupted-start recovery, and a Memory store
+ * left by an earlier version staying untouched. Every persistent path the
+ * runtime resolves is isolated under one temporary root; nothing here touches
+ * the operator's default state.
  */
 
 const repositoryRoot = path.resolve(import.meta.dir, '../../..');
@@ -31,7 +29,6 @@ const TEST_TIMEOUT_MS = 30_000;
 const WAIT_TIMEOUT_MS = 15_000;
 const DEAD_PID = 2_147_483_647;
 const STALE_INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
-const ONE_LOCAL_IDENTITY = { devices: 1, people: 1, spaces: 1 } as const;
 const usageEngineFailureDiagnostic = 'Usage engine failed to start or complete its command.';
 const startupFailureKindLine = (kind: 'startup-failure' | 'writer-lock-contended'): string =>
   `usage-engine startupFailureKind=${kind}`;
@@ -40,22 +37,16 @@ interface EngineFixture {
   readonly databasePath: string;
   readonly env: Record<string, string | undefined>;
   readonly homeDirectory: string;
-  readonly memoryDatabasePath: string;
-  readonly memoryLockPath: string;
-  readonly memoryRendezvousPath: string;
   readonly rendezvousPath: string;
+  /** The files an earlier engine wrote for its accepted-Memory store; this engine never creates or opens them. */
+  readonly retiredMemory: {
+    readonly databasePath: string;
+    readonly lockPath: string;
+    readonly rendezvousPath: string;
+  };
   readonly root: string;
   readonly stateDirectory: string;
   readonly usageLockPath: string;
-}
-
-interface MemoryIdentitySnapshot {
-  readonly counts: { readonly devices: number; readonly people: number; readonly spaces: number };
-  readonly deviceId: string;
-  readonly personId: string;
-  readonly schema: readonly string[];
-  readonly spaceId: string;
-  readonly userVersion: number;
 }
 
 interface UsageStoreSnapshot {
@@ -74,7 +65,15 @@ interface StartupRefusal {
   readonly privatePathLeaked: boolean;
 }
 
-type ResidualRuntimeFile = 'memory-lease' | 'memory-rendezvous' | 'usage-lease' | 'usage-rendezvous';
+type ResidualRuntimeFile = 'usage-lease' | 'usage-rendezvous';
+
+type RetiredMemoryFile = 'memory-lease' | 'memory-rendezvous' | 'memory-store';
+
+interface RetiredMemoryDigests {
+  readonly database: string;
+  readonly lease: string;
+  readonly rendezvous: string;
+}
 
 afterEach(async () => {
   for (const cleanup of cleanupTasks.splice(0).reverse()) {
@@ -123,6 +122,7 @@ const createFixture = async (
   cleanupTasks.push(async () => {
     await rm(root, { force: true, recursive: true });
   });
+  const retiredMemoryDatabasePath = path.join(stateDirectory, 'memory.sqlite');
   return {
     databasePath,
     env: {
@@ -144,10 +144,12 @@ const createFixture = async (
       XDG_STATE_HOME: path.join(homeDirectory, '.local', 'state'),
     },
     homeDirectory,
-    memoryDatabasePath: localMemoryIdentityDatabasePath(stateDirectory),
-    memoryLockPath: localMemoryIdentityLockPath(stateDirectory),
-    memoryRendezvousPath: memoryServiceRendezvousPath(stateDirectory),
     rendezvousPath: path.join(stateDirectory, 'rendezvous.json'),
+    retiredMemory: {
+      databasePath: retiredMemoryDatabasePath,
+      lockPath: usageEngineLockPath(retiredMemoryDatabasePath),
+      rendezvousPath: path.join(stateDirectory, 'memory-service.json'),
+    },
     root,
     stateDirectory,
     usageLockPath: usageEngineLockPath(databasePath),
@@ -238,11 +240,6 @@ const checkEngine = async (fixture: EngineFixture) => {
   return { ...result, report: JSON.parse(result.stdout.trim()) as Record<string, unknown> };
 };
 
-const memoryClientFor = (fixture: EngineFixture) =>
-  createMemoryServiceClient({
-    resolveRendezvous: async () => await loadMemoryServiceRendezvous(fixture.memoryRendezvousPath),
-  });
-
 const exists = (filePath: string): Promise<boolean> => Bun.file(filePath).exists();
 
 const sha256 = async (filePath: string): Promise<string> =>
@@ -256,19 +253,29 @@ const sha256AfterHeader = async (filePath: string): Promise<string> =>
     .update((await readFile(filePath)).subarray(100))
     .digest('hex');
 
-/** Every lease or rendezvous file still present; a clean stop leaves none. */
-const residualRuntimeFiles = async (fixture: EngineFixture): Promise<readonly ResidualRuntimeFile[]> => {
-  const candidates: ReadonlyArray<readonly [ResidualRuntimeFile, string]> = [
-    ['usage-lease', fixture.usageLockPath],
-    ['memory-lease', fixture.memoryLockPath],
-    ['usage-rendezvous', fixture.rendezvousPath],
-    ['memory-rendezvous', fixture.memoryRendezvousPath],
-  ];
-  const present = await Promise.all(
-    candidates.map(async ([label, filePath]) => ((await exists(filePath)) ? label : null)),
-  );
-  return present.filter((label): label is ResidualRuntimeFile => label !== null);
+const presentFiles = async <Label extends string>(
+  candidates: ReadonlyArray<readonly [Label, string]>,
+): Promise<readonly Label[]> => {
+  const present = await Promise.all(candidates.map(([, filePath]) => exists(filePath)));
+  return candidates.filter((_candidate, index) => present[index]).map(([label]) => label);
 };
+
+/** Every lease or rendezvous file still present; a clean stop leaves none. */
+const residualRuntimeFiles = (fixture: EngineFixture): Promise<readonly ResidualRuntimeFile[]> =>
+  presentFiles<ResidualRuntimeFile>([
+    ['usage-lease', fixture.usageLockPath],
+    ['usage-rendezvous', fixture.rendezvousPath],
+  ]);
+
+/** Every file of the retired Memory runtime present in the state directory, including SQLite sidecars. */
+const retiredMemoryFiles = (fixture: EngineFixture): Promise<readonly RetiredMemoryFile[]> =>
+  presentFiles<RetiredMemoryFile>([
+    ['memory-store', fixture.retiredMemory.databasePath],
+    ['memory-store', `${fixture.retiredMemory.databasePath}-wal`],
+    ['memory-store', `${fixture.retiredMemory.databasePath}-shm`],
+    ['memory-lease', fixture.retiredMemory.lockPath],
+    ['memory-rendezvous', fixture.retiredMemory.rendezvousPath],
+  ]);
 
 const startupRefusal = (
   result: { readonly exitCode: number; readonly stderr: string },
@@ -295,6 +302,7 @@ const withReadOnlyDatabase = <Value>(databasePath: string, use: (database: Datab
   }
 };
 
+/** Every schema object (tables and indexes) with its defining SQL. */
 const readSchema = (database: Database): readonly string[] =>
   (
     database
@@ -304,32 +312,6 @@ const readSchema = (database: Database): readonly string[] =>
 
 const readUserVersion = (database: Database): number =>
   (database.query('PRAGMA user_version').get() as { user_version: number }).user_version;
-
-const countRows = (database: Database, table: string): number =>
-  (database.query(`SELECT count(*) AS n FROM ${table}`).get() as { n: number }).n;
-
-const memoryIdentity = (memoryDatabasePath: string): MemoryIdentitySnapshot =>
-  withReadOnlyDatabase(memoryDatabasePath, (database) => {
-    const metadata = database
-      .query('SELECT person_id, personal_space_id, device_id FROM local_identity_metadata WHERE singleton = 1')
-      .all() as Array<{ device_id: string; person_id: string; personal_space_id: string }>;
-    const [row] = metadata;
-    if (metadata.length !== 1 || !row) {
-      throw new Error(`Expected exactly one local identity bootstrap, found ${metadata.length}.`);
-    }
-    return {
-      counts: {
-        devices: countRows(database, 'devices'),
-        people: countRows(database, 'people'),
-        spaces: countRows(database, 'spaces'),
-      },
-      deviceId: row.device_id,
-      personId: row.person_id,
-      schema: readSchema(database),
-      spaceId: row.personal_space_id,
-      userVersion: readUserVersion(database),
-    };
-  });
 
 const usageStoreSnapshot = (databasePath: string): UsageStoreSnapshot =>
   withReadOnlyDatabase(databasePath, (database) => {
@@ -417,27 +399,91 @@ const writeCodexHistory = async (fixture: EngineFixture): Promise<void> => {
 };
 
 /**
- * The only schema delta between the base-of-PR usage store (schema 3) and this
- * code (schema 4) is the replication outbox pair plus the version constant, so
- * a schema-3 store is reproduced deterministically by removing exactly that.
+ * A schema-4 usage store differs from the schema-5 layout only by the
+ * replication outbox it still carried: two tables, their two indexes, and the
+ * version constant. Re-adding exactly that, with one enqueued event so the
+ * upgrade has to drop populated tables, reproduces it deterministically. The
+ * version stays pinned to 4: that is the store the outbox drop must upgrade.
  */
-const downgradeUsageStoreToSchemaThree = (databasePath: string): void => {
+const previousUsageSchemaVersion = 4;
+const restoreSchemaFourReplicationOutbox = (databasePath: string): void => {
   mutateDatabase(databasePath, [
-    'DROP TABLE replication_outbox_events',
-    'DROP TABLE replication_outbox_state',
-    'PRAGMA user_version = 3',
+    `CREATE TABLE replication_outbox_state (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      device_id TEXT NOT NULL,
+      stream_id TEXT NOT NULL CHECK (stream_id IN ('usage-v1', 'memory-v1')),
+      next_generation INTEGER NOT NULL CHECK (next_generation > 0),
+      acknowledged_through_generation INTEGER NOT NULL DEFAULT 0
+        CHECK (acknowledged_through_generation >= 0),
+      previous_ack_proof TEXT CHECK (previous_ack_proof IS NULL OR length(previous_ack_proof) = 64),
+      last_acknowledged_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT`,
+    `CREATE TABLE replication_outbox_events (
+      event_id             TEXT PRIMARY KEY,
+      generation           INTEGER NOT NULL CHECK (generation > 0),
+      fact_key             TEXT NOT NULL CHECK (length(fact_key) BETWEEN 1 AND 512),
+      content_hash         TEXT NOT NULL CHECK (length(content_hash) = 64),
+      change_kind          TEXT NOT NULL,
+      payload              TEXT NOT NULL CHECK (json_valid(payload)),
+      state                TEXT NOT NULL CHECK (
+        state IN ('pending', 'in-flight', 'acknowledged', 'blocked')
+      ),
+      enqueued_at          TEXT NOT NULL,
+      attempt_count        INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+      next_attempt_at      TEXT,
+      last_error_code      TEXT CHECK (last_error_code IS NULL OR length(last_error_code) BETWEEN 1 AND 128),
+      acknowledged_at      TEXT,
+      UNIQUE (generation, fact_key, content_hash),
+      CHECK (
+        (state = 'acknowledged' AND acknowledged_at IS NOT NULL)
+        OR (state <> 'acknowledged' AND acknowledged_at IS NULL)
+      )
+    ) STRICT`,
+    'CREATE INDEX idx_replication_outbox_ready ON replication_outbox_events(state, next_attempt_at, generation)',
+    'CREATE INDEX idx_replication_outbox_fact_history ON replication_outbox_events(fact_key, generation)',
+    `INSERT INTO replication_outbox_state
+       (singleton, device_id, stream_id, next_generation, created_at, updated_at)
+     VALUES (1, 'fixture-device', 'usage-v1', 2, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')`,
+    `INSERT INTO replication_outbox_events
+       (event_id, generation, fact_key, content_hash, change_kind, payload, state, enqueued_at)
+     VALUES ('fixture-event', 1, 'fixture-fact', '${'0'.repeat(64)}', 'upsert', '{}', 'pending',
+             '2026-09-01T00:00:00.000Z')`,
+    `PRAGMA user_version = ${previousUsageSchemaVersion}`,
   ]);
 };
 
-const removeMemoryStore = async (fixture: EngineFixture): Promise<void> => {
-  await Promise.all(
-    ['', '-wal', '-shm'].map((suffix) => rm(`${fixture.memoryDatabasePath}${suffix}`, { force: true })),
-  );
+const retiredMemoryDigests = async (fixture: EngineFixture): Promise<RetiredMemoryDigests> => ({
+  database: await sha256(fixture.retiredMemory.databasePath),
+  lease: await sha256(fixture.retiredMemory.lockPath),
+  rendezvous: await sha256(fixture.retiredMemory.rendezvousPath),
+});
+
+/** A Memory store, live-owned lease, and rendezvous as an earlier engine version left them. */
+const writeRetiredMemoryRuntime = async (fixture: EngineFixture): Promise<RetiredMemoryDigests> => {
+  await writeLockFile(fixture.retiredMemory.lockPath, {
+    databasePath: fixture.retiredMemory.databasePath,
+    pid: process.pid,
+    stateDirectory: fixture.stateDirectory,
+  });
+  const database = new Database(fixture.retiredMemory.databasePath, { create: true, strict: true });
+  try {
+    database.exec('CREATE TABLE local_identity_metadata (singleton INTEGER PRIMARY KEY, person_id TEXT NOT NULL)');
+    database.exec("INSERT INTO local_identity_metadata VALUES (1, 'fixture-person')");
+    database.exec('PRAGMA user_version = 6');
+  } finally {
+    database.close();
+  }
+  await writeFile(fixture.retiredMemory.rendezvousPath, '{"port":1,"token":"retired","version":1}\n', {
+    mode: 0o600,
+  });
+  return await retiredMemoryDigests(fixture);
 };
 
 describe('usage engine real process store lifecycle', () => {
   test(
-    'bootstraps a fresh install: usage store, one Memory identity, both services, both leases',
+    'bootstraps a fresh install: usage store, its lease and rendezvous, and no Memory store',
     async () => {
       const fixture = await createFixture();
       await expect(exists(fixture.stateDirectory)).resolves.toBe(false);
@@ -450,45 +496,30 @@ describe('usage engine real process store lifecycle', () => {
         storeSchemaVersion: USAGE_STORE_SCHEMA_VERSION,
       });
 
-      // Both writer leases are held for the whole serving lifetime, each beside its own database.
-      await expect(residualRuntimeFiles(fixture)).resolves.toEqual([
-        'usage-lease',
-        'memory-lease',
-        'usage-rendezvous',
-        'memory-rendezvous',
-      ]);
-      expect(path.dirname(fixture.memoryLockPath)).toBe(fixture.stateDirectory);
-      expect((await lstat(fixture.memoryDatabasePath)).mode % 0o1000).toBe(0o600);
+      // The usage writer lease is held for the whole serving lifetime; no Memory file is ever created.
+      await expect(residualRuntimeFiles(fixture)).resolves.toEqual(['usage-lease', 'usage-rendezvous']);
+      await expect(retiredMemoryFiles(fixture)).resolves.toEqual([]);
       expect((await lstat(fixture.stateDirectory)).mode % 0o1000).toBe(0o700);
-
-      const identity = memoryIdentity(fixture.memoryDatabasePath);
-      expect(identity.counts).toEqual(ONE_LOCAL_IDENTITY);
-      expect(identity.userVersion).toBeGreaterThan(0);
       expect(usageStoreSnapshot(fixture.databasePath).userVersion).toBe(USAGE_STORE_SCHEMA_VERSION);
-
-      // The Memory service is reachable through its own rendezvous and serves the bootstrapped Space.
-      const reviews = await memoryClientFor(fixture).listResolutionReviews();
-      expect(String(reviews.spaceId)).toBe(identity.spaceId);
-      expect(reviews.reviews).toEqual([]);
 
       expect(await stopEngine(engine)).toBe(0);
       await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(identity);
+      await expect(retiredMemoryFiles(fixture)).resolves.toEqual([]);
 
       const check = await checkEngine(fixture);
       expect(check.exitCode).toBe(0);
-      expect(check.report).toMatchObject({
+      expect(check.report).toEqual({
         lock: { state: 'absent' },
         ok: true,
         rendezvous: { state: 'absent' },
-        store: { state: 'compatible' },
+        store: expect.objectContaining({ state: 'compatible' }),
       });
     },
     TEST_TIMEOUT_MS,
   );
 
   test(
-    'upgrades a base-of-PR state: schema-3 usage rows survive, Memory bootstraps once, no lease is left behind',
+    'upgrades a schema-4 store: usage rows survive and the replication outbox is dropped',
     async () => {
       const fixture = await createFixture();
       await writeCodexHistory(fixture);
@@ -496,17 +527,17 @@ describe('usage engine real process store lifecycle', () => {
       const collected = await runOnce(fixture, 'run-all-enabled', 'collect-1');
       expect(collected.exitCode).toBe(0);
       const collectedStore = usageStoreSnapshot(fixture.databasePath);
+      const collectedSchema = withReadOnlyDatabase(fixture.databasePath, readSchema);
       expect(collectedStore.rowKeys.length).toBeGreaterThan(0);
       expect(collectedStore.userVersion).toBe(USAGE_STORE_SCHEMA_VERSION);
+      expect(collectedSchema.some((entry) => entry.includes('replication_outbox'))).toBe(false);
 
-      downgradeUsageStoreToSchemaThree(fixture.databasePath);
-      await removeMemoryStore(fixture);
+      restoreSchemaFourReplicationOutbox(fixture.databasePath);
       const before = usageStoreSnapshot(fixture.databasePath);
-      expect(before.userVersion).toBe(3);
-      expect(before.tables).not.toContain('replication_outbox_events');
-      expect(before.tables).not.toContain('replication_outbox_state');
+      expect(before.userVersion).toBe(previousUsageSchemaVersion);
+      expect(before.tables).toContain('replication_outbox_events');
+      expect(before.tables).toContain('replication_outbox_state');
       expect(before.rowKeys).toEqual(collectedStore.rowKeys);
-      await expect(exists(fixture.memoryDatabasePath)).resolves.toBe(false);
       await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
 
       const { engine, rendezvous } = await serveUntilReady(fixture);
@@ -514,45 +545,37 @@ describe('usage engine real process store lifecycle', () => {
       const upgraded = usageStoreSnapshot(fixture.databasePath);
       expect(upgraded.userVersion).toBe(USAGE_STORE_SCHEMA_VERSION);
       expect(upgraded.rowKeys).toEqual(before.rowKeys);
-      expect(upgraded.tables).toEqual(
-        [...before.tables, 'replication_outbox_events', 'replication_outbox_state'].sort((left, right) =>
-          left.localeCompare(right),
-        ),
-      );
+      expect(upgraded.tables).toEqual(collectedStore.tables);
       expect(upgraded.generation).toBeGreaterThanOrEqual(before.generation);
-      const identity = memoryIdentity(fixture.memoryDatabasePath);
-      expect(identity.counts).toEqual(ONE_LOCAL_IDENTITY);
+      // Both outbox tables and both of their indexes are gone; every other schema object is unchanged.
+      expect(withReadOnlyDatabase(fixture.databasePath, readSchema)).toEqual(collectedSchema);
 
       expect(await stopEngine(engine)).toBe(0);
       await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(identity);
+      await expect(retiredMemoryFiles(fixture)).resolves.toEqual([]);
       expect(usageStoreSnapshot(fixture.databasePath).rowKeys).toEqual(before.rowKeys);
     },
     TEST_TIMEOUT_MS,
   );
 
   test(
-    'reopens a state produced by this code without a new identity bootstrap or duplicated rows',
+    'reopens a state produced by this code without duplicated rows',
     async () => {
       const fixture = await createFixture();
       await writeCodexHistory(fixture);
       expect((await runOnce(fixture, 'run-all-enabled', 'collect-1')).exitCode).toBe(0);
-      const identity = memoryIdentity(fixture.memoryDatabasePath);
       const store = usageStoreSnapshot(fixture.databasePath);
-      expect(identity.counts).toEqual(ONE_LOCAL_IDENTITY);
       expect(store.rowKeys.length).toBeGreaterThan(0);
 
       for (const restart of [1, 2]) {
         const { engine, rendezvous } = await serveUntilReady(fixture);
         expect((await statusRequest(rendezvous)).status).toBe(200);
-        expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(identity);
         expect(await stopEngine(engine)).toBe(0);
         await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
         const reopened = usageStoreSnapshot(fixture.databasePath);
         expect(reopened.userVersion).toBe(store.userVersion);
         expect(reopened.rowKeys).toEqual(store.rowKeys);
         expect(reopened.tables).toEqual(store.tables);
-        expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(identity);
         expect(restart).toBeGreaterThan(0);
       }
     },
@@ -560,43 +583,44 @@ describe('usage engine real process store lifecycle', () => {
   );
 
   test(
-    'refuses a newer Memory schema without touching either store',
+    'leaves a Memory store, lease, and rendezvous from an earlier version untouched',
     async () => {
       const fixture = await createFixture();
-      expect((await runOnce(fixture, 'publish', 'bootstrap-1')).exitCode).toBe(0);
-      const bootstrapped = memoryIdentity(fixture.memoryDatabasePath);
-      expect(bootstrapped.counts).toEqual(ONE_LOCAL_IDENTITY);
-      mutateDatabase(fixture.memoryDatabasePath, [`PRAGMA user_version = ${bootstrapped.userVersion + 1}`]);
-      const memoryBefore = memoryIdentity(fixture.memoryDatabasePath);
-      const memoryHashBefore = await sha256(fixture.memoryDatabasePath);
-      const usageBefore = usageStoreSnapshot(fixture.databasePath);
-      expect(memoryBefore.userVersion).toBe(bootstrapped.userVersion + 1);
+      // The earlier Memory lease names this live test process as its owner: an engine that still
+      // honoured it would refuse to start, and one that still opened memory.sqlite would rewrite it.
+      const retiredBefore = await writeRetiredMemoryRuntime(fixture);
 
-      const refused = await finishChild(spawnEngine(fixture, ['serve', '--port', '0']));
-      expect(startupRefusal(refused, [fixture.root])).toEqual(expectedRefusal('startup-failure'));
+      const { engine, rendezvous } = await serveUntilReady(fixture);
+      expect((await statusRequest(rendezvous)).status).toBe(200);
+      expect(await stopEngine(engine)).toBe(0);
+      expect((await runOnce(fixture, 'publish', 'publish-1')).exitCode).toBe(0);
 
-      // Fail closed (ADR 0038): the whole engine stops, and neither database was migrated, recreated, or repaired.
       await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
-      expect(await sha256(fixture.memoryDatabasePath)).toBe(memoryHashBefore);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(memoryBefore);
-      const usageAfter = usageStoreSnapshot(fixture.databasePath);
-      expect(usageAfter.userVersion).toBe(usageBefore.userVersion);
-      expect(usageAfter.tables).toEqual(usageBefore.tables);
-      expect(usageAfter.rowKeys).toEqual(usageBefore.rowKeys);
+      await expect(retiredMemoryFiles(fixture)).resolves.toEqual(['memory-store', 'memory-lease', 'memory-rendezvous']);
+      await expect(retiredMemoryDigests(fixture)).resolves.toEqual(retiredBefore);
+
+      // `check` reports only the usage store, its lease, and the control rendezvous.
+      const check = await checkEngine(fixture);
+      expect(check.exitCode).toBe(0);
+      expect(Object.keys(check.report).sort((left, right) => left.localeCompare(right))).toEqual([
+        'lock',
+        'ok',
+        'rendezvous',
+        'store',
+      ]);
+      expect(check.report).toMatchObject({ lock: { state: 'absent' }, ok: true, rendezvous: { state: 'absent' } });
     },
     TEST_TIMEOUT_MS,
   );
 
   test(
-    'refuses a newer usage schema before opening the Memory store',
+    'refuses a newer usage schema without touching the store',
     async () => {
       const fixture = await createFixture();
       expect((await runOnce(fixture, 'publish', 'bootstrap-1')).exitCode).toBe(0);
       mutateDatabase(fixture.databasePath, [`PRAGMA user_version = ${USAGE_STORE_SCHEMA_VERSION + 1}`]);
       const usageBefore = usageStoreSnapshot(fixture.databasePath);
       const usagePagesBefore = await sha256AfterHeader(fixture.databasePath);
-      const memoryBefore = memoryIdentity(fixture.memoryDatabasePath);
-      const memoryHashBefore = await sha256(fixture.memoryDatabasePath);
 
       const refused = await finishChild(spawnEngine(fixture, ['serve', '--port', '0']));
       expect(startupRefusal(refused, [fixture.root])).toEqual(expectedRefusal('startup-failure'));
@@ -609,8 +633,6 @@ describe('usage engine real process store lifecycle', () => {
       await expect(readLockOwner(fixture.usageLockPath)).resolves.toMatchObject({ pid: refused.pid });
       expect(await sha256AfterHeader(fixture.databasePath)).toBe(usagePagesBefore);
       expect(usageStoreSnapshot(fixture.databasePath)).toEqual(usageBefore);
-      expect(await sha256(fixture.memoryDatabasePath)).toBe(memoryHashBefore);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(memoryBefore);
 
       // `check` is the operator's read-only verification: it names the dead lease and the unavailable
       // store without mutating either. Effect 4's `runPromise` rejects with the `UsageStoreError` itself,
@@ -629,7 +651,6 @@ describe('usage engine real process store lifecycle', () => {
       mutateDatabase(fixture.databasePath, [`PRAGMA user_version = ${USAGE_STORE_SCHEMA_VERSION}`]);
       const { engine, rendezvous } = await serveUntilReady(fixture);
       expect((await statusRequest(rendezvous)).status).toBe(200);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(memoryBefore);
       expect(await stopEngine(engine)).toBe(0);
       await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
     },
@@ -641,30 +662,21 @@ describe('usage engine real process store lifecycle', () => {
     async () => {
       const primaryFixture = await createFixture();
       const { engine: primary, rendezvous } = await serveUntilReady(primaryFixture);
-      const identity = memoryIdentity(primaryFixture.memoryDatabasePath);
       const contenderFixture = await createFixture({ stateDirectory: primaryFixture.stateDirectory });
       expect(contenderFixture.databasePath).not.toBe(primaryFixture.databasePath);
-      expect(contenderFixture.memoryDatabasePath).toBe(primaryFixture.memoryDatabasePath);
 
       const refused = await finishChild(spawnEngine(contenderFixture, ['serve', '--port', '0']));
-      // The shared state directory already carries the primary's rendezvous, which the usage lease
-      // refuses to adopt before the Memory lease is even reached; the ADR 0038 lease itself is
-      // proven below with a directly owned memory.sqlite lock.
+      // The shared state directory already carries the primary's rendezvous, which the contender's
+      // usage lease refuses to adopt.
       expect(startupRefusal(refused, [primaryFixture.root, contenderFixture.root])).toEqual(
         expectedRefusal('startup-failure'),
       );
 
-      // No second usage store was created, and the primary keeps serving the same untouched identity.
+      // No second usage store was created, and the primary keeps serving.
       await expect(exists(contenderFixture.databasePath)).resolves.toBe(false);
       await expect(exists(contenderFixture.usageLockPath)).resolves.toBe(false);
       expect((await statusRequest(rendezvous)).status).toBe(200);
-      expect(memoryIdentity(primaryFixture.memoryDatabasePath)).toEqual(identity);
-      await expect(residualRuntimeFiles(primaryFixture)).resolves.toEqual([
-        'usage-lease',
-        'memory-lease',
-        'usage-rendezvous',
-        'memory-rendezvous',
-      ]);
+      await expect(residualRuntimeFiles(primaryFixture)).resolves.toEqual(['usage-lease', 'usage-rendezvous']);
 
       expect(await stopEngine(primary)).toBe(0);
       await expect(residualRuntimeFiles(primaryFixture)).resolves.toEqual([]);
@@ -673,7 +685,7 @@ describe('usage engine real process store lifecycle', () => {
   );
 
   test(
-    'refuses a second engine on the same usage database from another state directory without bootstrapping Memory there',
+    'refuses a second engine on the same usage database from another state directory',
     async () => {
       const primaryFixture = await createFixture();
       const { engine: primary, rendezvous } = await serveUntilReady(primaryFixture);
@@ -686,8 +698,7 @@ describe('usage engine real process store lifecycle', () => {
       );
       expect(refused.stderr).not.toContain(String(primary.child.pid));
 
-      // The usage lease precedes every Memory step, so the refused engine never created its own memory.sqlite.
-      await expect(exists(contenderFixture.memoryDatabasePath)).resolves.toBe(false);
+      // The contender sees only the primary's lease beside the shared database and publishes nothing.
       await expect(residualRuntimeFiles(contenderFixture)).resolves.toEqual(['usage-lease']);
       expect((await statusRequest(rendezvous)).status).toBe(200);
 
@@ -698,95 +709,60 @@ describe('usage engine real process store lifecycle', () => {
   );
 
   test(
-    'reports a live Memory lease as writer-lock-contended and releases the usage lease',
+    'recovers a stale usage lease left before the store opened',
     async () => {
       const fixture = await createFixture();
-      // A live owner of memory.sqlite (this test process) that holds no usage lease: only the
-      // dedicated Memory lease of ADR 0038 can exclude the engine here.
-      await writeLockFile(fixture.memoryLockPath, {
-        databasePath: fixture.memoryDatabasePath,
-        pid: process.pid,
-        stateDirectory: fixture.stateDirectory,
-      });
-      const lockBefore = await readFile(fixture.memoryLockPath, 'utf8');
-
-      const refused = await finishChild(spawnEngine(fixture, ['serve', '--port', '0']));
-      expect(startupRefusal(refused, [fixture.root])).toEqual(expectedRefusal('writer-lock-contended'));
-      expect(refused.stderr).not.toContain(String(process.pid));
-
-      // The usage store was prepared, the usage lease was released, and memory.sqlite was never created.
-      await expect(exists(fixture.databasePath)).resolves.toBe(true);
-      await expect(exists(fixture.memoryDatabasePath)).resolves.toBe(false);
-      await expect(residualRuntimeFiles(fixture)).resolves.toEqual(['memory-lease']);
-      expect(await readFile(fixture.memoryLockPath, 'utf8')).toBe(lockBefore);
-    },
-    TEST_TIMEOUT_MS,
-  );
-
-  test(
-    'recovers stale usage and Memory leases left before the Memory kernel opened',
-    async () => {
-      const fixture = await createFixture();
-      // An engine that died after taking both leases but before memory.sqlite existed leaves exactly
-      // these two files: dead-owner metadata beside each database path and no store to bootstrap from.
+      // An engine that died right after taking its lease leaves dead-owner metadata beside the
+      // database path and no store yet.
       await mkdir(path.dirname(fixture.databasePath), { mode: 0o700, recursive: true });
       await writeLockFile(fixture.usageLockPath, {
         databasePath: fixture.databasePath,
         pid: DEAD_PID,
         stateDirectory: fixture.stateDirectory,
       });
-      await writeLockFile(fixture.memoryLockPath, {
-        databasePath: fixture.memoryDatabasePath,
-        pid: DEAD_PID,
-        stateDirectory: fixture.stateDirectory,
-      });
-      await expect(exists(fixture.memoryDatabasePath)).resolves.toBe(false);
+      await expect(exists(fixture.databasePath)).resolves.toBe(false);
 
       const { engine, rendezvous } = await serveUntilReady(fixture);
       expect((await statusRequest(rendezvous)).status).toBe(200);
       expect(rendezvous.instanceId).not.toBe(STALE_INSTANCE_ID);
-      const identity = memoryIdentity(fixture.memoryDatabasePath);
-      expect(identity.counts).toEqual(ONE_LOCAL_IDENTITY);
-      const currentOwner = { instanceId: rendezvous.instanceId, pid: engine.child.pid };
-      await expect(readLockOwner(fixture.usageLockPath)).resolves.toEqual(currentOwner);
-      await expect(readLockOwner(fixture.memoryLockPath)).resolves.toEqual(currentOwner);
+      await expect(readLockOwner(fixture.usageLockPath)).resolves.toEqual({
+        instanceId: rendezvous.instanceId,
+        pid: engine.child.pid,
+      });
 
       expect(await stopEngine(engine)).toBe(0);
       await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(identity);
     },
     TEST_TIMEOUT_MS,
   );
 
   test(
-    'recovers a SIGKILL crash without duplicating the local identity',
+    'recovers a SIGKILL crash without duplicating rows',
     async () => {
       const fixture = await createFixture();
+      await writeCodexHistory(fixture);
+      expect((await runOnce(fixture, 'run-all-enabled', 'collect-1')).exitCode).toBe(0);
+      const store = usageStoreSnapshot(fixture.databasePath);
       const crashed = await serveUntilReady(fixture);
-      const identity = memoryIdentity(fixture.memoryDatabasePath);
-      const staleMemoryRendezvous = await loadMemoryServiceRendezvous(fixture.memoryRendezvousPath);
       crashed.engine.child.kill('SIGKILL');
       expect((await finishChild(crashed.engine)).exitCode).not.toBe(0);
-      await expect(residualRuntimeFiles(fixture)).resolves.toEqual([
-        'usage-lease',
-        'memory-lease',
-        'usage-rendezvous',
-        'memory-rendezvous',
-      ]);
+      await expect(residualRuntimeFiles(fixture)).resolves.toEqual(['usage-lease', 'usage-rendezvous']);
 
       const replacement = await serveUntilReady(
         fixture,
         ({ instanceId }) => instanceId !== crashed.rendezvous.instanceId,
       );
       expect((await statusRequest(replacement.rendezvous)).status).toBe(200);
-      const currentMemoryRendezvous = await loadMemoryServiceRendezvous(fixture.memoryRendezvousPath);
-      expect(currentMemoryRendezvous.token).not.toBe(staleMemoryRendezvous.token);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(identity);
-      expect(String((await memoryClientFor(fixture).listResolutionReviews()).spaceId)).toBe(identity.spaceId);
+      await expect(readLockOwner(fixture.usageLockPath)).resolves.toEqual({
+        instanceId: replacement.rendezvous.instanceId,
+        pid: replacement.engine.child.pid,
+      });
 
       expect(await stopEngine(replacement.engine)).toBe(0);
       await expect(residualRuntimeFiles(fixture)).resolves.toEqual([]);
-      expect(memoryIdentity(fixture.memoryDatabasePath)).toEqual(identity);
+      const recovered = usageStoreSnapshot(fixture.databasePath);
+      expect(recovered.rowKeys).toEqual(store.rowKeys);
+      expect(recovered.tables).toEqual(store.tables);
     },
     TEST_TIMEOUT_MS,
   );

@@ -104,7 +104,6 @@ export {
   queryCurrentServedReportRevisionBootstrap,
   queryDelegationEvaluations,
   queryDelegationJobs,
-  queryDistillationSessionMetadata,
   queryExecutorAccountChanges,
   queryJiraIntake,
   queryLatestCheckoutStatusObservations,

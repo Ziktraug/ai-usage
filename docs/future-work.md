@@ -16,7 +16,7 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 - Improve `/sync` file import review with clearer bundle identity, generated-at, row-count, and conflict summaries before the user confirms a bounded import.
 - Consider a documented encrypted-file workflow for users whose existing file-transfer tools do not already protect merge bundles at rest.
-- Keep transfer explicit and file-based. Machine discovery, non-loopback listeners, and background publication stay excluded; the connected platform and its outbound Device replication are retired (plan 120).
+- Keep transfer explicit and file-based. Machine discovery, non-loopback listeners, and background publication stay excluded; the connected platform and its outbound Device replication were removed (plan 120, ADR 0084).
 
 ## Skill Management
 

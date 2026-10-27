@@ -11,7 +11,7 @@ export type { DelegationMcpJobList, DelegationMcpListPayload } from './delegatio
  * tests), the recursion guard, the forced evaluation author, the response bound and the sanitized
  * failure codes. The composition owns the port: the strict report-core parse of every payload, the
  * engine commands through the control plane and the reads through the query-only store. No storage,
- * no engine, no report-core and no Memory dependency lives here.
+ * no engine and no report-core dependency lives here.
  */
 
 export const delegationMcpToolNames = Object.freeze([

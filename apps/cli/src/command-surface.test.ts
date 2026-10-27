@@ -20,7 +20,6 @@ test('the CLI advertises the delegation operations and says which ones need a ru
 
 test('the CLI no longer advertises or dispatches generated-account commands', () => {
   expect(helpText).not.toContain('analyses');
-  expect(helpText).toContain('memory search <query>');
   for (const args of [
     ['analyses'],
     ['analyses', 'projects'],
@@ -34,13 +33,35 @@ test('the CLI no longer advertises or dispatches generated-account commands', ()
   expect(Effect.runSync(parseCommand(['analyses', '--help']))).toEqual({ _tag: 'Help' });
 });
 
-test('an isolated executable rejects a former mutation before creating either local store', async () => {
-  await withCliSandbox(async ({ environment, root, runCli }) => {
-    const result = await runCli(['analyses', 'prepare', '--project', 'synthetic', '--authorize-provider-processing']);
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toBe('');
-    expect(result.stderr).toBe('Error: Unknown option: analyses\n');
-    await expect(access(environment.AI_USAGE_DATABASE_PATH!)).rejects.toThrow();
-    await expect(access(path.join(root, 'state', 'memory.sqlite'))).rejects.toThrow();
-  });
+test('the CLI no longer advertises or dispatches Memory search or replication status', () => {
+  expect(helpText.toLowerCase()).not.toContain('memory');
+  expect(helpText.toLowerCase()).not.toContain('replication');
+  for (const args of [
+    ['memory', 'search', 'release checklist'],
+    ['memory', 'search', 'release checklist', '--json'],
+    ['replication', 'status'],
+    ['replication', 'status', '--json'],
+  ]) {
+    const error = Effect.runSync(Effect.flip(parseCommand(args)));
+    expect(error._tag).toBe('CliArgumentError');
+    expect(error.message).toBe(`Unknown option: ${args[0]}`);
+  }
 });
+
+test.each([
+  ['analyses', ['analyses', 'prepare', '--project', 'synthetic', '--authorize-provider-processing']],
+  ['memory', ['memory', 'search', 'release checklist', '--json']],
+  ['replication', ['replication', 'status', '--json']],
+] as const)(
+  'an isolated executable rejects the former %s command before creating the store or engine state',
+  async (command, argv) => {
+    await withCliSandbox(async ({ environment, root, runCli }) => {
+      const result = await runCli([...argv]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe(`Error: Unknown option: ${command}\n`);
+      await expect(access(environment.AI_USAGE_DATABASE_PATH!)).rejects.toThrow();
+      await expect(access(path.join(root, 'state'))).rejects.toThrow();
+    });
+  },
+);

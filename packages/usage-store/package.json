@@ -17,9 +17,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ai-usage/platform-core": "workspace:*",
-    "@ai-usage/replication-outbox": "workspace:*",
-    "@ai-usage/replication-protocol": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "effect": "^4.0.5"
   }

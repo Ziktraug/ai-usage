@@ -8,8 +8,8 @@ export type HistoryFocusNavigationType = 'enter' | 'form' | 'goto' | 'leave' | '
  * new page rendered and, unless a component claimed focus meanwhile, moved the sequential focus
  * starting point to an `[autofocus]` element, the fragment target or the body. SvelteKit 3 does so
  * only when the entry it returns to was created with a different reset index, so Back across the
- * entries the app pushes with `reset: false` (campaign selection, Memory filters, kept-focus search
- * edits) left focus on a control of the page the reader just left. Keyboard and assistive
+ * entries the app pushes with `reset: false` (campaign selection, kept-focus search edits) left
+ * focus on a control of the page the reader just left. Keyboard and assistive
  * technology equivalence (ADR 0005, ADR 0013) needs the old behaviour. Repeating SvelteKit 3's own
  * reset after a traversal it did reset is harmless: the starting point is the same.
  */

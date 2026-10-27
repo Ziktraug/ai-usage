@@ -37,10 +37,7 @@ export interface WebQueryOwnership {
   readonly family:
     | 'delegation-jobs'
     | 'delegation-settings'
-    | 'memory'
-    | 'projects'
     | 'quota'
-    | 'replication'
     | 'report-current'
     | 'report-exact'
     | 'session'
@@ -179,28 +176,10 @@ export const webQueryOwnership = [
     rendering: 'browser-only',
   },
   {
-    family: 'memory',
-    policy: 'bounded-control-plane',
-    publication: 'none',
-    rendering: 'ssr-awaited',
-  },
-  {
-    family: 'projects',
-    policy: 'bounded-control-plane',
-    publication: 'none',
-    rendering: 'ssr-awaited',
-  },
-  {
     family: 'sync',
     policy: 'bounded-control-plane',
     publication: 'none',
     rendering: 'ssr-awaited',
-  },
-  {
-    family: 'replication',
-    policy: 'bounded-control-plane',
-    publication: 'none',
-    rendering: 'browser-only',
   },
   {
     family: 'sources',

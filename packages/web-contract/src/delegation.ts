@@ -856,7 +856,7 @@ const recordAcceptanceErrors = {
   Unavailable: publicErrorMap.Unavailable,
 } as const;
 
-/** Reasons the `job` read answers `Unavailable` with (the memory precedent for an absent entity). */
+/** Reasons the `job` read answers `Unavailable` with when the entity is absent. */
 export const DELEGATION_JOB_NOT_FOUND_REASON = 'job-not-found' as const;
 
 // ---------------------------------------------------------------------------------------------

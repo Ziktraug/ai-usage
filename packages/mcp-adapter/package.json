@@ -17,9 +17,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ai-usage/authorization-contract": "workspace:*",
-    "@ai-usage/memory-service": "workspace:*",
-    "@ai-usage/platform-core": "workspace:*",
     "@ai-usage/skills": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "zod": "^4.6.7"

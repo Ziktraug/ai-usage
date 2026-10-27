@@ -37,7 +37,7 @@ import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import { MAX_WORK_DELEGATIONS_JSON, readWorkSessionDelegations } from './work-session-join';
 
-/** Operator-owned state, outside served revisions, collection generations and the outbox. */
+/** Operator-owned state, outside served revisions and collection generations. */
 export const WORK_THREAD_TABLES = [
   'work_threads',
   'work_thread_links',

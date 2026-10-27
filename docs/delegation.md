@@ -87,7 +87,8 @@ approval_mode = "approve"
 ```
 
 `bun run mcp:register:codex` registers the same server under the name
-`ai-usage-memory`; use that name in the `tools` tables then. For a one-off
+`ai-usage-memory` (kept from the Memory era, see [Local MCP server](mcp.md#registration));
+use that name in the `tools` tables then. For a one-off
 `codex exec`, pass the table inline (a dotted `-c` path does not keep the dot
 inside the tool name):
 `-c 'mcp_servers.ai-usage.tools={"delegation.start"={approval_mode="approve"}}'`.

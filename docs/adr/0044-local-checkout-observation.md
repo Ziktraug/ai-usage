@@ -1,8 +1,9 @@
 # ADR 0044: Observe local Checkouts and bind them to Projects without review
 
-- **Status**: Accepted; acknowledgment step loses its reader with ADR 0049 on
-  `feat/work-resume-cockpit`; the Memory-kernel half retires in plan 120
-  phase B ([ADR 0074](0074-local-only-single-operator-product.md))
+- **Status**: Retired 2026-10-27 by
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md) (Checkout observation runtime and
+  the Memory kernel removed); the canonical-path and worktree plan lives on in
+  ADR 0051's checkout status enumeration
 - **Date**: 2026-10-07
 - **Amends**: 0024, 0042
 

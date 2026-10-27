@@ -2,12 +2,13 @@
 
 This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: the usage engine may ask the installed `codex app-server` or the experimental Claude Agent SDK for a fresh usage-limit observation before readers project the durable local result. Those provider clients own communication and authentication.
 
-The product is local-only; plan 120 removes the connected platform. Terms that
-only the dormant replication client still uses (Device enrollment state and
-credential, Replication outbox, Replication generation, Capture context) and the
-accepted Memory vocabulary stay until its phase B deletes that code; Work thread
-and Work handoff name a feature that was never built. A term's presence records
-the settled vocabulary, not feature availability;
+The product is local-only and single-operator. Plan 120 removed the connected
+platform, and its phase B
+([ADR 0084](docs/adr/0084-retire-memory-checkout-resolution-and-replication.md))
+removed accepted Memory, Checkout resolution and replication; their terms are
+listed under [Retired vocabulary](#retired-vocabulary) so historical records
+stay readable. Work handoff names a feature that was never built. A term's
+presence records the settled vocabulary, not feature availability;
 [`plans/README.md`](plans/README.md) is the implementation-status authority.
 
 ## Language
@@ -43,28 +44,15 @@ the revision and never silently switch to current.
 _Avoid_: copied database, artifact directory, live unversioned query
 
 **Data plane**:
-The durable storage authorities behind explicit application and reader ports.
-The existing usage SQLite database remains the report data plane queried
-directly by Web and CLI through read-only/query-only connections. The dedicated
-local Memory SQLite database is a separate authority; its presence does not
-authorize Web, CLI, or MCP to open write-capable connections or imply that one
-reader queries both.
-_Avoid_: control HTTP, report endpoint, one undifferentiated database
+The durable usage SQLite database behind explicit application and reader ports.
+Web, CLI, and MCP query it directly through read-only/query-only connections;
+only the usage engine writes it. It is the one local storage authority.
+_Avoid_: control HTTP, report endpoint
 
 **Control plane**:
 The authenticated numeric-loopback usage-engine surface carrying only commands,
 status, and bounded sanitized SSE events.
-It is not the Memory service/IPC seam.
 _Avoid_: data API, report transport, remote service, platform API
-
-**Memory service**:
-The separately named, authenticated numeric-loopback application-service seam
-for local Memory-domain reads and mutations. Its protocol, bearer token,
-rendezvous, and lifecycle are independent from the usage-engine control plane.
-Its accepted surface keeps Project resolution, Memory proposal review, and
-explicit import/export behind application services rather than implicit file
-synchronization.
-_Avoid_: control plane, report API, public platform endpoint
 
 **Enrichment contribution**:
 A versioned, validated value owned by one enricher and keyed to a stable base usage-row identity. Report reads compose it with the producer-owned base row; neither writer replaces the other's durable data.
@@ -91,19 +79,6 @@ On-demand inspection of a Session through its native harness history: rounds,
 metrics, tool activity and timeline with the reader's explicit coverage limits.
 This remains available after retirement of generated Session accounts.
 _Avoid_: generated account, accepted guidance, productivity score
-
-**Historical Session account**:
-An immutable generated interpretation retained from the retired Session
-distillation feature. Existing content, source references and promotion
-provenance remain stored; the account library and generation flow are withdrawn
-under ADR 0049. Historical interpretations do not become accepted Memory.
-_Avoid_: native Session analysis, accepted guidance, current library
-
-**Work episode (historical)**:
-An interpreted unit within a historical Session account, retaining its objective,
-attempts, qualified outcome and evidence references. It is not the
-harness-derived Round, an observed Campaign or a durable Work thread.
-_Avoid_: Round, task, Work thread, execution grouping
 
 **Campaign**:
 An observed execution grouping: a root Session and the related Sessions resolved
@@ -239,84 +214,28 @@ _Avoid_: usage snapshot, database backup, report payload
 An explicit export, out-of-band file copy, and import. It does not imply discovery, a listener available to another machine, or background synchronization.
 _Avoid_: pairing, replication, automatic transfer
 
-**Person**:
-The stable domain identity of one human. A Person is independent of Devices and
-display handles, and owns one personal Space in the identity kernel.
-_Avoid_: user account, GitHub user, device owner record
-
-**Device**:
-A stable identity for one local ai-usage runtime. Its Person owner, owning
-Space, label, enrollment state, and credential are separate facts; a hostname
-or existing usage-machine record is not silently promoted to a Device.
-_Avoid_: machine label, hostname, credential
-
-**Replication outbox**:
-The Device-local, transactional queue of immutable fact events awaiting
-outbound publication, one per owning SQLite authority. It preserves generation
-order and replay identity; it is not a cache, a sync log the server can read,
-or a second mutation authority.
-_Avoid_: sync queue, event log, pending changes
-
-**Space**:
-The explicit personal ownership and authorization root of the local Person. A
-resource is assigned to a Space before storage; repository, path, or Device
-observations never infer another Space later.
-_Avoid_: tenant guessed from repository, project group, organization login
-
-**Authorizer**:
-The application-owned port for tri-state permission checks, bounded ordinary
-resource listing, and complete opaque authorized-resource scope. It separates
-allow, deny, and operational error and is the only permission seam used by
-application services.
-_Avoid_: route guard, UI filter, database role, authentication provider
-
-**Authorized-resource scope**:
-A complete, opaque, request-scoped representation of every resource authorized
-for one principal, permission, resource kind, model version, and active Space.
-Application/edge code cannot inspect it as an ACL array. Persistence queries
-consume it before result limiting or ranking and must revalidate current
-relations when consistency requires it.
-_Avoid_: permission page, truncated ID list, post-filter, search-result ACL
-
 **Repository**:
-A stable Space-scoped source-control identity with provider identifiers and
-historical remote aliases as locators. A Repository may be renamed or
-transferred without becoming a different Project.
+The source-control repository a Session, checkout or pull request names, as its
+harness recorded it or as read locally from a checkout's remote. It is a fact
+with provenance, not a registered identity.
 _Avoid_: Project, Checkout, remote URL as primary identity
 
 **Project**:
-A stable cross-device identity for work, optionally linked to a Repository and
-monorepo subpath. Non-Git Projects are first-class. It is distinct from the
-machine-scoped Project source and the local presentation-only Project group.
-_Avoid_: project source, project group, repository URL, checkout path
+The working directory a Session ran in, as reports present it: a Project source
+(a local linked worktree counts under its parent checkout) shown under its
+directory name, or under the explicit Project group that contains it. The Work
+view and `work.context` name a project by its directory name (project label).
+There is no stable cross-device Project identity; the one the Memory store held
+was retired by ADR 0084.
+_Avoid_: project registry, Project identity, repository URL, checkout path
 
 **Checkout**:
-A Device-local observation of a working path, optionally resolved to a Project
-and Repository. Its path and remote are locators and provenance, never tenant
-or filesystem authority on another Device.
-_Avoid_: Project, Repository, capture authority
-
-**Resolution review**:
-The Person-facing decision that binds one observed Checkout to a Project (or
-leaves it explicitly unassigned) when repository resolution cannot decide
-alone. It records the chosen source and never infers another Space.
-_Avoid_: auto-assignment, project guess, unresolved warning
-
-**Capture context**:
-The explicit Device, Person, Space, optional Project, and optional SCM account
-or installation context attached before or during replication publication of a
-fact. The replication protocol carries the SCM fields until phase B removes it;
-local producers always leave them empty. Its assignment source is
-recorded; unresolved work stays personal or explicitly unassigned rather than
-being reassigned later from repository or Device clues.
-_Avoid_: inferred tenant, post-storage ownership repair, project source
-
-**Replication generation**:
-A monotonic position in one Device and replication stream. A server
-acknowledges it only after durable apply. It is distinct from logical fact
-identity, publication event identity, exact content identity, and report
-publication generations.
-_Avoid_: batch ID, event ID, content hash, report generation
+A working copy of a repository on this machine, named by its absolute path. The
+Work view observes the status of known checkouts (ADR 0051), review and
+delegation targets admit checkouts and the worktrees below them, and
+`work.context` scopes a read by checkout path. A path is a locator on this
+machine, never an identity or filesystem authority on another one.
+_Avoid_: Project, Repository, resolved Project binding
 
 **Project source**:
 A machine-scoped project path carried by a usage row. Locally observed paths may be canonicalized and inspected; paths from snapshots or merge bundles are opaque labels and never authorize local filesystem access. Its identity combines the machine and source path so similarly named folders stay distinct.
@@ -326,31 +245,9 @@ _Avoid_: project group, repository scan root
 An explicit local configuration that presents multiple project sources as one named project in reports.
 _Avoid_: project source, inferred alias
 
-**Memory observation**:
-Immutable, provenance-bearing evidence captured or imported for possible use by
-Agent Memory. It is not active guidance and is never accepted implicitly.
-_Avoid_: Memory item, proposal, raw prompt dump
-
-**Memory proposal**:
-Candidate guidance derived from explicit input or linked Memory observations
-and awaiting Person review. Generated content stays labelled and cannot accept
-itself.
-_Avoid_: accepted memory, autonomous distillation, mutable draft item
-
-**Memory item**:
-The stable identity of accepted Agent Memory guidance in one Space, with scope,
-kind, trust, sensitivity, lifecycle status, and a current Memory revision.
-_Avoid_: observation, proposal, Markdown file, revision row
-
-**Memory revision**:
-One immutable version of a Memory item. Revising appends a new revision and
-advances the current pointer atomically; exact older revisions remain
-addressable.
-_Avoid_: in-place edit, file version, proposal
-
 **Work thread**:
 A durable continuity container across Sessions and harnesses, with an explicit
-intent and lifecycle and an optional Project. It is not a Session, Project,
+intent and lifecycle and an optional project label. It is not a Session, Project,
 issue, branch, pull request, or campaign. The Work view calls it a task; its
 sessions, branch, pull requests and Jira issues are links, and it carries the
 operator's follow state (ADR 0063).
@@ -383,10 +280,9 @@ _Avoid_: task status, closed, resolved, archived
 
 **Work handoff**:
 An immutable, evidence-labelled `WorkHandoff` revision that transfers reviewed
-continuation context within a Work thread. Acceptance by a Person advances the
+continuation context within a Work thread. Acceptance by the operator advances the
 thread's current Work handoff; the target starts a normal new harness Session.
-It is distinct from `UsageEngineHandoff*` staged-file transport and imported
-Memory `kind: "handoff"`.
+It is distinct from `UsageEngineHandoff*` staged-file transport.
 _Avoid_: Handoff, native session conversion, generated summary presented as fact
 
 **Skill source repository**:
@@ -444,3 +340,28 @@ _Avoid_: boundary log, harness history event, SSE publication event, scattered p
 **Effect program execution**:
 A fresh, scoped application or control-plane boundary that runs one complete job or adapter entry to a business outcome. The scope may run inside a long-lived worker fiber, but its wide-event controller, annotations, and hop parent state never survive into the next execution. Queue admission, stale/skipped jobs, reusable helpers, and long-lived worker loops are not executions and do not emit their own event.
 _Avoid_: carrier fiber identity, enqueue-only command, nested Effect.gen helper, source-control-only logging
+
+## Retired vocabulary
+
+These terms name code that no longer exists. They stay defined in one line so
+historical ADRs and plans remain readable; do not use them for current
+behaviour.
+
+- **Historical Session account**, **Work episode**: a generated Session
+  interpretation and its interpreted unit, from Session distillation (retired
+  by ADR 0049). Their stored rows remain only in the untouched `memory.sqlite`;
+  no code reads them. A Work episode was never a Round, Campaign or Work thread.
+- **Memory observation**, **Memory proposal**, **Memory item**, **Memory
+  revision**, **Memory service**: accepted Agent Memory and the loopback
+  service that carried it, removed by ADR 0084. A Session's harness
+  **Proposal** above is unrelated.
+- **Resolution review**: the `/projects` decision binding a Checkout to a
+  Project identity, removed by ADR 0084 with Checkout resolution.
+- **Person**, **Device**, **Space**: the identities of the retired local
+  identity kernel in `memory.sqlite` (ADR 0084). Machine identity in reports is
+  the usage machine record, not a Device.
+- **Authorizer**, **Authorized-resource scope**: the permission port and its
+  opaque scope (ADR 0029, retired by ADR 0084).
+- **Replication outbox**, **Replication generation**, **Capture context**: the
+  outbound replication queue, its stream position and the ownership context it
+  published, removed by ADR 0084 (usage schema 5 drops the outbox tables).

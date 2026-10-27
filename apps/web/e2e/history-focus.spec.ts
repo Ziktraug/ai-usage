@@ -70,22 +70,6 @@ test('Back across a kept-focus Analysis tab change resets focus to the page', as
   await expect.poll(() => settledFocus(page)).toBe('body');
 });
 
-test('Back across a Memory filter resets focus to the page', async ({ page }) => {
-  const projectId = '0198f179-4837-7000-8000-00000000f0c5';
-  await page.goto('/memory?view=knowledge');
-  await waitForHydratedNavigation(page);
-  await page.getByLabel('Project ID (optional)').fill(projectId);
-  const apply = page.getByRole('button', { name: 'Apply filters', exact: true });
-  await apply.focus();
-  await page.keyboard.press('Enter');
-  await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBe(projectId);
-  await expect(apply).toBeFocused();
-
-  await page.goBack();
-  await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBeNull();
-  await expect.poll(() => settledFocus(page)).toBe('body');
-});
-
 test('Back from a campaign session drawer returns focus to the session that opened it', async ({ page }) => {
   await openCampaigns(page);
   const trigger = agentMap(page).getByRole('button', { name: OPEN_ROOT_SESSION_NAME });

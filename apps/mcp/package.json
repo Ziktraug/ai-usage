@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "ai-usage-memory-mcp": "./src/main.ts"
+    "ai-usage-mcp": "./src/main.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@ai-usage/mcp-adapter": "workspace:*",
-    "@ai-usage/memory-service": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/report-data": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
