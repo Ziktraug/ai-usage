@@ -1,6 +1,7 @@
 # ADR 0076: Browser boundary: oRPC contract + TanStack Query, derived once
 
-- **Status**: Accepted
+- **Status**: Accepted; "Derive once" implemented 2026-10-27 (plan 120 phase B,
+  amendment below)
 - **Date**: 2026-10-24
 - **Supersedes**: [ADR 0010](0010-sveltekit-contract-first-browser-boundary.md) and
   [ADR 0012](0012-tanstack-query-browser-server-state-ownership.md), consolidated
@@ -143,11 +144,38 @@ which PR #67 changes heavily, so they land after it.
    uses a subrequest, `subrequest-normalization.server.ts` and its forged trust
    headers are deleted.
 
+> Implemented 2026-10-27 (plan 120 phase B, after ADR 0084 removed 8 of the
+> procedures, leaving 49). Each procedure starts from `rpcProcedure({ method,
+> transport, requestSize, responseSize, errors, demo? })`
+> (`packages/web-contract/src/rpc-procedure.ts`): the declaration type admits
+> only GET queries with no or URL input and POST queries or mutations with no or
+> bounded JSON input, and requires a non-empty set of public error families; an
+> absent `demo` means forbidden. The root contract `satisfies` that shape and the
+> server router `satisfies` the contract, so a procedure missing its declaration
+> or its implementation fails type checking. `rpcProcedureTable` derives the
+> operation policies (CSRF from the transport), the path table, the demo set and
+> the test counts. The browser imports a committed, import-free
+> `rpc-get-paths.generated.ts` (`bun run generate` in `packages/web-contract`),
+> whose freshness a test checks against the contract; the initial closure fell
+> by 446 B. Deriving the table exposed 13 procedures whose hand-written policy
+> listed error families their contract did not declare (`work.attention`,
+> `workAttempts.*`, `workRouting.qualify`, `workThreads.*`, and `Forbidden` on
+> four delegation mutations); their contracts now declare them, and a test pins
+> the derived table to a snapshot of the hand-written one. The manual-merge
+> download joined the explicit HTTP policies. Server loads call
+> `createInProcessWebRpcClient(request)`, the `/rpc` router with the dependencies
+> `/rpc` builds, behind an interceptor that applies the demo rule;
+> `subrequest-normalization.server.ts` and the `handleFetch` hook are deleted.
+> The HTTP response byte bound does not apply in process: SSR outputs are bounded
+> by their output schemas and by the dehydration of successful data only.
+
 ## Consequences
 
 - One record states the browser boundary; ADRs 0010 and 0012 remain as history.
 - After phase B a new procedure touches the contract, its router module, a
-  client wrapper and its Query options; nothing else needs registering.
+  client wrapper and its Query options; nothing else needs registering, except
+  regenerating the browser GET table when the set of GET procedures changes
+  (a test fails until it is regenerated).
 - SSR stops paying an HTTP hop per read, and the only code that manufactures
   trust headers goes away.
 - oRPC's client and Query's core stay in the initial closure; replacing them

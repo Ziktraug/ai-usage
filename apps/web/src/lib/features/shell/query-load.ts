@@ -3,6 +3,11 @@ import { createWebQueryRuntime, type WebQueryRuntime, type WebQueryRuntimeOption
 
 export type RoutePrefetch = (runtime: WebQueryRuntime) => Promise<void>;
 
+/** A route load's acquisition input: the in-process RPC client and the page URL it reads state from. */
+export interface RouteQueryLoadOptions extends WebQueryRuntimeOptions {
+  readonly url: URL;
+}
+
 export const createAwaitedRouteQueryState = async (
   options: WebQueryRuntimeOptions,
   prefetch: RoutePrefetch,

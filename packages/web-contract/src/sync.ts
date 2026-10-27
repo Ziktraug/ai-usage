@@ -1,4 +1,4 @@
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   array,
   boolean,
@@ -17,6 +17,7 @@ import {
   string,
 } from 'valibot';
 import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { emptyInputSchema, isJsonWireValue } from './schema-conventions';
 
 const MAX_MACHINE_TEXT = 512;
@@ -108,16 +109,26 @@ const syncMachineLabelErrors = {
 } as const;
 
 export const syncContract = {
-  fleet: oc
-    .route({ method: 'GET', path: '/sync/fleet' })
+  fleet: rpcProcedure({
+    errors: syncFleetErrors,
+    method: 'GET',
+    path: '/sync/fleet',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
-    .output(syncFleetOutputSchema)
-    .errors(syncFleetErrors),
-  setMachineLabel: oc
-    .route({ method: 'POST', path: '/sync/setMachineLabel' })
+    .output(syncFleetOutputSchema),
+  setMachineLabel: rpcProcedure({
+    errors: syncMachineLabelErrors,
+    method: 'POST',
+    path: '/sync/setMachineLabel',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(syncMachineLabelInputSchema)
-    .output(syncMachineLabelOutputSchema)
-    .errors(syncMachineLabelErrors),
+    .output(syncMachineLabelOutputSchema),
 } as const;
 
 export type SyncContractClient = ContractRouterClient<typeof syncContract>;

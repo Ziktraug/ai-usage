@@ -5,7 +5,7 @@ import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import { createWebRpcHttpHandler } from '../../../server/rpc/handler.server';
+import { createInProcessWebRpcClient } from '../../../server/rpc/in-process-client.server';
 import type { WebRpcRouterDependencies } from '../../../server/rpc/router';
 import type { SkillsCapability, SkillsCapabilityResult } from '../../../server/rpc/skills';
 import { syntheticManagementSnapshot } from '../management/synthetic-fixture.test-helper';
@@ -99,14 +99,6 @@ const unavailableServices = <Services>(): Services =>
       get: () => unavailable,
     },
   ) as Services;
-
-const trustedHandlerFetch = (handler: (request: Request) => Promise<Response>) => async (request: Request) => {
-  const headers = new Headers(request.headers);
-  headers.set('host', '127.0.0.1:4178');
-  headers.set('origin', 'http://127.0.0.1:4178');
-  headers.set('sec-fetch-site', 'same-origin');
-  return await handler(new Request(request, { headers }));
-};
 
 /** The opening tag of the deletion group, so attribute order in the render is not load-bearing. */
 const deletionGroupAttributes = (html: string): string => {
@@ -593,7 +585,8 @@ describe('Svelte Skills workspace SSR', () => {
       saveMarkdown: unavailable,
       toggleSkill: unavailable,
     };
-    const handler = createWebRpcHttpHandler({
+    // The route acquires in process, as the Skills layout load does: one set of services per load.
+    const rpc = await createInProcessWebRpcClient(new Request('http://127.0.0.1:4178/skills/global/alpha-skill'), {
       createDependencies: () => {
         calls.acquisitions += 1;
         return Promise.resolve({
@@ -611,14 +604,11 @@ describe('Svelte Skills workspace SSR', () => {
           workThreads: unavailableServices<WebRpcRouterDependencies['workThreads']>(),
         });
       },
+      runtimeMode: 'e2e',
     });
     const result = await loadSkillsShellRoute({
       mode: 'e2e',
-      options: {
-        fetch: trustedHandlerFetch(handler),
-        requestOwner: 'p5-hydration-fixture',
-        url: new URL('http://127.0.0.1:4178/skills/global/alpha-skill'),
-      },
+      options: { rpc },
       pathname: '/skills/global/alpha-skill',
     });
     if (result.decision !== 'render') {
@@ -636,7 +626,7 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('data-skills-worktable');
     expect(html).not.toContain('Loading skills');
     expect(callsAfterRoute).toEqual({
-      acquisitions: 5,
+      acquisitions: 1,
       inventories: 1,
       knownPaths: 1,
       managed: 1,

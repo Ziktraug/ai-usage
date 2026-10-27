@@ -32,9 +32,10 @@ import {
 } from '@ai-usage/report-core/report-budgets';
 import { parseServedRevision } from '@ai-usage/report-core/served-revision';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import { boolean, literal, pipe, rawTransform, strictObject, unknown as unknownSchema } from 'valibot';
 import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { emptyInputSchema, isJsonWireValue } from './schema-conventions';
 
 const PROJECT_SOURCE_REFERENCE_PATTERN = /^project-source:[a-f0-9]{64}$/u;
@@ -432,74 +433,106 @@ const exactReportErrors = {
   InvalidInput: publicErrorMap.InvalidInput,
   RevisionExpired: publicErrorMap.RevisionExpired,
 } as const;
+/** The current-alias reads: the browser may cache their GET by URL. */
+const currentReportRead = {
+  method: 'GET',
+  requestSize: 'none',
+  responseSize: 'bounded-json',
+  transport: 'query',
+} as const;
+/** Exact reads at one revision; the request names the revision in a bounded JSON body. */
+const exactReportQuery = {
+  method: 'POST',
+  requestSize: 'bounded-rpc-json',
+  responseSize: 'bounded-json',
+  transport: 'query',
+} as const;
 
 export const reportContract = {
   campaign: {
-    labelOverrides: oc
-      .route({ method: 'GET' })
+    labelOverrides: rpcProcedure({
+      errors: { ForbiddenDemo: publicErrorMap.ForbiddenDemo, Unavailable: publicErrorMap.Unavailable },
+      method: 'GET',
+      requestSize: 'none',
+      responseSize: 'bounded-json',
+      transport: 'query',
+    })
       .input(emptyInputSchema)
-      .output(campaignOverridesResultSchema)
-      .errors({ ForbiddenDemo: publicErrorMap.ForbiddenDemo, Unavailable: publicErrorMap.Unavailable }),
-    setLabelOverride: oc
-      .route({ method: 'POST' })
-      .input(campaignMutationSchema)
-      .output(campaignOverridesResultSchema)
-      .errors({
+      .output(campaignOverridesResultSchema),
+    setLabelOverride: rpcProcedure({
+      errors: {
         Conflict: publicErrorMap.Conflict,
         Forbidden: publicErrorMap.Forbidden,
         ForbiddenDemo: publicErrorMap.ForbiddenDemo,
         InvalidInput: publicErrorMap.InvalidInput,
-      }),
+      },
+      method: 'POST',
+      requestSize: 'bounded-rpc-json',
+      responseSize: 'bounded-json',
+      transport: 'mutation',
+    })
+      .input(campaignMutationSchema)
+      .output(campaignOverridesResultSchema),
   },
   projectGroup: {
-    save: oc.route({ method: 'POST' }).input(saveProjectGroupsInputSchema).output(acceptedOutputSchema).errors({
-      Conflict: publicErrorMap.Conflict,
-      EngineUnavailable: publicErrorMap.EngineUnavailable,
-      Forbidden: publicErrorMap.Forbidden,
-      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
-      InvalidInput: publicErrorMap.InvalidInput,
-    }),
+    save: rpcProcedure({
+      errors: {
+        Conflict: publicErrorMap.Conflict,
+        EngineUnavailable: publicErrorMap.EngineUnavailable,
+        Forbidden: publicErrorMap.Forbidden,
+        ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+        InvalidInput: publicErrorMap.InvalidInput,
+      },
+      method: 'POST',
+      requestSize: 'bounded-rpc-json',
+      responseSize: 'bounded-json',
+      transport: 'mutation',
+    })
+      .input(saveProjectGroupsInputSchema)
+      .output(acceptedOutputSchema),
   },
   quota: {
-    history: oc.route({ method: 'POST' }).input(providerQuotaRequestSchema).output(providerQuotaResultSchema).errors({
-      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
-      InvalidInput: publicErrorMap.InvalidInput,
-      Unavailable: publicErrorMap.Unavailable,
-    }),
+    history: rpcProcedure({
+      errors: {
+        ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+        InvalidInput: publicErrorMap.InvalidInput,
+        Unavailable: publicErrorMap.Unavailable,
+      },
+      method: 'POST',
+      requestSize: 'bounded-rpc-json',
+      responseSize: 'bounded-json',
+      transport: 'query',
+    })
+      .input(providerQuotaRequestSchema)
+      .output(providerQuotaResultSchema),
   },
   report: {
-    focusedBreakdown: oc
-      .route({ method: 'POST' })
+    focusedBreakdown: rpcProcedure({ ...exactReportQuery, errors: exactReportErrors })
       .input(focusedBreakdownRequestSchema)
-      .output(focusedBreakdownOutputSchema)
-      .errors(exactReportErrors),
-    focusedOverview: oc
-      .route({ method: 'POST' })
+      .output(focusedBreakdownOutputSchema),
+    focusedOverview: rpcProcedure({ ...exactReportQuery, errors: exactReportErrors })
       .input(focusedOverviewRequestSchema)
-      .output(focusedOverviewOutputSchema)
-      .errors(exactReportErrors),
-    focusedSupport: oc
-      .route({ method: 'POST' })
+      .output(focusedOverviewOutputSchema),
+    focusedSupport: rpcProcedure({ ...exactReportQuery, errors: exactReportErrors })
       .input(focusedRevisionRequestSchema)
-      .output(focusedSupportOutputSchema)
-      .errors(exactReportErrors),
-    revisionBootstrap: oc
-      .route({ method: 'GET' })
+      .output(focusedSupportOutputSchema),
+    revisionBootstrap: rpcProcedure({ ...currentReportRead, errors: reportReadErrors })
       .input(emptyInputSchema)
-      .output(parsedSchema('report bootstrap result', parseReportRevisionBootstrapResult))
-      .errors(reportReadErrors),
-    revisionManifest: oc
-      .route({ method: 'GET' })
+      .output(parsedSchema('report bootstrap result', parseReportRevisionBootstrapResult)),
+    revisionManifest: rpcProcedure({ ...currentReportRead, errors: reportReadErrors })
       .input(emptyInputSchema)
-      .output(parsedSchema('report manifest result', parseReportRevisionManifestResult))
-      .errors(reportReadErrors),
+      .output(parsedSchema('report manifest result', parseReportRevisionManifestResult)),
   },
   runtime: {
-    reportPerfEnabled: oc
-      .route({ method: 'GET' })
+    reportPerfEnabled: rpcProcedure({
+      errors: { ForbiddenDemo: publicErrorMap.ForbiddenDemo },
+      method: 'GET',
+      requestSize: 'none',
+      responseSize: 'bounded-json',
+      transport: 'query',
+    })
       .input(emptyInputSchema)
-      .output(boolean())
-      .errors({ ForbiddenDemo: publicErrorMap.ForbiddenDemo }),
+      .output(boolean()),
   },
 } as const;
 

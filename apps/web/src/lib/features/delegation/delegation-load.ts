@@ -1,8 +1,8 @@
 import type { WebQueryHydrationState } from '../../query/client';
-import type { WebQueryRuntime, WebQueryRuntimeOptions } from '../../query/composition';
+import type { WebQueryRuntime } from '../../query/composition';
 import { type DelegationSettingsQueryClient, delegationSettingsQueryOptions } from '../../query/options/delegation';
 import { createDelegationClient } from '../../rpc/delegation-client';
-import { createAwaitedRouteQueryState } from '../shell/query-load';
+import { createAwaitedRouteQueryState, type RouteQueryLoadOptions } from '../shell/query-load';
 import { type DelegationSection, delegationSectionFor } from './delegation-model';
 
 export interface DelegationPageData {
@@ -24,7 +24,7 @@ export const deferredDelegationPageData = (url: URL): DelegationPageData => ({
 });
 
 export const loadDelegationPageData = async (
-  options: WebQueryRuntimeOptions,
+  options: RouteQueryLoadOptions,
   dependencies: DelegationPageLoadDependencies = {},
 ): Promise<DelegationPageData> => ({
   queryState: await createAwaitedRouteQueryState(options, async (runtime) => {

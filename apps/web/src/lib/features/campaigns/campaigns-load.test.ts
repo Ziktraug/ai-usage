@@ -26,6 +26,7 @@ import { demoReportPayload } from '../../../report-data';
 import { createHydratedWebQueryClient } from '../../query/client';
 import { campaignLabelOverridesKey, campaignLabelOverridesQueryOptions } from '../../query/options/report';
 import { sessionLookupKey, sessionLookupQueryOptions } from '../../query/options/session';
+import { createWebRpcClient } from '../../rpc/client';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { loadCampaignsPageData } from './campaigns-load';
 
@@ -107,7 +108,12 @@ const ssrFixture = (
     }
     return Response.json(serializer.serialize(result));
   };
-  return { lookups, memberPages, options: { fetch, url }, paths };
+  return {
+    lookups,
+    memberPages,
+    options: { rpc: createWebRpcClient({ fetch, url: new URL('/rpc', url) }), url },
+    paths,
+  };
 };
 
 const dehydratedLabelOverrides = (data: Awaited<ReturnType<typeof loadCampaignsPageData>>) =>

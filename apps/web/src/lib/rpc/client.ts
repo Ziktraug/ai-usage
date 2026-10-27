@@ -1,25 +1,12 @@
 import type { WebContractClient } from '@ai-usage/web-contract';
+import { rpcGetPaths } from '@ai-usage/web-contract/rpc-get-paths';
 import { createORPCClient } from '@orpc/client';
 import { RPCLink } from '@orpc/client/fetch';
 import { createORPCSvelteQueryUtils, type RouterUtils } from '@orpc/svelte-query';
 
-const GET_RPC_PATHS = new Set([
-  'campaign/labelOverrides',
-  'delegation/job',
-  'delegation/jobs',
-  'delegation/settings',
-  'report/revisionBootstrap',
-  'report/revisionManifest',
-  'runtime/reportPerfEnabled',
-  'skills/knownProjectPaths',
-  'skills/observations',
-  'skills/previewReconcileAll',
-  'skills/projectInventories',
-  'skills/projectMarkdown',
-  'skills/snapshot',
-  'sync/fleet',
-  'workRouting/context',
-]);
+// Generated from the contract's `rpcProcedure` declarations; the contract itself never reaches the
+// browser through this module, so choosing a method adds no schema to the bundle (ADR 0076).
+const GET_RPC_PATHS: ReadonlySet<string> = new Set(rpcGetPaths);
 
 export type WebRpcQueryUtils = RouterUtils<WebContractClient>;
 

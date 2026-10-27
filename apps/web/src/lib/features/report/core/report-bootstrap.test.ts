@@ -28,6 +28,7 @@ import {
   sessionPageKey,
   sessionPageQueryOptions,
 } from '../../../query/options/session';
+import { createWebRpcClient } from '../../../rpc/client';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import {
   acquireLiveReportQueryState,
@@ -38,9 +39,11 @@ import {
 } from './report-bootstrap';
 
 const liveOptions = () => ({
-  fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
   pageUrl: new URL('http://report.invalid/'),
-  url: new URL('http://report.invalid/'),
+  rpc: createWebRpcClient({
+    fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
+    url: 'http://report.invalid/rpc',
+  }),
 });
 
 const unavailableResult: ReportRevisionBootstrapResult = {
@@ -121,21 +124,9 @@ describe('report bootstrap', () => {
   });
 
   it.each(['demo', 'e2e'] as const)('selects the %s payload without acquiring server state', (mode) => {
-    let fetchCount = 0;
-    const data = reportPageDataFor(
-      mode,
-      {
-        fetch: () => {
-          fetchCount += 1;
-          return Promise.reject(new Error('Synthetic report mode must not acquire RPC data'));
-        },
-        url: new URL('http://synthetic.invalid/'),
-      },
-      undefined,
-    );
+    const data = reportPageDataFor(mode, undefined);
 
     expect(data.mode).toBe(mode);
-    expect(fetchCount).toBe(0);
     expect(data.queryState.dehydratedState.queries).toHaveLength(0);
     expect(data.mode === 'live' ? undefined : data.payload.rows.length).toBeGreaterThan(0);
   });
@@ -147,13 +138,7 @@ describe('report bootstrap', () => {
   });
 
   it('refuses live page data the server never acquired', () => {
-    expect(() =>
-      reportPageDataFor(
-        'live',
-        { fetch: () => Promise.reject(new Error('unused')), url: new URL('http://report.invalid/') },
-        undefined,
-      ),
-    ).toThrow(ReportBootstrapUnavailableError);
+    expect(() => reportPageDataFor('live', undefined)).toThrow(ReportBootstrapUnavailableError);
   });
 
   it('awaits a successful compatible publication and dehydrates the exact current alias key', async () => {

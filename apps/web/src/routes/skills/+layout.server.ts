@@ -1,8 +1,9 @@
 import { redirect } from '@sveltejs/kit';
 import { deferredSkillsShellRoute, loadSkillsShellRoute } from '#lib/features/skills/shell/data.ts';
+import { createInProcessWebRpcClient } from '#lib/server/rpc/in-process-client.server.ts';
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = async ({ fetch, isDataRequest, parent, url }) => {
+export const load: LayoutServerLoad = async ({ isDataRequest, parent, request, url }) => {
   const { runtimeMode } = await parent();
   if (runtimeMode === 'demo') {
     redirect(307, '/');
@@ -15,11 +16,7 @@ export const load: LayoutServerLoad = async ({ fetch, isDataRequest, parent, url
     ? deferredSkillsShellRoute()
     : await loadSkillsShellRoute({
         mode: runtimeMode,
-        options: {
-          fetch: (request) => fetch(request),
-          requestOwner: 'skills-shell-ssr',
-          url,
-        },
+        options: { rpc: await createInProcessWebRpcClient(request) },
         pathname: url.pathname,
       });
 

@@ -2,7 +2,6 @@ import { isPrintableSkillObservationText } from '@ai-usage/report-core/skill-obs
 import { SKILL_OBSERVATION_TIERS as skillObservationTiers } from '@ai-usage/report-core/skill-observation-evidence';
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { skillNamePattern, skillTargetIdPattern } from '@ai-usage/skills/shared';
-import { oc } from '@orpc/contract';
 import {
   array,
   boolean,
@@ -30,6 +29,7 @@ import {
   union,
 } from 'valibot';
 import { publicErrorDataSchema } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { emptyInputSchema, isJsonWireValue, jsonWireValueSchema } from './schema-conventions';
 
 const MAX_DISCOVERED_ENTRY_NAME_LENGTH = 255;
@@ -650,63 +650,145 @@ export const skillsErrorMap = {
   },
 } as const;
 
-const skills = oc.errors(skillsErrorMap);
-
 export const skillsContract = {
-  createTargetDirectory: skills
-    .route({ method: 'POST', path: '/skills/targets' })
+  createTargetDirectory: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/targets',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(skillTargetInputSchema)
     .output(skillManagementSnapshotSchema),
-  projectInventories: skills
-    .route({ method: 'GET', path: '/skills/inventories' })
+  projectInventories: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'GET',
+    path: '/skills/inventories',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
     .output(projectSkillInventoriesSchema),
-  knownProjectPaths: skills
-    .route({ method: 'GET', path: '/skills/known-paths' })
+  knownProjectPaths: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'GET',
+    path: '/skills/known-paths',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
     .output(knownSkillProjectPathsSchema),
-  observations: skills
-    .route({ method: 'GET', path: '/skills/observations' })
+  observations: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'GET',
+    path: '/skills/observations',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
     .output(skillObservationsSchema),
-  managedMarkdown: skills
-    .route({ method: 'POST', path: '/skills/markdown/read' })
+  managedMarkdown: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/markdown/read',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(skillNameInputSchema)
     .output(skillMarkdownDocumentSchema),
-  previewReconcileAll: skills
-    .route({ method: 'GET', path: '/skills/reconcile/preview' })
+  previewReconcileAll: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'GET',
+    path: '/skills/reconcile/preview',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
     .output(skillReconcileResultSchema),
-  projectMarkdown: skills
-    .route({ method: 'GET', path: '/skills/project-markdown' })
+  projectMarkdown: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'GET',
+    path: '/skills/project-markdown',
+    requestSize: 'bounded-url',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(projectSkillMarkdownInputSchema)
     .output(projectSkillMarkdownDocumentSchema),
-  reconcileAll: skills
-    .route({ method: 'POST', path: '/skills/reconcile' })
+  reconcileAll: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/reconcile',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(emptyInputSchema)
     .output(skillReconcileResultSchema),
-  reconcileOne: skills
-    .route({ method: 'POST', path: '/skills/reconcile/:skillName' })
+  reconcileOne: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/reconcile/:skillName',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(skillNameInputSchema)
     .output(skillReconcileResultSchema),
-  refreshSnapshot: skills
-    .route({ method: 'POST', path: '/skills/refresh' })
+  refreshSnapshot: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/refresh',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(emptyInputSchema)
     .output(skillManagementSnapshotSchema),
-  saveConfig: skills
-    .route({ method: 'POST', path: '/skills/config' })
+  saveConfig: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/config',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(skillManagementConfigSchema)
     .output(skillManagementSnapshotSchema),
-  saveManagedMarkdown: skills
-    .route({ method: 'POST', path: '/skills/markdown' })
+  saveManagedMarkdown: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/markdown',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(saveSkillMarkdownInputSchema)
     .output(skillMarkdownSaveResultSchema),
-  snapshot: skills
-    .route({ method: 'GET', path: '/skills' })
+  snapshot: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'GET',
+    path: '/skills',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
     .output(skillManagementSnapshotSchema),
-  toggleProjection: skills
-    .route({ method: 'POST', path: '/skills/toggle' })
+  toggleProjection: rpcProcedure({
+    errors: skillsErrorMap,
+    method: 'POST',
+    path: '/skills/toggle',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(skillToggleInputSchema)
     .output(skillReconcileResultSchema),
 };

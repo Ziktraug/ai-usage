@@ -4,10 +4,11 @@ import { demoNotFoundResponse } from '../../../server/demo-boundary.server';
 import { validateTrustedLocalRequest } from '../../../server/local-request-trust.server';
 import { getServerRuntimeMode } from '../../../server/runtime-mode.server';
 import {
+  type ExplicitHttpRequestPolicy,
   explicitHttpRequestPolicies,
-  type OperationRequestPolicy,
-  operationRequestPolicies,
   type RequestPolicy,
+  type RpcProcedureRequestPolicy,
+  rpcProcedureRequestPolicies,
 } from './request-policy';
 
 const MAX_RPC_CONTENT_LENGTH_BYTES = 12 * 1024 * 1024;
@@ -15,85 +16,20 @@ const MAX_RPC_URL_BYTES = 16 * 1024;
 const MAX_SOURCE_CONTROL_COMMAND_BYTES = 4 * 1024;
 const textEncoder = new TextEncoder();
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
-export const rpcPathByOperation = {
-  getDelegationSettings: '/delegation/settings',
-  saveDelegationSettings: '/delegation/saveSettings',
-  simulateDelegation: '/delegation/simulate',
-  listDelegationJobs: '/delegation/jobs',
-  getDelegationJob: '/delegation/job',
-  cancelDelegation: '/delegation/cancel',
-  recordDelegationAcceptance: '/delegation/recordAcceptance',
-  createManagedSkillTargetDirectory: '/skills/createTargetDirectory',
-  getCampaignLabelOverrides: '/campaign/labelOverrides',
-  getFocusedReportBreakdown: '/report/focusedBreakdown',
-  getFocusedReportOverview: '/report/focusedOverview',
-  getFocusedReportSupport: '/report/focusedSupport',
-  getKnownSkillProjectPaths: '/skills/knownProjectPaths',
-  getManagedSkillMarkdown: '/skills/managedMarkdown',
-  getProjectSkillMarkdown: '/skills/projectMarkdown',
-  getProviderQuotaHistory: '/quota/history',
-  getReportPerfEnabled: '/runtime/reportPerfEnabled',
-  getReportRevisionBootstrap: '/report/revisionBootstrap',
-  getReportRevisionManifest: '/report/revisionManifest',
-  getReportSessionCampaignChildren: '/session/campaignChildren',
-  getReportSessionDetail: '/session/detail',
-  getReportSessionLookup: '/session/lookup',
-  getReportSessionNeighbors: '/session/neighbors',
-  getReportSessionPage: '/session/page',
-  getSkillManagementSnapshot: '/skills/snapshot',
-  getSkillObservations: '/skills/observations',
-  getSkillProjectInventories: '/skills/projectInventories',
-  getSyncFleet: '/sync/fleet',
-  getWorkAttention: '/work/attention',
-  getWorkRoutingContext: '/workRouting/context',
-  qualifyWorkRouting: '/workRouting/qualify',
-  listWorkAttempts: '/workAttempts/list',
-  listWorkThreads: '/workThreads/list',
-  getWorkThreadDetail: '/workThreads/detail',
-  executeWorkThreadCommand: '/workThreads/command',
-  startWorkAttempt: '/workAttempts/start',
-  stopWorkAttempt: '/workAttempts/stop',
-  releaseWorkAttemptReservation: '/workAttempts/release',
-  previewReconcileAllManagedSkills: '/skills/previewReconcileAll',
-  reconcileAllManagedSkills: '/skills/reconcileAll',
-  reconcileManagedSkill: '/skills/reconcileOne',
-  refreshSkillManagementSnapshot: '/skills/refreshSnapshot',
-  resolveReportSessionVcs: '/session/vcs',
-  saveManagedSkillMarkdown: '/skills/saveManagedMarkdown',
-  saveProjectGroups: '/projectGroup/save',
-  saveSkillManagementConfig: '/skills/saveConfig',
-  setCampaignLabelOverride: '/campaign/setLabelOverride',
-  setMachineLabel: '/sync/setMachineLabel',
-  toggleManagedSkill: '/skills/toggleProjection',
-} as const;
 
-type RpcOperationName = keyof typeof rpcPathByOperation;
-
-export const rpcOperationPolicies = operationRequestPolicies.filter(
-  (policy): policy is OperationRequestPolicy & { operation: RpcOperationName } => policy.transport !== 'file',
+const rpcPoliciesByPath: ReadonlyMap<string, RpcProcedureRequestPolicy> = new Map(
+  rpcProcedureRequestPolicies.map((policy) => [policy.path, policy]),
 );
 
-const policiesByPath: ReadonlyMap<string, OperationRequestPolicy> = new Map(
-  rpcOperationPolicies.map((policy) => [rpcPathByOperation[policy.operation], policy]),
+/** The policy of the contract procedure at `pathname` below `/rpc`, if the contract declares one. */
+export const rpcPolicyForPath = (pathname: string): RpcProcedureRequestPolicy | undefined =>
+  rpcPoliciesByPath.get(pathname);
+
+const explicitPoliciesByPath: ReadonlyMap<string, ExplicitHttpRequestPolicy> = new Map(
+  explicitHttpRequestPolicies.map((policy) => [policy.target, policy]),
 );
 
-export const rpcPathForOperation = (operation: RpcOperationName): string => rpcPathByOperation[operation];
-
-export const rpcPolicyForPath = (pathname: string): OperationRequestPolicy | undefined => policiesByPath.get(pathname);
-
-const explicitPoliciesByPath = new Map<string, RequestPolicy>();
-for (const policy of explicitHttpRequestPolicies) {
-  explicitPoliciesByPath.set(policy.target, policy);
-}
-const manualMergeDownloadPolicy = operationRequestPolicies.find(
-  (policy) => policy.operation === 'exportManualMergeBundle',
-);
-if (!manualMergeDownloadPolicy) {
-  throw new Error('The manual merge download policy is missing.');
-}
-explicitPoliciesByPath.set('/api/manual-merge/download', manualMergeDownloadPolicy);
-
-export const explicitPolicyForPath = (pathname: string): RequestPolicy | undefined =>
+export const explicitPolicyForPath = (pathname: string): ExplicitHttpRequestPolicy | undefined =>
   explicitPoliciesByPath.get(pathname);
 
 const boundaryFailure = (status: number, tag: string, message: string, headers?: HeadersInit): Response =>
@@ -162,7 +98,7 @@ export const csrfRequestIsAllowed = (request: Request): boolean => {
 };
 
 export interface EnforcedRpcRequest {
-  readonly policy: OperationRequestPolicy;
+  readonly policy: RpcProcedureRequestPolicy;
 }
 
 const maximumRequestBodyBytes = (policy: RequestPolicy): number | undefined => {

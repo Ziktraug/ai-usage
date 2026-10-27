@@ -279,6 +279,13 @@ storage API.
   `./work-attempts`, `./work-routing`, `./work-threads`, `./errors`, and
   `./schema-conventions`: the remaining pure browser contracts and shared
   validation/error schemas.
+- `./rpc-procedure`: `rpcProcedure`, the one transport declaration every
+  procedure starts from (ADR 0076).
+- `./rpc-procedure-table`: the procedure table derived from the contract, for
+  the Web request policy, its path table and tests.
+- `./rpc-get-paths`: the generated, import-free table of GET procedure paths
+  the browser client reads; `bun run generate` rewrites it and a test checks it
+  against the contract.
 
 There is no Memory, Projects, replication or Session-distillation export or
 router branch (ADR 0084). Browser imports remain contract-first.

@@ -21,6 +21,7 @@ import {
   workAttentionRequestFromSearch,
 } from '../../query/options/work-attention';
 import { prefetchWorkQueries } from '../../query/work-prefetch';
+import { createWebRpcClient } from '../../rpc/client';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import type { WorkAttentionClient } from '../../rpc/work-attention-client';
 import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
@@ -58,23 +59,26 @@ describe('Work bounded stored metadata and Query hydration', () => {
       const data = await loadWorkPageData(
         {
           url: new URL('http://work.invalid/work'),
-          fetch: async (request) => {
-            const pathname = new URL(request.url).pathname;
-            paths.push(pathname);
-            if (pathname === '/rpc/report/revisionBootstrap') {
-              return Response.json(serializer.serialize(bootstrap));
-            }
-            const input = parseSessionQueryRequest(serializer.deserialize(await request.json()));
-            const projected = projectSessionPage(rows, input);
-            return Response.json(
-              serializer.serialize({
-                ok: false,
-                revision,
-                requestFingerprint: projected.requestFingerprint,
-                error: { tag, revision, message: 'Synthetic bounded failure' },
-              }),
-            );
-          },
+          rpc: createWebRpcClient({
+            url: 'http://work.invalid/rpc',
+            fetch: async (request) => {
+              const pathname = new URL(request.url).pathname;
+              paths.push(pathname);
+              if (pathname === '/rpc/report/revisionBootstrap') {
+                return Response.json(serializer.serialize(bootstrap));
+              }
+              const input = parseSessionQueryRequest(serializer.deserialize(await request.json()));
+              const projected = projectSessionPage(rows, input);
+              return Response.json(
+                serializer.serialize({
+                  ok: false,
+                  revision,
+                  requestFingerprint: projected.requestFingerprint,
+                  error: { tag, revision, message: 'Synthetic bounded failure' },
+                }),
+              );
+            },
+          }),
         },
         'live',
       );
@@ -114,7 +118,10 @@ describe('Work bounded stored metadata and Query hydration', () => {
     const data = await loadWorkPageData(
       {
         url: new URL('http://work.invalid/work'),
-        fetch: () => Promise.reject(new Error('synthetic private transport detail')),
+        rpc: createWebRpcClient({
+          url: 'http://work.invalid/rpc',
+          fetch: () => Promise.reject(new Error('synthetic private transport detail')),
+        }),
       },
       'live',
     );
@@ -224,27 +231,30 @@ describe('Work bounded stored metadata and Query hydration', () => {
     const data = await loadWorkPageData(
       {
         url: new URL('http://work.invalid/work'),
-        fetch: async (request) => {
-          const pathname = new URL(request.url).pathname;
-          paths.push(pathname);
-          if (pathname === '/rpc/report/revisionBootstrap') {
-            return Response.json(serializer.serialize(bootstrap));
-          }
-          if (pathname === '/rpc/work/attention') {
-            return Response.json({ data: JSON.parse(JSON.stringify(syntheticWorkAttentionDataset())), ok: true });
-          }
-          if (pathname !== '/rpc/session/page') {
-            throw new Error(`Unexpected acquisition: ${pathname}`);
-          }
-          const input = parseSessionQueryRequest(serializer.deserialize(await request.json()));
-          expect(input.pageSize).toBe(WORK_PAGE_SIZE);
-          expect(input.revision).toBe(revision);
-          expect(input.cursor).toBeNull();
-          const page = projectSessionPage(rows, input);
-          return Response.json(
-            serializer.serialize({ data: page, ok: true, revision, requestFingerprint: page.requestFingerprint }),
-          );
-        },
+        rpc: createWebRpcClient({
+          url: 'http://work.invalid/rpc',
+          fetch: async (request) => {
+            const pathname = new URL(request.url).pathname;
+            paths.push(pathname);
+            if (pathname === '/rpc/report/revisionBootstrap') {
+              return Response.json(serializer.serialize(bootstrap));
+            }
+            if (pathname === '/rpc/work/attention') {
+              return Response.json({ data: JSON.parse(JSON.stringify(syntheticWorkAttentionDataset())), ok: true });
+            }
+            if (pathname !== '/rpc/session/page') {
+              throw new Error(`Unexpected acquisition: ${pathname}`);
+            }
+            const input = parseSessionQueryRequest(serializer.deserialize(await request.json()));
+            expect(input.pageSize).toBe(WORK_PAGE_SIZE);
+            expect(input.revision).toBe(revision);
+            expect(input.cursor).toBeNull();
+            const page = projectSessionPage(rows, input);
+            return Response.json(
+              serializer.serialize({ data: page, ok: true, revision, requestFingerprint: page.requestFingerprint }),
+            );
+          },
+        }),
       },
       'live',
     );
@@ -284,10 +294,13 @@ describe('Work bounded stored metadata and Query hydration', () => {
     const data = await loadWorkPageData(
       {
         url: new URL('http://work.invalid/work'),
-        fetch: () => {
-          reads++;
-          throw new Error('No live reads in demo');
-        },
+        rpc: createWebRpcClient({
+          url: 'http://work.invalid/rpc',
+          fetch: () => {
+            reads++;
+            throw new Error('No live reads in demo');
+          },
+        }),
       },
       'demo',
     );
@@ -328,21 +341,24 @@ describe('Work bounded stored metadata and Query hydration', () => {
     const data = await loadWorkPageData(
       {
         url: new URL('http://work.invalid/work'),
-        fetch: async (request) => {
-          const pathname = new URL(request.url).pathname;
-          paths.push(pathname);
-          if (pathname === '/rpc/report/revisionBootstrap') {
-            return Response.json(serializer.serialize(bootstrap));
-          }
-          if (pathname !== '/rpc/session/page') {
-            throw new Error(`Unexpected acquisition: ${pathname} (private transport detail)`);
-          }
-          const input = parseSessionQueryRequest(serializer.deserialize(await request.json()));
-          const page = projectSessionPage(rows, input);
-          return Response.json(
-            serializer.serialize({ data: page, ok: true, revision, requestFingerprint: page.requestFingerprint }),
-          );
-        },
+        rpc: createWebRpcClient({
+          url: 'http://work.invalid/rpc',
+          fetch: async (request) => {
+            const pathname = new URL(request.url).pathname;
+            paths.push(pathname);
+            if (pathname === '/rpc/report/revisionBootstrap') {
+              return Response.json(serializer.serialize(bootstrap));
+            }
+            if (pathname !== '/rpc/session/page') {
+              throw new Error(`Unexpected acquisition: ${pathname} (private transport detail)`);
+            }
+            const input = parseSessionQueryRequest(serializer.deserialize(await request.json()));
+            const page = projectSessionPage(rows, input);
+            return Response.json(
+              serializer.serialize({ data: page, ok: true, revision, requestFingerprint: page.requestFingerprint }),
+            );
+          },
+        }),
       },
       'live',
     );
@@ -364,8 +380,10 @@ describe('Work bounded stored metadata and Query hydration', () => {
   });
   test('an incompatible store becomes a fixed typed message rather than the server wording', async () => {
     const runtime = createWebQueryRuntime({
-      fetch: () => Promise.reject(new Error('no transport')),
-      url: new URL('http://work.invalid/work'),
+      rpc: createWebRpcClient({
+        fetch: () => Promise.reject(new Error('no transport')),
+        url: 'http://work.invalid/rpc',
+      }),
     });
     const incompatible: WorkAttentionClient = {
       attention: () =>
@@ -389,8 +407,10 @@ describe('Work bounded stored metadata and Query hydration', () => {
   });
   test('invalid context never prefetches global attention and valid scope is forwarded', async () => {
     const runtime = createWebQueryRuntime({
-      fetch: () => Promise.reject(new Error('no transport')),
-      url: new URL('http://work.invalid/work'),
+      rpc: createWebRpcClient({
+        fetch: () => Promise.reject(new Error('no transport')),
+        url: 'http://work.invalid/rpc',
+      }),
     });
     const seen: unknown[] = [];
     const sources = {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { SyncFleet } from '@ai-usage/web-contract/sync';
 import { createHydratedWebQueryClient } from '../../query/client';
 import { syncFleetKey, syncFleetQueryOptions } from '../../query/options/sync';
+import { createWebRpcClient } from '../../rpc/client';
 import { deferredSyncPageData, loadSyncPageData, SYNC_COMPATIBLE_GENERATION } from './sync-load';
 
 const fleet: SyncFleet = {
@@ -52,8 +53,10 @@ describe('Sync SSR load identity', () => {
     };
     const data = await loadSyncPageData(
       {
-        fetch: () => Promise.reject(new Error('Injected Sync client owns this acquisition.')),
-        url: new URL('http://sync.invalid/sync'),
+        rpc: createWebRpcClient({
+          fetch: () => Promise.reject(new Error('Injected Sync client owns this acquisition.')),
+          url: 'http://sync.invalid/rpc',
+        }),
       },
       { createClient: () => client, now: () => 42 },
     );

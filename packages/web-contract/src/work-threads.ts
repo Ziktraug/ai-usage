@@ -25,7 +25,7 @@ import {
   type WorkThreadEpisode,
   type WorkThreadListQuery,
 } from '@ai-usage/report-core/work-thread-view';
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   array,
   boolean,
@@ -49,6 +49,8 @@ import {
   transform,
   variant,
 } from 'valibot';
+import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { isJsonWireValue, publicMessageSchema } from './schema-conventions';
 
 /** Frozen domain parsers remain the authority; normalize their accepted wire values once. */
@@ -321,17 +323,41 @@ export const parseWorkThreadsDetailOutput = (value: unknown): WorkThreadsDetailO
 export const parseWorkThreadsCommandOutput = (value: unknown): WorkThreadsCommandOutput =>
   parse(workThreadsCommandOutputSchema, value);
 export const workThreadsContract = {
-  list: oc
-    .route({ method: 'POST', path: '/work/threads' })
+  list: rpcProcedure({
+    demo: 'synthetic-only',
+    errors: { Unavailable: publicErrorMap.Unavailable },
+    method: 'POST',
+    path: '/work/threads',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(workThreadsListInputSchema)
     .output(workThreadsListOutputSchema),
-  detail: oc
-    .route({ method: 'POST', path: '/work/threads/detail' })
+  detail: rpcProcedure({
+    demo: 'synthetic-only',
+    errors: { Unavailable: publicErrorMap.Unavailable },
+    method: 'POST',
+    path: '/work/threads/detail',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(workThreadsDetailInputSchema)
     .output(workThreadsDetailOutputSchema),
-  command: oc
-    .route({ method: 'POST', path: '/work/threads/command' })
-    .errors({ Unavailable: { status: 503, message: 'The task command could not be recorded.' } })
+  command: rpcProcedure({
+    demo: 'synthetic-only',
+    errors: {
+      Forbidden: publicErrorMap.Forbidden,
+      InvalidInput: publicErrorMap.InvalidInput,
+      Unavailable: { message: 'The task command could not be recorded.', status: 503 },
+    },
+    method: 'POST',
+    path: '/work/threads/command',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(workThreadsCommandInputSchema)
     .output(workThreadsCommandOutputSchema),
 } as const;

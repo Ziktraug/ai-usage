@@ -31,7 +31,7 @@ import {
 import { REVIEW_ATTEMPT_BOUNDS } from '@ai-usage/report-core/work-attempts';
 import { EXECUTOR_BOUNDS } from '@ai-usage/report-core/work-executors';
 import { CANDIDATE_IDENTITY_STATES } from '@ai-usage/report-core/work-routing-vocabulary';
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   array,
   type BaseIssue,
@@ -59,6 +59,7 @@ import {
   variant,
 } from 'valibot';
 import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import {
   emptyInputSchema,
   isJsonWireValue,
@@ -829,6 +830,7 @@ const readErrors = {
 const saveSettingsErrors = {
   Conflict: { data: delegationConflictDataSchema },
   EngineUnavailable: publicErrorMap.EngineUnavailable,
+  Forbidden: publicErrorMap.Forbidden,
   ForbiddenDemo: publicErrorMap.ForbiddenDemo,
   InvalidInput: { data: delegationInvalidInputDataSchema },
   Unavailable: publicErrorMap.Unavailable,
@@ -836,6 +838,7 @@ const saveSettingsErrors = {
 
 const simulateErrors = {
   EngineUnavailable: publicErrorMap.EngineUnavailable,
+  Forbidden: publicErrorMap.Forbidden,
   ForbiddenDemo: publicErrorMap.ForbiddenDemo,
   InvalidInput: { data: delegationInvalidInputDataSchema },
   Unavailable: publicErrorMap.Unavailable,
@@ -843,6 +846,7 @@ const simulateErrors = {
 
 const cancelErrors = {
   EngineUnavailable: publicErrorMap.EngineUnavailable,
+  Forbidden: publicErrorMap.Forbidden,
   ForbiddenDemo: publicErrorMap.ForbiddenDemo,
   InvalidInput: { data: delegationInvalidInputDataSchema },
   Unavailable: publicErrorMap.Unavailable,
@@ -851,6 +855,7 @@ const cancelErrors = {
 const recordAcceptanceErrors = {
   Conflict: { data: delegationConflictDataSchema },
   EngineUnavailable: publicErrorMap.EngineUnavailable,
+  Forbidden: publicErrorMap.Forbidden,
   ForbiddenDemo: publicErrorMap.ForbiddenDemo,
   InvalidInput: { data: delegationInvalidInputDataSchema },
   Unavailable: publicErrorMap.Unavailable,
@@ -909,41 +914,76 @@ export const parseDelegationRecordAcceptanceOutput = (value: unknown): Delegatio
   parse(delegationRecordAcceptanceOutputSchema, value);
 
 export const delegationContract = {
-  settings: oc
-    .route({ method: 'GET', path: '/delegation/settings' })
+  settings: rpcProcedure({
+    errors: readErrors,
+    method: 'GET',
+    path: '/delegation/settings',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
-    .output(delegationSettingsViewSchema)
-    .errors(readErrors),
-  saveSettings: oc
-    .route({ method: 'POST', path: '/delegation/settings' })
+    .output(delegationSettingsViewSchema),
+  saveSettings: rpcProcedure({
+    errors: saveSettingsErrors,
+    method: 'POST',
+    path: '/delegation/settings',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(delegationSaveSettingsInputSchema)
-    .output(delegationSaveSettingsOutputSchema)
-    .errors(saveSettingsErrors),
-  simulate: oc
-    .route({ method: 'POST', path: '/delegation/simulate' })
+    .output(delegationSaveSettingsOutputSchema),
+  simulate: rpcProcedure({
+    errors: simulateErrors,
+    method: 'POST',
+    path: '/delegation/simulate',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(delegationSimulateInputSchema)
-    .output(delegationQualificationSchema)
-    .errors(simulateErrors),
-  jobs: oc
-    .route({ method: 'GET', path: '/delegation/jobs' })
+    .output(delegationQualificationSchema),
+  jobs: rpcProcedure({
+    errors: readErrors,
+    method: 'GET',
+    path: '/delegation/jobs',
+    requestSize: 'bounded-url',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(delegationJobsInputSchema)
-    .output(delegationJobsOutputSchema)
-    .errors(readErrors),
-  job: oc
-    .route({ method: 'GET', path: '/delegation/job' })
+    .output(delegationJobsOutputSchema),
+  job: rpcProcedure({
+    errors: readErrors,
+    method: 'GET',
+    path: '/delegation/job',
+    requestSize: 'bounded-url',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(delegationJobInputSchema)
-    .output(delegationJobViewSchema)
-    .errors(readErrors),
-  cancel: oc
-    .route({ method: 'POST', path: '/delegation/cancel' })
+    .output(delegationJobViewSchema),
+  cancel: rpcProcedure({
+    errors: cancelErrors,
+    method: 'POST',
+    path: '/delegation/cancel',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(delegationCancelInputSchema)
-    .output(delegationCancelOutputSchema)
-    .errors(cancelErrors),
-  recordAcceptance: oc
-    .route({ method: 'POST', path: '/delegation/acceptance' })
+    .output(delegationCancelOutputSchema),
+  recordAcceptance: rpcProcedure({
+    errors: recordAcceptanceErrors,
+    method: 'POST',
+    path: '/delegation/acceptance',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(delegationRecordAcceptanceInputSchema)
-    .output(delegationRecordAcceptanceOutputSchema)
-    .errors(recordAcceptanceErrors),
+    .output(delegationRecordAcceptanceOutputSchema),
 } as const;
 
 export type DelegationContractClient = ContractRouterClient<typeof delegationContract>;

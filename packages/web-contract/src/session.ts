@@ -10,9 +10,10 @@ import {
   type SessionPageResult,
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsResolveRequest, parseSessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import { custom, literal, minLength, picklist, pipe, strictObject, string, transform, union } from 'valibot';
 import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { isJsonWireValue } from './schema-conventions';
 
 const parses = <Output>(parser: (input: unknown) => Output, input: unknown): boolean => {
@@ -115,36 +116,66 @@ export const sessionVcsResolveResponseSchema = parserSchema(
 );
 
 export const sessionContract = {
-  campaignChildren: oc
-    .route({ method: 'POST', path: '/session/campaign-children' })
+  campaignChildren: rpcProcedure({
+    errors: exactSessionErrors,
+    method: 'POST',
+    path: '/session/campaign-children',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(sessionCampaignChildrenRequestSchema)
-    .output(sessionCampaignChildrenOutputSchema)
-    .errors(exactSessionErrors),
-  detail: oc
-    .route({ method: 'POST', path: '/session/detail' })
+    .output(sessionCampaignChildrenOutputSchema),
+  detail: rpcProcedure({
+    errors: localSessionErrors,
+    method: 'POST',
+    path: '/session/detail',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(sessionDetailRequestSchema)
-    .output(sessionDetailResponseSchema)
-    .errors(localSessionErrors),
-  lookup: oc
-    .route({ method: 'POST', path: '/session/lookup' })
+    .output(sessionDetailResponseSchema),
+  lookup: rpcProcedure({
+    errors: exactSessionErrors,
+    method: 'POST',
+    path: '/session/lookup',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(sessionLookupRequestSchema)
-    .output(sessionLookupOutputSchema)
-    .errors(exactSessionErrors),
-  neighbors: oc
-    .route({ method: 'POST', path: '/session/neighbors' })
+    .output(sessionLookupOutputSchema),
+  neighbors: rpcProcedure({
+    errors: exactSessionErrors,
+    method: 'POST',
+    path: '/session/neighbors',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(sessionNeighborRequestSchema)
-    .output(sessionNeighborOutputSchema)
-    .errors(exactSessionErrors),
-  page: oc
-    .route({ method: 'POST', path: '/session/page' })
+    .output(sessionNeighborOutputSchema),
+  page: rpcProcedure({
+    errors: exactSessionErrors,
+    method: 'POST',
+    path: '/session/page',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(sessionQueryRequestSchema)
-    .output(sessionPageOutputSchema)
-    .errors(exactSessionErrors),
-  vcs: oc
-    .route({ method: 'POST', path: '/session/vcs' })
+    .output(sessionPageOutputSchema),
+  vcs: rpcProcedure({
+    errors: localSessionErrors,
+    method: 'POST',
+    path: '/session/vcs',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(sessionVcsResolveRequestSchema)
-    .output(sessionVcsResolveResponseSchema)
-    .errors(localSessionErrors),
+    .output(sessionVcsResolveResponseSchema),
 } as const;
 
 export type SessionContractClient = ContractRouterClient<typeof sessionContract>;

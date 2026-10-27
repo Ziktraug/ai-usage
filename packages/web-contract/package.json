@@ -9,6 +9,9 @@
     "./errors": "./src/errors.ts",
     "./schema-conventions": "./src/schema-conventions.ts",
     "./report": "./src/report.ts",
+    "./rpc-get-paths": "./src/rpc-get-paths.generated.ts",
+    "./rpc-procedure": "./src/rpc-procedure.ts",
+    "./rpc-procedure-table": "./src/rpc-procedure-table.ts",
     "./session": "./src/session.ts",
     "./skills": "./src/skills.ts",
     "./control": "./src/control.ts",
@@ -22,6 +25,7 @@
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
     "format": "biome format --write .",
+    "generate": "bun scripts/generate-rpc-get-paths.ts",
     "lint": "biome check .",
     "test": "bun test"
   },

@@ -3,11 +3,10 @@ import {
   readSessionQueryPerformanceCapture,
   resetSessionQueryPerformanceCapture,
 } from '@ai-usage/usage-store/performance-testing';
-import { type Handle, type HandleFetch, sequence } from '@sveltejs/kit/hooks';
+import { type Handle, sequence } from '@sveltejs/kit/hooks';
 import { demoRouteDecision } from '#lib/features/shell/demo-policy.server.ts';
 import { webReadObservabilityLifecycle } from '#lib/server/observability/web-read-lifecycle.server.ts';
 import { resetReportHydrationBytes, snapshotReportHydrationBytes } from '#lib/server/perf/report-hydration-perf.ts';
-import { E2E_SKILLS_FIXTURE_HEADER } from '#lib/server/rpc/e2e-fixture-profile.ts';
 import { handleResponseCompression } from '../src/server/response-compression.server';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
 import { handleTrustedLocalRequest } from '../src/server/trusted-local-hook.server';
@@ -56,19 +55,6 @@ const handleSessionQueryPerfSnapshot = (request: Request): Response | undefined 
       status: 200,
     },
   );
-};
-
-export const handleFetch: HandleFetch = async ({ event, fetch, request }) => {
-  const visualSkillsFixtureRequested =
-    process.env.AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES === '1' &&
-    event.request.headers.get(E2E_SKILLS_FIXTURE_HEADER) === 'visual' &&
-    new URL(request.url).pathname.startsWith('/rpc/skills/');
-  if (!visualSkillsFixtureRequested) {
-    return await fetch(request);
-  }
-  const headers = new Headers(request.headers);
-  headers.set(E2E_SKILLS_FIXTURE_HEADER, 'visual');
-  return await fetch(new Request(request, { headers }));
 };
 
 process.once('sveltekit:shutdown', async () => {

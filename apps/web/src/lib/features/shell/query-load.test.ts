@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { createWebQueryClient, hydrateWebQueryClient } from '../../query/client';
 import { finiteSwrKey } from '../../query/keys';
+import { createWebRpcClient } from '../../rpc/client';
 import { createAwaitedRouteQueryState } from './query-load';
 
 const invalidRpcResponse = (): Response => Response.json({ invalid: true });
 const optionsFor = (port: number) => ({
-  fetch: () => Promise.resolve(invalidRpcResponse()),
-  url: new URL(`http://127.0.0.1:${port}/`),
+  rpc: createWebRpcClient({
+    fetch: () => Promise.resolve(invalidRpcResponse()),
+    url: new URL(`http://127.0.0.1:${port}/rpc`),
+  }),
 });
 
 describe('Svelte route Query hydration', () => {

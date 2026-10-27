@@ -609,6 +609,14 @@ The shared contract-first oRPC client transports typed calls and exposes one
 generated Svelte Query utility tree; it does not decide visibility or
 freshness. Client-visible modules must not import `*.server.*`.
 
+Each procedure is declared once in `@ai-usage/web-contract` through
+`rpcProcedure` (method, transport, size classes, error families, demo policy);
+the request policy, its path table, the demo set and the browser's GET table
+are derived from those declarations (ADR 0076). Server loads acquire through an
+in-process router client (`createInProcessWebRpcClient`) with the dependencies
+`/rpc` builds for the document request, so SSR makes no HTTP subrequest and no
+code manufactures trust headers.
+
 The Skills shell derives one immutable `SkillsPresentationProjection` from the
 accepted inventory, Project, selection, and observation Query values. Workspace,
 global, health, matrix, and observation renderers consume that projection rather

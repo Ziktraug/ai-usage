@@ -1,10 +1,9 @@
 import { isWorkThreadId } from '@ai-usage/report-core/work-thread';
 import type { RuntimeMode } from '../../../runtime-mode';
 import type { WebQueryHydrationState } from '../../query/client';
-import type { WebQueryRuntimeOptions } from '../../query/composition';
 import { prefetchWorkThreadRoute } from '../../query/options/work-threads';
 import { createWorkThreadsClient } from '../../rpc/work-threads-client';
-import { createAwaitedRouteQueryState } from '../shell/query-load';
+import { createAwaitedRouteQueryState, type RouteQueryLoadOptions } from '../shell/query-load';
 import { threadListQuery, threadPageCursors } from './work-thread-model';
 
 export interface ThreadPageData {
@@ -18,7 +17,7 @@ export const deferredThreadPageData = (mode: RuntimeMode): ThreadPageData => ({
 });
 
 export const loadThreadPageData = async (
-  options: WebQueryRuntimeOptions,
+  options: RouteQueryLoadOptions,
   mode: RuntimeMode,
 ): Promise<ThreadPageData> => {
   const queryState = await createAwaitedRouteQueryState(options, async (runtime) => {

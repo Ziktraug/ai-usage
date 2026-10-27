@@ -207,6 +207,5 @@ describe('browser server-state ownership boundary', () => {
 
     expect(rootLayoutLoad).not.toContain('createWebQueryClient');
     expect(rootLayoutLoad).not.toContain('createWebQueryRuntime');
-    expect(rootLayoutLoad).not.toContain('createWebQueryLoadState');
   });
 });

@@ -10,14 +10,17 @@ import { toWebReportPayload } from '../../../../web-report-payload';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapKey } from '../../../query/options/report';
+import { createWebRpcClient } from '../../../rpc/client';
 import { acquireLiveReportQueryState } from './report-bootstrap';
 
 const REPORT_FRESHNESS_PATTERN = /Data as of Jun 11, \d{2}:\d{2}/;
 
 const liveAcquisitionOptions = () => ({
-  fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
   pageUrl: new URL('http://report.invalid/'),
-  url: new URL('http://report.invalid/'),
+  rpc: createWebRpcClient({
+    fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
+    url: 'http://report.invalid/rpc',
+  }),
 });
 
 interface SvelteServerModule {

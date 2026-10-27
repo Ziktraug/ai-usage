@@ -5,6 +5,7 @@ import {
   ReportBootstrapUnavailableError,
 } from '#lib/features/report/core/report-bootstrap.ts';
 import { recordReportHydrationBytes } from '#lib/server/perf/report-hydration-perf.ts';
+import { createInProcessWebRpcClient } from '#lib/server/rpc/in-process-client.server.ts';
 import type { LayoutServerLoad } from './$types';
 
 /**
@@ -14,7 +15,7 @@ import type { LayoutServerLoad } from './$types';
  * A universal `load` would re-run during hydration and re-acquire everything over the network — the
  * serialised SSR fetch cache cannot replay the Overview, whose request body is a Blob by then.
  */
-export const load: LayoutServerLoad = async ({ depends, fetch, isDataRequest, locals, untrack, url }) => {
+export const load: LayoutServerLoad = async ({ depends, isDataRequest, locals, request, untrack, url }) => {
   depends('ai-usage:report-root');
   if (locals.shellE2eError) {
     error(503, 'Synthetic shell route failure');
@@ -25,17 +26,14 @@ export const load: LayoutServerLoad = async ({ depends, fetch, isDataRequest, lo
   if (isDataRequest) {
     return { reportQueryState: deferredLiveReportQueryState() };
   }
-  // Detached copies. Reading a tracked `url` property here would make this load search-scoped, so
+  // A detached copy. Reading a tracked `url` property here would make this load search-scoped, so
   // every filter and range change would refetch __data.json and re-acquire the whole report — work
   // the mounted report already owns, and which delays the refresh it is racing.
   const pageUrl = untrack(() => new URL(url.href));
-  const rpcBaseUrl = untrack(() => new URL(url.origin));
   try {
     const reportQueryState = await acquireLiveReportQueryState({
-      fetch: (request) => fetch(request),
       pageUrl,
-      requestOwner: 'report-root-ssr',
-      url: rpcBaseUrl,
+      rpc: await createInProcessWebRpcClient(request),
     });
     recordReportHydrationBytes(reportQueryState);
     return { reportQueryState };

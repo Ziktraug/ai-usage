@@ -1,12 +1,7 @@
 import type { WebContractClient } from '@ai-usage/web-contract';
 import type { QueryClient } from '@tanstack/svelte-query';
-import { createWebRpcClient, createWebRpcQueryUtils, type WebRpcQueryUtils } from '../rpc/client';
-import {
-  createWebQueryClient,
-  dehydrateWebQueryClient,
-  hydrateWebQueryClient,
-  type WebQueryHydrationState,
-} from './client';
+import { createWebRpcQueryUtils, type WebRpcQueryUtils } from '../rpc/client';
+import { createWebQueryClient, hydrateWebQueryClient, type WebQueryHydrationState } from './client';
 import { invalidateCurrentReportAliases } from './options/report';
 import type { WebQueryPolicyName } from './policies';
 
@@ -17,10 +12,12 @@ export interface WebQueryRuntime {
 }
 
 export interface WebQueryRuntimeOptions {
-  readonly fetch: (request: Request) => Promise<Response>;
   readonly hydrationState?: WebQueryHydrationState;
-  readonly requestOwner?: string;
-  readonly url: URL;
+  /**
+   * The typed transport. A server load passes the in-process router client
+   * (`createInProcessWebRpcClient`), so SSR acquisition makes no HTTP request (ADR 0076).
+   */
+  readonly rpc: WebContractClient;
 }
 
 /**
@@ -189,35 +186,13 @@ export const webQueryOwnership = [
   },
 ] as const satisfies readonly WebQueryOwnership[];
 
-export const createWebQueryRuntime = ({
-  fetch,
-  hydrationState,
-  requestOwner,
-  url,
-}: WebQueryRuntimeOptions): WebQueryRuntime => {
+/** An isolated request runtime: its own QueryClient over the given RPC client. */
+export const createWebQueryRuntime = ({ hydrationState, rpc }: WebQueryRuntimeOptions): WebQueryRuntime => {
   const queryClient = createWebQueryClient();
   if (hydrationState) {
     hydrateWebQueryClient(queryClient, hydrationState);
   }
-  const rpc = createWebRpcClient({
-    fetch,
-    // Only headers a browser can reproduce may be sent here. `load` runs on the server and again
-    // during hydration, and SvelteKit keys its serialised SSR fetch cache on the request headers.
-    // `Origin` is a forbidden header name the browser silently drops, so setting it server-side
-    // desynchronises the two cache keys and forces the hydrating client to refetch over the network.
-    headers: requestOwner === undefined ? {} : { 'x-ai-usage-request-owner': requestOwner },
-    url: new URL('/rpc', url),
-  });
   return { orpc: createWebRpcQueryUtils(rpc), queryClient, rpc };
-};
-
-export const createWebQueryLoadState = (options: WebQueryRuntimeOptions): WebQueryHydrationState => {
-  const runtime = createWebQueryRuntime(options);
-  try {
-    return dehydrateWebQueryClient(runtime.queryClient);
-  } finally {
-    runtime.queryClient.clear();
-  }
 };
 
 export const createPublicationQueryInvalidator = (queryClient: QueryClient) => {

@@ -428,8 +428,17 @@ const createDelegationDependencies = (request: Request): WebRpcRouterDependencie
     }),
 });
 
-export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpcRouterDependencies> => {
-  const fixtureVariant = e2eSkillsFixtureVariantForHeaders(request.headers);
+export interface WebRpcRouterDependencyOptions {
+  /** The e2e Skills fixture to serve; by default the one the request's own header selects. */
+  readonly skillsFixtureVariant?: E2ESkillsFixtureVariant;
+}
+
+/** The services one request's router calls; `/rpc` and the in-process SSR client build the same ones. */
+export const createWebRpcRouterDependencies = (
+  request: Request,
+  dependencyOptions: WebRpcRouterDependencyOptions = {},
+): Promise<WebRpcRouterDependencies> => {
+  const fixtureVariant = dependencyOptions.skillsFixtureVariant ?? e2eSkillsFixtureVariantForHeaders(request.headers);
   return Promise.resolve({
     delegation: createDelegationDependencies(request),
     report: createReportDependencies(request),
