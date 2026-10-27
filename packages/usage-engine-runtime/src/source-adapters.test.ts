@@ -12,7 +12,7 @@ import {
 } from '@ai-usage/local-machine/bounded-process';
 import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
-import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
+import { canonicalInstantFromDate, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
@@ -1351,7 +1351,11 @@ describe('work fact sources', () => {
         importPullRequestObservations({
           dbPath: usageStorePath(home),
           observations: [
-            stored(66, { mergedAt: '2026-10-21T19:30:00.000Z', state: 'MERGED' }),
+            stored(66, {
+              history: { complete: true, items: [] },
+              mergedAt: '2026-10-21T19:30:00.000Z',
+              state: 'MERGED',
+            }),
             stored(67, {}),
             stored(67, {
               baseRef: null,
@@ -2577,6 +2581,7 @@ test('observes an older linked PR when newer merged links fill the candidate bou
           checksRollup: 'success' as const,
           draft: false,
           headRef: 'fixture',
+          history: { complete: true, items: [] },
           host: 'github.com',
           machineId: machine.id,
           mergedAt: '2026-10-21T20:00:02.000Z',
@@ -2609,6 +2614,73 @@ test('observes an older linked PR when newer merged links fill the candidate bou
       });
     }
     expect(calls.filter(({ args }) => args[0] === 'pr').map(({ args }) => args[2])).toEqual(['1', '1']);
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test('re-reads a merged PR stored without its status history once, then leaves it alone', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-thread-pr-history-backfill-'));
+  try {
+    await createLinkedThread(home, [{ kind: 'pull-request', key: 'github.com/fixture/project#80' }]);
+    await Effect.runPromise(
+      importPullRequestObservations({
+        dbPath: usageStorePath(home),
+        observations: [
+          {
+            accountLabel: null,
+            baseRef: 'main',
+            checksRollup: 'success' as const,
+            draft: false,
+            headRef: 'fixture',
+            host: 'github.com',
+            machineId: machine.id,
+            mergedAt: '2026-10-21T20:00:02.000Z',
+            number: 80,
+            observedAt: '2026-10-21T20:00:03.000Z',
+            outcome: 'observed' as const,
+            outcomeMessage: null,
+            repository: 'Fixture/Project',
+            reviewDecision: 'APPROVED',
+            state: 'MERGED' as const,
+            title: 'Merged before histories were read',
+            updatedAt: '2026-10-21T20:00:02.000Z',
+            url: 'https://github.com/Fixture/Project/pull/80',
+          },
+        ],
+      }),
+    );
+    const calls: BoundedProcessOptions[] = [];
+    const registry = await createRegistry(home, {
+      ghAvailable: () => true,
+      workFactProcessRunner: (options) => {
+        if (options.args[0] === 'search') {
+          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: '[]' });
+        }
+        if (options.args[0] === 'pr') {
+          calls.push(options);
+          return Effect.succeed({
+            durationMs: 1,
+            exitCode: 0,
+            stdout: JSON.stringify({
+              ...JSON.parse(pullRequestView(options.args[4] ?? '', Number(options.args[2]))),
+              state: 'MERGED',
+              mergedAt: '2026-10-21T20:00:02Z',
+            }),
+          });
+        }
+        return fakeWorkFactRunner(calls)(options);
+      },
+    });
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await Effect.runPromise(registry.get('github.pull-requests')!.run(progressContext([])));
+    }
+    expect(calls.filter(({ args }) => args[0] === 'pr').map(({ args }) => args[2])).toEqual(['80']);
+    const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
+    expect(stored.items[0]?.latest.history).toEqual({
+      complete: true,
+      items: [{ actor: 'reviewer', at: parseCanonicalInstant('2026-10-20T09:00:00.000Z'), kind: 'approved' }],
+    });
   } finally {
     rmSync(home, { force: true, recursive: true });
   }

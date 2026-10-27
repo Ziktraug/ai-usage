@@ -11,6 +11,9 @@ import { threadListQuery } from './work-thread-model';
 
 const PROJECT_TAG_PATTERN = /class="wt-project-tag[^"]*" title="exaprint\/Exalibur">Exalibur</;
 const SOURCE_CAPTION_PATTERN = /GitHub · [A-Z][a-z]{2} \d/;
+// Lane glyphs are hidden from assistive technology (the day button names them); legend glyphs are not.
+const DAY_MILESTONE_PATTERN = /aria-hidden="true" class="wt-mark wt-milestone" data-milestone="([^"]+)"/g;
+const DAY_EVENT_DOT_PATTERN = /class="wt-mark wt-event-mark"/;
 
 const SUMMARY_CONTENT = /<summary[^>]*>(.*?)<\/summary>/;
 const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Checks failing<\/h2>/;
@@ -157,13 +160,15 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain(long.row.thread.title);
     expect(html(Detail, { ...baseDetailProps, data: analysis })).toContain('data-title-length="normal"');
   });
-  test('week cells retain session and event chips with a fully named task link', () => {
+  test('week cells retain session chips and draw the day milestone with a fully named task link', () => {
     const title =
       'Improve the synthetic report with a sufficiently long task title that needs to wrap while remaining completely accessible';
     const marks = [
-      { at: list.generatedAt, harness: 'claude', kind: 'session', label: 'Compare approaches' },
-      { at: list.generatedAt, harness: 'codex', kind: 'session', label: 'Review the approach' },
-      { at: list.generatedAt, harness: null, kind: 'event', label: 'PR #67 opened' },
+      { at: list.generatedAt, fact: null, harness: 'claude', kind: 'session', label: 'Compare approaches' },
+      { at: list.generatedAt, fact: null, harness: 'codex', kind: 'session', label: 'Review the approach' },
+      { at: list.generatedAt, fact: 'pull-request-opened', harness: null, kind: 'event', label: 'PR #67 opened' },
+      { at: list.generatedAt, fact: 'pull-request-merged', harness: null, kind: 'event', label: 'PR #67 merged' },
+      { at: list.generatedAt, fact: null, harness: null, kind: 'event', label: 'Waiting' },
     ];
     const body = html(List, {
       dataset: list,
@@ -177,9 +182,11 @@ describe('work thread SSR presentation', () => {
     });
     expect(body).toContain(`aria-label="${title}"`);
     expect(body).toContain(`title="${title}"`);
-    expect(body).toContain('2 sessions, 1 work events. Show activity.');
+    expect(body).toContain('2 sessions, PR #67 opened, PR #67 merged, 1 follow-up change. Show activity.');
     expect(body).toContain('wt-day-button');
-    expect(body).toContain('wt-event-mark');
+    // One glyph per day: the merge outranks the opening, and a milestone replaces the follow-up dot.
+    expect([...body.matchAll(DAY_MILESTONE_PATTERN)].map((match) => match[1])).toEqual(['pull-request-merged']);
+    expect(body).not.toMatch(DAY_EVENT_DOT_PATTERN);
     expect(body).toContain('>2</span>');
   });
   test('a row leads with its short project and reaches back past the week, without source captions', () => {
@@ -188,7 +195,7 @@ describe('work thread SSR presentation', () => {
       ...payments.row,
       thread: { ...payments.row.thread, projectLabel: 'exaprint/Exalibur' },
       firstActivityAt: old,
-      marks: [{ at: old, harness: 'codex', kind: 'session' as const, label: 'Old exploration' }],
+      marks: [{ at: old, fact: null, harness: 'codex', kind: 'session' as const, label: 'Old exploration' }],
     };
     const body = html(List, {
       dataset: list,
@@ -203,7 +210,7 @@ describe('work thread SSR presentation', () => {
     expect(body).toMatch(PROJECT_TAG_PATTERN);
     expect(body).not.toContain('Updated');
     expect(body).not.toMatch(SOURCE_CAPTION_PATTERN);
-    expect(body).toContain('1 sessions, 0 work events. Show activity.');
+    expect(body).toContain(': 1 session. Show activity.');
     expect(body).toContain('aria-label="Tasks and their activity timeline, scrolls back in time"');
     expect(body).toContain('>Today</span>');
   });

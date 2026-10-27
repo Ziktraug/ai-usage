@@ -38,9 +38,9 @@ const COLLECTION_TIMEOUT_MS = 60_000;
 const MAX_SERVED_PAGES = 12;
 const DONE_TAB = /^Done /;
 const API_PULL_REQUEST_READ = /^repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pulls\/\d+$/;
-// A query (never a mutation) reading only review-thread resolution of one pull request.
-const REVIEW_THREADS_READ =
-  /^query=query\(\$owner: String!, \$name: String!, \$number: Int!\) \{ repository\(owner: \$owner, name: \$name\) \{ pullRequest\(number: \$number\) \{ reviewThreads\(first: 100\) \{ totalCount nodes \{ isResolved \} \} \} \} \}$/;
+// A query (never a mutation) reading review-thread resolution and the bounded status history of one pull request.
+const PULL_REQUEST_DETAIL_READ =
+  'query=query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { totalCount nodes { isResolved } } reviews(last: 50, states: [APPROVED, CHANGES_REQUESTED]) { totalCount nodes { state submittedAt author { login } } } timelineItems(last: 30, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, CLOSED_EVENT, REOPENED_EVENT]) { totalCount nodes { __typename ... on ReadyForReviewEvent { createdAt actor { login } } ... on ConvertToDraftEvent { createdAt actor { login } } ... on ClosedEvent { createdAt actor { login } } ... on ReopenedEvent { createdAt actor { login } } } } } } }';
 const OWNER_VARIABLE = /^owner=[\w.-]+$/;
 const NAME_VARIABLE = /^name=[\w.-]+$/;
 const NUMBER_VARIABLE = /^number=\d+$/;
@@ -343,10 +343,10 @@ const assertReadOnlyGhCalls = async (log: string): Promise<void> => {
     } else if (command === 'pr') {
       expect(subcommand).toBe('view'); // Also excludes the legacy resolver's pr list in this journey.
     } else if (command === 'api' && subcommand === 'graphql') {
-      // The open PR's review-thread read: one query document and its three variables, nothing else.
+      // The PR detail read: one query document and its three variables, nothing else.
       expect(args).toHaveLength(10);
       expect([args[2], args[4], args[6], args[8]]).toEqual(['-f', '-f', '-f', '-F']);
-      expect(args[3]).toMatch(REVIEW_THREADS_READ);
+      expect(args[3]).toBe(PULL_REQUEST_DETAIL_READ);
       expect(args[5]).toMatch(OWNER_VARIABLE);
       expect(args[7]).toMatch(NAME_VARIABLE);
       expect(args[9]).toMatch(NUMBER_VARIABLE);

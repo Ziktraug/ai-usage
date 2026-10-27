@@ -237,7 +237,7 @@ describe('Work thread situation', () => {
           ...reviewed,
           sessionCount: 1,
           delegatedSessionCount: 1,
-          marks: [{ at, kind: 'event', harness: null, label: 'Agent review completed' }],
+          marks: [{ at, fact: null, kind: 'event', harness: null, label: 'Agent review completed' }],
         },
         at,
       ),

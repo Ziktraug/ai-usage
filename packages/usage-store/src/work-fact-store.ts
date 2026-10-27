@@ -102,7 +102,8 @@ export const workFactSchemaSql = `
     created_at TEXT,
     closed_at TEXT,
     unresolved_review_threads INTEGER,
-    cross_repository INTEGER
+    cross_repository INTEGER,
+    history TEXT
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_pull_request_observations_identity
     ON pull_request_observations(machine_id, host, repository, number, observed_at DESC);
@@ -199,6 +200,7 @@ export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>
         'closed_at',
         'unresolved_review_threads',
         'cross_repository',
+        'history',
       ],
     ],
     ['checkout_status_observations', ['counts_changed_at']],
@@ -247,6 +249,8 @@ interface PullRequestRecord {
   discovery_role?: string | null;
   draft: number | null;
   head_ref: string | null;
+  /** JSON `PullRequestHistory`; `NULL` when the read did not establish it or predates the column. */
+  history?: string | null;
   host: string;
   id: number;
   machine_id: string;
@@ -342,6 +346,7 @@ const pullRequestValue = (record: PullRequestRecord): unknown => ({
   discoveryRole: record.discovery_role,
   draft: booleanFromColumn(record.draft),
   headRef: record.head_ref,
+  history: record.history == null ? null : jsonFromColumn(record.history),
   host: record.host,
   machineId: record.machine_id,
   mergeable: record.mergeable,
@@ -428,8 +433,8 @@ const updateCheckoutCountChanges = (
   }
 };
 
-/** The stored comments; a column that no longer parses is handed over as text, which is not a list and fails re-validation. */
-const commentsFromColumn = (value: string): unknown => {
+/** A JSON column that no longer parses is handed over as text, which fails re-validation. */
+const jsonFromColumn = (value: string): unknown => {
   try {
     return JSON.parse(value) as unknown;
   } catch {
@@ -441,7 +446,7 @@ const jiraIssueValue = (record: JiraIssueRecord): unknown => ({
   ...(record.url ? { url: record.url } : {}),
   assigneeLabel: record.assignee_label,
   commentCount: record.comment_count,
-  comments: commentsFromColumn(record.comments_json),
+  comments: jsonFromColumn(record.comments_json),
   key: record.issue_key,
   machineId: record.machine_id,
   observedAt: record.observed_at,
@@ -630,8 +635,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 machine_id, host, repository, number, observed_at, outcome, outcome_message, account_label,
                 state, draft, review_decision, merged_at, updated_at, title, url, head_ref, base_ref, checks_rollup,
                 discovery_role, mergeable, merge_state_status, created_at, closed_at, unresolved_review_threads,
-                cross_repository
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cross_repository, history
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             for (const candidate of input.observations) {
               const observation = parsePullRequestObservation(candidate);
@@ -665,6 +670,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 observation.closedAt ?? null,
                 observation.unresolvedReviewThreads ?? null,
                 observation.crossRepository === undefined ? null : Number(observation.crossRepository),
+                observation.history == null ? null : JSON.stringify(observation.history),
               );
               if (changes(db) === 1) {
                 result.inserted += 1;

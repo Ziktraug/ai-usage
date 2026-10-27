@@ -367,7 +367,10 @@ export interface QueryWorkThreadLinksInput {
 
 export interface QueryActiveWorkThreadLinksInput {
   readonly dbPath: string;
-  /** Apply terminal-state eligibility before the bound; a failure after a merge stays eligible. */
+  /**
+   * Apply terminal-state eligibility before the bound; a failure after a merge, or a merged read
+   * without its status history, stays eligible.
+   */
   readonly excludeObservedMerged?: boolean;
   /** Restrict Jira authority before the bound; omitted means all sites. */
   readonly jiraSite?: string;
@@ -2676,7 +2679,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
       const pendingPullRequests = input.excludeObservedMerged === true;
       const latestObservations = pendingPullRequests
         ? `WITH latest_observations AS MATERIALIZED (
-        SELECT lower(host) || '/' || lower(repository) || '#' || number AS link_key, outcome, state, merged_at,
+        SELECT lower(host) || '/' || lower(repository) || '#' || number AS link_key, outcome, state, merged_at, history,
           ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
         FROM pull_request_observations WHERE machine_id = ?
       )`
@@ -2685,6 +2688,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         ? `AND NOT EXISTS (
         SELECT 1 FROM latest_observations observation WHERE observation.link_key = lower(links.link_key)
           AND observation.rank = 1 AND observation.outcome = 'observed' AND observation.state = 'MERGED'
+          AND observation.history IS NOT NULL
           AND NOT coalesce((threads.follow_state = 'waiting'
             AND json_extract(threads.waiting_on_json, '$.kind') = 'pull-request-review'
             AND lower(json_extract(threads.waiting_on_json, '$.linkKey')) = lower(links.link_key)
