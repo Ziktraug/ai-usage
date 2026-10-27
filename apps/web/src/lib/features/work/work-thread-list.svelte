@@ -23,7 +23,7 @@
     threadDate,
     threadSituationCopy,
     threadTime,
-    threadWeek,
+    threadTimeline,
   } from './work-thread-model';
   import WorkThreadSources from './work-thread-sources.svelte';
 
@@ -52,7 +52,44 @@
     loadingMore?: boolean;
     continuation?: boolean;
   } = $props();
-  const week = $derived(threadWeek(dataset.generatedAt, timeZone));
+  const timeline = $derived(
+    threadTimeline(
+      dataset.generatedAt,
+      timeZone,
+      rows.map((row) => row.firstActivityAt),
+    ),
+  );
+  const dayIndex = $derived(new Map(timeline.map((day, index) => [day.key, index])));
+  // Each month spans its own columns, so its pinned label stays readable wherever the lane scrolls.
+  const months = $derived(
+    timeline.flatMap((day, index) => {
+      if (day.month === null) {
+        return [];
+      }
+      const next = timeline.findIndex((later, laterIndex) => laterIndex > index && later.month !== null);
+      return [{ label: day.month, start: index + 1, span: (next === -1 ? timeline.length : next) - index }];
+    }),
+  );
+  // Mondays draw the stronger week line; the offset aligns the repeating background to them.
+  const weekOffset = $derived(
+    Math.max(
+      timeline.findIndex((day) => day.weekStart),
+      0,
+    ),
+  );
+  let board = $state<HTMLElement>();
+  let pinnedToToday = true;
+  // Today sits at the right edge on load and when the range grows; scrolling back is the operator's.
+  $effect(() => {
+    if (board && timeline.length && pinnedToToday) {
+      board.scrollLeft = board.scrollWidth;
+    }
+  });
+  const onBoardScroll = (): void => {
+    if (board) {
+      pinnedToToday = board.scrollLeft + board.clientWidth >= board.scrollWidth - 2;
+    }
+  };
   let groupByProject = $state(false);
   const situations = $derived(
     new Map(
@@ -159,15 +196,33 @@
 {/if}
 
 <div aria-labelledby={`work-tab-${query.tab}`} id="work-task-panel" role="tabpanel">
-  <div class="wt-board">
+  <!-- One horizontal scroller keeps every lane aligned with the scale; task and "what's left" stay pinned.
+       Focusing a task, a day or "what's left" scrolls it into view, and arrow keys then scroll the lane. -->
+  <section
+    aria-label="Tasks and their activity timeline, scrolls back in time"
+    class="wt-board"
+    onscroll={onBoardScroll}
+    style={`--wt-days: ${timeline.length}; --wt-week-offset: ${weekOffset}`}
+    bind:this={board}
+  >
     <div aria-hidden="true" class="wt-board-head">
-      <span>Task · latest activity first ↓</span>
-      <div class="wt-week-scale">
-        {#each week as day}
-          <span class:wt-today={day.today}>{day.label}</span>
+      <span class="wt-col-task">Task · latest activity first ↓</span>
+      <div class="wt-scale">
+        {#each months as month (month.start)}
+          <span class="wt-scale-month" style={`grid-column: ${month.start} / span ${month.span}`}
+            ><span>{month.label}</span></span
+          >
+        {/each}
+        {#each timeline as day, index}
+          <!-- A Monday right before today would collide with the "Today" label. -->
+          {#if day.today || (day.weekStart && index < timeline.length - 2)}
+            <span class="wt-scale-day" style={`grid-column: ${index + 1}`} class:wt-today={day.today}
+              >{day.today ? 'Today' : day.dayOfMonth}</span
+            >
+          {/if}
         {/each}
       </div>
-      <span>What's left</span>
+      <span class="wt-col-next">What's left</span>
     </div>
     {#each groups as group (group.project)}
       <section aria-label={`${group.project} tasks`}>
@@ -212,48 +267,49 @@
                 >
               </p>
             </div>
-            <fieldset aria-label={`This week's activity for ${row.thread.title}`} class="wt-week">
-              {#each week as day}
-                {@const marks = buckets.get(day.key) ?? []}
-                {@const sessions = marks.filter((mark) => mark.kind === 'session')}
-                <div class="wt-day" class:wt-today={day.today}>
-                  {#if marks.length}
-                    {@const selected = selectedMarks?.threadId === row.thread.threadId && selectedMarks.day === day.key}
-                    {@const description = `${day.label}: ${sessions.length} sessions, ${marks.length - sessions.length} work events. Show activity.`}
-                    <button
-                      aria-controls={selected ? `wt-marks-${row.thread.threadId}-${day.key}` : undefined}
-                      aria-expanded={selected ? 'true' : 'false'}
-                      aria-label={description}
-                      class="wt-day-button"
-                      id={`wt-mark-${row.thread.threadId}-${day.key}`}
-                      onclick={() =>
-                        (selectedMarks = selected ? null : { threadId: row.thread.threadId, day: day.key })}
-                      onkeydown={(event) => {
-                        if (event.key === 'Escape') {
-                          closeMarks();
-                        }
-                      }}
-                      title={description}
-                      type="button"
-                    >
-                      {#if sessions.length}
-                        <span
-                          aria-hidden="true"
-                          class="wt-mark"
-                          data-harness={sessions.length === 1 ? sessions[0]?.harness : ''}
-                          >{#if sessions.length > 1}
-                            {sessions.length}
-                          {:else}
-                            <WorkHarnessGlyph harness={sessions[0]?.harness ?? null} />
-                          {/if}</span
-                        >
-                      {/if}
-                      {#if marks.length > sessions.length}
-                        <span aria-hidden="true" class="wt-mark wt-event-mark"></span>
-                      {/if}
-                    </button>
-                  {/if}
-                </div>
+            <fieldset aria-label={`Activity of ${row.thread.title}`} class="wt-lane">
+              <span aria-hidden="true" class="wt-lane-today"></span>
+              {#each [...buckets] as [dayKey, marks] (dayKey)}
+                {@const index = dayIndex.get(dayKey)}
+                {@const day = index === undefined ? undefined : timeline[index]}
+                {#if day && index !== undefined}
+                  {@const sessions = marks.filter((mark) => mark.kind === 'session')}
+                  {@const selected = selectedMarks?.threadId === row.thread.threadId && selectedMarks.day === day.key}
+                  {@const description = `${day.label}: ${sessions.length} sessions, ${marks.length - sessions.length} work events. Show activity.`}
+                  <button
+                    aria-controls={selected ? `wt-marks-${row.thread.threadId}-${day.key}` : undefined}
+                    aria-expanded={selected ? 'true' : 'false'}
+                    aria-label={description}
+                    class="wt-day-button"
+                    id={`wt-mark-${row.thread.threadId}-${day.key}`}
+                    onclick={() => (selectedMarks = selected ? null : { threadId: row.thread.threadId, day: day.key })}
+                    onkeydown={(event) => {
+                      if (event.key === 'Escape') {
+                        closeMarks();
+                      }
+                    }}
+                    style={`grid-column: ${index + 1}`}
+                    title={description}
+                    type="button"
+                    class:wt-today={day.today}
+                  >
+                    {#if sessions.length}
+                      <span
+                        aria-hidden="true"
+                        class="wt-mark"
+                        data-harness={sessions.length === 1 ? sessions[0]?.harness : ''}
+                        >{#if sessions.length > 1}
+                          {sessions.length}
+                        {:else}
+                          <WorkHarnessGlyph harness={sessions[0]?.harness ?? null} />
+                        {/if}</span
+                      >
+                    {/if}
+                    {#if marks.length > sessions.length}
+                      <span aria-hidden="true" class="wt-mark wt-event-mark"></span>
+                    {/if}
+                  </button>
+                {/if}
               {/each}
             </fieldset>
             <a
@@ -317,7 +373,7 @@
         <a class="wt-link" href="/work/sessions">Browse sessions</a>
       </div>
     {/each}
-  </div>
+  </section>
   {#if dataset.nextCursor}
     <div class="wt-more">
       {#if continuation}

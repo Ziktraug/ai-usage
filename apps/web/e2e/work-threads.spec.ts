@@ -672,15 +672,23 @@ test('list and task layouts are accessible without overflow at desktop, tablet a
     expect(await taskLink.locator('strong').evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe('2');
     const taskBounds = await row(page, ids.longTitle).boundingBox();
     expect(taskBounds?.height).toBeLessThanOrEqual(width > 780 ? 240 : 360);
+    // The timeline scrolls inside the board, today at the right edge; the page itself never does.
+    const board = page.locator('.wt-board');
+    const scroll = await board.evaluate((element) => ({
+      left: element.scrollLeft,
+      max: element.scrollWidth - element.clientWidth,
+      visible: element.clientWidth,
+    }));
+    expect(scroll.left).toBeGreaterThanOrEqual(scroll.max - 2);
     if (width === 375) {
       const titleBounds = await row(page, ids.longTitle).locator('.wt-task-summary').boundingBox();
-      const weekControl = row(page, ids.longTitle).locator('.wt-day-button').first();
+      const weekControl = row(page, ids.longTitle).locator('.wt-day-button').last();
       const weekBounds = await weekControl.boundingBox();
       if (!(taskBounds && titleBounds && weekBounds)) {
         throw new Error('The mobile task title and week activity must remain visible.');
       }
-      expect(titleBounds.width / taskBounds.width).toBeGreaterThanOrEqual(0.48);
-      expect(titleBounds.width / taskBounds.width).toBeLessThanOrEqual(0.6);
+      expect(titleBounds.width / scroll.visible).toBeGreaterThanOrEqual(0.48);
+      expect(titleBounds.width / scroll.visible).toBeLessThanOrEqual(0.65);
       expect(weekBounds.width).toBeGreaterThanOrEqual(20);
       await expect(weekControl).toBeVisible();
     }
@@ -781,4 +789,28 @@ test('tasks of one ticket combine after a preview, undo, read as one, and separa
   await expect(banner).toHaveCount(0);
   await open(page);
   await expect(row(page, ids.webhookPullRequest)).toHaveCount(1);
+});
+
+test('the timeline scrolls back with the keyboard while the task and what is left stay pinned', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await open(page);
+  const board = page.getByRole('region', { name: 'Tasks and their activity timeline, scrolls back in time' });
+  await board.evaluate((element) => {
+    element.style.setProperty('--wt-days', '120');
+  });
+  const before = await board.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+    return element.scrollLeft;
+  });
+  expect(before).toBeGreaterThan(0);
+  const summary = row(page, ids.payments).locator('.wt-task-summary');
+  const pinned = await summary.boundingBox();
+  // Focus inside the lane, as a keyboard user reaches it; the arrows then scroll the board.
+  await row(page, ids.payments).locator('.wt-day-button').last().focus();
+  for (let press = 0; press < 5; press++) {
+    await page.keyboard.press('ArrowLeft');
+  }
+  await expect.poll(() => board.evaluate((element) => element.scrollLeft)).toBeLessThan(before);
+  expect((await summary.boundingBox())?.x).toBe(pinned?.x);
+  await expect(row(page, ids.payments).locator('.wt-next')).toBeInViewport();
 });

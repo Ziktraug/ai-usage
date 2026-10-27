@@ -579,13 +579,13 @@ const compareMarks = (left: WorkThreadMark, right: WorkThreadMark): number =>
   (left.label ?? '').localeCompare(right.label ?? '') ||
   (left.harness ?? '').localeCompare(right.harness ?? '');
 
-const weekMarksOf = (
+const timelineMarksOf = (
   episodes: readonly WorkThreadEpisode[],
   factEvents: readonly WorkThreadFactEvent[],
   events: readonly WorkThreadEvent[],
   now: CanonicalInstant,
 ): WorkThreadMark[] => {
-  const start = Date.parse(now) - 8 * DAY_MS;
+  const start = Date.parse(now) - (WORK_THREAD_VIEW_BOUNDS.maxTimelineDays + 1) * DAY_MS;
   const candidates: WorkThreadMark[] = [
     ...episodes.map((episode) => ({
       at: episode.startedAt,
@@ -813,7 +813,7 @@ const readRow = (
     ),
   ];
   const after = thread.doneAt === null ? [] : dates.filter((at) => Date.parse(at) > Date.parse(thread.doneAt ?? at));
-  const marks = weekMarksOf(episodes, factEvents, events, now);
+  const marks = timelineMarksOf(episodes, factEvents, events, now);
   const latest = (instants: readonly CanonicalInstant[]): CanonicalInstant =>
     instants.reduce((a, b) => (Date.parse(a) > Date.parse(b) ? a : b));
   return {

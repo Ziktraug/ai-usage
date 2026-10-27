@@ -4,16 +4,17 @@ import {
   WORK_THREAD_STALE_AFTER_MS,
   type WorkThreadRemainder,
 } from '@ai-usage/report-core/work-thread-situation';
-import type {
-  WorkThreadDetailDataset,
-  WorkThreadEpisode,
-  WorkThreadFactEvent,
-  WorkThreadListQuery,
-  WorkThreadMark,
-  WorkThreadMarkers,
-  WorkThreadPullRequestMarker,
-  WorkThreadRow,
-  WorkThreadSourceStatus,
+import {
+  WORK_THREAD_VIEW_BOUNDS,
+  type WorkThreadDetailDataset,
+  type WorkThreadEpisode,
+  type WorkThreadFactEvent,
+  type WorkThreadListQuery,
+  type WorkThreadMark,
+  type WorkThreadMarkers,
+  type WorkThreadPullRequestMarker,
+  type WorkThreadRow,
+  type WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
 
 export const threadListQuery = (search: URLSearchParams): WorkThreadListQuery => ({
@@ -100,16 +101,52 @@ export const threadDayKey = (at: string | Date, timeZone: string): string => {
   return `${part('year')}-${part('month')}-${part('day')}`;
 };
 
-export const threadWeek = (now: string, timeZone: string) => {
+export interface ThreadTimelineDay {
+  readonly dayOfMonth: number;
+  /** Calendar key `YYYY-MM-DD` in the operator's time zone. */
+  readonly key: string;
+  /** Accessible and tooltip name: "Mon, Oct 20". */
+  readonly label: string;
+  /** Set on the first day shown and on each first of the month: "Oct 2026". */
+  readonly month: string | null;
+  readonly today: boolean;
+  /** Mondays carry the week tick of the scale. */
+  readonly weekStart: boolean;
+}
+
+/** Two weeks at least, so a recent task still reads against its days. */
+export const THREAD_TIMELINE_MIN_DAYS = 14;
+
+/**
+ * Calendar days from the earliest activity among `firstActivities` to today, today last, bounded
+ * by `maxTimelineDays`. Days are calendar keys, so DST and midnight never shift a column.
+ */
+export const threadTimeline = (
+  now: string,
+  timeZone: string,
+  firstActivities: readonly string[] = [],
+): readonly ThreadTimelineDay[] => {
   const today = threadDayKey(now, timeZone);
-  const anchor = new Date(`${today}T12:00:00Z`);
-  return Array.from({ length: 7 }, (_, index) => {
-    const day = new Date(anchor);
-    day.setUTCDate(anchor.getUTCDate() - 6 + index);
+  const anchor = Date.parse(`${today}T12:00:00Z`);
+  const earliest = firstActivities.reduce((first, at) => {
+    const key = threadDayKey(at, timeZone);
+    return key < first ? key : first;
+  }, today);
+  const span = Math.round((anchor - Date.parse(`${earliest}T12:00:00Z`)) / 86_400_000) + 1;
+  const length = Math.min(Math.max(span, THREAD_TIMELINE_MIN_DAYS), WORK_THREAD_VIEW_BOUNDS.maxTimelineDays);
+  return Array.from({ length }, (_, index) => {
+    const day = new Date(anchor - (length - 1 - index) * 86_400_000);
+    const dayOfMonth = day.getUTCDate();
     return {
       key: day.toISOString().slice(0, 10),
-      label: day.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', day: 'numeric' }),
-      today: index === 6,
+      label: day.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }),
+      dayOfMonth,
+      weekStart: day.getUTCDay() === 1,
+      month:
+        index === 0 || dayOfMonth === 1
+          ? day.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', year: 'numeric' })
+          : null,
+      today: index === length - 1,
     };
   });
 };
