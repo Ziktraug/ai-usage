@@ -423,6 +423,23 @@ describe('scheduled source adapters', () => {
     }
   });
 
+  test('polls OpenCode for quota only with the CLI and a local OpenCode store', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-opencode-quota-'));
+    try {
+      const detect = async (registry: Awaited<ReturnType<typeof createRegistry>>) =>
+        (await Effect.runPromise(registry.get('opencode.usage-limits')?.detect ?? Effect.die('missing'))).availability;
+      expect(await detect(await createRegistry(home, { opencodeLiveAvailable: () => true }))).toBe('not-detected');
+
+      const store = path.join(home, '.local', 'share', 'opencode');
+      mkdirSync(store, { recursive: true });
+      writeFileSync(path.join(store, 'opencode.db'), '');
+      expect(await detect(await createRegistry(home, { opencodeLiveAvailable: () => true }))).toBe('detected');
+      expect(await detect(await createRegistry(home, { opencodeLiveAvailable: () => false }))).toBe('not-detected');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
   test('normalizes and imports one session source without global enrichment', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-source-claude-'));
     try {

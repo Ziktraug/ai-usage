@@ -96,6 +96,30 @@ describe('provider quota rail', () => {
     expect(codex?.windows.map((entryWindow) => entryWindow.severity)).toEqual(['ok', 'warning']);
   });
 
+  test('lists windows shortest allowance first, whatever order their ids stored them in', () => {
+    const entries = buildProviderQuotaRail(
+      dataset([
+        status({
+          key: 'opencode:7ea41d8c635f5d32',
+          windows: [
+            window({ group: 'monthly', id: 'go:monthly', label: 'Monthly' }),
+            window({ group: null, id: 'go:extra', label: 'Extra' }),
+            window({ group: '5h', id: 'go:rolling', label: '5h' }),
+            window({ group: 'weekly', id: 'go:weekly', label: 'Weekly' }),
+          ],
+        }),
+      ]),
+      NOW,
+    );
+
+    expect(entries.find((entry) => entry.key === 'opencode')?.windows.map((entry) => entry.label)).toEqual([
+      '5h',
+      'Weekly',
+      'Monthly',
+      'Extra',
+    ]);
+  });
+
   test('treats a sign-in failure as danger rather than an empty ring', () => {
     const entries = buildProviderQuotaRail(dataset([status({ key: 'codex', state: 'auth-required' })]), NOW);
     const codex = entries.find((entry) => entry.key === 'codex');

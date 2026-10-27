@@ -7,4 +7,5 @@ export * from './collected-session';
 export * from './collectors';
 export * from './datasets';
 export * from './facets';
+export * from './opencode-usage-limits';
 export * from './provider-quota';

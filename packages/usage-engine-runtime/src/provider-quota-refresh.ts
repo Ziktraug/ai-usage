@@ -54,6 +54,15 @@ export const CLAUDE_QUOTA_SOURCE_IDENTITY: ProviderQuotaSourceIdentity = {
   providerLabel: 'Claude',
 };
 
+/** OpenCode keeps no local quota history either, so `backfillSourceKey` is declared but never written. */
+export const OPENCODE_QUOTA_SOURCE_IDENTITY: ProviderQuotaSourceIdentity = {
+  backfillSourceKey: 'opencode-none',
+  cursorKey: 'refresh',
+  liveSourceKey: 'opencode-usage-limits',
+  providerKey: 'opencode',
+  providerLabel: 'OpenCode',
+};
+
 export interface ProviderQuotaRefreshResult {
   backfill: 'advanced' | 'complete' | 'failed' | 'skipped';
   latest: ProviderStatus[];

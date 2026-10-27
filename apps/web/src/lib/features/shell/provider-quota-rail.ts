@@ -157,6 +157,15 @@ const unmeasuredEntry = (key: HarnessKey): ProviderQuotaRailEntry => ({
   windows: [],
 });
 
+/**
+ * Stored windows are ordered by id, which is a storage detail: OpenCode's `go:monthly` would sort
+ * before `go:rolling`. The rail reads shortest allowance first, as the Overview panel groups them;
+ * windows outside the known groups keep their stored order after those.
+ */
+const WINDOW_GROUP_RANK: Readonly<Record<string, number>> = { '5h': 0, monthly: 2, weekly: 1 };
+const windowGroupRank = (window: ProviderLimitWindow): number =>
+  (window.group === null ? undefined : WINDOW_GROUP_RANK[window.group]) ?? Object.keys(WINDOW_GROUP_RANK).length;
+
 const toRailWindow = (window: ProviderLimitWindow): ProviderQuotaRailWindow => ({
   blocked: window.blocked,
   id: window.id,
@@ -185,7 +194,7 @@ const toRailEntry = (key: HarnessKey, status: ProviderStatus, now: Date): Provid
     severity: severityFor(fresh.state, fresh.windows),
     stale: fresh.state === 'stale',
     usedPercent: worstUsedPercent(fresh.windows),
-    windows: fresh.windows.map(toRailWindow),
+    windows: fresh.windows.toSorted((left, right) => windowGroupRank(left) - windowGroupRank(right)).map(toRailWindow),
   };
 };
 

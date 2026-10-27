@@ -190,6 +190,7 @@ try {
         ...policies,
         'claude.usage-limits': { enabled: false },
         'codex.usage-limits': { enabled: false },
+        'opencode.usage-limits': { enabled: false },
         // The masked acli would make Jira read as installed and failing; no fixture profile observes
         // Jira, so the source stays off and its coverage keeps reading "not observed".
         'jira.issues': { enabled: false },

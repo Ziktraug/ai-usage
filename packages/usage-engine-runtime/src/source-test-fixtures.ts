@@ -9,6 +9,7 @@ export const isolatedSourceOptions = {
   executorObservation: { which: () => null },
   ghAvailable: () => false,
   gitAvailable: () => false,
+  opencodeLiveAvailable: () => false,
   workFactProcessRunner: (options) => Effect.die(new Error(`Missing process fixture for ${options.command}`)),
 } satisfies SourceAdapterOptions;
 

@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { annotateWideEventIfAvailable } from '@ai-usage/effect-runtime';
-import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
+import {
+  createClaudeAgentSdkBatchSource,
+  createOpenCodeUsageLimitsBatchSource,
+  normalizeCursorCommitAttributionItems,
+} from '@ai-usage/local-collectors';
 import { CHECKOUT_STATUS_DEFAULTS, observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
 import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
 import {
@@ -105,7 +109,7 @@ import { Data, Duration, Effect, Exit } from 'effect';
 import { listManagedCursorUsageExportPaths } from './input-file';
 import type { ProviderQuotaRuntimeOptions } from './provider-quota';
 import { refreshLocalProviderQuotas } from './provider-quota';
-import { CLAUDE_QUOTA_SOURCE_IDENTITY } from './provider-quota-refresh';
+import { CLAUDE_QUOTA_SOURCE_IDENTITY, OPENCODE_QUOTA_SOURCE_IDENTITY } from './provider-quota-refresh';
 import { type SanitizableSourceWarning, sanitizeSourceWarnings } from './source-warnings';
 import { reconcileWorkBranchesFromHome } from './work-branches';
 
@@ -157,6 +161,8 @@ export interface SourceAdapterOptions {
   readonly gitAvailable?: () => boolean;
   readonly machine?: UsageMachine;
   readonly now?: () => Date;
+  /** Defaults to `opencode` being on PATH; the OpenCode usage-limits source is not detected without it. */
+  readonly opencodeLiveAvailable?: () => boolean;
   readonly providerQuotaOptions?: ProviderQuotaRuntimeOptions;
   readonly workFactInputs?: WorkFactInputs;
   /** The bounded runner for `git` and `gh`; tests inject a fake. */
@@ -775,7 +781,7 @@ const createProviderQuotaSource = (input: {
   detect: Effect.Effect<SourceDetectionResult>;
   /** Provider-specific refresh overrides: identity and sources. Codex passes none and keeps its defaults. */
   quotaOptions?: ProviderQuotaRuntimeOptions;
-  id: 'codex.usage-limits' | 'claude.usage-limits';
+  id: 'codex.usage-limits' | 'claude.usage-limits' | 'opencode.usage-limits';
   machine: UsageMachine;
   options: SourceAdapterOptions;
   storage: LocalHistoryStorageService;
@@ -1876,6 +1882,13 @@ export const createScheduledSourceRegistry = (
       const liveAvailable = options.claudeLiveAvailable?.() ?? Bun.which('claude') !== null;
       return liveAvailable && history.availability === 'detected' ? detected() : notDetected();
     });
+    // Same rule as Claude: the CLI on PATH and a local OpenCode store. Whether the CLI is recent enough
+    // to serve the route, and whether it is signed in to the Console, are outcomes the read records.
+    const opencodeQuotaDetection = Effect.gen(function* () {
+      const history = yield* detections.opencode;
+      const liveAvailable = options.opencodeLiveAvailable?.() ?? Bun.which('opencode') !== null;
+      return liveAvailable && history.availability === 'detected' ? detected() : notDetected();
+    });
     // At least one harness CLI on the PATH. Only metadata commands run, so no local history is
     // required: an installed but never-used CLI is still a fact worth recording.
     const executorDetection = Effect.sync(() => {
@@ -1983,6 +1996,19 @@ export const createScheduledSourceRegistry = (
           identity: CLAUDE_QUOTA_SOURCE_IDENTITY,
           // The CLI version, or its typed startup refusal, lands on the read's `quota.refresh` hop.
           liveSource: createClaudeAgentSdkBatchSource({ annotate: annotateWideEventIfAvailable }),
+        },
+        storage,
+      }),
+      createProviderQuotaSource({
+        dbPath,
+        detect: opencodeQuotaDetection,
+        id: 'opencode.usage-limits',
+        machine,
+        options,
+        quotaOptions: {
+          backfillSource: null,
+          identity: OPENCODE_QUOTA_SOURCE_IDENTITY,
+          liveSource: createOpenCodeUsageLimitsBatchSource(),
         },
         storage,
       }),

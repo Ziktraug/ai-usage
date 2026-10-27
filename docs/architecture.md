@@ -2,8 +2,9 @@
 
 `ai-usage` reports usage from local coding-tool history. Provider quota sources
 are the narrow provider-facing exception: the usage engine may invoke the
-installed Codex CLI's supported local app-server interface or the experimental
-Claude Agent SDK. Those provider clients own communication and authentication.
+installed Codex CLI's supported local app-server interface, the experimental
+Claude Agent SDK, or the installed OpenCode CLI's experimental local
+usage-limits route. Those provider clients own communication and authentication.
 `ai-usage` does not read provider credentials, call private provider HTTP
 endpoints, or persist raw provider payloads.
 
@@ -887,7 +888,10 @@ admission, cadence, dependencies, or publication ordering here.
 - Stable sources are `claude.sessions`, `codex.sessions`,
   `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`,
   and `cursor.commit-attribution`. `claude.usage-limits` is an eighth,
-  default-enabled experimental source whose upstream API may change.
+  default-enabled experimental source whose upstream API may change, and
+  `opencode.usage-limits` is another on the same terms: it runs
+  `opencode api --standalone experimental.usage.limits` and needs OpenCode
+  2.2.0 or later.
   `executors.capabilities` is a ninth, default-enabled source that runs
   harness CLI metadata commands every fifteen minutes and never changes the
   served report.

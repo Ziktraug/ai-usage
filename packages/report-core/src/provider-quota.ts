@@ -547,6 +547,83 @@ export const normalizeClaudeAgentSdkQuotaObservation = (
   };
 };
 
+export interface NormalizeOpenCodeUsageLimitsInput {
+  accountScope?: string | null;
+  machineId: string;
+  machineLabel?: string | null;
+  observedAt: Date | string;
+  /** The `data` member of `experimental.usage.limits`, already known to be non-null. */
+  result: unknown;
+}
+
+/**
+ * The three OpenCode Go meters, in the order the console shows them. OpenCode documents them as a
+ * 5-hour, a weekly and a monthly allowance, but the server never reports a duration, so — as for
+ * Claude — `limitSeconds` stays null rather than being invented from the documentation.
+ */
+const OPENCODE_GO_METERS = [
+  { group: '5h', key: 'rolling', label: '5h' },
+  { group: 'weekly', key: 'weekly', label: 'Weekly' },
+  { group: 'monthly', key: 'monthly', label: 'Monthly' },
+] as const;
+
+const openCodeGoWindow = (raw: unknown, meter: (typeof OPENCODE_GO_METERS)[number]): ProviderLimitWindow | null => {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const usedPercent = clampPercent(raw.percent);
+  // `resetsAt` is milliseconds since the epoch, which `normalizeIsoTimestamp` reads as such.
+  const resetsAt = typeof raw.resetsAt === 'number' ? normalizeIsoTimestamp(raw.resetsAt) : null;
+  if (usedPercent === null && resetsAt === null) {
+    return null;
+  }
+  return {
+    // `limited` is OpenCode's own binary "Go refuses requests until the window resets".
+    blocked: raw.limited === true || usedPercent === 100,
+    group: meter.group,
+    id: `go:${meter.key}`,
+    label: meter.label,
+    limitSeconds: null,
+    remainingPercent: remainingPercentFromUsed(usedPercent),
+    resetsAt,
+    scope: 'global',
+    usedPercent,
+  };
+};
+
+/**
+ * Normalises the OpenCode server's experimental usage-limits payload. Only the Go allowance becomes
+ * windows: Console budgets are monthly spend caps, a different metric kind that must not be drawn as
+ * a subscription quota. A signed-in workspace without Go is a normal outcome, recorded as a
+ * window-less `unsupported` observation so the UI can say "no quota window" rather than "never read".
+ */
+export const normalizeOpenCodeUsageLimitsObservation = (
+  input: NormalizeOpenCodeUsageLimitsInput,
+): ProviderQuotaObservation | null => {
+  const observedAt = normalizeIsoTimestamp(input.observedAt);
+  if (!(observedAt && nonEmptyString(input.machineId) && isRecord(input.result))) {
+    return null;
+  }
+  const go = input.result.go;
+  const windows = isRecord(go)
+    ? OPENCODE_GO_METERS.flatMap((meter) => openCodeGoWindow(go[meter.key], meter) ?? [])
+    : [];
+  const measuredState: ProviderStatusState = windows.some((window) => window.blocked) ? 'partial' : 'ok';
+  return {
+    accountScope: input.accountScope ?? null,
+    machineId: input.machineId,
+    machineLabel: input.machineLabel ?? null,
+    observedAt,
+    plan: isRecord(go) ? 'go' : null,
+    providerGeneratedAt: null,
+    providerKey: 'opencode',
+    providerLabel: 'OpenCode',
+    source: { confidence: 'authoritative', key: 'opencode-usage-limits', mode: 'poll' },
+    state: windows.length > 0 ? measuredState : 'unsupported',
+    windows,
+  };
+};
+
 const SOURCE_CONFIDENCES = new Set(['authoritative', 'historical', 'derived']);
 const SOURCE_MODES = new Set(['poll', 'push', 'backfill']);
 const STATUS_STATES = new Set(['ok', 'partial', 'auth-required', 'unsupported', 'stale', 'error']);

@@ -111,7 +111,7 @@ describe('collection source contracts', () => {
   test('derives the provider-usage group rather than naming one source', () => {
     // A quota refresh means "refresh the providers". Hardcoding a single id is what made the second
     // provider invisible to the CLI and to the on-demand refresh.
-    expect(providerUsageSourceIds).toEqual(['codex.usage-limits', 'claude.usage-limits']);
+    expect(providerUsageSourceIds).toEqual(['codex.usage-limits', 'claude.usage-limits', 'opencode.usage-limits']);
   });
 
   test('validates stable ids and strict sparse overrides', () => {

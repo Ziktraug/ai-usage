@@ -532,6 +532,7 @@ export interface LiveUsageEngineRuntimeOptions {
     | 'executorObservation'
     | 'ghAvailable'
     | 'gitAvailable'
+    | 'opencodeLiveAvailable'
     | 'workFactProcessRunner'
   >;
   readonly storage?: LocalHistoryStorageService;

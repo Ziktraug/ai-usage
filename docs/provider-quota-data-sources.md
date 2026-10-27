@@ -1,8 +1,8 @@
 # Provider quota data sources
 
-Status: research snapshot as of 2026-07-15, re-verified against primary sources on 2026-08-08. This document covers subscription quota percentages and reset windows. It does not treat context-window usage, session token counts, estimated cost, API billing, or HTTP request throttling as equivalent metrics.
+Status: research snapshot as of 2026-07-15, re-verified against primary sources on 2026-08-08 and, for OpenCode and Cursor, on 2026-10-27. This document covers subscription quota percentages and reset windows. It does not treat context-window usage, session token counts, estimated cost, API billing, or HTTP request throttling as equivalent metrics.
 
-The 2026-08-08 pass confirmed the Codex, OpenCode, and Cursor findings unchanged, and corrected two errors in the Claude Code and Gemini CLI sections. Both are marked inline below.
+The 2026-08-08 pass confirmed the Codex, OpenCode, and Cursor findings unchanged, and corrected two errors in the Claude Code and Gemini CLI sections. Both are marked inline below. The 2026-10-27 pass found that OpenCode now serves its Go allowance through its own local server, and confirmed the Cursor findings unchanged.
 
 ## Executive summary
 
@@ -12,11 +12,11 @@ Provider quota data does not follow one universal 5-hour/weekly/monthly model:
 | --- | --- | --- | --- | --- |
 | Codex | Commonly 5-hour and weekly; optional monthly credit/spend control is a different concept | `codex app-server` JSON-RPC `account/rateLimits/read` | Rich but imperfect local rollout JSONL | Local snapshots are redundant, opportunistic, and can be replayed as apparently fresh |
 | Claude Code | 5-hour and 7-day for Claude.ai subscribers, plus per-model weekly windows and overage | Agent SDK `Query.usage_EXPERIMENTAL_…()` for polling; status-line JSON on stdin as the documented fallback | No quota data found in local transcripts | The polling source is shipped but explicitly unstable; the documented status-line source is push-only |
-| OpenCode Go | 5-hour, weekly, monthly | Web console only | No quota fields in local OpenCode SQLite | No supported public usage endpoint yet |
+| OpenCode Go | 5-hour, weekly, monthly | `opencode api --standalone experimental.usage.limits` (OpenCode 2.2.0+) | No quota fields in local OpenCode SQLite | The route is named experimental and needs a 2.2.0 CLI |
 | Cursor | Primarily monthly included usage/spend | Dashboard; Admin API for Teams | Admin API supports usage events and daily data | Individual plans have no documented programmatic quota source; no equivalent 5-hour/weekly windows |
 | Gemini CLI | Primarily daily and per-model | Interactive `/stats model` | No documented quota-history source | No documented headless quota command; different window model |
 
-The recommended MVP is Codex first, using the CLI's app-server as the live polling adapter and rollout JSONL for a best-effort backfill. Claude is the recommended second provider: unlike the other three it has a real programmatic source, and it can be polled at rest rather than only observed passively.
+The recommended MVP is Codex first, using the CLI's app-server as the live polling adapter and rollout JSONL for a best-effort backfill. Claude is the recommended second provider: it has a real programmatic source, and it can be polled at rest rather than only observed passively. OpenCode Go became the third on 2026-10-27, when OpenCode shipped a local route with the same shape: the CLI owns authentication and answers without a model turn.
 
 ## Metric boundaries
 
@@ -216,6 +216,12 @@ Do not confuse these fields with:
 
 ## OpenCode
 
+> **Update (2026-10-27).** The conclusion below that no supported source exists no longer holds.
+> Pull request #16513 was merged on 2026-08-11, three days after the previous re-verification, and
+> OpenCode 2.2.0 (released 2026-10-27) adds a route to its own local server that reads the Go
+> allowance through the CLI's Console sign-in. The original findings are kept below as history; the
+> recommended source is described in [Recommended live source](#recommended-live-source-opencode-220).
+
 ### OpenCode Go
 
 OpenCode Go documents three subscription usage limits:
@@ -239,15 +245,61 @@ The installed `opencode stats` command reports local session token and cost stat
 
 Scraping the web dashboard with browser cookies would be technically possible but is not recommended: it couples the product to private endpoints, browser storage, fragile authentication, and sensitive session cookies.
 
+### Recommended live source (OpenCode 2.2.0+)
+
+Commit `e42f6d101` ([#58694](https://github.com/anomalyco/opencode/pull/58694), 2026-10-24) adds an
+experimental route to the OpenCode server, declared in `packages/protocol/src/groups/usage.ts`:
+
+```text
+GET /api/experimental/usage/limits    operation id: experimental.usage.limits
+```
+
+The CLI's `api` subcommand calls it by operation id. `--standalone` runs a private server for the
+one request instead of the shared background service:
+
+```text
+opencode api --standalone experimental.usage.limits
+```
+
+The response is `{ location, data }`. `data` is `null` when the location is not signed in to the
+OpenCode Console, and otherwise holds (`packages/schema/src/usage-limits.ts`):
+
+- `workspace` — the Console workspace `id`, optional `name`, and a dashboard `usageURL`;
+- `go` — present only when the member subscribes to Go: `rolling`, `weekly` and `monthly` meters,
+  each `{ percent, limited, resetsAt }`, where `percent` is consumed percentage from 0 to 100,
+  `limited` means Go refuses requests until the window resets, and `resetsAt` is **milliseconds**
+  since the epoch;
+- `budgets[]` — monthly Console spend limits (`limit`, `spent`, `scope`, `per`, `coverage`,
+  `resetsAt`). These are spend caps, not subscription windows.
+
+The server builds this from two Console reads with the stored credential: the Go usage endpoint added
+by #16513 and `GET /api/policies/current-budgets`, with a 15-second timeout. AI Usage never reads
+`auth.json`, never sees the key, and never calls the Console.
+
+Verified live on 2026-10-27 against OpenCode 2.2.0 on a Go subscription: about 2.5 seconds per
+standalone read, the same answer with an environment reduced to `PATH`, `HOME` and `LANG`, and no
+row written to the local OpenCode database. Two caveats from that check:
+
+- the shared background service is whatever build started it. On this machine it was the OpenCode
+  Desktop app's bundled 2.1.3 CLI, which has no such route, so a non-standalone `opencode api` call
+  failed even with a 2.2.0 CLI on `PATH`. `--standalone` avoids depending on Desktop's version;
+- an older CLI exits non-zero with `Operation not found: experimental.usage.limits` on stderr.
+
+The Go meters carry no window duration, so a collector should not invent one from the documented
+5-hour/weekly/monthly limits.
+
 ### OpenCode Zen
 
 OpenCode Zen is pay-as-you-go. Balance, auto-reload, and configured monthly spend limits are different from OpenCode Go's 5-hour/weekly/monthly subscription allowances and should use a separate metric kind.
 
 ### OpenCode recommendation
 
-- Keep an OpenCode Go adapter contract in the architecture, but report the source as unavailable until a supported API lands.
+- Poll `opencode api --standalone experimental.usage.limits` on the same cadence as Codex and Claude, with a defensive parse, and flag the source experimental. *(Done as `opencode.usage-limits`.)*
+- Map only the `go` meters to windows. Keep Console `budgets[]` as a spend concept, separate from subscription windows.
+- Treat `data: null` as an authentication outcome, a workspace without `go` as a window-less `unsupported` observation, and `Operation not found` as an outdated CLI.
+- Scope observations by a digest of the Console workspace id; do not persist the id, the workspace name, or the dashboard URL.
 - Continue importing local session tokens and costs separately through the existing OpenCode data path.
-- Do not infer authoritative Go quota percentages from local token costs unless OpenCode publishes a stable accounting contract that matches its server-side meter.
+- Do not infer authoritative Go quota percentages from local token costs.
 
 ## Cursor
 
@@ -275,6 +327,8 @@ Official source:
 - [Cursor Admin API](https://docs.cursor.com/en/account/teams/admin-api)
 
 This API is useful for historical absolute usage, but it does not expose Codex/Claude-style 5-hour and weekly subscription quota windows. A monthly percentage may be derived only when the applicable included allowance or configured hard limit is known and semantically compatible.
+
+Re-confirmed 2026-10-27: a Cursor staff reply on the community forum (2026-05-19) still states that there is no public usage API or CLI command for individual plans, and no later announcement or CLI changelog entry adds one. The in-CLI `/usage` command reports activity statistics, not plan spending.
 
 Re-confirmed 2026-08-08: Cursor's API index still scopes every usage and spend endpoint to Teams and Enterprise, the individual-scope APIs (Cloud Agents, TypeScript SDK, Python SDK, SDK Bridge) expose no plan quota, and the CLI documents no usage, quota, or billing command. Cursor's own help pages describe usage as monthly and resetting with the billing cycle, so there is no 5-hour or weekly window to query in the first place. Third-party tools that display a Cursor personal quota do so by local estimation or dashboard scraping.
 
@@ -359,7 +413,7 @@ Normalization rules:
 3. Poll Claude through the Agent SDK usage method with a defensive parse. *(Done as a default-enabled experimental source with its own source policy.)*
 4. Add optional Claude status-line ingestion only if the SDK method is withdrawn or proves unreliable.
 5. Add Cursor Teams absolute usage as a separately labeled source if there is demand.
-6. Wait for an official OpenCode Go quota endpoint before adding live Go polling.
+6. Poll OpenCode Go through the OpenCode server's experimental usage-limits route. *(Done 2026-10-27; it needs OpenCode 2.2.0.)*
 7. Reassess Gemini when a supported headless quota interface exists.
 
 This ordering provides a useful quota-history feature without making raw OAuth tokens, browser-cookie scraping, or undocumented provider endpoints part of the security and maintenance surface. Steps 3 and 4 are deliberately ordered against stability: the SDK method is the better source but the weaker contract, so the documented status-line path is kept in reserve rather than built first.
