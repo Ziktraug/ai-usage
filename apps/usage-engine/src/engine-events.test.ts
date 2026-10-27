@@ -115,6 +115,7 @@ test('emits engine lifecycle and command boundaries from the production composit
       executorObservation: { which: () => null },
       ghAvailable: () => false,
       gitAvailable: () => false,
+      opencodeLiveAvailable: () => false,
     },
     storage: createLocalHistoryStorage(path.join(root, 'home')),
     temporaryRoot,

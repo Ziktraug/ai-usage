@@ -1228,6 +1228,7 @@ describe('usage engine runtime', () => {
       // A quota refresh runs every provider-usage source, not a nominated one.
       'run-source:codex.usage-limits',
       'run-source:claude.usage-limits',
+      'run-source:opencode.usage-limits',
       'redetect-and-run:cursor.sessions',
       'publish',
     ]);

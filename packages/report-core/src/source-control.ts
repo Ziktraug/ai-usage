@@ -10,6 +10,7 @@ export const collectionSourceIds = [
   'cursor.sessions',
   'codex.usage-limits',
   'claude.usage-limits',
+  'opencode.usage-limits',
   'rtk.savings',
   'cursor.commit-attribution',
   // The Desktop registry names the checkouts and pull requests the two fact producers read, so it
@@ -107,6 +108,16 @@ export const collectionSourceDefinitions = [
     id: 'claude.usage-limits',
     kind: 'producer',
     label: 'Claude usage limits',
+  },
+  {
+    cadenceMs: fiveMinutesMs,
+    defaultEnabled: true,
+    // OpenCode serves its Go allowance on a route it names `experimental`, so the same flag applies.
+    experimental: true,
+    group: 'provider-usage',
+    id: 'opencode.usage-limits',
+    kind: 'producer',
+    label: 'OpenCode usage limits',
   },
   {
     cadenceMs: oneMinuteMs,

@@ -395,7 +395,8 @@ This is the sole deep write-side service. It may import collectors,
 `report-data`, control contracts, `usage-merge`, and `usage-store/writer`, but
 no app. Only `apps/usage-engine` may compose its live implementation.
 
-Provider usage polling is the engine-owned `codex.usage-limits` source at its
+Provider usage polling is the engine-owned provider-usage group
+(`codex.usage-limits`, `claude.usage-limits`, `opencode.usage-limits`) at a
 five-minute cadence. Web and CLI display its stored freshness through read-only
 facades; an explicit refresh sends `collect-fresh-quota` through the control
 client and never starts an app-owned provider timer.

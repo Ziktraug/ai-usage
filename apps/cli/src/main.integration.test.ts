@@ -589,6 +589,7 @@ test('quota reports a paused policy without invoking the provider', async () => 
         sourcePolicies: {
           'claude.usage-limits': { enabled: false },
           'codex.usage-limits': { enabled: false },
+          'opencode.usage-limits': { enabled: false },
         },
       }),
     );
@@ -873,6 +874,7 @@ test('quota --json keeps the human failure contract when every provider source i
         sourcePolicies: {
           'claude.usage-limits': { enabled: false },
           'codex.usage-limits': { enabled: false },
+          'opencode.usage-limits': { enabled: false },
         },
       }),
     );
