@@ -577,7 +577,8 @@ describe('work-thread reader', () => {
       const dated = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
       expect(dated?.row.firstActivityAt).toBe(at(-300));
       expect(dated?.factEvents[0]?.at).toBe(at(-300));
-      expect(dated?.row.marks.every((mark) => mark.at !== at(-300))).toBe(true);
+      // The timeline reaches back past the week: the old pull request opening is a mark too.
+      expect(dated?.row.marks.filter((mark) => mark.at === at(-300)).map((mark) => mark.kind)).toEqual(['event']);
       const linkedPr = history.find((link) => link.kind === 'pull-request');
       if (!linkedPr) {
         throw new Error('Missing pull request link');
@@ -619,11 +620,12 @@ describe('work-thread reader', () => {
     });
   });
 
-  test('keeps newest week marks and both kinds when follow-state changes crowd the lane', async () => {
+  test('keeps the newest marks and both kinds when follow-state changes crowd the timeline', async () => {
     const dbPath = await fixture();
-    await publish(dbPath, [session('root', { date: at(-100) })]);
-    const threadId = await create(dbPath, [sessionLink('root')], 'Many changes', -150);
-    for (let index = 0; index < 70; index++) {
+    const crowd = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow + 6;
+    await publish(dbPath, [session('root', { date: at(-crowd - 30) })]);
+    const threadId = await create(dbPath, [sessionLink('root')], 'Many changes', -crowd - 80);
+    for (let index = 0; index < crowd; index++) {
       await command(
         dbPath,
         {
@@ -637,57 +639,39 @@ describe('work-thread reader', () => {
           reason: null,
           acknowledgedRemainders: [],
         },
-        -70 + index,
+        -crowd + index,
       );
     }
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    const kept = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow - 1;
     expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toEqual([
-      { at: at(-100), harness: 'codex', kind: 'session', label: 'root' },
+      { at: at(-crowd - 30), harness: 'codex', kind: 'session', label: 'root' },
     ]);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'event').map((mark) => mark.at)).toEqual(
-      Array.from({ length: 63 }, (_, index) => at(-63 + index)),
+      Array.from({ length: kept }, (_, index) => at(-kept + index)),
     );
     expect(detail?.row.marks.at(-1)?.label).toBe('Following');
     expect(list.rows[0]).toEqual(detail?.row);
   });
 
-  test('preserves the newest event when session starts fill the week mark bound', async () => {
+  test('the timeline keeps sessions months old, not only the last week', async () => {
     const dbPath = await fixture();
-    const rows = Array.from({ length: 64 }, (_, index) => session(`root-${index}`, { date: at(-64 + index) }));
+    const rows = Array.from({ length: 12 }, (_, index) =>
+      session(`root-${index}`, { date: at(-24 * 15 * (index + 1)) }),
+    );
     await publish(dbPath, rows);
     const threadId = await create(
       dbPath,
       rows.map((row) => sessionLink(row.source?.sourceSessionId ?? '')),
-      'Many sessions',
-      -150,
-    );
-    await command(
-      dbPath,
-      {
-        commandId: randomUUID(),
-        op: 'set-follow-state',
-        threadId,
-        expectedRevision: 1,
-        to: 'waiting',
-        waitingFor: 'Feedback',
-        waitingOn: null,
-        reason: null,
-        acknowledgedRemainders: [],
-      },
-      -90,
+      'Long-running work',
+      -24 * 200,
     );
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
-    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
-    expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
-    expect(detail?.row.marks.filter((mark) => mark.kind === 'event')).toEqual([
-      { at: at(-90), harness: null, kind: 'event', label: 'Waiting' },
-    ]);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'session').map((mark) => mark.at)).toEqual(
-      Array.from({ length: 63 }, (_, index) => at(-63 + index)),
+      rows.map((_, index) => at(-24 * 15 * (12 - index))),
     );
-    expect(list.rows[0]).toEqual(detail?.row);
   });
 
   test.each([false, true])(
@@ -1521,7 +1505,8 @@ describe('work-thread reader', () => {
     const list = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, tab: 'done' }, now: NOW }));
     for (const row of [detail?.row, list.rows[0]]) {
       expect(row?.sessionCount).toBe(1);
-      expect(row?.marks.filter((mark) => mark.kind === 'session')).toEqual([]);
+      // Only the parent remains on the timeline; the detached child leaves no mark.
+      expect(row?.marks.filter((mark) => mark.kind === 'session').map((mark) => mark.label)).toEqual(['parent']);
       expect(row?.markers.local).toEqual([]);
       expect(row?.afterDone).toBeNull();
       expect(row?.lastActivityAt).toBe(at(-10));
@@ -1758,8 +1743,9 @@ describe('work-thread reader', () => {
       'checkout_status_observations',
       'work_thread_events',
     ]) {
-      // Pull requests: page facts, Jira keys in their branches, and one global combination scan (ADR 0080).
-      const expected = { checkout_status_observations: 1, pull_request_observations: 3 }[table] ?? 2;
+      // Pull requests: page facts, Jira keys in their branches, one global combination scan (ADR 0080)
+      // and the project list, which reads each task's project from its PR repository.
+      const expected = { checkout_status_observations: 1, pull_request_observations: 4 }[table] ?? 2;
       expect(
         page.queries.filter((sql) => sql.includes(`FROM ${table}`)),
         table,
@@ -1822,7 +1808,7 @@ describe('work-thread reader', () => {
       launchedBy: { harness: 'codex', title: 'old' },
     });
     expect(detail?.row.sessionCount).toBe(2);
-    expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toHaveLength(0);
+    expect(detail?.row.marks.filter((mark) => mark.kind === 'session').map((mark) => mark.at)).toEqual([at(-300)]);
     expect(detail?.row.firstActivityAt).toBe(at(-300));
     expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
   });

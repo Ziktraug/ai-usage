@@ -31,6 +31,7 @@ export {
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   quiesceUsageStoreForShutdown,
+  reconcileWorkBranches,
   recordDelegationEvaluation,
   recordWorkFactRun,
   requestDelegationJob,

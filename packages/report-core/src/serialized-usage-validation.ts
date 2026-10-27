@@ -65,6 +65,7 @@ const SERIALIZED_SOURCE_KEYS = new Set([
   'artifactPath',
   'delegatedSessions',
   'harnessKey',
+  'launchMode',
   'machineId',
   'machineLabel',
   'parentSourceSessionId',
@@ -154,6 +155,7 @@ const hasValidSerializedSourceFields = (value: unknown): value is Record<string,
     (value.artifactPath === undefined || value.artifactPath === null || typeof value.artifactPath === 'string') &&
     typeof value.harnessKey === 'string' &&
     value.harnessKey.length > 0 &&
+    (value.launchMode === undefined || value.launchMode === 'exec' || value.launchMode === 'interactive') &&
     (value.sourceSessionId === null || typeof value.sourceSessionId === 'string') &&
     (value.parentSourceSessionId === undefined ||
       value.parentSourceSessionId === null ||

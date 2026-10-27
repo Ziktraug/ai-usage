@@ -672,7 +672,12 @@ describe('github config', () => {
     const home = await mkdtemp('ai-usage-github-config-');
     try {
       const storage = writeHomeConfig(home, {
-        github: { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }], enabled: true },
+        github: {
+          accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }],
+          enabled: true,
+          hostAliases: { 'github-perso.com': 'github.com' },
+          sharedBranches: ['release'],
+        },
       });
       const config = await Effect.runPromise(
         readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -680,6 +685,8 @@ describe('github config', () => {
       expect(config.github).toEqual({
         accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }],
         enabled: true,
+        hostAliases: { 'github-perso.com': 'github.com' },
+        sharedBranches: ['release'],
       });
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -694,6 +701,10 @@ describe('github config', () => {
       { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture/project' }] },
       { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture', token: 'never' }] },
       { enabled: false, hostOwnerPattern: 'fixture/*' },
+      { hostAliases: { 'github-perso.com': 'https://github.com' } },
+      { hostAliases: ['github.com'] },
+      { sharedBranches: 'release' },
+      { sharedBranches: [''] },
       [],
     ];
     for (const github of invalid) {
@@ -737,11 +748,12 @@ describe('jira config', () => {
   test('reads a strict jira section from the user home config', async () => {
     const home = await mkdtemp('ai-usage-jira-config-');
     try {
-      const storage = writeHomeConfig(home, { jira: { enabled: false, site: 'example.atlassian.net' } });
+      const jira = { enabled: false, handedOffStatuses: ['To Review (IT)'], site: 'example.atlassian.net' };
+      const storage = writeHomeConfig(home, { jira });
       const config = await Effect.runPromise(
         readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
-      expect(config.jira).toEqual({ enabled: false, site: 'example.atlassian.net' });
+      expect(config.jira).toEqual(jira);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -753,6 +765,8 @@ describe('jira config', () => {
       { site: 'https://example.atlassian.net' },
       { site: 'not a host' },
       { enabled: true, token: 'never' },
+      { handedOffStatuses: 'To Review' },
+      { handedOffStatuses: [''] },
       [],
     ];
     for (const jira of invalid) {

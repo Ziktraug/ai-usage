@@ -2,10 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import type { WorkThreadEvent, WorkThreadLink } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadRemainder } from '@ai-usage/report-core/work-thread-situation';
-import type {
-  WorkThreadEpisode,
-  WorkThreadFactEvent,
-  WorkThreadSourceStatus,
+import {
+  WORK_THREAD_VIEW_BOUNDS,
+  type WorkThreadEpisode,
+  type WorkThreadFactEvent,
+  type WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
 import {
   createSyntheticWorkThreadStore,
@@ -22,10 +23,13 @@ import {
   episodeSpanContext,
   episodeTimeRange,
   groupThreadRows,
+  localMarkerKey,
   observedWebUrl,
   primaryResumeEpisode,
+  projectShortLabel,
   remainderCopy,
   remainderEvidenceCopy,
+  THREAD_TIMELINE_MIN_DAYS,
   taskSourceStatuses,
   threadDate,
   threadDayKey,
@@ -40,8 +44,8 @@ import {
   threadRefs,
   threadSituationCopy,
   threadSourceAvailability,
+  threadTimeline,
   threadUrl,
-  threadWeek,
 } from './work-thread-model';
 
 const store = createSyntheticWorkThreadStore();
@@ -147,8 +151,8 @@ describe('task presentation model', () => {
       'Europe/Paris',
     );
     expect(marks.get('2026-10-25')).toHaveLength(2);
-    const week = threadWeek('2026-10-26T01:00:00Z', 'Europe/Paris');
-    expect(week.map((day) => day.key)).toEqual([
+    const days = threadTimeline('2026-10-26T01:00:00Z', 'Europe/Paris', ['2026-10-20T08:00:00Z']);
+    expect(days.map((day) => day.key).slice(-7)).toEqual([
       '2026-10-20',
       '2026-10-21',
       '2026-10-22',
@@ -157,7 +161,34 @@ describe('task presentation model', () => {
       '2026-10-25',
       '2026-10-26',
     ]);
-    expect(week.filter((day) => day.today)).toHaveLength(1);
+    expect(new Set(days.map((day) => day.key)).size).toBe(days.length);
+    expect(days.filter((day) => day.today).map((day) => day.key)).toEqual(['2026-10-26']);
+  });
+  test('the timeline reaches back to the earliest task activity, today last, within its bounds', () => {
+    const days = threadTimeline('2026-10-27T10:00:00Z', 'UTC', ['2026-10-25T10:00:00Z', '2026-08-30T23:30:00Z']);
+    expect(days[0]?.key).toBe('2026-08-30');
+    expect(days.at(-1)).toMatchObject({ key: '2026-10-27', today: true, label: 'Tue, Oct 27' });
+    expect(days.filter((day) => day.month).map((day) => day.month)).toEqual(['Aug 2026', 'Sep 2026', 'Oct 2026']);
+    expect(days.find((day) => day.key === '2026-08-31')).toMatchObject({ weekStart: true, dayOfMonth: 31 });
+    // A recent task still reads against two weeks; a very old one is cut at the bound.
+    expect(threadTimeline('2026-10-27T10:00:00Z', 'UTC', [])).toHaveLength(THREAD_TIMELINE_MIN_DAYS);
+    expect(threadTimeline('2026-10-27T10:00:00Z', 'UTC', ['2020-01-01T00:00:00Z'])).toHaveLength(
+      WORK_THREAD_VIEW_BOUNDS.maxTimelineDays,
+    );
+  });
+  test('one branch checked out in several worktrees keeps one marker per checkout', () => {
+    const marker = payment.row.markers.local[0];
+    if (!marker?.latest) {
+      throw new Error('Expected a local marker');
+    }
+    const other = { ...marker, latest: { ...marker.latest, checkoutPath: `${marker.latest.checkoutPath}-2` } };
+    expect(localMarkerKey(marker)).not.toBe(localMarkerKey(other));
+    expect(localMarkerKey(marker).startsWith(marker.key)).toBe(true);
+  });
+  test('the list keeps explanations, not source and date captions, and shortens projects', () => {
+    expect(projectShortLabel('exaprint/Exalibur')).toBe('Exalibur');
+    expect(projectShortLabel('XLB')).toBe('XLB');
+    expect(projectShortLabel(null)).toBe('No project');
   });
   test('analysis copy permits ending without implying automatic closure', () => {
     expect(threadSituationCopy(analysis.row, analysis.generatedAt, analysis.sources)).toMatchObject({
@@ -439,6 +470,14 @@ describe('round 2 concise task evidence', () => {
     'failing-checks': { input: { ...evidence, kind: 'failing-checks' }, copy: 'Checks failing' },
     'pending-checks': { input: { ...evidence, kind: 'pending-checks' }, copy: 'Checks pending' },
     'review-requested': { input: { ...evidence, kind: 'review-requested' }, copy: 'A PR waits for your review' },
+    'team-review-requested': {
+      input: { ...evidence, kind: 'team-review-requested' },
+      copy: 'Your team was asked to review · take it or leave it',
+    },
+    'jira-after-merge': {
+      input: { ...evidence, kind: 'jira-after-merge' },
+      copy: 'Merged · the ticket moves on without you',
+    },
     'unresolved-review-threads': {
       input: { ...evidence, kind: 'unresolved-review-threads', count: 2 },
       copy: '2 review threads to address',

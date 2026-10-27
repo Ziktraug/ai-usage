@@ -3,6 +3,7 @@
   import type { WorkThreadRow } from '@ai-usage/report-core/work-thread-view';
   import {
     localCheckoutStatus,
+    localMarkerKey,
     observedWebUrl,
     pullRequestBadge,
     pullRequestChecks,
@@ -71,7 +72,7 @@
       {/if}
     </div>
   {/each}
-  {#each row.markers.local as marker (marker.key)}
+  {#each row.markers.local as marker (localMarkerKey(marker))}
     {@const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful}
     <div
       class="wt-artifact"

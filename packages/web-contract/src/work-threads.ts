@@ -102,7 +102,7 @@ const markers = strictObject({
         latestSuccessful: nullable(pr),
         mergeable: nullable(picklist(['mergeable', 'conflicting', 'unknown'])),
         mergeStateStatus: nullable(text),
-        role: nullable(picklist(['author', 'review-requested'])),
+        role: nullable(picklist(['author', 'review-requested', 'team-review-requested'])),
       }),
     ),
     maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread),

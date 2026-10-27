@@ -24,6 +24,13 @@ export interface AiUsageGitHubAccountConfig {
 export interface AiUsageGitHubConfig {
   accounts?: AiUsageGitHubAccountConfig[];
   enabled?: boolean;
+  /**
+   * Remote host alias → GitHub host, beside what `~/.ssh/config` declares (ADR 0081): a remote
+   * written `git@github-perso.com:owner/repo` is the same repository as its `github.com` PRs.
+   */
+  hostAliases?: Record<string, string>;
+  /** Branch names that are never one task's work, beside main, master, develop and trunk. */
+  sharedBranches?: string[];
 }
 
 /**
@@ -34,6 +41,11 @@ export interface AiUsageGitHubConfig {
  */
 export interface AiUsageJiraConfig {
   enabled?: boolean;
+  /**
+   * Status names (case-insensitive) in which a ticket is someone else's step once its pull
+   * requests merged, such as a review or QA column. Workflows name them; nothing is assumed.
+   */
+  handedOffStatuses?: string[];
   site?: string;
 }
 

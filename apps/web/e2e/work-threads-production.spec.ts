@@ -334,7 +334,11 @@ const assertReadOnlyGhCalls = async (log: string): Promise<void> => {
     const [command, subcommand] = args;
     if (command === 'search') {
       expect(subcommand).toBe('prs');
-      expect(args.includes('--author=@me') || args.includes('--review-requested=@me')).toBe(true);
+      expect(
+        args.includes('--author=@me') ||
+          args.includes('user-review-requested:@me') ||
+          args.includes('--review-requested=@me'),
+      ).toBe(true);
       expect(args).toContain('--state=open');
     } else if (command === 'pr') {
       expect(subcommand).toBe('view'); // Also excludes the legacy resolver's pr list in this journey.
@@ -370,7 +374,8 @@ test('production Work threads survive source refresh, follow-up transitions and 
   await test.step('A: discover a PR without sessions, end, reload Done and reopen', async () => {
     await page.goto(`/work?q=${encodeURIComponent(DISCOVERED_TITLE)}`);
     await hydrated(page);
-    await expect(taskRow(page, threadId)).toContainText('PR #77 · 0 linked sessions');
+    await expect(taskRow(page, threadId)).toContainText('0 linked sessions');
+    await expect(taskRow(page, threadId)).toContainText('PR #77');
     await taskRow(page, threadId).getByRole('link', { name: DISCOVERED_TITLE }).first().click();
     await expect(page.getByRole('heading', { name: DISCOVERED_TITLE, exact: true })).toBeVisible();
     await page.locator('summary').filter({ hasText: 'GITHUB' }).click();

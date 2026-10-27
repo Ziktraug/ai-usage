@@ -38,7 +38,7 @@
     threadPageCursors,
     threadUrl,
   } from './work-thread-model';
-  import { threadSurface } from './work-thread-styles';
+  import { threadListShell, threadSurface } from './work-thread-styles';
   import './work-threads.css';
 
   let { data }: { data: ThreadPageData } = $props();
@@ -238,7 +238,7 @@
 </script>
 
 <svelte:head><title>{detail?.row.thread.title ?? 'My work'} · ai-usage</title></svelte:head>
-<div class={shell}>
+<div class={taskId ? shell : threadListShell}>
   <main
     class={`${threadSurface} wt-surface`}
     data-route-shell="work"

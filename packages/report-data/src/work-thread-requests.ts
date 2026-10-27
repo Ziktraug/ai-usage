@@ -115,10 +115,12 @@ const claudeRequests = (
       desktop.format !== 'claude-desktop-session-v1' ||
       declarations.length === 0,
     requests: declarations
+      // Only an action the session asked for is a request. "Review ready" without one is a report
+      // ("CI running, auto-fix on"): it stays on its session and never ranks as the operator's move.
       .filter(
         (declaration) =>
-          (declaration.status === 'blocked' && Boolean(declaration.needsAction?.trim())) ||
-          declaration.status === 'review_ready',
+          (declaration.status === 'blocked' || declaration.status === 'review_ready') &&
+          Boolean(declaration.needsAction?.trim()),
       )
       .map((declaration) => ({
         key: JSON.stringify([sessionKey, desktop?.desktopSessionId, declaration.declarationKey]),
@@ -131,7 +133,7 @@ const claudeRequests = (
         askedAt: declaration.declaredAt,
         answeredAt: null,
         observedAt: desktop?.observedAt ?? declaration.firstObservedAt,
-        text: (declaration.needsAction ?? declaration.detail).slice(0, 1000),
+        text: (declaration.needsAction ?? '').slice(0, 1000),
         ...claudeStanding(desktop?.archived ?? false, declaration),
         evidence: 'claude-desktop-declaration',
       })),

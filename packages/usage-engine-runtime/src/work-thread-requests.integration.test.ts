@@ -491,6 +491,18 @@ test('Claude native declarations retain stable observation identity and never tr
   expect(detail.row.nativeRequests[0]).toMatchObject({ key: original?.key, state: 'uncertain', answeredAt: null });
   expect(deriveWorkThreadSituation(detail.row, NOW).hint).not.toBe('ready-to-close');
   expect(detail.episodes[0]?.nativeRequests).toHaveLength(1);
+  // "Review ready" with no action asked is a report, not a request waiting on the operator.
+  nativeDocument.postTurnSummary = {
+    status_category: 'review_ready',
+    status_detail: 'PR #1480 draft; CI running, auto-fix on',
+    needs_action: '',
+    summarizes_uuid: 'review-ready-report',
+  };
+  nativeDocument.lastActivityAt = NOW.getTime() - 5000;
+  await writeFile(file, JSON.stringify(nativeDocument));
+  await run(source.run(context));
+  detail = await read();
+  expect(detail.row.nativeRequests.map((request) => request.key)).toEqual([original?.key ?? 'missing request']);
   for (const sessionId of [f.seeded.ids.codexRoot, f.seeded.ids.codexChild]) {
     await run(
       applyWorkThreadCommand({

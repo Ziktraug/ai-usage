@@ -9,6 +9,9 @@ import {
 } from '../../../server/work-threads-e2e-fixture.server';
 import { threadListQuery } from './work-thread-model';
 
+const PROJECT_TAG_PATTERN = /class="wt-project-tag[^"]*" title="exaprint\/Exalibur">Exalibur</;
+const SOURCE_CAPTION_PATTERN = /GitHub · [A-Z][a-z]{2} \d/;
+
 const SUMMARY_CONTENT = /<summary[^>]*>(.*?)<\/summary>/;
 const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Checks failing<\/h2>/;
 
@@ -178,6 +181,31 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain('wt-day-button');
     expect(body).toContain('wt-event-mark');
     expect(body).toContain('>2</span>');
+  });
+  test('a row leads with its short project and reaches back past the week, without source captions', () => {
+    const old = new Date(Date.parse(list.generatedAt) - 40 * 86_400_000).toISOString();
+    const row = {
+      ...payments.row,
+      thread: { ...payments.row.thread, projectLabel: 'exaprint/Exalibur' },
+      firstActivityAt: old,
+      marks: [{ at: old, harness: 'codex', kind: 'session' as const, label: 'Old exploration' }],
+    };
+    const body = html(List, {
+      dataset: list,
+      rows: [row],
+      query,
+      timeZone: 'UTC',
+      href: () => '/work',
+      onOpen: noop,
+      onFilter: noop,
+      onMore: noop,
+    });
+    expect(body).toMatch(PROJECT_TAG_PATTERN);
+    expect(body).not.toContain('Updated');
+    expect(body).not.toMatch(SOURCE_CAPTION_PATTERN);
+    expect(body).toContain('1 sessions, 0 work events. Show activity.');
+    expect(body).toContain('aria-label="Tasks and their activity timeline, scrolls back in time"');
+    expect(body).toContain('>Today</span>');
   });
   test('discovered PR history uses source dates and hides automatic linking noise', async () => {
     const merged = await detail(WORK_THREADS_FIXTURE_IDS.mergedPr);

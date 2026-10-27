@@ -69,6 +69,8 @@ export interface CodexSession {
   hasTokenUsage: boolean;
   id: string | null;
   lastRejectedMetricAt?: string;
+  /** `session_meta.source` when it is a plain string: `exec` for `codex exec`, `cli`, `vscode`… */
+  launchSource: string | null;
   maxTotal: number;
   model: string;
   models: string[];
@@ -489,6 +491,7 @@ const emptySession = (): CodexSession => ({
   skillObservations: [],
   skillObservationCompleteness: completeSkillObservationCollection(),
   subagentKind: null,
+  launchSource: null,
   threadSource: null,
   agentNickname: null,
   subscription: false,
@@ -1333,6 +1336,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
         session.vcs = sessionVcs;
       }
       session.threadSource = typeof payload.thread_source === 'string' ? payload.thread_source : session.threadSource;
+      session.launchSource = typeof payload.source === 'string' ? payload.source : session.launchSource;
       const subagent = codexSubagentFromSource(payload.source);
       if (subagent) {
         session.subagentKind = subagent.kind;

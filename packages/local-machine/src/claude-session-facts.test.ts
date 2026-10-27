@@ -610,6 +610,44 @@ describe('parseClaudeSessionFacts', () => {
     expect(facts?.source.vcs?.branches.every(({ webUrl }) => webUrl === null)).toBe(true);
   });
 
+  test('folders of one clone are not ambiguous when each resolves to the session repository', () => {
+    const repository = normalizeSessionVcsRepository('git@github.com:owner/repository.git', 'local-derived');
+    const records = [
+      event({
+        type: 'user',
+        timestamp: '2026-07-01T15:00:00.000Z',
+        uuid: 'user-1',
+        cwd: '/clone',
+        gitBranch: 'feat/one',
+        message: { content: 'Start at the root' },
+      }),
+      event({
+        type: 'user',
+        timestamp: '2026-07-01T15:01:00.000Z',
+        uuid: 'user-2',
+        cwd: '/clone/packages/app',
+        gitBranch: 'feat/one',
+        message: { content: 'Continue in a package' },
+      }),
+    ];
+    const same = parseClaudeSessionFacts({
+      records,
+      repository,
+      sourcePathRepository: () => repository,
+      sourceSessionId: 'one-clone',
+    });
+    expect(same?.source.vcs?.partial).toBe(false);
+    expect(same?.source.vcs?.branches.map(({ name }) => name)).toEqual(['feat/one']);
+    const other = normalizeSessionVcsRepository('git@github.com:owner/other.git', 'local-derived');
+    const mixed = parseClaudeSessionFacts({
+      records,
+      repository,
+      sourcePathRepository: (sourcePath) => (sourcePath === '/clone' ? repository : other),
+      sourceSessionId: 'two-clones',
+    });
+    expect(mixed?.source.vcs?.partial).toBe(true);
+  });
+
   test('keeps one round per prompt across deep ancestry and broken chains, with observed bounds', () => {
     const records: Record<string, unknown>[] = [
       event({

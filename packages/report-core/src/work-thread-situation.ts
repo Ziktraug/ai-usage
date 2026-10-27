@@ -37,7 +37,12 @@ export type WorkThreadRemainder = RemainderEvidence &
           | 'pending-checks'
           | 'ready-to-merge'
           | 'review-requested'
+          // A review requested from one of the operator's teams: theirs to take or leave, not owed.
+          | 'team-review-requested'
           | 'jira-open'
+          // Every linked PR merged and the ticket in a status the operator's config names as handed
+          // off (a review or QA column): the workflow's next step is someone else's.
+          | 'jira-after-merge'
           | 'source-stale'
           | 'source-unknown';
       }
@@ -125,8 +130,8 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
       continue;
     }
     // Someone else's pull request: its conflicts, checks and drafts are the author's work, not the operator's.
-    if (marker.role === 'review-requested') {
-      remainders.push({ ...evidence, kind: 'review-requested' });
+    if (marker.role === 'review-requested' || marker.role === 'team-review-requested') {
+      remainders.push({ ...evidence, kind: marker.role });
       continue;
     }
     const priorCount = remainders.length;
@@ -225,10 +230,12 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
   localRemainders(row, now, remainders);
   pullRequestRemainders(row, now, remainders);
   // While a pull request is open, an unfinished ticket is its expected state, not a separate step.
-  const pullRequestOpen = row.markers.pullRequests.some((marker) => {
+  const pullRequestStates = row.markers.pullRequests.map((marker) => {
     const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful;
-    return fact?.state === 'OPEN';
+    return fact?.state ?? null;
   });
+  const pullRequestOpen = pullRequestStates.includes('OPEN');
+  const allMerged = pullRequestStates.length > 0 && pullRequestStates.every((state) => state === 'MERGED');
   for (const marker of row.markers.jiraIssues) {
     const fact = observation(marker, 'jira', now, remainders);
     if (fact === null) {
@@ -237,6 +244,8 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
     const evidence = { key: marker.key, observedAt: fact.observedAt, source: 'jira' as const };
     if (fact.statusCategory === null || fact.statusCategory === 'unknown') {
       remainders.push({ ...evidence, kind: 'source-unknown' });
+    } else if (fact.statusCategory !== 'done' && fact.handedOff === true && allMerged) {
+      remainders.push({ ...evidence, kind: 'jira-after-merge' });
     } else if (fact.statusCategory !== 'done' && !pullRequestOpen) {
       remainders.push({ ...evidence, kind: 'jira-open' });
     }
@@ -294,6 +303,8 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'pending-checks',
   'ready-to-merge',
   'awaiting-review',
+  'jira-after-merge',
+  'team-review-requested',
   // Strict branch protection makes an update necessary only once review is settled; updating earlier
   // is undone by the next merge to the base, so awaiting review outranks it.
   'behind-base',
@@ -341,8 +352,9 @@ export const deriveWorkThreadSituation = (
   }
   const reason = PRIORITY.find((kind) => remainders.some((remainder) => remainder.kind === kind)) ?? 'source-unknown';
   const evidence = remainders.find((remainder) => remainder.kind === reason);
-  let hint: WorkThreadSituation['hint'] = reason.startsWith('source-') ? 'undecided' : 'to-resume';
-  if (reason === 'pending-checks' || reason === 'awaiting-review') {
+  let hint: WorkThreadSituation['hint'] =
+    reason.startsWith('source-') || reason === 'team-review-requested' ? 'undecided' : 'to-resume';
+  if (reason === 'pending-checks' || reason === 'awaiting-review' || reason === 'jira-after-merge') {
     hint = 'waiting';
   }
   const actions = { github: 'open-pr', jira: 'open-jira', local: 'copy-context', sessions: 'copy-context' } as const;

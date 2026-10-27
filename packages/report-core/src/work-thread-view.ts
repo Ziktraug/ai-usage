@@ -10,8 +10,10 @@ import type { WorkThread, WorkThreadEvent, WorkThreadLink } from './work-thread'
  */
 
 export const WORK_THREAD_VIEW_BOUNDS = {
-  /** Session and work marks per row, for the compact week lane. */
-  maxMarksPerRow: 64,
+  /** Session and work marks per row, newest first, for the scrolling timeline. */
+  maxMarksPerRow: 240,
+  /** How far back the timeline reaches, whatever the tasks' first activity. */
+  maxTimelineDays: 366,
   maxNativeRequests: 64,
   maxEpisodes: 100,
   maxEpisodeChildren: 20,
@@ -76,7 +78,7 @@ export interface WorkThreadLocalMarker extends WorkThreadFact<CheckoutStatusObse
 }
 
 /** Why a discovered pull request concerns the operator; `null` when it came through a link. */
-export type WorkThreadPullRequestRole = 'author' | 'review-requested' | null;
+export type WorkThreadPullRequestRole = 'author' | 'review-requested' | 'team-review-requested' | null;
 
 export interface WorkThreadPullRequestMarker extends WorkThreadFact<PullRequestObservation> {
   /** Mergeability as GitHub reported it; `null` when unknown. Behind the base is not a conflict. */
@@ -91,7 +93,7 @@ export interface WorkThreadMarkers {
   readonly pullRequests: readonly WorkThreadPullRequestMarker[];
 }
 
-/** One dated point of the week lane. Placement only: not proportional to any duration. */
+/** One dated point of the timeline. Placement only: not proportional to any duration. */
 export interface WorkThreadMark {
   readonly at: CanonicalInstant;
   readonly harness: string | null;

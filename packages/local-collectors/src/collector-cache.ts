@@ -172,6 +172,7 @@ const isCollectorRowSource = (value: unknown): boolean =>
         'artifactPath',
         'delegatedSessions',
         'harnessKey',
+        'launchMode',
         'machineId',
         'machineLabel',
         'parentSourceSessionId',
@@ -182,6 +183,7 @@ const isCollectorRowSource = (value: unknown): boolean =>
       ].includes(key),
     ) &&
     typeof value.harnessKey === 'string' &&
+    (value.launchMode === undefined || value.launchMode === 'exec' || value.launchMode === 'interactive') &&
     // Match serialized source validation: the producer owns the list bound,
     // while cached historical facts remain readable without new restrictions.
     (value.delegatedSessions === undefined ||

@@ -603,7 +603,9 @@ export interface PullRequestObservation {
   /** When GitHub closed it without merging; `mergedAt` carries a merge. */
   readonly closedAt?: CanonicalInstant | null;
   readonly createdAt?: CanonicalInstant | null;
-  readonly discoveryRole?: 'author' | 'review-requested' | null;
+  /** True when the head branch lives in a fork, so its name says nothing about this repository. */
+  readonly crossRepository?: boolean;
+  readonly discoveryRole?: 'author' | 'review-requested' | 'team-review-requested' | null;
   readonly draft: boolean | null;
   readonly headRef: string | null;
   readonly host: string;
@@ -657,7 +659,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
   const discoveryRole =
     value.discoveryRole === null || value.discoveryRole === undefined
       ? null
-      : oneOf(['author', 'review-requested'] as const, value.discoveryRole);
+      : oneOf(['author', 'review-requested', 'team-review-requested'] as const, value.discoveryRole);
   const mergeable =
     value.mergeable === null || value.mergeable === undefined
       ? null
@@ -705,7 +707,8 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     url === undefined ||
     headRef === undefined ||
     baseRef === undefined ||
-    checksRollup === undefined
+    checksRollup === undefined ||
+    (value.crossRepository !== undefined && typeof value.crossRepository !== 'boolean')
   ) {
     return null;
   }
@@ -715,6 +718,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     checksRollup,
     closedAt,
     createdAt,
+    ...(typeof value.crossRepository === 'boolean' ? { crossRepository: value.crossRepository } : {}),
     discoveryRole,
     draft,
     headRef,
@@ -918,6 +922,8 @@ export interface JiraIssueObservation {
   readonly assigneeLabel: string | null;
   readonly commentCount: number | null;
   readonly comments: readonly JiraIssueComment[];
+  /** Present when the status was one the operator's config names as handed off when observed. */
+  readonly handedOff?: true;
   readonly key: string;
   readonly machineId: string;
   readonly observedAt: CanonicalInstant;
@@ -1025,7 +1031,8 @@ export const parseJiraIssueObservation = (value: unknown): JiraIssueObservation 
     sprint === undefined ||
     parentKey === undefined ||
     commentCount === undefined ||
-    comments === undefined
+    comments === undefined ||
+    (value.handedOff !== undefined && value.handedOff !== true)
   ) {
     return null;
   }
@@ -1033,6 +1040,7 @@ export const parseJiraIssueObservation = (value: unknown): JiraIssueObservation 
     assigneeLabel,
     commentCount,
     comments,
+    ...(value.handedOff === true ? { handedOff: true as const } : {}),
     key,
     machineId,
     observedAt,

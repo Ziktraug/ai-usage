@@ -181,6 +181,11 @@ export type WorkThreadCommand =
       readonly threadId: string;
     }
   | { readonly commandId: string; readonly linkId: string; readonly op: 'detach-link'; readonly threadId: string }
+  /**
+   * Detach a session by key, including one the task reads through its branch with no stored link
+   * (ADR 0081): the detached link recorded either way is the operator's veto.
+   */
+  | { readonly commandId: string; readonly key: string; readonly op: 'detach-session'; readonly threadId: string }
   | { readonly commandId: string; readonly note: string | null; readonly op: 'set-note'; readonly threadId: string }
   | { readonly commandId: string; readonly op: 'rename'; readonly threadId: string; readonly title: string }
   /**
@@ -264,6 +269,36 @@ export const branchLinkKey = (input: {
   readonly ref: string;
   readonly repository: string;
 }): string => `branch:${input.host.toLowerCase()}/${input.repository}@${input.ref}`;
+
+/** Branches everyone merges into: a session on one is no single task's work (ADR 0081). */
+export const SHARED_BRANCH_NAMES: ReadonlySet<string> = new Set(['main', 'master', 'develop', 'development', 'trunk']);
+
+const FORBIDDEN_REF_CHARACTERS = new Set(['~', '^', ':', '?', '*', '[', '\\']);
+/** Controls, space, DEL and the characters git reserves for revision syntax. */
+const hasInvalidRefCharacter = (ref: string): boolean =>
+  [...ref].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 32 || code === 127 || FORBIDDEN_REF_CHARACTERS.has(character);
+  });
+
+/**
+ * `git check-ref-format` for a branch: what a harness may record that is not one (`HEAD`, a
+ * placeholder such as `.invalid`, an empty name) never stands for work on a branch.
+ */
+export const isBranchRefName = (ref: string): boolean =>
+  ref.length > 0 &&
+  ref.length <= 255 &&
+  ref !== 'HEAD' &&
+  ref !== '@' &&
+  !hasInvalidRefCharacter(ref) &&
+  !ref.includes('..') &&
+  !ref.includes('@{') &&
+  !ref.includes('//') &&
+  !ref.startsWith('/') &&
+  !ref.startsWith('-') &&
+  !ref.endsWith('/') &&
+  !ref.endsWith('.') &&
+  ref.split('/').every((segment) => !(segment.startsWith('.') || segment.endsWith('.lock')));
 
 export type ParsedWorkThreadLinkKey =
   | { readonly host: string; readonly kind: 'pull-request'; readonly number: number; readonly repository: string }
@@ -642,6 +677,13 @@ export const parseWorkThreadCommand = (value: unknown): WorkThreadCommand | null
         ? { commandId, key: link.key, kind: link.kind, op: 'link', threadId: value.threadId }
         : null;
     }
+    case 'detach-session':
+      return hasOnlyKeys(value, ['commandId', 'key', 'op', 'threadId']) &&
+        typeof value.key === 'string' &&
+        parseWorkThreadLinkKey('session', value.key) !== null &&
+        isWorkThreadId(value.threadId)
+        ? { commandId, key: value.key, op: 'detach-session', threadId: value.threadId }
+        : null;
     case 'detach-link':
       return hasOnlyKeys(value, ['commandId', 'linkId', 'op', 'threadId']) &&
         isWorkThreadId(value.linkId) &&

@@ -1,9 +1,21 @@
 import type { CanonicalInstant } from './canonical-instant';
 import type { PullRequestObservation } from './work-attention';
 import { jiraKeysInBranch } from './work-attention-facts';
-import { jiraIssueLinkKey, pullRequestLinkKey, WORK_THREAD_BOUNDS, type WorkThreadIntent } from './work-thread';
+import {
+  isBranchRefName,
+  jiraIssueLinkKey,
+  pullRequestLinkKey,
+  SHARED_BRANCH_NAMES,
+  WORK_THREAD_BOUNDS,
+  type WorkThreadIntent,
+} from './work-thread';
 
 export interface WorkThreadSeed {
+  /**
+   * `branch:<host>/<owner>/<repo>@<head>` when GitHub reports the head branch in the PR's own
+   * repository (ADR 0081): an authored PR joins the task that holds that branch, before any ticket.
+   */
+  readonly branchKey?: string | null;
   readonly discoveredAt: CanonicalInstant;
   readonly intent: WorkThreadIntent | null;
   readonly linkKind: 'pull-request';
@@ -60,10 +72,19 @@ export const workThreadSeedsFromPullRequests = (observations: readonly PullReque
     const originKey = pullRequestSeedKey(observation);
     const branchKeys = jiraKeysInBranch(observation.headRef ?? '');
     const [branchKey] = branchKeys;
+    const headRef = observation.headRef;
+    const ownBranch =
+      observation.crossRepository === false &&
+      headRef !== null &&
+      isBranchRefName(headRef) &&
+      !SHARED_BRANCH_NAMES.has(headRef);
     return [
       {
+        ...(ownBranch
+          ? { branchKey: `branch:${observation.host.toLowerCase()}/${observation.repository.toLowerCase()}@${headRef}` }
+          : {}),
         discoveredAt: observation.observedAt,
-        intent: observation.discoveryRole === 'review-requested' ? 'review' : 'change',
+        intent: observation.discoveryRole === 'author' ? 'change' : 'review',
         linkKind: 'pull-request',
         origin: 'pull-request',
         originKey,
