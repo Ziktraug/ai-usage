@@ -1,7 +1,7 @@
 # 120 — Local-only cleanup: remove the connected platform and dead features, take the upgrade's opportunities
 
-Status: PHASE A DONE locally on 2026-10-24 (stacked branches, committed, not pushed); phase B
-TODO after PR #67.
+Status: PHASE A MERGED to `main` on 2026-10-25 (#68–#72); PHASE B DONE locally on 2026-10-27 on
+`refactor/remove-memory-and-replication` (four commits on `main` `88b45743`, not pushed; ADR 0084).
 Baseline: `chore/upgrade-dependencies` at `5b8bc4d4` (plan 119, Bun 1.4.3, Effect 4, SvelteKit 3,
 Panda 2, Ultracite 8), not pushed.
 Depends on: plan 119. Phase B waits for PR #67 (`feat/work-resume-cockpit`, which carries #66 and
@@ -120,3 +120,32 @@ Not done and why:
   project groups and aliases, quota feed, Skills, Sources, Campaigns, MCP `work.context` on #67).
 - A phase A change that edits files PR #67 changes heavily (control contract, engine runtime command
   executor, usage store writer, web request policy) beyond a line-level touch.
+
+## Phase B outcome (2026-10-27)
+
+The operator confirmed the scope at the start: decision rows 1 and 5, the usage store dropping its
+outbox at schema 5, and the browser-boundary refactor included; the real stores stay untouched.
+Recorded by ADR 0084, which retires ADRs 0024, 0026, 0028, 0029, 0038 and 0044.
+
+Branch `refactor/remove-memory-and-replication`, local, on `main` `88b45743`:
+
+| Commit | What it carries |
+| --- | --- |
+| `18235aa2` | Memory, `/projects`, Checkout observation and replication removed: 11 packages (106 files, 28.5k lines), the engine's Memory service, lease and rendezvous, CLI `memory search` and `replication status`, MCP `memory.*` tools, rail 11 → 9, Sources replication panel, residual Session-distillation lot, control protocol 3 → 4, usage schema 4 → 5 dropping the outbox; docs, CONTEXT.md, ADR headers |
+| `76e0c06b` | Review fix: stale-lock recovery reads only the owner of a rendezvous of any protocol, so a crashed protocol-3 engine no longer blocks every start; dead ADR evidence links |
+| `d66ba652` | ADR 0076 "Derive once": `rpcProcedure` declarations, request policy and browser GET table derived from the contract, SSR through an in-process router client, subrequest normalization and `handleFetch` deleted; a missed Projects link in a campaign scale test; Linux desktop baselines with the nine-entry rail |
+| `e5befd95` | Review fix: the in-process client refuses mutations, so SSR stays read-only |
+
+Whole branch (before this record): 365 files, +4.0k / −45.9k lines. Initial closure 303,572 → 303,126 B gzip after the
+removal and the derivation (304,123 B recorded, 305,000 B ceiling).
+
+Not done, and why:
+- The real stores were not opened (operator decision). The first engine start with this branch
+  migrates the usage store to schema 5 and cannot be undone: back up the usage store and
+  `memory.sqlite` as one pair first (`docs/local-store-upgrade.md`, "Usage schema 5").
+- The MCP registered server name stays `ai-usage-memory`: renaming it would orphan existing
+  operator registrations. The MCP handshake now reports `ai-usage`.
+- The darwin visual baselines still show the eleven-entry rail; CI runs Linux only (as for #73).
+- The two Linux baselines were regenerated with local Chrome, not taken from a CI artifact; their
+  only difference from the old references is the rail.
+- The stale branch `feat/retire-session-distillation` (superseded by #67) is left in place.
