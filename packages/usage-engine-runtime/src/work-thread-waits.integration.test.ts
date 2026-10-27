@@ -116,6 +116,7 @@ const fixture = async (
   let beforeView: (() => void | Promise<void>) | undefined;
   const calls: string[][] = [];
   let openViews = 0;
+  let views = 0;
   const runner: BoundedProcessRunner = (request) =>
     Effect.promise(async () => {
       calls.push([request.command, ...request.args]);
@@ -140,6 +141,7 @@ const fixture = async (
           return { durationMs: 1, exitCode: 4, stdout: '' };
         }
         await beforeView?.();
+        views += 1;
         if (mergedAt === null) {
           openViews += 1;
         }
@@ -211,16 +213,18 @@ const fixture = async (
     poll: async () => {
       const firstCall = calls.length;
       const priorOpenViews = openViews;
+      const priorViews = views;
       const result = await Effect.runPromise(source.run({ reportProgress: () => Effect.void }));
       const graphqlCalls = calls.slice(firstCall).filter((args) => args[0] === 'gh' && args[1] === 'api');
       const newOpenViews = openViews - priorOpenViews;
-      const expectedGraphqlCalls = Array.from({ length: newOpenViews }, () => [
+      // Every view, open or merged, is followed by one bounded detail read (threads and status history).
+      const expectedGraphqlCalls = Array.from({ length: views - priorViews }, () => [
         'gh',
         ...reviewThreadsFixtureArgs('fixture/project', 7),
       ]);
       // Check outside the runner: a contained runner defect must not silently weaken these fixtures.
       if (JSON.stringify(graphqlCalls) !== JSON.stringify(expectedGraphqlCalls)) {
-        throw new Error('Expected exactly one bounded review-thread read for each open PR view');
+        throw new Error('Expected exactly one bounded detail read for each PR view');
       }
       if (newOpenViews > 0) {
         const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));

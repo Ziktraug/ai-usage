@@ -14,6 +14,7 @@
   import WorkCombineSuggestions from './work-combine-suggestions.svelte';
   import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import WorkJiraIntake from './work-jira-intake.svelte';
+  import WorkMilestoneGlyph from './work-milestone-glyph.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import {
     bucketThreadMarks,
@@ -21,11 +22,21 @@
     groupThreadRowsBySituation,
     harnessName,
     projectShortLabel,
+    threadDayMarks,
     threadSituationCopy,
     threadTime,
     threadTimeline,
   } from './work-thread-model';
   import WorkThreadSources from './work-thread-sources.svelte';
+
+  const LEGEND_MILESTONES = [
+    ['pull-request-opened', 'PR opened'],
+    ['pull-request-ready', 'Ready for review'],
+    ['pull-request-changes-requested', 'Changes requested'],
+    ['pull-request-approved', 'Approved'],
+    ['pull-request-merged', 'Merged'],
+    ['pull-request-closed', 'Closed'],
+  ] as const;
 
   let {
     dataset,
@@ -274,9 +285,8 @@
                 {@const index = dayIndex.get(dayKey)}
                 {@const day = index === undefined ? undefined : timeline[index]}
                 {#if day && index !== undefined}
-                  {@const sessions = marks.filter((mark) => mark.kind === 'session')}
+                  {@const { sessions, milestone, others, description } = threadDayMarks(marks, day.label)}
                   {@const selected = selectedMarks?.threadId === row.thread.threadId && selectedMarks.day === day.key}
-                  {@const description = `${day.label}: ${sessions.length} sessions, ${marks.length - sessions.length} work events. Show activity.`}
                   <button
                     aria-controls={selected ? `wt-marks-${row.thread.threadId}-${day.key}` : undefined}
                     aria-expanded={selected ? 'true' : 'false'}
@@ -306,7 +316,11 @@
                         {/if}</span
                       >
                     {/if}
-                    {#if marks.length > sessions.length}
+                    {#if milestone}
+                      <span aria-hidden="true" class="wt-mark wt-milestone" data-milestone={milestone}
+                        ><WorkMilestoneGlyph kind={milestone} /></span
+                      >
+                    {:else if others > 0}
                       <span aria-hidden="true" class="wt-mark wt-event-mark"></span>
                     {/if}
                   </button>
@@ -406,7 +420,14 @@
     ><span
       ><span class="wt-glyph" data-harness="codex"><WorkHarnessGlyph harness="codex" size={10} /></span>
       Codex session</span
-    ><span><span class="wt-glyph">2</span> Several sessions that day</span><span>○ Work event</span>
+    ><span><span class="wt-glyph">2</span> Several sessions that day</span>
+    {#each LEGEND_MILESTONES as [kind, label] (kind)}
+      <span
+        ><span class="wt-mark wt-milestone" data-milestone={kind}><WorkMilestoneGlyph {kind} size={10} /></span>
+        {label}</span
+      >
+    {/each}
+    <span>○ Follow-up change</span>
   </div>
   <span>Placed by day · open a mark for times and episode spans</span>
 </div>

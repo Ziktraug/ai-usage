@@ -13,6 +13,7 @@ import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transpo
 const ids = {
   payments: '12000000-0000-4000-8000-000000000001',
   analysis: '12000000-0000-4000-8000-000000000004',
+  uploads: '12000000-0000-4000-8000-000000000005',
   review: '12000000-0000-4000-8000-000000000006',
   longTitle: '12000000-0000-4000-8000-000000000009',
   mergedPr: '12000000-0000-4000-8000-000000000010',
@@ -23,6 +24,8 @@ const ids = {
 const DONE_TAB = /^Done /;
 const FOLLOWING_TAB = /^Following /;
 const TIMED_SESSION_MARK = /^\d{2}:\d{2} · Claude · Compare retry approaches$/;
+const PR_OPENED_DAY_PATTERN = /\d+ sessions?, PR #1487 opened/;
+const MERGED_DAY_PATTERN = /PR #1479 merged\. Show activity\.$/;
 const commandPath = '/rpc/workThreads/command';
 const detailPath = '/rpc/workThreads/detail';
 const prKey = 'github.example/synthetic/example-shop#1487';
@@ -364,10 +367,11 @@ test('a long desktop task heading keeps its full title in about two lines at a s
 test('a mixed day shows both chips and lists dated marks before opening the task', async ({ page }) => {
   await open(page);
   const task = row(page, ids.payments);
-  const day = task.locator('.wt-day-button:has(.wt-event-mark):has([data-harness])').first();
+  const day = task.locator('.wt-day-button:has(.wt-milestone):has([data-harness])').first();
   // The provider mark replaces letter glyphs that read like "CI" next to check states.
   await expect(day.locator('[data-harness="claude"] svg')).toBeVisible();
-  await expect(day.locator('.wt-event-mark')).toBeVisible();
+  await expect(day.locator('.wt-milestone[data-milestone="pull-request-opened"]')).toBeVisible();
+  await expect(day).toHaveAccessibleName(PR_OPENED_DAY_PATTERN);
   await day.focus();
   await page.keyboard.press('Enter');
   await expect(day).toHaveAttribute('aria-expanded', 'true');
@@ -380,6 +384,23 @@ test('a mixed day shows both chips and lists dated marks before opening the task
   await marks.getByRole('link', { name: 'Open task for this day →', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Prevent duplicate payments', exact: true })).toBeVisible();
   expect(new URL(page.url()).searchParams.get('day')).toBe('2026-10-19');
+});
+
+test('a task lane shows its pull request milestones up to the merge without opening a day', async ({ page }) => {
+  await open(page);
+  const lane = row(page, ids.uploads).locator('.wt-lane');
+  expect(
+    await lane.locator('.wt-milestone').evaluateAll((marks) => marks.map((mark) => mark.dataset.milestone)),
+  ).toEqual([
+    'pull-request-opened',
+    'pull-request-ready',
+    'pull-request-changes-requested',
+    'pull-request-approved',
+    'pull-request-merged',
+  ]);
+  await expect(lane.locator('.wt-day-button:has([data-milestone="pull-request-merged"])')).toHaveAccessibleName(
+    MERGED_DAY_PATTERN,
+  );
 });
 
 test('episode durations and PR fact events use their own evidence dates', async ({ page }) => {

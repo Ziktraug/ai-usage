@@ -41,8 +41,24 @@ interface FakeScenario {
   readonly authToken?: FakeResponse;
   readonly pullRequests?: Readonly<Record<string, FakeResponse>>;
 }
-const reviewThreadsBody = (nodes: readonly unknown[], totalCount = nodes.length) =>
-  JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { totalCount, nodes } } } } });
+const emptyConnection = { totalCount: 0, nodes: [] };
+const STATUS_HISTORY_ONLY_PATTERN = /^Status history unavailable: /;
+const reviewThreadsBody = (
+  nodes: readonly unknown[],
+  totalCount = nodes.length,
+  history: { readonly reviews?: unknown; readonly timelineItems?: unknown } = {},
+) =>
+  JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          reviewThreads: { totalCount, nodes },
+          reviews: history.reviews ?? emptyConnection,
+          timelineItems: history.timelineItems ?? emptyConnection,
+        },
+      },
+    },
+  });
 
 /** Installs the fake `gh` on a private PATH that also carries the Bun executable for its shebang. */
 const installFakeGh = (scenario: FakeScenario): FakeGh => {
@@ -304,6 +320,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
       discoveryRole: null,
       draft: false,
       headRef: 'feat/work-view',
+      history: { complete: true, items: [] },
       host: 'github.com',
       machineId: 'machine-a',
       mergeable: null,
@@ -348,7 +365,8 @@ describe('observePullRequests through a fake gh on PATH', () => {
       'state,isDraft,reviewDecision,createdAt,closedAt,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,isCrossRepository,statusCheckRollup',
     ]);
     expect(calls[0]?.token).toBeNull();
-    expect(calls.slice(1).map(({ token }) => token)).toEqual(Array.from({ length: 5 }, () => TOKEN_SENTINEL));
+    // One view and one GraphQL detail read per pull request, whatever its state.
+    expect(calls.slice(1).map(({ token }) => token)).toEqual(Array.from({ length: 6 }, () => TOKEN_SENTINEL));
     for (const call of calls) {
       expect(call.environment).toContain('GH_PROMPT_DISABLED');
       expect(call.environment).toContain('GH_NO_UPDATE_NOTIFIER');
@@ -708,8 +726,9 @@ describe('pull request dates and unresolved review threads', () => {
         'Review threads unavailable: incomplete review thread connection; Invalid lifecycle dates: createdAt, closedAt',
       unresolvedReviewThreads: null,
     });
+    // The closed pull request reads its history; its review threads are not counted.
     expect(batch.observations[1]).toMatchObject({ outcome: 'observed', outcomeMessage: null });
-    expect(fake.calls().filter(({ args }) => args[1] === 'graphql')).toHaveLength(1);
+    expect(fake.calls().filter(({ args }) => args[1] === 'graphql')).toHaveLength(2);
   });
 
   test.each([{}, { createdAt: null, closedAt: null }, { createdAt: '', closedAt: '' }])(
@@ -835,44 +854,54 @@ describe('pull request dates and unresolved review threads', () => {
         unresolvedReviewThreads: null,
         outcomeMessage: expect.stringContaining('Review threads unavailable:'),
       });
-      expect(batch.observations[1]).toMatchObject({ unresolvedReviewThreads: null, outcomeMessage: null });
+      expect(batch.observations[0]).not.toHaveProperty('history');
+      expect(batch.observations[1]).toMatchObject({
+        unresolvedReviewThreads: null,
+        outcomeMessage: expect.stringMatching(STATUS_HISTORY_ONLY_PATTERN),
+      });
       expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
         ['auth', 'token'],
         ['pr', 'view'],
         ['api', 'graphql'],
         ['pr', 'view'],
+        ['api', 'graphql'],
       ]);
       expect(JSON.stringify(batch)).not.toContain('PRIVATE_GRAPHQL_DIAGNOSTIC');
     },
   );
 
-  test.each(['CLOSED', 'MERGED'])('keeps dates without an extra GraphQL call for %s', async (state) => {
-    const closedAt = '2026-10-20T10:00:00Z';
-    const fake = installFakeGh({
-      pullRequests: {
-        'fixture/project#66': {
-          stdout: view({
-            state,
-            createdAt: '2026-10-19T09:00:00Z',
-            closedAt,
-            mergedAt: state === 'MERGED' ? closedAt : null,
-          }),
+  test.each(['CLOSED', 'MERGED'])(
+    'keeps dates and reads the history without counting threads for %s',
+    async (state) => {
+      const closedAt = '2026-10-20T10:00:00Z';
+      const fake = installFakeGh({
+        pullRequests: {
+          'fixture/project#66': {
+            stdout: view({
+              state,
+              createdAt: '2026-10-19T09:00:00Z',
+              closedAt,
+              mergedAt: state === 'MERGED' ? closedAt : null,
+            }),
+          },
         },
-      },
-    });
-    expect((await observe(fake)).observations[0]).toMatchObject({
-      state,
-      createdAt: '2026-10-19T09:00:00.000Z',
-      closedAt: '2026-10-20T10:00:00.000Z',
-      mergedAt: state === 'MERGED' ? '2026-10-20T10:00:00.000Z' : null,
-      unresolvedReviewThreads: null,
-      outcomeMessage: null,
-    });
-    expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
-      ['auth', 'token'],
-      ['pr', 'view'],
-    ]);
-  });
+      });
+      expect((await observe(fake)).observations[0]).toMatchObject({
+        state,
+        createdAt: '2026-10-19T09:00:00.000Z',
+        closedAt: '2026-10-20T10:00:00.000Z',
+        mergedAt: state === 'MERGED' ? '2026-10-20T10:00:00.000Z' : null,
+        history: { complete: true, items: [] },
+        unresolvedReviewThreads: null,
+        outcomeMessage: null,
+      });
+      expect(fake.calls().map(({ args }) => args.slice(0, 2))).toEqual([
+        ['auth', 'token'],
+        ['pr', 'view'],
+        ['api', 'graphql'],
+      ]);
+    },
+  );
 });
 
 test.each(['throw', 'effect defect'] as const)(
@@ -903,7 +932,7 @@ test.each(['throw', 'effect defect'] as const)(
     const batch = await observe(fake, { links: [link(66), link(67)], run });
     expect(batch.observations[0]).toMatchObject({
       outcome: 'observed',
-      outcomeMessage: 'Review threads unavailable: gh runner failed',
+      outcomeMessage: 'Review threads unavailable: gh runner failed; Status history unavailable: gh runner failed',
       title: 'Add the Work view',
       unresolvedReviewThreads: null,
     });
@@ -970,6 +999,112 @@ test('review-thread output obeys the same process ceiling and remains a visible 
   expect(batch.observations[0]).toMatchObject({
     outcome: 'observed',
     unresolvedReviewThreads: null,
-    outcomeMessage: 'Review threads unavailable: gh output-limit',
+    outcomeMessage: 'Review threads unavailable: gh output-limit; Status history unavailable: gh output-limit',
+  });
+});
+
+describe('pull request status history', () => {
+  const at = (time: string) => `2026-10-2${time}Z`;
+  test('reads reviews and timeline events as dated milestones, oldest first, with their actors', async () => {
+    const fake = installFakeGh({
+      api: {
+        graphql: {
+          stdout: reviewThreadsBody([], 0, {
+            reviews: {
+              totalCount: 2,
+              nodes: [
+                { state: 'CHANGES_REQUESTED', submittedAt: at('0T10:00:00'), author: { login: 'reviewer' } },
+                { state: 'APPROVED', submittedAt: at('1T09:00:00'), author: null },
+              ],
+            },
+            timelineItems: {
+              totalCount: 2,
+              nodes: [
+                { __typename: 'ReadyForReviewEvent', createdAt: at('0T08:00:00'), actor: { login: 'author' } },
+                { __typename: 'ConvertToDraftEvent', createdAt: at('0T07:00:00'), actor: { login: 'author' } },
+              ],
+            },
+          }),
+        },
+      },
+      pullRequests: { 'fixture/project#66': { stdout: view({ state: 'MERGED', mergedAt: at('1T10:00:00') }) } },
+    });
+    const [observation] = (await observe(fake)).observations;
+    expect(observation?.history).toEqual({
+      complete: true,
+      items: [
+        { actor: 'author', at: parseCanonicalInstant('2026-10-20T07:00:00.000Z'), kind: 'converted-to-draft' },
+        { actor: 'author', at: parseCanonicalInstant('2026-10-20T08:00:00.000Z'), kind: 'ready-for-review' },
+        { actor: 'reviewer', at: parseCanonicalInstant('2026-10-20T10:00:00.000Z'), kind: 'changes-requested' },
+        { actor: null, at: parseCanonicalInstant('2026-10-21T09:00:00.000Z'), kind: 'approved' },
+      ],
+    });
+    expect(observation?.outcomeMessage).toBeNull();
+    expect(parsePullRequestObservation(observation)).toEqual(observation ?? null);
+    const [query] = fake.calls().filter(({ args }) => args[1] === 'graphql');
+    expect(query?.args[3]).toContain('reviews(last: 50, states: [APPROVED, CHANGES_REQUESTED])');
+    expect(query?.args[3]).toContain(
+      'timelineItems(last: 30, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, CLOSED_EVENT, REOPENED_EVENT])',
+    );
+  });
+
+  test('a connection holding more than it returned keeps the newest items as a partial history', async () => {
+    const fake = installFakeGh({
+      api: {
+        graphql: {
+          stdout: reviewThreadsBody([], 0, {
+            reviews: {
+              totalCount: 51,
+              nodes: [{ state: 'APPROVED', submittedAt: at('1T09:00:00'), author: { login: 'reviewer' } }],
+            },
+          }),
+        },
+      },
+      pullRequests: { 'fixture/project#66': { stdout: view() } },
+    });
+    const [observation] = (await observe(fake)).observations;
+    expect(observation?.history).toEqual({
+      complete: false,
+      items: [{ actor: 'reviewer', at: parseCanonicalInstant('2026-10-21T09:00:00.000Z'), kind: 'approved' }],
+    });
+  });
+
+  test.each([
+    {
+      name: 'unknown review state',
+      reviews: { totalCount: 1, nodes: [{ state: 'COMMENTED', submittedAt: at('1T09:00:00'), author: null }] },
+    },
+    {
+      name: 'undated review',
+      reviews: { totalCount: 1, nodes: [{ state: 'APPROVED', submittedAt: null, author: null }] },
+    },
+    {
+      name: 'mistyped author',
+      reviews: { totalCount: 1, nodes: [{ state: 'APPROVED', submittedAt: at('1T09:00:00'), author: 'x' }] },
+    },
+    {
+      name: 'unknown timeline item',
+      timelineItems: { totalCount: 1, nodes: [{ __typename: 'LabeledEvent', createdAt: at('1T09:00:00') }] },
+    },
+    {
+      name: 'more nodes than counted',
+      timelineItems: {
+        totalCount: 0,
+        nodes: [{ __typename: 'ClosedEvent', createdAt: at('1T09:00:00'), actor: null }],
+      },
+    },
+    { name: 'mistyped connection', reviews: 'none' },
+  ])('a malformed history ($name) is not established, and the thread count still is', async (history) => {
+    const fake = installFakeGh({
+      api: { graphql: { stdout: reviewThreadsBody([{ isResolved: false }], 1, history) } },
+      pullRequests: { 'fixture/project#66': { stdout: view() } },
+    });
+    const [observation] = (await observe(fake)).observations;
+    expect(observation).not.toHaveProperty('history');
+    expect(observation).toMatchObject({
+      outcome: 'observed',
+      unresolvedReviewThreads: 1,
+      outcomeMessage: expect.stringMatching(STATUS_HISTORY_ONLY_PATTERN),
+    });
   });
 });

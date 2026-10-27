@@ -6,6 +6,7 @@ import {
   WORK_THREAD_VIEW_BOUNDS,
   type WorkThreadEpisode,
   type WorkThreadFactEvent,
+  type WorkThreadMark,
   type WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
 import {
@@ -33,6 +34,7 @@ import {
   taskSourceStatuses,
   threadDate,
   threadDayKey,
+  threadDayMarks,
   threadDisplayMarkers,
   threadEventActor,
   threadEventCopy,
@@ -140,14 +142,17 @@ describe('task presentation model', () => {
     const at = parseCanonicalInstant('2026-10-24T00:30:00.000Z');
     expect(threadDayKey(at, 'America/Los_Angeles')).toBe('2026-10-23');
     expect(threadDayKey(at, 'Europe/Paris')).toBe('2026-10-24');
-    const marks = bucketThreadMarks([{ at, kind: 'session', harness: 'codex', label: null }], 'America/Los_Angeles');
+    const marks = bucketThreadMarks(
+      [{ at, fact: null, kind: 'session', harness: 'codex', label: null }],
+      'America/Los_Angeles',
+    );
     expect(marks.get('2026-10-23')).toHaveLength(1);
   });
   test('DST repeated hour is one day; week remains seven distinct calendar days', () => {
     const first = parseCanonicalInstant('2026-10-25T00:30:00.000Z');
     const second = parseCanonicalInstant('2026-10-25T01:30:00.000Z');
     const marks = bucketThreadMarks(
-      [first, second].map((at) => ({ at, kind: 'session' as const, harness: 'codex', label: null })),
+      [first, second].map((at) => ({ at, fact: null, kind: 'session' as const, harness: 'codex', label: null })),
       'Europe/Paris',
     );
     expect(marks.get('2026-10-25')).toHaveLength(2);
@@ -641,6 +646,7 @@ describe('the shared task history', () => {
     threadId: payment.row.thread.threadId,
   };
   const fact: WorkThreadFactEvent = {
+    actor: null,
     at: openedAt,
     key: 'github.example/synthetic/shop#72',
     kind: 'pull-request-opened',
@@ -672,6 +678,40 @@ describe('the shared task history', () => {
     expect(threadFactEventCopy({ ...fact, kind: 'pull-request-closed', title: null })).toEqual({
       title: 'PR #72 closed',
       detail: null,
+    });
+    expect(threadFactEventCopy({ ...fact, actor: 'reviewer', kind: 'pull-request-changes-requested' }).title).toBe(
+      'PR #72 changes requested by reviewer',
+    );
+  });
+
+  test('a day of the lane draws its most telling milestone and names every mark', () => {
+    const mark = (overrides: Partial<WorkThreadMark>): WorkThreadMark => ({
+      at: openedAt,
+      fact: null,
+      harness: null,
+      kind: 'event',
+      label: 'Waiting',
+      ...overrides,
+    });
+    const day = threadDayMarks(
+      [
+        mark({ harness: 'claude', kind: 'session', label: 'Fix uploads' }),
+        mark({ fact: 'pull-request-approved', label: 'PR #72 approved by reviewer' }),
+        mark({ fact: 'pull-request-merged', label: 'PR #72 merged' }),
+        mark({}),
+      ],
+      'Oct 23',
+    );
+    expect(day.milestone).toBe('pull-request-merged');
+    expect(day.sessions).toHaveLength(1);
+    expect(day.others).toBe(1);
+    expect(day.description).toBe(
+      'Oct 23: 1 session, PR #72 approved by reviewer, PR #72 merged, 1 follow-up change. Show activity.',
+    );
+    expect(threadDayMarks([mark({}), mark({})], 'Oct 24')).toMatchObject({
+      milestone: null,
+      others: 2,
+      description: 'Oct 24: 0 sessions, 2 follow-up changes. Show activity.',
     });
   });
   test.each(['origin', 'declared', 'launched'] as const)(

@@ -592,6 +592,47 @@ export const PULL_REQUEST_CHECK_ROLLUPS = ['success', 'failure', 'pending', 'unk
 export type PullRequestCheckRollup = (typeof PULL_REQUEST_CHECK_ROLLUPS)[number];
 
 /**
+ * The status changes GitHub records on a pull request's timeline. Opening and merging are not
+ * listed: `createdAt` and `mergedAt` already date them. A review is one reviewer's decision, not
+ * the pull request's aggregate `reviewDecision` at that time.
+ */
+export const PULL_REQUEST_MILESTONE_KINDS = [
+  'ready-for-review',
+  'converted-to-draft',
+  'approved',
+  'changes-requested',
+  'closed',
+  'reopened',
+] as const;
+export type PullRequestMilestoneKind = (typeof PULL_REQUEST_MILESTONE_KINDS)[number];
+
+export const PULL_REQUEST_HISTORY_BOUNDS = {
+  /** Approving and change-requesting reviews read per pull request, oldest first. */
+  maxReviews: 50,
+  /** Draft, ready, close and reopen events read per pull request, oldest first. */
+  maxTimelineEvents: 30,
+} as const;
+const maxHistoryItems = PULL_REQUEST_HISTORY_BOUNDS.maxReviews + PULL_REQUEST_HISTORY_BOUNDS.maxTimelineEvents;
+
+export interface PullRequestMilestone {
+  /** The GitHub login that acted, when GitHub reports one (a deleted account reports none). */
+  readonly actor: string | null;
+  /** GitHub's own date for the event (`createdAt`, a review's `submittedAt`). */
+  readonly at: CanonicalInstant;
+  readonly kind: PullRequestMilestoneKind;
+}
+
+/**
+ * The pull request's status history as GitHub reported it on one read, oldest first. Each read
+ * replaces it whole, so a deleted or dismissed review leaves it. `complete` is false when a
+ * connection held more than the bounds: the oldest items are then the ones kept.
+ */
+export interface PullRequestHistory {
+  readonly complete: boolean;
+  readonly items: readonly PullRequestMilestone[];
+}
+
+/**
  * One dated read of one pull request through the GitHub CLI. A failed read is still an
  * observation: it keeps its outcome and leaves every GitHub-reported field null, so the last
  * successful observation remains the latest *fact* and the failure remains visible.
@@ -608,6 +649,8 @@ export interface PullRequestObservation {
   readonly discoveryRole?: 'author' | 'review-requested' | 'team-review-requested' | null;
   readonly draft: boolean | null;
   readonly headRef: string | null;
+  /** `null` when this read did not establish the history (older observations, a failed query). */
+  readonly history?: PullRequestHistory | null;
   readonly host: string;
   readonly machineId: string;
   readonly mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
@@ -644,6 +687,40 @@ const optionalPullRequestLifecycleInstant = (value: unknown): CanonicalInstant |
     : undefined;
 };
 
+const parsePullRequestMilestone = (value: unknown): PullRequestMilestone | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const kind = oneOf(PULL_REQUEST_MILESTONE_KINDS, value.kind);
+  const at = optionalPullRequestLifecycleInstant(value.at);
+  const actor = optionalText(value.actor, maxShortText);
+  return kind === undefined || at === undefined || at === null || actor === undefined ? null : { actor, at, kind };
+};
+
+/** `undefined` rejects the observation; `null` is a history this read did not establish. */
+const optionalPullRequestHistory = (value: unknown): PullRequestHistory | null | undefined => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    typeof value.complete !== 'boolean' ||
+    !Array.isArray(value.items) ||
+    value.items.length > maxHistoryItems
+  ) {
+    return undefined;
+  }
+  const items: PullRequestMilestone[] = [];
+  for (const candidate of value.items) {
+    const item = parsePullRequestMilestone(candidate);
+    if (item === null) {
+      return undefined;
+    }
+    items.push(item);
+  }
+  return { complete: value.complete, items };
+};
+
 export const parsePullRequestObservation = (value: unknown): PullRequestObservation | null => {
   if (!isRecord(value)) {
     return null;
@@ -671,6 +748,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
   const createdAt = optionalPullRequestLifecycleInstant(value.createdAt);
   const closedAt = optionalPullRequestLifecycleInstant(value.closedAt);
   const unresolvedReviewThreads = optionalCount(value.unresolvedReviewThreads);
+  const history = optionalPullRequestHistory(value.history);
   const mergedAt = optionalInstant(value.mergedAt);
   const updatedAt = optionalInstant(value.updatedAt);
   const title = optionalText(value.title, maxShortText);
@@ -701,6 +779,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     createdAt === undefined ||
     closedAt === undefined ||
     unresolvedReviewThreads === undefined ||
+    history === undefined ||
     mergedAt === undefined ||
     updatedAt === undefined ||
     title === undefined ||
@@ -722,6 +801,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     discoveryRole,
     draft,
     headRef,
+    ...(history === null ? {} : { history }),
     host,
     machineId,
     mergeable,

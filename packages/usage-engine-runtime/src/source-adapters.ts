@@ -989,11 +989,12 @@ const leastRecentlyObservedJiraKeys = (
   });
 
 /**
- * Leaves out the links whose latest stored observation already showed the pull request merged.
- * A merge is terminal: re-reading it every cadence for the fourteen days a session stays active
- * spends `gh` calls to learn nothing. Only a successful latest read counts; a failed read after a
- * merge, or no observation at all, keeps the link in the batch. A store that cannot be consulted
- * keeps every link and says so.
+ * Leaves out the links whose latest stored observation already showed the pull request merged,
+ * with its status history. A merge is terminal: re-reading it every cadence for the fourteen days a
+ * session stays active spends `gh` calls to learn nothing. Only a successful latest read counts; a
+ * failed read after a merge, a merged read whose history was not established (older observations
+ * included, read once more to backfill it), or no observation at all keeps the link in the batch.
+ * A store that cannot be consulted keeps every link and says so.
  */
 const withoutMergedLinks = (
   dbPath: string,
@@ -1010,7 +1011,7 @@ const withoutMergedLinks = (
         machineId,
       });
       for (const { latest } of items) {
-        if (latest.outcome === 'observed' && latest.state === 'MERGED') {
+        if (latest.outcome === 'observed' && latest.state === 'MERGED' && latest.history != null) {
           merged.add(normalizedLinkKey({ host: latest.host, number: latest.number, repository: latest.repository }));
         }
       }
