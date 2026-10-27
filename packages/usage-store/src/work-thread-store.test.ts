@@ -12,6 +12,7 @@ import {
   type WorkThreadCommand,
   type WorkThreadCommandResult,
   type WorkThreadLink,
+  type WorkThreadTaskCommand,
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
@@ -19,14 +20,23 @@ import { UsageStoreError } from './errors';
 import { applyWorkThreadCommand, seedWorkThreads } from './index';
 import {
   countWorkThreads,
+  queryJiraIntake,
   queryUsageStoreGenerations,
   queryWorkThreadById,
+  queryWorkThreadCombinations,
+  queryWorkThreadCombineSuggestions,
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   queryWorkThreadProjects,
   queryWorkThreadsPage,
 } from './reader';
-import { createWorkThreadStore, type WorkThreadSeed, workThreadSchemaSql } from './work-thread-store';
+import { workFactSchemaSql } from './work-fact-store';
+import {
+  createWorkThreadStore,
+  type WorkThreadCombineSuggestionEntry,
+  type WorkThreadSeed,
+  workThreadSchemaSql,
+} from './work-thread-store';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
@@ -36,6 +46,7 @@ import {
   initializeUsageStore,
   queryActiveWorkThreadLinks,
   queryWorkThreadWaitCandidates,
+  recordJiraIntake,
   recordWorkFactRun,
 } from './writer';
 
@@ -46,6 +57,88 @@ const MACHINE = 'thread-machine';
 const SESSION = `session:${MACHINE}/codex/session-one`;
 const PR = 'github.com/fixture/repo#42';
 const run = <Value>(effect: Effect.Effect<Value, UsageStoreError>): Promise<Value> => Effect.runPromise(effect);
+
+test('orders discovered work by source activity before pagination, never by collection or automatic links', async () => {
+  const dbPath = await createStore();
+  await run(
+    seedWorkThreads({
+      dbPath,
+      machineId: MACHINE,
+      now: NOW,
+      seeds: [42, 43].map((number) => ({
+        discoveredAt: NOW,
+        intent: 'change',
+        linkKind: 'pull-request',
+        origin: 'pull-request',
+        originKey: `github.com/fixture/repo#${number}`,
+        projectLabel: 'fixture/repo',
+        title: `PR ${number}`,
+      })),
+    }),
+  );
+  const observations: PullRequestObservation[] = [42, 43].map((number) => ({
+    accountLabel: null,
+    baseRef: 'main',
+    checksRollup: 'success',
+    draft: false,
+    headRef: 'topic',
+    host: 'github.com',
+    machineId: MACHINE,
+    mergedAt: null,
+    number,
+    observedAt: NOW,
+    outcome: 'observed',
+    outcomeMessage: null,
+    repository: 'fixture/repo',
+    reviewDecision: null,
+    state: 'OPEN',
+    title: `PR ${number}`,
+    url: `https://github.com/fixture/repo/pull/${number}`,
+    updatedAt: parseCanonicalInstant(number === 42 ? '2026-10-23T08:00:00.000Z' : '2026-10-24T09:00:00.000Z'),
+  }));
+  await run(importPullRequestObservations({ dbPath, observations }));
+  await run(
+    attachDeclaredWorkThreadSessions({
+      dbPath,
+      machineId: MACHINE,
+      now: LATER,
+      declarations: [{ pullRequestKey: PR, sessionKey: SESSION }],
+    }),
+  );
+  const first = await page(dbPath, { limit: 1 });
+  expect(first.rows[0]).toMatchObject({ thread: { title: 'PR 43' }, lastActivityAt: '2026-10-24T09:00:00.000Z' });
+  const second = await page(dbPath, { limit: 1, cursor: first.nextCursor });
+  expect(second.rows[0]).toMatchObject({ thread: { title: 'PR 42' }, lastActivityAt: '2026-10-23T08:00:00.000Z' });
+  expect(second.nextCursor).toBeNull();
+  await run(
+    importPullRequestObservations({
+      dbPath,
+      observations: observations.map((item) => ({ ...item, observedAt: LATER })),
+    }),
+  );
+  expect((await page(dbPath, { limit: 1 })).rows).toEqual(first.rows);
+  await run(
+    importPullRequestObservations({
+      dbPath,
+      observations: [
+        {
+          ...observations[0]!,
+          observedAt: parseCanonicalInstant('2026-10-24T12:00:00.000Z'),
+          headRef: 'fix/SHOP-42/changes',
+        },
+      ],
+    }),
+  );
+  await run(
+    importJiraIssueObservations({
+      dbPath,
+      observations: [
+        { machineId: MACHINE, key: 'SHOP-42', observedAt: LATER, updatedAt: NOW, outcome: 'observed', comments: [] },
+      ],
+    }),
+  );
+  expect((await page(dbPath, { limit: 1 })).rows[0]).toMatchObject({ thread: { title: 'PR 42' }, lastActivityAt: NOW });
+});
 
 describe('declared sessions join existing Work threads', () => {
   test('links exact declarations to each active PR thread once, including Done, without seeding', async () => {
@@ -228,7 +321,7 @@ const createStore = async (): Promise<string> => {
   return dbPath;
 };
 
-const command = (dbPath: string, input: WorkThreadCommand, now: string = NOW): Promise<WorkThreadCommandResult> =>
+const command = (dbPath: string, input: WorkThreadTaskCommand, now: string = NOW): Promise<WorkThreadCommandResult> =>
   run(applyWorkThreadCommand({ command: input, dbPath, machineId: MACHINE, now }));
 
 const createCommand = (
@@ -311,11 +404,12 @@ const evidenceFixture = async () => {
   const dbPath = path.join(root, 'evidence.sqlite');
   const db = new Database(dbPath);
   db.exec(workThreadSchemaSql);
+  db.exec(workFactSchemaSql);
   db.exec(`
     CREATE TABLE served_report_current(singleton INTEGER, revision TEXT);
     CREATE TABLE served_report_revisions(revision TEXT, generated_at TEXT, complete INTEGER);
     CREATE TABLE served_report_rows(revision TEXT, ordinal INTEGER, row_id TEXT, project_label TEXT,
-      campaign_root INTEGER, origin TEXT, active_time INTEGER, machine_id TEXT, source_row_json TEXT);
+      campaign_root INTEGER, origin TEXT, active_time INTEGER, machine_id TEXT, source_row_json TEXT, source_authority TEXT DEFAULT 'local-observed');
     CREATE TABLE claude_desktop_sessions(id INTEGER PRIMARY KEY, machine_id TEXT, desktop_session_id TEXT,
       cli_session_id TEXT, prior_cli_session_ids_json TEXT, title TEXT, created_at TEXT, last_activity_at TEXT,
       cwd TEXT, worktree_path TEXT, last_turn_report TEXT, status_category TEXT, needs_action TEXT,
@@ -364,7 +458,7 @@ const evidenceFixture = async () => {
     } = {},
   ) => {
     ordinal++;
-    db.query('INSERT INTO served_report_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    db.query("INSERT INTO served_report_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'local-observed')").run(
       options.revision ?? 'fixture',
       ordinal,
       `row-${ordinal}`,
@@ -1095,7 +1189,7 @@ describe('work thread store', () => {
       const before = counts();
       const events = await run(store.queryWorkThreadEvents({ dbPath, threadIds: [first, second] }));
       expect(counts().connections - before.connections).toBe(1);
-      expect(counts().queries - before.queries).toBe(5); // Four schema checks, one scoped event query.
+      expect(counts().queries - before.queries).toBe(10); // Nine schema checks, one scoped event query.
       for (const threadId of [first, second]) {
         const scoped = events.filter((event) => event.threadId === threadId);
         expect(scoped).toHaveLength(WORK_THREAD_BOUNDS.maxEventsPerThread);
@@ -1454,7 +1548,7 @@ describe('work thread store', () => {
         expect(result.failure.reason).toBe('invalid-input');
       }
     }
-    const omitted: WorkThreadCommand = JSON.parse(JSON.stringify({ ...createCommand(), links: undefined }));
+    const omitted: WorkThreadTaskCommand = JSON.parse(JSON.stringify({ ...createCommand(), links: undefined }));
     expect(await command(dbPath, omitted)).toMatchObject({ ok: true });
     expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
   });
@@ -2429,4 +2523,383 @@ test('observation-only PRs enrich a proven task but never create an unsolicited 
   await run(seedWorkThreads({ ...input, declarations }));
   expect(threadSnapshot(dbPath)).toEqual(before);
   expect(await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }))).toHaveLength(2);
+});
+
+describe('ticket routing and the Jira intake', () => {
+  const authored = (number: number, ticket: string | null = 'SHOP-7'): WorkThreadSeed => ({
+    ...seed({ intent: 'change', originKey: `github.com/fixture/repo#${number}`, title: `PR ${number}` }),
+    routingJiraKey: ticket === null ? null : `jira:default/${ticket}`,
+  });
+  const observePullRequest = (dbPath: string, number: number, headRef: string) =>
+    run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          {
+            accountLabel: null,
+            baseRef: 'main',
+            checksRollup: 'success',
+            draft: false,
+            headRef,
+            host: 'github.com',
+            machineId: MACHINE,
+            mergedAt: null,
+            number,
+            observedAt: NOW,
+            outcome: 'observed',
+            outcomeMessage: null,
+            repository: 'fixture/repo',
+            reviewDecision: null,
+            state: 'OPEN',
+            title: `PR ${number}`,
+            updatedAt: NOW,
+            url: `https://github.com/fixture/repo/pull/${number}`,
+          },
+        ],
+      }),
+    );
+  const linksOf = async (dbPath: string) => {
+    const { rows } = await page(dbPath);
+    const links = await run(queryWorkThreadLinks({ dbPath, threadIds: rows.map((row) => row.thread.threadId) }));
+    return rows.map((row) =>
+      links
+        .filter((link) => link.threadId === row.thread.threadId && link.detachedAt === null)
+        .map((link) => link.key)
+        .toSorted(),
+    );
+  };
+  const intake = async (dbPath: string) =>
+    (await run(queryJiraIntake({ dbPath, machineId: MACHINE, limit: 50 }))).items.map((item) => item.key);
+
+  test('authored PRs naming one ticket share one task, which records the ticket and the evidence', async () => {
+    const dbPath = await createStore();
+    expect(
+      await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1), authored(2)] })),
+    ).toEqual({ created: 1, existing: 1, uncertain: 0 });
+    expect(await linksOf(dbPath)).toEqual([
+      ['github.com/fixture/repo#1', 'github.com/fixture/repo#2', 'jira:default/SHOP-7'],
+    ]);
+    const [row] = (await page(dbPath)).rows;
+    const events = await run(queryWorkThreadEvents({ dbPath, threadIds: [row?.thread.threadId ?? ''] }));
+    expect(events.filter((event) => event.kind === 'link-added').map((event) => event.reason)).toEqual([
+      'Head branch names SHOP-7',
+      'Head branch names SHOP-7',
+    ]);
+  });
+
+  test('a PR joins the task that follows its ticket by origin or through an earlier branch', async () => {
+    const dbPath = await createStore();
+    await run(
+      seedWorkThreads({
+        dbPath,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [seed({ intent: null, linkKind: 'jira-issue', origin: 'jira-issue', originKey: 'jira:default/SHOP-7' })],
+      }),
+    );
+    await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    expect(await linksOf(dbPath)).toEqual([['github.com/fixture/repo#1', 'jira:default/SHOP-7']]);
+
+    const branchOnly = await createStore();
+    await run(seedWorkThreads({ dbPath: branchOnly, machineId: MACHINE, now: NOW, seeds: [authored(1, null)] }));
+    await observePullRequest(branchOnly, 1, 'fix/SHOP-7/first');
+    await run(seedWorkThreads({ dbPath: branchOnly, machineId: MACHINE, now: NOW, seeds: [authored(2)] }));
+    expect(await linksOf(branchOnly)).toEqual([['github.com/fixture/repo#1', 'github.com/fixture/repo#2']]);
+  });
+
+  test('several open followers, a Done follower or a review keep the new PR separate', async () => {
+    const ambiguous = await createStore();
+    await run(
+      seedWorkThreads({
+        dbPath: ambiguous,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [authored(1, null), authored(2, null)],
+      }),
+    );
+    await observePullRequest(ambiguous, 1, 'fix/SHOP-7/first');
+    await observePullRequest(ambiguous, 2, 'fix/SHOP-7/second');
+    await run(seedWorkThreads({ dbPath: ambiguous, machineId: MACHINE, now: NOW, seeds: [authored(3)] }));
+    expect((await linksOf(ambiguous)).toSorted()).toEqual([
+      ['github.com/fixture/repo#1'],
+      ['github.com/fixture/repo#2'],
+      ['github.com/fixture/repo#3'],
+    ]);
+
+    const done = await createStore();
+    const doneId = await create(done, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-7' }] });
+    await command(done, follow(doneId, 1, 'done'));
+    await run(seedWorkThreads({ dbPath: done, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    expect(await linksOf(done)).toEqual([['github.com/fixture/repo#1']]);
+
+    const review = await createStore();
+    await create(review, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-7' }] });
+    await run(
+      seedWorkThreads({
+        dbPath: review,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [{ ...authored(1, null), intent: 'review' }],
+      }),
+    );
+    expect(await run(countWorkThreads({ dbPath: review }))).toEqual({ done: 0, open: 2 });
+  });
+
+  test('a detached ticket link vetoes routing to that task', async () => {
+    const dbPath = await createStore();
+    const threadId = await create(dbPath, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-7' }] });
+    const [link] = await run(queryWorkThreadLinks({ dbPath, threadIds: [threadId] }));
+    await command(dbPath, { commandId: randomUUID(), op: 'detach-link', threadId, linkId: link?.linkId ?? '' });
+    await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 2 });
+  });
+
+  test('assigned issues wait in the intake until followed, attached, dismissed or unassigned', async () => {
+    const dbPath = await createStore();
+    const record = (keys: readonly string[], complete = true) =>
+      run(recordJiraIntake({ complete, dbPath, keys, machineId: MACHINE, now: NOW }));
+    expect(await record(['SHOP-1', 'SHOP-2', 'SHOP-3', 'SHOP-7'])).toBe(4);
+    await run(seedWorkThreads({ dbPath, machineId: MACHINE, now: NOW, seeds: [authored(1)] }));
+    await create(dbPath, { links: [{ kind: 'jira-issue', key: 'jira:default/SHOP-1' }] });
+    expect((await intake(dbPath)).toSorted()).toEqual(['jira:default/SHOP-2', 'jira:default/SHOP-3']);
+
+    const dismiss = {
+      commandId: randomUUID(),
+      dismissed: true,
+      key: 'jira:default/SHOP-2',
+      op: 'dismiss-intake',
+    } as const;
+    const decide = (input: WorkThreadCommand) =>
+      run(applyWorkThreadCommand({ command: input, dbPath, machineId: MACHINE, now: NOW }));
+    expect(await decide(dismiss)).toEqual({ applied: true, followRevision: 1, ok: true, threadId: null });
+    expect(await decide(dismiss)).toEqual({ applied: false, followRevision: 1, ok: true, threadId: null });
+    expect(await intake(dbPath)).toEqual(['jira:default/SHOP-3']);
+    await record(['SHOP-1', 'SHOP-2', 'SHOP-3', 'SHOP-7']);
+    expect(await intake(dbPath)).toEqual(['jira:default/SHOP-3']);
+    await decide({ ...dismiss, commandId: randomUUID(), dismissed: false });
+    expect((await intake(dbPath)).toSorted()).toEqual(['jira:default/SHOP-2', 'jira:default/SHOP-3']);
+
+    await record(['SHOP-2'], false);
+    expect((await intake(dbPath)).toSorted()).toEqual(['jira:default/SHOP-2', 'jira:default/SHOP-3']);
+    await record(['SHOP-2']);
+    expect(await intake(dbPath)).toEqual(['jira:default/SHOP-2']);
+  });
+});
+
+describe('combined tasks (ADR 0080)', () => {
+  const pullRequestSeed = (number: number): WorkThreadSeed => ({
+    ...seed({ intent: 'change', originKey: `github.com/fixture/repo#${number}`, title: `PR ${number}` }),
+    routingJiraKey: null,
+  });
+  const observeBranch = (dbPath: string, number: number, headRef: string) =>
+    run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [
+          {
+            accountLabel: null,
+            baseRef: 'main',
+            checksRollup: 'success',
+            draft: false,
+            headRef,
+            host: 'github.com',
+            machineId: MACHINE,
+            mergedAt: null,
+            number,
+            observedAt: NOW,
+            outcome: 'observed',
+            outcomeMessage: null,
+            repository: 'fixture/repo',
+            reviewDecision: null,
+            state: 'OPEN',
+            title: `PR ${number}`,
+            updatedAt: NOW,
+            url: `https://github.com/fixture/repo/pull/${number}`,
+          },
+        ],
+      }),
+    );
+  /** A ticket task and two PR tasks naming it in their branches, as discovery left them. */
+  const splitTicket = async () => {
+    const dbPath = await createStore();
+    await run(
+      seedWorkThreads({
+        dbPath,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [
+          seed({
+            intent: null,
+            linkKind: 'jira-issue',
+            origin: 'jira-issue',
+            originKey: 'jira:default/SHOP-7',
+            // Discovery labels a ticket task with its Jira project, not where the work lands.
+            projectLabel: 'SHOP',
+            title: 'Ticket',
+          }),
+          pullRequestSeed(1),
+          pullRequestSeed(2),
+        ],
+      }),
+    );
+    await observeBranch(dbPath, 1, 'fix/SHOP-7/first');
+    await observeBranch(dbPath, 2, 'fix/SHOP-7/second');
+    const suggestions = await run(queryWorkThreadCombineSuggestions({ dbPath, machineId: MACHINE }));
+    const [suggestion] = suggestions.items;
+    if (!suggestion) {
+      throw new Error('Expected a combination suggestion');
+    }
+    return { dbPath, suggestion };
+  };
+  const combineCommand = (suggestion: WorkThreadCombineSuggestionEntry): WorkThreadTaskCommand => ({
+    commandId: randomUUID(),
+    op: 'combine',
+    participants: suggestion.participants.map(({ thread }) => ({
+      expectedRevision: thread.followRevision,
+      threadId: thread.threadId,
+    })),
+    threadId: suggestion.keptThreadId,
+    ticketKey: suggestion.ticketKey,
+  });
+
+  test('proposes the ticket task as kept, combines the group into one task and separates it again', async () => {
+    const { dbPath, suggestion } = await splitTicket();
+    expect(suggestion).toMatchObject({ blockers: [], ticketKey: 'jira:default/SHOP-7' });
+    expect(suggestion.participants.map(({ thread }) => thread.title).toSorted()).toEqual(['PR 1', 'PR 2', 'Ticket']);
+    const kept = suggestion.participants.find(({ thread }) => thread.threadId === suggestion.keptThreadId)?.thread;
+    expect(kept?.title).toBe('Ticket');
+
+    const combine = combineCommand(suggestion);
+    const combined = await command(dbPath, combine);
+    expect(combined).toMatchObject({ ok: true, threadId: suggestion.keptThreadId, followRevision: 2 });
+    expect(await command(dbPath, combine)).toMatchObject({ ok: true, applied: false });
+    expect((await page(dbPath)).rows.map((row) => row.thread.title)).toEqual(['Ticket']);
+    expect(await run(countWorkThreads({ dbPath }))).toEqual({ done: 0, open: 1 });
+    expect((await run(queryWorkThreadCombineSuggestions({ dbPath, machineId: MACHINE }))).items).toEqual([]);
+    const combinations = await run(queryWorkThreadCombinations({ dbPath, threadIds: [suggestion.keptThreadId] }));
+    expect(combinations.map((item) => item.memberTitle).toSorted()).toEqual(['PR 1', 'PR 2']);
+
+    // Members are read-only, collection follows the kept task, and a new PR routes to it.
+    const member = combinations[0]?.memberThreadId ?? '';
+    expect(
+      await command(dbPath, { commandId: randomUUID(), op: 'rename', threadId: member, title: 'x' }),
+    ).toMatchObject({
+      ok: false,
+      failure: 'task-combined',
+    });
+    const collected = await run(
+      queryActiveWorkThreadLinks({ dbPath, machineId: MACHINE, kind: 'pull-request', limit: 50 }),
+    );
+    expect(collected.links.map((link) => link.key).toSorted()).toEqual([
+      'github.com/fixture/repo#1',
+      'github.com/fixture/repo#2',
+    ]);
+    await run(
+      seedWorkThreads({
+        dbPath,
+        machineId: MACHINE,
+        now: NOW,
+        seeds: [{ ...pullRequestSeed(3), routingJiraKey: 'jira:default/SHOP-7' }],
+      }),
+    );
+    expect((await page(dbPath)).rows.map((row) => row.thread.title)).toEqual(['Ticket']);
+
+    const separated = await command(dbPath, {
+      commandId: randomUUID(),
+      expectedRevision: 3,
+      op: 'separate',
+      threadId: suggestion.keptThreadId,
+    });
+    expect(separated).toMatchObject({ ok: false, failure: 'revision-conflict' });
+    const keptNow = await run(queryWorkThreadById({ dbPath, threadId: suggestion.keptThreadId }));
+    expect(
+      await command(dbPath, {
+        commandId: randomUUID(),
+        expectedRevision: keptNow?.followRevision ?? 0,
+        op: 'separate',
+        threadId: suggestion.keptThreadId,
+      }),
+    ).toMatchObject({ ok: true });
+    expect((await page(dbPath)).rows.map((row) => row.thread.title).toSorted()).toEqual(['PR 1', 'PR 2', 'Ticket']);
+    const events = await run(queryWorkThreadEvents({ dbPath, threadIds: [member] }));
+    expect(events.map((event) => event.kind)).toEqual(['created', 'combined', 'separated']);
+  });
+
+  test('a ticket task reads as the repository of its pull requests, combined members included', async () => {
+    const { dbPath, suggestion } = await splitTicket();
+    const projectOf = async (title: string) =>
+      (await page(dbPath)).rows.find((row) => row.thread.title === title)?.thread.projectLabel;
+    expect(await projectOf('Ticket')).toBe('SHOP');
+    expect(await run(queryWorkThreadProjects({ dbPath }))).toEqual(['SHOP', 'fixture/repo']);
+    await command(dbPath, combineCommand(suggestion));
+    expect(await projectOf('Ticket')).toBe('fixture/repo');
+    expect(await run(queryWorkThreadProjects({ dbPath }))).toEqual(['fixture/repo']);
+    expect((await page(dbPath, { project: 'fixture/repo' })).rows.map((row) => row.thread.title)).toEqual(['Ticket']);
+    expect((await page(dbPath, { project: 'SHOP' })).rows).toEqual([]);
+    const kept = await run(queryWorkThreadById({ dbPath, threadId: suggestion.keptThreadId }));
+    expect(kept?.projectLabel).toBe('fixture/repo');
+  });
+
+  test('refuses a drifted preview, blocked groups and stale revisions without writing', async () => {
+    const { dbPath, suggestion } = await splitTicket();
+    const withoutOne = suggestion.participants.filter(
+      ({ thread }, index) =>
+        thread.threadId === suggestion.keptThreadId || index !== suggestion.participants.length - 1,
+    );
+    expect(withoutOne).toHaveLength(2);
+    expect(await command(dbPath, combineCommand({ ...suggestion, participants: withoutOne }))).toMatchObject({
+      ok: false,
+      failure: 'stale-preview',
+    });
+    const stale = combineCommand({
+      ...suggestion,
+      participants: suggestion.participants.map((item) => ({ ...item, thread: { ...item.thread, followRevision: 9 } })),
+    });
+    expect(await command(dbPath, stale)).toMatchObject({ ok: false, failure: 'revision-conflict' });
+
+    const noted = suggestion.participants.find(({ thread }) => thread.threadId !== suggestion.keptThreadId)?.thread;
+    await command(dbPath, {
+      commandId: randomUUID(),
+      note: 'Keep separate',
+      op: 'set-note',
+      threadId: noted?.threadId ?? '',
+    });
+    const blocked = (await run(queryWorkThreadCombineSuggestions({ dbPath, machineId: MACHINE }))).items[0];
+    expect(blocked?.blockers).toEqual([`“${noted?.title}” has a note; move or clear it first.`]);
+    expect(await command(dbPath, combineCommand(suggestion))).toMatchObject({
+      ok: false,
+      failure: 'invalid-transition',
+    });
+    expect((await page(dbPath)).rows).toHaveLength(3);
+  });
+
+  test('detaching a link through the kept task detaches it on every combined task', async () => {
+    const { dbPath, suggestion } = await splitTicket();
+    for (const { thread } of suggestion.participants.filter((participant) => participant.thread.title !== 'Ticket')) {
+      await command(dbPath, {
+        commandId: randomUUID(),
+        key: SESSION,
+        kind: 'session',
+        op: 'link',
+        threadId: thread.threadId,
+      });
+    }
+    const fresh = (await run(queryWorkThreadCombineSuggestions({ dbPath, machineId: MACHINE }))).items[0];
+    await command(dbPath, combineCommand(fresh ?? suggestion));
+    const ids = (fresh ?? suggestion).participants.map(({ thread }) => thread.threadId);
+    const session = (await run(queryWorkThreadLinks({ dbPath, threadIds: ids }))).find((link) => link.key === SESSION);
+    expect(
+      await command(dbPath, {
+        commandId: randomUUID(),
+        linkId: session?.linkId ?? '',
+        op: 'detach-link',
+        threadId: suggestion.keptThreadId,
+      }),
+    ).toMatchObject({ ok: true });
+    const sessions = (await run(queryWorkThreadLinks({ dbPath, threadIds: ids }))).filter(
+      (link) => link.key === SESSION,
+    );
+    expect(sessions).toHaveLength(2);
+    expect(sessions.every((link) => link.detachedAt !== null)).toBe(true);
+  });
 });

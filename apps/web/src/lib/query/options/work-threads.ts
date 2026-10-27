@@ -37,6 +37,13 @@ export const workThreadDetailQueryOptions = (
     queryKey: workThreadDetailKey(threadId),
     queryFn: ({ signal }) => client.detail({ threadId }, { signal }),
   });
+/** An intake decision changes no task: only the list, which carries the intake, is stale. */
+export const invalidateWorkThreadListQueries = async (
+  client: Pick<QueryClient, 'invalidateQueries'>,
+): Promise<void> => {
+  await client.invalidateQueries({ queryKey: collectionSwrKey('work-threads', 'list') });
+};
+
 /** Also use on revision conflict: the operator must decide against the refreshed revision. */
 export const invalidateWorkThreadQueries = async (
   client: Pick<QueryClient, 'invalidateQueries'>,

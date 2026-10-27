@@ -245,6 +245,8 @@ describe('work fact producers on engine startup', () => {
     expect(pullRequests).toEqual(['fixture/project#66', 'fixture/project#67']);
     expect(calls.filter(({ command }) => command === 'gh').map(({ args }) => args.slice(0, 2))).toEqual([
       ['auth', 'token'],
+      // Authored, personally requested and team-requested reviews (ADR 0082).
+      ['search', 'prs'],
       ['search', 'prs'],
       ['search', 'prs'],
       ['auth', 'token'],

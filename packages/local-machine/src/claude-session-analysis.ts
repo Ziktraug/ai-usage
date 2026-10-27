@@ -120,7 +120,9 @@ export const readClaudeSessionAnalysis = (
       return null;
     }
     const repository = readLocalGitRepository(initial.source.sourcePath);
-    const facts = repository ? parseClaudeSessionFacts({ ...input, repository }) : initial;
+    const facts = repository
+      ? parseClaudeSessionFacts({ ...input, repository, sourcePathRepository: readLocalGitRepository })
+      : initial;
     return facts ? { detail: facts.detailFacts, projection: facts.projection } : null;
   });
 

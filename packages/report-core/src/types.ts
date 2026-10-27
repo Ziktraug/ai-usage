@@ -25,6 +25,11 @@ export interface UsageRowSource {
   artifactPath?: string | null;
   delegatedSessions?: readonly { harness: 'codex'; sourceSessionId: string }[];
   harnessKey: string;
+  /**
+   * How the harness says the session was started: `exec` for a non-interactive run (`codex exec`),
+   * `interactive` for a terminal or editor session. Absent when the harness did not say.
+   */
+  launchMode?: 'exec' | 'interactive';
   machineId?: string;
   machineLabel?: string;
   parentSourceSessionId?: string | null;

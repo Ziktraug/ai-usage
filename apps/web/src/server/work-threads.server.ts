@@ -1,7 +1,9 @@
 import {
   parseWorkThreadCommand,
+  type WorkIntakeCommandResult,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
+  type WorkThreadTaskCommand,
 } from '@ai-usage/report-core/work-thread';
 import type {
   WorkThreadDetailDataset,
@@ -20,7 +22,11 @@ import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 /** The Web process reads projections and forwards commands; it never owns a live store writer. */
 export interface WorkThreadServerPorts {
-  readonly executeCommand: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult>;
+  /** A task command's answer names its task; only an intake decision answers without one. */
+  readonly executeCommand: {
+    (command: WorkThreadTaskCommand): Promise<WorkThreadCommandResult>;
+    (command: WorkThreadCommand): Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
+  };
   readonly readDetail: (threadId: string) => Promise<WorkThreadDetailDataset | null>;
   readonly readList: (query: WorkThreadListQuery) => Promise<WorkThreadListDataset>;
 }
@@ -62,8 +68,12 @@ const readFromStore = async <Data>(operation: Effect.Effect<Data, unknown>): Pro
 export const bindLiveWorkThreadPorts = (
   dbPath: string = resolveUsageWebRuntimePaths().databasePath,
   resolveControl: typeof resolveUsageEngineControlClientForServer = resolveUsageEngineControlClientForServer,
-): WorkThreadServerPorts => ({
-  executeCommand: async (command) => {
+): WorkThreadServerPorts => {
+  function executeCommand(command: WorkThreadTaskCommand): Promise<WorkThreadCommandResult>;
+  function executeCommand(command: WorkThreadCommand): Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
+  async function executeCommand(
+    command: WorkThreadCommand,
+  ): Promise<WorkThreadCommandResult | WorkIntakeCommandResult> {
     const control = await resolveControl().catch(() => {
       throw new WorkThreadServiceUnavailableError('The usage engine is not running; the task was not changed.');
     });
@@ -74,10 +84,13 @@ export const bindLiveWorkThreadPorts = (
     throw new WorkThreadServiceUnavailableError(
       completion.state === 'failed' ? completion.error.message : 'The usage engine returned an unexpected answer.',
     );
-  },
-  readDetail: (threadId) => readFromStore(queryWorkThreadDetail({ dbPath, threadId })),
-  readList: (query) => readFromStore(queryWorkThreadList({ dbPath, query })),
-});
+  }
+  return {
+    executeCommand,
+    readDetail: (threadId) => readFromStore(queryWorkThreadDetail({ dbPath, threadId })),
+    readList: (query) => readFromStore(queryWorkThreadList({ dbPath, query })),
+  };
+};
 
 const portsFor = async (options: WorkThreadServerOptions): Promise<WorkThreadServerPorts> => {
   if (options.ports) {
@@ -133,7 +146,7 @@ export const readWorkThreadDetailForServer = (
 export const executeWorkThreadCommandForServer = async (
   input: WorkThreadCommand,
   options: WorkThreadServerOptions = {},
-): Promise<WorkThreadCommandResult> => {
+): Promise<WorkThreadCommandResult | WorkIntakeCommandResult> => {
   options.signal?.throwIfAborted();
   const command = parseWorkThreadCommand(input);
   if (command === null) {
@@ -150,7 +163,7 @@ export const executeWorkThreadCommandFromRequestForServer = async (
   request: Request,
   input: WorkThreadCommand,
   options: WorkThreadServerOptions = {},
-): Promise<WorkThreadCommandResult> => {
+): Promise<WorkThreadCommandResult | WorkIntakeCommandResult> => {
   const trustFailure = validateTrustedLocalRequest(request);
   if (trustFailure) {
     throw trustFailure;

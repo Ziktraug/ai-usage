@@ -356,6 +356,24 @@ sessions, branch, pull requests and Jira issues are links, and it carries the
 operator's follow state (ADR 0063).
 _Avoid_: session thread, campaign, task inferred from prompts
 
+**Jira intake**:
+Issues Jira assigns to the operator that no open Work thread follows yet, listed
+above the tasks until the operator follows, attaches or dismisses each one.
+Assignment alone never creates a Work thread (ADR 0079).
+_Avoid_: backlog task, inbox, auto-followed ticket
+
+**Branch evidence**:
+The repository and branch a Session's harness recorded, equal to a branch a Work thread holds:
+the Session reads as part of that thread, and recent interactive work on a branch no thread holds
+creates one. A folder, a title or a time window is never branch evidence (ADR 0081).
+_Avoid_: checkout match, inferred branch, guessed association
+
+**Combined task**:
+A Work thread whose members, other threads following the same ticket, read as
+part of it until the operator separates them. Members keep their links and
+history; they are not ended (ADR 0080).
+_Avoid_: merged task, duplicate, absorbed (in UI copy)
+
 **Follow state**:
 The operator's own standing on a Work thread: Following, Waiting or Done. Only
 explicit commands change it. Ending a follow-up closes the operator's

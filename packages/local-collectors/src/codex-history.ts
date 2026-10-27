@@ -167,7 +167,8 @@ interface SqliteDatabase {
 // and native task evidence instead of retaining inherited cumulative snapshots.
 // An unchanged rollout must also recover lost generations and partial status.
 // Version 27 also records loss from recognized native requests/outputs with invalid timestamps.
-const CODEX_SESSION_CACHE_VERSION = 27;
+// 28: sessions keep `session_meta.source`, so `codex exec` runs are told apart from interactive ones.
+const CODEX_SESSION_CACHE_VERSION = 28;
 
 // The runtime's op-count yielding cannot split one long synchronous
 // decompress-and-parse, and a cold pass over thousands of rollouts chains many
@@ -436,6 +437,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       phases,
       subagentKind: value.subagentKind,
       threadSource: typeof value.threadSource === 'string' ? value.threadSource : null,
+      launchSource: typeof value.launchSource === 'string' ? value.launchSource : null,
       agentNickname: typeof value.agentNickname === 'string' ? value.agentNickname : null,
       subscription: value.subscription,
       firstUser: typeof value.firstUser === 'string' ? value.firstUser : null,
@@ -886,6 +888,9 @@ export const readCodexUsageSessionsResult: Effect.Effect<
           ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
           ...(classifierRootSourceSessionId ? { rootSourceSessionId: classifierRootSourceSessionId } : {}),
           sourcePath: session.cwd,
+          ...(session.launchSource === null
+            ? {}
+            : { launchMode: session.launchSource === 'exec' ? ('exec' as const) : ('interactive' as const) }),
           ...(session.vcs ? { vcs: session.vcs } : {}),
         },
         projectPath: session.cwd,

@@ -9,6 +9,9 @@ import {
 } from '../../../server/work-threads-e2e-fixture.server';
 import { threadListQuery } from './work-thread-model';
 
+const PROJECT_TAG_PATTERN = /class="wt-project-tag[^"]*" title="exaprint\/Exalibur">Exalibur</;
+const SOURCE_CAPTION_PATTERN = /GitHub · [A-Z][a-z]{2} \d/;
+
 const SUMMARY_CONTENT = /<summary[^>]*>(.*?)<\/summary>/;
 const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Checks failing<\/h2>/;
 
@@ -179,13 +182,38 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain('wt-event-mark');
     expect(body).toContain('>2</span>');
   });
+  test('a row leads with its short project and reaches back past the week, without source captions', () => {
+    const old = new Date(Date.parse(list.generatedAt) - 40 * 86_400_000).toISOString();
+    const row = {
+      ...payments.row,
+      thread: { ...payments.row.thread, projectLabel: 'exaprint/Exalibur' },
+      firstActivityAt: old,
+      marks: [{ at: old, harness: 'codex', kind: 'session' as const, label: 'Old exploration' }],
+    };
+    const body = html(List, {
+      dataset: list,
+      rows: [row],
+      query,
+      timeZone: 'UTC',
+      href: () => '/work',
+      onOpen: noop,
+      onFilter: noop,
+      onMore: noop,
+    });
+    expect(body).toMatch(PROJECT_TAG_PATTERN);
+    expect(body).not.toContain('Updated');
+    expect(body).not.toMatch(SOURCE_CAPTION_PATTERN);
+    expect(body).toContain('1 sessions, 0 work events. Show activity.');
+    expect(body).toContain('aria-label="Tasks and their activity timeline, scrolls back in time"');
+    expect(body).toContain('>Today</span>');
+  });
   test('discovered PR history uses source dates and hides automatic linking noise', async () => {
     const merged = await detail(WORK_THREADS_FIXTURE_IDS.mergedPr);
     const body = html(Detail, { ...baseDetailProps, timeZone: 'UTC', data: merged });
     expect(body).toContain('Since Oct 20');
     expect(body).toContain('PR #1502 opened');
     expect(body).toContain('PR #1502 merged');
-    expect(body.indexOf('PR #1502 opened')).toBeLessThan(body.indexOf('PR #1502 merged'));
+    expect(body.indexOf('PR #1502 merged')).toBeLessThan(body.indexOf('PR #1502 opened'));
     expect(body).toContain('wt-fact-event');
     expect(body).not.toContain('Task created');
     expect(body).not.toContain('Source linked');
@@ -456,7 +484,7 @@ describe('work thread SSR presentation', () => {
     expect(banner).toContain('Sessions: evidence incomplete');
     expect(banner).toContain('does not establish that nothing is left');
   });
-  test('source events show escaped readable labels and reserve raw keys for title attributes', () => {
+  test('link changes remain out of the default chronology and keep their control available', () => {
     const episode = payments.episodes[0];
     const event = payments.events[0];
     if (!(episode && event)) {
@@ -488,16 +516,11 @@ describe('work thread SSR presentation', () => {
       })),
     };
     const body = html(Detail, { ...baseDetailProps, data });
-    const visible = body.replaceAll(/<[^>]*>/g, '');
-    expect(visible).toContain('&lt;Check> retry &amp; result · Codex');
+    expect(body).toContain('Link changes');
     expect(body).not.toContain('<Check>');
-    expect(visible).toContain('a session (no longer readable)');
-    expect(visible).toContain('PR #68 · team/repo');
-    expect(visible).toContain('XLB-2085');
-    expect(visible).toContain('fix/payment/retry');
+    expect(body).not.toContain('Source detached');
     for (const key of keys) {
-      expect(body).toContain(`title="${key}"`);
-      expect(visible).not.toContain(key);
+      expect(body).not.toContain(key);
     }
   });
   test('episode context labels span, verified resume copy, and unknown origin honestly', () => {

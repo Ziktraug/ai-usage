@@ -1529,6 +1529,7 @@ describe('live usage engine publication', () => {
       ['auth', 'token'],
       ['search', 'prs'],
       ['search', 'prs'],
+      ['search', 'prs'],
     ]);
     const cleanupEvents = capture.events().filter((event) => event.boundary === 'handoff.cleanup');
     expect(cleanupEvents).toHaveLength(1);

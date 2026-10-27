@@ -57,6 +57,9 @@ export const WORK_THREAD_EVENT_KINDS = [
   'note',
   'renamed',
   'wait-satisfied',
+  // ADR 0080: recorded on the kept task and on each task combined into it, then on separation.
+  'combined',
+  'separated',
 ] as const;
 export type WorkThreadEventKind = (typeof WORK_THREAD_EVENT_KINDS)[number];
 
@@ -65,11 +68,17 @@ export const WORK_THREAD_COMMAND_FAILURES = [
   'revision-conflict',
   'invalid-transition',
   'invalid-link',
+  /** The task was combined into another; commands go to the kept task (ADR 0080). */
+  'task-combined',
+  /** The tasks following the ticket changed since the combination was previewed. */
+  'stale-preview',
 ] as const;
 export type WorkThreadCommandFailure = (typeof WORK_THREAD_COMMAND_FAILURES)[number];
 
 export const WORK_THREAD_BOUNDS = {
   maxAcknowledgedRemainders: 16,
+  /** Tasks one combination may join, the kept task included. */
+  maxCombinedThreads: 8,
   maxEventsPerThread: 500,
   maxKey: 640,
   maxLinksPerThread: 64,
@@ -172,8 +181,33 @@ export type WorkThreadCommand =
       readonly threadId: string;
     }
   | { readonly commandId: string; readonly linkId: string; readonly op: 'detach-link'; readonly threadId: string }
+  /**
+   * Detach a session by key, including one the task reads through its branch with no stored link
+   * (ADR 0081): the detached link recorded either way is the operator's veto.
+   */
+  | { readonly commandId: string; readonly key: string; readonly op: 'detach-session'; readonly threadId: string }
   | { readonly commandId: string; readonly note: string | null; readonly op: 'set-note'; readonly threadId: string }
-  | { readonly commandId: string; readonly op: 'rename'; readonly threadId: string; readonly title: string };
+  | { readonly commandId: string; readonly op: 'rename'; readonly threadId: string; readonly title: string }
+  /**
+   * Combine every task following one ticket into the kept task (ADR 0080). The exact participant set
+   * and their revisions are what the operator previewed; any drift is refused, never adjusted.
+   */
+  | {
+      readonly commandId: string;
+      readonly op: 'combine';
+      readonly participants: readonly { readonly expectedRevision: number; readonly threadId: string }[];
+      readonly threadId: string;
+      readonly ticketKey: string;
+    }
+  /** End the combination kept by `threadId`; each task returns with the state it kept. */
+  | {
+      readonly commandId: string;
+      readonly expectedRevision: number;
+      readonly op: 'separate';
+      readonly threadId: string;
+    }
+  /** Hide (or restore) an assigned Jira issue in the intake; it concerns no task. */
+  | { readonly commandId: string; readonly dismissed: boolean; readonly key: string; readonly op: 'dismiss-intake' };
 
 export type WorkThreadCommandResult =
   | {
@@ -189,6 +223,14 @@ export type WorkThreadCommandResult =
       readonly failure: WorkThreadCommandFailure;
       readonly message: string;
     };
+
+/** Commands addressed to one task; their result always names it. */
+export type WorkThreadTaskCommand = Exclude<WorkThreadCommand, { readonly op: 'dismiss-intake' }>;
+
+/** An intake decision changes no task, so its result names none (and a fixed revision of 1). */
+export type WorkIntakeCommandResult =
+  | { readonly ok: true; readonly applied: boolean; readonly followRevision: number; readonly threadId: null }
+  | Extract<WorkThreadCommandResult, { readonly ok: false }>;
 
 // ---------------------------------------------------------------------------------------------
 // Qualified keys. A path or a common name is never an identity; each key names its authority.
@@ -227,6 +269,36 @@ export const branchLinkKey = (input: {
   readonly ref: string;
   readonly repository: string;
 }): string => `branch:${input.host.toLowerCase()}/${input.repository}@${input.ref}`;
+
+/** Branches everyone merges into: a session on one is no single task's work (ADR 0081). */
+export const SHARED_BRANCH_NAMES: ReadonlySet<string> = new Set(['main', 'master', 'develop', 'development', 'trunk']);
+
+const FORBIDDEN_REF_CHARACTERS = new Set(['~', '^', ':', '?', '*', '[', '\\']);
+/** Controls, space, DEL and the characters git reserves for revision syntax. */
+const hasInvalidRefCharacter = (ref: string): boolean =>
+  [...ref].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 32 || code === 127 || FORBIDDEN_REF_CHARACTERS.has(character);
+  });
+
+/**
+ * `git check-ref-format` for a branch: what a harness may record that is not one (`HEAD`, a
+ * placeholder such as `.invalid`, an empty name) never stands for work on a branch.
+ */
+export const isBranchRefName = (ref: string): boolean =>
+  ref.length > 0 &&
+  ref.length <= 255 &&
+  ref !== 'HEAD' &&
+  ref !== '@' &&
+  !hasInvalidRefCharacter(ref) &&
+  !ref.includes('..') &&
+  !ref.includes('@{') &&
+  !ref.includes('//') &&
+  !ref.startsWith('/') &&
+  !ref.startsWith('-') &&
+  !ref.endsWith('/') &&
+  !ref.endsWith('.') &&
+  ref.split('/').every((segment) => !(segment.startsWith('.') || segment.endsWith('.lock')));
 
 export type ParsedWorkThreadLinkKey =
   | { readonly host: string; readonly kind: 'pull-request'; readonly number: number; readonly repository: string }
@@ -605,6 +677,13 @@ export const parseWorkThreadCommand = (value: unknown): WorkThreadCommand | null
         ? { commandId, key: link.key, kind: link.kind, op: 'link', threadId: value.threadId }
         : null;
     }
+    case 'detach-session':
+      return hasOnlyKeys(value, ['commandId', 'key', 'op', 'threadId']) &&
+        typeof value.key === 'string' &&
+        parseWorkThreadLinkKey('session', value.key) !== null &&
+        isWorkThreadId(value.threadId)
+        ? { commandId, key: value.key, op: 'detach-session', threadId: value.threadId }
+        : null;
     case 'detach-link':
       return hasOnlyKeys(value, ['commandId', 'linkId', 'op', 'threadId']) &&
         isWorkThreadId(value.linkId) &&
@@ -617,6 +696,51 @@ export const parseWorkThreadCommand = (value: unknown): WorkThreadCommand | null
         note !== undefined &&
         isWorkThreadId(value.threadId)
         ? { commandId, note, op: 'set-note', threadId: value.threadId }
+        : null;
+    }
+    case 'combine': {
+      const ticket = parseLinkInput({ key: value.ticketKey, kind: 'jira-issue' });
+      const rawParticipants = value.participants;
+      if (
+        !(
+          hasOnlyKeys(value, ['commandId', 'op', 'participants', 'threadId', 'ticketKey']) &&
+          ticket &&
+          isWorkThreadId(value.threadId) &&
+          Array.isArray(rawParticipants)
+        ) ||
+        rawParticipants.length < 2 ||
+        rawParticipants.length > WORK_THREAD_BOUNDS.maxCombinedThreads
+      ) {
+        return null;
+      }
+      const participants = rawParticipants.map((item: unknown) => {
+        if (!(isRecord(item) && hasOnlyKeys(item, ['expectedRevision', 'threadId']) && isWorkThreadId(item.threadId))) {
+          return null;
+        }
+        const expectedRevision = revision(item.expectedRevision);
+        return expectedRevision === null ? null : { expectedRevision, threadId: item.threadId };
+      });
+      if (
+        !participants.every((item): item is { expectedRevision: number; threadId: string } => item !== null) ||
+        new Set(participants.map((item) => item.threadId)).size !== participants.length ||
+        !participants.some((item) => item.threadId === value.threadId)
+      ) {
+        return null;
+      }
+      return { commandId, op: 'combine', participants, threadId: value.threadId, ticketKey: ticket.key };
+    }
+    case 'separate': {
+      const expectedRevision = revision(value.expectedRevision);
+      return hasOnlyKeys(value, ['commandId', 'expectedRevision', 'op', 'threadId']) &&
+        expectedRevision !== null &&
+        isWorkThreadId(value.threadId)
+        ? { commandId, expectedRevision, op: 'separate', threadId: value.threadId }
+        : null;
+    }
+    case 'dismiss-intake': {
+      const link = parseLinkInput({ key: value.key, kind: 'jira-issue' });
+      return hasOnlyKeys(value, ['commandId', 'dismissed', 'key', 'op']) && link && typeof value.dismissed === 'boolean'
+        ? { commandId, dismissed: value.dismissed, key: link.key, op: 'dismiss-intake' }
         : null;
     }
     case 'rename': {

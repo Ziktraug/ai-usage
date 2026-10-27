@@ -17,6 +17,8 @@ const ids = {
   longTitle: '12000000-0000-4000-8000-000000000009',
   mergedPr: '12000000-0000-4000-8000-000000000010',
   unknownDuration: '12000000-0000-4000-8000-000000000011',
+  webhookTicket: '12000000-0000-4000-8000-000000000013',
+  webhookPullRequest: '12000000-0000-4000-8000-000000000014',
 };
 const DONE_TAB = /^Done /;
 const FOLLOWING_TAB = /^Following /;
@@ -62,6 +64,9 @@ const createTask = async (
   const created = await command(request, input);
   if (!created.ok) {
     throw new Error(created.message);
+  }
+  if (created.threadId === null) {
+    throw new Error('Task creation answered without its task.');
   }
   return { threadId: created.threadId, title: input.title };
 };
@@ -270,7 +275,11 @@ test('Undo of Reopen restores the original closure reason and acknowledgements a
 
 test('a task exists for a PR with zero sessions and keeps a dated GitHub marker', async ({ page }) => {
   await open(page);
-  await expect(row(page, ids.review)).toContainText('PR #1492 · 0 linked sessions');
+  await expect(row(page, ids.review)).toContainText('0 linked sessions');
+  await expect(row(page, ids.review).getByRole('link', { name: 'PR #1492 ↗', exact: true })).toHaveAttribute(
+    'href',
+    'https://github.example/synthetic/example-shop/pull/1492',
+  );
   await row(page, ids.review).getByRole('link', { name: 'Check cart rounding' }).first().click();
   await expect(page.getByText('0 linked sessions · one task', { exact: true })).toBeVisible();
   await page.locator('summary').filter({ hasText: 'GITHUB' }).click();
@@ -356,7 +365,8 @@ test('a mixed day shows both chips and lists dated marks before opening the task
   await open(page);
   const task = row(page, ids.payments);
   const day = task.locator('.wt-day-button:has(.wt-event-mark):has([data-harness])').first();
-  await expect(day.locator('[data-harness="claude"]')).toHaveText('Cl');
+  // The provider mark replaces letter glyphs that read like "CI" next to check states.
+  await expect(day.locator('[data-harness="claude"] svg')).toBeVisible();
   await expect(day.locator('.wt-event-mark')).toBeVisible();
   await day.focus();
   await page.keyboard.press('Enter');
@@ -382,10 +392,12 @@ test('episode durations and PR fact events use their own evidence dates', async 
   await expect(episode).toContainText('first to last activity, pauses included');
   await expect(page.locator('.wt-reason h2')).toHaveText('2 review threads to address');
   await open(page, ids.unknownDuration);
-  await expect(page.locator('.wt-duration')).toHaveText('Duration not recorded: —');
+  await expect(page.locator('.wt-duration')).toHaveCount(0);
+  await page.locator('.wt-session-button').first().click();
+  await expect(page.locator('.wt-inspector')).toContainText('Duration not recorded');
   await open(page, ids.mergedPr);
   await expect(page.locator('.wt-id')).toContainText('Since Oct 20');
-  await expect(page.locator('.wt-fact-event strong')).toHaveText(['PR #1502 opened', 'PR #1502 merged']);
+  await expect(page.locator('.wt-fact-event strong')).toHaveText(['PR #1502 merged', 'PR #1502 opened']);
   await expect(page.locator('.wt-fact-event .wt-event-source')).toHaveText(['GitHub', 'GitHub']);
   await expect(page.getByText('Task created', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Source linked', { exact: true })).toHaveCount(0);
@@ -461,6 +473,8 @@ test('links a recent served session of the project, detaches it, and can undo th
   await picker.getByRole('button', { name: 'Link Build report UI', exact: true }).click();
   await expect(page.getByText('1 linked session · one task', { exact: true })).toBeVisible();
   const linkedEvent = page.locator('.wt-event').filter({ hasText: 'Source linked' });
+  await expect(linkedEvent).toHaveCount(0);
+  await page.getByRole('checkbox', { name: 'Link changes', exact: true }).check();
   await expect(linkedEvent.getByText('Build report UI · Codex', { exact: true })).toHaveAttribute(
     'title',
     'session:fixture-machine/codex/campaign-root',
@@ -616,8 +630,8 @@ test('session intake creates a task through the inline form and opens its linked
   const response = await createdResponse;
   expect(response.status()).toBe(200);
   const created = parseWorkThreadsCommandOutput(decodeRpcResponseBody(await response.text()));
-  if (!created.ok) {
-    throw new Error(created.message);
+  if (!created.ok || created.threadId === null) {
+    throw new Error(created.ok ? 'Task creation answered without its task.' : created.message);
   }
   await expect(session.getByRole('status')).toContainText('Task created.');
   await session.getByRole('link', { name: 'Open task', exact: true }).click();
@@ -657,16 +671,24 @@ test('list and task layouts are accessible without overflow at desktop, tablet a
     await expect(taskLink).toHaveAttribute('title', longTitle);
     expect(await taskLink.locator('strong').evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe('2');
     const taskBounds = await row(page, ids.longTitle).boundingBox();
-    expect(taskBounds?.height).toBeLessThanOrEqual(width > 780 ? 100 : 150);
+    expect(taskBounds?.height).toBeLessThanOrEqual(width > 780 ? 240 : 360);
+    // The timeline scrolls inside the board, today at the right edge; the page itself never does.
+    const board = page.locator('.wt-board');
+    const scroll = await board.evaluate((element) => ({
+      left: element.scrollLeft,
+      max: element.scrollWidth - element.clientWidth,
+      visible: element.clientWidth,
+    }));
+    expect(scroll.left).toBeGreaterThanOrEqual(scroll.max - 2);
     if (width === 375) {
-      const titleBounds = await taskLink.boundingBox();
-      const weekControl = row(page, ids.longTitle).locator('.wt-day-button').first();
+      const titleBounds = await row(page, ids.longTitle).locator('.wt-task-summary').boundingBox();
+      const weekControl = row(page, ids.longTitle).locator('.wt-day-button').last();
       const weekBounds = await weekControl.boundingBox();
       if (!(taskBounds && titleBounds && weekBounds)) {
         throw new Error('The mobile task title and week activity must remain visible.');
       }
-      expect(titleBounds.width / taskBounds.width).toBeGreaterThanOrEqual(0.48);
-      expect(titleBounds.width / taskBounds.width).toBeLessThanOrEqual(0.6);
+      expect(titleBounds.width / scroll.visible).toBeGreaterThanOrEqual(0.48);
+      expect(titleBounds.width / scroll.visible).toBeLessThanOrEqual(0.65);
       expect(weekBounds.width).toBeGreaterThanOrEqual(20);
       await expect(weekControl).toBeVisible();
     }
@@ -679,4 +701,118 @@ test('list and task layouts are accessible without overflow at desktop, tablet a
   }
   await page.emulateMedia({ colorScheme: 'dark' });
   await assertAxe(page);
+});
+
+test('work exposes artifact links and independent states, with a global recent view and reversible chronology order', async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.getByRole('checkbox', { name: 'Group by project' })).not.toBeChecked();
+  await expect(row(page, ids.payments).getByRole('link', { name: 'PR #1487 ↗', exact: true })).toHaveAttribute(
+    'href',
+    'https://github.example/synthetic/example-shop/pull/1487',
+  );
+  await expect(row(page, ids.payments).getByRole('link', { name: 'SHOP-2085 ↗', exact: true })).toHaveAttribute(
+    'href',
+    'https://jira.example/browse/SHOP-2085',
+  );
+  await expect(row(page, ids.payments)).toContainText('Changes requested');
+  await expect(row(page, ids.payments)).toContainText('Checks pass');
+  // The project leads the row; the timeline and the activity order say when, so no "Updated" line.
+  await expect(row(page, ids.payments).locator('.wt-project-tag')).toHaveText('Example shop');
+  await expect(row(page, ids.payments)).not.toContainText('Updated');
+  await open(page, ids.payments);
+  const order = page.getByRole('combobox', { name: 'Order', exact: true });
+  await expect(order).toHaveValue('true');
+  const times = page.locator('.wt-entry-time');
+  const newest = await times.first().getAttribute('datetime');
+  const oldest = await times.last().getAttribute('datetime');
+  expect(newest! >= oldest!).toBe(true);
+  await order.selectOption({ label: 'Oldest first' });
+  await expect(times.first()).toHaveAttribute('datetime', oldest!);
+});
+
+test('assigned Jira tickets wait in a folded intake until followed or dismissed', async ({ page }) => {
+  await open(page);
+  const intake = page.locator('details.wt-jira-intake');
+  // SHOP-2085 is assigned too, but a task already follows it.
+  await expect(intake.locator('summary')).toContainText('2 tickets not followed yet');
+  await intake.locator('summary').click();
+  const items = intake.locator('.wt-intake-item');
+  await expect(items).toHaveCount(2);
+  await expect(intake).not.toContainText('SHOP-2085');
+  await assertAxe(page);
+
+  const review = items.filter({ hasText: 'SHOP-3002' });
+  await review.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await expect(intake.getByRole('status')).toContainText('SHOP-3002 dismissed');
+  await expect(items).toHaveCount(1);
+  await intake.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(items).toHaveCount(2);
+
+  const todo = items.filter({ hasText: 'SHOP-3001' });
+  await todo.getByRole('button', { name: 'Follow', exact: true }).click();
+  await expect(items).toHaveCount(1);
+  const followed = page.locator('[data-work-thread]', {
+    hasText: 'Synthetic: show delivery dates on the cart summary',
+  });
+  await expect(followed).toContainText('SHOP-3001');
+});
+
+test('tasks of one ticket combine after a preview, undo, read as one, and separate again', async ({ page }) => {
+  await open(page);
+  const block = page.locator('details.wt-combine');
+  await expect(block.locator('summary')).toContainText('1 ticket to combine');
+  await block.locator('summary').click();
+  const suggestion = block.locator('.wt-intake-item', { hasText: 'SHOP-3100' });
+  await expect(suggestion).toContainText('Keeps “Webhook deliveries are lost after a timeout”');
+  await expect(suggestion).toContainText('Joins · (SHOP-3100) Retry webhook deliveries with backoff · #1510');
+  await assertAxe(page);
+
+  await suggestion.getByRole('button', { name: 'Combine 2 tasks', exact: true }).click();
+  await expect(block.getByRole('status')).toContainText('SHOP-3100 combined into');
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(0);
+  await expect(row(page, ids.webhookTicket)).toContainText('combines 2 tasks');
+  await expect(row(page, ids.webhookTicket)).toContainText('PR #1510');
+  await block.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(1);
+
+  await block
+    .locator('.wt-intake-item', { hasText: 'SHOP-3100' })
+    .getByRole('button', { name: 'Combine 2 tasks' })
+    .click();
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(0);
+  await open(page, ids.webhookPullRequest);
+  await expect(page.getByRole('note')).toContainText('This task was combined into “Webhook deliveries are lost');
+  await open(page, ids.webhookTicket);
+  const banner = page.locator('.wt-combined-banner');
+  await expect(banner).toContainText('Combines 2 tasks for one ticket');
+  await banner.getByRole('button', { name: 'Separate', exact: true }).click();
+  await expect(banner).toHaveCount(0);
+  await open(page);
+  await expect(row(page, ids.webhookPullRequest)).toHaveCount(1);
+});
+
+test('the timeline scrolls back with the keyboard while the task and what is left stay pinned', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await open(page);
+  const board = page.getByRole('region', { name: 'Tasks and their activity timeline, scrolls back in time' });
+  await board.evaluate((element) => {
+    element.style.setProperty('--wt-days', '120');
+  });
+  const before = await board.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+    return element.scrollLeft;
+  });
+  expect(before).toBeGreaterThan(0);
+  const summary = row(page, ids.payments).locator('.wt-task-summary');
+  const pinned = await summary.boundingBox();
+  // Focus inside the lane, as a keyboard user reaches it; the arrows then scroll the board.
+  await row(page, ids.payments).locator('.wt-day-button').last().focus();
+  for (let press = 0; press < 5; press++) {
+    await page.keyboard.press('ArrowLeft');
+  }
+  await expect.poll(() => board.evaluate((element) => element.scrollLeft)).toBeLessThan(before);
+  expect((await summary.boundingBox())?.x).toBe(pinned?.x);
+  await expect(row(page, ids.payments).locator('.wt-next')).toBeInViewport();
 });

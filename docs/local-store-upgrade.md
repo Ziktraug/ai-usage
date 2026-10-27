@@ -71,6 +71,19 @@ the sessions actually read, independently of unchanged native timestamps.
 These auxiliary rows do not enter served revisions, exports or replication.
 Validation uses disposable stores; no daily-store upgrade is authorized here.
 
+2026-10-26 (ADR 0079): `work_jira_intake` records assigned Jira issues and the
+operator's dismissals, under the same usage version 4. Only the engine creates
+it; existing tasks, links and Jira-origin threads are left as they are, and no
+issue is backfilled until the next successful assigned-issue search. Query-only
+readers of a store without the table report it as not yet upgraded. Validation
+uses disposable stores; no daily-store upgrade is authorized here.
+
+2026-10-26 (ADR 0080): `work_thread_combinations` records combined tasks and
+their separation, under the same usage version 4. Only the engine creates it; no
+existing task, link or event is rewritten. An older binary ignores the table and
+lists combined members as separate tasks again. Validation uses disposable
+stores; no daily-store upgrade is authorized here.
+
 The Claude Desktop session fact family (ADR 0050) adds `claude_desktop_sessions`
 and `claude_desktop_collection_state` to the usage store without changing
 `user_version`, following the `skill_observations` precedent: the engine
@@ -317,6 +330,47 @@ the new tables and columns; threads created meanwhile are kept for the next
 upgrade, not deleted. Until the engine has reopened the store, the Work view's
 query-only read answers `schema-too-old` ("not upgraded for this version yet"),
 never an empty list.
+
+## Work artifact browser links (2026-10-26)
+
+The engine adds a nullable `url` column to `jira_issue_observations` under usage
+version 4. Existing rows remain unchanged and query-only readers tolerate the
+missing column. New observations retain only a public browser URL: the Jira REST
+`self` URL for self-hosted instances, or the CLI's authenticated public site when
+Atlassian returns an internal backend hostname. No auth status output or credential
+is stored. Back up both stores before restarting the engine with this change.
+
+## Branch evidence (2026-10-27)
+
+ADR 0081 adds three tables under usage version 4, created by the engine on its next open
+when absent: `work_session_branches` (which session recorded which repository branch, derived
+from the served revision and rebuilt with it), `work_session_branch_builds` (the revision and
+host aliases it was built from) and `work_branch_reconciliation` (one creation cutoff per
+machine, fixed three weeks before the first reconciliation). The first two are disposable: the
+engine deletes and rebuilds them, and nothing operator-owned lives there. The same open adds a
+nullable `cross_repository` integer column to `pull_request_observations`; rows written before
+carry null and give no head branch until the PR is observed again. Task links stay where they
+were: the engine adds `branch` links and `session`-origin tasks through its normal writer, never
+rewrites existing rows, and a detached link remains a veto. The Work view's reader requires the
+three tables, so it answers `schema-too-old` until the engine has reopened the store. An older
+binary ignores them. Collector caches move to new versions (Claude 22, Codex 28), so the first
+collection after the upgrade re-reads transcripts and rollouts once. Back up both stores before
+restarting the engine with this change.
+
+## Handed-off Jira statuses (2026-10-27)
+
+The engine adds a nullable `handed_off` integer column to
+`jira_issue_observations` under usage version 4, through the same
+presence-based `ALTER TABLE … ADD COLUMN`. It holds `1` when the observed status
+was one the home config names in `jira.handedOffStatuses` at observation time,
+and null otherwise; rows written before carry null and read as "not handed
+off". Nothing is backfilled: a change to the setting applies from the next Jira
+read. Query-only readers tolerate the missing column, and an older binary
+ignores it. Pull request discovery now records a third `discovery_role` value,
+`team-review-requested`, in the existing column; an older binary reading such a
+row treats the observation as invalid for that field, so upgrade the web and the
+engine together. Back up both stores before restarting the engine with this
+change.
 
 ## Backup
 

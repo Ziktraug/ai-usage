@@ -1,13 +1,15 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits closed true/false ARIA states; SSR and browser regressions assert their values. -->
 <script lang="ts">
   import type {
-    WorkThreadCommand,
     WorkThreadCommandResult,
     WorkThreadFollowState,
+    WorkThreadTaskCommand,
     WorkThreadWait,
   } from '@ai-usage/report-core/work-thread';
+  import { taskNativeRequests } from '@ai-usage/report-core/work-thread-situation';
   import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
-  import { createWorkThreadCommandAction, type WorkThreadCommandActionInput } from '../../rpc/work-threads-client';
+  import { createWorkThreadCommandAction, type WorkThreadTaskCommandActionInput } from '../../rpc/work-threads-client';
+  import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import WorkThreadEpisode from './work-thread-episode.svelte';
   import { captureFollowUndo, createFollowUndo, type FollowUndoAction } from './work-thread-follow-undo';
   import WorkThreadMarkers from './work-thread-markers.svelte';
@@ -59,7 +61,7 @@
     nextHref?: string | null;
     selectedDay?: string | null;
     onBack: (event: MouseEvent) => void;
-    onCommand: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult>;
+    onCommand: (command: WorkThreadTaskCommand) => Promise<WorkThreadCommandResult>;
     onPickerOpen: () => void;
     sessionChoices?: readonly SessionChoice[];
     sessionsLoading?: boolean;
@@ -85,10 +87,20 @@
   let toast = $state<string | null>(null);
   let undo = $state<(() => Promise<void>) | null>(null);
   let retry = $state<(() => Promise<void>) | null>(null);
-  const history = $derived(threadHistory(data, sessionsOnly, timeZone));
-  const nativePending = $derived(
-    row.nativeRequests.filter((request) => request.state === 'open' || request.state === 'uncertain'),
+  let newestFirst = $state(true);
+  let showLinkChanges = $state(false);
+  const history = $derived(
+    threadHistory(data, sessionsOnly, timeZone, newestFirst)
+      .map((day) => ({
+        ...day,
+        entries: day.entries.filter(
+          (entry) =>
+            showLinkChanges || entry.kind !== 'event' || !['link-added', 'link-detached'].includes(entry.event.kind),
+        ),
+      }))
+      .filter((day) => day.entries.length > 0),
   );
+  const nativePending = $derived(taskNativeRequests(row));
   const primaryRemainder = $derived(situation.remainders.find((item) => item.kind === situation.reason));
   const primaryPr = $derived(row.markers.pullRequests.find((marker) => marker.key === primaryRemainder?.key));
   const openPr = $derived(
@@ -110,7 +122,7 @@
   );
 
   type Success = Extract<WorkThreadCommandResult, { ok: true }>;
-  const execute = async (command: WorkThreadCommand, success: (result: Success) => void): Promise<void> => {
+  const execute = async (command: WorkThreadTaskCommand, success: (result: Success) => void): Promise<void> => {
     if (busy) {
       return;
     }
@@ -135,13 +147,13 @@
       busy = false;
     }
   };
-  const act = (input: WorkThreadCommandActionInput, success: (result: Success) => void): Promise<void> =>
+  const act = (input: WorkThreadTaskCommandActionInput, success: (result: Success) => void): Promise<void> =>
     execute(createWorkThreadCommandAction(input), success);
   const followInput = (
     to: WorkThreadFollowState,
     expectedRevision: number,
     extra?: { waitingFor: string | null; waitingOn: WorkThreadWait | null },
-  ): WorkThreadCommandActionInput => ({
+  ): WorkThreadTaskCommandActionInput => ({
     op: 'set-follow-state',
     threadId: thread.threadId,
     expectedRevision,
@@ -181,6 +193,12 @@
       },
     );
   };
+  // Ending a combination is itself the undo: each task returns with the state it kept (ADR 0080).
+  const separate = (): Promise<void> =>
+    act({ op: 'separate', expectedRevision: thread.followRevision, threadId: thread.threadId }, () => {
+      toast = 'Tasks separated';
+      undo = null;
+    });
   const restoreFollowState = async (restore: FollowUndoAction): Promise<void> => {
     if (busy) {
       return;
@@ -236,13 +254,14 @@
   };
   const detach = async (key: string): Promise<void> => {
     const link = row.links.find((candidate) => candidate.key === key && candidate.detachedAt === null);
-    if (!link) {
-      return;
-    }
-    await act({ op: 'detach-link', threadId: thread.threadId, linkId: link.linkId }, () => {
+    // A session read through the task's branch has no stored link; detaching it records the veto.
+    const command = link
+      ? ({ op: 'detach-link', threadId: thread.threadId, linkId: link.linkId } as const)
+      : ({ op: 'detach-session', threadId: thread.threadId, key } as const);
+    await act(command, () => {
       toast = 'Session detached · history stays';
       undo = () =>
-        act({ op: 'link', threadId: thread.threadId, kind: link.kind, key: link.key }, () => {
+        act({ op: 'link', threadId: thread.threadId, kind: 'session', key }, () => {
           toast = 'Session linked again';
           undo = null;
         });
@@ -299,7 +318,9 @@
 </nav>
 <header class="wt-task-head">
   <div>
-    <p class="wt-id">Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone)}</p>
+    <p class="wt-id">
+      Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone, false, data.generatedAt)}
+    </p>
     <h1 data-title-length={thread.title.length > 90 ? 'long' : 'normal'}>
       {thread.title}
     </h1>
@@ -326,6 +347,24 @@
 </header>
 <WorkThreadSources now={data.generatedAt} sources={taskSourceStatuses(data)} {timeZone} />
 
+{#if data.combinedInto}
+  <div class="wt-done-banner" role="note">
+    <strong>This task was combined into “{data.combinedInto.title}”.</strong>
+    <p>
+      Its links and history read as part of that task, which also holds its follow-up. Separate them there to follow
+      this one on its own again.
+    </p>
+    <a class="wt-link" href={`/work?task=${data.combinedInto.threadId}`}>Open “{data.combinedInto.title}” →</a>
+  </div>
+{:else if row.combinedThreads.length > 0}
+  <div class="wt-combined-banner">
+    <p>
+      Combines {row.combinedThreads.length + 1} tasks for one ticket:
+      {row.combinedThreads.map((member) => `“${member.title}”`).join(', ')}. Their links and history read here.
+    </p>
+    <button class="wt-button" disabled={busy} onclick={separate} type="button">Separate</button>
+  </div>
+{/if}
 {#if thread.followState === 'done'}
   <div class="wt-done-banner">
     <strong
@@ -354,7 +393,9 @@
             <p>
               {request.text}
               · {request.harness} · {request.sourceSessionId} ·
-              {request.askedAt ? threadDate(request.askedAt, timeZone) : 'date unknown'}<br>{request.detail}
+              {request.askedAt
+                ? threadDate(request.askedAt, timeZone, false, data.generatedAt)
+                : 'date unknown'}<br>{request.detail}
             </p>
           {/each}
         </details>
@@ -454,6 +495,7 @@
     {/if}
   </div>
 {/if}
+<WorkThreadArtifacts now={data.generatedAt} {row} {timeZone} />
 <WorkThreadMarkers
   analysisOnly={thread.intent === 'analysis'}
   markers={threadDisplayMarkers(row)}
@@ -476,6 +518,14 @@
           Sessions
         </button>
       </fieldset>
+      <label class="wt-switch"><input type="checkbox" bind:checked={showLinkChanges}>Link changes</label>
+      <label class="wt-switch"
+        >Order
+        <select class="wt-input" bind:value={newestFirst}>
+          <option value={true}>Newest first</option>
+          <option value={false}>Oldest first</option>
+        </select>
+      </label>
       <label class="wt-switch"
         ><input type="checkbox" bind:checked={showDelegations}>
         Expand all delegations</label
@@ -498,6 +548,7 @@
                   episode={entry.episode}
                   initiallyOpen={selectedDay === day.key}
                   {linkedKeys}
+                  links={row.links}
                   onCopy={copy}
                   onDetach={detach}
                   {showDelegations}
@@ -608,7 +659,7 @@
 {/if}
 {#if data.detachedLinks.some((link) => link.kind === 'session')}
   <details class="wt-detached">
-    <summary>Detached sessions</summary>
+    <summary>{data.detachedLinks.filter((link) => link.kind === 'session').length} detached sessions</summary>
     {#each data.detachedLinks.filter((link) => link.kind === 'session') as link}
       <div class="wt-session-choice">
         <span>{link.key}</span

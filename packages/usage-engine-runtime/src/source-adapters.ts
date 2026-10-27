@@ -60,16 +60,13 @@ import {
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
-import { explicitJiraKeys } from '@ai-usage/report-core/work-attention-facts';
+import { explicitJiraKeys, jiraKeysInBranch } from '@ai-usage/report-core/work-attention-facts';
 import {
   parseWorkThreadLinkKey,
   sessionLinkKey,
   pullRequestLinkKey as workThreadPullRequestKey,
 } from '@ai-usage/report-core/work-thread';
-import {
-  workThreadSeedsFromJiraIssues,
-  workThreadSeedsFromPullRequests,
-} from '@ai-usage/report-core/work-thread-seeds';
+import { workThreadSeedsFromPullRequests } from '@ai-usage/report-core/work-thread-seeds';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
@@ -89,11 +86,13 @@ import {
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
+  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
   queryWorkThreadWaitCandidates,
   type RtkSavingsContribution,
+  recordJiraIntake,
   recordWorkFactRun,
   type ServedLocalProjectSource,
   seedWorkThreads,
@@ -108,6 +107,7 @@ import type { ProviderQuotaRuntimeOptions } from './provider-quota';
 import { refreshLocalProviderQuotas } from './provider-quota';
 import { CLAUDE_QUOTA_SOURCE_IDENTITY } from './provider-quota-refresh';
 import { type SanitizableSourceWarning, sanitizeSourceWarnings } from './source-warnings';
+import { reconcileWorkBranchesFromHome } from './work-branches';
 
 export interface SourceRunContext {
   readonly reportProgress: (progress: SourceProgress) => Effect.Effect<void>;
@@ -915,6 +915,73 @@ const normalizedLinkKey = (link: PullRequestLink): string =>
     repository: link.repository.trim().toLowerCase(),
   });
 
+/** Active Jira links read per run; each run still observes at most `JIRA_ISSUE_DEFAULTS.maxKeys`. */
+const JIRA_ISSUE_CANDIDATE_LIMIT = 200;
+
+/**
+ * Keys named by the head branches of followed pull requests. The Work view shows these tickets on
+ * the pull request's task, so they need observations even when no thread links them explicitly.
+ * Merged pull requests stay included: their ticket is often the last open step.
+ */
+const pullRequestBranchJiraKeys = (
+  dbPath: string,
+  machineId: string,
+): Effect.Effect<{ readonly keys: readonly string[]; readonly truncated: boolean }, UsageStoreError> =>
+  Effect.gen(function* () {
+    const active = yield* queryActiveWorkThreadLinks({
+      dbPath,
+      machineId,
+      kind: 'pull-request',
+      limit: JIRA_ISSUE_CANDIDATE_LIMIT,
+    });
+    const links = active.links.flatMap((link): PullRequestLink[] => {
+      const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+      return parsed?.kind === 'pull-request' ? [parsed] : [];
+    });
+    if (links.length === 0) {
+      return { keys: [], truncated: active.truncated };
+    }
+    const { items } = yield* queryLatestPullRequestObservations({
+      dbPath,
+      limit: MAX_WORK_FACT_QUERY_LIMIT,
+      links,
+      machineId,
+    });
+    const keys = items.flatMap((item) => {
+      const fact = item.latest.outcome === 'observed' ? item.latest : item.latestObserved;
+      return jiraKeysInBranch(fact?.headRef ?? '');
+    });
+    return { keys: [...new Set(keys)], truncated: active.truncated };
+  });
+
+/**
+ * Rotates a bounded batch through every candidate: never-read keys first, then the oldest reads,
+ * so an issue past the per-run bound is still observed within a few runs. Equal ages keep the
+ * candidates' priority order.
+ */
+const leastRecentlyObservedJiraKeys = (
+  dbPath: string,
+  machineId: string,
+  candidates: readonly string[],
+): Effect.Effect<readonly string[], UsageStoreError> =>
+  Effect.gen(function* () {
+    if (candidates.length <= JIRA_ISSUE_DEFAULTS.maxKeys) {
+      return candidates;
+    }
+    const { items } = yield* queryLatestJiraIssueObservations({
+      dbPath,
+      keys: candidates,
+      limit: MAX_WORK_FACT_QUERY_LIMIT,
+      machineId,
+    });
+    const observedAt = new Map(items.map((item) => [item.latest.key, Date.parse(item.latest.observedAt)]));
+    return candidates
+      .map((key, index) => ({ at: observedAt.get(key) ?? Number.NEGATIVE_INFINITY, index, key }))
+      .sort((left, right) => left.at - right.at || left.index - right.index)
+      .slice(0, JIRA_ISSUE_DEFAULTS.maxKeys)
+      .map(({ key }) => key);
+  });
+
 /**
  * Leaves out the links whose latest stored observation already showed the pull request merged.
  * A merge is terminal: re-reading it every cadence for the fourteen days a session stays active
@@ -1010,6 +1077,15 @@ const desktopWorkFactInputs = (input: {
               sessionId: observation.cliSessionId,
             }),
           };
+          // Desktop also lists PRs observed in a shared checkout. Only its own PR is
+          // evidence of continuity; observing a PR still makes it eligible for facts.
+          if (pullRequest.own !== true) {
+            if (!seenLinks.has(key)) {
+              seenLinks.add(key);
+              links.push(link);
+            }
+            continue;
+          }
           if (
             parseWorkThreadLinkKey('pull-request', declaration.pullRequestKey) &&
             parseWorkThreadLinkKey('session', declaration.sessionKey)
@@ -1431,6 +1507,28 @@ const createPullRequestSource = (input: {
               now: input.now().toISOString(),
               declarations,
             }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      // New PRs and their head branches change which tasks hold which branches (ADR 0081).
+      const branches = yield* reconcileWorkBranchesFromHome({
+        config,
+        dbPath: input.dbPath,
+        home: input.storage.home,
+        machineId: input.machine.id,
+        now: input.now(),
+      }).pipe(
+        Effect.map((result) =>
+          result.truncated
+            ? [
+                {
+                  code: 'work-branches-truncated',
+                  message: 'Some branches exceeded the bounded branch reconciliation.',
+                },
+              ]
+            : [],
+        ),
+        Effect.catch((cause) =>
+          Effect.succeed([{ code: 'work-branches-failed', message: `Branch reconciliation failed: ${cause.message}` }]),
+        ),
+      );
       const identityWarnings =
         seeded.uncertain > 0
           ? [
@@ -1488,6 +1586,7 @@ const createPullRequestSource = (input: {
           ...waitWarnings,
           ...declarationWarnings,
           ...identityWarnings,
+          ...branches,
           ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
         ],
       };
@@ -1601,7 +1700,7 @@ const createJiraIssueSource = (input: {
           machineId: input.machine.id,
           kind: 'jira-issue',
           jiraSite: 'default',
-          limit: JIRA_ISSUE_DEFAULTS.maxKeys,
+          limit: JIRA_ISSUE_CANDIDATE_LIMIT,
         }),
         { links: [], truncated: false },
       );
@@ -1610,9 +1709,21 @@ const createJiraIssueSource = (input: {
         // The current Jira observation authority is the CLI's default site only.
         return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [parsed.key] : [];
       });
-      const candidates = [...new Set([...threadKeys, ...desktop.jiraKeys, ...discovery.keys])];
-      const keys = candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys);
-      const truncated = candidates.length > keys.length || discovery.truncated || threadLinks.truncated;
+      const branchKeys = yield* servedInputsOrEmpty(
+        'jira.issues',
+        pullRequestBranchJiraKeys(input.dbPath, input.machine.id),
+        { keys: [], truncated: false },
+      );
+      const candidates = [
+        ...new Set([...threadKeys, ...branchKeys.keys, ...desktop.jiraKeys, ...discovery.keys]),
+      ].slice(0, MAX_WORK_FACT_QUERY_LIMIT);
+      const keys = yield* servedInputsOrEmpty(
+        'jira.issues',
+        leastRecentlyObservedJiraKeys(input.dbPath, input.machine.id, candidates),
+        candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys),
+      );
+      const truncated =
+        candidates.length > keys.length || discovery.truncated || threadLinks.truncated || branchKeys.truncated;
       const waits = yield* servedInputsOrEmpty(
         'jira.issues',
         queryWorkThreadWaitCandidates({
@@ -1633,7 +1744,14 @@ const createJiraIssueSource = (input: {
       });
       yield* abortIfRequested(context.signal);
       yield* reportProgress(context, { completed: 0, phase: 'importing', total: batch.observations.length });
-      yield* importJiraIssueObservations({ dbPath: input.dbPath, observations: batch.observations }).pipe(
+      // The operator's workflow names its handed-off statuses; the observation records the verdict.
+      const handedOff = new Set((config.jira?.handedOffStatuses ?? []).map((status) => status.trim().toLowerCase()));
+      const observations = batch.observations.map((observation) =>
+        observation.status !== null && handedOff.has(observation.status.trim().toLowerCase())
+          ? { ...observation, handedOff: true as const }
+          : observation,
+      );
+      yield* importJiraIssueObservations({ dbPath: input.dbPath, observations }).pipe(
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
       const waitResult =
@@ -1664,18 +1782,15 @@ const createJiraIssueSource = (input: {
             ]
           : []),
       ];
-      // Only assigned issues the discovery returned become threads; a key read from a branch name
-      // stays a fact of the sessions that wrote it.
-      const discoveredKeys = new Set(discovery.keys);
-      const jiraSeeds = workThreadSeedsFromJiraIssues(
-        batch.observations.filter((observation) => discoveredKeys.has(observation.key)),
-      );
-      if (jiraSeeds.length > 0) {
-        yield* seedWorkThreads({
+      // Assignment alone is not a commitment (ADR 0079): assigned issues enter the Work intake,
+      // where the operator follows, attaches or dismisses them. A failed search proves nothing.
+      if (discovery.outcome === 'observed') {
+        yield* recordJiraIntake({
+          complete: !discovery.truncated,
           dbPath: input.dbPath,
+          keys: discovery.keys,
           machineId: input.machine.id,
           now: input.now().toISOString(),
-          seeds: jiraSeeds,
         }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
       }
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
@@ -1685,7 +1800,7 @@ const createJiraIssueSource = (input: {
       const notInstalled =
         batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
       const truncation = truncated
-        ? `Observed ${String(keys.length)} of ${String(candidates.length)} candidate Jira issues; additional search results may be omitted.`
+        ? `Observed ${String(keys.length)} of ${String(candidates.length)} candidate Jira issues; the least recently read go first on the next run, and additional search results may be omitted.`
         : null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,

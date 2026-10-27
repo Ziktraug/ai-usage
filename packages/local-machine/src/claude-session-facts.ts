@@ -21,6 +21,7 @@ import {
   type SessionVcsContext,
   type SessionVcsPullRequest,
   type SessionVcsRepository,
+  sessionVcsRepositoryAliasKey,
 } from '@ai-usage/report-core/session-vcs';
 import {
   MAX_SKILL_OBSERVATIONS_PER_SESSION,
@@ -88,6 +89,12 @@ export interface ClaudeSessionInput {
   isAgentFile?: boolean;
   records: readonly unknown[];
   repository: SessionVcsRepository | null;
+  /**
+   * Resolves each recorded `cwd` to its checkout's repository. When every `cwd` resolves to
+   * `repository` (a `cd` into a subdirectory or a worktree of the same clone), several folders are
+   * not ambiguous; without it, any second folder marks the context partial.
+   */
+  sourcePathRepository?: (sourcePath: string) => SessionVcsRepository | null;
   sourceSessionId: string;
 }
 
@@ -1738,7 +1745,18 @@ const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSess
       }
     }
   }
-  const hasMultipleSourcePaths = observedSourcePaths.size > 1;
+  const repositoryKey = input.repository ? sessionVcsRepositoryAliasKey(input.repository) : null;
+  const resolveSourcePath = input.sourcePathRepository;
+  const hasMultipleSourcePaths =
+    observedSourcePaths.size > 1 &&
+    !(
+      repositoryKey !== null &&
+      resolveSourcePath !== undefined &&
+      [...observedSourcePaths].every((path) => {
+        const repository = resolveSourcePath(path);
+        return repository !== null && sessionVcsRepositoryAliasKey(repository) === repositoryKey;
+      })
+    );
   const compactedBranches = compactSessionVcsBranchObservations(
     branchObservations,
     'harness-recorded',

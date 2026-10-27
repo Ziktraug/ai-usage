@@ -23,7 +23,8 @@ export type PullRequestDiscoveryOutcome =
   | 'timeout'
   | 'invalid';
 export interface DiscoveredPullRequestLink extends PullRequestLink {
-  readonly discoveryRole: 'author' | 'review-requested';
+  /** `team-review-requested`: the review was requested from a team the operator belongs to, not from them. */
+  readonly discoveryRole: 'author' | 'review-requested' | 'team-review-requested';
 }
 export interface DiscoverPullRequestsOptions {
   readonly account?: { readonly ghUser: string };
@@ -175,14 +176,21 @@ export const discoverPullRequests = (
     }
     env = { ...env, GH_TOKEN: token.stdout.trim() };
     const seen = new Set<string>();
-    for (const discoveryRole of ['author', 'review-requested'] as const) {
+    // `--review-requested` also matches requests to the operator's teams; `user-review-requested`
+    // matches personal ones. A request seen only through the team search is the team's.
+    const searches = [
+      { discoveryRole: 'author', query: ['--author=@me'] },
+      { discoveryRole: 'review-requested', query: ['user-review-requested:@me'] },
+      { discoveryRole: 'team-review-requested', query: ['--review-requested=@me'] },
+    ] as const;
+    for (const { discoveryRole, query } of searches) {
       const result = yield* read(run, {
         ...base,
         env,
         args: [
           'search',
           'prs',
-          `--${discoveryRole}=@me`,
+          ...query,
           '--state=open',
           '--json',
           SEARCH_FIELDS,

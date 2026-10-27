@@ -144,7 +144,9 @@ describe('synthetic task dataset', () => {
   test('has explicit synthetic provenance and frozen-contract-valid rows, links and events', async () => {
     const ports = createSyntheticWorkThreadStore();
     const list = await ports.readList(query);
-    expect(list.counts).toEqual({ done: 1, open: 11 });
+    // Two of the open tasks follow one ticket (SHOP-3100), for the combination preview (ADR 0080).
+    expect(list.counts).toEqual({ done: 1, open: 13 });
+    expect(list.combineSuggestions.items.map((item) => item.participants.length)).toEqual([2]);
     expect(list.generatedAt).toBe(WORK_THREADS_SYNTHETIC_NOW);
     expect(list.sources.every((source) => source.message?.startsWith('Synthetic demo'))).toBe(true);
     expect(list.rows.find((row) => row.thread.threadId === WORK_THREADS_FIXTURE_IDS.review)?.sessionCount).toBe(0);

@@ -441,7 +441,8 @@ Preserve the existing aggregation semantics.`,
       );
     };
 
-    writeFixture(classifierParentId, { thread_source: 'user' });
+    writeFixture(classifierParentId, { thread_source: 'user', source: 'cli' });
+    writeFixture('exec-run', { thread_source: 'user', source: 'exec', originator: 'codex_exec' });
     writeFixture('thread-spawn-unset', {
       source: { subagent: { thread_spawn: { parent_thread_id: classifierParentId } } },
       thread_source: 'subagent',
@@ -502,6 +503,11 @@ Preserve the existing aggregation semantics.`,
 
     expect(sessionsById.get(classifierParentId)?.origin).toBe('human');
     expect(sessionsById.get(classifierParentId)?.originProvenance).toBeUndefined();
+    expect(sessionsById.get(classifierParentId)?.source.launchMode).toBe('interactive');
+    expect(sessionsById.get('undeclared-origin')?.source.launchMode).toBeUndefined();
+    // `codex exec` keeps its declared human origin but is told apart as a non-interactive run.
+    expect(sessionsById.get('exec-run')?.origin).toBe('human');
+    expect(sessionsById.get('exec-run')?.source.launchMode).toBe('exec');
     expect(sessionsById.get('undeclared-origin')?.origin).toBeUndefined();
     expect(sessionsById.get('undeclared-origin')?.originProvenance).toBe('origin-absent');
     expect(sessionsById.get('undeclared-origin')?.source.rootSourceSessionId).toBeUndefined();

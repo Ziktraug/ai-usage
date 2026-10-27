@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkThreadMarkers } from '@ai-usage/report-core/work-thread-view';
-  import { observedWebUrl, threadDate, threadTime } from './work-thread-model';
+  import { localCheckoutStatus, localMarkerKey, observedWebUrl, threadDate, threadTime } from './work-thread-model';
 
   let {
     markers,
@@ -29,12 +29,6 @@
         return `Merge state ${state}`;
     }
   };
-  const worktreeCaption = (dirty: boolean | null | undefined): string => {
-    if (dirty === false) {
-      return 'Worktree clean';
-    }
-    return dirty ? 'Local changes remain' : 'Worktree state unknown';
-  };
 </script>
 
 {#if !(markers.local.length || markers.pullRequests.length || markers.jiraIssues.length)}
@@ -55,12 +49,12 @@
           <span class="wt-source-label">LOCAL <span aria-hidden="true">›</span></span
           ><strong>{main?.branch ?? 'Branch unknown'}</strong
           ><span class="wt-meta"
-            >{worktreeCaption(main?.dirty)}
+            >{markers.local[0] ? localCheckoutStatus(markers.local[0]) : 'Disk state unknown'}
             {markers.local.length > 1 ? ` · ${markers.local.length} checkouts` : ''}</span
           >
         </summary>
         <div class="wt-source-detail">
-          {#each markers.local as marker (marker.key)}
+          {#each markers.local as marker (localMarkerKey(marker))}
             {@const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful}
             <div class="wt-source-fact">
               {#if !marker.latest}
@@ -95,6 +89,7 @@
                   </div>
                 </dl>
               {:else}
+                <code class="wt-code">{marker.latest?.checkoutPath ?? marker.key}</code>
                 <p>No successful checkout observation available.</p>
               {/if}
             </div>

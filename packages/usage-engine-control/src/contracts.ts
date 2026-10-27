@@ -54,6 +54,7 @@ import {
   isWorkThreadId,
   parseWorkThreadCommand,
   WORK_THREAD_COMMAND_FAILURES,
+  type WorkIntakeCommandResult,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
 } from '@ai-usage/report-core/work-thread';
@@ -1362,7 +1363,7 @@ export interface UsageEngineReplicationStatusOutput {
 
 export interface UsageEngineWorkThreadOutput {
   readonly kind: 'work-thread';
-  readonly result: WorkThreadCommandResult;
+  readonly result: WorkThreadCommandResult | WorkIntakeCommandResult;
 }
 
 interface UsageEngineCommandCompletionBase {
@@ -2207,14 +2208,16 @@ export const parseUsageEngineWorkThreadOutput = (value: unknown): UsageEngineWor
         hasExactKeys(result, ['applied', 'followRevision', 'ok', 'threadId']) &&
         typeof result.applied === 'boolean' &&
         isWorkThreadRevision(result.followRevision) &&
-        isWorkThreadId(result.threadId)
+        (result.threadId === null || isWorkThreadId(result.threadId))
       )
     ) {
       return fail('Usage engine work-thread success is invalid.');
     }
     return {
       kind: 'work-thread',
-      result: { applied: result.applied, followRevision: result.followRevision, ok: true, threadId: result.threadId },
+      result: isWorkThreadId(result.threadId)
+        ? { applied: result.applied, followRevision: result.followRevision, ok: true, threadId: result.threadId }
+        : { applied: result.applied, followRevision: result.followRevision, ok: true, threadId: null },
     };
   }
   const failure = WORK_THREAD_COMMAND_FAILURES.find((candidate) => candidate === result.failure);

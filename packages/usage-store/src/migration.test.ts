@@ -137,7 +137,7 @@ describe('usage-store forward migration', () => {
     );
     const legacy = new Database(dbPath);
     legacy.exec(
-      'DROP TABLE work_thread_commands; DROP TABLE work_thread_events; DROP TABLE work_thread_links; DROP TABLE work_threads',
+      'DROP TABLE work_thread_combinations; DROP TABLE work_jira_intake; DROP TABLE work_thread_commands; DROP TABLE work_thread_events; DROP TABLE work_thread_links; DROP TABLE work_threads',
     );
     const version = readUserVersion(legacy);
     const metadata = readMetadata(legacy);
@@ -156,10 +156,12 @@ describe('usage-store forward migration', () => {
     expect(
       migrated
         .query(
-          "SELECT name FROM sqlite_schema WHERE type = 'table' AND (name = 'work_threads' OR name LIKE 'work_thread_%') ORDER BY name",
+          "SELECT name FROM sqlite_schema WHERE type = 'table' AND (name = 'work_threads' OR name LIKE 'work_thread_%' OR name = 'work_jira_intake') ORDER BY name",
         )
         .all(),
     ).toEqual([
+      { name: 'work_jira_intake' },
+      { name: 'work_thread_combinations' },
       { name: 'work_thread_commands' },
       { name: 'work_thread_events' },
       { name: 'work_thread_links' },

@@ -34,6 +34,7 @@ import {
   applyWorkThreadCommand,
   importPullRequestObservations,
   publishServedReportRevision,
+  queryJiraIntake,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -1085,14 +1086,15 @@ describe('work fact sources', () => {
         ['auth', 'token'],
         ['search', 'prs'],
         ['search', 'prs'],
+        ['search', 'prs'],
         ['auth', 'token'],
         ['pr', 'view'],
         ['api', 'graphql'],
       ]);
-      expect(calls[3]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
-      expect(calls[4]?.env?.GH_TOKEN).toBe('fixture-token');
+      expect(calls[4]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
       expect(calls[5]?.env?.GH_TOKEN).toBe('fixture-token');
-      expect(calls[5]?.args).toEqual(reviewThreadsFixtureArgs('fixture/project', 66));
+      expect(calls[6]?.env?.GH_TOKEN).toBe('fixture-token');
+      expect(calls[6]?.args).toEqual(reviewThreadsFixtureArgs('fixture/project', 66));
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => [latest.host, latest.number, latest.outcome, latest.state])).toEqual([
         ['github.com', 66, 'observed', 'OPEN'],
@@ -1191,6 +1193,7 @@ describe('work fact sources', () => {
       expect(ghCalls).toEqual([
         ['auth token --user', null],
         ['search prs --author=@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
+        ['search prs user-review-requested:@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['search prs --review-requested=@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['auth token --user', null],
         ['pr view 66', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
@@ -1609,6 +1612,8 @@ describe('jira issue source', () => {
     try {
       const now = new Date('2026-10-21T21:00:00.000Z');
       writeClaudeDesktopJiraRegistry(home, now);
+      // The operator's workflow names "In Progress" as handed off; matching ignores case.
+      writeHomeConfig(home, { jira: { handedOffStatuses: ['in progress'] } });
       const calls: BoundedProcessOptions[] = [];
       const registry = await createRegistry(home, {
         acliAvailable: () => true,
@@ -1627,9 +1632,36 @@ describe('jira issue source', () => {
       // Child (30 min ago) before root (1 h ago); each key once; the placeholder, the title's key
       // and the twenty-day-old session's key are never read.
       expect(calls.filter(({ args }) => args[2] === 'view').map(({ command, args }) => [command, ...args])).toEqual([
-        ['acli', 'jira', 'workitem', 'view', 'XLB-2091', '--json'],
-        ['acli', 'jira', 'workitem', 'view', 'XLB-2092', '--json'],
-        ['acli', 'jira', 'workitem', 'view', 'XLB-2090', '--json'],
+        [
+          'acli',
+          'jira',
+          'workitem',
+          'view',
+          'XLB-2091',
+          '--fields',
+          'key,summary,status,assignee,updated,parent,comment',
+          '--json',
+        ],
+        [
+          'acli',
+          'jira',
+          'workitem',
+          'view',
+          'XLB-2092',
+          '--fields',
+          'key,summary,status,assignee,updated,parent,comment',
+          '--json',
+        ],
+        [
+          'acli',
+          'jira',
+          'workitem',
+          'view',
+          'XLB-2090',
+          '--fields',
+          'key,summary,status,assignee,updated,parent,comment',
+          '--json',
+        ],
       ]);
       expect(calls.every(({ env }) => !Object.keys(env ?? {}).some((name) => SECRET_LIKE_VARIABLE.test(name)))).toBe(
         true,
@@ -1639,6 +1671,7 @@ describe('jira issue source', () => {
       expect(stored.items.every(({ latest }) => latest.outcome === 'observed' && latest.comments.length === 1)).toBe(
         true,
       );
+      expect(stored.items.every(({ latest }) => latest.handedOff === true)).toBe(true);
       const serialized = JSON.stringify(stored);
       expect(serialized).not.toContain('XLB-1999');
       expect(serialized).not.toContain('XLB-7777');
@@ -1894,6 +1927,8 @@ test('Desktop PR declarations join same-cycle discovered threads once and respec
     for (const [id, numbers] of [
       ['declaring', [12, 13]],
       ['unrelated', []],
+      ['observed-only', [12]],
+      ['not-owned', [13]],
       ['unsupported', [12]],
     ] as const) {
       writeFileSync(
@@ -1912,7 +1947,7 @@ test('Desktop PR declarations join same-cycle discovered threads once and respec
             baseRef: 'main',
             branch: 'feature',
             host: 'github.com',
-            own: true,
+            own: id === 'observed-only' ? undefined : id !== 'not-owned',
             prNumber: number,
             provider: 'github',
             repo: 'fixture/project',
@@ -2012,7 +2047,8 @@ describe('discovered work fact sources', () => {
           ),
         ).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
       }
-      expect(calls.filter(({ args }) => args[0] === 'search')).toHaveLength(4);
+      // Author, personal and team review searches on each of the two runs.
+      expect(calls.filter(({ args }) => args[0] === 'search')).toHaveLength(6);
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(
         stored.items
@@ -2094,7 +2130,7 @@ describe('discovered work fact sources', () => {
         warnings: [{ code: 'pull-requests-truncated', message: expect.stringContaining('46') }],
       });
       const searches = calls.filter(({ args }) => args[0] === 'search');
-      expect(searches).toHaveLength(2);
+      expect(searches).toHaveLength(3);
       expect(calls.filter(({ args }) => args[0] === 'auth').map(({ args }) => args)).toEqual([
         ['auth', 'token', '--user', 'alice', '--hostname', 'github.com'],
         ['auth', 'token', '--user', 'alice', '--hostname', 'github.com'],
@@ -2152,7 +2188,7 @@ describe('discovered work fact sources', () => {
     }
   });
 
-  test('discovers and observes assigned Jira issues without sessions', async () => {
+  test('discovers and observes assigned Jira issues into the intake without creating tasks', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'engine-discovery-jira-'));
     try {
       const calls: BoundedProcessOptions[] = [];
@@ -2183,9 +2219,11 @@ describe('discovered work fact sources', () => {
           query: { cursor: null, limit: 50, project: null, search: null, tab: 'open' },
         }),
       );
-      expect(threads.rows.map(({ thread }) => [thread.origin, thread.originKey])).toEqual([
-        ['jira-issue', 'jira:default/DEMO-12'],
-      ]);
+      expect(threads.rows).toEqual([]);
+      const intake = await Effect.runPromise(
+        queryJiraIntake({ dbPath: usageStorePath(home), limit: 50, machineId: machine.id }),
+      );
+      expect(intake.items.map(({ key }) => key)).toEqual(['jira:default/DEMO-12']);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
@@ -2262,6 +2300,41 @@ test('Jira discovery keeps explicit keys first and reports the observation ceili
     const viewedKeys = calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3]);
     expect(viewedKeys.slice(0, 4)).toEqual(['XLB-2091', 'XLB-2092', 'XLB-2090', 'DEMO-1']);
     expect(viewedKeys.filter((key) => key === 'XLB-2091')).toHaveLength(1);
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test('Jira candidates past the ceiling rotate in on the next run, never-read keys first', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-rotation-'));
+  try {
+    let now = new Date('2026-10-21T21:00:00.000Z');
+    writeClaudeDesktopJiraRegistry(home, now);
+    const calls: BoundedProcessOptions[] = [];
+    const registry = await createRegistry(home, {
+      acliAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: (options) =>
+        options.args[2] === 'search'
+          ? Effect.succeed({
+              durationMs: 1,
+              exitCode: 0,
+              stdout: JSON.stringify(Array.from({ length: 25 }, (_, index) => ({ key: `DEMO-${String(index + 1)}` }))),
+            })
+          : fakeJiraRunner(calls)(options),
+    });
+    await Effect.runPromise(registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'));
+    await Effect.runPromise(registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'));
+    const first = calls.splice(0).map(({ args }) => args[3]);
+    expect(first).toHaveLength(20);
+    now = new Date('2026-10-21T21:10:00.000Z');
+    await Effect.runPromise(registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'));
+    const second = calls.map(({ args }) => args[3]);
+    const unread = Array.from({ length: 8 }, (_, index) => `DEMO-${String(index + 18)}`);
+    // Discovery seeded threads on the first run, so equal read times follow thread-link order.
+    expect(new Set(second.slice(0, 8))).toEqual(new Set(unread));
+    expect(second.slice(8).every((key) => first.includes(key))).toBe(true);
+    expect(new Set([...first, ...second]).size).toBe(28);
   } finally {
     rmSync(home, { force: true, recursive: true });
   }

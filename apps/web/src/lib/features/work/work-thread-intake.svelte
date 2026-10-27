@@ -46,13 +46,13 @@
     failure = null;
     try {
       const result = await createWorkThreadsClient(rpc.workThreads).command(command);
-      if (result.ok) {
+      if (!result.ok) {
+        failure = result.message;
+        retryCommand = null;
+      } else if (result.threadId !== null) {
         createdId = result.threadId;
         retryCommand = null;
         await invalidateWorkThreadQueries(queryClient, result.threadId);
-      } else {
-        failure = result.message;
-        retryCommand = null;
       }
     } catch (error) {
       retryCommand = command;

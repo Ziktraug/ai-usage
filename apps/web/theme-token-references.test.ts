@@ -48,6 +48,8 @@ const APP_LOCAL_CUSTOM_PROPERTIES: ReadonlySet<string> = new Set([
   '--wt-codex',
   '--wt-codex-bg',
   '--wt-contrast',
+  '--wt-danger',
+  '--wt-danger-soft',
   '--wt-ink',
   '--wt-line',
   '--wt-line-strong',
@@ -59,6 +61,15 @@ const APP_LOCAL_CUSTOM_PROPERTIES: ReadonlySet<string> = new Set([
   '--wt-tint',
   '--wt-warn',
   '--wt-warn-soft',
+  // Work timeline geometry: the day count and week offset the list sets on the board, and the
+  // column widths and row background the stylesheet derives from them.
+  '--wt-day-w',
+  '--wt-days',
+  '--wt-lane-pad',
+  '--wt-next-w',
+  '--wt-row-bg',
+  '--wt-task-w',
+  '--wt-week-offset',
 ]);
 
 const UPPERCASE_PATTERN = /[A-Z]/g;

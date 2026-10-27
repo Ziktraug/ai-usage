@@ -31,6 +31,7 @@ const row = (patch: Partial<WorkThreadRow> = {}): WorkThreadRow => ({
   nativeRequests: [],
   nativeRequestCoverage: 'complete',
   afterDone: null,
+  combinedThreads: [],
   firstActivityAt: at,
   lastActivityAt: at,
   links: [],
@@ -154,6 +155,14 @@ describe('Work thread situation', () => {
       action: 'open-pr',
     });
     expect(kinds(requested)).toEqual(['review-requested']);
+    // A request addressed to a team is a candidate to take, not a move the operator owes.
+    const team = withPr(pr({ reviewDecision: 'REVIEW_REQUIRED' }), { role: 'team-review-requested' });
+    expect(deriveWorkThreadSituation(team, at)).toMatchObject({
+      hint: 'undecided',
+      reason: 'team-review-requested',
+      action: 'open-pr',
+    });
+    expect(kinds(team)).toEqual(['team-review-requested']);
   });
   test('a draft remains an operator remainder instead of being ready to merge', () => {
     const draft = withPr(pr({ draft: true, reviewDecision: 'APPROVED', unresolvedReviewThreads: 0 }));
@@ -290,8 +299,15 @@ describe('Work thread situation', () => {
       expect(kinds(combined)).toContain('open-pr');
     }
     const requested = withPr(pr({ unresolvedReviewThreads: 0 }), { role: 'review-requested' });
-    expect(kinds(requested)).toEqual(['review-requested', 'ready-to-merge']);
+    expect(kinds(requested)).toEqual(['review-requested']);
     expect(deriveWorkThreadSituation(requested, at).reason).toBe('review-requested');
+  });
+  test("a ticket's own task, with no declared intent, is ready to close once its PRs merged", () => {
+    const value = withPr(pr({ state: 'MERGED' }));
+    expect(deriveWorkThreadSituation({ ...value, thread: { ...value.thread, intent: null } }, at)).toMatchObject({
+      hint: 'ready-to-close',
+      reason: 'merged-complete',
+    });
   });
   test('no PR or completed session alone ends a change follow-up', () => {
     expect(deriveWorkThreadSituation(row({ sessionCount: 1 }), at).hint).toBe('undecided');
@@ -322,7 +338,7 @@ describe('Work thread situation', () => {
       { key: id, source: 'sessions', observedAt: at, kind: 'running-session', count: 2 },
     ]);
   });
-  test('open PR review, failing checks, merge conflict and review request all remain visible', () => {
+  test("a requested review leaves the author's blockers to the author", () => {
     const value = withPr(pr({ reviewDecision: 'CHANGES_REQUESTED', checksRollup: 'failure' }));
     const marker = value.markers.pullRequests[0];
     if (!marker) {
@@ -342,9 +358,24 @@ describe('Work thread situation', () => {
         ],
       },
     };
-    expect(kinds(observed)).toEqual(['changes-requested', 'failing-checks', 'merge-conflict', 'review-requested']);
-    expect(deriveWorkThreadSituation(observed, at)).toMatchObject({ reason: 'merge-conflict', action: 'open-pr' });
-    expect(deriveWorkThreadSituation(observed, at).remainders.find((r) => r.kind === 'merge-conflict')).toMatchObject({
+    expect(kinds(observed)).toEqual(['review-requested']);
+    expect(deriveWorkThreadSituation(observed, at)).toMatchObject({
+      hint: 'to-resume',
+      reason: 'review-requested',
+      action: 'open-pr',
+    });
+    const authored = {
+      ...observed,
+      markers: {
+        ...observed.markers,
+        pullRequests: [
+          { ...marker, role: 'author' as const, mergeable: 'conflicting' as const, mergeStateStatus: 'DIRTY' },
+        ],
+      },
+    };
+    expect(kinds(authored)).toEqual(['changes-requested', 'failing-checks', 'merge-conflict']);
+    expect(deriveWorkThreadSituation(authored, at)).toMatchObject({ reason: 'merge-conflict', action: 'open-pr' });
+    expect(deriveWorkThreadSituation(authored, at).remainders.find((r) => r.kind === 'merge-conflict')).toMatchObject({
       baseRef: 'release/next',
     });
   });
@@ -364,6 +395,29 @@ describe('Work thread situation', () => {
       baseRef: 'release/next',
       observedAt: at,
     });
+  });
+  test('behind the base waits while review is still required', () => {
+    const value = withPr(pr({ reviewDecision: 'REVIEW_REQUIRED', unresolvedReviewThreads: 0 }));
+    const marker = value.markers.pullRequests[0];
+    if (!marker) {
+      throw new Error('Missing fixture marker');
+    }
+    const behind = {
+      ...value,
+      markers: { ...value.markers, pullRequests: [{ ...marker, mergeStateStatus: 'BEHIND' }] },
+    };
+    expect(kinds(behind)).toEqual(['behind-base', 'awaiting-review']);
+    expect(deriveWorkThreadSituation(behind, at)).toMatchObject({ hint: 'waiting', reason: 'awaiting-review' });
+  });
+  test('an open PR makes its unfinished ticket expected, not a separate step', () => {
+    const value = withPr(pr({ reviewDecision: 'REVIEW_REQUIRED', unresolvedReviewThreads: 0 }));
+    const fact = jira({ statusCategory: 'in-progress' });
+    const linked = {
+      ...value,
+      markers: { ...value.markers, jiraIssues: [{ key: 'jira:default/TEST-1', latest: fact, latestSuccessful: fact }] },
+    };
+    expect(kinds(linked)).toEqual(['awaiting-review']);
+    expect(deriveWorkThreadSituation(linked, at)).toMatchObject({ hint: 'waiting', reason: 'awaiting-review' });
   });
   test('pending CI waits and an approved open PR still has a remainder', () => {
     expect(
@@ -389,6 +443,25 @@ describe('Work thread situation', () => {
         at,
       ),
     ).toMatchObject({ hint: 'to-resume', reason: 'jira-open', action: 'open-jira' });
+  });
+  test('a status the operator names as handed off waits once every PR merged, and only then', () => {
+    const withTicket = (state: 'MERGED' | 'OPEN') => {
+      const value = withPr(pr({ state, reviewDecision: 'APPROVED', unresolvedReviewThreads: 0 }));
+      const fact = { ...jira({ statusCategory: 'in-progress', status: 'To Review (IT)' }), handedOff: true as const };
+      return {
+        ...value,
+        markers: {
+          ...value.markers,
+          jiraIssues: [{ key: 'jira:default/TEST-1', latest: fact, latestSuccessful: fact }],
+        },
+      };
+    };
+    expect(deriveWorkThreadSituation(withTicket('MERGED'), at)).toMatchObject({
+      hint: 'waiting',
+      reason: 'jira-after-merge',
+      action: 'open-jira',
+    });
+    expect(kinds(withTicket('OPEN'))).not.toContain('jira-after-merge');
   });
   test('known failing checks stay actionable while a truncated session read remains visible', () => {
     const unavailable = {
@@ -550,8 +623,32 @@ test('native requests keep personal state independent, preserve other remainder 
   expect(
     deriveWorkThreadSituation({ ...withPr(pr({ checksRollup: 'failure' })), nativeRequests: [request] }, at).reason,
   ).toBe('failing-checks');
+  const unrelated = {
+    ...request,
+    evidence: 'claude-desktop-declaration' as const,
+    text: '#42 merged; waiting on #99 CI',
+  };
+  const multiTaskSession = { ...withPr(pr({ state: 'MERGED', mergedAt: at })), nativeRequests: [unrelated] };
+  expect(kinds(multiTaskSession)).not.toContain('native-request');
+  expect(multiTaskSession.nativeRequests).toEqual([unrelated]);
   expect(
     deriveWorkThreadSituation(row({ thread: { ...thread, intent: 'analysis' }, nativeRequestCoverage: 'partial' }), at)
       .hint,
   ).not.toBe('ready-to-close');
+});
+
+test('a missing checkout keeps its unavailable evidence without treating historical files as current work', () => {
+  const previous = local({ dirty: true, modifiedCount: 2, ahead: 3 });
+  const value = row({
+    markers: {
+      jiraIssues: [],
+      pullRequests: [],
+      local: [
+        { key: 'checkout', via: 'session-checkout', latest: local({ outcome: 'missing' }), latestSuccessful: previous },
+      ],
+    },
+  });
+  const result = deriveWorkThreadSituation(value, at);
+  expect(result.remainders.map((item) => item.kind)).toEqual(['source-unavailable']);
+  expect(result.hint).not.toBe('ready-to-close');
 });

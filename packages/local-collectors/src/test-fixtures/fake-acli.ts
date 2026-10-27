@@ -17,6 +17,7 @@ interface ScenarioResponse {
 }
 
 interface Scenario {
+  readonly auth?: ScenarioResponse;
   readonly issues?: Record<string, ScenarioResponse>;
 }
 
@@ -30,7 +31,7 @@ appendFileSync(
 );
 
 const command = args.slice(0, 3).join(' ');
-const response = command === 'jira workitem view' ? scenario.issues?.[args[3] ?? ''] : undefined;
+const response = command === 'jira auth status' ? scenario.auth : scenario.issues?.[args[3] ?? ''];
 if (response === undefined) {
   process.exit(1);
 }

@@ -13,6 +13,7 @@ import {
   type JiraIssueObservation,
   type JiraIssueObservationOutcome,
   type JiraStatusCategory,
+  jiraBrowseUrl,
   WORK_ATTENTION_BOUNDS,
 } from '@ai-usage/report-core/work-attention';
 import { Effect } from 'effect';
@@ -311,6 +312,7 @@ const parseComments = (fields: Record<string, unknown>): ParsedComments | undefi
 
 export interface ParsedJiraIssue {
   readonly assigneeLabel: string | null;
+  readonly browserSiteRequired?: boolean;
   readonly commentCount: number | null;
   readonly comments: readonly JiraIssueComment[];
   readonly parentKey: string | null;
@@ -319,6 +321,7 @@ export interface ParsedJiraIssue {
   readonly statusCategory: JiraStatusCategory | null;
   readonly summary: string | null;
   readonly updatedAt: CanonicalInstant | null;
+  readonly url?: string;
 }
 
 /**
@@ -366,6 +369,8 @@ export const parseJiraIssueView = (stdout: string, key: string): ParsedJiraIssue
     statusCategory: status.category,
     summary: summary === null ? null : summary.slice(0, maxShortText),
     updatedAt,
+    ...(typeof value.self === 'string' && value.self.includes('.atl-paas.net/') ? { browserSiteRequired: true } : {}),
+    ...(jiraBrowseUrl(value.self ?? value.url, key) ? { url: jiraBrowseUrl(value.self ?? value.url, key)! } : {}),
   };
 };
 
@@ -378,6 +383,7 @@ type AcliRead =
 
 interface RunContext {
   readonly base: Pick<BoundedProcessOptions, 'maximumOutputBytes' | 'signal' | 'timeoutMs'>;
+  browserSite?: string | null;
   readonly machineId: string;
   readonly now: () => Date;
   readonly run: BoundedProcessRunner;
@@ -401,6 +407,13 @@ const acli = (context: RunContext, args: readonly string[]): Effect.Effect<AcliR
     Effect.map((result): AcliRead => ({ exitCode: result.exitCode, kind: 'completed', stdout: result.stdout })),
     Effect.catch((error) => Effect.succeed<AcliRead>(acliReadFailure(error.kind))),
   );
+
+const JIRA_AUTH_SITE = /^\s*Site:\s*([a-zA-Z0-9.-]+\.atlassian\.net)\s*$/m;
+/** The CLI's authenticated public site, not the internal REST backend from `self`. */
+export const parseJiraAuthSite = (stdout: string): string | null => {
+  const host = JIRA_AUTH_SITE.exec(stdout)?.[1];
+  return host ? `https://${host.toLowerCase()}` : null;
+};
 
 interface Classification {
   /** Whether later keys in this run should be skipped with the same outcome. */
@@ -483,7 +496,13 @@ const observeKey = (
         classification.message,
       ),
     });
-    const view = yield* acli(context, [...JIRA_VIEW_COMMAND, key, '--json']);
+    const view = yield* acli(context, [
+      ...JIRA_VIEW_COMMAND,
+      key,
+      '--fields',
+      'key,summary,status,assignee,updated,parent,comment',
+      '--json',
+    ]);
     if (view.kind === 'timeout') {
       return failure({ haltsRun: true, message: 'acli timed out', outcome: 'timeout' });
     }
@@ -503,6 +522,14 @@ const observeKey = (
     if (parsed === null) {
       return failure({ haltsRun: false, message: 'acli returned an unexpected issue shape', outcome: 'invalid' });
     }
+    let url = parsed.url;
+    if (parsed.browserSiteRequired) {
+      if (context.browserSite === undefined) {
+        const auth = yield* acli(context, ['jira', 'auth', 'status']);
+        context.browserSite = auth.kind === 'completed' && auth.exitCode === 0 ? parseJiraAuthSite(auth.stdout) : null;
+      }
+      url = context.browserSite ? `${context.browserSite}/browse/${key}` : undefined;
+    }
     return {
       halt: null,
       observation: {
@@ -520,6 +547,7 @@ const observeKey = (
         statusCategory: parsed.statusCategory,
         summary: parsed.summary,
         updatedAt: parsed.updatedAt,
+        ...(url ? { url } : {}),
       },
     };
   });

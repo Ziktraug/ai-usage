@@ -37,7 +37,12 @@ export type WorkThreadRemainder = RemainderEvidence &
           | 'pending-checks'
           | 'ready-to-merge'
           | 'review-requested'
+          // A review requested from one of the operator's teams: theirs to take or leave, not owed.
+          | 'team-review-requested'
           | 'jira-open'
+          // Every linked PR merged and the ticket in a status the operator's config names as handed
+          // off (a review or QA column): the workflow's next step is someone else's.
+          | 'jira-after-merge'
           | 'source-stale'
           | 'source-unknown';
       }
@@ -83,7 +88,7 @@ const observation = <T extends DatedObservation>(
 const localRemainders = (row: WorkThreadRow, now: number, remainders: WorkThreadRemainder[]) => {
   for (const marker of row.markers.local) {
     const fact = observation(marker, 'local', now, remainders);
-    if (fact === null) {
+    if (fact === null || marker.latest?.outcome === 'missing') {
       continue;
     }
     const evidence = { key: marker.key, observedAt: fact.observedAt, source: 'local' as const };
@@ -124,6 +129,11 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
     if (fact.state !== 'OPEN') {
       continue;
     }
+    // Someone else's pull request: its conflicts, checks and drafts are the author's work, not the operator's.
+    if (marker.role === 'review-requested' || marker.role === 'team-review-requested') {
+      remainders.push({ ...evidence, kind: marker.role });
+      continue;
+    }
     const priorCount = remainders.length;
     if (fact.reviewDecision === 'CHANGES_REQUESTED') {
       remainders.push({ ...evidence, kind: 'changes-requested' });
@@ -140,14 +150,11 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
     if (marker.mergeStateStatus === 'BEHIND') {
       remainders.push({ ...evidence, kind: 'behind-base', baseRef: fact.baseRef });
     }
-    if (marker.role === 'review-requested') {
-      remainders.push({ ...evidence, kind: 'review-requested' });
-    }
     const unresolved = fact.unresolvedReviewThreads;
     if (typeof unresolved === 'number' && Number.isSafeInteger(unresolved) && unresolved > 0) {
       remainders.push({ ...evidence, kind: 'unresolved-review-threads', count: unresolved });
     }
-    if (fact.reviewDecision === 'REVIEW_REQUIRED' && marker.role !== 'review-requested') {
+    if (fact.reviewDecision === 'REVIEW_REQUIRED') {
       remainders.push({ ...evidence, kind: 'awaiting-review' });
     }
     if (fact.draft === true) {
@@ -169,9 +176,44 @@ const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: Work
   }
 };
 
+/** Session-wide reports can discuss several PRs. Foreign references disqualify a report
+ * as the task's next action; the original report remains available on its session.
+ * This does not resolve a request or change the operator's follow state.
+ */
+export const taskNativeRequests = (row: WorkThreadRow): readonly WorkThreadNativeRequest[] => {
+  const numbers = new Set(
+    row.markers.pullRequests.flatMap((marker) => {
+      const fact = marker.latestSuccessful ?? marker.latest;
+      return fact ? [String(fact.number)] : [];
+    }),
+  );
+  const urls = new Set(
+    row.markers.pullRequests.flatMap((marker) => {
+      const fact = marker.latestSuccessful ?? marker.latest;
+      return fact ? [`${fact.host}/${fact.repository}/pull/${fact.number}`.toLowerCase()] : [];
+    }),
+  );
+  return row.nativeRequests.filter((request) => {
+    if (request.state !== 'open' && request.state !== 'uncertain') {
+      return false;
+    }
+    if (request.evidence !== 'claude-desktop-declaration' || numbers.size === 0) {
+      return true;
+    }
+    const references = [...request.text.matchAll(/#(\d+)\b/g)].map((match) => match[1]);
+    const qualified = [...request.text.matchAll(/https?:\/\/([^\s/]+\/[^\s/]+\/[^\s/]+\/pull\/\d+)\b/g)].map((match) =>
+      match[1]?.toLowerCase(),
+    );
+    return (
+      references.every((number) => number !== undefined && numbers.has(number)) &&
+      qualified.every((url) => url !== undefined && urls.has(url))
+    );
+  });
+};
+
 const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadRemainder[] => {
   const remainders: WorkThreadRemainder[] = [];
-  for (const request of row.nativeRequests) {
+  for (const request of taskNativeRequests(row)) {
     if (request.state === 'open' || request.state === 'uncertain') {
       remainders.push({
         key: request.key,
@@ -187,6 +229,13 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
   }
   localRemainders(row, now, remainders);
   pullRequestRemainders(row, now, remainders);
+  // While a pull request is open, an unfinished ticket is its expected state, not a separate step.
+  const pullRequestStates = row.markers.pullRequests.map((marker) => {
+    const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful;
+    return fact?.state ?? null;
+  });
+  const pullRequestOpen = pullRequestStates.includes('OPEN');
+  const allMerged = pullRequestStates.length > 0 && pullRequestStates.every((state) => state === 'MERGED');
   for (const marker of row.markers.jiraIssues) {
     const fact = observation(marker, 'jira', now, remainders);
     if (fact === null) {
@@ -195,7 +244,9 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
     const evidence = { key: marker.key, observedAt: fact.observedAt, source: 'jira' as const };
     if (fact.statusCategory === null || fact.statusCategory === 'unknown') {
       remainders.push({ ...evidence, kind: 'source-unknown' });
-    } else if (fact.statusCategory !== 'done') {
+    } else if (fact.statusCategory !== 'done' && fact.handedOff === true && allMerged) {
+      remainders.push({ ...evidence, kind: 'jira-after-merge' });
+    } else if (fact.statusCategory !== 'done' && !pullRequestOpen) {
       remainders.push({ ...evidence, kind: 'jira-open' });
     }
   }
@@ -243,7 +294,6 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'unresolved-review-threads',
   'changes-requested',
   'failing-checks',
-  'behind-base',
   'review-requested',
   'native-request',
   'local-files',
@@ -253,6 +303,11 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'pending-checks',
   'ready-to-merge',
   'awaiting-review',
+  'jira-after-merge',
+  'team-review-requested',
+  // Strict branch protection makes an update necessary only once review is settled; updating earlier
+  // is undone by the next merge to the base, so awaiting review outranks it.
+  'behind-base',
   'open-pr',
   'source-unavailable',
   'source-stale',
@@ -284,7 +339,8 @@ export const deriveWorkThreadSituation = (
       return { hint: 'ready-to-close', reason: 'no-remainder', action: 'end-follow-up', remainders };
     }
     if (
-      row.thread.intent === 'change' &&
+      // An undeclared intent (a ticket's own task) delivers through its pull requests like a change.
+      (row.thread.intent === 'change' || row.thread.intent === null) &&
       row.markers.pullRequests.length > 0 &&
       row.markers.pullRequests.every(
         (marker) => marker.latest?.outcome === 'observed' && marker.latest.state === 'MERGED',
@@ -296,8 +352,9 @@ export const deriveWorkThreadSituation = (
   }
   const reason = PRIORITY.find((kind) => remainders.some((remainder) => remainder.kind === kind)) ?? 'source-unknown';
   const evidence = remainders.find((remainder) => remainder.kind === reason);
-  let hint: WorkThreadSituation['hint'] = reason.startsWith('source-') ? 'undecided' : 'to-resume';
-  if (reason === 'pending-checks' || reason === 'awaiting-review') {
+  let hint: WorkThreadSituation['hint'] =
+    reason.startsWith('source-') || reason === 'team-review-requested' ? 'undecided' : 'to-resume';
+  if (reason === 'pending-checks' || reason === 'awaiting-review' || reason === 'jira-after-merge') {
     hint = 'waiting';
   }
   const actions = { github: 'open-pr', jira: 'open-jira', local: 'copy-context', sessions: 'copy-context' } as const;

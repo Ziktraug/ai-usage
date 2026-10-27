@@ -364,6 +364,7 @@ successful read kept beside it.
 {
   "jira": {
     "enabled": true,
+    "handedOffStatuses": ["To Review (IT)"],
     "site": "example.atlassian.net"
   }
 }
@@ -371,6 +372,12 @@ successful read kept beside it.
 
 - `enabled` (optional, default on when `acli` is found): `false` records the
   source as disabled instead of reading.
+- `handedOffStatuses` (optional): status names, matched without regard to case,
+  in which a ticket is someone else's step once every linked pull request merged
+  (a review or QA column). The Work view then shows such a task as waiting
+  instead of "Ticket not done". A status in progress that is not listed stays
+  your move. Each Jira read records the verdict, so a change applies from the
+  next read.
 - `site` (optional): the Jira site your keys belong to, kept for your record;
   this version does not pass it to the CLI.
 
@@ -379,6 +386,27 @@ repository config cannot enable provider communication. The `acli` command
 shape is taken from the Atlassian CLI documentation and was not exercised on
 the machine this feature was built on (ADR 0054); an unexpected response is
 recorded as `invalid`, never as a fact.
+
+Sessions also join tasks through the branch their harness recorded (ADR 0081): Codex records the
+repository and branch, Claude Code the branch and the folder whose `origin` remote names the
+repository. A followed PR's head branch and recent interactive work on a branch without a task
+are enough; the folder alone never is. Two optional `github` keys of the home config tune it:
+
+```json
+{
+  "github": {
+    "hostAliases": { "github-work": "github.com" },
+    "sharedBranches": ["release"]
+  }
+}
+```
+
+- `hostAliases` (optional): remote host alias → host, beside the exact `Host` → `HostName` entries
+  of `~/.ssh/config`, which are read already.
+- `sharedBranches` (optional): branch names that never become a task of their own, beside main,
+  master, develop, development, trunk, each clone's `origin/HEAD` and the base of an open PR.
+
+Detaching a session from a task keeps it out of that task, even when its branch still matches.
 
 
 ### 9. Declare which checkouts a launched review may run in

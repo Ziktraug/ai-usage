@@ -15,18 +15,21 @@ import {
   pullRequestLinkKey,
   sessionLinkKey,
   WORK_THREAD_BOUNDS,
+  type WorkIntakeCommandResult,
   type WorkThread,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
   type WorkThreadEvent,
   type WorkThreadLink,
   type WorkThreadLinkInput,
+  type WorkThreadTaskCommand,
 } from '@ai-usage/report-core/work-thread';
 import {
   WORK_THREAD_VIEW_BOUNDS,
   type WorkThreadDetailDataset,
   type WorkThreadEpisode,
   type WorkThreadFactEvent,
+  type WorkThreadListDataset,
   type WorkThreadListQuery,
   type WorkThreadMarkers,
   type WorkThreadRow,
@@ -55,6 +58,8 @@ export const WORK_THREADS_FIXTURE_IDS = {
   mergedPr: '12000000-0000-4000-8000-000000000010',
   unknownDuration: '12000000-0000-4000-8000-000000000011',
   draft: '12000000-0000-4000-8000-000000000012',
+  webhookTicket: '12000000-0000-4000-8000-000000000013',
+  webhookPullRequest: '12000000-0000-4000-8000-000000000014',
 } as const;
 
 const at = (day: number, time = '09:00'): CanonicalInstant =>
@@ -172,6 +177,7 @@ const prMarker = (
 
 const jiraMarker = (key: string, done = false): WorkThreadMarkers['jiraIssues'][number] => {
   const observation: JiraIssueObservation = {
+    url: `https://jira.example/browse/${key}`,
     assigneeLabel: 'Synthetic operator',
     commentCount: 0,
     comments: [],
@@ -188,6 +194,28 @@ const jiraMarker = (key: string, done = false): WorkThreadMarkers['jiraIssues'][
     updatedAt: at(23),
   };
   return { key: jiraIssueLinkKey({ key, site: 'synthetic' }), latest: observation, latestSuccessful: observation };
+};
+
+/** Assigned issues no seeded task follows, plus one (SHOP-2085) that a task already follows. */
+const syntheticIntakeIssues = (): readonly WorkThreadMarkers['jiraIssues'][number][] => {
+  const todo = jiraMarker('SHOP-3001');
+  const todoIssue = todo.latestSuccessful && {
+    ...todo.latestSuccessful,
+    status: 'To Do',
+    statusCategory: 'todo' as const,
+    summary: 'Synthetic: show delivery dates on the cart summary',
+  };
+  const review = jiraMarker('SHOP-3002');
+  const reviewIssue = review.latestSuccessful && {
+    ...review.latestSuccessful,
+    status: 'To Review',
+    summary: 'Synthetic: localise the coupon error messages',
+  };
+  return [
+    { ...todo, latest: todoIssue, latestSuccessful: todoIssue },
+    { ...review, latest: reviewIssue, latestSuccessful: reviewIssue },
+    jiraMarker('SHOP-2085'),
+  ];
 };
 
 const localMarker = (branch: string, modifiedCount = 0): WorkThreadMarkers['local'][number] => {
@@ -494,6 +522,28 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
         ],
       },
     ),
+    // One ticket followed by two tasks, as discovery left them before ADR 0079: a combination to preview.
+    record(
+      makeThread(WORK_THREADS_FIXTURE_IDS.webhookTicket, 'Webhook deliveries are lost after a timeout', {
+        createdAt: at(17),
+        origin: 'jira-issue',
+        originKey: jiraIssueLinkKey({ key: 'SHOP-3100', site: 'synthetic' }),
+      }),
+      { jiraIssues: [jiraMarker('SHOP-3100')], local: [], pullRequests: [] },
+    ),
+    record(
+      makeThread(WORK_THREADS_FIXTURE_IDS.webhookPullRequest, '(SHOP-3100) Retry webhook deliveries with backoff', {
+        createdAt: at(18),
+        intent: 'change',
+        origin: 'pull-request',
+        originKey: pullRequestLinkKey({ host, repository, number: 1510 }),
+      }),
+      {
+        jiraIssues: [jiraMarker('SHOP-3100')],
+        local: [],
+        pullRequests: [prMarker(1510, { title: '(SHOP-3100) Retry webhook deliveries with backoff' })],
+      },
+    ),
   ];
   // These identities belong to the existing synthetic served-session client used by /work/sessions.
   // Keeping them here lets the real picker query link that existing session into the same task.
@@ -626,6 +676,10 @@ const eventMarkLabel = (event: WorkThreadEvent): string => {
       return 'Task renamed';
     case 'wait-satisfied':
       return 'Waiting source updated';
+    case 'combined':
+      return 'Tasks combined';
+    case 'separated':
+      return 'Tasks separated';
     default: {
       const unsupported: never = event.kind;
       throw new TypeError(`Unsupported task event: ${unsupported}`);
@@ -719,14 +773,120 @@ export const createSyntheticWorkThreadStore = (
   const pullRequestFacts = new Map(
     initial.records.flatMap((record) => record.markers.pullRequests.map((marker) => [marker.key, marker] as const)),
   );
-  const commands = new Map<string, WorkThreadCommandResult>();
+  const commands = new Map<string, WorkThreadCommandResult | WorkIntakeCommandResult>();
+  const intakeIssues = options.seed === false ? [] : syntheticIntakeIssues();
+  for (const marker of intakeIssues) {
+    if (!jiraFacts.has(marker.key)) {
+      jiraFacts.set(marker.key, marker);
+    }
+  }
+  const dismissedIntake = new Set<string>();
+  const jiraIntake = (): WorkThreadListDataset['jiraIntake'] => {
+    const followed = new Set(
+      [...records.values()]
+        .filter((record) => record.thread.followState !== 'done')
+        .flatMap((record) => activeLinks(record).map((link) => link.key)),
+    );
+    return {
+      items: intakeIssues
+        .filter((marker) => !(followed.has(marker.key) || dismissedIntake.has(marker.key)))
+        .map((marker) => ({ firstSeenAt: at(21), issue: marker.latestSuccessful, key: marker.key })),
+      truncated: false,
+    };
+  };
   const now = (): CanonicalInstant => canonicalInstantFromDate(options.now?.() ?? new Date(WORK_THREADS_SYNTHETIC_NOW));
   const sources = options.sources ?? syntheticSources;
 
-  const activeLinks = (record: FixtureRecord): WorkThreadLink[] =>
-    record.links.filter((link) => link.detachedAt === null);
+  // Combined tasks (ADR 0080): member id -> kept id. Members keep their records; the kept row reads theirs.
+  const keptOf = new Map<string, string>();
+  const membersOf = (keptId: string): FixtureRecord[] =>
+    [...keptOf].flatMap(([memberId, kept]) => {
+      const member = kept === keptId ? records.get(memberId) : undefined;
+      return member ? [member] : [];
+    });
+  const reference = (record: FixtureRecord) => ({ threadId: record.thread.threadId, title: record.thread.title });
+  const groupLinks = (record: FixtureRecord): WorkThreadLink[] => [
+    ...record.links,
+    ...membersOf(record.thread.threadId).flatMap((member) =>
+      member.links.map((link) => ({ ...link, threadId: record.thread.threadId })),
+    ),
+  ];
+  const activeLinks = (record: FixtureRecord): WorkThreadLink[] => {
+    const seen = new Set<string>();
+    return groupLinks(record).filter((link) => {
+      const identity = `${link.kind} ${link.key}`;
+      if (link.detachedAt !== null || seen.has(identity)) {
+        return false;
+      }
+      seen.add(identity);
+      return true;
+    });
+  };
   const linkedEpisodes = (record: FixtureRecord) =>
-    projectSyntheticWorkThreadEpisodes([...episodes.values()], record.links);
+    projectSyntheticWorkThreadEpisodes([...episodes.values()], groupLinks(record));
+  const ticketsOf = (record: FixtureRecord): string[] => [
+    ...new Set(
+      record.links.filter((link) => link.kind === 'jira-issue' && link.detachedAt === null).map((link) => link.key),
+    ),
+  ];
+  const openTicketGroups = (): Map<string, FixtureRecord[]> => {
+    const groups = new Map<string, FixtureRecord[]>();
+    for (const record of records.values()) {
+      if (record.thread.followState !== 'done') {
+        for (const ticket of ticketsOf(record)) {
+          groups.set(ticket, [...(groups.get(ticket) ?? []), record]);
+        }
+      }
+    }
+    return groups;
+  };
+  const blockersOf = (group: readonly FixtureRecord[]): string[] =>
+    group.flatMap(({ thread }) => {
+      const name = `“${thread.title.slice(0, 60)}”`;
+      return [
+        ...(thread.followState === 'following' ? [] : [`${name} is Waiting; resume following it first.`]),
+        ...(thread.intent === 'review' ? [`${name} is a review; a review stays its own task.`] : []),
+        ...(thread.note === null ? [] : [`${name} has a note; move or clear it first.`]),
+        ...(keptOf.has(thread.threadId) || membersOf(thread.threadId).length > 0
+          ? [`${name} is already part of a combination.`]
+          : []),
+      ];
+    });
+  const keptFor = (group: readonly FixtureRecord[], ticket: string): FixtureRecord | undefined =>
+    group.find((record) => record.thread.originKey === ticket) ??
+    group.toSorted((left, right) => left.thread.createdAt.localeCompare(right.thread.createdAt))[0];
+  const combineSuggestions = (): WorkThreadListDataset['combineSuggestions'] => ({
+    items: [...openTicketGroups()]
+      .filter(
+        ([, group]) =>
+          new Set(group.map((record) => keptOf.get(record.thread.threadId) ?? record.thread.threadId)).size > 1,
+      )
+      .flatMap(([ticketKey, group]) => {
+        const kept = keptFor(group, ticketKey);
+        return kept
+          ? [
+              {
+                blockers: blockersOf(group),
+                issue: jiraFacts.get(ticketKey)?.latestSuccessful ?? null,
+                keptThreadId: kept.thread.threadId,
+                participants: group.map((record) => ({
+                  followRevision: record.thread.followRevision,
+                  origin: record.thread.origin,
+                  pullRequestKeys: record.links
+                    .filter((link) => link.kind === 'pull-request' && link.detachedAt === null)
+                    .map((link) => link.key),
+                  sessionCount: record.links.filter((link) => link.kind === 'session' && link.detachedAt === null)
+                    .length,
+                  threadId: record.thread.threadId,
+                  title: record.thread.title,
+                })),
+                ticketKey,
+              },
+            ]
+          : [];
+      }),
+    truncated: false,
+  });
   const sourcesFor = (scope: readonly FixtureRecord[]): readonly WorkThreadSourceStatus[] =>
     scope.some((record) => linkedEpisodes(record).hasUnresolvedSessionLinks)
       ? sources.map((source) =>
@@ -820,6 +980,7 @@ export const createSyntheticWorkThreadStore = (
       nativeRequests: [],
       nativeRequestCoverage: 'complete',
       afterDone: latestAt ? { count: newer.length, latestAt } : null,
+      combinedThreads: membersOf(record.thread.threadId).map(reference),
       firstActivityAt:
         [
           record.thread.createdAt,
@@ -870,7 +1031,100 @@ export const createSyntheticWorkThreadStore = (
     appendEvent(record, { kind: 'link-added', linkKey: input.key });
     return true;
   };
-  const apply = (command: WorkThreadCommand): WorkThreadCommandResult => {
+  const apply = (command: WorkThreadCommand): WorkThreadCommandResult | WorkIntakeCommandResult => {
+    if (command.op === 'dismiss-intake') {
+      const applied = dismissedIntake.has(command.key) !== command.dismissed;
+      if (command.dismissed) {
+        dismissedIntake.add(command.key);
+      } else {
+        dismissedIntake.delete(command.key);
+      }
+      return { applied, followRevision: 1, ok: true, threadId: null };
+    }
+    const commandThreadId = 'threadId' in command ? command.threadId : null;
+    const keptId = commandThreadId === null ? undefined : keptOf.get(commandThreadId);
+    if (keptId !== undefined) {
+      const kept = records.get(keptId);
+      return fail(
+        'task-combined',
+        records.get(commandThreadId ?? '')?.thread.followRevision ?? null,
+        `This task was combined into “${kept?.thread.title ?? keptId}”; act on that task or separate it first.`,
+      );
+    }
+    if (command.op === 'combine') {
+      const group = openTicketGroups().get(command.ticketKey) ?? [];
+      const expected = new Map(command.participants.map((item) => [item.threadId, item.expectedRevision]));
+      const kept = records.get(command.threadId);
+      if (!kept) {
+        return fail('not-found', null, 'This task could not be found.');
+      }
+      if (group.length !== expected.size || group.some((candidate) => !expected.has(candidate.thread.threadId))) {
+        return fail(
+          'stale-preview',
+          kept.thread.followRevision,
+          'The tasks following this ticket changed since the preview; review the combination again.',
+        );
+      }
+      const changed = group.find(
+        (candidate) => candidate.thread.followRevision !== expected.get(candidate.thread.threadId),
+      );
+      if (changed) {
+        return fail(
+          'revision-conflict',
+          changed.thread.followRevision,
+          `“${changed.thread.title}” changed since the preview`,
+        );
+      }
+      const blockers = blockersOf(group);
+      if (blockers.length > 0) {
+        return fail('invalid-transition', kept.thread.followRevision, blockers.join(' '));
+      }
+      const members = group.filter((candidate) => candidate !== kept);
+      for (const member of members) {
+        keptOf.set(member.thread.threadId, kept.thread.threadId);
+        member.thread = { ...member.thread, followRevision: member.thread.followRevision + 1 };
+        appendEvent(member, {
+          kind: 'combined',
+          linkKey: command.ticketKey,
+          reason: `Combined into “${kept.thread.title}”`,
+        });
+      }
+      kept.thread = { ...kept.thread, followRevision: kept.thread.followRevision + 1 };
+      appendEvent(kept, {
+        kind: 'combined',
+        linkKey: command.ticketKey,
+        reason: `Combined ${members.length} ${members.length === 1 ? 'task' : 'tasks'}: ${members.map((member) => `“${member.thread.title}”`).join(', ')}`,
+      });
+      return result(kept.thread);
+    }
+    if (command.op === 'separate') {
+      const kept = records.get(command.threadId);
+      if (!kept) {
+        return fail('not-found', null, 'This task could not be found.');
+      }
+      if (kept.thread.followRevision !== command.expectedRevision) {
+        return fail(
+          'revision-conflict',
+          kept.thread.followRevision,
+          'The task changed since this command was prepared',
+        );
+      }
+      const members = membersOf(kept.thread.threadId);
+      if (members.length === 0) {
+        return fail('invalid-transition', kept.thread.followRevision, 'No task is combined into this one');
+      }
+      for (const member of members) {
+        keptOf.delete(member.thread.threadId);
+        member.thread = { ...member.thread, followRevision: member.thread.followRevision + 1 };
+        appendEvent(member, { kind: 'separated', reason: `Separated from “${kept.thread.title}”` });
+      }
+      kept.thread = { ...kept.thread, followRevision: kept.thread.followRevision + 1 };
+      appendEvent(kept, {
+        kind: 'separated',
+        reason: `Separated ${members.length} ${members.length === 1 ? 'task' : 'tasks'}`,
+      });
+      return result(kept.thread);
+    }
     if (command.op === 'create') {
       // Seeded and Done tasks count too. Receipt replay happens before applying a new command.
       if (records.size >= MAX_SYNTHETIC_THREADS) {
@@ -961,6 +1215,19 @@ export const createSyntheticWorkThreadStore = (
         appendEvent(record, { kind: 'link-detached', linkKey: link.key });
         return result(record.thread);
       }
+      case 'detach-session': {
+        const active = record.links.filter(
+          (candidate) => candidate.kind === 'session' && candidate.key === command.key && candidate.detachedAt === null,
+        );
+        if (active.length === 0) {
+          return result(record.thread, false);
+        }
+        record.links = record.links.map((candidate) =>
+          active.includes(candidate) ? { ...candidate, detachedAt: now() } : candidate,
+        );
+        appendEvent(record, { kind: 'link-detached', linkKey: command.key });
+        return result(record.thread);
+      }
       case 'set-note': {
         const changed = record.thread.note !== command.note;
         if (changed) {
@@ -997,36 +1264,43 @@ export const createSyntheticWorkThreadStore = (
       .toLocaleLowerCase('en');
     return query.search === null || searchable.includes(query.search.trim().toLocaleLowerCase('en'));
   };
+  function executeCommand(input: WorkThreadTaskCommand): Promise<WorkThreadCommandResult>;
+  function executeCommand(input: WorkThreadCommand): Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
+  function executeCommand(input: WorkThreadCommand): Promise<WorkThreadCommandResult | WorkIntakeCommandResult> {
+    const command = parseWorkThreadCommand(input);
+    if (!command) {
+      return Promise.reject(new TypeError('The task command is invalid.'));
+    }
+    const previous = commands.get(command.commandId);
+    if (previous) {
+      return Promise.resolve(structuredClone(previous.ok ? { ...previous, applied: false } : previous));
+    }
+    const outcome = apply(command);
+    commands.set(command.commandId, structuredClone(outcome));
+    if (commands.size > MAX_SYNTHETIC_RECEIPTS) {
+      const oldest = commands.keys().next().value;
+      if (oldest !== undefined) {
+        commands.delete(oldest);
+      }
+    }
+    return Promise.resolve(structuredClone(outcome));
+  }
   return {
-    executeCommand: (input) => {
-      const command = parseWorkThreadCommand(input);
-      if (!command) {
-        return Promise.reject(new TypeError('The task command is invalid.'));
-      }
-      const previous = commands.get(command.commandId);
-      if (previous) {
-        return Promise.resolve(structuredClone(previous.ok ? { ...previous, applied: false } : previous));
-      }
-      const outcome = apply(command);
-      commands.set(command.commandId, structuredClone(outcome));
-      if (commands.size > MAX_SYNTHETIC_RECEIPTS) {
-        const oldest = commands.keys().next().value;
-        if (oldest !== undefined) {
-          commands.delete(oldest);
-        }
-      }
-      return Promise.resolve(structuredClone(outcome));
-    },
+    executeCommand,
     readDetail: (threadId) => {
       const record = records.get(threadId);
+      const kept = record ? records.get(keptOf.get(record.thread.threadId) ?? '') : undefined;
       const data: WorkThreadDetailDataset | null = record
         ? {
+            combinedInto: kept ? reference(kept) : null,
             // Keep association history in the store; the wire projection has the frozen link bound.
-            detachedLinks: record.links
+            detachedLinks: groupLinks(record)
               .filter((link) => link.detachedAt !== null)
               .slice(-WORK_THREAD_BOUNDS.maxLinksPerThread),
             episodes: linkedEpisodes(record).episodes.slice(0, WORK_THREAD_VIEW_BOUNDS.maxEpisodes),
-            events: record.events.slice(-WORK_THREAD_BOUNDS.maxEventsPerThread),
+            events: [...record.events, ...membersOf(record.thread.threadId).flatMap((member) => member.events)]
+              .sort((left, right) => left.at.localeCompare(right.at))
+              .slice(-WORK_THREAD_BOUNDS.maxEventsPerThread),
             factEvents: pullRequestFactEvents(toRow(record).markers.pullRequests),
             generatedAt: now(),
             row: toRow(record),
@@ -1036,7 +1310,9 @@ export const createSyntheticWorkThreadStore = (
       return Promise.resolve(structuredClone(data));
     },
     readList: (query) => {
-      const matching = [...records.values()].filter((record) => matches(record, query));
+      const matching = [...records.values()].filter(
+        (record) => !keptOf.has(record.thread.threadId) && matches(record, query),
+      );
       const counts = {
         done: matching.filter((record) => record.thread.followState === 'done').length,
         open: matching.filter((record) => record.thread.followState !== 'done').length,
@@ -1045,7 +1321,11 @@ export const createSyntheticWorkThreadStore = (
         .filter((record) =>
           query.tab === 'done' ? record.thread.followState === 'done' : record.thread.followState !== 'done',
         )
-        .sort((left, right) => left.thread.threadId.localeCompare(right.thread.threadId));
+        .sort(
+          (left, right) =>
+            toRow(right).lastActivityAt.localeCompare(toRow(left).lastActivityAt) ||
+            left.thread.threadId.localeCompare(right.thread.threadId),
+        );
       const fingerprint = JSON.stringify([query.project, query.search, query.tab]);
       let offset = 0;
       if (query.cursor !== null) {
@@ -1060,8 +1340,10 @@ export const createSyntheticWorkThreadStore = (
       const page = rows.slice(offset, next);
       return Promise.resolve(
         structuredClone({
+          combineSuggestions: combineSuggestions(),
           counts,
           generatedAt: now(),
+          jiraIntake: jiraIntake(),
           machineId,
           nextCursor: next < rows.length ? `${next}:${encodeURIComponent(fingerprint)}` : null,
           projects: [

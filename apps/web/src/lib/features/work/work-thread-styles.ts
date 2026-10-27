@@ -15,8 +15,16 @@ export const threadSurface = css({
   '--wt-ok-soft': 'token(colors.status.okSoft)',
   '--wt-warn': 'token(colors.status.warn)',
   '--wt-warn-soft': 'token(colors.status.warnSoft)',
+  '--wt-danger': 'token(colors.status.danger)',
+  '--wt-danger-soft': 'token(colors.status.dangerSoft)',
   '--wt-claude': 'token(colors.harness.claude.fg)',
   '--wt-claude-bg': 'token(colors.harness.claude.bg)',
   '--wt-codex': 'token(colors.harness.codex.fg)',
   '--wt-codex-bg': 'token(colors.harness.codex.bg)',
+});
+
+/** The task list uses the whole window: its timeline scrolls back over weeks. A task keeps the reading width. */
+export const threadListShell = css({
+  px: { base: '12px', md: '24px' },
+  py: { base: '20px', md: '28px' },
 });

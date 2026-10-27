@@ -136,7 +136,14 @@ describe('work-thread engine service', () => {
       expect(accepted.ok).toBe(true);
       const created = await runtime.waitForCommand(accepted.commandId);
       expect(created.state).toBe('succeeded');
-      if (!(created.state === 'succeeded' && created.command === 'work-thread' && created.output.result.ok)) {
+      if (
+        !(
+          created.state === 'succeeded' &&
+          created.command === 'work-thread' &&
+          created.output.result.ok &&
+          created.output.result.threadId !== null
+        )
+      ) {
         throw new Error('Expected a successful work-thread creation.');
       }
       const threadId = created.output.result.threadId;
@@ -205,7 +212,7 @@ describe('work-thread engine service', () => {
     expect(commandResult.result.ok).toBe(true);
     gate.close();
     await expect(service.execute(createCommand())).rejects.toThrow('closed');
-    if (commandResult.result.ok) {
+    if (commandResult.result.ok && commandResult.result.threadId !== null) {
       expect(persistedThread(dbPath, commandResult.result.threadId)).not.toBeNull();
     }
   });

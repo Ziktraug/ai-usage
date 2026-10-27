@@ -12,6 +12,8 @@ import {
   parseWorkThreadLink,
   WORK_THREAD_BOUNDS,
   WORK_THREAD_COMMAND_FAILURES,
+  WORK_THREAD_ORIGINS,
+  type WorkIntakeCommandResult,
   type WorkThreadCommand,
   type WorkThreadCommandResult,
 } from '@ai-usage/report-core/work-thread';
@@ -100,7 +102,7 @@ const markers = strictObject({
         latestSuccessful: nullable(pr),
         mergeable: nullable(picklist(['mergeable', 'conflicting', 'unknown'])),
         mergeStateStatus: nullable(text),
-        role: nullable(picklist(['author', 'review-requested'])),
+        role: nullable(picklist(['author', 'review-requested', 'team-review-requested'])),
       }),
     ),
     maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread),
@@ -127,10 +129,15 @@ const nativeRequest = strictObject({
   detail: publicMessageSchema,
 });
 const nativeRequests = pipe(array(nativeRequest), maxLength(WORK_THREAD_VIEW_BOUNDS.maxNativeRequests));
+const reference = strictObject({
+  threadId: id,
+  title: pipe(string(), minLength(1), maxLength(WORK_THREAD_BOUNDS.maxTitle)),
+});
 export const workThreadRowSchema = strictObject({
   nativeRequests,
   nativeRequestCoverage: picklist(['complete', 'partial']),
   afterDone: nullable(strictObject({ count, latestAt: instant })),
+  combinedThreads: pipe(array(reference), maxLength(WORK_THREAD_BOUNDS.maxCombinedThreads)),
   delegatedSessionCount: count,
   firstActivityAt: instant,
   lastActivityAt: instant,
@@ -159,9 +166,38 @@ export const workThreadsListInputSchema = strictObject({
   tab: picklist(WORK_THREAD_TABS),
 });
 export const workThreadsDetailInputSchema = strictObject({ threadId: id });
+const jiraIntakeItem = strictObject({ firstSeenAt: instant, issue: nullable(jira), key: text });
+const combineSuggestion = strictObject({
+  blockers: pipe(array(publicMessageSchema), maxLength(WORK_THREAD_VIEW_BOUNDS.maxCombineBlockers)),
+  issue: nullable(jira),
+  keptThreadId: id,
+  participants: pipe(
+    array(
+      strictObject({
+        followRevision: revision,
+        origin: picklist(WORK_THREAD_ORIGINS),
+        pullRequestKeys: pipe(array(text), maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread)),
+        sessionCount: count,
+        threadId: id,
+        title: pipe(string(), minLength(1), maxLength(WORK_THREAD_BOUNDS.maxTitle)),
+      }),
+    ),
+    minLength(2),
+    maxLength(WORK_THREAD_VIEW_BOUNDS.maxCombineParticipants),
+  ),
+  ticketKey: text,
+});
 export const workThreadsListDataSchema = strictObject({
+  combineSuggestions: strictObject({
+    items: pipe(array(combineSuggestion), maxLength(WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions)),
+    truncated: boolean(),
+  }),
   counts: strictObject({ done: count, open: count }),
   generatedAt: instant,
+  jiraIntake: strictObject({
+    items: pipe(array(jiraIntakeItem), maxLength(WORK_THREAD_VIEW_BOUNDS.maxJiraIntake)),
+    truncated: boolean(),
+  }),
   machineId: text,
   nextCursor: nullable(pipe(string(), minLength(1), maxLength(4096))),
   projects: pipe(array(text), maxLength(WORK_THREAD_VIEW_BOUNDS.maxProjects)),
@@ -225,6 +261,7 @@ export const workThreadEpisodeSchema = custom<WorkThreadEpisode>((value) => {
   return true;
 }, 'Invalid task session episode.');
 export const workThreadsDetailDataSchema = strictObject({
+  combinedInto: nullable(reference),
   detachedLinks: pipe(array(link), maxLength(WORK_THREAD_BOUNDS.maxLinksPerThread)),
   episodes: pipe(array(workThreadEpisodeSchema), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodes)),
   events: pipe(array(event), maxLength(WORK_THREAD_BOUNDS.maxEventsPerThread)),
@@ -260,7 +297,7 @@ export const workThreadsCommandInputSchema = frozenSchema(parseWorkThreadCommand
 export const workThreadsCommandOutputSchema = pipe(
   custom<unknown>(isJsonWireValue, 'Expected a finite JSON value.'),
   variant('ok', [
-    strictObject({ ok: literal(true), applied: boolean(), followRevision: revision, threadId: id }),
+    strictObject({ ok: literal(true), applied: boolean(), followRevision: revision, threadId: nullable(id) }),
     strictObject({
       ok: literal(false),
       currentRevision: nullable(revision),
@@ -274,7 +311,7 @@ export type WorkThreadsDetailInput = InferOutput<typeof workThreadsDetailInputSc
 export type WorkThreadsListOutput = InferOutput<typeof workThreadsListOutputSchema>;
 export type WorkThreadsDetailOutput = InferOutput<typeof workThreadsDetailOutputSchema>;
 export type WorkThreadsCommandInput = WorkThreadCommand;
-export type WorkThreadsCommandOutput = WorkThreadCommandResult;
+export type WorkThreadsCommandOutput = WorkThreadCommandResult | WorkIntakeCommandResult;
 export const parseWorkThreadsListOutput = (value: unknown): WorkThreadsListOutput =>
   parse(workThreadsListOutputSchema, value);
 export const parseWorkThreadsDetailOutput = (value: unknown): WorkThreadsDetailOutput =>

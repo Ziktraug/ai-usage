@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { parseCanonicalInstant } from './canonical-instant';
-import { type JiraIssueObservation, type PullRequestObservation, parsePullRequestObservation } from './work-attention';
-import { WORK_THREAD_BOUNDS } from './work-thread';
-import { workThreadSeedsFromJiraIssues, workThreadSeedsFromPullRequests } from './work-thread-seeds';
+import { type PullRequestObservation, parsePullRequestObservation } from './work-attention';
+import { isBranchRefName, WORK_THREAD_BOUNDS } from './work-thread';
+import { workThreadSeedsFromPullRequests } from './work-thread-seeds';
 
 const observedAt = parseCanonicalInstant('2026-10-24T10:00:00.000Z');
 const later = parseCanonicalInstant('2026-10-24T11:00:00.000Z');
@@ -30,24 +30,6 @@ const pullRequest = (overrides: Partial<PullRequestObservation> = {}): PullReque
   url: 'https://github.com/demo/project/pull/12',
   ...overrides,
 });
-const jiraIssue = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObservation => ({
-  assigneeLabel: 'Demo Person',
-  commentCount: 0,
-  comments: [],
-  key: 'DEMO-12',
-  machineId: 'machine-a',
-  observedAt,
-  outcome: 'observed',
-  outcomeMessage: null,
-  parentKey: null,
-  sprint: null,
-  status: 'In progress',
-  statusCategory: 'in-progress',
-  summary: 'Improve the demo',
-  updatedAt: observedAt,
-  ...overrides,
-});
-
 describe('work thread seeds', () => {
   test('keeps fully qualified identities and chooses author or review intent without sessions', () => {
     const observations = [
@@ -63,6 +45,7 @@ describe('work thread seeds', () => {
         origin: 'pull-request',
         originKey: 'github.com/demo/project#12',
         projectLabel: 'demo/project',
+        routingJiraKey: null,
         title: 'Improve the demo',
       },
       {
@@ -72,6 +55,7 @@ describe('work thread seeds', () => {
         origin: 'pull-request',
         originKey: 'github.com/other/project#12',
         projectLabel: 'other/project',
+        routingJiraKey: null,
         title: 'Improve the demo',
       },
       {
@@ -81,6 +65,7 @@ describe('work thread seeds', () => {
         origin: 'pull-request',
         originKey: 'other.example/demo/project#12',
         projectLabel: 'demo/project',
+        routingJiraKey: null,
         title: 'Improve the demo',
       },
     ]);
@@ -105,6 +90,7 @@ describe('work thread seeds', () => {
         origin: 'pull-request',
         originKey: 'github.com/demo/project#12',
         projectLabel: 'demo/project',
+        routingJiraKey: null,
         title: 'New title',
       },
     ]);
@@ -119,7 +105,6 @@ describe('work thread seeds', () => {
       WORK_THREAD_BOUNDS.maxTitle,
     );
     expect(workThreadSeedsFromPullRequests([pullRequest({ title: null })])[0]?.title).toBe('demo/project#12');
-    expect(workThreadSeedsFromJiraIssues([jiraIssue({ summary: null })])[0]?.title).toBe('DEMO-12');
   });
 
   test('a newer successful link-only observation removes discovery eligibility', () => {
@@ -145,6 +130,7 @@ describe('work thread seeds', () => {
         origin: 'pull-request',
         originKey: 'github.com/fixture/project#12',
         projectLabel: 'fixture/PROJECT',
+        routingJiraKey: null,
         title: 'Updated title',
       },
     ]);
@@ -155,36 +141,45 @@ describe('work thread seeds', () => {
     expect(workThreadSeedsFromPullRequests([linkOnly, original])).toEqual([]);
   });
 
-  test('Jira uses the CLI default site, latest success and no inferred intent', () => {
-    const observations = [
-      jiraIssue(),
-      jiraIssue({ observedAt: later, summary: 'Updated summary' }),
-      jiraIssue({ observedAt: later, outcome: 'network' }),
-      jiraIssue({ key: 'OTHER-12' }),
-    ];
-    expect(workThreadSeedsFromJiraIssues(observations)).toEqual([
-      {
-        discoveredAt: later,
-        intent: null,
-        linkKind: 'jira-issue',
-        origin: 'jira-issue',
-        originKey: 'jira:default/DEMO-12',
-        projectLabel: 'DEMO',
-        title: 'Updated summary',
-      },
-      {
-        discoveredAt: observedAt,
-        intent: null,
-        linkKind: 'jira-issue',
-        origin: 'jira-issue',
-        originKey: 'jira:default/OTHER-12',
-        projectLabel: 'OTHER',
-        title: 'Improve the demo',
-      },
-    ]);
-    expect(workThreadSeedsFromJiraIssues([...observations].reverse())).toEqual(
-      workThreadSeedsFromJiraIssues(observations),
+  test('only an authored PR whose branch names exactly one ticket carries a routing key', () => {
+    const routing = (overrides: Partial<PullRequestObservation>) =>
+      workThreadSeedsFromPullRequests([pullRequest(overrides)])[0]?.routingJiraKey;
+    expect(routing({ headRef: 'fix/XLB-2085/wallet' })).toBe('jira:default/XLB-2085');
+    expect(routing({ headRef: 'fix/XLB-2085/XLB-2086' })).toBeNull();
+    expect(routing({ headRef: 'fix/xlb-2085-wallet' })).toBeNull();
+    expect(routing({ headRef: 'chore/XLB-0/setup' })).toBeNull();
+    expect(routing({ discoveryRole: 'review-requested', headRef: 'fix/XLB-2085/wallet' })).toBeNull();
+  });
+
+  test('only a name git accepts as a branch stands for work on a branch', () => {
+    for (const ref of ['feat/parser', 'fix/XLB-2085/wallet', 'ws/fix-cart', 'release-1.2']) {
+      expect(isBranchRefName(ref)).toBe(true);
+    }
+    for (const ref of [
+      '',
+      'HEAD',
+      '.invalid',
+      'feat/.hidden',
+      'a..b',
+      'with space',
+      'x.lock',
+      'feat/',
+      'a@{1}',
+      'end.',
+    ]) {
+      expect(isBranchRefName(ref)).toBe(false);
+    }
+  });
+
+  test('a head branch in the PR repository carries its branch key; a fork or shared branch does not', () => {
+    const branch = (overrides: Partial<PullRequestObservation>) =>
+      workThreadSeedsFromPullRequests([pullRequest(overrides)])[0]?.branchKey;
+    expect(branch({ crossRepository: false, headRef: 'feat/Parser' })).toBe(
+      `branch:github.com/${pullRequest().repository.toLowerCase()}@feat/Parser`,
     );
+    expect(branch({ crossRepository: true, headRef: 'feat/parser' })).toBeUndefined();
+    expect(branch({ headRef: 'feat/parser' })).toBeUndefined();
+    expect(branch({ crossRepository: false, headRef: 'develop' })).toBeUndefined();
   });
 
   test('legacy PR parser defaults new fields to null and validates reported enum values', () => {

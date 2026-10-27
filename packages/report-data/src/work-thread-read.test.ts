@@ -18,8 +18,8 @@ import {
   branchLinkKey,
   pullRequestLinkKey,
   sessionLinkKey,
-  type WorkThreadCommand,
   type WorkThreadLinkInput,
+  type WorkThreadTaskCommand,
 } from '@ai-usage/report-core/work-thread';
 import { deriveWorkThreadSituation } from '@ai-usage/report-core/work-thread-situation';
 import { WORK_THREAD_VIEW_BOUNDS, type WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
@@ -60,7 +60,7 @@ const fixture = async () => {
   await run(updateUsageMachineLabel({ dbPath, machine: { id: MACHINE, label: 'Reader fixture' } }));
   return dbPath;
 };
-const command = async (dbPath: string, input: WorkThreadCommand, hours = -24) => {
+const command = async (dbPath: string, input: WorkThreadTaskCommand, hours = -24) => {
   const result = await run(applyWorkThreadCommand({ dbPath, machineId: MACHINE, command: input, now: at(hours) }));
   if (!result.ok) {
     throw new Error(result.failure);
@@ -577,7 +577,8 @@ describe('work-thread reader', () => {
       const dated = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
       expect(dated?.row.firstActivityAt).toBe(at(-300));
       expect(dated?.factEvents[0]?.at).toBe(at(-300));
-      expect(dated?.row.marks.every((mark) => mark.at !== at(-300))).toBe(true);
+      // The timeline reaches back past the week: the old pull request opening is a mark too.
+      expect(dated?.row.marks.filter((mark) => mark.at === at(-300)).map((mark) => mark.kind)).toEqual(['event']);
       const linkedPr = history.find((link) => link.kind === 'pull-request');
       if (!linkedPr) {
         throw new Error('Missing pull request link');
@@ -619,11 +620,12 @@ describe('work-thread reader', () => {
     });
   });
 
-  test('keeps newest week marks and both kinds when follow-state changes crowd the lane', async () => {
+  test('keeps the newest marks and both kinds when follow-state changes crowd the timeline', async () => {
     const dbPath = await fixture();
-    await publish(dbPath, [session('root', { date: at(-100) })]);
-    const threadId = await create(dbPath, [sessionLink('root')], 'Many changes', -150);
-    for (let index = 0; index < 70; index++) {
+    const crowd = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow + 6;
+    await publish(dbPath, [session('root', { date: at(-crowd - 30) })]);
+    const threadId = await create(dbPath, [sessionLink('root')], 'Many changes', -crowd - 80);
+    for (let index = 0; index < crowd; index++) {
       await command(
         dbPath,
         {
@@ -637,57 +639,39 @@ describe('work-thread reader', () => {
           reason: null,
           acknowledgedRemainders: [],
         },
-        -70 + index,
+        -crowd + index,
       );
     }
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    const kept = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow - 1;
     expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toEqual([
-      { at: at(-100), harness: 'codex', kind: 'session', label: 'root' },
+      { at: at(-crowd - 30), harness: 'codex', kind: 'session', label: 'root' },
     ]);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'event').map((mark) => mark.at)).toEqual(
-      Array.from({ length: 63 }, (_, index) => at(-63 + index)),
+      Array.from({ length: kept }, (_, index) => at(-kept + index)),
     );
     expect(detail?.row.marks.at(-1)?.label).toBe('Following');
     expect(list.rows[0]).toEqual(detail?.row);
   });
 
-  test('preserves the newest event when session starts fill the week mark bound', async () => {
+  test('the timeline keeps sessions months old, not only the last week', async () => {
     const dbPath = await fixture();
-    const rows = Array.from({ length: 64 }, (_, index) => session(`root-${index}`, { date: at(-64 + index) }));
+    const rows = Array.from({ length: 12 }, (_, index) =>
+      session(`root-${index}`, { date: at(-24 * 15 * (index + 1)) }),
+    );
     await publish(dbPath, rows);
     const threadId = await create(
       dbPath,
       rows.map((row) => sessionLink(row.source?.sourceSessionId ?? '')),
-      'Many sessions',
-      -150,
-    );
-    await command(
-      dbPath,
-      {
-        commandId: randomUUID(),
-        op: 'set-follow-state',
-        threadId,
-        expectedRevision: 1,
-        to: 'waiting',
-        waitingFor: 'Feedback',
-        waitingOn: null,
-        reason: null,
-        acknowledgedRemainders: [],
-      },
-      -90,
+      'Long-running work',
+      -24 * 200,
     );
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
-    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
-    expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
-    expect(detail?.row.marks.filter((mark) => mark.kind === 'event')).toEqual([
-      { at: at(-90), harness: null, kind: 'event', label: 'Waiting' },
-    ]);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'session').map((mark) => mark.at)).toEqual(
-      Array.from({ length: 63 }, (_, index) => at(-63 + index)),
+      rows.map((_, index) => at(-24 * 15 * (12 - index))),
     );
-    expect(list.rows[0]).toEqual(detail?.row);
   });
 
   test.each([false, true])(
@@ -1521,7 +1505,8 @@ describe('work-thread reader', () => {
     const list = await run(queryWorkThreadList({ dbPath, query: { ...QUERY, tab: 'done' }, now: NOW }));
     for (const row of [detail?.row, list.rows[0]]) {
       expect(row?.sessionCount).toBe(1);
-      expect(row?.marks.filter((mark) => mark.kind === 'session')).toEqual([]);
+      // Only the parent remains on the timeline; the detached child leaves no mark.
+      expect(row?.marks.filter((mark) => mark.kind === 'session').map((mark) => mark.label)).toEqual(['parent']);
       expect(row?.markers.local).toEqual([]);
       expect(row?.afterDone).toBeNull();
       expect(row?.lastActivityAt).toBe(at(-10));
@@ -1758,7 +1743,13 @@ describe('work-thread reader', () => {
       'checkout_status_observations',
       'work_thread_events',
     ]) {
-      expect(page.queries.filter((sql) => sql.includes(`FROM ${table}`))).toHaveLength(1);
+      // Pull requests: page facts, Jira keys in their branches, one global combination scan (ADR 0080)
+      // and the project list, which reads each task's project from its PR repository.
+      const expected = { checkout_status_observations: 1, pull_request_observations: 4 }[table] ?? 2;
+      expect(
+        page.queries.filter((sql) => sql.includes(`FROM ${table}`)),
+        table,
+      ).toHaveLength(expected);
     }
     expect(page.list.rows).toHaveLength(9);
     expect(page.list.rows.flatMap((row) => row.markers.pullRequests)).toHaveLength(558);
@@ -1817,7 +1808,7 @@ describe('work-thread reader', () => {
       launchedBy: { harness: 'codex', title: 'old' },
     });
     expect(detail?.row.sessionCount).toBe(2);
-    expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toHaveLength(0);
+    expect(detail?.row.marks.filter((mark) => mark.kind === 'session').map((mark) => mark.at)).toEqual([at(-300)]);
     expect(detail?.row.firstActivityAt).toBe(at(-300));
     expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
   });
@@ -2494,5 +2485,143 @@ describe('work-thread reader', () => {
       Effect.result(queryWorkThreadList({ dbPath, query: { ...QUERY, limit: 101 }, now: NOW })),
     );
     expect(invalid._tag).toBe('Failure');
+  });
+});
+
+test('a PR branch supplies an exact Jira reference and its observed URL without guessing a site', async () => {
+  const dbPath = await fixture();
+  const threadId = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }]);
+  await run(importPullRequestObservations({ dbPath, observations: [{ ...pr(-2), headRef: 'fix/SHOP-42/url-limit' }] }));
+  const issue = parseJiraIssueObservation({
+    machineId: MACHINE,
+    key: 'SHOP-42',
+    observedAt: at(-1),
+    outcome: 'observed',
+    status: 'In progress',
+    url: 'https://jira.example.test/browse/SHOP-42',
+    comments: [],
+  });
+  if (!issue) {
+    throw new Error('Invalid Jira fixture');
+  }
+  await run(importJiraIssueObservations({ dbPath, observations: [issue] }));
+  const result = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+  expect(result?.row.markers.jiraIssues[0]?.latestSuccessful).toMatchObject({
+    key: 'SHOP-42',
+    status: 'In progress',
+    url: issue.url,
+  });
+  expect(result?.row.links.filter((link) => link.kind === 'session')).toHaveLength(0);
+});
+
+test('a deleted dedicated worktree stays visible even without a previous successful disk read', async () => {
+  const dbPath = await fixture();
+  const desktop = parseClaudeDesktopSessionObservation({
+    accountDirectory: 'account',
+    archived: false,
+    branch: 'feat/x',
+    cliSessionId: 'cli-id',
+    completedTurns: 1,
+    createdAt: at(-4),
+    cwd: '/fixture/desktop',
+    declaredPullRequests: [{ host: 'github.com', repository: 'fixture/repo', number: 7, state: 'OPEN' }],
+    desktopSessionId: 'desktop-id',
+    effort: null,
+    fileModifiedAt: at(-1),
+    filePath: 'account/session.json',
+    format: 'claude-desktop-session-v1',
+    lastActivityAt: at(-1),
+    lastTurnReport: 'Ready for review.',
+    machineId: MACHINE,
+    model: null,
+    observedAt: at(0),
+    openSuggestions: [],
+    organizationDirectory: 'org',
+    originCwd: null,
+    priorCliSessionIds: [],
+    resolvedSuggestions: {},
+    sideSessionNotes: [],
+    sourceBranch: null,
+    spawnedFrom: null,
+    title: 'Desktop title',
+    titleSource: 'auto',
+    turnSummary: {
+      detail: 'Waiting for decision',
+      needsAction: 'Review this',
+      status: 'review_ready',
+      summarizesUuid: null,
+    },
+    unsupportedReason: null,
+    worktreePath: '/fixture/deleted-worktree',
+    wrapUpDescription: null,
+    writtenBranches: [],
+  });
+
+  if (!desktop) {
+    throw new Error('Invalid Desktop fixture');
+  }
+  await run(
+    importClaudeDesktopSessions({
+      dbPath,
+      machineId: MACHINE,
+      collectedAt: NOW,
+      completeness: { filesParsed: 1, filesSeen: 1, rejected: 0, truncated: false, unsupported: 0 },
+      observations: [desktop],
+    }),
+  );
+  const threadId = await create(dbPath, [
+    { kind: 'session', key: sessionLinkKey({ machineId: MACHINE, harness: 'claude', sessionId: 'cli-id' }) },
+    { kind: 'pull-request', key: 'github.com/fixture/repo#7' },
+  ]);
+  await run(importPullRequestObservations({ dbPath, observations: [{ ...pr(-2), headRef: 'feat/x' }] }));
+  const missing = parseCheckoutStatusObservation({
+    machineId: MACHINE,
+    checkoutPath: '/fixture/deleted-worktree',
+    observedAt: at(-1),
+    outcome: 'missing',
+  });
+  if (!missing) {
+    throw new Error('Invalid missing checkout');
+  }
+  await run(importCheckoutStatusObservations({ dbPath, observations: [missing] }));
+  const result = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+  expect(result?.row.markers.local).toMatchObject([{ latest: { outcome: 'missing' }, latestSuccessful: null }]);
+});
+
+describe('combined tasks read as one (ADR 0080)', () => {
+  test('the kept task lists its members and their links; a member points at the kept task', async () => {
+    const dbPath = await fixture();
+    const ticket = { kind: 'jira-issue' as const, key: 'jira:default/SHOP-9' };
+    const kept = await create(dbPath, [ticket], 'Ticket task', -30);
+    const member = await create(
+      dbPath,
+      [ticket, { kind: 'pull-request', key: 'github.com/fixture/repo#9' }],
+      'PR task',
+    );
+    const before = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    const [suggestion] = before.combineSuggestions.items;
+    expect(suggestion).toMatchObject({ blockers: [], keptThreadId: kept, ticketKey: 'jira:default/SHOP-9' });
+    await command(dbPath, {
+      commandId: randomUUID(),
+      op: 'combine',
+      participants: (suggestion?.participants ?? []).map((item) => ({
+        expectedRevision: item.followRevision,
+        threadId: item.threadId,
+      })),
+      threadId: kept,
+      ticketKey: 'jira:default/SHOP-9',
+    });
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(list.combineSuggestions.items).toEqual([]);
+    expect(list.counts.open).toBe(1);
+    const [row] = list.rows;
+    expect(row?.combinedThreads).toEqual([{ threadId: member, title: 'PR task' }]);
+    expect(row?.links.map((link) => link.key).toSorted()).toEqual(['github.com/fixture/repo#9', 'jira:default/SHOP-9']);
+    expect(row?.markers.pullRequests.map((marker) => marker.key)).toEqual(['github.com/fixture/repo#9']);
+    const memberDetail = await run(queryWorkThreadDetail({ dbPath, threadId: member, now: NOW }));
+    expect(memberDetail?.combinedInto).toEqual({ threadId: kept, title: 'Ticket task' });
+    const keptDetail = await run(queryWorkThreadDetail({ dbPath, threadId: kept, now: NOW }));
+    expect(keptDetail?.combinedInto).toBeNull();
+    expect(keptDetail?.events.filter((event) => event.kind === 'combined')).toHaveLength(2);
   });
 });

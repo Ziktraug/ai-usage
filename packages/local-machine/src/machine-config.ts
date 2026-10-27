@@ -231,7 +231,9 @@ const isUsageMachine = (value: unknown): value is UsageMachine => {
   return typeof record.id === 'string' && record.id.length > 0 && typeof record.label === 'string';
 };
 
-const GITHUB_CONFIG_KEYS = new Set(['accounts', 'enabled']);
+const GITHUB_CONFIG_KEYS = new Set(['accounts', 'enabled', 'hostAliases', 'sharedBranches']);
+const HOST_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i;
+const MAX_GITHUB_CONFIG_ENTRIES = 32;
 const GITHUB_ACCOUNT_KEYS = new Set(['ghUser', 'host', 'owner']);
 const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
 
@@ -260,11 +262,27 @@ const isGitHubConfig = (value: unknown): value is AiUsageGitHubConfig => {
   return (
     Object.keys(record).every((key) => GITHUB_CONFIG_KEYS.has(key)) &&
     (record.enabled === undefined || typeof record.enabled === 'boolean') &&
-    (record.accounts === undefined || (Array.isArray(record.accounts) && record.accounts.every(isGitHubAccountConfig)))
+    (record.accounts === undefined ||
+      (Array.isArray(record.accounts) && record.accounts.every(isGitHubAccountConfig))) &&
+    (record.hostAliases === undefined ||
+      (typeof record.hostAliases === 'object' &&
+        record.hostAliases !== null &&
+        !Array.isArray(record.hostAliases) &&
+        Object.entries(record.hostAliases).length <= MAX_GITHUB_CONFIG_ENTRIES &&
+        Object.entries(record.hostAliases).every(
+          ([alias, host]) => HOST_NAME_PATTERN.test(alias) && typeof host === 'string' && HOST_NAME_PATTERN.test(host),
+        ))) &&
+    (record.sharedBranches === undefined ||
+      (Array.isArray(record.sharedBranches) &&
+        record.sharedBranches.length <= MAX_GITHUB_CONFIG_ENTRIES &&
+        record.sharedBranches.every(
+          (branch) => typeof branch === 'string' && branch.trim().length > 0 && branch.length <= 255,
+        )))
   );
 };
 
-const JIRA_CONFIG_KEYS = new Set(['enabled', 'site']);
+const JIRA_CONFIG_KEYS = new Set(['enabled', 'handedOffStatuses', 'site']);
+const MAX_JIRA_HANDED_OFF_STATUSES = 32;
 /** A host name such as `example.atlassian.net`: labels of letters, digits and dashes, at least one dot. */
 const JIRA_SITE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
 
@@ -277,6 +295,12 @@ const isJiraConfig = (value: unknown): value is AiUsageJiraConfig => {
   return (
     Object.keys(record).every((key) => JIRA_CONFIG_KEYS.has(key)) &&
     (record.enabled === undefined || typeof record.enabled === 'boolean') &&
+    (record.handedOffStatuses === undefined ||
+      (Array.isArray(record.handedOffStatuses) &&
+        record.handedOffStatuses.length <= MAX_JIRA_HANDED_OFF_STATUSES &&
+        record.handedOffStatuses.every(
+          (status) => typeof status === 'string' && status.trim().length > 0 && status.length <= 128,
+        ))) &&
     (record.site === undefined ||
       (typeof record.site === 'string' && record.site.length <= 256 && JIRA_SITE_PATTERN.test(record.site)))
   );

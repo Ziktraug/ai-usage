@@ -150,6 +150,7 @@ export const toSerializedMergeRow = (
   const source = serialized.source;
   const mergeSource = {
     harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
+    ...(source?.launchMode === undefined ? {} : { launchMode: source.launchMode }),
     sourceSessionId: source?.sourceSessionId ?? null,
     ...(source?.delegatedSessions === undefined ? {} : { delegatedSessions: source.delegatedSessions }),
     ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
