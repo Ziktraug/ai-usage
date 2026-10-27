@@ -164,7 +164,9 @@ which PR #67 changes heavily, so they land after it.
 > the derived table to a snapshot of the hand-written one. The manual-merge
 > download joined the explicit HTTP policies. Server loads call
 > `createInProcessWebRpcClient(request)`, the `/rpc` router with the dependencies
-> `/rpc` builds, behind an interceptor that applies the demo rule;
+> `/rpc` builds, behind an interceptor that applies the demo rule and refuses
+> every procedure declared as a mutation (a document GET is never CSRF-guarded,
+> so SSR stays read-only by construction);
 > `subrequest-normalization.server.ts` and the `handleFetch` hook are deleted.
 > The HTTP response byte bound does not apply in process: SSR outputs are bounded
 > by their output schemas and by the dehydration of successful data only.

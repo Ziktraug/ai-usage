@@ -615,7 +615,8 @@ the request policy, its path table, the demo set and the browser's GET table
 are derived from those declarations (ADR 0076). Server loads acquire through an
 in-process router client (`createInProcessWebRpcClient`) with the dependencies
 `/rpc` builds for the document request, so SSR makes no HTTP subrequest and no
-code manufactures trust headers.
+code manufactures trust headers. That client refuses mutations: a document load
+only reads.
 
 The Skills shell derives one immutable `SkillsPresentationProjection` from the
 accepted inventory, Project, selection, and observation Query values. Workspace,

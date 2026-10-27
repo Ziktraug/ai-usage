@@ -152,6 +152,25 @@ describe('in-process Web RPC client', () => {
     expect(tasks).toMatchObject({ ok: false });
   });
 
+  test('refuses every mutation before any service runs, so a document load stays read-only', async () => {
+    let writes = 0;
+    const routerDependencies = dependencies({
+      sync: services({
+        setMachineLabel: () => {
+          writes += 1;
+          return Promise.resolve({});
+        },
+      }),
+    });
+
+    const refused = await failureOf(async () =>
+      (await inProcessClient(routerDependencies)).sync.setMachineLabel({ label: 'Desk' }),
+    );
+
+    expect(shapeOf(refused)).toEqual({ code: 'METHOD_NOT_SUPPORTED', defined: false, status: 405 });
+    expect(writes).toBe(0);
+  });
+
   test('follows the visual Skills fixture of the document only under the private e2e overrides', () => {
     const visual = new Request('http://127.0.0.1:3000/skills', { headers: { [E2E_SKILLS_FIXTURE_HEADER]: 'visual' } });
 

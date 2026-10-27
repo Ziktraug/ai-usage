@@ -39,6 +39,9 @@ const defaultDependencies = async (request: Request): Promise<WebRpcRouterDepend
  * boundary's empty 404. The HTTP rules do not apply because no HTTP request is made: method, Origin,
  * CSRF and byte bounds guard a request body and a response stream this client never produces, and the
  * document request has already passed the trusted-local hook.
+ *
+ * A document load only reads: a mutation would change state on a GET that CSRF never guards, so this
+ * client refuses every procedure declared as a mutation before any service runs.
  */
 export const createInProcessWebRpcClient = async (
   request: Request,
@@ -52,6 +55,12 @@ export const createInProcessWebRpcClient = async (
         const policy = rpcPolicyForPath(`/${path.join('/')}`);
         if (policy === undefined || (runtimeMode === 'demo' && policy.demo !== 'synthetic-only')) {
           throw new ORPCError('NOT_FOUND', { message: 'The RPC operation does not exist.', status: 404 });
+        }
+        if (policy.transport === 'mutation') {
+          throw new ORPCError('METHOD_NOT_SUPPORTED', {
+            message: 'A document load cannot run a mutation.',
+            status: 405,
+          });
         }
         return await next();
       },
