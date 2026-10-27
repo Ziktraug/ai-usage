@@ -3,7 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-10-26
 - **Amends**: 0063, 0078
-- **Amended by**: [0080](0080-combined-work-threads.md) (existing duplicates are combined)
+- **Amended by**: [0080](0080-combined-work-threads.md) (existing duplicates are combined), [0081](0081-work-branch-evidence.md) (branch equality routes first)
 
 ## Context
 

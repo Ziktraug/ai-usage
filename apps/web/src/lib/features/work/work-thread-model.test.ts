@@ -23,6 +23,7 @@ import {
   episodeSpanContext,
   episodeTimeRange,
   groupThreadRows,
+  localMarkerKey,
   observedWebUrl,
   primaryResumeEpisode,
   projectShortLabel,
@@ -174,6 +175,15 @@ describe('task presentation model', () => {
     expect(threadTimeline('2026-10-27T10:00:00Z', 'UTC', ['2020-01-01T00:00:00Z'])).toHaveLength(
       WORK_THREAD_VIEW_BOUNDS.maxTimelineDays,
     );
+  });
+  test('one branch checked out in several worktrees keeps one marker per checkout', () => {
+    const marker = payment.row.markers.local[0];
+    if (!marker?.latest) {
+      throw new Error('Expected a local marker');
+    }
+    const other = { ...marker, latest: { ...marker.latest, checkoutPath: `${marker.latest.checkoutPath}-2` } };
+    expect(localMarkerKey(marker)).not.toBe(localMarkerKey(other));
+    expect(localMarkerKey(marker).startsWith(marker.key)).toBe(true);
   });
   test('the list keeps explanations, not source and date captions, and shortens projects', () => {
     expect(projectShortLabel('exaprint/Exalibur')).toBe('Exalibur');

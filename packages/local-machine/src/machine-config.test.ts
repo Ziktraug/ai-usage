@@ -672,7 +672,12 @@ describe('github config', () => {
     const home = await mkdtemp('ai-usage-github-config-');
     try {
       const storage = writeHomeConfig(home, {
-        github: { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }], enabled: true },
+        github: {
+          accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }],
+          enabled: true,
+          hostAliases: { 'github-perso.com': 'github.com' },
+          sharedBranches: ['release'],
+        },
       });
       const config = await Effect.runPromise(
         readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -680,6 +685,8 @@ describe('github config', () => {
       expect(config.github).toEqual({
         accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture' }],
         enabled: true,
+        hostAliases: { 'github-perso.com': 'github.com' },
+        sharedBranches: ['release'],
       });
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -694,6 +701,10 @@ describe('github config', () => {
       { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture/project' }] },
       { accounts: [{ ghUser: 'alice', host: 'github.com', owner: 'fixture', token: 'never' }] },
       { enabled: false, hostOwnerPattern: 'fixture/*' },
+      { hostAliases: { 'github-perso.com': 'https://github.com' } },
+      { hostAliases: ['github.com'] },
+      { sharedBranches: 'release' },
+      { sharedBranches: [''] },
       [],
     ];
     for (const github of invalid) {

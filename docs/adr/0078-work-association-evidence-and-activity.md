@@ -3,7 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-10-26
 - **Amends**: 0063
-- **Amended by**: [0079](0079-ticket-routing-and-jira-intake.md) (an authored PR's branch key may route it to its ticket's task), [0082](0082-work-priorities-reports-team-reviews-handed-off-tickets.md) (reports are not requests)
+- **Amended by**: [0079](0079-ticket-routing-and-jira-intake.md) (an authored PR's branch key may route it to its ticket's task), [0081](0081-work-branch-evidence.md) (recorded branches), [0082](0082-work-priorities-reports-team-reviews-handed-off-tickets.md) (reports are not requests)
 
 ## Context
 

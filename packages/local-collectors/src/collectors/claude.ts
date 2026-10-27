@@ -89,7 +89,8 @@ interface ClaudeCache {
 // Bumped to 19 to reject resume evidence masked by later semicolon commands and
 // retain matching native thread evidence when a resumed command ends in error.
 // Bumped to 21 to reprice rows after the GPT-5.2/gpt-4.1/o4-mini/Haiku 5.5 pricing update.
-const CLAUDE_CACHE_VERSION = 21;
+// 22: several `cwd` of one clone (subdirectories, worktrees) no longer mark the VCS context partial.
+const CLAUDE_CACHE_VERSION = 22;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
@@ -421,7 +422,13 @@ const parseClaudeFile = (
     result.repositoryKey = repositoryCacheKey(repository);
     result.repositorySourcePath = initialFacts.source.sourcePath;
     const facts = repository
-      ? (parseClaudeSessionFacts({ isAgentFile, records, repository, sourceSessionId }) ?? initialFacts)
+      ? (parseClaudeSessionFacts({
+          isAgentFile,
+          records,
+          repository,
+          sourcePathRepository: resolveRepository,
+          sourceSessionId,
+        }) ?? initialFacts)
       : initialFacts;
     const { projection, report, source } = facts;
     result.declaredChildSourceSessionIds = [

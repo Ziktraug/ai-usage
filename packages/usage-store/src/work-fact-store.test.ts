@@ -189,7 +189,13 @@ describe('work fact store: pull request observations', () => {
     await Effect.runPromise(initializeUsageStore({ dbPath }));
     const upgraded = new Database(dbPath);
     expect(upgraded.query('SELECT * FROM pull_request_observations ORDER BY id').all()).toEqual(
-      oldRows.map((row) => ({ ...row, closed_at: null, created_at: null, unresolved_review_threads: null })),
+      oldRows.map((row) => ({
+        ...row,
+        closed_at: null,
+        created_at: null,
+        cross_repository: null,
+        unresolved_review_threads: null,
+      })),
     );
     const columns = upgraded.query('PRAGMA table_info(pull_request_observations)').all() as {
       name: string;

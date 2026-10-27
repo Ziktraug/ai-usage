@@ -24,6 +24,13 @@ export interface AiUsageGitHubAccountConfig {
 export interface AiUsageGitHubConfig {
   accounts?: AiUsageGitHubAccountConfig[];
   enabled?: boolean;
+  /**
+   * Remote host alias → GitHub host, beside what `~/.ssh/config` declares (ADR 0081): a remote
+   * written `git@github-perso.com:owner/repo` is the same repository as its `github.com` PRs.
+   */
+  hostAliases?: Record<string, string>;
+  /** Branch names that are never one task's work, beside main, master, develop and trunk. */
+  sharedBranches?: string[];
 }
 
 /**

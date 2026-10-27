@@ -15,6 +15,7 @@ import {
 } from '@ai-usage/local-machine/machine-config';
 import { applyCampaignLabelOverrideMutation } from '@ai-usage/report-core/campaign-label';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
+import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import {
   type ProjectSourceSelector,
   parseProjectGroupConfigs,
@@ -84,6 +85,7 @@ import {
   type SourcePolicyStore,
 } from './source-control';
 import { createSourceSnapshotBroker } from './source-snapshot-broker';
+import { reconcileWorkBranchesFromHome } from './work-branches';
 import { createWorkThreadService } from './work-threads';
 import { createUsageEngineWriterGate, type UsageEngineWriterGate } from './writer-gate';
 
@@ -475,6 +477,8 @@ export interface DurableReportPublisherOptions {
   readonly dbPath: string;
   readonly machine: UsageMachine;
   readonly now?: () => Date;
+  /** Branch evidence after a publication that changed the report (ADR 0081); failures are reported here. */
+  readonly reconcileWorkBranches?: (input: { readonly config: AiUsageConfig; readonly now: Date }) => Promise<void>;
   readonly reportRetentionFailure?: (cause: unknown) => void;
   readonly retainRevisions?: (input: { readonly dbPath: string; readonly now: number }) => Promise<void>;
   readonly revision?: () => string;
@@ -946,6 +950,22 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
       dbPath: options.dbPath,
       machine: requireMachine(),
       now,
+      reconcileWorkBranches: async (input) => {
+        await observe(
+          'work.branches',
+          () =>
+            Effect.runPromise(
+              reconcileWorkBranchesFromHome({
+                config: input.config,
+                dbPath: options.dbPath,
+                home: storage.home,
+                machineId: requireMachine().id,
+                now: input.now,
+              }),
+            ),
+          { phase: 'publication' },
+        );
+      },
       retainRevisions: async (input) =>
         await observe(
           'retention',
@@ -1269,6 +1289,13 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
         options.reportRetentionFailure?.(cause);
       } catch {
         // A diagnostic sink must not turn a committed publication into a failed command.
+      }
+    }
+    if (result.changed && options.reconcileWorkBranches) {
+      try {
+        await options.reconcileWorkBranches({ config: publishConfig, now: publicationTime });
+      } catch {
+        // Its own observed boundary records the failure; the publication stays committed.
       }
     }
     return {

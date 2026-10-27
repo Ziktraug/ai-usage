@@ -4546,6 +4546,7 @@ export const {
   queryWorkThreadWaitCandidates,
   queryWorkThreadSessionEvidence,
   queryWorkThreadsPage,
+  reconcileWorkBranches,
   recordJiraIntake,
   seedWorkThreads,
 } = createWorkThreadStore({
@@ -4574,6 +4575,8 @@ export type {
   QueryWorkThreadsPageResult,
   QueryWorkThreadWaitCandidatesInput,
   QueryWorkThreadWaitCandidatesResult,
+  ReconcileWorkBranchesInput,
+  ReconcileWorkBranchesResult,
   RecordJiraIntakeInput,
   SeedWorkThreadsInput,
   SeedWorkThreadsResult,

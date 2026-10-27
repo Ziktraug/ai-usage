@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkThreadMarkers } from '@ai-usage/report-core/work-thread-view';
-  import { localCheckoutStatus, observedWebUrl, threadDate, threadTime } from './work-thread-model';
+  import { localCheckoutStatus, localMarkerKey, observedWebUrl, threadDate, threadTime } from './work-thread-model';
 
   let {
     markers,
@@ -54,7 +54,7 @@
           >
         </summary>
         <div class="wt-source-detail">
-          {#each markers.local as marker (marker.key)}
+          {#each markers.local as marker (localMarkerKey(marker))}
             {@const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful}
             <div class="wt-source-fact">
               {#if !marker.latest}

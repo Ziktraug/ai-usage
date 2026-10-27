@@ -254,13 +254,14 @@
   };
   const detach = async (key: string): Promise<void> => {
     const link = row.links.find((candidate) => candidate.key === key && candidate.detachedAt === null);
-    if (!link) {
-      return;
-    }
-    await act({ op: 'detach-link', threadId: thread.threadId, linkId: link.linkId }, () => {
+    // A session read through the task's branch has no stored link; detaching it records the veto.
+    const command = link
+      ? ({ op: 'detach-link', threadId: thread.threadId, linkId: link.linkId } as const)
+      : ({ op: 'detach-session', threadId: thread.threadId, key } as const);
+    await act(command, () => {
       toast = 'Session detached · history stays';
       undo = () =>
-        act({ op: 'link', threadId: thread.threadId, kind: link.kind, key: link.key }, () => {
+        act({ op: 'link', threadId: thread.threadId, kind: 'session', key }, () => {
           toast = 'Session linked again';
           undo = null;
         });

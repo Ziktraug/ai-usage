@@ -59,6 +59,10 @@ export const threadUrl = (url: URL, threadId: string | null, day?: string): stri
   return `${next.pathname}${next.search}`;
 };
 
+/** One branch can be checked out in several worktrees: the checkout tells their markers apart. */
+export const localMarkerKey = (marker: WorkThreadMarkers['local'][number]): string =>
+  `${marker.key}\n${marker.latest?.checkoutPath ?? marker.latestSuccessful?.checkoutPath ?? ''}`;
+
 /** The repository name alone ("Exalibur" for "exaprint/Exalibur"): the owner rarely tells tasks apart. */
 export const projectShortLabel = (label: string | null): string =>
   label === null ? 'No project' : (label.split('/').filter(Boolean).at(-1) ?? label);

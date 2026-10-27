@@ -340,6 +340,23 @@ missing column. New observations retain only a public browser URL: the Jira REST
 Atlassian returns an internal backend hostname. No auth status output or credential
 is stored. Back up both stores before restarting the engine with this change.
 
+## Branch evidence (2026-10-27)
+
+ADR 0081 adds three tables under usage version 4, created by the engine on its next open
+when absent: `work_session_branches` (which session recorded which repository branch, derived
+from the served revision and rebuilt with it), `work_session_branch_builds` (the revision and
+host aliases it was built from) and `work_branch_reconciliation` (one creation cutoff per
+machine, fixed three weeks before the first reconciliation). The first two are disposable: the
+engine deletes and rebuilds them, and nothing operator-owned lives there. The same open adds a
+nullable `cross_repository` integer column to `pull_request_observations`; rows written before
+carry null and give no head branch until the PR is observed again. Task links stay where they
+were: the engine adds `branch` links and `session`-origin tasks through its normal writer, never
+rewrites existing rows, and a detached link remains a veto. The Work view's reader requires the
+three tables, so it answers `schema-too-old` until the engine has reopened the store. An older
+binary ignores them. Collector caches move to new versions (Claude 22, Codex 28), so the first
+collection after the upgrade re-reads transcripts and rollouts once. Back up both stores before
+restarting the engine with this change.
+
 ## Handed-off Jira statuses (2026-10-27)
 
 The engine adds a nullable `handed_off` integer column to

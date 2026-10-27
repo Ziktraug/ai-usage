@@ -193,6 +193,7 @@ export {
   readDelegationJob,
   readDelegationJobs,
   readDelegationQualification,
+  reconcileWorkBranches,
   recordDelegationEvaluation,
   recordDelegationQualification,
   recordJiraIntake,
@@ -258,6 +259,8 @@ export type {
   QueryActiveWorkThreadLinksResult,
   QueryWorkThreadWaitCandidatesInput,
   QueryWorkThreadWaitCandidatesResult,
+  ReconcileWorkBranchesInput,
+  ReconcileWorkBranchesResult,
   WorkThreadSeed,
   WorkThreadWaitCandidate,
 } from './work-thread-store';

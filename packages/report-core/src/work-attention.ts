@@ -603,6 +603,8 @@ export interface PullRequestObservation {
   /** When GitHub closed it without merging; `mergedAt` carries a merge. */
   readonly closedAt?: CanonicalInstant | null;
   readonly createdAt?: CanonicalInstant | null;
+  /** True when the head branch lives in a fork, so its name says nothing about this repository. */
+  readonly crossRepository?: boolean;
   readonly discoveryRole?: 'author' | 'review-requested' | 'team-review-requested' | null;
   readonly draft: boolean | null;
   readonly headRef: string | null;
@@ -705,7 +707,8 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     url === undefined ||
     headRef === undefined ||
     baseRef === undefined ||
-    checksRollup === undefined
+    checksRollup === undefined ||
+    (value.crossRepository !== undefined && typeof value.crossRepository !== 'boolean')
   ) {
     return null;
   }
@@ -715,6 +718,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
     checksRollup,
     closedAt,
     createdAt,
+    ...(typeof value.crossRepository === 'boolean' ? { crossRepository: value.crossRepository } : {}),
     discoveryRole,
     draft,
     headRef,

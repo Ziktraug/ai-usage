@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { type CanonicalInstant, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { isRecord } from '@ai-usage/report-core/datasets';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
@@ -10,6 +10,7 @@ import {
 } from '@ai-usage/report-core/work-attention';
 import { jiraKeysInBranch } from '@ai-usage/report-core/work-attention-facts';
 import {
+  isBranchRefName,
   isWorkThreadId,
   jiraIssueLinkKey,
   parseWorkThread,
@@ -17,6 +18,7 @@ import {
   parseWorkThreadEvent,
   parseWorkThreadLink,
   parseWorkThreadLinkKey,
+  SHARED_BRANCH_NAMES,
   WORK_THREAD_BOUNDS,
   WORK_THREAD_COMMAND_FAILURES,
   type WorkIntakeCommandResult,
@@ -43,6 +45,9 @@ export const WORK_THREAD_TABLES = [
   'work_thread_commands',
   'work_jira_intake',
   'work_thread_combinations',
+  'work_session_branches',
+  'work_session_branch_builds',
+  'work_branch_reconciliation',
 ] as const;
 
 export const workThreadSchemaSql = `
@@ -120,6 +125,32 @@ export const workThreadSchemaSql = `
     dismissed_at TEXT,
     PRIMARY KEY (machine_id, link_key)
   );
+  -- Branch evidence (ADR 0081): which sessions recorded which repository branch, rebuilt by the
+  -- engine from the served revision. Derived and disposable; tasks hold the branch links.
+  CREATE TABLE IF NOT EXISTS work_session_branches (
+    revision TEXT NOT NULL,
+    link_key TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    harness TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('interactive', 'exec', 'delegated', 'review', 'unknown')),
+    repository_label TEXT NOT NULL,
+    started_at TEXT,
+    title TEXT,
+    source_path TEXT,
+    PRIMARY KEY (revision, link_key, machine_id, harness, session_id)
+  ) WITHOUT ROWID;
+  CREATE INDEX IF NOT EXISTS idx_work_session_branches_key
+    ON work_session_branches(link_key, machine_id, role, started_at);
+  CREATE TABLE IF NOT EXISTS work_session_branch_builds (
+    revision TEXT PRIMARY KEY,
+    built_at TEXT NOT NULL,
+    aliases_json TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS work_branch_reconciliation (
+    machine_id TEXT PRIMARY KEY,
+    creation_cutoff_at TEXT NOT NULL
+  );
 `;
 
 interface SqliteDatabase {
@@ -157,6 +188,8 @@ export interface ApplyWorkThreadCommandInput {
 }
 
 export interface WorkThreadSeed {
+  /** The PR's head branch key, when in its own repository: joins the task holding it (ADR 0081). */
+  readonly branchKey?: string | null;
   readonly discoveredAt: string;
   readonly intent: WorkThreadIntent | null;
   readonly linkKind: WorkThreadLinkKind;
@@ -1028,6 +1061,31 @@ const executeCommand = (
       addEvent(db, thread, now, 'link-detached', { linkKey: link.key });
       return success(thread);
     }
+    case 'detach-session': {
+      const group = JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)]);
+      const active = db
+        .query(`SELECT 1 FROM work_thread_links WHERE kind = 'session' AND link_key = ? AND detached_at IS NULL
+          AND thread_id IN (SELECT value FROM json_each(?))`)
+        .get(command.key, group);
+      if (active === null) {
+        const vetoed = db
+          .query(`SELECT 1 FROM work_thread_links WHERE kind = 'session' AND link_key = ?
+            AND thread_id IN (SELECT value FROM json_each(?))`)
+          .get(command.key, group);
+        if (vetoed !== null) {
+          return success(thread, false);
+        }
+        // A session read through the branch has no stored link; the detached row is the veto.
+        db.query(`INSERT INTO work_thread_links(link_id, thread_id, kind, link_key, provenance, created_at, detached_at)
+          VALUES (?, ?, 'session', ?, 'user', ?, ?)`).run(randomUUID(), thread.threadId, command.key, now, now);
+      } else {
+        db.query(`UPDATE work_thread_links SET detached_at = ? WHERE kind = 'session' AND link_key = ?
+          AND detached_at IS NULL AND thread_id IN (SELECT value FROM json_each(?))`).run(now, command.key, group);
+      }
+      saveThread(db, { ...thread, updatedAt: now });
+      addEvent(db, thread, now, 'link-detached', { linkKey: command.key });
+      return success(thread);
+    }
     case 'set-note':
       if (thread.note === command.note) {
         return success(thread, false);
@@ -1090,6 +1148,19 @@ const sourceActivitySql = `source_activity AS MATERIALIZED (
  ) WHERE at IS NOT NULL AND at != '' GROUP BY machine_id, kind, link_key
 )`;
 
+/** Roles that stand on their own on a branch; delegated sessions and reviews nest under a parent. */
+const BRANCH_ROOT_ROLES = "('interactive', 'exec', 'unknown')";
+/** A detached session link anywhere in the combination, not linked again, is the operator's veto. */
+const branchSessionVetoSql = (thread: string, key: string): string => `NOT EXISTS (
+  SELECT 1 FROM work_thread_links vetoed WHERE vetoed.kind = 'session' AND vetoed.detached_at IS NOT NULL
+    AND vetoed.link_key = ${key} AND vetoed.thread_id IN ${taskThreadsSql(thread)}
+    AND NOT EXISTS (SELECT 1 FROM work_thread_links relinked WHERE relinked.kind = 'session'
+      AND relinked.link_key = vetoed.link_key AND relinked.detached_at IS NULL
+      AND relinked.thread_id IN ${taskThreadsSql(thread)})
+)`;
+
+const BRANCH_SESSION_KEY_SQL = "'session:' || sb.machine_id || '/' || sb.harness || '/' || sb.session_id";
+
 // A kept task's activity spans its combined members' events and links (ADR 0080).
 const threadActivitySql = `COALESCE((SELECT MAX(at) FROM (
   SELECT e.at AS at FROM work_thread_events e WHERE e.thread_id IN ${taskThreadsSql('t')} AND (
@@ -1104,6 +1175,13 @@ const threadActivitySql = `COALESCE((SELECT MAX(at) FROM (
   SELECT a.at FROM work_thread_links l JOIN source_activity a
     ON a.machine_id = t.machine_id AND a.kind = l.kind AND a.link_key = CASE WHEN l.kind = 'pull-request' THEN lower(l.link_key) ELSE l.link_key END
     WHERE l.thread_id IN ${taskThreadsSql('t')} AND l.detached_at IS NULL
+  UNION ALL
+  SELECT a.at FROM work_thread_links l
+    JOIN work_session_branches sb ON sb.link_key = l.link_key AND sb.machine_id = t.machine_id
+      AND sb.role IN ${BRANCH_ROOT_ROLES}
+    JOIN source_activity a ON a.machine_id = t.machine_id AND a.kind = 'session' AND a.link_key = ${BRANCH_SESSION_KEY_SQL}
+    WHERE l.thread_id IN ${taskThreadsSql('t')} AND l.kind = 'branch' AND l.detached_at IS NULL
+      AND ${branchSessionVetoSql('t', BRANCH_SESSION_KEY_SQL)}
   UNION ALL
   SELECT j.at FROM work_thread_links l JOIN pull_request_observations p
     ON p.machine_id = t.machine_id AND lower(l.link_key) = lower(p.host || '/' || p.repository || '#' || p.number)
@@ -1485,6 +1563,21 @@ const activeLinkCount = (db: SqliteDatabase, threadId: string): number => {
 
 const branchEvidence = (linkKey: string): string => `Head branch names ${linkKey.slice(linkKey.lastIndexOf('/') + 1)}`;
 
+/** The single open task holding a branch, as its kept task; none when several do or only Done ones. */
+const openBranchHolder = (db: SqliteDatabase, branchKey: string): WorkThread | null => {
+  const holders = new Map<string, WorkThread>();
+  for (const row of db
+    .query(`SELECT t.* FROM work_threads t WHERE t.origin_key = ? OR EXISTS (
+      SELECT 1 FROM work_thread_links l WHERE l.thread_id = t.thread_id AND l.kind = 'branch'
+        AND ${comparableLinkSql('branch')} = ? AND l.detached_at IS NULL)`)
+    .all(branchKey, branchKey)) {
+    const task = effectiveThread(db, threadFromRecord(row));
+    holders.set(task.threadId, task);
+  }
+  const [holder] = holders.values();
+  return holders.size === 1 && holder !== undefined && holder.followState !== 'done' ? holder : null;
+};
+
 /** Reuse only an unambiguous, operator-linked session task with no prior PR association. */
 const reconciliationCandidates = (db: SqliteDatabase, input: SeedWorkThreadsInput): Map<string, WorkThread | null> => {
   const result = new Map<string, WorkThread | null>();
@@ -1596,6 +1689,239 @@ const reconciliationCandidates = (db: SqliteDatabase, input: SeedWorkThreadsInpu
   return result;
 };
 
+// ---------------------------------------------------------------------------------------------
+// Branch evidence (ADR 0081). A session's harness records its repository and branch; a task holds
+// the branch as a link. Sessions on that branch read as the task's, except delegated ones (nested
+// under their parent) and the ones the operator detached.
+// ---------------------------------------------------------------------------------------------
+
+/** Sessions one task reads through its branches; older ones are left out and reported truncated. */
+export const MAX_BRANCH_SESSIONS_PER_TASK = 60;
+/** Only sessions this recent create a task; older history joins existing tasks only. */
+export const BRANCH_TASK_CREATION_WINDOW_DAYS = 21;
+const MAX_BRANCH_TASKS_PER_RUN = 25;
+const MAX_HEAD_BRANCH_LINKS = 500;
+const MAX_BRANCH_CANDIDATES = 500;
+
+export interface ReconcileWorkBranchesInput {
+  readonly dbPath: string;
+  /** Resolves the default branch a checkout's `origin` names (`refs/remotes/origin/HEAD`), if known. */
+  readonly defaultBranchOf?: (sourcePath: string) => string | null;
+  /** SSH host alias → host, so `github-perso.com` remotes compare with `github.com` pull requests. */
+  readonly hostAliases?: Readonly<Record<string, string>>;
+  readonly machineId: string;
+  readonly now: string;
+  /** Branch names the operator's config declares shared, besides the conventional ones. */
+  readonly sharedBranches?: readonly string[];
+}
+
+export interface ReconcileWorkBranchesResult {
+  /** Branch links added to existing tasks: from a PR's head branch, or a ticket the branch names. */
+  readonly branchLinks: number;
+  readonly created: number;
+  readonly indexed: boolean;
+  /** Candidate branches left without a task: shared, a PR base, or no interactive session. */
+  readonly suppressed: number;
+  readonly truncated: boolean;
+}
+
+const currentServedRevision = (db: SqliteDatabase): string | null => {
+  const value = db
+    .query(`SELECT revisions.revision FROM served_report_current current
+      JOIN served_report_revisions revisions USING(revision) WHERE current.singleton = 1 AND revisions.complete = 1`)
+    .get();
+  return value === null ? null : validated(evidenceText(record(value).revision, 512), 'served revision');
+};
+
+const sessionBranchRole = (row: Record<string, unknown>, delegatedBy: string | undefined): string => {
+  if (row.origin === 'classifier') {
+    return 'review';
+  }
+  if (row.origin === 'subagent' || typeof row.parent === 'string' || delegatedBy !== undefined) {
+    return 'delegated';
+  }
+  if (row.launch_mode === 'exec') {
+    return 'exec';
+  }
+  // Codex says how a run started; a row without it (an older collection) cannot create a task.
+  if (row.harness === 'codex' && row.launch_mode !== 'interactive') {
+    return 'unknown';
+  }
+  return row.origin === 'human' ? 'interactive' : 'unknown';
+};
+
+/** Rebuilds the index for `revision` unless it already exists for the same host aliases. */
+const rebuildSessionBranches = (
+  db: SqliteDatabase,
+  revision: string,
+  aliases: Readonly<Record<string, string>>,
+  now: CanonicalInstant,
+): boolean => {
+  const aliasesJson = JSON.stringify(Object.entries(aliases).sort(([left], [right]) => left.localeCompare(right)));
+  const built = db.query('SELECT aliases_json FROM work_session_branch_builds WHERE revision = ?').get(revision);
+  if (built !== null && record(built).aliases_json === aliasesJson) {
+    return false;
+  }
+  db.query('DELETE FROM work_session_branches').run();
+  db.query('DELETE FROM work_session_branch_builds').run();
+  // A Claude session titled after its id reads better under its Desktop title, when it has one.
+  const desktopTitles = new Map<string, string>();
+  for (const value of db
+    .query(`SELECT machine_id, cli_session_id, title FROM claude_desktop_sessions
+      UNION ALL SELECT desktop.machine_id, prior.value, desktop.title
+      FROM claude_desktop_sessions desktop, json_each(desktop.prior_cli_session_ids_json) prior`)
+    .all()) {
+    const row = record(value);
+    if (typeof row.title === 'string' && row.title.trim()) {
+      desktopTitles.set(`${String(row.machine_id)}/${String(row.cli_session_id)}`, row.title.trim());
+    }
+  }
+  // A `codex exec` a Claude session launched is listed on the parent only; invert that edge first.
+  const delegatedBy = new Map<string, string>();
+  for (const value of db
+    .query(`SELECT machine_id, json_extract(source_row_json, '$.source.sourceSessionId') AS parent,
+        json_extract(source_row_json, '$.source.delegatedSessions') AS delegated
+      FROM served_report_rows WHERE revision = ? AND json_type(source_row_json, '$.source.delegatedSessions') = 'array'`)
+    .all(revision)) {
+    const row = record(value);
+    for (const child of readWorkSessionDelegations(row.delegated).delegatedSessions) {
+      delegatedBy.set(`${String(row.machine_id)}/${child.harness}/${child.sourceSessionId}`, String(row.parent));
+    }
+  }
+  const insert = db.query(`INSERT OR IGNORE INTO work_session_branches(revision, link_key, machine_id, harness,
+    session_id, role, repository_label, started_at, title, source_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  // A partial context (several repositories, truncated spans) is no evidence of where work happened.
+  for (const value of db
+    .query(`SELECT machine_id, json_extract(source_row_json, '$.source.harnessKey') AS harness,
+        json_extract(source_row_json, '$.source.sourceSessionId') AS session_id,
+        json_extract(source_row_json, '$.source.parentSourceSessionId') AS parent,
+        json_extract(source_row_json, '$.origin') AS origin,
+        json_extract(source_row_json, '$.source.launchMode') AS launch_mode,
+        json_extract(source_row_json, '$.source.vcs.repository.host') AS host,
+        json_extract(source_row_json, '$.source.vcs.repository.ownerPath') AS owner_path,
+        json_extract(source_row_json, '$.source.vcs.branches') AS branches,
+        json_extract(source_row_json, '$.source.sourcePath') AS source_path,
+        json_extract(source_row_json, '$.date') AS started_at,
+        json_extract(source_row_json, '$.sessionLabel') AS title,
+        json_extract(source_row_json, '$.titleSource') AS title_source
+      FROM served_report_rows WHERE revision = ?
+        AND json_extract(source_row_json, '$.source.vcs.partial') = 0
+        AND json_extract(source_row_json, '$.source.vcs.repository.host') IS NOT NULL
+        AND json_array_length(json_extract(source_row_json, '$.source.vcs.branches')) > 0`)
+    .all(revision)) {
+    const row = record(value);
+    if (
+      typeof row.harness !== 'string' ||
+      typeof row.session_id !== 'string' ||
+      typeof row.host !== 'string' ||
+      typeof row.owner_path !== 'string' ||
+      typeof row.branches !== 'string'
+    ) {
+      continue;
+    }
+    const machineId = String(row.machine_id);
+    const host = row.host.toLowerCase();
+    const role = sessionBranchRole(row, delegatedBy.get(`${machineId}/${row.harness}/${row.session_id}`));
+    const names = new Set<string>();
+    const spans: unknown = JSON.parse(row.branches);
+    for (const span of Array.isArray(spans) ? spans : []) {
+      if (isRecord(span) && typeof span.name === 'string' && isBranchRefName(span.name)) {
+        names.add(span.name);
+      }
+    }
+    for (const name of names) {
+      const key = `branch:${aliases[host] ?? host}/${row.owner_path.toLowerCase()}@${name}`;
+      if (parseWorkThreadLinkKey('branch', key) === null) {
+        continue;
+      }
+      insert.run(
+        revision,
+        key,
+        machineId,
+        row.harness,
+        row.session_id,
+        role,
+        row.owner_path,
+        normalizeIsoTimestamp(row.started_at),
+        // A title made from the session id says nothing; the Desktop title or the branch reads better.
+        (typeof row.title === 'string' && row.title_source !== 'id'
+          ? row.title
+          : (desktopTitles.get(`${machineId}/${row.session_id}`) ?? null)
+        )?.slice(0, WORK_THREAD_BOUNDS.maxTitle) ?? null,
+        typeof row.source_path === 'string' ? row.source_path : null,
+      );
+    }
+  }
+  db.query('INSERT INTO work_session_branch_builds(revision, built_at, aliases_json) VALUES (?, ?, ?)').run(
+    revision,
+    now,
+    aliasesJson,
+  );
+  return true;
+};
+
+/** Stable per task and session, so a derived row keeps its identity across reads. */
+const derivedLinkId = (threadId: string, key: string): string => {
+  const hex = createHash('sha256').update(`${threadId}\n${key}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
+/** The sessions a task reads through its active branch links: newest first, bounded, vetoes applied. */
+const branchSessionLinks = (
+  db: SqliteDatabase,
+  scope: Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'> & { readonly threadId: string },
+): { readonly links: readonly WorkThreadLink[]; readonly truncated: boolean } => {
+  const branchKeys = [
+    ...new Set(
+      scope.links
+        .filter((link) => link.kind === 'branch' && link.detachedAt === null)
+        .map((link) => canonicalLinkKey('branch', link.key)),
+    ),
+  ];
+  if (
+    branchKeys.length === 0 ||
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'work_session_branches'").get() === null
+  ) {
+    return { links: [], truncated: false };
+  }
+  const linked = new Set(scope.links.filter((link) => link.kind === 'session').map((link) => link.key));
+  const rows = db
+    .query(`SELECT ${BRANCH_SESSION_KEY_SQL} AS session_key, MIN(sb.started_at) AS started_at
+      FROM work_session_branches sb, (SELECT ? AS thread_id) t
+      WHERE sb.link_key IN (SELECT value FROM json_each(?)) AND sb.machine_id = ? AND sb.role IN ${BRANCH_ROOT_ROLES}
+        AND ${branchSessionVetoSql('t', BRANCH_SESSION_KEY_SQL)}
+      GROUP BY sb.machine_id, sb.harness, sb.session_id
+      ORDER BY MIN(sb.started_at) DESC, session_key LIMIT ?`)
+    .all(scope.threadId, JSON.stringify(branchKeys), scope.machineId, MAX_BRANCH_SESSIONS_PER_TASK + linked.size + 1)
+    .map(record)
+    .filter((row) => !linked.has(String(row.session_key)));
+  return {
+    truncated: rows.length > MAX_BRANCH_SESSIONS_PER_TASK,
+    links: rows.slice(0, MAX_BRANCH_SESSIONS_PER_TASK).map((row) =>
+      validated(
+        parseWorkThreadLink({
+          createdAt: normalizeIsoTimestamp(row.started_at) ?? '1970-01-01T00:00:00.000Z',
+          detachedAt: null,
+          key: row.session_key,
+          kind: 'session',
+          linkId: derivedLinkId(scope.threadId, String(row.session_key)),
+          provenance: 'declared',
+          threadId: scope.threadId,
+        }),
+        'branch session',
+      ),
+    ),
+  };
+};
+
+interface BranchCandidate {
+  readonly firstAt: CanonicalInstant;
+  readonly key: string;
+  readonly repositoryLabel: string;
+  readonly sourcePath: string | null;
+  readonly title: string | null;
+}
+
 export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies) => {
   const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
   const write = <Value>(
@@ -1693,6 +2019,31 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           existing++;
           continue;
         }
+        const branchKey = seed.branchKey ? canonicalLinkKey('branch', seed.branchKey) : null;
+        if (branchKey !== null && !parseWorkThreadLinkKey('branch', branchKey)) {
+          return invalidInput('A PR head branch key must be qualified');
+        }
+        // Branch equality is stronger evidence than a ticket key: the PR is that branch's work.
+        const branchHolder = branchKey === null || seed.intent === 'review' ? null : openBranchHolder(db, branchKey);
+        if (
+          branchHolder !== null &&
+          activeLinkCount(db, branchHolder.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
+        ) {
+          addLink(db, {
+            createdAt: now,
+            key: originKey,
+            kind: 'pull-request',
+            provenance: 'declared',
+            threadId: branchHolder.threadId,
+          });
+          saveThread(db, { ...branchHolder, updatedAt: now });
+          addEvent(db, branchHolder, now, 'link-added', {
+            linkKey: originKey,
+            reason: `Head branch ${branchKey?.slice(branchKey.indexOf('@') + 1)}`,
+          });
+          existing++;
+          continue;
+        }
         const routingKey =
           seed.origin === 'pull-request' && seed.routingJiraKey
             ? canonicalLinkKey('jira-issue', seed.routingJiraKey)
@@ -1739,6 +2090,15 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           threadId: thread.threadId,
         });
         addEvent(db, thread, discoveredAt, 'created', { toState: 'following' });
+        if (branchKey !== null && !hasKnownWorkThreadLink(db, 'branch', branchKey)) {
+          addLink(db, {
+            createdAt: discoveredAt,
+            key: branchKey,
+            kind: 'branch',
+            provenance: 'declared',
+            threadId: thread.threadId,
+          });
+        }
         if (routingKey !== null && followers?.open.length === 0 && followers.done === 0) {
           // The new task now follows the ticket, so later PRs and the Jira intake find it.
           addLink(db, {
@@ -1766,6 +2126,218 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         }
       }
       return { created, existing, uncertain };
+    });
+
+  /**
+   * Branch evidence (ADR 0081), in one writer transaction: index the served revision's recorded
+   * branches, give PR tasks their head branch, then route or create a task for each branch with
+   * recent interactive work. Bounded; whatever is left over is reported truncated, never dropped.
+   */
+  const reconcileWorkBranches = (
+    input: ReconcileWorkBranchesInput,
+  ): Effect.Effect<ReconcileWorkBranchesResult, UsageStoreError> =>
+    write(input.dbPath, 'reconcileWorkBranches', (db) => {
+      const now = instant(input.now);
+      const aliases: Record<string, string> = {};
+      for (const [alias, host] of Object.entries(input.hostAliases ?? {})) {
+        aliases[alias.toLowerCase()] = host.toLowerCase();
+      }
+      const shared = new Set([...SHARED_BRANCH_NAMES, ...(input.sharedBranches ?? [])]);
+      const result = { branchLinks: 0, created: 0, indexed: false, suppressed: 0, truncated: false };
+      const revision = currentServedRevision(db);
+      if (revision === null) {
+        return result;
+      }
+      result.indexed = rebuildSessionBranches(db, revision, aliases, now);
+
+      // 1. A followed PR names its head branch: the task holds it, unless a fork's or vetoed.
+      const heads = db
+        .query(`WITH latest AS (
+          SELECT lower(host) AS host, lower(repository) AS repository, number, head_ref, cross_repository,
+            ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
+          FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed'
+        )
+        SELECT l.thread_id, l.link_key AS pull_request_key, latest.host, latest.repository, latest.head_ref
+        FROM work_thread_links l JOIN work_threads t ON t.thread_id = l.thread_id AND t.machine_id = ?
+        JOIN latest ON latest.rank = 1 AND lower(l.link_key) = latest.host || '/' || latest.repository || '#' || latest.number
+        WHERE l.kind = 'pull-request' AND l.detached_at IS NULL AND latest.cross_repository = 0
+          AND latest.head_ref IS NOT NULL
+        ORDER BY l.created_at, l.link_id LIMIT ?`)
+        .all(input.machineId, input.machineId, MAX_HEAD_BRANCH_LINKS + 1)
+        .map(record);
+      result.truncated ||= heads.length > MAX_HEAD_BRANCH_LINKS;
+      for (const head of heads.slice(0, MAX_HEAD_BRANCH_LINKS)) {
+        const ref = String(head.head_ref);
+        const key = `branch:${String(head.host)}/${String(head.repository)}@${ref}`;
+        if (
+          !isBranchRefName(ref) ||
+          shared.has(ref) ||
+          parseWorkThreadLinkKey('branch', key) === null ||
+          hasKnownWorkThreadLink(db, 'branch', key)
+        ) {
+          continue;
+        }
+        const task = effectiveThread(db, validated(readThread(db, String(head.thread_id)), 'PR task'));
+        if (activeLinkCount(db, task.threadId) >= WORK_THREAD_BOUNDS.maxLinksPerThread) {
+          result.truncated = true;
+          continue;
+        }
+        addLink(db, { createdAt: now, key, kind: 'branch', provenance: 'declared', threadId: task.threadId });
+        addEvent(db, task, now, 'link-added', {
+          linkKey: key,
+          reason: `Head branch of ${String(head.pull_request_key)}`,
+        });
+        result.branchLinks++;
+      }
+
+      // 2. A branch with recent interactive work and no task: route it to its ticket, or create one.
+      if (db.query('SELECT 1 FROM work_branch_reconciliation WHERE machine_id = ?').get(input.machineId) === null) {
+        // The window is fixed when the feature first runs: older history never creates a task later.
+        const cutoff = new Date(Date.parse(now) - BRANCH_TASK_CREATION_WINDOW_DAYS * 86_400_000).toISOString();
+        db.query('INSERT INTO work_branch_reconciliation(machine_id, creation_cutoff_at) VALUES (?, ?)').run(
+          input.machineId,
+          cutoff,
+        );
+      }
+      const cutoff = String(
+        record(
+          db
+            .query('SELECT creation_cutoff_at FROM work_branch_reconciliation WHERE machine_id = ?')
+            .get(input.machineId),
+        ).creation_cutoff_at,
+      );
+      // A branch some observed PR has as its head is that PR's work: it waits for the PR's task to
+      // hold it (once GitHub says the head is not a fork) rather than becoming a second task.
+      const pullRequestHeads = new Set(
+        db
+          .query(`SELECT DISTINCT lower(host) || '/' || lower(repository) || '@' || head_ref AS head
+            FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed' AND head_ref IS NOT NULL
+              AND (cross_repository IS NULL OR cross_repository = 0)`)
+          .all(input.machineId)
+          .map((row) => String(record(row).head)),
+      );
+      const openBases = new Set(
+        db
+          .query(`WITH latest AS (
+            SELECT lower(host) AS host, lower(repository) AS repository, base_ref, state,
+              ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
+            FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed'
+          ) SELECT host || '/' || repository || '@' || base_ref AS base FROM latest
+            WHERE rank = 1 AND state = 'OPEN' AND base_ref IS NOT NULL`)
+          .all(input.machineId)
+          .map((row) => String(record(row).base)),
+      );
+      const candidates = db
+        .query(`WITH ranked AS (
+          SELECT link_key, started_at, repository_label, title, source_path,
+            ROW_NUMBER() OVER (PARTITION BY link_key ORDER BY started_at, session_id) AS rank
+          FROM work_session_branches
+          WHERE revision = ? AND machine_id = ? AND role = 'interactive' AND started_at >= ?
+        ) SELECT * FROM ranked WHERE rank = 1 ORDER BY started_at, link_key LIMIT ?`)
+        .all(revision, input.machineId, cutoff, MAX_BRANCH_CANDIDATES + 1)
+        .map((value): BranchCandidate => {
+          const row = record(value);
+          return {
+            firstAt: validated(normalizeIsoTimestamp(row.started_at), 'branch session start'),
+            key: String(row.link_key),
+            repositoryLabel: String(row.repository_label),
+            sourcePath: typeof row.source_path === 'string' ? row.source_path : null,
+            title: typeof row.title === 'string' && row.title.trim() ? row.title.trim() : null,
+          };
+        });
+      result.truncated ||= candidates.length > MAX_BRANCH_CANDIDATES;
+      const defaults = new Map<string, string | null>();
+      const defaultBranchOf = (sourcePath: string | null): string | null => {
+        if (sourcePath === null || input.defaultBranchOf === undefined) {
+          return null;
+        }
+        if (!defaults.has(sourcePath)) {
+          defaults.set(sourcePath, input.defaultBranchOf(sourcePath));
+        }
+        return defaults.get(sourcePath) ?? null;
+      };
+      let created = 0;
+      for (const candidate of candidates.slice(0, MAX_BRANCH_CANDIDATES)) {
+        const parsed = parseWorkThreadLinkKey('branch', candidate.key);
+        if (parsed?.kind !== 'branch' || hasKnownWorkThreadLink(db, 'branch', candidate.key)) {
+          continue;
+        }
+        // Exclusions only stop creation; a session on such a branch still joins a task holding it.
+        const branchOfRepository = `${parsed.host}/${parsed.repository}@${parsed.ref}`;
+        if (
+          shared.has(parsed.ref) ||
+          defaultBranchOf(candidate.sourcePath) === parsed.ref ||
+          openBases.has(branchOfRepository) ||
+          pullRequestHeads.has(branchOfRepository)
+        ) {
+          result.suppressed++;
+          continue;
+        }
+        const ticketKeys = jiraKeysInBranch(parsed.ref);
+        const [ticket] = ticketKeys;
+        const routingKey =
+          ticketKeys.length === 1 && ticket !== undefined ? jiraIssueLinkKey({ key: ticket, site: 'default' }) : null;
+        const followers = routingKey === null ? null : jiraKeyFollowers(db, input.machineId, routingKey);
+        const [follower] = followers?.open ?? [];
+        if (
+          followers?.open.length === 1 &&
+          follower &&
+          activeLinkCount(db, follower.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
+        ) {
+          addLink(db, {
+            createdAt: now,
+            key: candidate.key,
+            kind: 'branch',
+            provenance: 'declared',
+            threadId: follower.threadId,
+          });
+          addEvent(db, follower, now, 'link-added', { linkKey: candidate.key, reason: `Branch names ${ticket}` });
+          result.branchLinks++;
+          continue;
+        }
+        if (created >= MAX_BRANCH_TASKS_PER_RUN) {
+          result.truncated = true;
+          continue;
+        }
+        const thread = newThread({
+          intent: 'change',
+          machineId: input.machineId,
+          now: candidate.firstAt,
+          objective: null,
+          origin: 'session',
+          originKey: candidate.key,
+          projectLabel: candidate.repositoryLabel.slice(0, WORK_THREAD_BOUNDS.maxTitle),
+          title: (candidate.title ?? parsed.ref).slice(0, WORK_THREAD_BOUNDS.maxTitle),
+        });
+        saveThread(db, { ...thread, updatedAt: now });
+        addLink(db, {
+          createdAt: candidate.firstAt,
+          key: candidate.key,
+          kind: 'branch',
+          provenance: 'origin',
+          threadId: thread.threadId,
+        });
+        addEvent(db, thread, candidate.firstAt, 'created', {
+          toState: 'following',
+          reason: `Sessions recorded branch ${parsed.ref}`,
+        });
+        if (routingKey !== null && followers?.open.length === 0 && followers.done === 0) {
+          addLink(db, {
+            createdAt: candidate.firstAt,
+            key: routingKey,
+            kind: 'jira-issue',
+            provenance: 'declared',
+            threadId: thread.threadId,
+          });
+          addEvent(db, thread, candidate.firstAt, 'link-added', {
+            linkKey: routingKey,
+            reason: `Branch names ${ticket}`,
+          });
+        }
+        created++;
+      }
+      result.created = created;
+      return result;
     });
 
   const attachDeclaredWorkThreadSessions = (
@@ -2341,6 +2913,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
     applyWorkThreadCommand,
     applyWorkThreadWaitObservations,
     attachDeclaredWorkThreadSessions,
+    reconcileWorkBranches,
     countWorkThreads,
     queryActiveWorkThreadLinks,
     queryWorkThreadById,
@@ -2360,6 +2933,8 @@ export interface WorkThreadSessionEvidence {
     readonly machineId: string;
     readonly checkoutPath: string;
   }[];
+  /** Sessions read through the task's branch links (ADR 0081), as links that are not stored. */
+  readonly branchSessionLinks: readonly WorkThreadLink[];
   readonly generatedAt: CanonicalInstant | null;
   readonly revision: string | null;
   readonly sessions: readonly {
@@ -2443,11 +3018,12 @@ interface SessionEvidencePage {
 const sessionEvidenceKey = (machineId: string, harness: string, sessionId: string): string =>
   `session:${machineId}/${harness}/${sessionId}`;
 
+// A veto on any task of a combination holds for all of them (ADR 0080, 0081).
 const nonDetachedSessionSql = (machine: string, harness: string, session: string): string => `NOT EXISTS (
-  SELECT 1 FROM work_thread_links detached WHERE detached.thread_id = requested.thread_id
+  SELECT 1 FROM work_thread_links detached WHERE detached.thread_id IN ${taskThreadsSql('requested')}
     AND detached.kind = 'session' AND detached.detached_at IS NOT NULL
     AND detached.link_key = 'session:' || ${machine} || '/' || ${harness} || '/' || ${session}
-    AND NOT EXISTS (SELECT 1 FROM work_thread_links relinked WHERE relinked.thread_id = detached.thread_id
+    AND NOT EXISTS (SELECT 1 FROM work_thread_links relinked WHERE relinked.thread_id IN ${taskThreadsSql('requested')}
       AND relinked.kind = 'session' AND relinked.link_key = detached.link_key AND relinked.detached_at IS NULL)
 )`;
 
@@ -2470,7 +3046,7 @@ const readSessionEvidencePage = (
 ): SessionEvidencePage => {
   for (const input of scopes) {
     if (
-      input.links.length > WORK_THREAD_BOUNDS.maxLinksPerThread ||
+      input.links.length > WORK_THREAD_BOUNDS.maxLinksPerThread + MAX_BRANCH_SESSIONS_PER_TASK ||
       !input.machineId ||
       input.links.some((link) => parseWorkThreadLink(link) === null)
     ) {
@@ -2719,7 +3295,7 @@ const readSessionEvidencePage = (
 const readThreadSessionEvidence = (
   page: SessionEvidencePage,
   input: Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'>,
-): WorkThreadSessionEvidence => {
+): Omit<WorkThreadSessionEvidence, 'branchSessionLinks'> => {
   const { revision, generatedAt } = page;
   const sessions = new Map<string, WorkThreadSessionEvidence['sessions'][number]>();
   const branchCheckouts: WorkThreadSessionEvidence['branchCheckouts'][number][] = [];
@@ -2866,6 +3442,41 @@ const readThreadSessionEvidence = (
   return { revision, generatedAt, sessions: [...sessions.values()], branchCheckouts, truncated };
 };
 
+/** Adds the sessions the scope reads through its branch links, as links of the same thread. */
+const withBranchSessions = <Scope extends Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'>>(
+  db: SqliteDatabase,
+  scope: Scope,
+  threadId: string,
+): Scope & { readonly branchLinks: readonly WorkThreadLink[]; readonly branchTruncated: boolean } => {
+  if (scope.links.length > WORK_THREAD_BOUNDS.maxLinksPerThread) {
+    return invalidInput('Invalid linked session evidence scope');
+  }
+  const branch = branchSessionLinks(db, { ...scope, threadId });
+  return {
+    ...scope,
+    links: [...scope.links, ...branch.links],
+    branchLinks: branch.links,
+    branchTruncated: branch.truncated,
+  };
+};
+
+const withBranchEvidence = (
+  evidence: Omit<WorkThreadSessionEvidence, 'branchSessionLinks'>,
+  scope: { readonly branchLinks: readonly WorkThreadLink[]; readonly branchTruncated: boolean },
+): WorkThreadSessionEvidence => {
+  // A derived session the read could not resolve to one served row is not shown as linked.
+  const resolved = new Set(
+    evidence.sessions.map((session) =>
+      sessionEvidenceKey(session.member.machineId, session.harness, session.member.sourceSessionId),
+    ),
+  );
+  return {
+    ...evidence,
+    branchSessionLinks: scope.branchLinks.filter((link) => resolved.has(link.key)),
+    truncated: evidence.truncated || scope.branchTruncated,
+  };
+};
+
 export const createWorkThreadSessionEvidenceStore = (dependencies: WorkThreadStoreDependencies) => {
   function queryWorkThreadSessionEvidence(
     input: QueryWorkThreadSessionEvidenceInput,
@@ -2895,13 +3506,19 @@ export const createWorkThreadSessionEvidenceStore = (dependencies: WorkThreadSto
               if (input.threads.length === 0) {
                 return [];
               }
-              const page = readSessionEvidencePage(db, input.threads);
-              return input.threads.map((thread) => ({
+              const scopes = input.threads.map((thread) => withBranchSessions(db, thread, thread.threadId));
+              const page = readSessionEvidencePage(db, scopes);
+              return scopes.map((thread) => ({
                 threadId: thread.threadId,
-                evidence: readThreadSessionEvidence(page, thread),
+                evidence: withBranchEvidence(readThreadSessionEvidence(page, thread), thread),
               }));
             }
-            return readThreadSessionEvidence(readSessionEvidencePage(db, [input]), input);
+            const threadId = input.links[0]?.threadId;
+            const scope =
+              threadId === undefined
+                ? { ...input, branchLinks: [], branchTruncated: false }
+                : withBranchSessions(db, input, threadId);
+            return withBranchEvidence(readThreadSessionEvidence(readSessionEvidencePage(db, [scope]), scope), scope);
           } finally {
             db.exec('COMMIT');
           }

@@ -1215,6 +1215,19 @@ export const createSyntheticWorkThreadStore = (
         appendEvent(record, { kind: 'link-detached', linkKey: link.key });
         return result(record.thread);
       }
+      case 'detach-session': {
+        const active = record.links.filter(
+          (candidate) => candidate.kind === 'session' && candidate.key === command.key && candidate.detachedAt === null,
+        );
+        if (active.length === 0) {
+          return result(record.thread, false);
+        }
+        record.links = record.links.map((candidate) =>
+          active.includes(candidate) ? { ...candidate, detachedAt: now() } : candidate,
+        );
+        appendEvent(record, { kind: 'link-detached', linkKey: command.key });
+        return result(record.thread);
+      }
       case 'set-note': {
         const changed = record.thread.note !== command.note;
         if (changed) {

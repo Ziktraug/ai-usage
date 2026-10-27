@@ -107,6 +107,7 @@ import type { ProviderQuotaRuntimeOptions } from './provider-quota';
 import { refreshLocalProviderQuotas } from './provider-quota';
 import { CLAUDE_QUOTA_SOURCE_IDENTITY } from './provider-quota-refresh';
 import { type SanitizableSourceWarning, sanitizeSourceWarnings } from './source-warnings';
+import { reconcileWorkBranchesFromHome } from './work-branches';
 
 export interface SourceRunContext {
   readonly reportProgress: (progress: SourceProgress) => Effect.Effect<void>;
@@ -1506,6 +1507,28 @@ const createPullRequestSource = (input: {
               now: input.now().toISOString(),
               declarations,
             }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+      // New PRs and their head branches change which tasks hold which branches (ADR 0081).
+      const branches = yield* reconcileWorkBranchesFromHome({
+        config,
+        dbPath: input.dbPath,
+        home: input.storage.home,
+        machineId: input.machine.id,
+        now: input.now(),
+      }).pipe(
+        Effect.map((result) =>
+          result.truncated
+            ? [
+                {
+                  code: 'work-branches-truncated',
+                  message: 'Some branches exceeded the bounded branch reconciliation.',
+                },
+              ]
+            : [],
+        ),
+        Effect.catch((cause) =>
+          Effect.succeed([{ code: 'work-branches-failed', message: `Branch reconciliation failed: ${cause.message}` }]),
+        ),
+      );
       const identityWarnings =
         seeded.uncertain > 0
           ? [
@@ -1563,6 +1586,7 @@ const createPullRequestSource = (input: {
           ...waitWarnings,
           ...declarationWarnings,
           ...identityWarnings,
+          ...branches,
           ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
         ],
       };

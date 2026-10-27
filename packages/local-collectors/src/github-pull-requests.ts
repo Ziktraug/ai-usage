@@ -92,6 +92,7 @@ const PULL_REQUEST_FIELDS = [
   'url',
   'headRefName',
   'baseRefName',
+  'isCrossRepository',
   'statusCheckRollup',
 ] as const;
 const GH_AUTHENTICATION_REQUIRED_EXIT_CODE = 4;
@@ -204,6 +205,8 @@ interface ParsedPullRequest {
   readonly checksRollup: PullRequestCheckRollup;
   readonly closedAt: CanonicalInstant | null;
   readonly createdAt: CanonicalInstant | null;
+  /** True when the head branch lives in another repository (a fork); absent when not reported. */
+  readonly crossRepository: boolean | null;
   readonly draft: boolean;
   readonly headRef: string;
   readonly lifecycleDateMessage: string | null;
@@ -277,6 +280,7 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
   const title = boundedText(value.title, maxShortText);
   const headRef = boundedText(value.headRefName, maxShortText);
   const baseRef = boundedText(value.baseRefName, maxShortText);
+  const crossRepository = typeof value.isCrossRepository === 'boolean' ? value.isCrossRepository : null;
   const url = typeof value.url === 'string' && value.url.length <= maxPath ? value.url : undefined;
   let urlMatchesLink = false;
   if (url !== undefined) {
@@ -320,6 +324,7 @@ export const parsePullRequestView = (stdout: string, link: PullRequestLink): Par
     checksRollup: rollupChecks(value.statusCheckRollup),
     closedAt: closedAt ?? null,
     createdAt: createdAt ?? null,
+    crossRepository,
     draft,
     headRef,
     lifecycleDateMessage: invalidDates.length > 0 ? `Invalid lifecycle dates: ${invalidDates.join(', ')}` : null,
@@ -555,6 +560,7 @@ const observeLink = (
           checksRollup: parsed.checksRollup,
           closedAt: parsed.closedAt,
           createdAt: parsed.createdAt,
+          ...(parsed.crossRepository === null ? {} : { crossRepository: parsed.crossRepository }),
           discoveryRole: link.discoveryRole ?? null,
           draft: parsed.draft,
           headRef: parsed.headRef,

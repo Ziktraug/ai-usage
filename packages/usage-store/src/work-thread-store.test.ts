@@ -1189,7 +1189,7 @@ describe('work thread store', () => {
       const before = counts();
       const events = await run(store.queryWorkThreadEvents({ dbPath, threadIds: [first, second] }));
       expect(counts().connections - before.connections).toBe(1);
-      expect(counts().queries - before.queries).toBe(7); // Six schema checks, one scoped event query.
+      expect(counts().queries - before.queries).toBe(10); // Nine schema checks, one scoped event query.
       for (const threadId of [first, second]) {
         const scoped = events.filter((event) => event.threadId === threadId);
         expect(scoped).toHaveLength(WORK_THREAD_BOUNDS.maxEventsPerThread);

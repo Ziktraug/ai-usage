@@ -152,6 +152,8 @@ describe('parsePullRequestView', () => {
       state: 'OPEN',
       title: 'Add the Work view',
     });
+    expect(parsePullRequestView(view({ isCrossRepository: true }), link(66))?.crossRepository).toBe(true);
+    expect(parsePullRequestView(view({}), link(66))?.crossRepository).toBeNull();
     expect(parsePullRequestView(view({ state: 'open' }), link(66))).toBeNull();
     expect(parsePullRequestView(view({ isDraft: 'no' }), link(66))).toBeNull();
     expect(parsePullRequestView(view({ updatedAt: 'yesterday' }), link(66))).toBeNull();
@@ -343,7 +345,7 @@ describe('observePullRequests through a fake gh on PATH', () => {
     ]);
     expect(calls[1]?.args.slice(5)).toEqual([
       '--json',
-      'state,isDraft,reviewDecision,createdAt,closedAt,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,statusCheckRollup',
+      'state,isDraft,reviewDecision,createdAt,closedAt,mergedAt,mergeable,mergeStateStatus,updatedAt,title,url,headRefName,baseRefName,isCrossRepository,statusCheckRollup',
     ]);
     expect(calls[0]?.token).toBeNull();
     expect(calls.slice(1).map(({ token }) => token)).toEqual(Array.from({ length: 5 }, () => TOKEN_SENTINEL));

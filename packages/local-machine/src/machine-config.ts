@@ -231,7 +231,9 @@ const isUsageMachine = (value: unknown): value is UsageMachine => {
   return typeof record.id === 'string' && record.id.length > 0 && typeof record.label === 'string';
 };
 
-const GITHUB_CONFIG_KEYS = new Set(['accounts', 'enabled']);
+const GITHUB_CONFIG_KEYS = new Set(['accounts', 'enabled', 'hostAliases', 'sharedBranches']);
+const HOST_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i;
+const MAX_GITHUB_CONFIG_ENTRIES = 32;
 const GITHUB_ACCOUNT_KEYS = new Set(['ghUser', 'host', 'owner']);
 const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
 
@@ -260,7 +262,22 @@ const isGitHubConfig = (value: unknown): value is AiUsageGitHubConfig => {
   return (
     Object.keys(record).every((key) => GITHUB_CONFIG_KEYS.has(key)) &&
     (record.enabled === undefined || typeof record.enabled === 'boolean') &&
-    (record.accounts === undefined || (Array.isArray(record.accounts) && record.accounts.every(isGitHubAccountConfig)))
+    (record.accounts === undefined ||
+      (Array.isArray(record.accounts) && record.accounts.every(isGitHubAccountConfig))) &&
+    (record.hostAliases === undefined ||
+      (typeof record.hostAliases === 'object' &&
+        record.hostAliases !== null &&
+        !Array.isArray(record.hostAliases) &&
+        Object.entries(record.hostAliases).length <= MAX_GITHUB_CONFIG_ENTRIES &&
+        Object.entries(record.hostAliases).every(
+          ([alias, host]) => HOST_NAME_PATTERN.test(alias) && typeof host === 'string' && HOST_NAME_PATTERN.test(host),
+        ))) &&
+    (record.sharedBranches === undefined ||
+      (Array.isArray(record.sharedBranches) &&
+        record.sharedBranches.length <= MAX_GITHUB_CONFIG_ENTRIES &&
+        record.sharedBranches.every(
+          (branch) => typeof branch === 'string' && branch.trim().length > 0 && branch.length <= 255,
+        )))
   );
 };
 

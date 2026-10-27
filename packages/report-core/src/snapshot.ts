@@ -123,6 +123,7 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
       ...(source?.artifactPath === undefined ? {} : { artifactPath: source.artifactPath }),
       ...(source?.delegatedSessions === undefined ? {} : { delegatedSessions: source.delegatedSessions }),
       harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
+      ...(source?.launchMode === undefined ? {} : { launchMode: source.launchMode }),
       sourceSessionId: source?.sourceSessionId ?? null,
       ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
       ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),

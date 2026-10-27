@@ -627,7 +627,9 @@ const readRow = (
   storedActivity?: CanonicalInstant,
 ): RowRead => {
   const active = links.filter((link) => link.detachedAt === null);
-  const { episodes: rawEpisodes, omitted, delegatedKeys } = episodesOf(evidence, active);
+  // Sessions read through the task's branch count as linked; the row still lists stored links only.
+  const sessionLinks = [...active, ...evidence.branchSessionLinks];
+  const { episodes: rawEpisodes, omitted, delegatedKeys } = episodesOf(evidence, sessionLinks);
   const nativeSessions = evidence.sessions.map((session) => factsRead.nativeRequests.get(keyOf(session)));
   const allRequests = [
     ...new Map(
@@ -753,7 +755,7 @@ const readRow = (
       return key === null ? [] : [{ ...factOf(key, observation), via: checkout.via }];
     });
   const sessions = [...new Map(evidence.sessions.map((session) => [keyOf(session), session])).values()];
-  const linkedSessionKeys = new Set(active.filter((link) => link.kind === 'session').map((link) => link.key));
+  const linkedSessionKeys = new Set(sessionLinks.filter((link) => link.kind === 'session').map((link) => link.key));
   const firstActivityAt = [
     thread.createdAt,
     ...sessions.flatMap((session) => {
@@ -847,7 +849,7 @@ const readRow = (
       marks,
       // Neither stored session family carries native lifecycle evidence; recency is not a running state.
       runningSessions: 0,
-      ...sessionCountsOf(episodes, active, delegatedKeys),
+      ...sessionCountsOf(episodes, sessionLinks, delegatedKeys),
       thread,
     },
   };

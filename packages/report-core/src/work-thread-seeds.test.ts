@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseCanonicalInstant } from './canonical-instant';
 import { type PullRequestObservation, parsePullRequestObservation } from './work-attention';
-import { WORK_THREAD_BOUNDS } from './work-thread';
+import { isBranchRefName, WORK_THREAD_BOUNDS } from './work-thread';
 import { workThreadSeedsFromPullRequests } from './work-thread-seeds';
 
 const observedAt = parseCanonicalInstant('2026-10-24T10:00:00.000Z');
@@ -149,6 +149,37 @@ describe('work thread seeds', () => {
     expect(routing({ headRef: 'fix/xlb-2085-wallet' })).toBeNull();
     expect(routing({ headRef: 'chore/XLB-0/setup' })).toBeNull();
     expect(routing({ discoveryRole: 'review-requested', headRef: 'fix/XLB-2085/wallet' })).toBeNull();
+  });
+
+  test('only a name git accepts as a branch stands for work on a branch', () => {
+    for (const ref of ['feat/parser', 'fix/XLB-2085/wallet', 'ws/fix-cart', 'release-1.2']) {
+      expect(isBranchRefName(ref)).toBe(true);
+    }
+    for (const ref of [
+      '',
+      'HEAD',
+      '.invalid',
+      'feat/.hidden',
+      'a..b',
+      'with space',
+      'x.lock',
+      'feat/',
+      'a@{1}',
+      'end.',
+    ]) {
+      expect(isBranchRefName(ref)).toBe(false);
+    }
+  });
+
+  test('a head branch in the PR repository carries its branch key; a fork or shared branch does not', () => {
+    const branch = (overrides: Partial<PullRequestObservation>) =>
+      workThreadSeedsFromPullRequests([pullRequest(overrides)])[0]?.branchKey;
+    expect(branch({ crossRepository: false, headRef: 'feat/Parser' })).toBe(
+      `branch:github.com/${pullRequest().repository.toLowerCase()}@feat/Parser`,
+    );
+    expect(branch({ crossRepository: true, headRef: 'feat/parser' })).toBeUndefined();
+    expect(branch({ headRef: 'feat/parser' })).toBeUndefined();
+    expect(branch({ crossRepository: false, headRef: 'develop' })).toBeUndefined();
   });
 
   test('legacy PR parser defaults new fields to null and validates reported enum values', () => {
