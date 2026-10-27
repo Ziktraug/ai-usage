@@ -147,6 +147,7 @@ export const workThreadRowSchema = strictObject({
     array(
       strictObject({
         at: instant,
+        fact: nullable(picklist(WORK_THREAD_FACT_EVENT_KINDS)),
         harness: nullable(text),
         kind: picklist(['session', 'event']),
         label: nullable(pipe(string(), minLength(1), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText))),
@@ -268,6 +269,7 @@ export const workThreadsDetailDataSchema = strictObject({
   factEvents: pipe(
     array(
       strictObject({
+        actor: nullable(text),
         at: instant,
         key: text,
         kind: picklist(WORK_THREAD_FACT_EVENT_KINDS),

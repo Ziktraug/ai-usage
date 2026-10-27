@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { parseCanonicalInstant } from './canonical-instant';
 import {
   CHECKOUT_STATUS_OUTCOMES,
   describeCheckoutOutcome,
   describeCheckoutState,
   isCheckoutReadFailure,
+  PULL_REQUEST_HISTORY_BOUNDS,
   parseCheckoutStatusObservation,
   parseClaudeDesktopSessionObservation,
   parseJiraIssueObservation,
@@ -170,6 +172,46 @@ describe('parsePullRequestObservation', () => {
       parsePullRequestObservation({ ...observed, unresolvedReviewThreads: Number.MAX_SAFE_INTEGER })
         ?.unresolvedReviewThreads,
     ).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  test('carries a dated status history and leaves an unread one absent', () => {
+    const history = {
+      complete: false,
+      items: [
+        { actor: 'reviewer', at: '2026-10-21T18:10:00Z', kind: 'changes-requested' },
+        { actor: null, at: '2026-10-21T18:20:00.000Z', kind: 'approved' },
+      ],
+    };
+    expect(parsePullRequestObservation({ ...observed, history })?.history).toEqual({
+      complete: false,
+      items: [
+        { actor: 'reviewer', at: parseCanonicalInstant('2026-10-21T18:10:00.000Z'), kind: 'changes-requested' },
+        { actor: null, at: parseCanonicalInstant('2026-10-21T18:20:00.000Z'), kind: 'approved' },
+      ],
+    });
+    for (const unread of [observed, { ...observed, history: null }]) {
+      expect(parsePullRequestObservation(unread)).not.toHaveProperty('history');
+    }
+  });
+
+  test('rejects a malformed or over-bound status history', () => {
+    const item = { actor: null, at: '2026-10-21T18:20:00.000Z', kind: 'approved' };
+    for (const history of [
+      { items: [item] },
+      { complete: true, items: 'none' },
+      { complete: true, items: [{ ...item, kind: 'commented' }] },
+      { complete: true, items: [{ ...item, at: null }] },
+      { complete: true, items: [{ ...item, actor: 'x'.repeat(WORK_ATTENTION_BOUNDS.maxShortText + 1) }] },
+      {
+        complete: true,
+        items: Array.from(
+          { length: PULL_REQUEST_HISTORY_BOUNDS.maxReviews + PULL_REQUEST_HISTORY_BOUNDS.maxTimelineEvents + 1 },
+          () => item,
+        ),
+      },
+    ]) {
+      expect(parsePullRequestObservation({ ...observed, history })).toBeNull();
+    }
   });
 
   test('legacy observations and explicit null values keep the new facts unknown', () => {

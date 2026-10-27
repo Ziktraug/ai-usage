@@ -9,12 +9,14 @@ import {
   type WorkThreadDetailDataset,
   type WorkThreadEpisode,
   type WorkThreadFactEvent,
+  type WorkThreadFactEventKind,
   type WorkThreadListQuery,
   type WorkThreadMark,
   type WorkThreadMarkers,
   type WorkThreadPullRequestMarker,
   type WorkThreadRow,
   type WorkThreadSourceStatus,
+  workThreadFactEventLabel,
 } from '@ai-usage/report-core/work-thread-view';
 
 export const threadListQuery = (search: URLSearchParams): WorkThreadListQuery => ({
@@ -161,6 +163,36 @@ export const threadTimeline = (
       today: index === length - 1,
     };
   });
+};
+
+/** Most telling first: when one day holds several milestones, the lane draws the first of them. */
+const MILESTONE_RANK: readonly WorkThreadFactEventKind[] = [
+  'pull-request-merged',
+  'pull-request-closed',
+  'pull-request-approved',
+  'pull-request-changes-requested',
+  'pull-request-reopened',
+  'pull-request-ready',
+  'pull-request-draft',
+  'pull-request-opened',
+];
+
+/**
+ * What one day of a task's lane shows: its sessions, the most telling source milestone (drawn as
+ * its own glyph) and every milestone named in the accessible description, so the day reads the
+ * same without opening it.
+ */
+export const threadDayMarks = (marks: readonly WorkThreadMark[], dayLabel: string) => {
+  const sessions = marks.filter((mark) => mark.kind === 'session');
+  const milestones = marks.filter((mark) => mark.kind === 'event' && mark.fact !== null);
+  const others = marks.length - sessions.length - milestones.length;
+  const milestone = MILESTONE_RANK.find((kind) => milestones.some((mark) => mark.fact === kind)) ?? null;
+  const parts = [
+    `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`,
+    ...milestones.map((mark) => mark.label ?? 'Pull request milestone'),
+    ...(others > 0 ? [`${others} ${others === 1 ? 'follow-up change' : 'follow-up changes'}`] : []),
+  ];
+  return { sessions, milestone, others, description: `${dayLabel}: ${parts.join(', ')}. Show activity.` };
 };
 
 export const bucketThreadMarks = (marks: readonly WorkThreadMark[], timeZone: string) => {
@@ -740,10 +772,7 @@ export const threadEventCopy = (
 };
 
 export const threadFactEventCopy = (event: WorkThreadFactEvent): { title: string; detail: string | null } => ({
-  title:
-    event.label +
-    ' ' +
-    { 'pull-request-opened': 'opened', 'pull-request-merged': 'merged', 'pull-request-closed': 'closed' }[event.kind],
+  title: workThreadFactEventLabel(event),
   detail: event.title,
 });
 

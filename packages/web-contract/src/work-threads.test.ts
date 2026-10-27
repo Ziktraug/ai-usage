@@ -241,21 +241,39 @@ describe('Work thread wire contract — dated facts and labels', () => {
     events: [],
     factEvents: [
       {
+        actor: null,
         at,
         key: 'github.com/acme/app#12',
         kind: 'pull-request-opened',
         label: 'PR #12',
         title: 'Synthetic change',
       },
+      {
+        actor: 'reviewer',
+        at,
+        key: 'github.com/acme/app#12',
+        kind: 'pull-request-approved',
+        label: 'PR #12',
+        title: 'Synthetic change',
+      },
     ],
     generatedAt: at,
-    row: { ...row, marks: [{ at, harness: null, kind: 'event', label: 'PR #12 opened' }] },
+    row: {
+      ...row,
+      marks: [
+        { at, fact: 'pull-request-opened', harness: null, kind: 'event', label: 'PR #12 opened' },
+        { at, fact: 'pull-request-approved', harness: null, kind: 'event', label: 'PR #12 approved by reviewer' },
+      ],
+    },
     sources: [],
   };
   test('fact events and mark labels cross the wire', () => {
     expect(parse(workThreadsDetailDataSchema, detail)).toMatchObject({
-      factEvents: [{ kind: 'pull-request-opened', label: 'PR #12' }],
-      row: { firstActivityAt: at, marks: [{ label: 'PR #12 opened' }] },
+      factEvents: [
+        { kind: 'pull-request-opened', label: 'PR #12' },
+        { actor: 'reviewer', kind: 'pull-request-approved' },
+      ],
+      row: { firstActivityAt: at, marks: [{ label: 'PR #12 opened' }, { fact: 'pull-request-approved' }] },
     });
   });
   test('unknown fact kinds, observation-dated facts and empty labels are rejected', () => {
@@ -263,13 +281,20 @@ describe('Work thread wire contract — dated facts and labels', () => {
       { ...detail.factEvents[0], kind: 'pull-request-deployed' },
       { ...detail.factEvents[0], observedAt: at },
       { ...detail.factEvents[0], label: '' },
+      { ...detail.factEvents[0], actor: undefined },
     ]) {
       expect(safeParse(workThreadsDetailDataSchema, { ...detail, factEvents: [fact] }).success).toBe(false);
     }
     expect(
       safeParse(workThreadsDetailDataSchema, {
         ...detail,
-        row: { ...row, marks: [{ at, harness: null, kind: 'event', label: '' }] },
+        row: { ...row, marks: [{ at, fact: null, harness: null, kind: 'event', label: '' }] },
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(workThreadsDetailDataSchema, {
+        ...detail,
+        row: { ...row, marks: [{ at, fact: 'pull-request-deployed', harness: null, kind: 'event', label: 'x' }] },
       }).success,
     ).toBe(false);
     const { firstActivityAt: _omitted, ...withoutOrigin } = row;

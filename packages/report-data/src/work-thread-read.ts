@@ -3,6 +3,7 @@ import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import type {
   CheckoutStatusObservation,
   JiraIssueObservation,
+  PullRequestMilestoneKind,
   PullRequestObservation,
 } from '@ai-usage/report-core/work-attention';
 import { jiraKeysInBranch } from '@ai-usage/report-core/work-attention-facts';
@@ -28,6 +29,7 @@ import {
   type WorkThreadReference,
   type WorkThreadRow,
   type WorkThreadSourceStatus,
+  workThreadFactEventLabel,
 } from '@ai-usage/report-core/work-thread-view';
 import {
   countWorkThreads,
@@ -528,6 +530,17 @@ const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<R
 
 const MERGEABLE = { MERGEABLE: 'mergeable', CONFLICTING: 'conflicting', UNKNOWN: 'unknown' } as const;
 
+/** GitHub closes a pull request as it merges it; that closure is the merge, not a milestone of its own. */
+const MERGE_CLOSURE_WINDOW_MS = 60_000;
+const HISTORY_FACT_KINDS = {
+  'ready-for-review': 'pull-request-ready',
+  'converted-to-draft': 'pull-request-draft',
+  approved: 'pull-request-approved',
+  'changes-requested': 'pull-request-changes-requested',
+  closed: 'pull-request-closed',
+  reopened: 'pull-request-reopened',
+} as const satisfies Record<PullRequestMilestoneKind, WorkThreadFactEvent['kind']>;
+
 const factEventsOf = (pullRequests: WorkThreadMarkers['pullRequests']): WorkThreadFactEvent[] => {
   const distinct = new Map<string, WorkThreadFactEvent>();
   for (const marker of pullRequests) {
@@ -538,13 +551,14 @@ const factEventsOf = (pullRequests: WorkThreadMarkers['pullRequests']): WorkThre
     const openedAt = normalizeIsoTimestamp(successful.createdAt);
     const mergedAt = normalizeIsoTimestamp(successful.mergedAt);
     const closedAt = normalizeIsoTimestamp(successful.closedAt);
-    const add = (kind: WorkThreadFactEvent['kind'], at: CanonicalInstant | null) => {
+    const add = (kind: WorkThreadFactEvent['kind'], at: CanonicalInstant | null, actor: string | null = null) => {
       if (at === null) {
         return;
       }
-      const identity = JSON.stringify([pullRequestIdentity(successful), kind, at]);
+      const identity = JSON.stringify([pullRequestIdentity(successful), kind, at, actor]);
       if (!distinct.has(identity)) {
         distinct.set(identity, {
+          actor,
           at,
           key: marker.key,
           kind,
@@ -555,8 +569,22 @@ const factEventsOf = (pullRequests: WorkThreadMarkers['pullRequests']): WorkThre
     };
     add('pull-request-opened', openedAt);
     add('pull-request-merged', mergedAt);
-    if (mergedAt === null && successful.state !== 'MERGED') {
-      add('pull-request-closed', closedAt);
+    const history = successful.history ?? null;
+    if (history === null) {
+      // Without a read history, the latest closure is the only one known.
+      if (mergedAt === null && successful.state !== 'MERGED') {
+        add('pull-request-closed', closedAt);
+      }
+      continue;
+    }
+    for (const item of history.items) {
+      const mergeClosure =
+        item.kind === 'closed' &&
+        mergedAt !== null &&
+        Math.abs(Date.parse(item.at) - Date.parse(mergedAt)) <= MERGE_CLOSURE_WINDOW_MS;
+      if (!mergeClosure) {
+        add(HISTORY_FACT_KINDS[item.kind], item.at, item.actor);
+      }
     }
   }
   return [...distinct.values()]
@@ -568,11 +596,6 @@ const factEventsOf = (pullRequests: WorkThreadMarkers['pullRequests']): WorkThre
 };
 
 const FOLLOW_STATE_LABELS = { following: 'Following', waiting: 'Waiting', done: 'Follow-up ended' } as const;
-const FACT_EVENT_LABELS = {
-  'pull-request-opened': 'opened',
-  'pull-request-merged': 'merged',
-  'pull-request-closed': 'closed',
-} as const;
 const compareMarks = (left: WorkThreadMark, right: WorkThreadMark): number =>
   left.at.localeCompare(right.at) ||
   left.kind.localeCompare(right.kind) ||
@@ -586,37 +609,48 @@ const timelineMarksOf = (
   now: CanonicalInstant,
 ): WorkThreadMark[] => {
   const start = Date.parse(now) - (WORK_THREAD_VIEW_BOUNDS.maxTimelineDays + 1) * DAY_MS;
-  const candidates: WorkThreadMark[] = [
-    ...episodes.map((episode) => ({
-      at: episode.startedAt,
-      harness: episode.harness,
-      kind: 'session' as const,
-      label: episode.title ?? `Session ${episode.sourceSessionId}`,
-    })),
-    ...factEvents.map((event) => ({
-      at: event.at,
-      harness: null,
-      kind: 'event' as const,
-      label: `${event.label} ${FACT_EVENT_LABELS[event.kind]}`,
-    })),
-    ...events.flatMap((event) =>
-      event.kind === 'follow-state' && event.toState !== null
-        ? [{ at: event.at, harness: null, kind: 'event' as const, label: FOLLOW_STATE_LABELS[event.toState] }]
-        : [],
+  const recent = (marks: WorkThreadMark[]) =>
+    marks
+      .filter(({ at }) => Date.parse(at) >= start && Date.parse(at) <= Date.parse(now))
+      .sort((left, right) => compareMarks(right, left));
+  // Filled in this order, newest first within each: the source's milestones (fewer than the bound),
+  // then the sessions, then the operator's follow-up changes, which can be many.
+  const ranked = [
+    ...recent(
+      factEvents.map((event) => ({
+        at: event.at,
+        fact: event.kind,
+        harness: null,
+        kind: 'event' as const,
+        label: workThreadFactEventLabel(event),
+      })),
+    ),
+    ...recent(
+      episodes.map((episode) => ({
+        at: episode.startedAt,
+        fact: null,
+        harness: episode.harness,
+        kind: 'session' as const,
+        label: episode.title ?? `Session ${episode.sourceSessionId}`,
+      })),
+    ),
+    ...recent(
+      events.flatMap((event) =>
+        event.kind === 'follow-state' && event.toState !== null
+          ? [
+              {
+                at: event.at,
+                fact: null,
+                harness: null,
+                kind: 'event' as const,
+                label: FOLLOW_STATE_LABELS[event.toState],
+              },
+            ]
+          : [],
+      ),
     ),
   ];
-  const recent = candidates
-    .filter(({ at }) => Date.parse(at) >= start && Date.parse(at) <= Date.parse(now))
-    .sort((left, right) => compareMarks(right, left));
-  const selected = recent.slice(0, WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
-  const newest = selected[0];
-  if (newest !== undefined && selected.every((mark) => mark.kind === newest.kind)) {
-    const otherKind = recent.find((mark) => mark.kind !== newest.kind);
-    if (otherKind !== undefined) {
-      selected[selected.length - 1] = otherKind;
-    }
-  }
-  return selected.sort(compareMarks);
+  return ranked.slice(0, WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow).sort(compareMarks);
 };
 
 const readRow = (

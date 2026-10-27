@@ -509,7 +509,7 @@ describe('work-thread reader', () => {
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
     expect(detail?.row.marks).toEqual([
-      { at: at(-2), harness: 'codex', kind: 'session', label: 'Investigate the parser' },
+      { at: at(-2), fact: null, harness: 'codex', kind: 'session', label: 'Investigate the parser' },
     ]);
     expect(list.rows[0]).toEqual(detail?.row);
   });
@@ -528,6 +528,7 @@ describe('work-thread reader', () => {
       const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
       expect(detail?.factEvents).toEqual([
         {
+          actor: null,
           at: at(-72),
           key: 'github.com/fixture/repo#7',
           kind: 'pull-request-opened',
@@ -535,6 +536,7 @@ describe('work-thread reader', () => {
           title: 'Real linked PR',
         },
         {
+          actor: null,
           at: at(-3),
           key: 'github.com/fixture/repo#7',
           kind: 'pull-request-merged',
@@ -543,8 +545,8 @@ describe('work-thread reader', () => {
         },
       ]);
       expect(detail?.row.marks).toEqual([
-        { at: at(-72), harness: null, kind: 'event', label: 'PR #7 opened' },
-        { at: at(-3), harness: null, kind: 'event', label: 'PR #7 merged' },
+        { at: at(-72), fact: 'pull-request-opened', harness: null, kind: 'event', label: 'PR #7 opened' },
+        { at: at(-3), fact: 'pull-request-merged', harness: null, kind: 'event', label: 'PR #7 merged' },
       ]);
       expect(detail?.row.firstActivityAt).toBe(at(-72));
       expect(list.rows[0]).toEqual(detail?.row);
@@ -620,6 +622,110 @@ describe('work-thread reader', () => {
     });
   });
 
+  test('places the status history GitHub dated as milestones, without a second mark for the merge closure', async () => {
+    const dbPath = await fixture();
+    const threadId = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }], 'PR work', -1);
+    const history = {
+      complete: true,
+      items: [
+        { actor: 'author', at: at(-50), kind: 'ready-for-review' as const },
+        { actor: 'reviewer', at: at(-30), kind: 'changes-requested' as const },
+        { actor: null, at: at(-10), kind: 'approved' as const },
+        // GitHub closes a pull request as it merges it.
+        { actor: 'author', at: at(-3), kind: 'closed' as const },
+      ],
+    };
+    await run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [{ ...pr(-2), createdAt: at(-72), state: 'MERGED', mergedAt: at(-3), history }],
+      }),
+    );
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    expect(detail?.factEvents.map(({ actor, at: when, kind }) => [kind, when, actor])).toEqual([
+      ['pull-request-opened', at(-72), null],
+      ['pull-request-ready', at(-50), 'author'],
+      ['pull-request-changes-requested', at(-30), 'reviewer'],
+      ['pull-request-approved', at(-10), null],
+      ['pull-request-merged', at(-3), null],
+    ]);
+    expect(detail?.row.marks.map(({ fact, label }) => [fact, label])).toEqual([
+      ['pull-request-opened', 'PR #7 opened'],
+      ['pull-request-ready', 'PR #7 ready for review by author'],
+      ['pull-request-changes-requested', 'PR #7 changes requested by reviewer'],
+      ['pull-request-approved', 'PR #7 approved'],
+      ['pull-request-merged', 'PR #7 merged'],
+    ]);
+    expect(list.rows[0]).toEqual(detail?.row);
+  });
+
+  test('a closed and reopened pull request keeps each closure from its history', async () => {
+    const dbPath = await fixture();
+    const threadId = await create(dbPath, [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }]);
+    const history = {
+      complete: true,
+      items: [
+        { actor: 'author', at: at(-20), kind: 'closed' as const },
+        { actor: 'author', at: at(-15), kind: 'reopened' as const },
+        { actor: 'author', at: at(-5), kind: 'closed' as const },
+      ],
+    };
+    await run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [{ ...pr(-1), state: 'CLOSED', closedAt: at(-5), history }],
+      }),
+    );
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.factEvents.map((event) => [event.kind, event.at])).toEqual([
+      ['pull-request-closed', at(-20)],
+      ['pull-request-reopened', at(-15)],
+      ['pull-request-closed', at(-5)],
+    ]);
+  });
+
+  test('follow-up changes cannot crowd the milestones of a task off its timeline', async () => {
+    const dbPath = await fixture();
+    const crowd = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow + 6;
+    const threadId = await create(
+      dbPath,
+      [{ kind: 'pull-request', key: 'github.com/fixture/repo#7' }],
+      'Busy task',
+      -crowd - 80,
+    );
+    await run(
+      importPullRequestObservations({
+        dbPath,
+        observations: [{ ...pr(-1), createdAt: at(-crowd - 60), state: 'MERGED', mergedAt: at(-crowd - 50) }],
+      }),
+    );
+    for (let index = 0; index < crowd; index++) {
+      await command(
+        dbPath,
+        {
+          commandId: randomUUID(),
+          op: 'set-follow-state',
+          threadId,
+          expectedRevision: index + 1,
+          to: index % 2 === 0 ? 'waiting' : 'following',
+          waitingFor: index % 2 === 0 ? 'An answer' : null,
+          waitingOn: null,
+          reason: null,
+          acknowledgedRemainders: [],
+        },
+        -crowd + index,
+      );
+    }
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
+    expect(detail?.row.marks.slice(0, 2).map((mark) => [mark.fact, mark.at])).toEqual([
+      ['pull-request-opened', at(-crowd - 60)],
+      ['pull-request-merged', at(-crowd - 50)],
+    ]);
+    expect(detail?.row.marks.at(-1)?.label).toBe('Following');
+  });
+
   test('keeps the newest marks and both kinds when follow-state changes crowd the timeline', async () => {
     const dbPath = await fixture();
     const crowd = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow + 6;
@@ -647,7 +753,7 @@ describe('work-thread reader', () => {
     const kept = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow - 1;
     expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toEqual([
-      { at: at(-crowd - 30), harness: 'codex', kind: 'session', label: 'root' },
+      { at: at(-crowd - 30), fact: null, harness: 'codex', kind: 'session', label: 'root' },
     ]);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'event').map((mark) => mark.at)).toEqual(
       Array.from({ length: kept }, (_, index) => at(-kept + index)),
@@ -720,7 +826,9 @@ describe('work-thread reader', () => {
         spanMs: 7_200_000,
       });
       expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 2 });
-      expect(detail?.row.marks).toEqual([{ at: at(-6), harness: 'claude', kind: 'session', label: 'Claude parent' }]);
+      expect(detail?.row.marks).toEqual([
+        { at: at(-6), fact: null, harness: 'claude', kind: 'session', label: 'Claude parent' },
+      ]);
       expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
       expect(list.rows.find((row) => row.thread.threadId === threadId)).toEqual(detail?.row);
       const independent = await run(queryWorkThreadDetail({ dbPath, threadId: separate, now: NOW }));
@@ -831,7 +939,9 @@ describe('work-thread reader', () => {
       expect(detail?.episodes.map((episode) => episode.sourceSessionId)).toEqual(['claude-parent']);
       expect(detail?.episodes[0]?.children).toEqual([]);
       expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 0 });
-      expect(detail?.row.marks).toEqual([{ at: at(-6), harness: 'claude', kind: 'session', label: 'Claude parent' }]);
+      expect(detail?.row.marks).toEqual([
+        { at: at(-6), fact: null, harness: 'claude', kind: 'session', label: 'Claude parent' },
+      ]);
       expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
     },
   );
@@ -2371,7 +2481,7 @@ describe('work-thread reader', () => {
     }
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     expect(detail?.episodes[0]?.children).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren);
-    expect(detail?.row.marks).toEqual([{ at: at(-2), harness: 'codex', kind: 'session', label: 'parent' }]);
+    expect(detail?.row.marks).toEqual([{ at: at(-2), fact: null, harness: 'codex', kind: 'session', label: 'parent' }]);
     expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
     const explicit = await create(dbPath, [
       sessionLink('parent'),

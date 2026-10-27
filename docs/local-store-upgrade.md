@@ -372,6 +372,16 @@ row treats the observation as invalid for that field, so upgrade the web and the
 engine together. Back up both stores before restarting the engine with this
 change.
 
+## Pull request status history (2026-10-27)
+
+ADR 0083 adds a nullable `history` text column (JSON) to `pull_request_observations` under
+usage version 4, through the same presence-based `ALTER TABLE … ADD COLUMN` on the engine's
+next open. Rows written before carry null and read as "history not read"; nothing is rewritten.
+Query-only readers tolerate the missing column, and an older binary ignores it. The engine reads
+each followed pull request merged before the upgrade once more to fill its history, then stops
+re-reading it as before. Upgrade the web and the engine together: the Work view's wire contract
+gains the milestone fields. Back up both stores before restarting the engine with this change.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

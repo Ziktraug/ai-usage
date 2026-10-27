@@ -9,6 +9,7 @@
   import { taskNativeRequests } from '@ai-usage/report-core/work-thread-situation';
   import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
   import { createWorkThreadCommandAction, type WorkThreadTaskCommandActionInput } from '../../rpc/work-threads-client';
+  import WorkMilestoneGlyph from './work-milestone-glyph.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import WorkThreadEpisode from './work-thread-episode.svelte';
   import { captureFollowUndo, createFollowUndo, type FollowUndoAction } from './work-thread-follow-undo';
@@ -559,6 +560,9 @@
                 {@const factCopy = threadFactEventCopy(entry.event)}
                 <div class="wt-event wt-fact-event">
                   <span class="wt-event-source">GitHub</span>
+                  <span aria-hidden="true" class="wt-mark wt-milestone" data-milestone={entry.event.kind}
+                    ><WorkMilestoneGlyph kind={entry.event.kind} size={10} /></span
+                  >
                   <div>
                     <strong>{factCopy.title}</strong>
                     {#if factCopy.detail}

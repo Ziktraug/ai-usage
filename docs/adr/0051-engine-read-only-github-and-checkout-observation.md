@@ -1,6 +1,6 @@
 # ADR 0051: Engine-side read-only GitHub and checkout status observation
 
-- **Status**: Accepted; amended 2026-10-25 by [ADR 0077](0077-delegation-independent-of-the-calling-harness.md) (stderr classification)
+- **Status**: Accepted; amended 2026-10-25 by [ADR 0077](0077-delegation-independent-of-the-calling-harness.md) (stderr classification); amended 2026-10-27 by [ADR 0083](0083-pull-request-status-history-milestones.md) (status history read)
 - **Date**: 2026-10-21
 - **Extends**: 0009, 0044
 

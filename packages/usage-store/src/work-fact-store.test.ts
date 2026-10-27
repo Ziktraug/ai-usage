@@ -194,6 +194,7 @@ describe('work fact store: pull request observations', () => {
         closed_at: null,
         created_at: null,
         cross_repository: null,
+        history: null,
         unresolved_review_threads: null,
       })),
     );
@@ -251,6 +252,41 @@ describe('work fact store: pull request observations', () => {
       { created_at: at(0), closed_at: at(1), unresolved_review_threads: null },
     ]);
     db.close();
+  });
+
+  test('round-trips a status history and keeps an unread one absent', async () => {
+    const dbPath = await createStore('pr-history');
+    const history = {
+      complete: true,
+      items: [
+        { actor: 'reviewer', at: at(1), kind: 'changes-requested' as const },
+        { actor: null, at: at(2), kind: 'approved' as const },
+      ],
+    };
+    const observations = [
+      pullRequest({ number: 41, observedAt: at(3), history }),
+      pullRequest({ number: 42, observedAt: at(3) }),
+    ];
+    await Effect.runPromise(importPullRequestObservations({ dbPath, observations }));
+    const actual = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(
+      actual.items
+        .map(({ latestObserved }) => latestObserved)
+        .sort((left, right) => (left?.number ?? 0) - (right?.number ?? 0)),
+    ).toEqual(observations);
+    const db = new Database(dbPath);
+    expect(
+      db.query('SELECT number, history IS NULL AS unread FROM pull_request_observations ORDER BY number').all(),
+    ).toEqual([
+      { number: 41, unread: 0 },
+      { number: 42, unread: 1 },
+    ]);
+    // A column that no longer parses fails re-validation: the row is reported skipped, never read as no history.
+    db.query("UPDATE pull_request_observations SET history = '{broken' WHERE number = 41").run();
+    db.close();
+    const corrupted = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath }));
+    expect(corrupted.skipped).toBe(1);
+    expect(corrupted.items.map(({ latest }) => latest.number)).toEqual([42]);
   });
 
   test('reads legacy columns without migration and adds nullable columns on the next import', async () => {

@@ -1109,6 +1109,7 @@ describe('work thread store', () => {
       checksRollup: 'success',
       draft: false,
       headRef: 'fixture',
+      history: { complete: true, items: [] },
       host: 'github.com',
       machineId: MACHINE,
       mergedAt: NOW,
@@ -1153,6 +1154,14 @@ describe('work thread store', () => {
     expect(await run(queryActiveWorkThreadLinks({ ...query, excludeObservedMerged: true, limit: 1 }))).toMatchObject({
       truncated: true,
     });
+    // A merged read that did not establish the status history keeps the link eligible to read it again.
+    const { history: _unread, ...withoutHistory } = observed(2, { observedAt: LATER });
+    await run(importPullRequestObservations({ dbPath, observations: [withoutHistory] }));
+    expect(
+      (await run(queryActiveWorkThreadLinks({ ...query, excludeObservedMerged: true }))).links
+        .map((link) => link.key)
+        .toSorted(),
+    ).toEqual(['github.com/fixture/repo#1', 'github.com/fixture/repo#2', 'github.com/fixture/repo#3']);
   });
 
   test('batches latest event history and active/detached links with independent thread limits', async () => {
@@ -2272,6 +2281,7 @@ describe('work thread wait recovery', () => {
       db.close();
     }
     const merged = waitPullRequest({
+      history: { complete: true, items: [] },
       observedAt: waitAt(30),
       updatedAt: waitAt(25),
       mergedAt: waitAt(25),

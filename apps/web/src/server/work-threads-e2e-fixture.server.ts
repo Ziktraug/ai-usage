@@ -34,6 +34,7 @@ import {
   type WorkThreadMarkers,
   type WorkThreadRow,
   type WorkThreadSourceStatus,
+  workThreadFactEventLabel,
 } from '@ai-usage/report-core/work-thread-view';
 import type { WorkThreadServerPorts } from './work-threads.server';
 
@@ -382,7 +383,22 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       {
         jiraIssues: [jiraMarker('SHOP-2086', true)],
         local: [localMarker('fix/SHOP-2086/uploads')],
-        pullRequests: [prMarker(1479, { mergedAt: at(23), reviewDecision: 'APPROVED', state: 'MERGED' })],
+        pullRequests: [
+          prMarker(1479, {
+            draft: false,
+            history: {
+              complete: true,
+              items: [
+                { actor: 'synthetic-author', at: at(20, '11:30'), kind: 'ready-for-review' },
+                { actor: 'synthetic-reviewer', at: at(21, '15:10'), kind: 'changes-requested' },
+                { actor: 'synthetic-reviewer', at: at(22, '10:05'), kind: 'approved' },
+              ],
+            },
+            mergedAt: at(23),
+            reviewDecision: 'APPROVED',
+            state: 'MERGED',
+          }),
+        ],
       },
       [
         makeEpisode('upload-fix', 'Repair upload validation', 20),
@@ -617,6 +633,15 @@ const result = (thread: WorkThread, applied = true): WorkThreadCommandResult => 
   threadId: thread.threadId,
 });
 
+const HISTORY_FACT_KINDS = {
+  'ready-for-review': 'pull-request-ready',
+  'converted-to-draft': 'pull-request-draft',
+  approved: 'pull-request-approved',
+  'changes-requested': 'pull-request-changes-requested',
+  closed: 'pull-request-closed',
+  reopened: 'pull-request-reopened',
+} as const;
+
 const pullRequestFactEvents = (markers: WorkThreadMarkers['pullRequests']): WorkThreadFactEvent[] =>
   markers
     .flatMap((marker) => {
@@ -624,14 +649,17 @@ const pullRequestFactEvents = (markers: WorkThreadMarkers['pullRequests']): Work
       if (fact?.outcome !== 'observed') {
         return [];
       }
-      const evidence = { key: marker.key, label: `PR #${fact.number}`, title: fact.title };
+      const evidence = { actor: null, key: marker.key, label: `PR #${fact.number}`, title: fact.title };
       const facts: WorkThreadFactEvent[] = [];
       if (fact.createdAt) {
         facts.push({ ...evidence, at: fact.createdAt, kind: 'pull-request-opened' });
       }
+      for (const item of fact.history?.items ?? []) {
+        facts.push({ ...evidence, actor: item.actor, at: item.at, kind: HISTORY_FACT_KINDS[item.kind] });
+      }
       if (fact.state === 'MERGED' && fact.mergedAt) {
         facts.push({ ...evidence, at: fact.mergedAt, kind: 'pull-request-merged' });
-      } else if (fact.state === 'CLOSED' && fact.closedAt) {
+      } else if (fact.state === 'CLOSED' && fact.closedAt && !fact.history) {
         facts.push({ ...evidence, at: fact.closedAt, kind: 'pull-request-closed' });
       }
       return facts;
@@ -942,6 +970,7 @@ export const createSyntheticWorkThreadStore = (
     const marks = [
       ...projected.episodes.map((episode) => ({
         at: episode.startedAt,
+        fact: null,
         harness: episode.harness,
         kind: 'session' as const,
         label: episode.title,
@@ -950,15 +979,17 @@ export const createSyntheticWorkThreadStore = (
         .filter((event) => visibleThreadEvent(record, event))
         .map((event) => ({
           at: event.at,
+          fact: null,
           harness: null,
           kind: 'event' as const,
           label: eventMarkLabel(event),
         })),
       ...factEvents.map((fact) => ({
         at: fact.at,
+        fact: fact.kind,
         harness: null,
         kind: 'event' as const,
-        label: `${fact.label} ${{ 'pull-request-opened': 'opened', 'pull-request-merged': 'merged', 'pull-request-closed': 'closed' }[fact.kind]}`,
+        label: workThreadFactEventLabel(fact),
       })),
     ]
       .sort((left, right) => left.at.localeCompare(right.at))

@@ -10,7 +10,7 @@ import type { WorkThread, WorkThreadEvent, WorkThreadLink } from './work-thread'
  */
 
 export const WORK_THREAD_VIEW_BOUNDS = {
-  /** Session and work marks per row, newest first, for the scrolling timeline. */
+  /** Milestone, session and follow-up marks per row, in that priority, for the scrolling timeline. */
   maxMarksPerRow: 240,
   /** How far back the timeline reaches, whatever the tasks' first activity. */
   maxTimelineDays: 366,
@@ -18,7 +18,10 @@ export const WORK_THREAD_VIEW_BOUNDS = {
   maxEpisodes: 100,
   maxEpisodeChildren: 20,
   maxEpisodeText: 1000,
-  /** Opened, merged or closed, for each linked pull request at most. */
+  /**
+   * Pull request openings, merges and history milestones across the task's linked pull requests.
+   * Below `maxMarksPerRow`, so the timeline always keeps them and still has room for sessions.
+   */
   maxFactEvents: 192,
   maxPageSize: 100,
   defaultPageSize: 50,
@@ -96,6 +99,8 @@ export interface WorkThreadMarkers {
 /** One dated point of the timeline. Placement only: not proportional to any duration. */
 export interface WorkThreadMark {
   readonly at: CanonicalInstant;
+  /** The source milestone an event mark stands for, so the lane draws it without reading its label. */
+  readonly fact: WorkThreadFactEventKind | null;
   readonly harness: string | null;
   readonly kind: 'session' | 'event';
   /** What the mark stands for (a session title, "PR #12 opened"), for its accessible name and detail. */
@@ -245,6 +250,11 @@ export interface WorkThreadEpisode {
 
 export const WORK_THREAD_FACT_EVENT_KINDS = [
   'pull-request-opened',
+  'pull-request-ready',
+  'pull-request-draft',
+  'pull-request-changes-requested',
+  'pull-request-approved',
+  'pull-request-reopened',
   'pull-request-merged',
   'pull-request-closed',
 ] as const;
@@ -252,10 +262,12 @@ export type WorkThreadFactEventKind = (typeof WORK_THREAD_FACT_EVENT_KINDS)[numb
 
 /**
  * A dated fact of a linked source placed in the task's thread beside the sessions. It carries the
- * source's own date (a pull request's `createdAt`, `mergedAt`, `closedAt`), never the instant the
- * product observed it, and it is not stored as a thread event.
+ * source's own date (a pull request's `createdAt`, `mergedAt`, a review's `submittedAt`), never the
+ * instant the product observed it, and it is not stored as a thread event.
  */
 export interface WorkThreadFactEvent {
+  /** Who acted, when the source says (a reviewer's login); `null` otherwise. */
+  readonly actor: string | null;
   readonly at: CanonicalInstant;
   /** The linked source's qualified key. */
   readonly key: string;
@@ -264,6 +276,21 @@ export interface WorkThreadFactEvent {
   readonly label: string;
   readonly title: string | null;
 }
+
+const FACT_EVENT_VERBS = {
+  'pull-request-opened': 'opened',
+  'pull-request-ready': 'ready for review',
+  'pull-request-draft': 'converted to draft',
+  'pull-request-changes-requested': 'changes requested',
+  'pull-request-approved': 'approved',
+  'pull-request-reopened': 'reopened',
+  'pull-request-merged': 'merged',
+  'pull-request-closed': 'closed',
+} as const satisfies Record<WorkThreadFactEventKind, string>;
+
+/** "PR #12 approved by alex": the one wording of a fact, for marks, history rows and accessible names. */
+export const workThreadFactEventLabel = (event: Pick<WorkThreadFactEvent, 'actor' | 'kind' | 'label'>): string =>
+  `${event.label} ${FACT_EVENT_VERBS[event.kind]}${event.actor === null ? '' : ` by ${event.actor}`}`;
 
 export interface WorkThreadDetailDataset {
   /** Set when this task was combined into another: it is read-only history until separated. */

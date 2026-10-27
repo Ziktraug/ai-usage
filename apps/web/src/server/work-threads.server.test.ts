@@ -200,6 +200,7 @@ describe('synthetic task dataset', () => {
     });
     expect(detail?.factEvents).toEqual([
       {
+        actor: null,
         at: parseCanonicalInstant('2026-10-20T10:15:00.000Z'),
         key: 'github.example/synthetic/example-shop#1502',
         kind: 'pull-request-opened',
@@ -207,6 +208,7 @@ describe('synthetic task dataset', () => {
         title: 'Verify the receipt export',
       },
       {
+        actor: null,
         at: parseCanonicalInstant('2026-10-23T14:49:00.000Z'),
         key: 'github.example/synthetic/example-shop#1502',
         kind: 'pull-request-merged',
@@ -214,10 +216,26 @@ describe('synthetic task dataset', () => {
         title: 'Verify the receipt export',
       },
     ]);
-    expect(detail?.row.marks.map((mark) => mark.label)).toEqual(['PR #1502 opened', 'PR #1502 merged']);
+    expect(detail?.row.marks.map((mark) => [mark.fact, mark.label])).toEqual([
+      ['pull-request-opened', 'PR #1502 opened'],
+      ['pull-request-merged', 'PR #1502 merged'],
+    ]);
     expect(detail?.events.map((event) => event.kind)).toEqual(['created', 'link-added']);
     expect(detail?.row.links[0]?.provenance).toBe('origin');
     expect(detail?.row.marks.every((mark) => mark.at !== WORK_THREADS_SYNTHETIC_NOW)).toBe(true);
+    expect(parseWorkThreadsDetailOutput({ ok: true, data: detail }).ok).toBe(true);
+  });
+
+  test('a merged PR with a status history places each milestone, dated by GitHub, on the lane', async () => {
+    const ports = createSyntheticWorkThreadStore();
+    const detail = await ports.readDetail(WORK_THREADS_FIXTURE_IDS.uploads);
+    expect(detail?.row.marks.filter((mark) => mark.fact !== null).map((mark) => mark.label)).toEqual([
+      'PR #1479 opened',
+      'PR #1479 ready for review by synthetic-author',
+      'PR #1479 changes requested by synthetic-reviewer',
+      'PR #1479 approved by synthetic-reviewer',
+      'PR #1479 merged',
+    ]);
     expect(parseWorkThreadsDetailOutput({ ok: true, data: detail }).ok).toBe(true);
   });
 
@@ -316,7 +334,13 @@ describe('synthetic task dataset', () => {
     });
     const after = await ports.readDetail(threadId);
     expect(after?.row.marks.filter((mark) => mark.label === 'Source linked')).toEqual([
-      { at: parseCanonicalInstant('2026-10-25T13:00:00.000Z'), harness: null, kind: 'event', label: 'Source linked' },
+      {
+        at: parseCanonicalInstant('2026-10-25T13:00:00.000Z'),
+        fact: null,
+        harness: null,
+        kind: 'event',
+        label: 'Source linked',
+      },
     ]);
     expect(
       after?.events.filter((event) => event.kind === 'link-added' && event.linkKey === automaticLink.key),

@@ -466,6 +466,52 @@
   border: 2px solid var(--wt-line-strong);
   border-radius: 50%;
 }
+/* Source milestones are round, sessions square: shape tells them apart before color does. */
+.wt-milestone {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--wt-ink);
+  background: var(--wt-paper);
+  border: 1px solid var(--wt-line-strong);
+  border-radius: 50%;
+}
+.wt-milestone[data-milestone="pull-request-merged"] {
+  color: var(--wt-contrast);
+  background: var(--wt-accent);
+  border-color: var(--wt-accent);
+}
+.wt-milestone[data-milestone="pull-request-approved"] {
+  color: var(--wt-ok);
+  background: var(--wt-ok-soft);
+  border-color: var(--wt-ok);
+}
+.wt-milestone[data-milestone="pull-request-changes-requested"] {
+  color: var(--wt-danger);
+  background: var(--wt-danger-soft);
+  border-color: var(--wt-danger);
+}
+.wt-milestone:is(
+  [data-milestone="pull-request-closed"],
+  [data-milestone="pull-request-draft"]
+) {
+  color: var(--wt-muted);
+  border-style: dashed;
+}
+.wt-fact-event .wt-milestone {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  box-shadow: none;
+}
+.wt-legend .wt-milestone {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+  box-shadow: none;
+}
 .wt-next {
   display: grid;
   gap: 3px;
@@ -1349,6 +1395,11 @@
     width: 13px;
     min-width: 13px;
     height: 13px;
+  }
+  .wt-milestone {
+    width: 22px;
+    min-width: 22px;
+    padding: 0;
   }
   .wt-next strong {
     font-size: 10px;

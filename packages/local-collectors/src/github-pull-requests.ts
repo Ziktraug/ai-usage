@@ -8,8 +8,11 @@ import { type CanonicalInstant, canonicalInstantFromDate } from '@ai-usage/repor
 import { isRecord } from '@ai-usage/report-core/datasets';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
+  PULL_REQUEST_HISTORY_BOUNDS,
   PULL_REQUEST_STATES,
   type PullRequestCheckRollup,
+  type PullRequestHistory,
+  type PullRequestMilestone,
   type PullRequestObservation,
   type PullRequestObservationOutcome,
   type PullRequestState,
@@ -430,8 +433,13 @@ const classifyRestError = (read: GhRead): Classification => {
   };
 };
 
-const REVIEW_THREADS_QUERY =
-  'query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { totalCount nodes { isResolved } } } } }';
+/**
+ * One GraphQL read per pull request: unresolved review threads (counted on an open pull request
+ * only) and the status history. Reviews are filtered to approvals and change requests server-side,
+ * timeline items to draft, ready, close and reopen events, so comment traffic never fills the
+ * bounds; `last` keeps the newest when a connection holds more.
+ */
+const PULL_REQUEST_DETAIL_QUERY = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { totalCount nodes { isResolved } } reviews(last: ${String(PULL_REQUEST_HISTORY_BOUNDS.maxReviews)}, states: [APPROVED, CHANGES_REQUESTED]) { totalCount nodes { state submittedAt author { login } } } timelineItems(last: ${String(PULL_REQUEST_HISTORY_BOUNDS.maxTimelineEvents)}, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, CLOSED_EVENT, REOPENED_EVENT]) { totalCount nodes { __typename ... on ReadyForReviewEvent { createdAt actor { login } } ... on ConvertToDraftEvent { createdAt actor { login } } ... on ClosedEvent { createdAt actor { login } } ... on ReopenedEvent { createdAt actor { login } } } } } } }`;
 interface ReviewThreadRead {
   readonly count: number | null;
   readonly message: string | null;
@@ -441,20 +449,18 @@ const unknownReviewThreads = (reason: string): ReviewThreadRead => ({
   message: `Review threads unavailable: ${reason}`,
 });
 
+interface HistoryRead {
+  readonly history: PullRequestHistory | null;
+  readonly message: string | null;
+}
+const unknownHistory = (reason: string): HistoryRead => ({
+  history: null,
+  message: `Status history unavailable: ${reason}`,
+});
+
 /** Only a complete connection establishes a count; partial GraphQL data never establishes zero. */
-const parseReviewThreads = (stdout: string): ReviewThreadRead => {
-  let body: unknown;
-  try {
-    body = JSON.parse(stdout);
-  } catch {
-    return unknownReviewThreads('invalid GraphQL response');
-  }
-  if (!isRecord(body) || (body.errors !== undefined && (!Array.isArray(body.errors) || body.errors.length > 0))) {
-    return unknownReviewThreads('GraphQL response contains errors');
-  }
-  const repository = isRecord(body.data) ? body.data.repository : undefined;
-  const pullRequest = isRecord(repository) ? repository.pullRequest : undefined;
-  const connection = isRecord(pullRequest) ? pullRequest.reviewThreads : undefined;
+const parseReviewThreads = (pullRequest: Record<string, unknown>): ReviewThreadRead => {
+  const connection = pullRequest.reviewThreads;
   if (
     !isRecord(connection) ||
     typeof connection.totalCount !== 'number' ||
@@ -481,14 +487,115 @@ const parseReviewThreads = (stdout: string): ReviewThreadRead => {
   return { count, message: null };
 };
 
-const observeReviewThreads = (context: RunContext, link: PullRequestLink): Effect.Effect<ReviewThreadRead> =>
+const REVIEW_MILESTONES = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes-requested' } as const;
+const TIMELINE_MILESTONES = {
+  ReadyForReviewEvent: 'ready-for-review',
+  ConvertToDraftEvent: 'converted-to-draft',
+  ClosedEvent: 'closed',
+  ReopenedEvent: 'reopened',
+} as const;
+
+/** A deleted account is reported as a null author; that leaves the milestone without an actor. */
+const loginOf = (value: unknown): string | null | undefined => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return isRecord(value) && typeof value.login === 'string' && value.login.length > 0
+    ? value.login.slice(0, maxShortText)
+    : undefined;
+};
+
+/** `null` when the connection is malformed; `complete` is false when it held more than it returned. */
+const historyConnection = (
+  value: unknown,
+  milestoneOf: (node: Record<string, unknown>) => PullRequestMilestone | null,
+): { readonly complete: boolean; readonly items: readonly PullRequestMilestone[] } | null => {
+  if (
+    !isRecord(value) ||
+    typeof value.totalCount !== 'number' ||
+    !Number.isSafeInteger(value.totalCount) ||
+    value.totalCount < 0 ||
+    !Array.isArray(value.nodes) ||
+    value.nodes.length > value.totalCount
+  ) {
+    return null;
+  }
+  const items: PullRequestMilestone[] = [];
+  for (const node of value.nodes) {
+    const item = isRecord(node) ? milestoneOf(node) : null;
+    if (item === null) {
+      return null;
+    }
+    items.push(item);
+  }
+  return { complete: value.nodes.length === value.totalCount, items };
+};
+
+const reviewMilestone = (node: Record<string, unknown>): PullRequestMilestone | null => {
+  const kind = node.state === 'APPROVED' || node.state === 'CHANGES_REQUESTED' ? REVIEW_MILESTONES[node.state] : null;
+  const at = lifecycleInstant(node.submittedAt);
+  const actor = loginOf(node.author);
+  return kind === null || at === undefined || at === null || actor === undefined ? null : { actor, at, kind };
+};
+
+const timelineMilestone = (node: Record<string, unknown>): PullRequestMilestone | null => {
+  const kind =
+    typeof node.__typename === 'string' && Object.hasOwn(TIMELINE_MILESTONES, node.__typename)
+      ? TIMELINE_MILESTONES[node.__typename as keyof typeof TIMELINE_MILESTONES]
+      : null;
+  const at = lifecycleInstant(node.createdAt);
+  const actor = loginOf(node.actor);
+  return kind === null || at === undefined || at === null || actor === undefined ? null : { actor, at, kind };
+};
+
+const parseHistory = (pullRequest: Record<string, unknown>): HistoryRead => {
+  const reviews = historyConnection(pullRequest.reviews, reviewMilestone);
+  const timeline = historyConnection(pullRequest.timelineItems, timelineMilestone);
+  if (reviews === null || timeline === null) {
+    return unknownHistory(reviews === null ? 'invalid review connection' : 'invalid timeline connection');
+  }
+  const items = [...reviews.items, ...timeline.items].sort(
+    (left, right) => left.at.localeCompare(right.at) || left.kind.localeCompare(right.kind),
+  );
+  return { history: { complete: reviews.complete && timeline.complete, items }, message: null };
+};
+
+interface DetailRead {
+  readonly history: HistoryRead;
+  readonly reviewThreads: ReviewThreadRead;
+}
+const unknownDetail = (reason: string): DetailRead => ({
+  history: unknownHistory(reason),
+  reviewThreads: unknownReviewThreads(reason),
+});
+
+/** Errors anywhere in the response establish nothing: GraphQL may return partial data beside them. */
+const parsePullRequestDetail = (stdout: string): DetailRead => {
+  let body: unknown;
+  try {
+    body = JSON.parse(stdout);
+  } catch {
+    return unknownDetail('invalid GraphQL response');
+  }
+  if (!isRecord(body) || (body.errors !== undefined && (!Array.isArray(body.errors) || body.errors.length > 0))) {
+    return unknownDetail('GraphQL response contains errors');
+  }
+  const repository = isRecord(body.data) ? body.data.repository : undefined;
+  const pullRequest = isRecord(repository) ? repository.pullRequest : undefined;
+  if (!isRecord(pullRequest)) {
+    return unknownDetail('invalid pull request node');
+  }
+  return { history: parseHistory(pullRequest), reviewThreads: parseReviewThreads(pullRequest) };
+};
+
+const observeDetail = (context: RunContext, link: PullRequestLink): Effect.Effect<DetailRead> =>
   Effect.gen(function* () {
     const [owner, name] = link.repository.split('/');
     const response = yield* gh(context, [
       'api',
       'graphql',
       '-f',
-      `query=${REVIEW_THREADS_QUERY}`,
+      `query=${PULL_REQUEST_DETAIL_QUERY}`,
       '-f',
       `owner=${owner}`,
       '-f',
@@ -497,13 +604,13 @@ const observeReviewThreads = (context: RunContext, link: PullRequestLink): Effec
       `number=${String(link.number)}`,
     ]);
     if (response.kind !== 'completed') {
-      return unknownReviewThreads(`gh ${response.kind}`);
+      return unknownDetail(`gh ${response.kind}`);
     }
     if (response.exitCode !== 0) {
-      return unknownReviewThreads(`gh exited ${String(response.exitCode)}`);
+      return unknownDetail(`gh exited ${String(response.exitCode)}`);
     }
-    return parseReviewThreads(response.stdout);
-  }).pipe(Effect.catchDefect(() => Effect.succeed(unknownReviewThreads('gh runner failed'))));
+    return parsePullRequestDetail(response.stdout);
+  }).pipe(Effect.catchDefect(() => Effect.succeed(unknownDetail('gh runner failed'))));
 
 const observeLink = (
   context: RunContext,
@@ -550,8 +657,9 @@ const observeLink = (
           outcome: 'invalid',
         });
       }
-      const reviewThreads =
-        parsed.state === 'OPEN' ? yield* observeReviewThreads(context, link) : { count: null, message: null };
+      const detail = yield* observeDetail(context, link);
+      // Unresolved threads only matter, and are only counted, while the pull request is open.
+      const reviewThreads = parsed.state === 'OPEN' ? detail.reviewThreads : { count: null, message: null };
       return {
         halt: null,
         observation: {
@@ -564,6 +672,7 @@ const observeLink = (
           discoveryRole: link.discoveryRole ?? null,
           draft: parsed.draft,
           headRef: parsed.headRef,
+          ...(detail.history.history === null ? {} : { history: detail.history.history }),
           host: link.host,
           machineId: context.machineId,
           mergeable: parsed.mergeable,
@@ -573,8 +682,9 @@ const observeLink = (
           observedAt,
           outcome: 'observed',
           outcomeMessage:
-            [reviewThreads.message, parsed.lifecycleDateMessage].filter((message) => message !== null).join('; ') ||
-            null,
+            [reviewThreads.message, detail.history.message, parsed.lifecycleDateMessage]
+              .filter((message) => message !== null)
+              .join('; ') || null,
           repository: link.repository,
           reviewDecision: parsed.reviewDecision,
           state: parsed.state,
