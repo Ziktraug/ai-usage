@@ -1086,14 +1086,15 @@ describe('work fact sources', () => {
         ['auth', 'token'],
         ['search', 'prs'],
         ['search', 'prs'],
+        ['search', 'prs'],
         ['auth', 'token'],
         ['pr', 'view'],
         ['api', 'graphql'],
       ]);
-      expect(calls[3]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
-      expect(calls[4]?.env?.GH_TOKEN).toBe('fixture-token');
+      expect(calls[4]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
       expect(calls[5]?.env?.GH_TOKEN).toBe('fixture-token');
-      expect(calls[5]?.args).toEqual(reviewThreadsFixtureArgs('fixture/project', 66));
+      expect(calls[6]?.env?.GH_TOKEN).toBe('fixture-token');
+      expect(calls[6]?.args).toEqual(reviewThreadsFixtureArgs('fixture/project', 66));
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => [latest.host, latest.number, latest.outcome, latest.state])).toEqual([
         ['github.com', 66, 'observed', 'OPEN'],
@@ -1192,6 +1193,7 @@ describe('work fact sources', () => {
       expect(ghCalls).toEqual([
         ['auth token --user', null],
         ['search prs --author=@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
+        ['search prs user-review-requested:@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['search prs --review-requested=@me', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
         ['auth token --user', null],
         ['pr view 66', 'PRIVATE_ENGINE_TOKEN_SENTINEL'],
@@ -1610,6 +1612,8 @@ describe('jira issue source', () => {
     try {
       const now = new Date('2026-10-21T21:00:00.000Z');
       writeClaudeDesktopJiraRegistry(home, now);
+      // The operator's workflow names "In Progress" as handed off; matching ignores case.
+      writeHomeConfig(home, { jira: { handedOffStatuses: ['in progress'] } });
       const calls: BoundedProcessOptions[] = [];
       const registry = await createRegistry(home, {
         acliAvailable: () => true,
@@ -1667,6 +1671,7 @@ describe('jira issue source', () => {
       expect(stored.items.every(({ latest }) => latest.outcome === 'observed' && latest.comments.length === 1)).toBe(
         true,
       );
+      expect(stored.items.every(({ latest }) => latest.handedOff === true)).toBe(true);
       const serialized = JSON.stringify(stored);
       expect(serialized).not.toContain('XLB-1999');
       expect(serialized).not.toContain('XLB-7777');
@@ -2042,7 +2047,8 @@ describe('discovered work fact sources', () => {
           ),
         ).toEqual({ changed: false, inputCount: 2, outputCount: 2, warnings: [] });
       }
-      expect(calls.filter(({ args }) => args[0] === 'search')).toHaveLength(4);
+      // Author, personal and team review searches on each of the two runs.
+      expect(calls.filter(({ args }) => args[0] === 'search')).toHaveLength(6);
       const stored = await Effect.runPromise(queryLatestPullRequestObservations({ dbPath: usageStorePath(home) }));
       expect(
         stored.items
@@ -2124,7 +2130,7 @@ describe('discovered work fact sources', () => {
         warnings: [{ code: 'pull-requests-truncated', message: expect.stringContaining('46') }],
       });
       const searches = calls.filter(({ args }) => args[0] === 'search');
-      expect(searches).toHaveLength(2);
+      expect(searches).toHaveLength(3);
       expect(calls.filter(({ args }) => args[0] === 'auth').map(({ args }) => args)).toEqual([
         ['auth', 'token', '--user', 'alice', '--hostname', 'github.com'],
         ['auth', 'token', '--user', 'alice', '--hostname', 'github.com'],

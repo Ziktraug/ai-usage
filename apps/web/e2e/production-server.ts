@@ -71,7 +71,7 @@ try {
       'const [command, subcommand, ...rest] = args;',
       'if (command === "pr" && subcommand === "list") {',
       '  process.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));',
-      '} else if (command === "search" && subcommand === "prs" && (rest.includes("--author=@me") || rest.includes("--review-requested=@me"))) {',
+      '} else if (command === "search" && subcommand === "prs" && (rest.includes("--author=@me") || rest.includes("user-review-requested:@me") || rest.includes("--review-requested=@me"))) {',
       '  process.stdout.write(JSON.stringify(rest.includes("--author=@me") ? [{ number: 77, repository: { nameWithOwner: "fixture/discovered" }, title: "Discovered fixture pull request", url: "https://github.com/fixture/discovered/pull/77", updatedAt: "2026-07-03T11:00:00Z", isDraft: false }] : []));',
       // Discovery reads the active account token before searching; the fixture account has one.
       '} else if (command === "auth" && subcommand === "token") {',

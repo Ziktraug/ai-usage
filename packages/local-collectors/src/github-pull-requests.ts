@@ -38,7 +38,7 @@ import { Effect } from 'effect';
  */
 
 export interface PullRequestLink {
-  readonly discoveryRole?: 'author' | 'review-requested' | null;
+  readonly discoveryRole?: 'author' | 'review-requested' | 'team-review-requested' | null;
   readonly host: string;
   readonly number: number;
   /** `owner/name`. */

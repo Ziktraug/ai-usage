@@ -340,6 +340,21 @@ missing column. New observations retain only a public browser URL: the Jira REST
 Atlassian returns an internal backend hostname. No auth status output or credential
 is stored. Back up both stores before restarting the engine with this change.
 
+## Handed-off Jira statuses (2026-10-27)
+
+The engine adds a nullable `handed_off` integer column to
+`jira_issue_observations` under usage version 4, through the same
+presence-based `ALTER TABLE … ADD COLUMN`. It holds `1` when the observed status
+was one the home config names in `jira.handedOffStatuses` at observation time,
+and null otherwise; rows written before carry null and read as "not handed
+off". Nothing is backfilled: a change to the setting applies from the next Jira
+read. Query-only readers tolerate the missing column, and an older binary
+ignores it. Pull request discovery now records a third `discovery_role` value,
+`team-review-requested`, in the existing column; an older binary reading such a
+row treats the observation as invalid for that field, so upgrade the web and the
+engine together. Back up both stores before restarting the engine with this
+change.
+
 ## Backup
 
 1. Stop the supervised stack (`bun run start` or `bun run dev`) with SIGTERM

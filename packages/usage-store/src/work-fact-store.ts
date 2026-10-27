@@ -143,7 +143,8 @@ export const workFactSchemaSql = `
     parent_key TEXT,
     comment_count INTEGER CHECK (comment_count IS NULL OR comment_count >= 0),
     comments_json TEXT NOT NULL,
-    url TEXT
+    url TEXT,
+    handed_off INTEGER
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_issue_observations_identity
     ON jira_issue_observations(machine_id, issue_key, observed_at DESC);
@@ -192,13 +193,13 @@ export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>
       ['discovery_role', 'mergeable', 'merge_state_status', 'created_at', 'closed_at', 'unresolved_review_threads'],
     ],
     ['checkout_status_observations', ['counts_changed_at']],
-    ['jira_issue_observations', ['url']],
+    ['jira_issue_observations', ['url', 'handed_off']],
     ['work_fact_run_state', ['outcome_code']],
   ] as const) {
     const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
     for (const name of additions) {
       if (!columns.some((column) => column.name === name)) {
-        const type = name === 'unresolved_review_threads' ? 'INTEGER' : 'TEXT';
+        const type = name === 'unresolved_review_threads' || name === 'handed_off' ? 'INTEGER' : 'TEXT';
         db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
         changed = true;
       }
@@ -278,6 +279,7 @@ interface JiraIssueRecord {
   assignee_label: string | null;
   comment_count: number | null;
   comments_json: string;
+  handed_off?: number | null;
   id: number;
   issue_key: string;
   machine_id: string;
@@ -436,6 +438,7 @@ const jiraIssueValue = (record: JiraIssueRecord): unknown => ({
   statusCategory: record.status_category,
   summary: record.summary,
   updatedAt: record.updated_at,
+  ...(record.handed_off === 1 ? { handedOff: true } : {}),
 });
 
 const isWorkFactSourceId = (value: unknown): value is WorkFactSourceId =>
@@ -777,8 +780,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
             const insert = db.query(`
               INSERT OR IGNORE INTO jira_issue_observations (
                 machine_id, issue_key, observed_at, outcome, outcome_message, status, status_category, summary,
-                updated_at, assignee_label, sprint, parent_key, comment_count, comments_json, url
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                updated_at, assignee_label, sprint, parent_key, comment_count, comments_json, url, handed_off
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             for (const candidate of input.observations) {
               const observation = parseJiraIssueObservation(candidate);
@@ -802,6 +805,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 observation.commentCount,
                 JSON.stringify(observation.comments),
                 observation.url ?? null,
+                observation.handedOff === true ? 1 : null,
               );
               if (changes(db) === 1) {
                 result.inserted += 1;

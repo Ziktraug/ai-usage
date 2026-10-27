@@ -264,7 +264,8 @@ const isGitHubConfig = (value: unknown): value is AiUsageGitHubConfig => {
   );
 };
 
-const JIRA_CONFIG_KEYS = new Set(['enabled', 'site']);
+const JIRA_CONFIG_KEYS = new Set(['enabled', 'handedOffStatuses', 'site']);
+const MAX_JIRA_HANDED_OFF_STATUSES = 32;
 /** A host name such as `example.atlassian.net`: labels of letters, digits and dashes, at least one dot. */
 const JIRA_SITE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
 
@@ -277,6 +278,12 @@ const isJiraConfig = (value: unknown): value is AiUsageJiraConfig => {
   return (
     Object.keys(record).every((key) => JIRA_CONFIG_KEYS.has(key)) &&
     (record.enabled === undefined || typeof record.enabled === 'boolean') &&
+    (record.handedOffStatuses === undefined ||
+      (Array.isArray(record.handedOffStatuses) &&
+        record.handedOffStatuses.length <= MAX_JIRA_HANDED_OFF_STATUSES &&
+        record.handedOffStatuses.every(
+          (status) => typeof status === 'string' && status.trim().length > 0 && status.length <= 128,
+        ))) &&
     (record.site === undefined ||
       (typeof record.site === 'string' && record.site.length <= 256 && JIRA_SITE_PATTERN.test(record.site)))
   );

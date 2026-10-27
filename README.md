@@ -364,6 +364,7 @@ successful read kept beside it.
 {
   "jira": {
     "enabled": true,
+    "handedOffStatuses": ["To Review (IT)"],
     "site": "example.atlassian.net"
   }
 }
@@ -371,6 +372,12 @@ successful read kept beside it.
 
 - `enabled` (optional, default on when `acli` is found): `false` records the
   source as disabled instead of reading.
+- `handedOffStatuses` (optional): status names, matched without regard to case,
+  in which a ticket is someone else's step once every linked pull request merged
+  (a review or QA column). The Work view then shows such a task as waiting
+  instead of "Ticket not done". A status in progress that is not listed stays
+  your move. Each Jira read records the verdict, so a change applies from the
+  next read.
 - `site` (optional): the Jira site your keys belong to, kept for your record;
   this version does not pass it to the CLI.
 

@@ -81,7 +81,7 @@ export const groupThreadRows = (rows: readonly WorkThreadRow[]) => {
 const SITUATION_GROUPS = [
   { hint: 'to-resume', label: 'To resume', note: 'Your next step' },
   { hint: 'in-progress', label: 'In progress', note: 'A session is still running' },
-  { hint: 'undecided', label: 'To decide', note: 'Evidence is missing or stale' },
+  { hint: 'undecided', label: 'To decide', note: 'A team request, or evidence missing or stale' },
   { hint: 'waiting', label: 'Waiting', note: 'On reviewers, checks or a reply' },
   { hint: 'ready-to-close', label: 'Ready to close', note: 'Nothing known is left' },
   { hint: 'done', label: 'Done', note: 'Follow-up ended' },
@@ -234,6 +234,9 @@ export const pullRequestBadge = (
   if (marker.role === 'review-requested') {
     return { tone: 'your-review', label: 'Your review' };
   }
+  if (marker.role === 'team-review-requested') {
+    return { tone: 'in-review', label: 'Team review' };
+  }
   if (fact.draft) {
     return { tone: 'draft', label: 'Draft' };
   }
@@ -364,6 +367,8 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
       return 'Checks pending';
     case 'review-requested':
       return 'A PR waits for your review';
+    case 'team-review-requested':
+      return 'Your team was asked to review · take it or leave it';
     case 'unresolved-review-threads':
       return `${remainder.count} review ${remainder.count === 1 ? 'thread' : 'threads'} to address`;
     case 'awaiting-review':
@@ -376,6 +381,8 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
       return 'PR still open';
     case 'jira-open':
       return 'Ticket not done';
+    case 'jira-after-merge':
+      return 'Merged · the ticket moves on without you';
     case 'source-unavailable':
       return remainder.outcome === 'truncated'
         ? `${sourceName(remainder.source)} evidence incomplete`

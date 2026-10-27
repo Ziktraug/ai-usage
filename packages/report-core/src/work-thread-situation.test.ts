@@ -155,6 +155,14 @@ describe('Work thread situation', () => {
       action: 'open-pr',
     });
     expect(kinds(requested)).toEqual(['review-requested']);
+    // A request addressed to a team is a candidate to take, not a move the operator owes.
+    const team = withPr(pr({ reviewDecision: 'REVIEW_REQUIRED' }), { role: 'team-review-requested' });
+    expect(deriveWorkThreadSituation(team, at)).toMatchObject({
+      hint: 'undecided',
+      reason: 'team-review-requested',
+      action: 'open-pr',
+    });
+    expect(kinds(team)).toEqual(['team-review-requested']);
   });
   test('a draft remains an operator remainder instead of being ready to merge', () => {
     const draft = withPr(pr({ draft: true, reviewDecision: 'APPROVED', unresolvedReviewThreads: 0 }));
@@ -435,6 +443,25 @@ describe('Work thread situation', () => {
         at,
       ),
     ).toMatchObject({ hint: 'to-resume', reason: 'jira-open', action: 'open-jira' });
+  });
+  test('a status the operator names as handed off waits once every PR merged, and only then', () => {
+    const withTicket = (state: 'MERGED' | 'OPEN') => {
+      const value = withPr(pr({ state, reviewDecision: 'APPROVED', unresolvedReviewThreads: 0 }));
+      const fact = { ...jira({ statusCategory: 'in-progress', status: 'To Review (IT)' }), handedOff: true as const };
+      return {
+        ...value,
+        markers: {
+          ...value.markers,
+          jiraIssues: [{ key: 'jira:default/TEST-1', latest: fact, latestSuccessful: fact }],
+        },
+      };
+    };
+    expect(deriveWorkThreadSituation(withTicket('MERGED'), at)).toMatchObject({
+      hint: 'waiting',
+      reason: 'jira-after-merge',
+      action: 'open-jira',
+    });
+    expect(kinds(withTicket('OPEN'))).not.toContain('jira-after-merge');
   });
   test('known failing checks stay actionable while a truncated session read remains visible', () => {
     const unavailable = {

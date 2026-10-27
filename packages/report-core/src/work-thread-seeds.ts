@@ -63,7 +63,7 @@ export const workThreadSeedsFromPullRequests = (observations: readonly PullReque
     return [
       {
         discoveredAt: observation.observedAt,
-        intent: observation.discoveryRole === 'review-requested' ? 'review' : 'change',
+        intent: observation.discoveryRole === 'author' ? 'change' : 'review',
         linkKind: 'pull-request',
         origin: 'pull-request',
         originKey,

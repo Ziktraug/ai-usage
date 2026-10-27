@@ -334,7 +334,11 @@ const assertReadOnlyGhCalls = async (log: string): Promise<void> => {
     const [command, subcommand] = args;
     if (command === 'search') {
       expect(subcommand).toBe('prs');
-      expect(args.includes('--author=@me') || args.includes('--review-requested=@me')).toBe(true);
+      expect(
+        args.includes('--author=@me') ||
+          args.includes('user-review-requested:@me') ||
+          args.includes('--review-requested=@me'),
+      ).toBe(true);
       expect(args).toContain('--state=open');
     } else if (command === 'pr') {
       expect(subcommand).toBe('view'); // Also excludes the legacy resolver's pr list in this journey.

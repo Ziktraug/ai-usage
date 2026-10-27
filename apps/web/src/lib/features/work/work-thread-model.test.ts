@@ -460,6 +460,14 @@ describe('round 2 concise task evidence', () => {
     'failing-checks': { input: { ...evidence, kind: 'failing-checks' }, copy: 'Checks failing' },
     'pending-checks': { input: { ...evidence, kind: 'pending-checks' }, copy: 'Checks pending' },
     'review-requested': { input: { ...evidence, kind: 'review-requested' }, copy: 'A PR waits for your review' },
+    'team-review-requested': {
+      input: { ...evidence, kind: 'team-review-requested' },
+      copy: 'Your team was asked to review · take it or leave it',
+    },
+    'jira-after-merge': {
+      input: { ...evidence, kind: 'jira-after-merge' },
+      copy: 'Merged · the ticket moves on without you',
+    },
     'unresolved-review-threads': {
       input: { ...evidence, kind: 'unresolved-review-threads', count: 2 },
       copy: '2 review threads to address',

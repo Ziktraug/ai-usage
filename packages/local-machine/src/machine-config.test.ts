@@ -737,11 +737,12 @@ describe('jira config', () => {
   test('reads a strict jira section from the user home config', async () => {
     const home = await mkdtemp('ai-usage-jira-config-');
     try {
-      const storage = writeHomeConfig(home, { jira: { enabled: false, site: 'example.atlassian.net' } });
+      const jira = { enabled: false, handedOffStatuses: ['To Review (IT)'], site: 'example.atlassian.net' };
+      const storage = writeHomeConfig(home, { jira });
       const config = await Effect.runPromise(
         readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
-      expect(config.jira).toEqual({ enabled: false, site: 'example.atlassian.net' });
+      expect(config.jira).toEqual(jira);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -753,6 +754,8 @@ describe('jira config', () => {
       { site: 'https://example.atlassian.net' },
       { site: 'not a host' },
       { enabled: true, token: 'never' },
+      { handedOffStatuses: 'To Review' },
+      { handedOffStatuses: [''] },
       [],
     ];
     for (const jira of invalid) {

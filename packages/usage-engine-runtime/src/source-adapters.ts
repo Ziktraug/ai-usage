@@ -1720,7 +1720,14 @@ const createJiraIssueSource = (input: {
       });
       yield* abortIfRequested(context.signal);
       yield* reportProgress(context, { completed: 0, phase: 'importing', total: batch.observations.length });
-      yield* importJiraIssueObservations({ dbPath: input.dbPath, observations: batch.observations }).pipe(
+      // The operator's workflow names its handed-off statuses; the observation records the verdict.
+      const handedOff = new Set((config.jira?.handedOffStatuses ?? []).map((status) => status.trim().toLowerCase()));
+      const observations = batch.observations.map((observation) =>
+        observation.status !== null && handedOff.has(observation.status.trim().toLowerCase())
+          ? { ...observation, handedOff: true as const }
+          : observation,
+      );
+      yield* importJiraIssueObservations({ dbPath: input.dbPath, observations }).pipe(
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
       const waitResult =

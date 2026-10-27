@@ -603,7 +603,7 @@ export interface PullRequestObservation {
   /** When GitHub closed it without merging; `mergedAt` carries a merge. */
   readonly closedAt?: CanonicalInstant | null;
   readonly createdAt?: CanonicalInstant | null;
-  readonly discoveryRole?: 'author' | 'review-requested' | null;
+  readonly discoveryRole?: 'author' | 'review-requested' | 'team-review-requested' | null;
   readonly draft: boolean | null;
   readonly headRef: string | null;
   readonly host: string;
@@ -657,7 +657,7 @@ export const parsePullRequestObservation = (value: unknown): PullRequestObservat
   const discoveryRole =
     value.discoveryRole === null || value.discoveryRole === undefined
       ? null
-      : oneOf(['author', 'review-requested'] as const, value.discoveryRole);
+      : oneOf(['author', 'review-requested', 'team-review-requested'] as const, value.discoveryRole);
   const mergeable =
     value.mergeable === null || value.mergeable === undefined
       ? null
@@ -918,6 +918,8 @@ export interface JiraIssueObservation {
   readonly assigneeLabel: string | null;
   readonly commentCount: number | null;
   readonly comments: readonly JiraIssueComment[];
+  /** Present when the status was one the operator's config names as handed off when observed. */
+  readonly handedOff?: true;
   readonly key: string;
   readonly machineId: string;
   readonly observedAt: CanonicalInstant;
@@ -1025,7 +1027,8 @@ export const parseJiraIssueObservation = (value: unknown): JiraIssueObservation 
     sprint === undefined ||
     parentKey === undefined ||
     commentCount === undefined ||
-    comments === undefined
+    comments === undefined ||
+    (value.handedOff !== undefined && value.handedOff !== true)
   ) {
     return null;
   }
@@ -1033,6 +1036,7 @@ export const parseJiraIssueObservation = (value: unknown): JiraIssueObservation 
     assigneeLabel,
     commentCount,
     comments,
+    ...(value.handedOff === true ? { handedOff: true as const } : {}),
     key,
     machineId,
     observedAt,

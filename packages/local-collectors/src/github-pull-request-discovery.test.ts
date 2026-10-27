@@ -29,7 +29,13 @@ interface Response {
   readonly exitCode?: number;
   readonly stdout?: string;
 }
-const fakeGh = (responses: { readonly author?: Response; readonly review?: Response; readonly auth?: Response }) => {
+const fakeGh = (responses: {
+  readonly author?: Response;
+  readonly review?: Response;
+  /** The broader `--review-requested` search, team requests included; defaults to `review`. */
+  readonly team?: Response;
+  readonly auth?: Response;
+}) => {
   const root = mkdtempSync(path.join(tmpdir(), 'ai-usage-gh-discovery-'));
   roots.push(root);
   const command = path.join(root, 'gh');
@@ -37,7 +43,7 @@ const fakeGh = (responses: { readonly author?: Response; readonly review?: Respo
   writeFileSync(path.join(root, 'calls.jsonl'), '');
   writeFileSync(
     command,
-    `#!${process.execPath}\nimport {appendFileSync, readFileSync} from 'node:fs';\nconst args = process.argv.slice(2);\nconst scenario = JSON.parse(readFileSync(import.meta.dir + '/scenario.json','utf8'));\nappendFileSync(import.meta.dir + '/calls.jsonl',JSON.stringify({args, host:process.env.GH_HOST, tokenPresent:!!process.env.GH_TOKEN})+'\\n');\nprocess.stderr.write('PRIVATE_DISCOVERY_STDERR');\nconst response = args[0] === 'auth' ? scenario.auth : args.includes('--author=@me') ? scenario.author : scenario.review;\nif (response?.delayMs) await Bun.sleep(response.delayMs);\nprocess.stdout.write(response?.stdout ?? '[]');\nprocess.exit(response?.exitCode ?? 0);\n`,
+    `#!${process.execPath}\nimport {appendFileSync, readFileSync} from 'node:fs';\nconst args = process.argv.slice(2);\nconst scenario = JSON.parse(readFileSync(import.meta.dir + '/scenario.json','utf8'));\nappendFileSync(import.meta.dir + '/calls.jsonl',JSON.stringify({args, host:process.env.GH_HOST, tokenPresent:!!process.env.GH_TOKEN})+'\\n');\nprocess.stderr.write('PRIVATE_DISCOVERY_STDERR');\nconst response = args[0] === 'auth' ? scenario.auth : args.includes('--author=@me') ? scenario.author : args.includes('--review-requested=@me') ? (scenario.team ?? scenario.review) : scenario.review;\nif (response?.delayMs) await Bun.sleep(response.delayMs);\nprocess.stdout.write(response?.stdout ?? '[]');\nprocess.exit(response?.exitCode ?? 0);\n`,
   );
   chmodSync(command, 0o700);
   const calls: BoundedProcessOptions[] = [];
@@ -53,6 +59,7 @@ describe('personal pull request discovery', () => {
     const fake = fakeGh({
       author: { stdout: JSON.stringify([fixture(), fixture(13)]) },
       review: { stdout: JSON.stringify([fixture(), fixture(14)]) },
+      team: { stdout: JSON.stringify([fixture(14), fixture(15)]) },
     });
     const result = await Effect.runPromise(discoverPullRequests({ run: fake.run }));
     expect(result).toMatchObject({ accountLabel: null, outcome: 'observed', outcomeMessage: null, truncated: false });
@@ -60,8 +67,11 @@ describe('personal pull request discovery', () => {
       [12, 'author'],
       [13, 'author'],
       [14, 'review-requested'],
+      [15, 'team-review-requested'],
     ]);
-    expect(fake.calls).toHaveLength(3);
+    expect(fake.calls).toHaveLength(4);
+    expect(fake.calls[2]?.args).toContain('user-review-requested:@me');
+    expect(fake.calls[3]?.args).toContain('--review-requested=@me');
     expect(fake.calls[0]?.args).toEqual(['auth', 'token', '--hostname', 'github.com']);
     for (const call of fake.calls.slice(1)) {
       expect(call.command).toBe('gh');

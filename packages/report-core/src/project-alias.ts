@@ -34,6 +34,11 @@ export interface AiUsageGitHubConfig {
  */
 export interface AiUsageJiraConfig {
   enabled?: boolean;
+  /**
+   * Status names (case-insensitive) in which a ticket is someone else's step once its pull
+   * requests merged, such as a review or QA column. Workflows name them; nothing is assumed.
+   */
+  handedOffStatuses?: string[];
   site?: string;
 }
 

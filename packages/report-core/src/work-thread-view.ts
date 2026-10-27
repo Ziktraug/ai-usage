@@ -78,7 +78,7 @@ export interface WorkThreadLocalMarker extends WorkThreadFact<CheckoutStatusObse
 }
 
 /** Why a discovered pull request concerns the operator; `null` when it came through a link. */
-export type WorkThreadPullRequestRole = 'author' | 'review-requested' | null;
+export type WorkThreadPullRequestRole = 'author' | 'review-requested' | 'team-review-requested' | null;
 
 export interface WorkThreadPullRequestMarker extends WorkThreadFact<PullRequestObservation> {
   /** Mergeability as GitHub reported it; `null` when unknown. Behind the base is not a conflict. */
