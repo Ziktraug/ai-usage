@@ -61,7 +61,7 @@ or Markdown authority would duplicate lifecycle and integrity ownership.
 ## Evidence
 
 - [Execution plan](../../plans/115-local-session-distillation.md)
-- [Semantic contract](../../packages/platform-core/src/session-distillation.ts)
-- [Evidence reader](../../packages/local-machine/src/distillation-evidence.ts)
-- [Skill](../../skills/session-distillation/SKILL.md)
-- [Synthetic evaluation](../../tools/fixtures/distillation/evaluation.json)
+- Semantic contract: `packages/platform-core/src/session-distillation.ts`, removed by ADR 0084 (git history keeps it)
+- Evidence reader: `packages/local-machine/src/distillation-evidence.ts`, removed by ADR 0084 (git history keeps it)
+- Skill: `skills/session-distillation/SKILL.md`, removed by ADR 0049 (git history keeps it)
+- Synthetic evaluation: `tools/fixtures/distillation/evaluation.json`, removed by ADR 0049 (git history keeps it)

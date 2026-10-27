@@ -61,7 +61,7 @@ and make a later sensitivity edit an implicit publication authorization.
 
 ## Evidence
 
-- [Promotion application](../../packages/memory-service/src/analysis-promotion.ts)
-- [Local promotion and replication regression](../../packages/memory-sqlite/src/analysis-promotion.test.ts)
+- Promotion application: `packages/memory-service/src/analysis-promotion.ts`, removed by ADR 0084 (git history keeps it)
+- Local promotion and replication regression: `packages/memory-sqlite/src/analysis-promotion.test.ts`, removed by ADR 0084 (git history keeps it)
 - [Local store upgrade](../local-store-upgrade.md)
 - Session distillation: `docs/session-distillation.md`, removed with accepted Memory by ADR 0084 (git history keeps it)

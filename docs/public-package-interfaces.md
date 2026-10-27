@@ -212,7 +212,10 @@ errors, never the store ([Local MCP server](mcp.md)).
   and consumes the file; this seam never parses/imports the document.
 - `./node`: owner-only/no-follow rendezvous parsing, fixed loopback origin,
   bounded opened-file reads, and the shared engine/Web/CLI runtime-target path
-  resolver.
+  resolver. Clients load a rendezvous only at the current protocol version;
+  `loadStaleUsageEngineRendezvousOwner`, for the engine's stale-lock recovery
+  only, returns the owner of a rendezvous of any protocol version and nothing
+  a client could connect with.
 - `./testing`: parser-backed in-memory client for tests/fixtures only.
 
 The protocol surface carries commands, status, and bounded events only. It must

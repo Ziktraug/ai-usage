@@ -10,7 +10,7 @@ import {
   hasCurrentOwner,
   isOwnerOnly,
   isProcessStartTimeTicks,
-  loadUsageEngineRendezvous,
+  loadStaleUsageEngineRendezvousOwner,
   processIsAlive,
   readProcessStartTimeTicks as processStartTimeTicks,
   readOpenedFileBounded,
@@ -1013,16 +1013,18 @@ const removeValidatedStaleRendezvous = async (
     return;
   }
   rendezvousStats = await repairInterruptedRendezvousPublication(directory, rendezvousPath, stalePid, rendezvousStats);
-  let rendezvous: Awaited<ReturnType<typeof loadUsageEngineRendezvous>>;
+  // Recovery proves ownership only: the dead engine may have spoken an earlier protocol, so its
+  // version must not block the takeover that the strict live-client loader would refuse.
+  let rendezvousOwner: UsageEngineInstanceId;
   try {
-    rendezvous = await loadUsageEngineRendezvous(rendezvousPath);
+    rendezvousOwner = await loadStaleUsageEngineRendezvousOwner(rendezvousPath);
   } catch (error) {
     throw new Error(
       `Usage engine stale rendezvous ownership could not be validated and was preserved: ${rendezvousPath}`,
       { cause: error },
     );
   }
-  if (rendezvous.instanceId !== lockInstanceId) {
+  if (rendezvousOwner !== lockInstanceId) {
     throw new Error(`Usage engine stale lock and rendezvous identities differ and were preserved: ${directory.path}`);
   }
   const current = await lstat(rendezvousPath).catch(() => undefined);

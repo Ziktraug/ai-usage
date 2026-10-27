@@ -34,7 +34,6 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "env": ["AI_USAGE_PRINT_MEMORY_SEARCH_METRICS"],
       "outputs": []
     },
     "@ai-usage/design-system#test": {

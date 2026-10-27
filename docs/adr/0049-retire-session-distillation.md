@@ -68,7 +68,7 @@ the workflow that the product has withdrawn.
 
 - Retirement notice and residual lot: `docs/session-distillation.md`, removed by ADR 0084 (git history keeps it)
 - [Browser route rejection tests](../../apps/web/src/lib/server/rpc/handler.server.test.ts)
-- [Authenticated Memory service tests](../../apps/usage-engine/src/memory-service-server.test.ts)
-- [Historical provenance projection](../../packages/memory-service/src/browse.test.ts)
-- [Promotion persistence and publication regressions](../../packages/memory-sqlite/src/analysis-promotion.test.ts)
+- Authenticated Memory service tests: `apps/usage-engine/src/memory-service-server.test.ts`, removed by ADR 0084 (git history keeps it)
+- Historical provenance projection: `packages/memory-service/src/browse.test.ts`, removed by ADR 0084 (git history keeps it)
+- Promotion persistence and publication regressions: `packages/memory-sqlite/src/analysis-promotion.test.ts`, removed by ADR 0084 (git history keeps it)
 - [Local store upgrade procedure](../local-store-upgrade.md)

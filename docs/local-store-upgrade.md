@@ -500,7 +500,11 @@ migrated the store, their read-only connections refuse it as `schema-too-old`.
   recorded code revision, then start.
 - An older binary that was pointed at a migrated usage store refuses it but can
   leave a dead `<database>.engine.lock` behind; the next compatible start
-  recovers that lease automatically.
+  recovers that lease automatically. The same holds for the lock and
+  `rendezvous.json` an engine of an earlier protocol left after a crash: the
+  next start checks only that the rendezvous belongs to the dead lock owner,
+  whatever its protocol version, and removes both. Until then `check` reports
+  that rendezvous as `unsafe`.
 
 Never edit `user_version` by hand, never run an older revision against a
 migrated store, and never restore one file of a backup pair without the other.
