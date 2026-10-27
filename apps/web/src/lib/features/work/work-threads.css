@@ -1432,6 +1432,29 @@
   min-height: 24px;
   padding: 0;
 }
+/* The project leads each row: tasks of several repositories interleave in activity order. */
+.wt-project-tag {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 7px;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.6;
+  vertical-align: top;
+  color: var(--wt-accent);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: var(--wt-tint);
+  border-radius: 4px;
+}
+.wt-project-tag.wt-no-project {
+  font-weight: 500;
+  color: var(--wt-muted);
+  background: var(--wt-soft);
+}
 .wt-task-summary > .wt-meta {
   margin-top: 5px;
 }

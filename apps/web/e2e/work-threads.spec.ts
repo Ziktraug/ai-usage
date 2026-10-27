@@ -718,7 +718,9 @@ test('work exposes artifact links and independent states, with a global recent v
   );
   await expect(row(page, ids.payments)).toContainText('Changes requested');
   await expect(row(page, ids.payments)).toContainText('Checks pass');
-  await expect(row(page, ids.payments)).toContainText('Updated');
+  // The project leads the row; the timeline and the activity order say when, so no "Updated" line.
+  await expect(row(page, ids.payments).locator('.wt-project-tag')).toHaveText('Example shop');
+  await expect(row(page, ids.payments)).not.toContainText('Updated');
   await open(page, ids.payments);
   const order = page.getByRole('combobox', { name: 'Order', exact: true });
   await expect(order).toHaveValue('true');

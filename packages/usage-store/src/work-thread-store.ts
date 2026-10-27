@@ -520,7 +520,7 @@ const threadFromRecord = (value: unknown): WorkThread => {
         typeof row.origin_key === 'string' && row.origin === 'pull-request'
           ? row.origin_key.toLowerCase()
           : row.origin_key,
-      projectLabel: row.project_label,
+      projectLabel: 'effective_project' in row ? row.effective_project : row.project_label,
       threadId: row.thread_id,
       title: row.title,
       updatedAt: row.updated_at,
@@ -1116,6 +1116,27 @@ const threadActivitySql = `COALESCE((SELECT MAX(at) FROM (
         AND detached.link_key = j.link_key AND detached.detached_at IS NOT NULL)
 ) WHERE at IS NOT NULL AND at != ''), t.created_at)`;
 
+/**
+ * Where a task's work lands: the repository of its latest observed pull request, members of a
+ * combination included, else its stored label. A ticket's task otherwise reads as its Jira project.
+ */
+const threadProjectSql = (alias: string): string => `COALESCE((
+  SELECT (
+    -- Linked keys are stored lowercase; discovery keeps GitHub's own spelling, which reads better.
+    SELECT spelled.repository FROM pull_request_observations spelled
+    WHERE spelled.machine_id = chosen.machine_id AND spelled.host = chosen.host AND spelled.number = chosen.number
+      AND lower(spelled.repository) = chosen.repository
+    ORDER BY spelled.repository = lower(spelled.repository), spelled.observed_at DESC LIMIT 1
+  ) FROM (
+    SELECT p.machine_id, p.host, p.number, lower(p.repository) AS repository
+    FROM work_thread_links l JOIN pull_request_observations p
+      ON p.machine_id = ${alias}.machine_id AND p.outcome = 'observed'
+      AND lower(l.link_key) = lower(p.host || '/' || p.repository || '#' || p.number)
+    WHERE l.thread_id IN ${taskThreadsSql(alias)} AND l.kind = 'pull-request' AND l.detached_at IS NULL
+    ORDER BY p.observed_at DESC, p.id DESC LIMIT 1
+  ) chosen
+), ${alias}.project_label)`;
+
 const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[] } => {
   if (
     !Number.isSafeInteger(query.limit) ||
@@ -1135,7 +1156,7 @@ const pageFilter = (query: WorkThreadListQuery): { sql: string; params: unknown[
   ];
   const params: unknown[] = [];
   if (query.project !== null) {
-    conditions.push('t.project_label = ?');
+    conditions.push('t.effective_project = ?');
     params.push(query.project);
   }
   if (query.search !== null && query.search.length > 0) {
@@ -2011,7 +2032,8 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
     read(input.dbPath, 'queryWorkThreadsPage', (db) => {
       const { sql, params } = pageFilter(input.query);
       const records = db
-        .query(`WITH ${sourceActivitySql}, activity AS MATERIALIZED (SELECT t.*, ${threadActivitySql} AS activity_at FROM work_threads t)
+        .query(`WITH ${sourceActivitySql}, activity AS MATERIALIZED (SELECT t.*, ${threadActivitySql} AS activity_at,
+          ${threadProjectSql('t')} AS effective_project FROM work_threads t)
         SELECT t.* FROM activity t WHERE ${sql}
         ORDER BY t.activity_at DESC, t.thread_id ASC LIMIT ?`)
         .all(...params, input.query.limit + 1);
@@ -2036,7 +2058,12 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
     });
 
   const queryWorkThreadById = (input: QueryWorkThreadByIdInput): Effect.Effect<WorkThread | null, UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadById', (db) => readThread(db, input.threadId));
+    read(input.dbPath, 'queryWorkThreadById', (db) => {
+      const row = db
+        .query(`SELECT t.*, ${threadProjectSql('t')} AS effective_project FROM work_threads t WHERE t.thread_id = ?`)
+        .get(input.threadId);
+      return row === null ? null : threadFromRecord(row);
+    });
 
   const queryWorkThreadLinks = (
     input: QueryWorkThreadLinksInput,
@@ -2155,8 +2182,8 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
   }): Effect.Effect<readonly string[], UsageStoreError> =>
     read(input.dbPath, 'queryWorkThreadProjects', (db) =>
       db
-        .query(`SELECT DISTINCT project_label FROM work_threads t
-      WHERE project_label IS NOT NULL AND ${notCombinedMemberSql('t')} ORDER BY project_label LIMIT ?`)
+        .query(`SELECT DISTINCT project_label FROM (SELECT ${threadProjectSql('t')} AS project_label FROM work_threads t
+      WHERE ${notCombinedMemberSql('t')}) WHERE project_label IS NOT NULL ORDER BY project_label LIMIT ?`)
         .all(WORK_THREAD_VIEW_BOUNDS.maxProjects)
         .map((value) =>
           validated(

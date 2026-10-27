@@ -1743,8 +1743,9 @@ describe('work-thread reader', () => {
       'checkout_status_observations',
       'work_thread_events',
     ]) {
-      // Pull requests: page facts, Jira keys in their branches, and one global combination scan (ADR 0080).
-      const expected = { checkout_status_observations: 1, pull_request_observations: 3 }[table] ?? 2;
+      // Pull requests: page facts, Jira keys in their branches, one global combination scan (ADR 0080)
+      // and the project list, which reads each task's project from its PR repository.
+      const expected = { checkout_status_observations: 1, pull_request_observations: 4 }[table] ?? 2;
       expect(
         page.queries.filter((sql) => sql.includes(`FROM ${table}`)),
         table,

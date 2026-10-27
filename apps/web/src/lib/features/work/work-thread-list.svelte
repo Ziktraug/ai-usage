@@ -20,7 +20,7 @@
     groupThreadRows,
     groupThreadRowsBySituation,
     harnessName,
-    threadDate,
+    projectShortLabel,
     threadSituationCopy,
     threadTime,
     threadTimeline,
@@ -101,12 +101,14 @@
   );
   const situationOf = (row: WorkThreadRow) =>
     situations.get(row.thread.threadId) ?? threadSituationCopy(row, dataset.generatedAt, dataset.sources, timeZone);
-  const groups = $derived.by((): readonly { project: string; note?: string; tasks: readonly WorkThreadRow[] }[] => {
-    if (groupByProject) {
-      return groupThreadRows(rows);
-    }
-    return groupThreadRowsBySituation(rows, (row) => situationOf(row).hint);
-  });
+  const groups = $derived.by(
+    (): readonly { project: string; label: string; note?: string; tasks: readonly WorkThreadRow[] }[] => {
+      if (groupByProject) {
+        return groupThreadRows(rows);
+      }
+      return groupThreadRowsBySituation(rows, (row) => situationOf(row).hint);
+    },
+  );
   let selectedMarks = $state<{ threadId: string; day: string } | null>(null);
   const closeMarks = (): void => {
     if (selectedMarks) {
@@ -225,9 +227,9 @@
       <span class="wt-col-next">What's left</span>
     </div>
     {#each groups as group (group.project)}
-      <section aria-label={`${group.project} tasks`}>
-        <h2 class="wt-project">
-          {group.project}
+      <section aria-label={`${group.label} tasks`}>
+        <h2 class="wt-project" title={group.project}>
+          {group.label}
           <span
             >{group.tasks.length}
             {group.tasks.length === 1 ? 'task' : 'tasks'}{group.note ? ` · ${group.note}` : ''}</span
@@ -242,6 +244,12 @@
             class:wt-waiting={row.thread.followState === 'waiting'}
           >
             <div class="wt-task-summary">
+              <span
+                class="wt-project-tag"
+                title={row.thread.projectLabel ?? undefined}
+                class:wt-no-project={row.thread.projectLabel === null}
+                >{projectShortLabel(row.thread.projectLabel)}</span
+              >
               <a
                 aria-label={row.thread.title}
                 class="wt-task-title"
@@ -252,20 +260,13 @@
                 <strong>{row.thread.title}</strong>
               </a>
               <p class="wt-meta">
-                {row.thread.projectLabel ?? 'No project'}
-                · {row.sessionCount} linked
+                {row.sessionCount}
+                linked
                 {row.sessionCount === 1 ? 'session' : 'sessions'}{row.delegatedSessionCount > 0
                   ? ` · ${row.delegatedSessionCount} delegated`
                   : ''}{row.combinedThreads.length > 0 ? ` · combines ${row.combinedThreads.length + 1} tasks` : ''}
               </p>
               <WorkThreadArtifacts now={dataset.generatedAt} {row} {timeZone} />
-              <p class="wt-meta">
-                Updated
-                <time datetime={row.lastActivityAt}
-                  >{threadDate(row.lastActivityAt, timeZone, false, dataset.generatedAt)}
-                  · {threadTime(row.lastActivityAt, timeZone)}</time
-                >
-              </p>
             </div>
             <fieldset aria-label={`Activity of ${row.thread.title}`} class="wt-lane">
               <span aria-hidden="true" class="wt-lane-today"></span>
@@ -325,7 +326,10 @@
                   <span class="wt-stale" title="Some source evidence is stale">Stale</span>
                 {/if}</span
               >
-              <strong>{situation.headline}</strong><small>{situation.caption}</small>
+              <strong>{situation.headline}</strong>
+              {#if situation.note}
+                <small>{situation.note}</small>
+              {/if}
             </a>
             {#if selectedMarks?.threadId === row.thread.threadId}
               {@const dayMarks = buckets.get(selectedMarks.day) ?? []}

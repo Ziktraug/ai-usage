@@ -2733,6 +2733,8 @@ describe('combined tasks (ADR 0080)', () => {
             linkKind: 'jira-issue',
             origin: 'jira-issue',
             originKey: 'jira:default/SHOP-7',
+            // Discovery labels a ticket task with its Jira project, not where the work lands.
+            projectLabel: 'SHOP',
             title: 'Ticket',
           }),
           pullRequestSeed(1),
@@ -2821,6 +2823,21 @@ describe('combined tasks (ADR 0080)', () => {
     expect((await page(dbPath)).rows.map((row) => row.thread.title).toSorted()).toEqual(['PR 1', 'PR 2', 'Ticket']);
     const events = await run(queryWorkThreadEvents({ dbPath, threadIds: [member] }));
     expect(events.map((event) => event.kind)).toEqual(['created', 'combined', 'separated']);
+  });
+
+  test('a ticket task reads as the repository of its pull requests, combined members included', async () => {
+    const { dbPath, suggestion } = await splitTicket();
+    const projectOf = async (title: string) =>
+      (await page(dbPath)).rows.find((row) => row.thread.title === title)?.thread.projectLabel;
+    expect(await projectOf('Ticket')).toBe('SHOP');
+    expect(await run(queryWorkThreadProjects({ dbPath }))).toEqual(['SHOP', 'fixture/repo']);
+    await command(dbPath, combineCommand(suggestion));
+    expect(await projectOf('Ticket')).toBe('fixture/repo');
+    expect(await run(queryWorkThreadProjects({ dbPath }))).toEqual(['fixture/repo']);
+    expect((await page(dbPath, { project: 'fixture/repo' })).rows.map((row) => row.thread.title)).toEqual(['Ticket']);
+    expect((await page(dbPath, { project: 'SHOP' })).rows).toEqual([]);
+    const kept = await run(queryWorkThreadById({ dbPath, threadId: suggestion.keptThreadId }));
+    expect(kept?.projectLabel).toBe('fixture/repo');
   });
 
   test('refuses a drifted preview, blocked groups and stale revisions without writing', async () => {

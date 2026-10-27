@@ -59,6 +59,10 @@ export const threadUrl = (url: URL, threadId: string | null, day?: string): stri
   return `${next.pathname}${next.search}`;
 };
 
+/** The repository name alone ("Exalibur" for "exaprint/Exalibur"): the owner rarely tells tasks apart. */
+export const projectShortLabel = (label: string | null): string =>
+  label === null ? 'No project' : (label.split('/').filter(Boolean).at(-1) ?? label);
+
 export const groupThreadRows = (rows: readonly WorkThreadRow[]) => {
   const groups = new Map<string, WorkThreadRow[]>();
   for (const row of rows) {
@@ -67,7 +71,11 @@ export const groupThreadRows = (rows: readonly WorkThreadRow[]) => {
     group.push(row);
     groups.set(project, group);
   }
-  return [...groups].map(([project, tasks]) => ({ project, tasks }));
+  return [...groups].map(([project, tasks]) => ({
+    project,
+    label: projectShortLabel(tasks[0]?.thread.projectLabel ?? null),
+    tasks,
+  }));
 };
 
 const SITUATION_GROUPS = [
@@ -86,7 +94,7 @@ export const groupThreadRowsBySituation = (
 ) =>
   SITUATION_GROUPS.flatMap(({ hint, label, note }) => {
     const tasks = rows.filter((row) => hintOf(row) === hint);
-    return tasks.length ? [{ project: label, note, tasks }] : [];
+    return tasks.length ? [{ project: label, label, note, tasks }] : [];
   });
 
 /** Calendar keys, not elapsed 24-hour intervals: correct across midnight and DST. */
@@ -537,7 +545,9 @@ export const threadSituationCopy = (
     headline = 'Work is in progress';
     caption = primary ? remainderEvidenceCopy(primary, timeZone) : 'Sessions · date unknown';
   }
-  return { ...situation, label, headline, caption };
+  // The list repeats no source or date (the timeline shows when); it keeps only explanations.
+  const explained = ['follow-up-ended', 'explicit-wait', 'no-remainder', 'merged-complete'].includes(situation.reason);
+  return { ...situation, label, headline, caption, note: explained ? caption : null };
 };
 
 /** An observed source URL may be opened, but never executable schemes or credentials. */

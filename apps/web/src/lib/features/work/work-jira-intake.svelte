@@ -57,7 +57,8 @@
       title: item.issue?.summary ?? issueKey(item.key),
       intent: 'change',
       objective: null,
-      projectLabel: issueKey(item.key).split('-')[0] ?? null,
+      // The Jira project is not where the work lands; the task takes its PR's repository.
+      projectLabel: null,
       links: [{ kind: 'jira-issue', key: item.key }],
     });
   const attach = (item: WorkThreadJiraIntakeItem, threadId: string) =>

@@ -25,6 +25,7 @@ import {
   groupThreadRows,
   observedWebUrl,
   primaryResumeEpisode,
+  projectShortLabel,
   remainderCopy,
   remainderEvidenceCopy,
   THREAD_TIMELINE_MIN_DAYS,
@@ -173,6 +174,11 @@ describe('task presentation model', () => {
     expect(threadTimeline('2026-10-27T10:00:00Z', 'UTC', ['2020-01-01T00:00:00Z'])).toHaveLength(
       WORK_THREAD_VIEW_BOUNDS.maxTimelineDays,
     );
+  });
+  test('the list keeps explanations, not source and date captions, and shortens projects', () => {
+    expect(projectShortLabel('exaprint/Exalibur')).toBe('Exalibur');
+    expect(projectShortLabel('XLB')).toBe('XLB');
+    expect(projectShortLabel(null)).toBe('No project');
   });
   test('analysis copy permits ending without implying automatic closure', () => {
     expect(threadSituationCopy(analysis.row, analysis.generatedAt, analysis.sources)).toMatchObject({
