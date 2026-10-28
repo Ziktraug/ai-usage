@@ -775,6 +775,59 @@ export const projectLatestProviderQuotaObservation = ({
     : provider;
 };
 
+/** What the supersession rule reads from a stored latest head; the store maps its rows onto it. */
+export interface ProviderQuotaHeadFacts {
+  readonly accountScope: string | null;
+  /** The most recent confirmation of the head's reading, as the latest read returns `lastObservedAt`. */
+  readonly lastObservedAt: string;
+  readonly machineId: string;
+  readonly providerKey: string;
+}
+
+const quotaHeadGroupKey = ({ machineId, providerKey }: ProviderQuotaHeadFacts): string =>
+  JSON.stringify([providerKey, machineId]);
+
+/** The store keys the unscoped head by `accountScope ?? ''`, so an empty scope is unscoped too. */
+const isUnscopedQuotaHead = ({ accountScope }: ProviderQuotaHeadFacts): boolean => (accountScope ?? '') === '';
+
+/**
+ * Drops a superseded unscoped head: for one provider and machine, the head without an account scope
+ * is omitted when a scoped head of that provider and machine was confirmed at or after it.
+ *
+ * A collector that starts attributing its readings to an account (Codex app-server since its
+ * fingerprint) leaves its earlier unscoped head behind, and the rollout backfill keeps writing
+ * unscoped rows because rollouts carry no account identity, so the unscoped head cannot be deleted:
+ * it would come back. Readers therefore apply this rule at the latest-heads read. An unscoped head
+ * newer than every scoped head stays, since it may carry a fresher unattributed reading or an
+ * auth-required state; a provider with only unscoped heads, and every scoped head, are untouched.
+ * The order of `heads` is preserved. A confirmation that does not parse never supersedes and is
+ * never superseded.
+ */
+export const withoutSupersededUnscopedQuotaHeads = <Head>(
+  heads: readonly Head[],
+  facts: (head: Head) => ProviderQuotaHeadFacts,
+): Head[] => {
+  const newestScopedConfirmation = new Map<string, number>();
+  for (const head of heads) {
+    const fact = facts(head);
+    const confirmedAt = Date.parse(fact.lastObservedAt);
+    if (isUnscopedQuotaHead(fact) || Number.isNaN(confirmedAt)) {
+      continue;
+    }
+    const key = quotaHeadGroupKey(fact);
+    newestScopedConfirmation.set(key, Math.max(confirmedAt, newestScopedConfirmation.get(key) ?? confirmedAt));
+  }
+  return heads.filter((head) => {
+    const fact = facts(head);
+    if (!isUnscopedQuotaHead(fact)) {
+      return true;
+    }
+    const scopedConfirmedAt = newestScopedConfirmation.get(quotaHeadGroupKey(fact));
+    const confirmedAt = Date.parse(fact.lastObservedAt);
+    return scopedConfirmedAt === undefined || Number.isNaN(confirmedAt) || scopedConfirmedAt < confirmedAt;
+  });
+};
+
 export class ProviderQuotaValidationError extends Error {
   constructor(message: string) {
     super(message);

@@ -754,7 +754,11 @@ the newest stored observation per provider; `quota --stored` and
 `quota --json` prints that newest-observation read as a `ProviderStatusDataset`
 with freshness applied by the CLI, and `quota --stored --json` is the
 supported seam for desktop and status-bar consumers
-([ADR 0045](adr/0045-desktop-quota-feed-through-the-cli.md)).
+([ADR 0045](adr/0045-desktop-quota-feed-through-the-cli.md)). The latest-heads
+read every reader shares omits a superseded unscoped head: an unscoped head
+of a provider and machine whose scoped head was confirmed at or after it
+([ADR 0085](adr/0085-superseded-unscoped-quota-heads.md)); history reads keep
+every stream.
 
 Portable snapshot/output files remain explicit CLI writes performed after
 bounded reads. CLI wide-event delivery is file-only: it never writes event or

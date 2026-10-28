@@ -3,6 +3,7 @@ import {
   type ProviderQuotaObservation,
   parseProviderQuotaObservation,
   providerQuotaObservationFingerprintInput,
+  withoutSupersededUnscopedQuotaHeads,
 } from '@ai-usage/report-core/provider-quota';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
@@ -731,6 +732,10 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
     const filters = quotaQueryFilters(input, 'heads.');
     const filterSql = filters.clauses.length ? `WHERE ${filters.clauses.join(' AND ')}` : '';
     const headIndex = quotaLatestHeadIndex(input);
+    // Every selected head is read, not `maximum + 1`: the supersession rule below needs the scoped
+    // heads of a provider and machine to judge its unscoped one, and the caller's bound must count
+    // the heads that survive the rule. Heads are one row per stream at most, so the stream budget
+    // bounds this read; the windows are still read only for the rows returned.
     const latestSql = `
             WITH selected AS MATERIALIZED (
               SELECT
@@ -760,7 +765,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
               selected.first_observed_at DESC,
               selected.observation_id DESC
           `;
-    const latestParams = [...filters.params, maximum + 1];
+    const latestParams = [...filters.params, MAX_PROVIDER_QUOTA_STREAMS + 1];
     input.trace?.({ params: latestParams, sql: latestSql });
     const candidates = db.query(latestSql).all(...latestParams) as Array<
       ProviderQuotaObservationRecord & {
@@ -772,6 +777,9 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
         selected_provider_key: string;
       }
     >;
+    if (candidates.length > MAX_PROVIDER_QUOTA_STREAMS) {
+      throw new Error('Provider quota latest-head projection exceeds its read budget');
+    }
     for (const candidate of candidates) {
       if (
         candidate.id !== candidate.selected_observation_id ||
@@ -784,8 +792,16 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
         throw new Error('Provider quota latest-head projection is corrupt');
       }
     }
-    const truncated = candidates.length > maximum;
-    const rows = candidates.slice(0, maximum);
+    // The latest read has no account-scope filter, so the rule always applies here; a reader that
+    // wants the unscoped stream itself names it on the history read.
+    const unsuperseded = withoutSupersededUnscopedQuotaHeads(candidates, (candidate) => ({
+      accountScope: candidate.account_scope,
+      lastObservedAt: candidate.last_observed_at,
+      machineId: candidate.machine_id,
+      providerKey: candidate.provider_key,
+    }));
+    const truncated = unsuperseded.length > maximum;
+    const rows = unsuperseded.slice(0, maximum);
     if (rows.length === 0) {
       return { observations: [], skipped: 0, truncated };
     }
