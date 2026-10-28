@@ -6,6 +6,8 @@ import { isProviderStatusDataset, type ProviderStatusDataset } from '@ai-usage/r
 import { parseUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { createUsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import { loadUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
+import { importProviderQuotaBatch, updateUsageMachineLabel } from '@ai-usage/usage-store/testing';
+import { Effect } from 'effect';
 import { type RunningCli, withCliSandbox } from './test-support/run-cli';
 
 type StoredWideEvent = Omit<WideEventSnapshot, 'resource' | 'schemaVersion'> &
@@ -967,5 +969,64 @@ test('quota --stored fails visibly on a store that exists but cannot be read', a
         outcome: 'failure',
       });
     }
+  });
+});
+
+/**
+ * The store shape that showed two "Codex" entries on the desktop feed: the unscoped head the
+ * app-server wrote before it scoped by account fingerprint, beside the scoped head it now refreshes.
+ */
+test('quota --stored --json prints one Codex entry when a scoped head supersedes the unscoped one', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const databasePath = path.join(root, 'store', 'usage.sqlite');
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const reading = (accountScope: string | null, observedAt: string) => ({
+      accountScope,
+      machineId: 'fixture-machine',
+      machineLabel: 'Fixture Machine',
+      observedAt,
+      plan: 'plus',
+      providerGeneratedAt: null,
+      providerKey: 'codex',
+      providerLabel: 'Codex',
+      source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' } as const,
+      state: 'ok' as const,
+      windows: [
+        {
+          blocked: false,
+          group: '5h',
+          id: 'codex:primary',
+          label: '5h',
+          limitSeconds: 18_000,
+          remainingPercent: accountScope === null ? 90 : 60,
+          resetsAt: '2026-10-28T01:00:00.000Z',
+          scope: 'provider' as const,
+          usedPercent: accountScope === null ? 10 : 40,
+        },
+      ],
+    });
+    await Effect.runPromise(
+      updateUsageMachineLabel({ dbPath: databasePath, machine: { id: 'fixture-machine', label: 'Fixture Machine' } }),
+    );
+    await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath: databasePath,
+        items: [
+          { observation: reading(null, '2026-10-27T20:21:00.000Z') },
+          { observation: reading('ee40c8e243efcef5', '2026-10-27T20:33:00.000Z') },
+        ],
+      }),
+    );
+
+    const stored = await runCli(['quota', '--stored', '--json']);
+
+    expect(stored.exitCode).toBe(0);
+    expect(stored.stderr).toBe('');
+    const dataset = JSON.parse(stored.stdout) as ProviderStatusDataset;
+    expect(isProviderStatusDataset(dataset)).toBe(true);
+    expect(dataset.providers.map(({ generatedAt, key }) => ({ generatedAt, key }))).toEqual([
+      { generatedAt: '2026-10-27T20:33:00.000Z', key: 'codex:ee40c8e243efcef5' },
+    ]);
   });
 });

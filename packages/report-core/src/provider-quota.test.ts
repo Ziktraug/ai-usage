@@ -11,6 +11,7 @@ import {
   projectLatestProviderQuotaObservation,
   providerQuotaObservationFingerprintInput,
   segmentProviderQuotaHistoryPoints,
+  withoutSupersededUnscopedQuotaHeads,
 } from './provider-quota';
 
 const CODEX_NOW = Date.parse('2026-10-22T18:00:00.000Z');
@@ -356,6 +357,64 @@ describe('projectLatestProviderQuotaObservation', () => {
         '2026-07-15T10:00:00.000Z',
       );
     }
+  });
+});
+
+describe('withoutSupersededUnscopedQuotaHeads', () => {
+  interface Head {
+    readonly accountScope: string | null;
+    readonly lastObservedAt: string;
+    readonly machineId: string;
+    readonly providerKey: string;
+  }
+  const head = (
+    accountScope: string | null,
+    lastObservedAt: string,
+    rest: Partial<Pick<Head, 'machineId' | 'providerKey'>> = {},
+  ): Head => ({ accountScope, lastObservedAt, machineId: 'machine-1', providerKey: 'codex', ...rest });
+  const facts = (item: Head) => item;
+  const keep = (heads: readonly Head[]) =>
+    withoutSupersededUnscopedQuotaHeads(heads, facts).map(({ accountScope }) => accountScope);
+
+  // The real shape: the app-server wrote `codex` unscoped before it scoped by fingerprint, and the
+  // rollout backfill still writes unscoped rows, so the unscoped head never goes away on its own.
+  const unscoped = head(null, '2026-10-27T20:21:00.000Z');
+  const scoped = head('ee40c8e243efcef5', '2026-10-27T21:33:00.000Z');
+
+  test('drops the unscoped head once a scoped head of the same provider and machine is as recent', () => {
+    expect(keep([unscoped, scoped])).toEqual(['ee40c8e243efcef5']);
+    expect(keep([scoped, head(null, scoped.lastObservedAt)])).toEqual(['ee40c8e243efcef5']);
+  });
+
+  test('keeps an unscoped head that is newer than every scoped head', () => {
+    const fresher = head(null, '2026-10-27T21:34:00.000Z');
+    expect(keep([scoped, fresher])).toEqual(['ee40c8e243efcef5', null]);
+  });
+
+  test('treats an empty account scope as unscoped, like the store head key does', () => {
+    expect(keep([head('', unscoped.lastObservedAt), scoped])).toEqual(['ee40c8e243efcef5']);
+  });
+
+  test('leaves other providers, other machines and scoped-only or unscoped-only groups alone', () => {
+    const claude = head(null, '2026-10-27T18:00:00.000Z', { providerKey: 'claude' });
+    const peerMachine = head(null, '2026-10-27T18:00:00.000Z', { machineId: 'machine-2' });
+    const secondAccount = head('1234567890abcdef', '2026-10-27T19:00:00.000Z');
+    expect(keep([claude, peerMachine, unscoped, scoped, secondAccount])).toEqual([
+      null,
+      null,
+      'ee40c8e243efcef5',
+      '1234567890abcdef',
+    ]);
+    expect(keep([claude])).toEqual([null]);
+    expect(keep([scoped, secondAccount])).toEqual(['ee40c8e243efcef5', '1234567890abcdef']);
+  });
+
+  test('preserves the order it was given and never compares an unparseable confirmation', () => {
+    const scopedFirst = withoutSupersededUnscopedQuotaHeads([scoped, head('x', '2026-10-27T19:00:00.000Z')], facts);
+    expect(scopedFirst.map(({ accountScope }) => accountScope)).toEqual(['ee40c8e243efcef5', 'x']);
+    expect(keep([head(null, 'not-a-timestamp'), scoped])).toEqual([null, 'ee40c8e243efcef5']);
+    expect(keep([unscoped, head('x', 'not-a-timestamp')])).toEqual([null, 'x']);
+    expect(withoutSupersededUnscopedQuotaHeads([], facts)).toEqual([]);
   });
 });
 

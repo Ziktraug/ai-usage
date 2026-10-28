@@ -10,6 +10,8 @@ import {
 import { createUsageReportPayload, prepareUsageReport, serializeUsageRow } from '@ai-usage/report-core/report-data';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { type StoredProviderQuotaObservation, UsageStoreError } from '@ai-usage/usage-store/reader';
+import { importProviderQuotaBatch, updateUsageMachineLabel } from '@ai-usage/usage-store/testing';
+import { Effect } from 'effect';
 import type { Args } from './cli';
 import { quotaStatusDataset } from './quota';
 import {
@@ -317,4 +319,34 @@ test('marks a merged reading stale when even its most recent confirmation is pas
     { source: 'live-api', state: 'stale' },
     { source: 'local-history', state: 'stale' },
   ]);
+});
+
+// The store shape that showed two "Codex" entries on the desktop feed: the unscoped head the
+// app-server wrote before it scoped by account fingerprint, beside the scoped head it now refreshes.
+test('reads one Codex entry from a store holding a superseded unscoped head', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-cli-quota-heads-'));
+  try {
+    const dbPath = path.join(root, 'usage.sqlite');
+    const unscoped = storedQuota('2026-10-27T20:21:00.000Z', '2026-10-27T20:21:00.000Z').observation;
+    const scoped = {
+      ...storedQuota('2026-10-27T20:33:00.000Z', '2026-10-27T20:33:00.000Z').observation,
+      accountScope: 'ee40c8e243efcef5',
+    };
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine: { id: 'machine-1', label: 'Laptop' } }));
+    await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [{ observation: unscoped }, { observation: scoped }],
+      }),
+    );
+
+    const latest = await readLatestProviderQuotas(dbPath);
+
+    expect(latest.map((provider) => ({ generatedAt: provider.generatedAt, key: provider.key }))).toEqual([
+      { generatedAt: '2026-10-27T20:33:00.000Z', key: 'codex:ee40c8e243efcef5' },
+    ]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
